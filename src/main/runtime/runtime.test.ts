@@ -127,6 +127,9 @@ describe('AgentRuntime activation', () => {
   it('focuses a known dwarf before consulting its transcript', async () => {
     const source = provider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(true),
@@ -151,6 +154,9 @@ describe('AgentRuntime activation', () => {
     }
     const launchTerminal = vi.fn().mockResolvedValue(true)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
@@ -178,6 +184,9 @@ describe('AgentRuntime activation', () => {
     }
     const launchTerminal = vi.fn().mockResolvedValue(false)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
@@ -200,6 +209,9 @@ describe('AgentRuntime activation', () => {
     const source = provider(feed)
     const launchTerminal = vi.fn().mockResolvedValue(true)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       focus: vi.fn().mockResolvedValue(false),
@@ -230,6 +242,9 @@ describe('AgentRuntime activation', () => {
       const focus = vi.fn().mockResolvedValue(true)
       const launchTerminal = vi.fn().mockResolvedValue(true)
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         focus,
@@ -252,6 +267,9 @@ describe('AgentRuntime activation', () => {
       // Two different facts, and the panel shows two different things: "this
       // session has written nothing yet" is not "there is no way to read it".
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [provider([])],
         onMinesUpdated: vi.fn()
@@ -267,6 +285,9 @@ describe('AgentRuntime activation', () => {
     it('reads nothing for a dwarf that is not on the board', async () => {
       const source = provider()
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -283,6 +304,9 @@ describe('AgentRuntime activation', () => {
     it("reports unreadable when the provider does not know the dwarf's transcript", async () => {
       const source: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue(null) }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -344,6 +368,9 @@ describe('AgentRuntime activation', () => {
 
     it("names the foreman that launched a worker as the issuer of the worker's prompt", async () => {
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [crewProvider(CREW_FEED)],
         onMinesUpdated: vi.fn()
@@ -368,6 +395,9 @@ describe('AgentRuntime activation', () => {
       // The other half of #175, and the one that was already right: nobody
       // launched the root, so its first message carries no issuer at all.
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [crewProvider(CREW_FEED)],
         onMinesUpdated: vi.fn()
@@ -429,6 +459,9 @@ describe('AgentRuntime activation', () => {
         feed: vi.fn().mockResolvedValue(CREW_FEED)
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [codexCrew],
         onMinesUpdated: vi.fn()
@@ -485,6 +518,9 @@ describe('AgentRuntime activation', () => {
         feed: vi.fn().mockResolvedValue(final)
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
         providers: [source],
         onMinesUpdated: vi.fn(),
@@ -509,6 +545,9 @@ describe('AgentRuntime activation', () => {
         feed: vi.fn().mockRejectedValue(new Error('the file went away'))
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -548,6 +587,9 @@ describe('AgentRuntime activation', () => {
     it("asks the provider for a page of the panel's own size, and carries the flag back", async () => {
       const source = pagingProvider({ messages: OLDER, reachedStart: true })
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -565,6 +607,9 @@ describe('AgentRuntime activation', () => {
     it('reads nothing for a dwarf that is not on the board', async () => {
       const source = pagingProvider({ messages: OLDER, reachedStart: false })
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -584,6 +629,9 @@ describe('AgentRuntime activation', () => {
       const noPages: Provider = { kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }
       for (const source of [noPages, pagingProvider(null)]) {
         const runtime = new AgentRuntime({
+          // AMENDED for #470: see worktreePlatformAdapters above.
+          platformAdapters: worktreePlatformAdapters(),
+
           config: defaultConfig(),
           providers: [source],
           onMinesUpdated: vi.fn()
@@ -604,6 +652,9 @@ describe('AgentRuntime activation', () => {
         feedPage: vi.fn().mockRejectedValue(new Error('the file went away'))
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -655,6 +706,9 @@ describe('AgentRuntime activation', () => {
         })
       }
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [source],
         onMinesUpdated: vi.fn()
@@ -718,6 +772,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
       .mockResolvedValue([{ role: 'assistant', text: 'hi', timestamp: 'now' } as FeedMessage])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated
@@ -738,6 +795,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
     const feed = vi.fn().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated: vi.fn()
@@ -752,6 +812,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue(scanWith(100))
     const feed = vi.fn().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated: vi.fn()
@@ -773,6 +836,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
     scan.mockResolvedValueOnce(scanWith(200))
     const feed = vi.fn().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan, feed }],
       onMinesUpdated: vi.fn()
@@ -793,6 +859,9 @@ describe('AgentRuntime.watchDwarfFeed (#196)', () => {
       .mockResolvedValue([{ role: 'assistant', text: 'hi', timestamp: 'now' } as FeedMessage])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed }],
       // #348: the poll now resolves each session's project off the filesystem,
@@ -856,6 +925,9 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
         }
       ])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       onMinesUpdated: vi.fn(),
@@ -902,6 +974,9 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
       }
     ])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       onMinesUpdated: vi.fn(),
@@ -951,6 +1026,9 @@ describe('AgentRuntime dwarf lifecycle wiring', () => {
       }
     ])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       onMinesUpdated: vi.fn(),
@@ -1020,6 +1098,9 @@ describe('AgentRuntime activation for a leaving dwarf', () => {
     }
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [source],
       focus,
@@ -1054,6 +1135,9 @@ describe('AgentRuntime activation for a leaving dwarf', () => {
     }
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [source],
       focus,
@@ -1148,6 +1232,9 @@ describe('AgentRuntime.sendDwarfText', () => {
       textDelivery: (dwarfId: string) => targets[dwarfId] ?? null
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
@@ -1818,6 +1905,9 @@ describe('AgentRuntime.sendDwarfText', () => {
     const port = fakePort()
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [
         {
@@ -2354,6 +2444,9 @@ describe('AgentRuntime.kickDwarf', () => {
       textDelivery: (dwarfId: string) => targets[dwarfId] ?? null
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
@@ -2483,6 +2576,9 @@ describe('AgentRuntime.kickDwarf', () => {
     const port = fakePort()
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [
         {
@@ -2869,6 +2965,9 @@ describe('AgentRuntime.kickDwarf — the terminal tier ends the session (#329)',
   ) {
     let now = 0
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [
         {
@@ -3210,6 +3309,9 @@ describe('AgentRuntime over the Codex message queue', () => {
         dwarfId === DWARF_ID ? { kind: 'codex-queue', threadId: THREAD_ID } : null
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
@@ -3515,6 +3617,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
     const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
     const launched = new LaunchedSessionRegistry({ endProcessTree })
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [options.provider ?? execProvider()],
       launchedSessions: launched,
@@ -3678,6 +3783,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       .mockResolvedValueOnce([snapshot('was-here-first')])
       .mockResolvedValue([snapshot('was-here-first'), snapshot(THREAD_ID)])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         { kind: 'codex', scan, feed: vi.fn().mockResolvedValue([]), textDelivery: () => null }
@@ -3778,6 +3886,9 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
         endProcessTree: vi.fn().mockResolvedValue(true)
       })
       const runtime = new AgentRuntime({
+        // AMENDED for #470: see worktreePlatformAdapters above.
+        platformAdapters: worktreePlatformAdapters(),
+
         config: defaultConfig(),
         providers: [resumableProvider()],
         textDelivery: port,
@@ -4167,6 +4278,9 @@ describe('AgentRuntime provider wiring', () => {
     )
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home,
       fs: fake,
@@ -4186,6 +4300,9 @@ describe('AgentRuntime.nudge', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       // #348: as above — no real disk inside a tick driven by fake timers.
@@ -4217,6 +4334,9 @@ describe('AgentRuntime.nudge', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       // #348: as above — no real disk inside a tick driven by fake timers.
@@ -4262,6 +4382,9 @@ describe('AgentRuntime.nudge', () => {
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const onMinesUpdated = vi.fn()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 2_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       onMinesUpdated
@@ -4282,6 +4405,9 @@ describe('AgentRuntime.nudge', () => {
     vi.useFakeTimers()
     const scan = vi.fn<Provider['scan']>().mockResolvedValue([])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), pollIntervalMs: 60_000 },
       providers: [{ kind: 'claude', scan, feed: async () => null }],
       onMinesUpdated: vi.fn()
@@ -4339,6 +4465,9 @@ describe('AgentRuntime delivery instrumentation', () => {
     clock: { value: number }
   ) {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         {
@@ -4647,6 +4776,9 @@ describe('AgentRuntime kick escalation policy', () => {
       endConsoleSession: vi.fn().mockResolvedValue({ delivered: true })
     } satisfies TextDeliveryPort
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         {
@@ -4816,6 +4948,9 @@ describe('AgentRuntime material vault', () => {
     tiers.tierOf(VAULT_PROJECT)
     await tiers.settle()
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers,
       ledger,
@@ -4893,6 +5028,9 @@ describe('AgentRuntime material vault', () => {
     const onMinesUpdated = vi.fn()
     const { provider } = countingProvider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [provider],
       ledger,
@@ -4934,6 +5072,9 @@ describe('AgentRuntime material vault', () => {
     // with no vault; that must stay a working, disk-free configuration.
     const { provider, setTokens } = countingProvider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [provider],
       onMinesUpdated: vi.fn()
@@ -4984,6 +5125,9 @@ describe('AgentRuntime material vault', () => {
     await ledger.load()
     const { provider, setTokens } = countingProvider()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: [provider],
       ledger,
@@ -5187,6 +5331,9 @@ describe('AgentRuntime.launchAgent (#86)', () => {
 
   async function runtimeWith(launchSession: SessionLauncher) {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
       launchSession,
@@ -5508,6 +5655,9 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     onLaunchFailed?: (push: LaunchFailedPush) => void
   ) {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
       launchSession,
@@ -5648,6 +5798,9 @@ describe('AgentRuntime proving which dwarf a detached launch became (#191)', () 
      */
     const onBoard = [...sessions]
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [
         {
@@ -5810,6 +5963,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
   it('records every project a session is seen working in', async () => {
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects,
@@ -5831,6 +5987,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // actually produced an answer (#41).
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects,
@@ -5849,6 +6008,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // The store refuses loudly by design, and index.ts turns that refusal into
     // a null. A broken projects database costs the declared mines, nothing else.
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects: null,
@@ -5866,6 +6028,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // and /simulated-valley/... is not a project on anybody's disk.
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home: 'C:\\Users\\test',
       fs: new FakeFs(),
@@ -5888,6 +6053,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     // and a folder nobody has run an agent in has never been opened.
     const projects = projectsStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       projects,
@@ -5909,6 +6077,9 @@ describe('AgentRuntime projects wiring (#93)', () => {
     const upsert = vi.spyOn(projects, 'upsertObserved')
     let now = 5_000
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [workingProvider()],
       projects,
@@ -5969,6 +6140,9 @@ describe('AgentRuntime declared mines (#85)', () => {
     ledger?: MaterialLedger
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       // A zero grace window so a departed crew is gone the moment it stops
       // being reported: what remains on the board is then the declaration, and
       // nothing borrowed from the leaving-dwarf path.
@@ -6369,6 +6543,9 @@ describe('AgentRuntime project queries (#92)', () => {
     tiers?: TierService
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       // A zero grace window for the reason the #85 block uses one: a crew that
       // stopped being reported is gone at once, so `live` is answered from the
       // board rather than from the leaving-dwarf window.
@@ -6798,6 +6975,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     providers?: Provider[]
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: options.providers ?? [],
       heldSessions: options.heldSessions,
@@ -6852,6 +7032,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // nobody's folder.
     const port = heldPort()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
       appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
@@ -7237,6 +7420,9 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     )
     const port = heldPort()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home,
       fs: fake,
@@ -7733,6 +7919,9 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
     ledger.creditCoal('mine:a', 9_000)
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       ledger,
@@ -7760,6 +7949,9 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
     ledger.creditCoal(mineIdForPath(ADOPTED), 500)
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       projects,
@@ -7789,6 +7981,9 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
     ledger.creditCoal('mine:a', 500)
 
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [],
       ledger,
@@ -7853,6 +8048,9 @@ describe('AgentRuntime map placement (#136)', () => {
     providers?: Provider[]
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? placementStore() : options.projects,
@@ -7936,6 +8134,9 @@ describe('AgentRuntime map placement (#136)', () => {
     // real table is untouched by a run whose whole point is that it is a demo.
     const projects = placementStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       home: 'C:\\Users\\test',
       fs: new FakeFs(),
@@ -7999,6 +8200,9 @@ describe('AgentRuntime map placement (#136)', () => {
       .mockResolvedValue([])
     const projects = placementStore()
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 20 },
       providers: [{ kind: 'claude', scan, feed: vi.fn().mockResolvedValue([]) }],
       projects,
@@ -8037,6 +8241,9 @@ describe('AgentRuntime map placement (#136)', () => {
     // walk is what has to produce a verdict here, and it must weigh an
     // in-memory folder rather than whatever the host happens to have.
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: [],
       fs: new FakeFs(),
@@ -8511,6 +8718,9 @@ describe('AgentRuntime board-and-list coherence (#165)', () => {
     providers?: Provider[]
   }): AgentRuntime {
     return new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? coherenceStore() : options.projects,
@@ -8622,6 +8832,9 @@ describe('AgentRuntime.mineHistory', () => {
   it("resolves the mine to its folder and answers with the folder's speakers", async () => {
     const readAcross = vi.fn().mockResolvedValue([SPEAKER])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       history: { read: vi.fn(), readAcross },
@@ -8641,6 +8854,9 @@ describe('AgentRuntime.mineHistory', () => {
   it('reads nothing for a mine that is not on the board, and says it could not', async () => {
     const readAcross = vi.fn().mockResolvedValue([SPEAKER])
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       history: { read: vi.fn(), readAcross },
@@ -8658,6 +8874,9 @@ describe('AgentRuntime.mineHistory', () => {
   it('answers unreadable rather than throwing when the read itself fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       history: { read: vi.fn(), readAcross: vi.fn().mockRejectedValue(new Error('disk')) },
@@ -8703,6 +8922,9 @@ describe('AgentRuntime.mineFolderOf', () => {
 
   it('resolves a mine on the board to its own folder', async () => {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       onMinesUpdated: vi.fn()
@@ -8714,6 +8936,9 @@ describe('AgentRuntime.mineFolderOf', () => {
 
   it('answers undefined for a mine that is not on the board', async () => {
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       onMinesUpdated: vi.fn()
@@ -8831,6 +9056,9 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
     const fs = new FakeFs()
     fs.addFile(CLAUDE, '#!/bin/sh\n')
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [heldProvider()],
       textDelivery: port,
@@ -9087,6 +9315,12 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
       providers: [options.provider ?? claudeInHostedMine()],
       hostedProcesses: hosted,
       now: () => clock.now,
+      // AMENDED for #470: HOSTED_MINE and every fixture in this describe
+      // block are Windows-shaped, and mine-id lookups key on
+      // `normalizePathKey`, which folds case only on win32/darwin — the
+      // host's own platform must never decide that fold (see
+      // worktreePlatformAdapters above).
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -9427,6 +9661,8 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
         env: {}
       }),
       simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      // AMENDED for #470: see runtimeWithHost above.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -9486,10 +9722,15 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     return runtime.getMines()[0]?.dwarfs[0]?.waitingReason
   }
 
+  // AMENDED for #470: PROMPT_MINE is Windows-shaped, and mine-id lookups
+  // key on `normalizePathKey`, which folds case only on win32/darwin — the
+  // host running the suite must never decide that fold (see
+  // worktreePlatformAdapters above).
   it('marks the dwarf of the session Claude Code says has a dialog open', async () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [observedForeman()],
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
@@ -9506,6 +9747,7 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [observedForeman()],
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     runtime.noteHookEvent(permissionPrompt('sess-nobody'))
@@ -9522,6 +9764,7 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     const runtime = new AgentRuntime({
       config: defaultConfig(),
       providers: [observedForeman()],
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     runtime.noteHookEvent(permissionPrompt('sess-9'))
@@ -9565,12 +9808,13 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
       config: defaultConfig(),
       providers: [observedForeman()],
       heldSessions,
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(PROMPT_MINE),
+      mineId: mineIdForPath(PROMPT_MINE, 'win32'),
       prompt: 'dig here'
     })
     started[0]!.onSessionId('sess-9')
@@ -9681,6 +9925,10 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
+      // AMENDED for #470: the snapshot's cwd above is Windows-shaped, so the
+      // board must fold it on the platform it names, not on the host running
+      // the suite (see worktreePlatformAdapters above).
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       ...(wiring.keystroke === undefined ? {} : { permissionKeystroke: wiring.keystroke })
     })
@@ -10433,6 +10681,9 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
       textDelivery: (dwarfId: string) => (dwarfId === FOREMAN_ID ? target : null)
     }
     const runtime = new AgentRuntime({
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
+
       config: defaultConfig(),
       providers: [source],
       textDelivery: port,
