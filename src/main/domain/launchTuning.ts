@@ -180,7 +180,10 @@ export function resumeTuning(
 
   if (launch?.effort !== undefined) {
     tuning.effort = launch.effort
-  } else if (observed?.effort !== undefined && PROVIDER_EFFORT_LEVELS.codex.includes(observed.effort)) {
+  } else if (
+    observed?.effort !== undefined &&
+    PROVIDER_EFFORT_LEVELS.codex.includes(observed.effort)
+  ) {
     tuning.effort = observed.effort
   }
 

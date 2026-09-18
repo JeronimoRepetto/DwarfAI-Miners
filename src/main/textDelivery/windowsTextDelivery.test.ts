@@ -868,7 +868,16 @@ describe('WindowsTextDelivery.resumeCodexThread', () => {
     ).resolves.toEqual({ delivered: true })
     expect(runCodexResume.mock.calls[0]?.[0]).toMatchObject({
       command: 'C:\\Users\\j\\.local\\bin\\codex.exe',
-      args: ['exec', '-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=high', 'resume', THREAD_ID, '-'],
+      args: [
+        'exec',
+        '-m',
+        'gpt-5.6-sol',
+        '-c',
+        'model_reasoning_effort=high',
+        'resume',
+        THREAD_ID,
+        '-'
+      ],
       cwd: CWD
     })
   })

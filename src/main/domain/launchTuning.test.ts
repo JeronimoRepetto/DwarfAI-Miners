@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PROVIDER_EFFORT_LEVELS, codexTuningArgs, parseLaunchTuning, resumeTuning } from './launchTuning'
+import {
+  PROVIDER_EFFORT_LEVELS,
+  codexTuningArgs,
+  parseLaunchTuning,
+  resumeTuning
+} from './launchTuning'
 
 describe('PROVIDER_EFFORT_LEVELS', () => {
   /*
@@ -230,9 +235,9 @@ describe('resumeTuning', () => {
   })
 
   it('fills only the field the launch left absent, from the observed pair', () => {
-    expect(resumeTuning({ model: 'gpt-5.6-sol' }, { model: 'gpt-5.6-luna', effort: 'medium' })).toEqual(
-      { model: 'gpt-5.6-sol', effort: 'medium' }
-    )
+    expect(
+      resumeTuning({ model: 'gpt-5.6-sol' }, { model: 'gpt-5.6-luna', effort: 'medium' })
+    ).toEqual({ model: 'gpt-5.6-sol', effort: 'medium' })
   })
 
   it('falls back to the observed pair entirely when the launch named nothing', () => {
@@ -249,7 +254,9 @@ describe('resumeTuning', () => {
   })
 
   it('drops a blank or whitespace-only observed model', () => {
-    expect(resumeTuning(undefined, { model: '   ', effort: 'medium' })).toEqual({ effort: 'medium' })
+    expect(resumeTuning(undefined, { model: '   ', effort: 'medium' })).toEqual({
+      effort: 'medium'
+    })
     expect(resumeTuning(undefined, { model: '', effort: 'medium' })).toEqual({ effort: 'medium' })
   })
 

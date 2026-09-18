@@ -154,9 +154,7 @@ describe('deliverViaCodexResume', () => {
    */
   it('carries a tuned model and effort before the resume subcommand', async () => {
     const run = runner({ running: true })
-    await deliverViaCodexResume(
-      options({ tuning: { model: 'gpt-5.6-sol', effort: 'high' }, run })
-    )
+    await deliverViaCodexResume(options({ tuning: { model: 'gpt-5.6-sol', effort: 'high' }, run }))
     const invocation = run.mock.calls[0]![0]
     expect(invocation.args).toEqual([
       'exec',

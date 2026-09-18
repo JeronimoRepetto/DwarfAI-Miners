@@ -4,6 +4,7 @@ import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
 import { agentProviderList } from '../domain/launchProviders'
+import { resumeTuning, type LaunchTuning } from '../domain/launchTuning'
 import {
   antigravityModelCatalog,
   claudeModelCatalog,
@@ -2621,15 +2622,34 @@ export class AgentRuntime {
    * The folder comes off the endpoint rather than from this process, because
    * Codex declines to run outside a Git repository and a packaged app's own
    * working directory is nothing anybody chose.
+   *
+   * AMENDED for #462: `launchDwarfId` names the dwarf whose LAUNCH record may
+   * be read for an explicit tuning, and it is `undefined` on a foreman hop
+   * (Risk 1) — `resolved.prefix !== ''` at the call site means the endpoint
+   * belongs to an ancestor this method was never told the id of, and reading
+   * the launch registry keyed on the REQUESTING dwarf's id would tune an
+   * ancestor's turn from a descendant's launch record. The observed half
+   * (`observed`) is hop-safe either way: it rides the endpoint itself.
    */
   private async resumeCodexThread(
     threadId: string,
     cwd: string,
-    text: string
+    text: string,
+    observed: LaunchTuning,
+    launchDwarfId: string | undefined
   ): Promise<TextDeliveryOutcome> {
     const resume = this.textDelivery.resumeCodexThread
     if (resume === undefined) return { delivered: false, error: NO_RESUME_TIER }
-    return resume.call(this.textDelivery, { threadId, cwd, text })
+    const launch =
+      launchDwarfId === undefined ? undefined : this.launched.tuningOfDwarf(launchDwarfId)
+    const tuning = resumeTuning(launch, observed)
+    const isEmpty = tuning.model === undefined && tuning.effort === undefined
+    return resume.call(this.textDelivery, {
+      threadId,
+      cwd,
+      text,
+      ...(isEmpty ? {} : { tuning })
+    })
   }
 
   /**
@@ -3350,8 +3370,24 @@ export class AgentRuntime {
           //
           // request.pressEnter is dropped, exactly as the queue and the relay
           // drop it: there is no console line here to leave unsent.
+          //
+          // The launch registry is read for `request.dwarfId` ONLY where no
+          // hop occurred (#462, Risk 1): `resolved.prefix === ''` is exactly
+          // "this endpoint belongs to the dwarf that was asked for", and a
+          // hop's own worker names are the tell that it does not. The
+          // endpoint's own observed pair travels either way — see
+          // resumeCodexThread above.
           return timer.measure('spawn', () =>
-            this.resumeCodexThread(endpoint.threadId, endpoint.cwd, payload)
+            this.resumeCodexThread(
+              endpoint.threadId,
+              endpoint.cwd,
+              payload,
+              {
+                ...(endpoint.model === undefined ? {} : { model: endpoint.model }),
+                ...(endpoint.effort === undefined ? {} : { effort: endpoint.effort })
+              },
+              resolved.prefix === '' ? request.dwarfId : undefined
+            )
           )
         }
         return timer.measure('relay', () =>
@@ -3600,7 +3636,21 @@ export class AgentRuntime {
           provider: request.provider,
           minePath: mine.path,
           process: retained,
-          knownSessionIds: this.mines.flatMap((item) => item.dwarfs.map((dwarf) => dwarf.sessionId))
+          knownSessionIds: this.mines.flatMap((item) =>
+            item.dwarfs.map((dwarf) => dwarf.sessionId)
+          ),
+          // #462: what this launch explicitly asked for, so a codex resume
+          // reached after this process exits can still carry it — see
+          // LaunchedSessionRegistry.tuningOfDwarf. The same spread the
+          // launchSession call above already uses; absent stays absent.
+          ...(request.model === undefined && request.effort === undefined
+            ? {}
+            : {
+                tuning: {
+                  ...(request.model === undefined ? {} : { model: request.model }),
+                  ...(request.effort === undefined ? {} : { effort: request.effort })
+                }
+              })
         })
         // #263. Subscribed here, never behind the launcher: the receipt this
         // failure is correlated by is the one just issued a few lines above,
