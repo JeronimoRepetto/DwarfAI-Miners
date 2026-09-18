@@ -147,6 +147,46 @@ describe('deliverViaCodexResume', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  /**
+   * Issue #462: a tuned resume carries its model/effort exactly where the
+   * launch's own argv does — BEFORE `resume`, never after (the measured clap
+   * trap `buildCodexResumeArgs`'s own describe pins above).
+   */
+  it('carries a tuned model and effort before the resume subcommand', async () => {
+    const run = runner({ running: true })
+    await deliverViaCodexResume(
+      options({ tuning: { model: 'gpt-5.6-sol', effort: 'high' }, run })
+    )
+    const invocation = run.mock.calls[0]![0]
+    expect(invocation.args).toEqual([
+      'exec',
+      '-m',
+      'gpt-5.6-sol',
+      '-c',
+      'model_reasoning_effort=high',
+      'resume',
+      THREAD_ID,
+      '-'
+    ])
+    expect(invocation.args.indexOf('resume')).toBeGreaterThan(
+      invocation.args.indexOf('model_reasoning_effort=high')
+    )
+  })
+
+  /**
+   * The spec's byte-identical requirement: an empty tuning and an absent one
+   * must produce the exact same argv the channel had before this issue.
+   */
+  it('stays byte-identical to the untuned argv when tuning is empty or absent', async () => {
+    const run = runner({ running: true })
+    await deliverViaCodexResume(options({ tuning: {}, run }))
+    expect(run.mock.calls[0]![0].args).toEqual(['exec', 'resume', THREAD_ID, '-'])
+
+    const runAbsent = runner({ running: true })
+    await deliverViaCodexResume(options({ run: runAbsent }))
+    expect(runAbsent.mock.calls[0]![0].args).toEqual(['exec', 'resume', THREAD_ID, '-'])
+  })
+
   // The privacy rule every delivery tier is built under: an outcome carries a
   // verdict and a sentence, and there is no field a payload could travel in.
   it('never echoes the message back in any outcome', async () => {
