@@ -52,32 +52,35 @@ export type { Platform }
 /**
  * Whether the macOS console-input path is offered by default.
  *
- * What it gates is two mechanisms now, not one (#367 item 2, and see
+ * What it gates is two mechanisms, not one (#367 item 2, and see
  * `darwinConsoleInput.ts`). A MESSAGE is written into the Terminal.app tab the
  * session's tty names — measured live 2026-09-18, no window raised, no
  * keystroke synthesized, Automation permission only. A key that must not carry
  * a Return — #203's permission digit, and the Escape behind a deny — is still a
  * System Events keystroke at the foreground, and still needs Accessibility
- * permission this app cannot detect.
+ * permission this app cannot detect, and a foregrounded window.
  *
- * So the reach verdict #367 asked for exists: `darwinTabReach.ts` answers
- * `own-console` for a tty a Terminal.app tab carries and `terminal-host` for
- * everything else, which is the same refusal the Windows port makes for a
- * shared tab strip (#329). A message can no longer land in the wrong tab,
- * because no tab is guessed at — it is addressed.
+ * The reach verdict #367 asked for is what makes this safe: `darwinTabReach.ts`
+ * answers `own-console` for a tty a Terminal.app tab carries and
+ * `terminal-host` for everything else, which is the same refusal the Windows
+ * port makes for a shared tab strip (#329). A message can no longer land in
+ * the wrong tab, because no tab is guessed at — it is addressed. A session
+ * hosted anywhere other than a Terminal.app tab still answers `terminal-host`
+ * and its message still goes by relay, exactly as before this flipped.
  *
- * What still keeps this `false`: nothing on this path has been run from the
- * panel end to end, only from a scratch tab, and Terminal.app is the ONLY host
- * measured — iTerm2, WezTerm, Alacritty, kitty, Ghostty, Hyper and Warp all
- * refuse until somebody measures them. Set `DARWIN_CONSOLE_INPUT=1` (config.ts's
- * `darwinConsoleInputEnabled`, documented beside the other diagnostic switches
- * in docs/guide.md) to override this constant for one run, through the
- * `darwinConsoleInput` option below, wired in at index.ts's composition root.
- * Flip this constant, and the README support matrix with it, once the
- * maintainer has verified the whole path from the panel on a real Mac (#367
- * item 3).
+ * The maintainer chose this default `true` on 2026-09-18 ("DARWIN_CONSOLE_INPUT
+ * debe venir activado por defecto", #367), before the end-to-end walk from the
+ * panel — Terminal.app is still the ONLY host measured; iTerm2, WezTerm,
+ * Alacritty, kitty, Ghostty, Hyper and Warp all fall back to `terminal-host`
+ * until somebody measures them, which the tty-ownership check above already
+ * guarantees rather than trusting this flag alone. `DARWIN_CONSOLE_INPUT` in
+ * config.ts's `darwinConsoleInputOverride` (documented beside the other
+ * diagnostic switches in docs/guide.md) is the way back: `=0`/`=false` forces
+ * this OFF for one run, `=1`/`=true` forces it ON, unset leaves this constant
+ * in charge. Wired in through the `darwinConsoleInput` option below, at
+ * index.ts's composition root.
  */
-export const DARWIN_CONSOLE_INPUT_ENABLED = false
+export const DARWIN_CONSOLE_INPUT_ENABLED = true
 
 export interface PlatformAdapters {
   platform: Platform
@@ -108,8 +111,8 @@ export interface PlatformAdapterOptions {
   env?: NodeJS.ProcessEnv
   /**
    * Overrides DARWIN_CONSOLE_INPUT_ENABLED; for tests, and for the
-   * `DARWIN_CONSOLE_INPUT` testing opt-in index.ts feeds in from the real
-   * environment (#367 item 1).
+   * `DARWIN_CONSOLE_INPUT` two-way override index.ts feeds in from the real
+   * environment (#367 items 1 and 3).
    */
   darwinConsoleInput?: boolean
   /** Injected for tests; defaults to a real powershell.exe run. */
