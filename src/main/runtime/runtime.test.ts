@@ -84,13 +84,17 @@ function datePath(date: Date): string {
 describe('expandHomePath', () => {
   const home = 'C:\\Users\\j'
 
+  // AMENDED for #470: the fixture is a Windows-shaped home, so the join must
+  // say 'win32' explicitly rather than letting it default to the host running
+  // the test — the whole point of this case is a home from a platform other
+  // than the one this suite runs on.
   it.each([
     ['~', home],
     ['~/.claude', 'C:\\Users\\j\\.claude'],
     ['~\\.claude-work', 'C:\\Users\\j\\.claude-work'],
     ['C:\\custom\\claude', 'C:\\custom\\claude']
   ])('expands %s', (input, expected) => {
-    expect(expandHomePath(input, home)).toBe(expected)
+    expect(expandHomePath(input, home, 'win32')).toBe(expected)
   })
 })
 
@@ -9893,6 +9897,39 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
   })
 })
 
+// AMENDED for #470: every fixture below is Windows-shaped ('C:\Code\Anvil...'),
+// and the fold every describe block below exercises must run against that
+// platform, never the host running the suite (see platform-ports) — omitting
+// it let a POSIX host walk this Windows path with `posix.dirname`, which
+// never matches its own '.git', while a real `.git` a few folders up the
+// actual worktree this suite runs from silently did.
+function worktreePlatformAdapters(): PlatformAdapters {
+  return {
+    platform: 'win32',
+    focusPid: vi.fn().mockResolvedValue(false),
+    launchTranscriptViewer: vi.fn().mockResolvedValue(false),
+    viewerScriptPath: 'C:\\viewer.mjs',
+    textDelivery: {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true })
+    },
+    processProbe: {
+      isCodexProcessRunning: vi.fn().mockResolvedValue(false),
+      processStartTimeMs: vi.fn().mockResolvedValue(null)
+    },
+    processEnd: {
+      endProcessTree: vi.fn().mockResolvedValue(false),
+      terminateProcess: vi.fn().mockResolvedValue(false),
+      killProcess: vi.fn().mockResolvedValue(false)
+    },
+    cliDetector: {
+      detect: vi.fn().mockResolvedValue({ cli: 'claude', installed: false }),
+      peek: vi.fn().mockReturnValue('unprobed')
+    }
+  }
+}
+
 /**
  * Every worktree of one repository is one mine — the main working tree's
  * (#348). The board is a map of projects, and a worktree is a place a project
@@ -9954,6 +9991,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
         { kind: 'claude', scan: vi.fn().mockResolvedValue(snapshots), feed: vi.fn() } as Provider
       ],
       fs,
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000,
       ...extra
@@ -10087,6 +10125,10 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
       providers: [],
       projects,
       fs,
+      // AMENDED for #470: see worktreePlatformAdapters above — this
+      // describe block's fixtures are Windows-shaped, and the fold must run
+      // against that platform rather than the host running the suite.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -10171,6 +10213,8 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
       ],
       projects,
       fs: repoFs(),
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
@@ -10226,6 +10270,8 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
         }),
       chooseDirectory: async () => picked,
       fs,
+      // AMENDED for #470: see worktreePlatformAdapters above.
+      platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })

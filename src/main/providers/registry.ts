@@ -110,6 +110,7 @@ export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
     new ClaudeProvider({
       fs,
       roots: config.providers.claude.configDirs.map(expandPath),
+      platform: platform.platform,
       // The pid-reuse guard's source of truth: a registry entry only counts
       // as alive when the pid's real creation time matches its procStart.
       processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid),

@@ -1,5 +1,5 @@
-import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
+import { currentPlatform, pathFor, type Platform } from '../../platform/platform'
 import { filetimeToEpochMs } from '../../platform/processProbe'
 import { permissionInputLine } from '../../domain/permissionSummary'
 import { redactSecrets } from '../../domain/redactSecrets'
@@ -207,6 +207,8 @@ export interface ClaudeProviderOptions {
    * multiple accounts keep separate sessions/ dirs). Missing roots are skipped.
    */
   roots: string[]
+  /** The platform `roots` belong to (see platform-ports). Defaults to the running host. */
+  platform?: Platform
   /** Injected for tests; defaults to a real process.kill(pid, 0) probe. */
   isPidAlive?: (pid: number) => boolean
   /**
@@ -427,6 +429,7 @@ export class ClaudeProvider implements Provider {
 
   private readonly fs: FsLike
   private readonly roots: string[]
+  private readonly platform: Platform
   private readonly isPidAlive: (pid: number) => boolean
   private readonly processStartTimeMs?: (pid: number) => Promise<number | null>
   private readonly now: () => number
@@ -624,6 +627,7 @@ export class ClaudeProvider implements Provider {
   constructor(options: ClaudeProviderOptions) {
     this.fs = options.fs
     this.roots = options.roots
+    this.platform = options.platform ?? currentPlatform()
     this.isPidAlive = options.isPidAlive ?? defaultIsPidAlive
     if (options.processStartTimeMs !== undefined) {
       this.processStartTimeMs = options.processStartTimeMs
@@ -651,6 +655,7 @@ export class ClaudeProvider implements Provider {
     const snapshots: ProviderSnapshot[] = []
     const seenSessions = new Set<string>()
 
+    const { join } = pathFor(this.platform)
     for (const root of this.roots) {
       const sessionsDir = join(root, 'sessions')
       // No exists() pre-check: listDir already answers [] for a missing
@@ -851,8 +856,12 @@ export class ClaudeProvider implements Provider {
     deliveryTargets: Map<string, TextDeliveryTarget>,
     procStart: ProcStartVerdict
   ): Promise<ProviderSnapshot> {
-    const projectDir = join(root, 'projects', encodeClaudeProjectDir(session.cwd))
-    const transcriptPath = join(projectDir, `${session.sessionId}.jsonl`)
+    const projectDir = pathFor(this.platform).join(
+      root,
+      'projects',
+      encodeClaudeProjectDir(session.cwd)
+    )
+    const transcriptPath = pathFor(this.platform).join(projectDir, `${session.sessionId}.jsonl`)
     const transcriptStat = await pollProfiler.measure('cl.stat', () => this.fs.stat(transcriptPath))
     // First sight of a session (fresh app start, or a session that just
     // appeared): one deeper read, so a launch that scrolled past the regular
@@ -1108,7 +1117,8 @@ export class ClaudeProvider implements Provider {
       const subagentPath = claudeSubagentTranscriptPath(
         projectDir,
         session.sessionId,
-        agent.agentId
+        agent.agentId,
+        this.platform
       )
       // One stat answers both questions this file raises: whether there is a
       // tail worth reading at all, and how long this worker itself has been
@@ -1427,7 +1437,7 @@ export class ClaudeProvider implements Provider {
       if (ended.failed !== true) continue
       if (ended.launch?.sessionId !== options.sessionId) continue
       const stat = await this.fs.stat(
-        claudeSubagentTranscriptPath(options.projectDir, options.sessionId, agentId)
+        claudeSubagentTranscriptPath(options.projectDir, options.sessionId, agentId, this.platform)
       )
       if (stat === null || stat.mtimeMs <= ended.seenAtMs) continue
       ended.resumed = true
@@ -1503,7 +1513,7 @@ export class ClaudeProvider implements Provider {
     }
     for (const agentId of [...remembered.keys()]) {
       const stat = await this.fs.stat(
-        claudeSubagentTranscriptPath(options.projectDir, session.sessionId, agentId)
+        claudeSubagentTranscriptPath(options.projectDir, session.sessionId, agentId, this.platform)
       )
       // The worker's own, shorter window: a subagent cannot be waiting on a
       // human the way its foreman can, so its silence is judged sooner.
@@ -1568,7 +1578,9 @@ export class ClaudeProvider implements Provider {
     sessionId: string
   ): Promise<ReadonlyMap<string, ClaudeInFlightAgent[]>> {
     const byParent = new Map<string, ClaudeInFlightAgent[]>()
-    for (const entry of await this.fs.listDir(claudeSubagentDir(projectDir, sessionId))) {
+    for (const entry of await this.fs.listDir(
+      claudeSubagentDir(projectDir, sessionId, this.platform)
+    )) {
       if (entry.isDirectory) continue
       const agentId = SIDECAR_NAME_RE.exec(entry.name)?.[1]
       if (agentId === undefined || this.hasEnded(agentId)) continue
@@ -1615,7 +1627,7 @@ export class ClaudeProvider implements Provider {
     if (known !== undefined) return known
     const sidecar = await readClaudeSubagentSidecar(
       this.fs,
-      claudeSubagentSidecarPath(projectDir, sessionId, agentId)
+      claudeSubagentSidecarPath(projectDir, sessionId, agentId, this.platform)
     )
     if (Object.keys(sidecar).length > 0) this.sidecars.set(agentId, sidecar)
     return sidecar

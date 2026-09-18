@@ -1,5 +1,4 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
 import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
@@ -90,7 +89,7 @@ import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
 import type { CliDetector } from '../platform/cliDetection'
 import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
-import { normalizePathKey, type Platform } from '../platform/platform'
+import { currentPlatform, normalizePathKey, pathFor, type Platform } from '../platform/platform'
 import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
 import {
@@ -529,11 +528,23 @@ function failureReasonSuffix(outcome: TextDeliveryOutcome): string {
   return outcome.delivered || outcome.error === undefined ? '' : `: ${outcome.error}`
 }
 
-/** Expand only a leading home shorthand; other paths are passed through. */
-export function expandHomePath(path: string, home: string = homedir()): string {
+/**
+ * Expand only a leading home shorthand; other paths are passed through.
+ *
+ * `home` and the configured path both name the same `platform`, never the
+ * host running this process (see platform-ports) — a config value naming a
+ * Windows home joined with `node:path`'s bare `join` collapses to a mixed
+ * separator on a POSIX host, which is not a path either side of the join
+ * ever meant (#470).
+ */
+export function expandHomePath(
+  path: string,
+  home: string = homedir(),
+  platform: Platform = currentPlatform()
+): string {
   if (path === '~') return home
   if (path.startsWith('~/') || path.startsWith('~\\')) {
-    return join(home, path.slice(2))
+    return pathFor(platform).join(home, path.slice(2))
   }
   return path
 }
@@ -1010,7 +1021,7 @@ export class AgentRuntime {
           fs,
           sqlite: options.sqlite ?? new NodeSqlite(),
           platform,
-          expandPath: (path) => expandHomePath(path, home),
+          expandPath: (path) => expandHomePath(path, home, platform.platform),
           // Read at scan time, never now: the held registry is composed a few
           // lines below this, and no scan runs before the constructor returns.
           isHeldSession: (sessionId) => this.heldSessions.holds(sessionId),
@@ -1079,7 +1090,7 @@ export class AgentRuntime {
       (async () => {
         const codexSqlite = options.sqlite ?? new NodeSqlite()
         const db = await codexSqlite.openReadOnly(
-          expandHomePath(options.config.providers.codex.stateDb, home)
+          expandHomePath(options.config.providers.codex.stateDb, home, platform.platform)
         )
         if (db === null) return []
         try {
@@ -1190,7 +1201,8 @@ export class AgentRuntime {
       new TierService({
         fs,
         thresholds: options.config.tierThresholds,
-        ttlS: options.config.tierCacheTtlS
+        ttlS: options.config.tierCacheTtlS,
+        platform: platform.platform
       })
     this.tiers = tiers
     /*
@@ -1205,14 +1217,22 @@ export class AgentRuntime {
       new MineHistoryReader({
         fs,
         claudeRoots: options.config.providers.claude.configDirs.map((path) =>
-          expandHomePath(path, home)
+          expandHomePath(path, home, platform.platform)
         ),
         codex: {
           sqlite: options.sqlite ?? new NodeSqlite(),
-          stateDbPath: expandHomePath(options.config.providers.codex.stateDb, home)
+          stateDbPath: expandHomePath(
+            options.config.providers.codex.stateDb,
+            home,
+            platform.platform
+          )
         },
         antigravity: {
-          storeRoot: expandHomePath(options.config.providers.antigravity.storeRoot, home)
+          storeRoot: expandHomePath(
+            options.config.providers.antigravity.storeRoot,
+            home,
+            platform.platform
+          )
         },
         platform: platform.platform
       })
