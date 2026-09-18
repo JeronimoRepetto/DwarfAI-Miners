@@ -1103,23 +1103,6 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 /*
- * The row while a fold is standing over a column it has not unmounted yet
- * (#472). Set from useShellFold, off the list of held columns it already keeps.
- *
- * main resizes the window the moment the fold ends, and the row it resizes
- * around is one `--space-nav-gap` wider than the rectangle it is making: the
- * held column is `flex: 1` and collapses to nothing, but the gap beside it does
- * not collapse with it. Packed from the free edge that gap overflows at the
- * DOCKED one, which is where the mine stands — the interior clipped for those
- * frames, and the blink when the column finally goes. Packed against the docked
- * edge instead, the overflow falls on the free side, which is the band the fold
- * has already clipped away and main is taking: pixels that are transparent
- * already, which is the rule the whole fold exists to keep.
- */
-.shell.is-holding {
-  justify-content: flex-end;
-}
-/*
  * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,
  * the 8px padding, the radius and the shadow belong to any composition that has
  * something in it, not only to the one with a secondary panel.
@@ -1130,8 +1113,34 @@ onBeforeUnmount(() => {
  * left the window 8px wider than the columns it drew — the void the acceptance
  * run photographed — and grew the painting into the difference.
  */
+/*
+ * And both of them pack against the DOCKED edge, which is the whole of #488 and
+ * of #472 before it, whose own class for the held frames this replaces.
+ *
+ * `.shell` is `overflow: hidden` and `.shell-mine` is `flex: none` standing at
+ * the docked end of the row, so a row that disagrees with the box around it
+ * overflows at whichever end the packing leaves loose — and the two disagree
+ * every time the panel opens or closes, in both directions. main's `setBounds`
+ * is synchronous inside the IPC handler, so the native window is already its
+ * new width when the promise resolves, while the renderer's own box catches up
+ * only when the browser delivers `resize`. Packed from the free edge those
+ * frames are painted with the mine clipped and then snapped back: the blink.
+ * Packed against the docked edge they are painted with the FREE side loose,
+ * which is the band main is adding or taking and is transparent either way —
+ * #388's rule, kept by the row instead of by a class that watches for it.
+ *
+ * At rest this moves nothing: the row exactly fills the box, so there is no
+ * slack for either packing to place. `.shell.is-rail` has said the same thing
+ * for the same reason since #153, and `flex-end` is the right of a `row` and
+ * the left of a `row-reverse` — the docked side on both edges.
+ *
+ * The rail's carry is unaffected: `railStand` and `foldedRailOffset` measure
+ * the rail against the shell's box with `getBoundingClientRect`, so they read
+ * where the row actually put it rather than assuming which rule put it there.
+ */
 .shell.is-mine,
 .shell.is-pages {
+  justify-content: flex-end;
   gap: var(--space-nav-gap);
   padding: var(--space-nav-gap);
   border-radius: var(--radius-default);

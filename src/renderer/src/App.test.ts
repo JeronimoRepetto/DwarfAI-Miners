@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
@@ -2480,5 +2482,53 @@ describe('typography preferences (#370)', () => {
     expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
       'var(--font-family-roboto)'
     )
+  })
+})
+
+/*
+ * APPENDED for #488. jsdom lays nothing out and applies no stylesheet, so the
+ * rule is pinned where main pins the frame inset it cannot read either — off
+ * the source itself (see `counts the same frame the stylesheet draws` in
+ * main/shell/panelBounds.test.ts).
+ */
+describe('App shell packing (#488)', () => {
+  /** Every selector in App.vue's own stylesheet whose row packs at its main END. */
+  function packedAtTheDockedEdge(): string[] {
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    const style = source.slice(source.indexOf('<style scoped>')).replace(/\/\*[\s\S]*?\*\//g, '')
+    const packed: string[] = []
+    for (const rule of style.matchAll(/([^{}]+)\{([^{}]*)\}/g))
+      if (/justify-content:\s*flex-end/.test(rule[2]!))
+        packed.push(...rule[1]!.split(',').map((one) => one.trim()))
+    return packed
+  }
+
+  /*
+   * The whole of #488, and the reason it is a deletion. `.shell` is
+   * `overflow: hidden` and `.shell-mine` is `flex: none` at the DOCKED end of
+   * the row, so a row that disagrees with its box — main has resized the native
+   * window and the viewport has not caught up, either way round — overflows at
+   * whichever end the packing leaves loose. Packed from the free edge that is
+   * the mine, clipped and then snapped back: the blink. Packed against the
+   * docked edge it is the free side, which is the band main is adding or taking
+   * and is transparent either way, which is #388's rule.
+   */
+  it('packs every composition that draws a column beyond the rail against the docked edge', () => {
+    const packed = packedAtTheDockedEdge()
+    expect(packed).toContain('.shell.is-mine')
+    expect(packed).toContain('.shell.is-pages')
+    // The composition that has only the rail already did, and for this reason.
+    expect(packed).toContain('.shell.is-rail')
+  })
+
+  /*
+   * #474's class was the close path's own answer to the same disagreement. With
+   * every open composition packed the same way at rest it is a byte-for-byte
+   * duplicate of the default, and a rule that only ever restates another one is
+   * a second opinion waiting to disagree.
+   */
+  it('keeps no separate rule for the frames a fold is held over', () => {
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    expect(source).not.toContain('is-holding')
   })
 })
