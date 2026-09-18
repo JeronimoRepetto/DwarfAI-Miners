@@ -26,6 +26,7 @@ import type {
   HostedLaunchRequest,
   HostedLaunchResult,
   DwarfDeliveryReport,
+  DwarfSendSettledPush,
   ExternalLinkResult,
   LaunchFailedPush,
   MessagePanelDragPhase,
@@ -309,6 +310,15 @@ export interface DwarfAiMinersApi {
    */
   openExternalLink: (url: string) => Promise<ExternalLinkResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
+  /**
+   * The verdict of a message `sendDwarfText` answered a `holdId` for (#457)
+   * — see `DwarfSendSettledPush`. Push rather than pull, exactly like
+   * `onLaunchFailed`: the turn the message waited for ends minutes after
+   * that call already answered, so there is nothing to request and no
+   * moment to poll at. Returns an unsubscribe, like every other
+   * subscription here.
+   */
+  onDwarfSendSettled: (listener: (push: DwarfSendSettledPush) => void) => () => void
   /**
    * The path behind a dropped `File`, or '' when it has none (#408).
    *
@@ -673,6 +683,14 @@ const api: DwarfAiMinersApi = {
   openExternalLink: (url) =>
     ipcRenderer.invoke(IPC_CHANNELS.openExternalLink, typeof url === 'string' ? url : ''),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
+  // Subscription, exactly like onLaunchFailed: the renderer never sees the
+  // IpcRendererEvent, only the push itself.
+  onDwarfSendSettled: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, push: DwarfSendSettledPush) =>
+      listener(push)
+    ipcRenderer.on(IPC_CHANNELS.dwarfSendSettled, wrapped)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.dwarfSendSettled, wrapped)
+  },
   // The one place a dropped File becomes a path (#408). `webUtils` lives in
   // preload because the renderer has no business with either half: a File it
   // could read at will, and a path it could load at will. It gets neither —

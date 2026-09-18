@@ -16,8 +16,15 @@ import type { DwarfDeliveryReport, MessagePanelState, MessagePanelSurface } from
 
 const SURFACES: readonly MessagePanelSurface[] = ['none', 'launch', 'message']
 
-/** The phases each store's own verdict may be in (see DwarfSendState, DwarfKickState). */
-const SEND_PHASES = ['sending', 'delivered', 'reacted', 'failed'] as const
+/**
+ * The phases each store's own verdict may be in (see DwarfSendState,
+ * DwarfKickState).
+ *
+ * 'held' is a SEND phase and never a kick one (#457): a message can wait for
+ * a Codex turn to end, and an interrupt aimed at that same turn cannot — the
+ * two lists are checked separately so neither can borrow the other's words.
+ */
+const SEND_PHASES = ['sending', 'held', 'delivered', 'reacted', 'failed'] as const
 const KICK_PHASES = ['kicking', 'delivered', 'reacted', 'failed'] as const
 
 /** The window closed: no surface, and therefore no mine and no dwarf. */

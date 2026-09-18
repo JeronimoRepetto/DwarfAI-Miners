@@ -49,6 +49,7 @@ export type {
   DwarfQuestionAnswerResult,
   DwarfQuestionOption,
   DwarfRole,
+  DwarfSendSettledPush,
   DwarfSendState,
   DwarfSessionTuning,
   DwarfStatus,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfKickState, DwarfSendState } from '../../types'
 import {
+  HELD_TITLE,
   SEND_AGAIN_LABEL,
   SEND_AGAIN_TITLE,
   kickDismissedTheDwarf,
@@ -461,5 +462,37 @@ describe('sending a failed message again', () => {
     // thing on screen saying the channel let the person down once.
     expect(SEND_AGAIN_TITLE).toContain('stays marked')
     expect(SEND_AGAIN_TITLE).not.toMatch(/reacted/i)
+  })
+})
+
+/**
+ * A message the panel is HOLDING for a busy Codex thread (#457).
+ *
+ * The one phase on this wire that claims nothing at all: the words are in this
+ * app's own memory, so "handed over" would be false in the one direction
+ * reaction.ts exists to stop. Every assertion below is about that — the copy
+ * must say what is true (it is waiting) and never borrow a hand-over's words.
+ */
+describe('a message held for a turn that is still running', () => {
+  it('draws a pending marker, never a delivered one', () => {
+    const state: DwarfSendState = { phase: 'held', via: 'codex-exec-resume' }
+    const marker = sendMarker(state)
+
+    expect(marker?.glyph).toBe('…')
+    expect(marker?.cls).toBe('is-sending')
+    expect(marker?.title).toBe(HELD_TITLE)
+  })
+
+  it('says it is waiting for the turn, and never that anything was handed over', () => {
+    expect(HELD_TITLE).toMatch(/waiting/i)
+    expect(HELD_TITLE).not.toMatch(/handed/i)
+    expect(HELD_TITLE).not.toMatch(/reacted/i)
+  })
+
+  it('gives the composer the same sentence rather than the hand-over template', () => {
+    const state: DwarfSendState = { phase: 'held', via: 'codex-exec-resume' }
+
+    expect(sendStatusLine(state)).toBe(HELD_TITLE)
+    expect(sendStatusLine(state)).not.toMatch(/handed over/i)
   })
 })
