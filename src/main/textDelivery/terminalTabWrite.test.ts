@@ -39,8 +39,52 @@ describe('buildTerminalTabWriteCommand', () => {
     expect(buildTerminalTabWriteCommand(tty, 'hi')).toBeNull()
   })
 
-  it('refuses an empty payload rather than submitting a bare Return', () => {
-    expect(buildTerminalTabWriteCommand('/dev/ttys001', '')).toBeNull()
+  /*
+   * AMENDED for #367's submit fix. It was 'refuses an empty payload rather than
+   * submitting a bare Return', asserting null — written when a bare Return was
+   * only ever an accident. It is a SHAPE now: the Enter-only write, which is
+   * what the second call of a message does on its own. The refusal for a
+   * message with nothing in it did not go anywhere; it lives one level up, in
+   * `terminalTabPayloadFor`, which is where "the person typed nothing" is
+   * actually known. A builder cannot tell that from a deliberate Enter.
+   */
+  it('builds the Enter-only write from an empty payload', () => {
+    expect(buildTerminalTabWriteCommand('/dev/ttys001', '')).not.toBeNull()
+  })
+
+  /*
+   * #404, one to one, on the platform that had to learn it twice.
+   *
+   * A message written in ONE `do script` call landed in a live Claude Code
+   * composer and was never submitted — measured from the panel on 2026-09-18,
+   * and two consecutive messages concatenated there until the maintainer
+   * pressed Enter by hand. Ink reads a multi-character chunk arriving in one
+   * read as a PASTE, and inside a paste a carriage return is line content, not
+   * a submit gesture. The raw-mode node reader this script was first measured
+   * against has no such rule, which is exactly how the one-call shape looked
+   * right on 2026-09-18.
+   *
+   * So the submit is the SECOND call, as on Windows. The delay between them is
+   * only a margin against the two being coalesced into one read.
+   */
+  it('follows the payload with a second do script, so the Return is a submit and not paste content', () => {
+    const script = buildTerminalTabWriteCommand('/dev/ttys001', 'hola mundo')?.args[1] ?? ''
+    expect(script.match(/do script .* in t/g)).toHaveLength(2)
+    expect(script).toContain('do script payloadText in t')
+    expect(script).toContain('do script "" in t')
+    const payloadCall = script.indexOf('do script payloadText in t')
+    const delay = script.indexOf('delay 0.05')
+    const submitCall = script.indexOf('do script "" in t')
+    expect(payloadCall).toBeLessThan(delay)
+    expect(delay).toBeLessThan(submitCall)
+  })
+
+  // The Enter-only shape IS the submit, so a second one would be a second
+  // Return into whatever the composer holds next.
+  it('makes exactly one call when the payload is empty', () => {
+    const script = buildTerminalTabWriteCommand('/dev/ttys001', '')?.args[1] ?? ''
+    expect(script.match(/do script .* in t/g)).toHaveLength(1)
+    expect(script).not.toContain('delay')
   })
 
   it('refuses a payload past the argv bound rather than truncating somebody s words', () => {

@@ -14,9 +14,10 @@ import { buildTerminalTabWriteCommand, terminalTabPayloadFor } from './terminalT
  * one port — and the split is the point rather than a compromise.
  *
  * - A **message** is written into the Terminal.app tab the session's tty names
- *   (`terminalTabWrite.ts`). No window is raised, the foreground never moves,
- *   and the tab strip is never consulted, which is the same thing the Windows
- *   write by pid bought at #371. It needs only Automation permission.
+ *   (`terminalTabWrite.ts`), as a paste followed by its own submit call. No
+ *   window is raised, the foreground never moves, and the tab strip is never
+ *   consulted, which is the same thing the Windows write by pid bought at #371.
+ *   It needs only Automation permission.
  * - A **key that must not submit** — #203's permission digit, and the Escape
  *   behind a deny — stays on System Events keystrokes
  *   (`createOsascriptConsoleInput`). It cannot move, because every `do script`
@@ -31,6 +32,18 @@ import { buildTerminalTabWriteCommand, terminalTabPayloadFor } from './terminalT
  * asymmetry is real and is stated here rather than smoothed over: the panel can
  * write a message into a background tab and still be unable to answer a
  * permission prompt in it.
+ *
+ * **What this header claimed until 2026-09-18, and why it was wrong.** It said
+ * the message tier was the inverse of the Windows write — one call, whose own
+ * appended Return submitted the lot. That held against the raw-mode node reader
+ * it was measured on and failed against a live Claude Code TUI, which pasted
+ * every message and submitted none, concatenating two of them in the composer.
+ * It is #404 on a second platform: Ink reads a chunk arriving in one read as a
+ * paste, and a carriage return inside a paste is line content. The submit is a
+ * second `do script ""` now, so the two platforms follow the SAME rule. The
+ * split above is untouched by that — a digit still travels as one call with its
+ * Return, measured 2026-09-18 to be what the permission dialog and a
+ * single-select picker take.
  */
 
 /** The message could not be turned into one payload — an over-long path (#425). */
@@ -39,9 +52,11 @@ export const MESSAGE_UNBUILDABLE = 'That message could not be prepared for the t
 /**
  * A message that must arrive WITHOUT submitting, which this tier cannot do.
  *
- * Stated rather than silently submitted. `do script` appends its Return
- * unconditionally, so the honest answer is that nothing was written —
- * `neverStarted`, which lets the relay carry the words instead.
+ * Stated rather than silently submitted. The tier is a paste plus a submit
+ * call, and dropping the submit would not help: the payload's own appended
+ * Return would still be sitting in the composer as a line break nobody asked
+ * for. So the honest answer is that nothing was written — `neverStarted`, which
+ * lets the relay carry the words instead.
  */
 export const RETURN_CANNOT_BE_WITHHELD =
   'Terminal.app always submits what the panel writes, so this message was not written.'
