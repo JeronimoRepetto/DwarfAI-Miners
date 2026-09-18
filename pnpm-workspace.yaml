@@ -1,8 +1,15 @@
 # pnpm 11 gotcha (learned on a sibling project): `onlyBuiltDependencies`
-# in package.json is IGNORED. Build scripts must be allowed here, otherwise
-# electron's postinstall never runs and node_modules/electron/dist is empty.
+# in package.json is IGNORED. Build scripts must be allowed here for a
+# package that still has one. Electron 42+ ships no postinstall any more —
+# it downloads its binary lazily, on first run of its own `bin` — but pnpm
+# still asks about it here regardless, because `electron` is on pnpm's own
+# default list of native-build risks, not detected from its scripts field.
+# `false` (not omitted) says so explicitly and keeps pnpm from rewriting this
+# file with an unresolved placeholder on the next install. `pnpm dev`/`pnpm
+# preview` run `install-electron` ahead of electron-vite instead (see
+# package.json and #466).
 allowBuilds:
-  electron: true
+  electron: false
   electron-winstaller: true
   esbuild: true
 
