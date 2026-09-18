@@ -197,6 +197,21 @@ describe('buildMainWindowOptions', () => {
     expect(buildMainWindowOptions(input).thickFrame).toBe(false)
   })
 
+  /*
+   * ADDED for #465. `thickFrame: false` above is Windows-only by definition, so
+   * the native shadow it removed there is still drawn on macOS — around the
+   * TRANSPARENT window's shape, which the fold (#388) shrinks to a 20px bar
+   * while the window stays the full height. What the maintainer photographed is
+   * that shadow standing past the ends of the rail. The rail carries its own
+   * `--elevation-5`, so the OS one was a second shadow on every platform.
+   */
+  it('paints no native shadow, because the shell paints its own (#465)', () => {
+    expect(buildMainWindowOptions(input).hasShadow).toBe(false)
+    // Stated together: dropping the OS shadow must not cost the option that
+    // stopped the Windows resize flash (#394), which removes the other one.
+    expect(buildMainWindowOptions(input).thickFrame).toBe(false)
+  })
+
   it('wires the preload and icon paths through untouched', () => {
     const options = buildMainWindowOptions(input)
     expect(options.webPreferences?.preload).toBe(input.preloadPath)
@@ -462,6 +477,16 @@ describe('buildMessagePanelWindowOptions', () => {
   })
 
   it('drops the Windows thick frame like the shell does, so a height report cannot flash it (#394)', () => {
+    expect(buildMessagePanelWindowOptions(input).thickFrame).toBe(false)
+  })
+
+  /*
+   * ADDED for #465, for the reason the shell drops it: this window is
+   * transparent too, it is re-bounded on every height report, and macOS draws
+   * its own shadow around whatever shape a transparent window presents.
+   */
+  it('paints no native shadow either, because the panel paints its own (#465)', () => {
+    expect(buildMessagePanelWindowOptions(input).hasShadow).toBe(false)
     expect(buildMessagePanelWindowOptions(input).thickFrame).toBe(false)
   })
 
