@@ -32,6 +32,7 @@ import {
   type DwarfQuestion,
   type DwarfStatus,
   type FeedMessage,
+  type DwarfSendSettledPush,
   type LaunchFailedPush,
   type ProviderSnapshot
 } from '../domain/types'
@@ -71,6 +72,8 @@ import {
   type LaunchFailure
 } from '../sessionLaunch/launchedSessions'
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
+// #457: the panel's own queue for a launched Codex thread mid-turn.
+import { CODEX_HOLD_MAX_MS } from '../textDelivery/codexHold'
 import { TierService, type TierThresholds } from '../tier/tierService'
 import { AgentRuntime, expandHomePath } from './runtime'
 
@@ -3778,6 +3781,13 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       } as TextDeliveryPort
     }
 
+    /**
+     * AMENDED for #457: three optional fields appended — `onSendSettled` for
+     * the verdict a HELD message gets minutes after `sendDwarfText` answered,
+     * `now` for the bound that wait is under, and `endProcessTree` so a kick
+     * arriving while a message waits can be watched. Every existing caller
+     * passes none of them and is unchanged.
+     */
     async function runtimeWithResumableLaunch(
       port: TextDeliveryPort = resumePort(),
       options: {
@@ -3785,18 +3795,22 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
         launchTuning?: { model?: string; effort?: string }
         /** What the thread's own registry/rollout OBSERVES; carried on the endpoint. */
         observed?: { model?: string; effort?: string }
+        onSendSettled?: (push: DwarfSendSettledPush) => void
+        now?: () => number
+        endProcessTree?: (pid: number) => Promise<boolean>
       } = {}
     ) {
       const handle = retained()
-      const launched = new LaunchedSessionRegistry({
-        endProcessTree: vi.fn().mockResolvedValue(true)
-      })
+      const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
+      const launched = new LaunchedSessionRegistry({ endProcessTree })
       const runtime = new AgentRuntime({
         config: defaultConfig(),
         providers: [resumableProvider(options.observed ?? {})],
         textDelivery: port,
         launchedSessions: launched,
-        onMinesUpdated: vi.fn()
+        onMinesUpdated: vi.fn(),
+        ...(options.onSendSettled === undefined ? {} : { onSendSettled: options.onSendSettled }),
+        ...(options.now === undefined ? {} : { now: options.now })
       })
       launched.retain({
         provider: 'codex',
@@ -3806,22 +3820,31 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
         ...(options.launchTuning === undefined ? {} : { tuning: options.launchTuning })
       })
       await runtime.refresh()
-      return { runtime, handle, port }
+      return { runtime, handle, port, endProcessTree }
     }
 
     /**
-     * The launch wins while it lasts, and the ordering is the answer to the
-     * serialization question #450 raised: the opening turn is running, the one
-     * act that reaches it is ending it, and a resume started underneath it
-     * would open a second turn on the same thread.
+     * The launch keeps the EXIT while it lasts, and the ordering is the answer
+     * to the serialization question #450 raised: the opening turn is running,
+     * ending it is the one act that reaches it, and a resume started
+     * underneath it would open a second turn on the same thread.
+     *
+     * AMENDED for #457 — the kick assertion is unchanged and the composer
+     * assertion is REVERSED, because the behaviour it pinned was the defect
+     * that issue reports. A resume must still not be spawned underneath the
+     * opening turn (that is pinned below, and more strictly: the message is
+     * held), but refusing the person's TYPING was never what the
+     * serialization rule required. The composer stays live and the message
+     * waits; see the #457 block at the end of this describe for what happens
+     * to it.
      */
-    it('keeps the launch’s exit and no composer while the opening turn is still running', async () => {
+    it('keeps the launch’s exit AND the composer while the opening turn is still running', async () => {
       const { runtime } = await runtimeWithResumableLaunch()
       const dwarf = runtime.getMines()[0]?.dwarfs[0]
 
-      expect(dwarf?.textDelivery).toBeUndefined()
       expect(dwarf?.capabilities?.cancel).toBe('launched-process')
-      expect(dwarf?.capabilities?.sendText).toBeNull()
+      expect(dwarf?.textDelivery).toBe('codex-exec-resume')
+      expect(dwarf?.capabilities?.sendText).toBe('codex-exec-resume')
     })
 
     /**
@@ -4091,6 +4114,219 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
         log.mockRestore()
       }
     })
+
+    /* --- Holding a message for a busy thread (#457) — appended ------------ */
+
+    /**
+     * The composer of a panel-launched Codex dwarf was the only dead one in
+     * the app, and it was dead on TIMING alone — the channel exists, the
+     * session is reachable, and everywhere else in this panel writing to a
+     * working session is the whole point.
+     *
+     * What is really true is narrower than the refusal was: `codex exec
+     * resume` cannot start a SECOND turn on a thread already running one — it
+     * exits 1 at once, measured live 2026-09-18 on codex-cli 0.153.4 — and
+     * Codex queues nothing for an exec thread. So the wait has to live here,
+     * and the panel is the only thing that can hold it: it is what knows when
+     * the opening process exits and when a resume it spawned has ended.
+     */
+    describe('and holding what is typed while that turn still runs (#457)', () => {
+      /** A resume whose turn this test ends by hand — the port's own `turnEnded`. */
+      function endableTurn(): { port: TextDeliveryPort; end: () => void } {
+        let end = (): void => {}
+        const ended = new Promise<void>((resolve) => {
+          end = resolve
+        })
+        const port = resumePort({
+          resumeCodexThread: vi.fn().mockResolvedValue({ delivered: true, turnEnded: ended })
+        })
+        return { port, end }
+      }
+
+      it('holds the message instead of starting a second turn on the thread', async () => {
+        const { runtime, port } = await runtimeWithResumableLaunch()
+
+        const result = await runtime.sendDwarfText({
+          dwarfId: DWARF_ID,
+          text: 'also run the linter',
+          pressEnter: true
+        })
+
+        // Not delivered, and saying so: nothing has been handed to anything.
+        expect(result.delivered).toBe(false)
+        expect(result.via).toBe('codex-exec-resume')
+        expect(result.holdId).toEqual(expect.any(String))
+        expect(result.error).toBeUndefined()
+        expect(port.resumeCodexThread).not.toHaveBeenCalled()
+      })
+
+      it('resumes the thread with the held message once the opening process exits', async () => {
+        const { runtime, handle, port } = await runtimeWithResumableLaunch()
+        await runtime.sendDwarfText({
+          dwarfId: DWARF_ID,
+          text: 'also run the linter',
+          pressEnter: true
+        })
+
+        handle.exit()
+        await runtime.refresh()
+        await runtime.settleHeldMessages()
+
+        expect(port.resumeCodexThread).toHaveBeenCalledWith({
+          threadId: THREAD_ID,
+          cwd: CWD,
+          text: 'also run the linter'
+        })
+      })
+
+      it('reports that message its own verdict, under the id the send answered', async () => {
+        const onSendSettled = vi.fn()
+        const { runtime, handle } = await runtimeWithResumableLaunch(undefined, { onSendSettled })
+        const held = await runtime.sendDwarfText({
+          dwarfId: DWARF_ID,
+          text: 'also run the linter',
+          pressEnter: true
+        })
+
+        handle.exit()
+        await runtime.refresh()
+        await runtime.settleHeldMessages()
+
+        expect(onSendSettled).toHaveBeenCalledWith({
+          holdId: held.holdId,
+          dwarfId: DWARF_ID,
+          result: { delivered: true, via: 'codex-exec-resume' }
+        })
+      })
+
+      /**
+       * FIFO, one turn each, and never merged into one prompt: two sentences
+       * the person typed separately are two things they said, and Codex
+       * refuses a concurrent turn anyway.
+       */
+      it('sends several held messages in order, one turn at a time', async () => {
+        const { port, end } = endableTurn()
+        const { runtime, handle } = await runtimeWithResumableLaunch(port)
+        await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'first', pressEnter: true })
+        await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'second', pressEnter: true })
+
+        handle.exit()
+        await runtime.refresh()
+        await runtime.settleHeldMessages()
+
+        // Only the first: the second cannot start while this turn runs.
+        expect(port.resumeCodexThread).toHaveBeenCalledTimes(1)
+        expect(port.resumeCodexThread).toHaveBeenLastCalledWith({
+          threadId: THREAD_ID,
+          cwd: CWD,
+          text: 'first'
+        })
+
+        end()
+        // The turn's end reaches the runtime as a reaction on the port's own
+        // promise, and the drain is chained behind that — so one tick has to
+        // pass before there is a drain to settle.
+        await Promise.resolve()
+        await runtime.settleHeldMessages()
+
+        expect(port.resumeCodexThread).toHaveBeenCalledTimes(2)
+        expect(port.resumeCodexThread).toHaveBeenLastCalledWith({
+          threadId: THREAD_ID,
+          cwd: CWD,
+          text: 'second'
+        })
+      })
+
+      /**
+       * #462's tuning travels with a held message exactly as it does with a
+       * live one: the held turn goes out through the same `resumeCodexThread`,
+       * so there is one spelling of the argv and one precedence rule.
+       */
+      it('carries the launch tuning into the turn the held message finally starts', async () => {
+        const { runtime, handle, port } = await runtimeWithResumableLaunch(undefined, {
+          launchTuning: { model: 'gpt-5.6-sol' },
+          observed: { model: 'gpt-5.6-luna', effort: 'medium' }
+        })
+        await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'later', pressEnter: true })
+
+        handle.exit()
+        await runtime.refresh()
+        await runtime.settleHeldMessages()
+
+        expect(port.resumeCodexThread).toHaveBeenCalledWith({
+          threadId: THREAD_ID,
+          cwd: CWD,
+          text: 'later',
+          tuning: { model: 'gpt-5.6-sol', effort: 'medium' }
+        })
+      })
+
+      /**
+       * Kick ENDS a launched session, and that is precisely the event a held
+       * message is waiting for. Ending it is the person's later decision and
+       * outranks the earlier message, so the wait is abandoned rather than
+       * fired into a session that has just been told to stop — and the marker
+       * says which of the two happened.
+       */
+      it('drops a held message when the session is kicked, and never sends it after', async () => {
+        const onSendSettled = vi.fn()
+        const { runtime, port, endProcessTree } = await runtimeWithResumableLaunch(undefined, {
+          onSendSettled
+        })
+        const held = await runtime.sendDwarfText({
+          dwarfId: DWARF_ID,
+          text: 'never mind',
+          pressEnter: true
+        })
+
+        await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+          delivered: true,
+          via: 'launched-process'
+        })
+        await runtime.refresh()
+        await runtime.settleHeldMessages()
+
+        expect(endProcessTree).toHaveBeenCalledWith(4242)
+        expect(port.resumeCodexThread).not.toHaveBeenCalled()
+        const push = onSendSettled.mock.calls[0]?.[0] as DwarfSendSettledPush
+        expect(push.holdId).toBe(held.holdId)
+        expect(push.result.delivered).toBe(false)
+        expect(push.result.error).toMatch(/ended/i)
+        expect(push.result.error).not.toMatch(/handed/i)
+      })
+
+      /**
+       * Survival: nothing here is persisted, so the one thing that must not
+       * happen is a message waiting forever on an ending nobody saw. The wait
+       * is bounded and decays to "not sent" — never to a claimed hand-over
+       * (see reaction.ts, and the delivered-versus-reacted rule in AGENTS.md).
+       */
+      it('gives up a message held past the bound, claiming no hand-over at all', async () => {
+        const onSendSettled = vi.fn()
+        const clock = { now: 1_000 }
+        const { runtime, port } = await runtimeWithResumableLaunch(undefined, {
+          onSendSettled,
+          now: () => clock.now
+        })
+        const held = await runtime.sendDwarfText({
+          dwarfId: DWARF_ID,
+          text: 'still waiting',
+          pressEnter: true
+        })
+
+        clock.now += CODEX_HOLD_MAX_MS + 1
+        await runtime.refresh()
+        await runtime.settleHeldMessages()
+
+        expect(port.resumeCodexThread).not.toHaveBeenCalled()
+        const push = onSendSettled.mock.calls[0]?.[0] as DwarfSendSettledPush
+        expect(push.holdId).toBe(held.holdId)
+        expect(push.result.delivered).toBe(false)
+        expect(push.result.error).toMatch(/not sent/i)
+        expect(push.result.error).not.toMatch(/handed/i)
+      })
+    })
+    /* --- end of the #457 block -------------------------------------------- */
   })
   /* --- end of the #450 block ----------------------------------------------- */
 })
