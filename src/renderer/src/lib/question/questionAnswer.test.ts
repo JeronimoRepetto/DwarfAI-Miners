@@ -12,6 +12,7 @@ import {
   answerStatusLine,
   canSendAnswer,
   decisionForLabel,
+  freeTextRoute,
   isAnswerable,
   optionState,
   permissionRequest,
@@ -435,5 +436,22 @@ describe('toggledAnswer', () => {
     // refuse a label it cannot find an option for.
     const toggled = toggleOption(null, 'toolu_01', 'Cassandra')
     expect(toggledAnswer(toggled, multi())).toBeNull()
+  })
+})
+
+/* --- Where a card's free text really goes (#481) — one block, appended ----- */
+
+describe('freeTextRoute', () => {
+  it('leaves a held session’s free text on the ordinary message path', () => {
+    // The panel owns that stream, so the words are queued on it (#125) and
+    // there is no picker anywhere near them.
+    expect(freeTextRoute('held')).toBe('message')
+  })
+
+  it('sends a watched session’s free text into the picker, which is why it is refused', () => {
+    // The message path for this channel writes into the session's own console,
+    // and a session drawing a picker reads those keys as picker input — the
+    // Enter behind them confirming an option nobody chose (#481).
+    expect(freeTextRoute('terminal')).toBe('picker')
   })
 })

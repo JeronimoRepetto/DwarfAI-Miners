@@ -3,7 +3,12 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import { PRESS_ENTER_TO_SEND, SEND_ANSWER_NAME } from '../../lib/question/questionAnswer'
-import { ANSWER_ONLY_WHERE_IT_RUNS, joinAnswerLabels, type DwarfQuestion } from '../../types'
+import {
+  ANSWER_ONLY_WHERE_IT_RUNS,
+  TYPED_HERE_REACHES_THE_PICKER,
+  joinAnswerLabels,
+  type DwarfQuestion
+} from '../../types'
 import DwarfQuestionCard from './DwarfQuestionCard.vue'
 
 function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
@@ -311,15 +316,20 @@ describe('DwarfQuestionCard', () => {
       expect(event.defaultPrevented).toBe(false)
     })
 
-    it('still lets a free-form reply leave on the ordinary message path', async () => {
-      // Unanswerable is about the ANSWER channel. Telling the session
-      // something is a message, and that path is untouched here.
+    /*
+     * AMENDED for #481 (was: 'still lets a free-form reply leave on the
+     * ordinary message path', which set the box to 'write to Postgres' and
+     * asserted `send-text` carried it). A deliberate tightening: the premise of
+     * that test — "the message path is untouched here" — was false on this
+     * channel. The ordinary message path writes into the session's own console,
+     * and the picker standing at that console reads the letters as its own
+     * input while the Enter behind them confirms whichever option is
+     * highlighted. So the box is gone, and the card says where the words go.
+     */
+    it('offers no free-text box, because the picker there would read it', () => {
       const wrapper = observed()
-      await wrapper.find('.freeform-input').setValue('write to Postgres')
-      pressEnter(wrapper.find('.freeform-input').element)
-      expect(wrapper.emitted('send-text')).toEqual([
-        [{ text: 'write to Postgres', pressEnter: true }]
-      ])
+      expect(wrapper.find('.freeform-input').exists()).toBe(false)
+      expect(wrapper.find('.freeform-refused').text()).toContain(TYPED_HERE_REACHES_THE_PICKER)
     })
 
     it('says several questions, and names no provider (#360)', () => {
@@ -371,10 +381,62 @@ describe('a question answered at the session’s own terminal', () => {
     expect(wrapper.emitted('answer')).toEqual([['Neither']])
   })
 
-  it('draws no refusal and no jump while it can be answered', () => {
+  /*
+   * AMENDED for #481 (was: 'draws no refusal and no jump while it can be
+   * answered', asserting `.answer-jump` absent ANYWHERE on the card). The card
+   * has a second, legitimate jump since #481 — the one beside the refused
+   * free-text box, which is where a person answering in their own words has to
+   * go. So the assertion is re-aimed at the row it was always about. Nothing is
+   * weaker: the refusal row is still pinned absent, and the box's own jump is
+   * pinned present by the #481 block above.
+   */
+  it('draws no refusal row, and no jump belonging to one, while it can be answered', () => {
     const wrapper = observedSingle()
     expect(wrapper.find('.answer-error').exists()).toBe(false)
-    expect(wrapper.find('.answer-jump').exists()).toBe(false)
+    expect(wrapper.find('.answer-error .answer-jump').exists()).toBe(false)
+  })
+
+  /* --- The free-text box at a picker (#481) — one block, appended ---------- */
+
+  it('offers no free-text box, and says what typing here would really reach', () => {
+    // THE stop-gap #481 is about. Free text from this card leaves on the
+    // ordinary message path, which on this channel writes into the session's
+    // own console — where the open picker swallows the letters and the trailing
+    // Enter confirms whichever option is highlighted.
+    const wrapper = observedSingle()
+    expect(wrapper.find('.freeform-input').exists()).toBe(false)
+    expect(wrapper.find('.freeform-refused').text()).toContain(TYPED_HERE_REACHES_THE_PICKER)
+  })
+
+  it('names the two ways out that do work, and no provider', () => {
+    const text = observedSingle().find('.freeform-refused').text()
+    expect(text).toMatch(/picker/i)
+    expect(text).toMatch(/terminal/i)
+    expect(text).not.toMatch(/codex|claude|gemini/i)
+  })
+
+  it('offers the way to that terminal beside the refused box', async () => {
+    const wrapper = observedSingle()
+    const jump = wrapper.find('.freeform-refused .answer-jump')
+    expect(jump.text()).toBe(JUMP_TO_TERMINAL_NAME)
+    expect(jump.attributes('title')).toBe(CONSOLE_HINT)
+    await jump.trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+
+  it('emits nothing on the message path while the box is refused', async () => {
+    const wrapper = observedSingle()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('send-text')).toBeUndefined()
+  })
+
+  it('keeps the box on a held session’s ask, whose text touches no picker', () => {
+    // #125's path is untouched: those words are queued on the stream this panel
+    // holds, so nothing about them reaches a TUI.
+    const wrapper = card()
+    expect(wrapper.find('.freeform-input').exists()).toBe(true)
+    expect(wrapper.find('.freeform-refused').exists()).toBe(false)
   })
 
   it('shows main’s refusal with the way to the terminal beside it', async () => {
@@ -467,12 +529,19 @@ describe('a multi-select question at the session’s own terminal', () => {
     expect(event.defaultPrevented).toBe(false)
   })
 
-  it('keeps the free-form box until something is toggled, and never sends it as an answer', async () => {
+  /*
+   * AMENDED for #481 (was: 'keeps the free-form box until something is toggled,
+   * and never sends it as an answer', which set the box to 'all of them' and
+   * asserted `send-text` carried it). The same tightening the several-question
+   * block took, for the same fact: this ask is drawn at a terminal picker too,
+   * so there is no box to fill and nothing leaves on the message path.
+   */
+  it('offers no free-text box either, toggled or not', async () => {
     const wrapper = multi()
-    expect(wrapper.find('.freeform-input').exists()).toBe(true)
-    await wrapper.find('.freeform-input').setValue('all of them')
-    pressEnter(wrapper.find('.freeform-input').element)
-    expect(wrapper.emitted('send-text')).toEqual([[{ text: 'all of them', pressEnter: true }]])
+    expect(wrapper.find('.freeform-input').exists()).toBe(false)
+    expect(wrapper.find('.freeform-refused').text()).toContain(TYPED_HERE_REACHES_THE_PICKER)
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    expect(wrapper.emitted('send-text')).toBeUndefined()
     expect(wrapper.emitted('answer')).toBeUndefined()
   })
 
