@@ -75,6 +75,7 @@ const {
   retry: retryDwarfText,
   observe: observeSends,
   reconcile: reconcileEchoes,
+  listenHeld: listenHeldMessages,
   keepEchoesFor
 } = useDwarfMessaging()
 /**
@@ -1230,6 +1231,14 @@ let unsubscribe: (() => void) | undefined
 let unlistenPanel: (() => void) | undefined
 /** Main's launch-failure push (#263), subscribed alongside every other main-side listener. */
 let unlistenLaunchFailures: (() => void) | undefined
+/**
+ * Main's verdict for a message it HELD (#457), subscribed the same way.
+ *
+ * This window owns the composer, so this is where the bubble waiting on that
+ * verdict is drawn; the shell reads the marker off the published delivery
+ * report like every other one.
+ */
+let unlistenHeldMessages: (() => void) | undefined
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 /**
  * The faces this window paints with (#370).
@@ -1257,6 +1266,7 @@ onMounted(() => {
   void load()
   unsubscribe = window.api.onMinesUpdated(update)
   unlistenLaunchFailures = listenLaunchFailures()
+  unlistenHeldMessages = listenHeldMessages()
   if (typeof ResizeObserver === 'function') {
     surfaceObserver = new ResizeObserver(reportHeight)
     const element = surfaceRef.value
@@ -1269,6 +1279,7 @@ onBeforeUnmount(() => {
   unsubscribe?.()
   unlistenPanel?.()
   unlistenLaunchFailures?.()
+  unlistenHeldMessages?.()
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   unlistenTypography?.()
   /* --- end of the #370 block ----------------------------------------------- */

@@ -11,6 +11,7 @@ import {
   defaultDwarfMessagingState,
   type Dwarf,
   type DwarfAttachment,
+  type DwarfSendSettledPush,
   type DwarfSendState,
   type DwarfTextResult,
   type FeedMessage
@@ -89,6 +90,17 @@ const watchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const watchedEchoId = new Map<string, string>()
 /** The latest snapshot seen per dwarf, so a new delivery has a baseline to compare against. */
 const lastSeen = new Map<string, ReactionSnapshot>()
+/**
+ * Which bubble each message main is HOLDING belongs to, keyed by the hold id
+ * main minted (#457).
+ *
+ * A third record beside the two above, and it exists for the reason the second
+ * one does: a dwarf can have several messages waiting at once, so neither the
+ * dwarf id nor "the newest echo" can say which of them a verdict arriving
+ * minutes later is about. Main is the one that mints the id, because main is
+ * the one holding the queue — see `DwarfSendSettledPush`.
+ */
+const heldMessages = new Map<string, { dwarfId: string; echoId: string }>()
 
 /** Monotonic within the session, which is all an echo id has to be. */
 let mintedEchoes = 0
@@ -234,6 +246,37 @@ async function deliver(
     result = { delivered: false, via: 'none', error: 'The panel lost contact with the app.' }
   }
 
+  // Main is HOLDING this one for a busy Codex thread (#457): it answered at
+  // once, and what it answered is that nothing has been sent. So the verdict
+  // below is not taken at all — the marker says waiting, the bubble is
+  // remembered under main's own hold id, and the real verdict arrives on
+  // `settle` when the turn the message is waiting for ends.
+  //
+  // Neither `startWatch` nor `scheduleClear` runs here, and both absences are
+  // deliberate: there is no hand-over for a session to be seen reacting to,
+  // and a marker that cleared itself after four seconds would leave the person
+  // believing the message had gone.
+  const holdId = result.holdId
+  if (holdId !== undefined) {
+    const waiting: DwarfSendState = { phase: 'held', via: result.via }
+    state.byDwarfId[dwarfId] = waiting
+    markEcho(dwarfId, echoId, waiting)
+    heldMessages.set(holdId, { dwarfId, echoId })
+    return false
+  }
+
+  return recordVerdict(dwarfId, echoId, result)
+}
+
+/**
+ * Write one message's verdict onto both records, and start whatever that
+ * verdict has left to wait for.
+ *
+ * Shared by the send itself and by a held message settling minutes later
+ * (#457), because they are the same verdict: a second spelling here is how the
+ * held path would come to draw a ✓ on terms the live one never would.
+ */
+function recordVerdict(dwarfId: string, echoId: string, result: DwarfTextResult): boolean {
   // A relay courier killed by its own timeout (#439) is neither a proven
   // delivery nor a proven failure — see DwarfTextResult.unconfirmed — and it
   // must not draw as the latter: a ✕ with `Send again` risks handing the same
@@ -290,6 +333,31 @@ export function useDwarfMessaging() {
     attachments: readonly DwarfAttachment[] = []
   ): Promise<boolean> {
     return deliver(dwarfId, text, pressEnter, attachments)
+  }
+
+  /**
+   * What finally happened to a message main was holding (#457) — main's own
+   * push, applied to the one bubble it names.
+   *
+   * Silent for an id this store is not holding, which is the ordinary case
+   * once the panel has moved to another dwarf or this window has been
+   * reopened: a verdict with nowhere to land must not invent a marker for a
+   * message nobody can see.
+   *
+   * The verdict goes through `recordVerdict`, so a held message that finally
+   * delivered opens the same reaction watch a live one does — nothing about a
+   * ✓ here is weaker for having waited.
+   */
+  function settle(push: DwarfSendSettledPush): void {
+    const held = heldMessages.get(push.holdId)
+    if (held === undefined) return
+    heldMessages.delete(push.holdId)
+    recordVerdict(held.dwarfId, held.echoId, push.result)
+  }
+
+  /** Hear main's held-message verdicts. Returns the unsubscribe. */
+  function listenHeld(): () => void {
+    return window.api.onDwarfSendSettled(settle)
   }
 
   /** The files one sent message carried, for its own bubble and its retry (#408). */
@@ -399,6 +467,12 @@ export function useDwarfMessaging() {
     delete state.byDwarfId[dwarfId]
     delete echoes[dwarfId]
     delete echoAttachments[dwarfId]
+    // #457. The bubbles these named are gone, so their verdicts have nowhere
+    // to land; main goes on holding the messages themselves either way, which
+    // is where they were always kept.
+    for (const [holdId, held] of heldMessages) {
+      if (held.dwarfId === dwarfId) heldMessages.delete(holdId)
+    }
   }
 
   function clearAll(): void {
@@ -407,6 +481,7 @@ export function useDwarfMessaging() {
     for (const dwarfId of Object.keys(echoes)) delete echoes[dwarfId]
     for (const dwarfId of Object.keys(echoAttachments)) delete echoAttachments[dwarfId]
     lastSeen.clear()
+    heldMessages.clear()
   }
 
   return {
@@ -415,6 +490,8 @@ export function useDwarfMessaging() {
     echoAttachments,
     attachmentsFor,
     send,
+    settle,
+    listenHeld,
     retry,
     observe,
     reconcile,
