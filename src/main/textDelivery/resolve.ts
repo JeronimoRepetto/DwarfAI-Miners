@@ -158,7 +158,7 @@ function sendRouteOf(
   hops: ForemanHops,
   consoleInput: boolean
 ): Omit<ResolvedTextDelivery, 'prefix'> | null {
-  const endpoint = degradedForSend(hops.endpoint, consoleInput)
+  const endpoint = degradedForSend(heldForSend(hops.endpoint), consoleInput)
   if (endpoint === null || !canCarryText(endpoint)) return null
   if (endpoint.kind !== 'terminal' || endpoint.sessionName === undefined) {
     return { channel: channelOf(hops, endpoint), endpoint }
@@ -214,6 +214,30 @@ function channelOf(hops: ForemanHops, endpoint: TextDeliveryEndpoint): TextDeliv
  * console support would delete a working channel from the two platforms with
  * the fewest to spare (#97).
  */
+/**
+ * A launch whose opening process is still running, seen by the SEND as the
+ * resume it is standing in front of (#457) — the fourth place send and kick
+ * routing part company, and the only one where the send gets MORE than the
+ * kick rather than less.
+ *
+ * The sibling of `degradedForSend` below, and deliberately beside it: both
+ * rewrite one endpoint for the message alone, and both exist because an act's
+ * needs and a session's shape are different questions. There the machine
+ * cannot type, so a console becomes a relay; here the thread cannot take a
+ * second turn RIGHT NOW, which is a fact about a moment rather than about the
+ * session — and a moment is something the panel can wait out. The kick route
+ * never asks this, because ending that process is the act it is for, and it is
+ * the person's later decision (see kickEndpointOf, unchanged).
+ *
+ * Only a launched process is ever rewritten, and only one carrying
+ * `heldResume`: an absent one is #217's own refusal, which is still true of
+ * every provider whose launched thread cannot be resumed at all.
+ */
+function heldForSend(endpoint: TextDeliveryEndpoint): TextDeliveryEndpoint {
+  if (endpoint.kind !== 'launched-process' || endpoint.heldResume === undefined) return endpoint
+  return endpoint.heldResume
+}
+
 function degradedForSend(
   endpoint: TextDeliveryEndpoint,
   consoleInput: boolean
@@ -323,6 +347,15 @@ function kickEndpointOf(hops: ForemanHops): KickEndpoint | null {
   if (!canCarryKick(hops.endpoint)) return null
   if (!canInterrupt(hops.endpoint)) return null
   if (hops.endpoint.kind === 'launched-process' && hops.workerNames.length > 0) return null
+  // The held resume comes OFF here (#457). It is the send route's own reading
+  // of this endpoint — `heldForSend` above — and a kick that carried it would
+  // invite a reader to think ending the process has something to do with the
+  // message waiting behind it. It does, but in the other direction: the wait is
+  // abandoned because the session was ended, which the runtime decides, not
+  // this endpoint.
+  if (hops.endpoint.kind === 'launched-process') {
+    return { kind: 'launched-process', launchId: hops.endpoint.launchId }
+  }
   return hops.endpoint
 }
 

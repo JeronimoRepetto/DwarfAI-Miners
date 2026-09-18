@@ -35,6 +35,7 @@ import type {
   HeldSessionLaunchResult,
   HostedLaunchRequest,
   HostedLaunchResult,
+  DwarfSendSettledPush,
   LaunchFailedPush,
   MaterialTotals,
   MetricsResetResult,
@@ -863,6 +864,15 @@ async function init(): Promise<void> {
     onLaunchFailed: (push: LaunchFailedPush) => {
       for (const contents of appWebContents()) {
         contents.send(IPC_CHANNELS.launchFailed, push)
+      }
+    },
+    // #457. Both windows, for the reason above: the composer that held this
+    // message lives in whichever window has that dwarf open, and main does
+    // not track which one that was. One-way — the verdict of a message
+    // already answered for has no verdict of its own.
+    onSendSettled: (push: DwarfSendSettledPush) => {
+      for (const contents of appWebContents()) {
+        contents.send(IPC_CHANNELS.dwarfSendSettled, push)
       }
     }
   })

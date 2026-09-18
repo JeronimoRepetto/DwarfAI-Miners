@@ -75,6 +75,14 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
     setWatchedDwarf: vi.fn(),
     sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
+    /*
+     * ADDED for #457 (was: absent). The verdict of a message main HELD arrives
+     * on its own push, and this window subscribes to it unconditionally on
+     * mount — exactly like `onLaunchFailed` above, and like it, a missing stub
+     * would break every test in this file rather than the ones about a hold.
+     * The default hears nothing, which is what a delivered send produces.
+     */
+    onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),

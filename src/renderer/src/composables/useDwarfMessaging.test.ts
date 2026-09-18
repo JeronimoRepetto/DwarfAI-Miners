@@ -731,3 +731,125 @@ describe('useDwarfMessaging echoes', () => {
     })
   })
 })
+
+/**
+ * A message the panel is HOLDING for a busy Codex thread (#457).
+ *
+ * Main answers `sendDwarfText` at once with a `holdId` and nothing else: the
+ * words are in its memory, no channel has been asked anything, and the verdict
+ * arrives minutes later on its own push. Everything below is about the store
+ * keeping that honest — a marker that claims nothing, a composer that stays
+ * usable, and one verdict landing on the one bubble it belongs to.
+ */
+describe('useDwarfMessaging holding a message for a busy thread', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfMessaging().clearAll()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function heldResult(holdId: string): DwarfTextResult {
+    return { delivered: false, via: 'codex-exec-resume', holdId }
+  }
+
+  it('marks the message held rather than sending, delivered or failed', async () => {
+    stubApi(() => Promise.resolve(heldResult('hold:1')))
+    const { send, stateFor, echoesFor } = useDwarfMessaging()
+
+    await send('codex:t1', 'run the tests', true)
+
+    expect(stateFor('codex:t1')).toEqual({ phase: 'held', via: 'codex-exec-resume' })
+    expect(echoesFor('codex:t1')[0]?.state.phase).toBe('held')
+  })
+
+  it('keeps that marker on screen instead of clearing it after four seconds', async () => {
+    // Every other verdict is a moment; this one lasts as long as the turn it
+    // is waiting for, and a marker that vanished would leave the person
+    // believing the message had gone.
+    stubApi(() => Promise.resolve(heldResult('hold:1')))
+    const { send, stateFor } = useDwarfMessaging()
+
+    await send('codex:t1', 'run the tests', true)
+    vi.advanceTimersByTime(RESULT_VISIBLE_MS * 3)
+
+    expect(stateFor('codex:t1')?.phase).toBe('held')
+  })
+
+  it('lets the person type again while the first message is still waiting', async () => {
+    // The 'sending' guard refuses a second send for the same dwarf, and must
+    // not reach this: several held messages are the whole of #457's FIFO.
+    let minted = 0
+    stubApi(() => Promise.resolve(heldResult(`hold:${++minted}`)))
+    const { send, echoesFor } = useDwarfMessaging()
+
+    await send('codex:t1', 'first', true)
+    await send('codex:t1', 'second', true)
+
+    expect(echoesFor('codex:t1').map((echo) => echo.text)).toEqual(['first', 'second'])
+  })
+
+  it('applies main’s later verdict to the bubble that was held', async () => {
+    let minted = 0
+    stubApi(() => Promise.resolve(heldResult(`hold:${++minted}`)))
+    const { send, settle, stateFor, echoesFor } = useDwarfMessaging()
+
+    await send('codex:t1', 'first', true)
+    await send('codex:t1', 'second', true)
+    settle({
+      holdId: 'hold:1',
+      dwarfId: 'codex:t1',
+      result: { delivered: true, via: 'codex-exec-resume' }
+    })
+
+    const echoes = echoesFor('codex:t1')
+    expect(echoes[0]?.state).toEqual({
+      phase: 'delivered',
+      via: 'codex-exec-resume',
+      awaitingReaction: true
+    })
+    // The second is still waiting, and untouched by the first one's verdict.
+    expect(echoes[1]?.state.phase).toBe('held')
+    expect(stateFor('codex:t1')?.phase).toBe('delivered')
+  })
+
+  it('marks a held message that will never be sent as failed, with its reason', async () => {
+    stubApi(() => Promise.resolve(heldResult('hold:1')))
+    const { send, settle, stateFor } = useDwarfMessaging()
+
+    await send('codex:t1', 'never mind', true)
+    settle({
+      holdId: 'hold:1',
+      dwarfId: 'codex:t1',
+      result: {
+        delivered: false,
+        via: 'codex-exec-resume',
+        error: 'The session was ended before this message could be sent, so it was not sent.'
+      }
+    })
+
+    expect(stateFor('codex:t1')).toEqual({
+      phase: 'failed',
+      via: 'codex-exec-resume',
+      error: 'The session was ended before this message could be sent, so it was not sent.'
+    })
+  })
+
+  it('ignores a verdict for a hold it is not holding', async () => {
+    // The panel moved to another dwarf, or this window was reopened: a push
+    // with nowhere to land changes nothing rather than inventing a marker.
+    stubApi(() => Promise.resolve(heldResult('hold:1')))
+    const { send, settle, stateFor } = useDwarfMessaging()
+
+    await send('codex:t1', 'run the tests', true)
+    settle({
+      holdId: 'hold:9',
+      dwarfId: 'codex:t1',
+      result: { delivered: true, via: 'codex-exec-resume' }
+    })
+
+    expect(stateFor('codex:t1')?.phase).toBe('held')
+  })
+})

@@ -142,6 +142,15 @@ describe('parseDwarfDeliveryReport', () => {
     expect(parseDwarfDeliveryReport({ send: [], kick: {} })).toBeNull()
   })
 
+  it('accepts a held send verdict, which no kick may ever claim (#457)', () => {
+    // A message waiting for a Codex turn to end is a SEND state and nothing
+    // else: a kick is never held, so the two vocabularies stay apart exactly
+    // as they do for 'sending' and 'kicking'.
+    const parsed = parseDwarfDeliveryReport({ send: { a: { phase: 'held' } }, kick: {} })
+    expect(parsed?.send.a).toEqual({ phase: 'held' })
+    expect(parseDwarfDeliveryReport({ send: {}, kick: { a: { phase: 'held' } } })).toBeNull()
+  })
+
   it('drops nothing it accepted: an absent optional field stays absent', () => {
     // The renderer's own stores leave `via`, `error` and `awaitingReaction` off
     // when they have nothing to say, and a normalizer that filled them in

@@ -970,10 +970,16 @@ describe('a Codex thread continued with codex exec resume (#450)', () => {
 
   /**
    * The launched sentence, qualified (#450). It used to read as permanent, and
-   * for Codex it no longer is — so the refusal is now about the process that is
-   * still running, and it says what comes after.
+   * for Codex it no longer is — so the refusal says what comes after.
+   *
+   * AMENDED for #457: the last assertion was `toContain('once that turn ends')`
+   * and is now `toContain('waits here')`. The sentence it pinned promised the
+   * composer back when the turn ended, which was true only while a busy
+   * launched Codex dwarf had no composer at all — the very behaviour #457
+   * removed. Everything else in this case is unchanged, and the #457 block at
+   * the end of this file states the new sentence's own rules.
    */
-  it('tells a Codex launch it can be written to once its turn ends', () => {
+  it('tells a Codex launch what happens once the panel can reach its thread', () => {
     const hint = entryFor(
       'chat',
       resumable({
@@ -990,16 +996,77 @@ describe('a Codex thread continued with codex exec resume (#450)', () => {
     expect(hint).toContain('codex exec')
     // The promise #217 made is kept: this session still has an exit here.
     expect(hint).toContain('Kick ends it')
-    expect(hint).toContain('once that turn ends')
+    expect(hint).toContain('waits here')
   })
 
   /*
    * Evidence, never symmetry: the resume was measured on Codex and on nothing
    * else, so no other CLI's launch is told it can be written to later.
+   *
+   * AMENDED for #457 with the sentence itself — the claim is the same one,
+   * asserted against the wording that replaced 'once that turn ends'.
    */
   it('promises no such thing for a CLI the resume was never measured on', () => {
-    expect(launchedNoInboxReason('claude')).not.toContain('once that turn ends')
-    expect(launchedNoInboxReason('antigravity')).not.toContain('once that turn ends')
+    expect(launchedNoInboxReason('claude')).not.toContain('waits here')
+    expect(launchedNoInboxReason('antigravity')).not.toContain('waits here')
+    expect(launchedNoInboxReason('claude')).not.toContain('The composer opens')
+    expect(launchedNoInboxReason('antigravity')).not.toContain('The composer opens')
   })
 })
 /* --- end of the #450 block --------------------------------------------------- */
+
+/* --- The composer stays live on a busy launched thread (#457) — appended ---- */
+
+/**
+ * The copy #450 left behind, corrected by #457.
+ *
+ * "You can write to it again once that turn ends" described the world #450
+ * built: the composer went dead for as long as the opening process ran. It
+ * does not any more — the message is accepted and held — so the promise is
+ * about a wait that no longer exists.
+ *
+ * The sentence still has a case to cover, and it is narrower than it was: a
+ * Codex launch whose THREAD this panel has not found yet reports no channel at
+ * all, so its composer really is dead for that moment. What it may not do is
+ * name the turn as the thing being waited for, because it is not.
+ */
+describe('a launched Codex session the panel cannot reach yet (#457)', () => {
+  it('never promises the turn ending, because that is no longer what is waited for', () => {
+    expect(launchedNoInboxReason('codex')).not.toContain('once that turn ends')
+  })
+
+  it('still names the command, and still keeps #217’s promise of an exit', () => {
+    expect(launchedNoInboxReason('codex')).toContain('codex exec')
+    expect(launchedNoInboxReason('codex')).toContain('Kick ends it')
+  })
+
+  it('says a message typed while its turn runs will wait rather than be refused', () => {
+    expect(launchedNoInboxReason('codex')).toMatch(/wait/i)
+  })
+
+  /**
+   * `chatAction` has never read `busy` and must not start (#457): it reads
+   * whether the session has ENDED and whether there is a channel, and nothing
+   * else. A working dwarf with a resume channel keeps its composer.
+   */
+  it('keeps the composer on a working dwarf that has a channel', () => {
+    const entry = entryFor(
+      'chat',
+      defaultDwarf({
+        provider: 'codex',
+        status: 'working',
+        textDelivery: 'codex-exec-resume',
+        capabilities: {
+          sendText: 'codex-exec-resume',
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
+      })
+    )
+
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(CHANNEL_HINT['codex-exec-resume'])
+  })
+})
+/* --- end of the #457 block -------------------------------------------------- */

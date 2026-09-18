@@ -71,13 +71,23 @@ const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
  * Per provider and sparse rather than one sentence, on exactly the terms
  * LAUNCH_COMMAND is per provider: this is evidence, and it was measured on
  * Codex. `codex exec [OPTIONS] resume <SESSION_ID> -` continues the very same
- * thread, so the panel offers the composer as soon as the opening process is
- * gone (see the 'codex-exec-resume' channel). A CLI with no such route gets no
- * clause, because a promise nobody measured is the kind this file exists not
- * to make.
+ * thread (see the 'codex-exec-resume' channel). A CLI with no such route gets
+ * no clause, because a promise nobody measured is the kind this file exists
+ * not to make.
+ *
+ * AMENDED for #457 (was: ' You can write to it again once that turn ends.').
+ * That named the turn as the thing being waited for, which was true while the
+ * composer went dead for the length of the opening process — and that is the
+ * behaviour #457 removed. A message typed at a busy launched Codex dwarf is
+ * now accepted and HELD, so the only thing left to wait for is this panel
+ * finding the thread at all, which is what the refusal below is now about.
+ * The sentence says what the wait really is and what happens to a message
+ * typed into the composer once it opens.
  */
 const AFTER_THE_TURN: Partial<Record<DwarfProvider, string>> = {
-  codex: ' You can write to it again once that turn ends.'
+  codex:
+    ' The composer opens as soon as the panel finds the thread it is writing; ' +
+    'a message typed while its turn is still running waits here and is sent when that turn ends.'
 }
 
 /**

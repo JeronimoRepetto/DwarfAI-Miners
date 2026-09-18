@@ -60,6 +60,7 @@ import {
   type HeldSessionLaunchResult,
   type HostedLaunchRequest,
   type HostedLaunchResult,
+  type DwarfSendSettledPush,
   type LaunchFailedPush,
   type MaterialTotals,
   type MetricsResetResult,
@@ -150,8 +151,11 @@ import type {
 import {
   resolveKickDelivery,
   resolveTextDelivery,
-  stampTextDelivery
+  stampTextDelivery,
+  type ResolvedTextDelivery
 } from '../textDelivery/resolve'
+// #457: the panel's own wait for a Codex thread that is mid-turn.
+import { CodexHoldQueue, type HeldCodexMessage } from '../textDelivery/codexHold'
 import { heldContentFor, type AttachmentReader } from '../textDelivery/attachmentDelivery'
 import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
 import { questionKeystrokesFor, type QuestionKeystrokeRefusal } from '../textDelivery/questionKeys'
@@ -234,6 +238,21 @@ const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 /** The same refusal for the resume tier, which is optional on the port too (#450). */
 const NO_RESUME_TIER = "This build can't start a new turn on a Codex session."
+/*
+ * The three ways a HELD message stops being held without being sent (#457).
+ *
+ * Every one of them says "not sent" in so many words, and none of them says
+ * handed, delivered or queued. A held message was never given to anything, so
+ * its end has to read as a message the person still owns — which is also what
+ * puts `Send again` on the bubble, and what keeps expiry decaying downwards
+ * rather than into a hand-over nobody made (AGENTS.md, reaction.ts).
+ */
+const HELD_SESSION_ENDED =
+  'The session was ended before this message could be sent, so it was not sent.'
+const HELD_DWARF_DISMISSED =
+  'The dwarf was sent off the rock before this message could be sent, so it was not sent.'
+const HELD_WAIT_ELAPSED =
+  'The turn this message was waiting for never ended here, so it was not sent.'
 /**
  * A console the runtime resolved a message to, on a port with no message tier
  * (#319). It carries `neverStarted`, so the relay behind it takes the message:
@@ -591,6 +610,14 @@ export interface RuntimeOptions {
    * which is unconditional.
    */
   onLaunchFailed?: (push: LaunchFailedPush) => void
+  /**
+   * Pushes the verdict of a message `sendDwarfText` answered a `holdId` for
+   * (#457) — see `DwarfSendSettledPush`. Optional on exactly the terms
+   * `onLaunchFailed` is: a test that never holds anything need not wire one,
+   * and a build without one still holds and still fires, it simply has nobody
+   * to tell. The log line is unconditional either way.
+   */
+  onSendSettled?: (push: DwarfSendSettledPush) => void
   home?: string
   fs?: FsLike
   /** Read-only SQLite access for the Codex registry; injected for tests. */
@@ -787,6 +814,45 @@ export class AgentRuntime {
    * reaches the log unconditionally, and only the push is optional.
    */
   private readonly onLaunchFailed: (push: LaunchFailedPush) => void
+  /**
+   * Messages the panel is holding for a Codex thread that is mid-turn (#457),
+   * and the verdict channel they eventually settle on.
+   *
+   * The queue lives here rather than in the registry beside `launched`,
+   * because the question it answers is neither "what may this app end" nor
+   * "which session is this launch" — it is "may a turn be started on this
+   * thread right now", and the two facts that settle it are owned by two
+   * different things: the launch's own exit handle, and a resume process this
+   * runtime spawned. Only this file sees both.
+   */
+  private readonly codexHolds = new CodexHoldQueue()
+  /**
+   * Codex threads a resume THIS panel spawned is still running a turn on.
+   *
+   * Written when a resume reports its hand-over and cleared by that process's
+   * own exit (`TextDeliveryOutcome.turnEnded`), which is the only signal that
+   * is both immediate and certain. A port that reports no exit at all is
+   * tracked for nothing rather than guessed at — it simply behaves as it did
+   * before this issue, which is the honest degrade and is what the shipped
+   * ports never do.
+   *
+   * A turn somebody started in their OWN terminal is deliberately NOT in
+   * here, and cannot be: the rollout's `busy` lags the process by a poll in
+   * both directions and is already true for the whole opening turn, so it
+   * cannot tell "my resume is running" from "the scan has not caught up".
+   * Such a turn still meets Codex's own exit 1, which now arrives with the
+   * CLI's own words rather than as a guess (see codexResume.ts).
+   */
+  private readonly codexTurns = new Set<string>()
+  /**
+   * Serializes the fire-and-forget drain, and is what `settleHeldMessages`
+   * hands back — the same seam `projectWrites` and the launch register's
+   * `settle()` are, and for the same reason: the poll must never await a
+   * resume, which blocks for a whole model turn.
+   */
+  private codexHoldDrain: Promise<void> = Promise.resolve()
+  /** Told the verdict of a held message once it settles; see RuntimeOptions. */
+  private readonly onSendSettled: (push: DwarfSendSettledPush) => void
   /**
    * Which dwarf each launch of ours turned out to be, proved from the
    * session's own opening prompt (#191).
@@ -1130,6 +1196,9 @@ export class AgentRuntime {
     // this build ever wires still logs the failure, since that half of
     // reporting it is unconditional and lives in launchAgent itself.
     this.onLaunchFailed = options.onLaunchFailed ?? ((): void => {})
+    // #457, and the same no-op default for the same reason: a held message
+    // still fires and is still logged without anybody to report it to.
+    this.onSendSettled = options.onSendSettled ?? ((): void => {})
     // The receipt reader is the provider's own, because only a provider knows
     // where its store is and how a human turn is written in it. A provider
     // that has not been taught to read one answers nothing, and a launch on it
@@ -1405,6 +1474,13 @@ export class AgentRuntime {
         // rather than a poll later. Claims are made once and kept, so this
         // costs a lookup per launch still waiting for one.
         this.launched.observe(withMaterials)
+        // And whether anything the panel is holding can go now (#457). After
+        // `observe` because the claim above is what binds a launch to a dwarf,
+        // and `holdsRunningProcess` — the gate a held message waits on — is
+        // asked by that dwarf's id. Fire-and-forget for the reason the receipt
+        // read below is: one resumed turn blocks for as long as a model takes,
+        // and this callback is the thread the panel paints from.
+        this.drainCodexHolds()
         // And which dwarf each launch of ours IS (#191), which is a different
         // question with a different answer — see launchReceipts.ts. Started on
         // this board and deliberately NOT awaited: proving it reads the head of
@@ -2374,24 +2450,35 @@ export class AgentRuntime {
       if (target === undefined || target === null) continue
       // Ownership once more, and the only place it outranks a channel a
       // provider really does have (#450). A resume is a NEW `codex exec`
-      // process on a thread, so offering one while the OPENING process this
+      // process on a thread, so starting one while the OPENING process this
       // panel launched is still running would put two of them on a single
-      // thread — whatever Codex makes of that, the panel must not be what
-      // causes it. So the launch keeps the dwarf for as long as its process
-      // RUNS, which is also the window in which ending it is the only act that
-      // reaches anything at all.
+      // thread — measured since: Codex refuses the second outright (exit 1)
+      // rather than queueing it, so the panel must not be what causes one.
       //
       // `holdsRunningProcess` rather than `launchIdOfDwarf`, and the
       // difference is the whole behaviour: this panel started that session for
       // the rest of the run either way, and what matters here is whether there
-      // is still a process to be careful about. Once it exits, the dwarf
-      // trades an exit that can only answer "already ended" for a composer
-      // that works — which is the trade #450 is for. Scoped to this one kind
-      // rather than to the loop, and it has to be: every other
-      // channel a provider reports addresses a session rather than starting a
-      // process, and none of them can collide with a launch this way.
+      // is still a process to be careful about. Scoped to this one kind rather
+      // than to the loop, and it has to be: every other channel a provider
+      // reports addresses a session rather than starting a process, and none
+      // of them can collide with a launch this way.
+      //
+      // What that window answers with changed with #457. It used to be the
+      // bare launch, which takes no messages at all (#217) — so the composer
+      // went dead, and a person typing at a working session met a refusal on
+      // TIMING alone, which is not how anything else in this panel behaves.
+      // Now the launch carries the resume it is standing in front of, and
+      // resolve.ts hands each ACT the half it needs: the SEND takes the
+      // resume, because a message can wait here until the process exits, and
+      // the KICK keeps the launch, because ending that process is still the
+      // one act that reaches anything while it runs. See `heldForSend`.
       if (target.kind === 'codex-exec-resume' && this.launched.holdsRunningProcess(dwarfId)) {
-        break
+        const launchId = this.launched.launchIdOfDwarf(dwarfId)
+        // Unreachable — holdsRunningProcess answered off that very record —
+        // and stated rather than asserted: an id this registry cannot name is
+        // a launch nothing here may claim to end.
+        if (launchId === undefined) break
+        return { kind: 'launched-process', launchId, heldResume: target }
       }
       return target
     }
@@ -2666,11 +2753,207 @@ export class AgentRuntime {
       launchDwarfId === undefined ? undefined : this.launched.tuningOfDwarf(launchDwarfId)
     const tuning = resumeTuning(launch, observed)
     const isEmpty = tuning.model === undefined && tuning.effort === undefined
-    return resume.call(this.textDelivery, {
+    const outcome = await resume.call(this.textDelivery, {
       threadId,
       cwd,
       text,
       ...(isEmpty ? {} : { tuning })
+    })
+    this.watchCodexTurn(threadId, outcome)
+    return outcome
+  }
+
+  /**
+   * Remember that a turn this panel started is running on `threadId`, until
+   * that process ends (#457).
+   *
+   * Here rather than at either call site, because both of them — a live send
+   * and a held one going out — start exactly the same kind of process, and a
+   * rule about "is this thread busy" that only one of them applied would let
+   * a held message follow a live send straight into Codex's exit 1.
+   *
+   * Only a hand-over is remembered: a resume that died inside its start window
+   * started no turn. And only where the port reports an exit — a turn this
+   * panel cannot see end is not one it may claim to be waiting on, so it is
+   * simply not tracked (see `codexTurns`). Draining on the exit rather than
+   * waiting for the next poll is what makes several held messages go out as
+   * one continuous conversation instead of one every two seconds.
+   */
+  private watchCodexTurn(threadId: string, outcome: TextDeliveryOutcome): void {
+    const ended = outcome.turnEnded
+    if (!outcome.delivered || ended === undefined) return
+    this.codexTurns.add(threadId)
+    const done = (): void => {
+      this.codexTurns.delete(threadId)
+      this.drainCodexHolds()
+    }
+    // Both arms, because a rejection here would leave the thread marked busy
+    // for the rest of the run and every message held behind it waiting out
+    // its bound for nothing.
+    void ended.then(done, done)
+  }
+
+  /**
+   * Hold this message instead of sending it, when its Codex thread is already
+   * running a turn (#457) — or `null`, which means send it now.
+   *
+   * The one gate, and it is deliberately narrow: only a 'codex-exec-resume'
+   * route, and only for a turn THIS PROCESS knows about. Two facts settle it,
+   * and both are this app's own rather than a reading of somebody's rollout —
+   * the launch's exit handle, and a resume this runtime spawned. An observed
+   * thread's own queue (#97) and every other channel are untouched, because
+   * they hand a message to something that is already running.
+   *
+   * `launchDwarfId` follows #462's hop rule exactly: the launch registry is
+   * read for the REQUESTING dwarf only where no foreman hop occurred, because
+   * a hop's endpoint belongs to an ancestor this method was never told the id
+   * of. Resolved once, here, and carried on the held message — so the turn
+   * that finally goes out is tuned by the same rule that would have tuned it
+   * had it gone immediately.
+   */
+  private holdForBusyCodexThread(
+    request: DwarfTextRequest,
+    resolved: ResolvedTextDelivery,
+    payload: string
+  ): DwarfTextResult | null {
+    const endpoint = resolved.endpoint
+    if (endpoint.kind !== 'codex-exec-resume') return null
+    const launchDwarfId = resolved.prefix === '' ? request.dwarfId : undefined
+    const busy =
+      this.codexTurns.has(endpoint.threadId) ||
+      (launchDwarfId !== undefined && this.launched.holdsRunningProcess(launchDwarfId))
+    if (!busy) return null
+    const held = this.codexHolds.hold(
+      {
+        dwarfId: request.dwarfId,
+        threadId: endpoint.threadId,
+        cwd: endpoint.cwd,
+        text: payload,
+        observed: {
+          ...(endpoint.model === undefined ? {} : { model: endpoint.model }),
+          ...(endpoint.effort === undefined ? {} : { effort: endpoint.effort })
+        },
+        ...(launchDwarfId === undefined ? {} : { launchDwarfId })
+      },
+      this.now()
+    )
+    // The length, never the words — the same privacy rule the delivery log
+    // line holds, on a message that has not been delivered at all.
+    console.log(
+      `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
+        `held (${payload.length} chars) until the current turn ends [${held.holdId}]`
+    )
+    // `delivered: false` and no `error`, which is the shape of this verdict:
+    // nothing has been handed over and nothing has gone wrong. The panel draws
+    // it pending and waits for the push that names this same id.
+    return { delivered: false, via: resolved.channel, holdId: held.holdId }
+  }
+
+  /**
+   * Send whatever is now sendable, and give up on whatever has waited too
+   * long (#457).
+   *
+   * Queued rather than awaited, for the reason the register's own writes are:
+   * this runs off the poll, and one resumed turn blocks for as long as a
+   * model takes. Every caller is a moment when the answer can have changed —
+   * a poll (the opening process may have exited) and a turn's own end.
+   */
+  private drainCodexHolds(): void {
+    this.codexHoldDrain = this.codexHoldDrain
+      .then(() => this.runCodexHoldDrain())
+      .catch((error: unknown) => {
+        // A drain that threw costs these messages nothing but this pass: they
+        // are still held, and the next poll asks again. Their bound is what
+        // stops that being forever.
+        console.warn('[runtime] A held message could not be sent on this pass', error)
+      })
+  }
+
+  /** Settles the held-message drain; a test seam, exactly like the register's. */
+  settleHeldMessages(): Promise<void> {
+    return this.codexHoldDrain
+  }
+
+  private async runCodexHoldDrain(): Promise<void> {
+    for (const message of this.codexHolds.expired(this.now())) {
+      this.settleHeldMessage(message, HELD_WAIT_ELAPSED)
+    }
+    const waiting = this.codexHolds.held()
+    for (const threadId of this.codexHolds.threads()) {
+      // The OLDEST message for this thread decides, because it is the one that
+      // would go: FIFO is what keeps two things the person said in the order
+      // they said them.
+      const head = waiting.find((message) => message.threadId === threadId)
+      if (head === undefined) continue
+      if (this.codexTurns.has(threadId)) continue
+      if (head.launchDwarfId !== undefined && this.launched.holdsRunningProcess(head.launchDwarfId))
+        continue
+      const message = this.codexHolds.next(threadId)
+      if (message === undefined) continue
+      await this.sendHeldCodexMessage(message)
+    }
+  }
+
+  /**
+   * One held message, going out through exactly the path a live send takes.
+   *
+   * `resumeCodexThread` and nothing beside it: the tuning #462 resolved, the
+   * argv trap its builder records, and the turn tracking above all arrive
+   * because this is the same method. A second spelling of the send here is how
+   * a held message would come to carry a different model from the one the
+   * person's launch asked for.
+   */
+  private async sendHeldCodexMessage(message: HeldCodexMessage): Promise<void> {
+    const outcome = await this.resumeCodexThread(
+      message.threadId,
+      message.cwd,
+      message.text,
+      message.observed,
+      message.launchDwarfId
+    )
+    console.log(
+      `[runtime] Held message to ${message.dwarfId} via codex-exec-resume: ` +
+        `${outcome.delivered ? 'delivered' : 'failed'} (${message.text.length} chars)` +
+        failureReasonSuffix(outcome) +
+        ` [${message.holdId}]`
+    )
+    this.onSendSettled({
+      holdId: message.holdId,
+      dwarfId: message.dwarfId,
+      result: outcome.delivered
+        ? { delivered: true, via: 'codex-exec-resume' }
+        : {
+            delivered: false,
+            via: 'codex-exec-resume',
+            ...(outcome.error === undefined ? {} : { error: outcome.error })
+          }
+    })
+  }
+
+  /**
+   * Give up every message held for `dwarfId`, saying which act took it.
+   *
+   * The half of the Kick agreement that lives here rather than being hoped
+   * for: a kick and a held message want the same event, and only one of them
+   * may have it. Called from both kick outcomes — the end and the dismissal —
+   * so neither can quietly leave a message waiting for a session nobody is
+   * coming back to.
+   */
+  private dropHeldCodexMessages(dwarfId: string, reason: string): void {
+    for (const message of this.codexHolds.dropDwarf(dwarfId)) {
+      this.settleHeldMessage(message, reason)
+    }
+  }
+
+  /** One held message that will never be sent, and the sentence saying so. */
+  private settleHeldMessage(message: HeldCodexMessage, error: string): void {
+    console.log(
+      `[runtime] Held message to ${message.dwarfId} dropped [${message.holdId}]: ${error}`
+    )
+    this.onSendSettled({
+      holdId: message.holdId,
+      dwarfId: message.dwarfId,
+      result: { delivered: false, via: 'codex-exec-resume', error }
     })
   }
 
@@ -3345,6 +3628,12 @@ export class AgentRuntime {
      */
     const relayPayload = `${RELAY_PROVENANCE_LINE}\n${payload}`
     const endpoint = resolved.endpoint
+    // Before the timer and before any tier is asked anything (#457): a message
+    // the panel HOLDS starts no process, so it has no stage to measure and no
+    // outcome to fold in. It is the resolved route's own answer — same
+    // endpoint, same payload, same hop rule — deferred rather than refused.
+    const held = this.holdForBusyCodexThread(request, resolved, payload)
+    if (held !== null) return held
     const timer = createStageTimer(this.now)
     try {
       // 'total' is everything the caller waited for; the tier below reports the
@@ -3858,7 +4147,17 @@ export class AgentRuntime {
         `[runtime] Kick for ${request.dwarfId} via ${resolved.channel}: ` +
           `${outcome.delivered ? 'delivered' : 'failed'}${stageSuffix(timer.timings())}`
       )
-      if (outcome.delivered) return { delivered: true, via: resolved.channel }
+      if (outcome.delivered) {
+        // #457. A kick that landed is the person's LATER decision about this
+        // session, and it outranks a message still waiting for that session's
+        // turn to end — which for a launched Codex dwarf is the very event the
+        // kick just caused. Unconditional rather than scoped to the launched
+        // tier: a dwarf with nothing held is a no-op here, and a rule that had
+        // to name the tiers is a rule that would be forgotten when a fourth
+        // one arrives.
+        this.dropHeldCodexMessages(request.dwarfId, HELD_SESSION_ENDED)
+        return { delivered: true, via: resolved.channel }
+      }
       // Same fallback as sendDwarfText, carrying the exact instruction the
       // relay tier already uses — a kick has no user text, only this message.
       // A 'held-session' endpoint carries no relay name and must not borrow
@@ -3914,6 +4213,11 @@ export class AgentRuntime {
     console.log(
       `[runtime] Dismissing ${dwarfId}: nothing here can interrupt it, and it was asked to go.`
     )
+    // #457, and the same agreement the ended kick keeps: a dwarf the person
+    // just sent off the rock must not have a message of theirs arrive at it a
+    // minute later. The session is not ENDED here, which is why the sentence
+    // differs — the marker says the dwarf went, not that the process did.
+    this.dropHeldCodexMessages(dwarfId, HELD_DWARF_DISMISSED)
     this.lifecycle.dismiss(dwarfId)
     return { delivered: true, via: 'dismiss' }
   }

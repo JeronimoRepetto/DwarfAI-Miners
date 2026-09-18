@@ -38,6 +38,24 @@ const RELAY_HANDED_TITLE =
   'Handed to the session as a relayed note that names you as its author, not as a prompt you typed — watching for it to react.'
 const RELAY_UNOBSERVED_TITLE =
   'Handed to the session as a relayed note that names you as its author; no reaction seen.'
+/**
+ * A message the panel is holding for a Codex thread whose turn is still
+ * running (#457).
+ *
+ * The one verdict sentence in this file that reports no act at all, and the
+ * wording is the whole of it. `codex exec resume` cannot start a second turn
+ * on a thread that is already running one — it exits 1 at once — so the panel
+ * accepts the words and waits, which means they are sitting in this app's
+ * memory and nothing anywhere has been asked anything. "Handed over" would be
+ * the exact claim `reaction.ts` exists to stop, one phase earlier than usual.
+ *
+ * Two clauses, in KICK_HINT's idiom: what is true now, then what happens next.
+ * The second is what keeps a person from reading a pending marker as a stuck
+ * one — and it is a promise this app keeps itself, unlike every other channel
+ * here, which is why it is safe to make.
+ */
+export const HELD_TITLE =
+  'Waiting for the current turn to end — nothing has been sent yet. It goes as soon as the turn does.'
 const KICK_REACTED_TITLE = 'The session reacted to the kick.'
 const SEND_REACTED_TITLE = 'The session reacted to the message.'
 const SEND_FAILED_TITLE = 'The message could not be delivered.'
@@ -204,6 +222,13 @@ function reactedMarker(title: string): DeliveryMarker {
 export function sendMarker(state: DwarfSendState | undefined): DeliveryMarker | null {
   if (state === undefined) return null
   if (state.phase === 'sending') return { cls: 'is-sending', glyph: '…', title: 'Sending...' }
+  // The pending presentation, deliberately shared with 'sending' rather than
+  // given a colour of its own (#457): both states mean "nothing decided yet",
+  // and the design source specifies no fourth marker. What tells them apart is
+  // the sentence, which is where the difference actually matters — the marker
+  // says the message is still here, and the composer's own status line below
+  // says what it is waiting for.
+  if (state.phase === 'held') return { cls: 'is-sending', glyph: '…', title: HELD_TITLE }
   if (state.phase === 'delivered') {
     // A courier killed by its own timeout (#439) is never confirmed, so it
     // gets its own honest sentence instead of either the relayed or the plain
@@ -263,6 +288,9 @@ function statusLine(
 
 export function sendStatusLine(state: DwarfSendState | undefined): string | null {
   if (state === undefined) return null
+  // Ahead of everything below, because `statusLine`'s template opens with
+  // "Handed over" and that is precisely what has not happened (#457).
+  if (state.phase === 'held') return HELD_TITLE
   // "Handed over" is exactly what this state does not know (#439): the relay
   // never confirmed, so the status line gets the marker's own honest sentence
   // instead of the template every other verdict shares.

@@ -2555,6 +2555,47 @@ export interface DwarfTextResult {
    * to (see DwarfSendState.unconfirmed), never a ✕ with `Send again`.
    */
   unconfirmed?: boolean
+  /**
+   * Present exactly when the message was HELD rather than sent (#457): a
+   * panel-launched Codex thread whose turn is still running takes no second
+   * turn, so the panel keeps the words and resumes the thread when that turn
+   * ends.
+   *
+   * `delivered` is false beside it and means what it always means — nothing
+   * has been handed to anything — so a reader that knows nothing of this
+   * field still draws a message that has not arrived, which is true. What the
+   * field adds is that the attempt is not over: the verdict follows on
+   * `dwarfSendSettled`, naming this same id.
+   *
+   * Minted by MAIN, for the reason `AgentLaunchResult.launchId` is: a dwarf
+   * can be holding several messages at once, so the dwarf id cannot say which
+   * of them a later verdict is about.
+   */
+  holdId?: string
+}
+
+/**
+ * The verdict of a message that was HELD, once the turn it waited for ended
+ * (#457).
+ *
+ * Push rather than pull, exactly like `LaunchFailedPush`: `sendDwarfText`
+ * already answered — honestly, with `holdId` — and what happens next happens
+ * minutes later, off the end of somebody else's process. There is no request
+ * for the panel to make and no moment to poll for one.
+ *
+ * Correlated by `holdId` and never by dwarf id, because a dwarf can hold
+ * several messages at once and each one is its own resumed turn.
+ */
+export interface DwarfSendSettledPush {
+  holdId: string
+  /** Which dwarf the message was for, so the store can find the bubble without a scan. */
+  dwarfId: string
+  /**
+   * What finally happened. Never carries a `holdId` of its own: a message is
+   * held once, and a verdict that could hold again would be a wait with no
+   * end.
+   */
+  result: DwarfTextResult
 }
 
 /** One request to cancel a dwarf's current work. No user text is ever involved. */
@@ -2604,7 +2645,17 @@ export interface DwarfKickResult {
  * boundary — see DwarfDeliveryReport, which is the one direction it travels.
  */
 export interface DwarfSendState {
-  phase: 'sending' | 'delivered' | 'reacted' | 'failed'
+  /**
+   * 'held' is the one phase that claims NOTHING (#457). A message the panel
+   * is holding for a Codex thread whose turn is still running sits in this
+   * app's own memory: no channel has been asked anything, so 'sending' would
+   * say it is in flight and 'delivered' would say it was handed over, and
+   * both are false. It is its own phase for exactly that reason, and it is
+   * never a resting place — every held message ends as 'delivered' when its
+   * resume fires, or as 'failed' when it cannot (the session was kicked, the
+   * wait ran out, or the resume itself refused).
+   */
+  phase: 'sending' | 'held' | 'delivered' | 'reacted' | 'failed'
   /** The channel the delivery used, once one was chosen. */
   via?: string
   /** Why it failed, shown on the marker. */
@@ -4159,6 +4210,16 @@ export const IPC_CHANNELS = {
    */
   openExternalLink: 'shell:openExternalLink',
   sendDwarfText: 'dwarf:sendText',
+  /**
+   * The verdict of a message `sendDwarfText` answered `holdId` for (#457) —
+   * see `DwarfSendSettledPush`.
+   *
+   * Push rather than pull, exactly like `launchFailed` and for the same
+   * reason: main learns this asynchronously, when a Codex turn ends minutes
+   * after the call already answered, so there is nothing for the panel to ask
+   * for and no moment to poll at.
+   */
+  dwarfSendSettled: 'dwarf:sendText:settled',
   /**
    * The system file picker, for the composer's attach control (#408).
    *
