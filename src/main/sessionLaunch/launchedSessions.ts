@@ -1,5 +1,6 @@
 import { sameProcessStart } from '../platform/processProbe'
 import type { DwarfProvider, Mine } from '../domain/types'
+import type { LaunchTuning } from '../domain/launchTuning'
 import type { LaunchedSessionStore } from './launchedSessionStore'
 
 /**
@@ -117,6 +118,12 @@ export interface RetainLaunchRequest {
    * list is somebody else's, whatever folder it turns up in.
    */
   knownSessionIds: readonly string[]
+  /**
+   * What this launch explicitly asked for (#462), model and/or effort. Absent
+   * when nobody tuned the launch — see `tuningOfDwarf` for why this must
+   * outlive the process it started.
+   */
+  tuning?: LaunchTuning
 }
 
 /**
@@ -152,6 +159,13 @@ interface LaunchRecord {
    * `procStartMs` at the moment of the kill rather than trusted from startup.
    */
   restored: boolean
+  /**
+   * What this launch explicitly asked for (#462), carried past the process's
+   * own exit. A RESTORED record has none — it is a fresh object built from
+   * the store row, which has no tuning column — and falls to D2's observed
+   * pair instead; see `tuningOfDwarf`.
+   */
+  tuning?: LaunchTuning
 }
 
 export interface LaunchedSessionRegistryOptions {
@@ -212,7 +226,8 @@ export class LaunchedSessionRegistry {
       pid: request.process.pid,
       knownSessionIds: new Set(request.knownSessionIds),
       gone: false,
-      restored: false
+      restored: false,
+      ...(request.tuning === undefined ? {} : { tuning: request.tuning })
     }
     // Asked NOW, while this panel still holds the handle, which is the only
     // moment that pid is certainly this launch's. Read later it would be a
@@ -437,6 +452,23 @@ export class LaunchedSessionRegistry {
     const launchId = this.byDwarf.get(dwarfId)
     if (launchId === undefined) return false
     return this.records.get(launchId)?.gone === false
+  }
+
+  /**
+   * What this dwarf's own launch asked for (#462), or undefined when nobody
+   * tuned it or this panel never launched it.
+   *
+   * Reads `byDwarf` → `records` exactly as `holdsRunningProcess` does, and
+   * for the same reason: `forget()` only drops the store row (`:345-353`), so
+   * the record — and the tuning on it — stays reachable for the whole run
+   * after the launch process has exited, which is exactly when a resume
+   * becomes reachable. A RESTORED record (`restore()`, above) carries none;
+   * that is the observed pair's job (D2), not this one's.
+   */
+  tuningOfDwarf(dwarfId: string): LaunchTuning | undefined {
+    const launchId = this.byDwarf.get(dwarfId)
+    if (launchId === undefined) return undefined
+    return this.records.get(launchId)?.tuning
   }
 
   /**
