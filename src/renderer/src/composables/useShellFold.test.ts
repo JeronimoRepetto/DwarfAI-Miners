@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useShellFold } from './useShellFold'
-import { PANEL_MOTION_WATCHDOG_MS } from '../lib/shell/panelMotion'
+import { PANEL_LEAVE_BOUND_MS, PANEL_MOTION_WATCHDOG_MS } from '../lib/shell/panelMotion'
 import type { PanelEdge } from '../types'
 import type { ShellComposition } from '../lib/shell/composition'
 
@@ -143,11 +143,19 @@ function styleReads(shell: HTMLElement) {
   }
 }
 
+/*
+ * AMENDED for #464 throughout (was: `hold()` answering one promise, awaited
+ * directly). A leaving column now waits on TWO moments that used to be one —
+ * the fold ending, which is what the shrink waits for, and the window having
+ * caught up, which is what may finally unmount it — so every case that awaited
+ * the answer awaits `.folded` instead. The batch is still one object shared by
+ * every column of a change, so the identity the cases below assert is unchanged.
+ */
 describe('useShellFold', () => {
   it('folds the shell down to what the leaving column leaves behind', async () => {
     const test = harness()
     test.state.remaining = 'mine'
-    expect(test.fold.hold(test.column(555))).toBeInstanceOf(Promise)
+    expect(test.fold.hold(test.column(555))!.folded).toBeInstanceOf(Promise)
     await settled()
     expect(test.animations).toHaveLength(1)
     expect(test.animations[0]!.keyframes).toEqual([
@@ -198,7 +206,7 @@ describe('useShellFold', () => {
   it('reports the fold as the leave the shrink waits on, and not before it ends', async () => {
     const test = harness()
     let folded = false
-    void test.fold.hold(test.column(555))!.then(() => {
+    void test.fold.hold(test.column(555))!.folded.then(() => {
       folded = true
     })
     await settled()
@@ -220,7 +228,7 @@ describe('useShellFold', () => {
     vi.useFakeTimers()
     const test = harness()
     let folded = false
-    void test.fold.hold(test.column(555))!.then(() => {
+    void test.fold.hold(test.column(555))!.folded.then(() => {
       folded = true
     })
     await vi.advanceTimersByTimeAsync(0)
@@ -234,7 +242,7 @@ describe('useShellFold', () => {
   it('ends a running fold the moment the window is occluded (#266)', async () => {
     const test = harness()
     let folded = false
-    void test.fold.hold(test.column(555))!.then(() => {
+    void test.fold.hold(test.column(555))!.folded.then(() => {
       folded = true
     })
     await settled()
@@ -248,7 +256,7 @@ describe('useShellFold', () => {
   it('ends a running fold when reduced motion is asked for mid-way', async () => {
     const test = harness()
     let folded = false
-    void test.fold.hold(test.column(555))!.then(() => {
+    void test.fold.hold(test.column(555))!.folded.then(() => {
       folded = true
     })
     await settled()
@@ -485,6 +493,80 @@ describe('useShellFold', () => {
     test.wrapper.unmount()
   })
 
+  /*
+   * ADDED for #464. The fold ending and the column being let go used to be the
+   * same turn: `done()` unmounted `.shell-secondary`, which is `flex: 1`, so the
+   * row repacked while main had not been asked to resize yet — and every frame
+   * until its reply landed was the strip painted over bare ground. The shrink
+   * still waits on the fold and only the fold, or the two would wait on each
+   * other; what the column waits on is the window.
+   */
+  it('holds a leaving column past the fold, until the window has caught up with it', async () => {
+    const test = harness()
+    test.fold.settle(false)
+    test.state.remaining = 'mine'
+    const leaving = test.fold.hold(test.column(555))!
+    let folded = false
+    let released = false
+    void leaving.folded.then(() => {
+      folded = true
+    })
+    void leaving.released.then(() => {
+      released = true
+    })
+    await settled()
+    test.animations[0]!.finish()
+    await settled()
+    // The fold is over, so main may be asked to resize; the column that leaves
+    // is what is standing in the window until it has.
+    expect(folded).toBe(true)
+    expect(released).toBe(false)
+    test.fold.settle(false)
+    await settled()
+    expect(released).toBe(false)
+    sized(test.shell, 438)
+    test.fold.settle(false)
+    await settled()
+    expect(released).toBe(true)
+    test.wrapper.unmount()
+  })
+
+  /*
+   * The same bound the layout queue gives a leave (#266): a window that never
+   * answers must not leave the row standing at a width nothing will correct.
+   */
+  it('lets a held column go one bound after a fold main never answers', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    test.fold.settle(false)
+    test.state.remaining = 'mine'
+    const leaving = test.fold.hold(test.column(555))!
+    let released = false
+    void leaving.released.then(() => {
+      released = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    test.animations[0]!.finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(released).toBe(false)
+    await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+    expect(released).toBe(true)
+    test.wrapper.unmount()
+  })
+
+  it('lets a held column go when the shell goes away under it', async () => {
+    const test = harness()
+    const leaving = test.fold.hold(test.column(555))!
+    let released = false
+    void leaving.released.then(() => {
+      released = true
+    })
+    await settled()
+    test.wrapper.unmount()
+    await settled()
+    expect(released).toBe(true)
+  })
+
   it('carries nothing when the row leaves the rail where it stands', async () => {
     const test = harness({ width: 0 })
     sized(test.rail, 0)
@@ -591,7 +673,7 @@ describe('useShellFold', () => {
   it('releases a fold still running when the shell goes away', async () => {
     const test = harness()
     let folded = false
-    void test.fold.hold(test.column(555))!.then(() => {
+    void test.fold.hold(test.column(555))!.folded.then(() => {
       folded = true
     })
     await settled()

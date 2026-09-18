@@ -1,5 +1,6 @@
 import { onBeforeUnmount } from 'vue'
 import { createBoundedMotion } from '../lib/shell/boundedMotion'
+import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
 import {
   foldedRailOffset,
   foldedShellWidth,
@@ -69,6 +70,24 @@ export interface ShellFoldOptions {
   rail: () => HTMLElement | null
 }
 
+/**
+ * The two moments a leaving column waits on, which used to be one (#464).
+ *
+ * They are different events and telling them apart is the whole of the fix. The
+ * fold ending is what a shrink waits for, and it has to be: main cannot be
+ * asked to resize by something that is waiting for it to have. The window
+ * having caught up is what may finally unmount the column — `.shell-secondary`
+ * is `flex: 1`, so letting it go on the fold repacked the row while the
+ * rectangle around it had not changed, and every frame until main's reply
+ * landed was the fold's strip painted over bare ground.
+ */
+export interface ShellFoldHold {
+  /** The ground has finished folding. */
+  folded: Promise<void>
+  /** Main has applied the bounds it was folded for, or the bound has elapsed. */
+  released: Promise<void>
+}
+
 export function useShellFold(options: ShellFoldOptions) {
   const motion = createBoundedMotion()
 
@@ -126,7 +145,52 @@ export function useShellFold(options: ShellFoldOptions) {
    */
   let pinned: { box: number } | null = null
 
-  let batch: { widths: number[]; resolve: () => void; promise: Promise<void> } | null = null
+  interface Leaving {
+    widths: number[]
+    resolve: () => void
+    release: () => void
+    hold: ShellFoldHold
+  }
+
+  /** The columns registering for the next fold, before it is measured. */
+  let batch: Leaving | null = null
+  /**
+   * Every batch a fold is standing over, until the window has caught up.
+   *
+   * A list rather than the last one: two changes can fold before either window
+   * arrives — a mine closing takes the navigation stack with it one tick later —
+   * and the earlier batch is waiting on the same thing the later one is. Keeping
+   * only the newest left the first fold's columns standing for good.
+   */
+  let holding: Leaving[] = []
+  let overrun: ReturnType<typeof setTimeout> | undefined
+
+  function leaving(): Leaving {
+    let resolve!: () => void
+    let release!: () => void
+    const folded = new Promise<void>((done) => {
+      resolve = done
+    })
+    const released = new Promise<void>((done) => {
+      release = done
+    })
+    return { widths: [], resolve, release, hold: { folded, released } }
+  }
+
+  /**
+   * Let the columns a fold is standing over be unmounted.
+   *
+   * Called where the window has caught up, where the fold was superseded, and
+   * off a deadline — because the row standing at a width main never applied is
+   * the worse of the two states, and nothing here can make main answer.
+   */
+  function letGo(): void {
+    clearTimeout(overrun)
+    overrun = undefined
+    const held = holding
+    holding = []
+    for (const one of held) one.release()
+  }
 
   /**
    * A hidden window cannot advance the document timeline, so an animation
@@ -231,6 +295,7 @@ export function useShellFold(options: ShellFoldOptions) {
     const shell = options.shell()
     if (shell === null || still(shell)) {
       pending.resolve()
+      pending.release()
       return
     }
     // One style resolution for everything this fold reads off the element: the
@@ -273,6 +338,12 @@ export function useShellFold(options: ShellFoldOptions) {
         // ground that has already stopped moving.
         if (rail !== null) motion.release(rail)
         pinned = { box: folded + 2 * padding }
+        // The columns stay standing from here, and the shrink this resolves is
+        // what will eventually let them go. The bound is the latest fold's,
+        // which is the one the window still owes an answer to.
+        holding.push(pending)
+        clearTimeout(overrun)
+        overrun = setTimeout(letGo, PANEL_LEAVE_BOUND_MS)
       },
       pending.resolve
     )
@@ -286,22 +357,18 @@ export function useShellFold(options: ShellFoldOptions) {
    * three answers to the question of how wide it is. `null` when there is no
    * motion to wait for, which is the caller's cue to take the instant path.
    */
-  function hold(column: HTMLElement): Promise<void> | null {
+  function hold(column: HTMLElement): ShellFoldHold | null {
     const shell = options.shell()
     if (shell === null || still(shell)) return null
     if (batch === null) {
-      let resolve!: () => void
-      const promise = new Promise<void>((done) => {
-        resolve = done
-      })
-      batch = { widths: [], resolve, promise }
+      batch = leaving()
       // Measured a microtask later, when every column leaving in this patch has
       // registered: still inside the frame Vue is preparing, and with the row
       // it is measuring still intact.
       void Promise.resolve().then(begin)
     }
     batch.widths.push(column.getBoundingClientRect().width)
-    return batch.promise
+    return batch.hold
   }
 
   /**
@@ -371,6 +438,9 @@ export function useShellFold(options: ShellFoldOptions) {
       // What the row decides is the answer again, and holding the travel on top
       // of it would carry the rail out of the window main has just made.
       if (rail !== null) place(rail, 0)
+      // And the columns the fold was standing over may finally go: the row they
+      // repack now is the row this box was made for.
+      letGo()
     } else if (box === width) {
       // Nothing moved — a request that was refused, or one that only changed
       // the docked side. `painted` is left exactly as it was, which matters
@@ -410,6 +480,10 @@ export function useShellFold(options: ShellFoldOptions) {
     window.removeEventListener('resize', caughtUp)
     motion.dispose()
     batch?.resolve()
+    batch?.release()
+    // After `dispose`, which may have ended a fold still running and taken its
+    // columns into `holding` on the way past.
+    letGo()
   })
 
   return { hold, settle }
