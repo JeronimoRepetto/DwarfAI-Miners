@@ -774,24 +774,94 @@ describe('PosixTextDelivery.answerQuestionAtConsole', () => {
   })
 })
 
-// #481: the TYPED form of an answer — the person's own words for the picker's
-// "Other" row — was measured through the Windows console write only. On this
-// port the tab write has pressed digits and nothing else, so the words are
-// refused up front with `neverStarted`, and no key reaches anybody's tab.
+/*
+ * #481 on this port, after the 2026-09-18 measurement.
+ *
+ * The typed form is `[digit, words, Enter]` and its first two chunks must NOT
+ * submit. `do script` appends a Return to every call and has no form that
+ * appends none, so the tab write cannot express the sequence at all — measured
+ * live, both candidate shapes, both wrong and both silently (see the method).
+ *
+ * What CAN press a key without a Return is System Events, which is where the
+ * multi-select answer already goes. So the typed answer joins it rather than
+ * being refused as a special case: same preconditions, same refusals, one rule
+ * for every answer this tier cannot address.
+ */
 describe('PosixTextDelivery.answerQuestionAtConsole with a typed answer (#481)', () => {
-  it('refuses the typed form before any key is pressed, because it is unmeasured here', async () => {
+  function typing() {
     const sendKey = vi.fn().mockResolvedValue({ delivered: true })
     const sendText = vi.fn().mockResolvedValue(true)
     const focus = vi.fn().mockResolvedValue(true)
     const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText, sendKey } })
-    const outcome = await port.answerQuestionAtConsole({
+    return { sendKey, sendText, focus, port }
+  }
+
+  it('presses the typed answer key by key, behind a focus', async () => {
+    const { sendKey, sendText, focus, port } = typing()
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, chunks: ['4', 'in my words', '\r'] })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(sendText.mock.calls.map((call) => call[0])).toEqual(['4', 'in my words', '\r'])
+    // Never an Enter riding another chunk: the digit must land on the Other row
+    // WITHOUT submitting, which is the whole reason the tab write cannot do it.
+    expect(sendText.mock.calls.every((call) => call[1] === false)).toBe(true)
+    expect(sendKey).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The addressed route must never see it, and this is the assertion that
+   * matters most. Measured: one `do script` carrying the digit submitted an
+   * EMPTY Other answer, and one carrying digit-plus-words answered `Alpha` — an
+   * option nobody chose. Both arrive at the agent as the person's own answer.
+   */
+  it('never offers any chunk of it to the addressed tab write', async () => {
+    const { sendKey, port } = typing()
+    await port.answerQuestionAtConsole({ pid: 42, chunks: ['4', 'in my words', '\r'] })
+    expect(sendKey).not.toHaveBeenCalled()
+  })
+
+  it('refuses when the terminal will not come forward', async () => {
+    const sendText = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn().mockResolvedValue(false)
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText } })
+    const outcome = await port.answerQuestionAtConsole({ pid: 42, chunks: ['4', 'hi', '\r'] })
+    expect(outcome.delivered).toBe(false)
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('stops at the first chunk that will not go, rather than pressing the rest', async () => {
+    const sendText = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false)
+    const port = delivery({ consoleInput: { ...consoleInput(), sendText } })
+    const outcome = await port.answerQuestionAtConsole({ pid: 42, chunks: ['4', 'hi', '\r'] })
+    expect(outcome.delivered).toBe(false)
+    expect(sendText).toHaveBeenCalledTimes(2)
+  })
+
+  // #491's guard, stated at this port too rather than trusted from the caller:
+  // a chunk carrying something the picker would read as a key is refused, never
+  // sanitised, because a repaired answer is a sentence nobody wrote.
+  it('refuses chunks nothing may press, without focusing or typing', async () => {
+    const { sendText, focus, port } = typing()
+    const outcome = await port.answerQuestionAtConsole({ pid: 42, chunks: [] })
+    expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('refuses on a platform with no console input at all', async () => {
+    const outcome = await delivery({ platform: 'linux' }).answerQuestionAtConsole({
       pid: 42,
-      chunks: ['3', 'in my words', '\r']
+      chunks: ['4', 'hi', '\r']
     })
     expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
-    expect(outcome.error).toMatch(/not been measured/)
-    expect(sendKey).not.toHaveBeenCalled()
-    expect(sendText).not.toHaveBeenCalled()
-    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('never echoes the person s own words back in a refusal', async () => {
+    const outcome = await delivery({ platform: 'linux' }).answerQuestionAtConsole({
+      pid: 42,
+      chunks: ['4', 'my-secret-words', '\r']
+    })
+    expect(outcome.error).not.toContain('my-secret-words')
   })
 })
