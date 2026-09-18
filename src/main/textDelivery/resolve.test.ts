@@ -1049,3 +1049,75 @@ describe('resolving a resumed Codex thread (#450)', () => {
   })
 })
 /* --- end of the #450 block --------------------------------------------------- */
+
+/**
+ * The one dwarf whose send and kick part company over a fact about THIS
+ * PROCESS rather than about the session type (#457).
+ *
+ * While the opening `codex exec` a launch still holds is running, the thread
+ * behind it cannot take a second turn — `codex exec resume` on a thread
+ * already running one exits 1 at once. But the composer must stay live, which
+ * it was not before this issue: the runtime answered a plain 'launched-process'
+ * target and the send route refused it, so the person met a dead box.
+ *
+ * `heldResume` is how one walk still answers both halves. The SEND takes the
+ * resume the launch is standing in front of, because the panel can hold the
+ * message until that process exits; the KICK keeps the launch itself, because
+ * ending that process is the one act that reaches anything while it runs.
+ */
+describe('a launch whose opening process is still running (#457)', () => {
+  const heldLaunch: TextDeliveryTarget = {
+    kind: 'launched-process',
+    launchId: 'launch:1',
+    heldResume: { kind: 'codex-exec-resume', threadId: 'thread-a', cwd: '/mine' }
+  }
+
+  it('routes a message to the resume the launch is holding back', () => {
+    expect(resolveTextDelivery('codex:t1', targetsFrom({ 'codex:t1': heldLaunch }))).toEqual({
+      channel: 'codex-exec-resume',
+      endpoint: { kind: 'codex-exec-resume', threadId: 'thread-a', cwd: '/mine' },
+      prefix: ''
+    })
+  })
+
+  it('still routes a kick to the launch, which is what can be ended', () => {
+    expect(resolveKickDelivery('codex:t1', targetsFrom({ 'codex:t1': heldLaunch }))).toEqual({
+      channel: 'launched-process',
+      endpoint: { kind: 'launched-process', launchId: 'launch:1' },
+      prefix: ''
+    })
+  })
+
+  it('leaves a launch carrying no held resume refusing a message exactly as before', () => {
+    // Every other provider's launch, and a Codex one whose thread this panel
+    // cannot resume: the send is still refused, and #217's own copy still says
+    // why.
+    expect(
+      resolveTextDelivery(
+        'claude:t1',
+        targetsFrom({ 'claude:t1': { kind: 'launched-process', launchId: 'launch:1' } })
+      )
+    ).toBeNull()
+  })
+
+  it('stamps the composer live on that dwarf, and the exit beside it', () => {
+    const mines: Mine[] = [
+      {
+        id: 'mine-1',
+        path: '/mine',
+        name: 'mine',
+        tier: 'bronze',
+        dwarfs: [
+          { id: 'codex:t1', sessionId: 't1', provider: 'codex', status: 'working' } as Dwarf
+        ],
+        tokensObserved: 0
+      } as Mine
+    ]
+    const stamped = stampTextDelivery(mines, targetsFrom({ 'codex:t1': heldLaunch }))
+    const dwarf = stamped[0]!.dwarfs[0]!
+
+    expect(dwarf.textDelivery).toBe('codex-exec-resume')
+    expect(dwarf.capabilities?.sendText).toBe('codex-exec-resume')
+    expect(dwarf.capabilities?.cancel).toBe('launched-process')
+  })
+})

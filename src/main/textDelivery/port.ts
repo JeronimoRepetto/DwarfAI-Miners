@@ -85,7 +85,30 @@ export type TextDeliveryTarget =
        */
       interruptible: boolean
     }
-  | { kind: 'launched-process'; launchId: string }
+  | {
+      kind: 'launched-process'
+      launchId: string
+      /**
+       * The resume this launch is standing in front of, while its opening
+       * process still runs (#457).
+       *
+       * Present only for a Codex launch whose thread really can be resumed,
+       * and it is what lets ONE walk answer the send and the kick differently
+       * for the same dwarf. The SEND takes this endpoint — the panel holds the
+       * message and resumes the thread when that process exits, because
+       * `codex exec resume` on a thread already running a turn exits 1 at once
+       * (measured 2026-09-18, codex-cli 0.153.4) and Codex queues nothing. The
+       * KICK keeps the launch itself, because ending that process is the one
+       * act that reaches anything while it runs, and it is the person's later
+       * decision either way.
+       *
+       * Absent is the ordinary case and means exactly what a launched process
+       * has always meant: a message has nowhere to go (#217). Every other
+       * provider's launch, and a Codex one whose thread this panel cannot
+       * resume, keep that refusal and its copy unchanged.
+       */
+      heldResume?: Extract<TextDeliveryTarget, { kind: 'codex-exec-resume' }>
+    }
   | { kind: 'hosted-stdin'; hostedId: string }
   | {
       kind: 'codex-exec-resume'
@@ -376,6 +399,25 @@ export interface TextDeliveryOutcome {
    * cannot land in this state simply never sets it.
    */
   unconfirmed?: boolean
+  /**
+   * When the process this attempt started finally ENDED, for a tier whose act
+   * outlives its own verdict (#457) — today only the Codex resume.
+   *
+   * `codex exec resume` blocks for the whole model turn, so its outcome is
+   * taken at a short start window and the process runs on unobserved (see
+   * codexResume.ts). That was the whole of it until a second measurement:
+   * a resume started while a turn is already running on that thread exits 1
+   * at once, and Codex queues nothing — so somebody has to know when a turn
+   * ends, and the only thing that can is whatever holds the child. This is
+   * that fact, handed up.
+   *
+   * Resolves and never rejects; it reports an ENDING, not a verdict, and a
+   * turn that failed still ended. Optional and absent-by-default on exactly
+   * the terms `stages` is: a tier that cannot see its act end simply never
+   * sets it, and the runtime then tracks nothing rather than guessing — see
+   * `AgentRuntime.watchCodexTurn`. Nothing about the payload travels in here.
+   */
+  turnEnded?: Promise<void>
   /**
    * How long this tier's own stages took, when it measured them (issue #21).
    * Durations only — there is no way for a payload to travel in here. The
