@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
-import { darwinConsoleInputEnabled } from '../config/config'
+import { darwinConsoleInputOverride } from '../config/config'
 import type { ProbeCommand } from './processProbe'
 import type { EndProcessCommand } from './processEnd'
 import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
@@ -184,12 +184,11 @@ describe('createPlatformAdapters — text delivery', () => {
     expect(createPlatformAdapters(options('linux')).textDelivery.supportsConsoleInput).toBe(false)
   })
 
-  it('keeps the macOS console-input path gated off by default', () => {
-    // The osascript builders are unit-tested but not integration-verified, and
-    // System Events additionally needs Accessibility permission. Until that is
-    // checked on a real Mac the panel shows the honest disabled button rather
-    // than a send that silently does nothing.
-    expect(createPlatformAdapters(options('darwin')).textDelivery.supportsConsoleInput).toBe(false)
+  // AMENDED for #367 item 3: the maintainer flipped DARWIN_CONSOLE_INPUT_ENABLED
+  // to `true` on 2026-09-18, so with no override stated the path is now ON by
+  // default rather than gated off.
+  it('offers the macOS console-input path by default with no override stated', () => {
+    expect(createPlatformAdapters(options('darwin')).textDelivery.supportsConsoleInput).toBe(true)
   })
 
   it('can be switched on for macOS once it has been verified', async () => {
@@ -220,18 +219,29 @@ describe('createPlatformAdapters — text delivery', () => {
    * composed capability out — rather than trusting the two halves agree
    * because each is unit-tested on its own.
    */
+  // AMENDED for #367 item 3: darwinConsoleInputEnabled (a one-way opt-in) is
+  // now darwinConsoleInputOverride, a two-way override. Unset leaves the now
+  // `true` shipped default in charge; `0` forces it off; `1` forces it on
+  // (redundantly with the default, but exercising the forced-on branch too).
   it('flips supportsConsoleInput on darwin through the real env parser, end to end', () => {
-    const off = createPlatformAdapters(
-      options('darwin', { darwinConsoleInput: darwinConsoleInputEnabled({}) })
+    const unset = createPlatformAdapters(
+      options('darwin', { darwinConsoleInput: darwinConsoleInputOverride({}) })
     )
-    expect(off.textDelivery.supportsConsoleInput).toBe(false)
+    expect(unset.textDelivery.supportsConsoleInput).toBe(true)
 
-    const on = createPlatformAdapters(
+    const forcedOff = createPlatformAdapters(
       options('darwin', {
-        darwinConsoleInput: darwinConsoleInputEnabled({ DARWIN_CONSOLE_INPUT: '1' })
+        darwinConsoleInput: darwinConsoleInputOverride({ DARWIN_CONSOLE_INPUT: '0' })
       })
     )
-    expect(on.textDelivery.supportsConsoleInput).toBe(true)
+    expect(forcedOff.textDelivery.supportsConsoleInput).toBe(false)
+
+    const forcedOn = createPlatformAdapters(
+      options('darwin', {
+        darwinConsoleInput: darwinConsoleInputOverride({ DARWIN_CONSOLE_INPUT: '1' })
+      })
+    )
+    expect(forcedOn.textDelivery.supportsConsoleInput).toBe(true)
   })
 
   /*
@@ -279,12 +289,12 @@ describe('createPlatformAdapters — text delivery', () => {
     expect(seen.some((command) => command.args[1]?.includes('System Events'))).toBe(false)
   })
 
-  /*
-   * The default is still off, and the message tier must go with it: a darwin
-   * port composed without the switch states the refusal rather than writing.
-   */
+  // AMENDED for #367 item 3: the switch defaults on now, so this exercises the
+  // explicitly-forced-off branch instead of the old off-by-default one — the
+  // message tier must still go with the switch either way, and forcing it off
+  // here also keeps this test from ever shelling out to a real osascript.
   it('keeps the macOS message tier behind the same switch', async () => {
-    const adapters = createPlatformAdapters(options('darwin'))
+    const adapters = createPlatformAdapters(options('darwin', { darwinConsoleInput: false }))
     await expect(
       adapters.textDelivery.pasteToConsole?.({ pid: 42, text: 'hola', pressEnter: true })
     ).resolves.toMatchObject({ delivered: false, neverStarted: true })

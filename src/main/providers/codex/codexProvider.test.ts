@@ -117,10 +117,14 @@ function withThreadSpawn(rolloutText: string, parentSessionId: string, agentName
 describe('CodexProvider', () => {
   let fake: FakeFs
 
+  // AMENDED for #470: ROOT and every fixture here are Windows-shaped, so the
+  // provider needs 'win32' named explicitly rather than defaulting to the
+  // host running the suite (see platform-ports).
   function makeProvider(overrides: Partial<CodexProviderOptions> = {}): CodexProvider {
     return new CodexProvider({
       fs: fake,
       sessionsRoot: ROOT,
+      platform: 'win32',
       livenessWindowS: WINDOW_S,
       scanDays: 7,
       // Retention is additive to livenessWindowS; 0 extra seconds by default so

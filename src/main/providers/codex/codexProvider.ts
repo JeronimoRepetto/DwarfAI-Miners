@@ -1,11 +1,10 @@
-import { join } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
 import { isCodexProcessRunning as defaultIsCodexProcessRunning } from '../../platform/processProbe'
 import type { SqliteLike } from '../../adapters/sqliteLike'
 import { redactSecrets } from '../../domain/redactSecrets'
 import type { Dwarf, FeedMessage, FeedPageCursor, ProviderSnapshot } from '../../domain/types'
 import { pollProfiler } from '../../runtime/perf'
-import { currentPlatform, normalizePathKey, type Platform } from '../../platform/platform'
+import { currentPlatform, normalizePathKey, pathFor, type Platform } from '../../platform/platform'
 import {
   readFeedPage,
   readFeedWindow,
@@ -622,6 +621,7 @@ export class CodexProvider implements Provider {
       })
     }
 
+    const { join } = pathFor(this.platform)
     for (let daysAgo = 0; daysAgo < this.scanDays; daysAgo++) {
       const day = new Date(nowMs - daysAgo * 24 * 60 * 60 * 1_000)
       const dir = join(this.sessionsRoot, ...dateSegments(day))

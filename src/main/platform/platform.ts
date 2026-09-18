@@ -7,6 +7,8 @@
  * share, so it can be imported from anywhere without pulling an adapter in.
  */
 
+import { posix, win32 } from 'node:path'
+
 /** A platform family with its own adapter set. */
 export type Platform = 'win32' | 'darwin' | 'linux'
 
@@ -52,4 +54,17 @@ export function isCaseInsensitiveFs(platform: Platform): boolean {
 export function normalizePathKey(path: string, platform: Platform): string {
   const folded = platform === 'win32' ? path.replace(/\//g, '\\') : path
   return isCaseInsensitiveFs(platform) ? folded.toLowerCase() : folded
+}
+
+/**
+ * node:path's OS-specific submodule for `platform` — never the running
+ * host's (see platform-ports skill). Shared here rather than left local to
+ * `projects/worktree.ts` (its original home): every site that joins a path
+ * belonging to a `Platform` other than the host's own needs the same
+ * builder, and `node:path`'s bare `join`/`dirname` always reads the running
+ * host, which is wrong the moment the path in hand names a different one
+ * (#470).
+ */
+export function pathFor(platform: Platform): typeof posix {
+  return platform === 'win32' ? win32 : posix
 }

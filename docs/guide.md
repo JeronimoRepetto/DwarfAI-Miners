@@ -739,21 +739,24 @@ own.
 
 These are separate from the table above, and deliberately so: they are **real environment variables
 only**, never keys in `config-v1.json`. A debugging device does not belong in the file an installed
-app reads on every launch. Each is on for `1` or `true` and off for anything else.
+app reads on every launch. Each is on for `1` or `true` and off for anything else — except
+`DARWIN_CONSOLE_INPUT`, which is a two-way override (see below).
 
-| Variable               | What it prints                                                                                                        |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                           |
-| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                            |
-| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                          |
-| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                 |
-| `DARWIN_CONSOLE_INPUT` | Turns on the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. Shipped off (#367). |
+| Variable               | What it prints                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                              |
+| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                               |
+| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                             |
+| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                    |
+| `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367). |
 
 `DWARFAI_PERF` has to be a real environment variable even in a development checkout
 (`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
 arrives too late to be read. The other four work either way.
 
-`DARWIN_CONSOLE_INPUT` is an opt-in for testing macOS console input, and it switches on two
+`DARWIN_CONSOLE_INPUT` overrides the macOS console-input path in either direction: `=0` (or
+`=false`) forces it OFF, `=1` (or `=true`) forces it ON, and leaving it unset takes the shipped
+default, which is ON since the maintainer's 2026-09-18 decision (#367 item 3). It switches two
 mechanisms that ask for different permissions. A **message** is written into the Terminal.app tab
 the session's own tty names — no window is raised and no keystroke is synthesized, so macOS asks
 only for Automation permission to control Terminal, which it prompts for the first time a message

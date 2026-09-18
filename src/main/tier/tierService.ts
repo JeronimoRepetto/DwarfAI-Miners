@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
 import type { MineTier } from '../domain/types'
+import { currentPlatform, pathFor, type Platform } from '../platform/platform'
 
 /** Byte-size thresholds, expressed in KB, at which a mine upgrades to the next tier. */
 export interface TierThresholds {
@@ -164,17 +164,22 @@ function isSourceFile(name: string): boolean {
  * Every exclusion still spends one cap slot, matching the cap's own contract
  * of bounding files *visited* rather than bytes kept.
  *
- * Path segments are joined with `path.join`, never hand-rolled string
- * concatenation: a literal `\\` is not a separator on a POSIX filesystem, it
- * is one more character in a single bad filename, which silently zeroed this
- * walk's result on macOS/Linux.
+ * Path segments are joined with the joiner for `path`'s OWN platform, never
+ * hand-rolled string concatenation and never `node:path`'s bare `join` (which
+ * always reads the running host, wrong the moment `path` names a different
+ * one, see platform-ports): a literal `\\` is not a separator on a POSIX
+ * filesystem, it is one more character in a single bad filename, which
+ * silently zeroed this walk's result when a Windows-shaped path was measured
+ * from a macOS/Linux host (#470).
  */
 export async function sumSourceBytes(
   fs: FsLike,
   path: string,
   cap: number,
-  options: SumSourceBytesOptions = {}
+  options: SumSourceBytesOptions = {},
+  platform: Platform = currentPlatform()
 ): Promise<number> {
+  const { join } = pathFor(platform)
   let totalBytes = 0
   let filesSeen = 0
   const queue: string[] = [path]
@@ -266,6 +271,8 @@ export interface TierServiceOptions {
   debug?: boolean
   /** Debug-only: where the skip report is printed. Defaults to console.log. */
   log?: (line: string) => void
+  /** The platform the walked paths belong to (see platform-ports). Defaults to the running host. */
+  platform?: Platform
 }
 
 interface CacheEntry {
@@ -317,6 +324,7 @@ export class TierService {
   private readonly fileCap: number
   private readonly debug: boolean
   private readonly log: (line: string) => void
+  private readonly platform: Platform
   private readonly cache = new Map<string, CacheEntry>()
   private readonly inFlight = new Map<string, Promise<void>>()
 
@@ -328,6 +336,7 @@ export class TierService {
     this.fileCap = options.fileCap ?? DEFAULT_FILE_CAP
     this.debug = options.debug ?? tierDebugEnabled()
     this.log = options.log ?? ((line) => console.log(line))
+    this.platform = options.platform ?? currentPlatform()
   }
 
   /**
@@ -412,7 +421,7 @@ export class TierService {
           this.log(formatSkip(skipped))
         }
       : undefined
-    const totalBytes = await sumSourceBytes(this.fs, path, this.fileCap, { onSkip })
+    const totalBytes = await sumSourceBytes(this.fs, path, this.fileCap, { onSkip }, this.platform)
     if (this.debug) this.log(formatSkipSummary(path, totalBytes, counts))
     // No migration on upgrade: the vault seals each token delta with the
     // tier in force when it was observed (#22), so material already mined

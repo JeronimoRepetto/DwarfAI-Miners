@@ -127,10 +127,14 @@ describe('ClaudeProvider', () => {
   let fake: FakeFs
   let alivePids: Set<number>
 
+  // AMENDED for #470: every root and fixture path here is Windows-shaped, so
+  // the provider needs 'win32' named explicitly rather than defaulting to the
+  // host running the suite (see platform-ports).
   function makeProvider(roots = [ROOT1, ROOT2, MISSING_ROOT]): ClaudeProvider {
     return new ClaudeProvider({
       fs: fake,
       roots,
+      platform: 'win32',
       isPidAlive: (pid) => alivePids.has(pid),
       now: () => 99_000
     })
@@ -980,6 +984,8 @@ describe('ClaudeProvider', () => {
         return new ClaudeProvider({
           fs: fake,
           roots: [ROOT1],
+          // AMENDED for #470: see makeProvider above.
+          platform: 'win32',
           isPidAlive: (pid) => alivePids.has(pid),
           now: () => clock,
           foremanSilenceMs,
@@ -992,6 +998,8 @@ describe('ClaudeProvider', () => {
         return new ClaudeProvider({
           fs: fake,
           roots: [ROOT1],
+          // AMENDED for #470: see makeProvider above.
+          platform: 'win32',
           isPidAlive: (pid) => alivePids.has(pid),
           now: () => clock
         })
@@ -4112,6 +4120,8 @@ describe('ClaudeProvider', () => {
       const provider = new ClaudeProvider({
         fs,
         roots: [ROOT1],
+        // AMENDED for #470: see makeProvider above.
+        platform: 'win32',
         isPidAlive: (pid) => alivePids.has(pid),
         now: () => 99_000
       })
@@ -4149,6 +4159,8 @@ describe('ClaudeProvider', () => {
       const provider = new ClaudeProvider({
         fs,
         roots: [ROOT1],
+        // AMENDED for #470: see makeProvider above.
+        platform: 'win32',
         isPidAlive: (pid) => alivePids.has(pid),
         now: () => 99_000
       })
@@ -4171,6 +4183,8 @@ describe('ClaudeProvider', () => {
       const provider = new ClaudeProvider({
         fs,
         roots: [ROOT1],
+        // AMENDED for #470: see makeProvider above.
+        platform: 'win32',
         isPidAlive: (pid) => alivePids.has(pid),
         now: () => 99_000
       })
