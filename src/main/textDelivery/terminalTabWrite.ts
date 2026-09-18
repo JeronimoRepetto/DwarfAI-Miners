@@ -78,18 +78,33 @@ export const MAX_TERMINAL_TAB_PAYLOAD_CODE_POINTS = 32_768
 /**
  * How long the script waits between the payload call and the submit call.
  *
- * A margin, not the mechanism — the sibling of `CHUNK_SPLIT_DELAY_MS` in
- * `consoleInputWrite.ts`, and it carries the same 50 ms for the same reason.
- * What submits is that the Return arrives in a call of its OWN, not that
- * anything was waited out; the pause only insures against the two calls being
- * coalesced into one read while the receiving process is busy, which would put
- * the Return back inside the paste. Measured at 54 ms apart in the receiver on
- * 2026-09-18.
+ * **A margin, not the mechanism**, and that has not changed — the sibling of
+ * `CHUNK_SPLIT_DELAY_MS` in `consoleInputWrite.ts`. What submits is that the
+ * Return arrives in a call of its OWN; the pause only insures against the two
+ * calls being coalesced into one read while the receiving process is busy,
+ * which would put the Return back inside the paste and reinstate the bug the
+ * second call exists to fix.
+ *
+ * **50 ms turned out to be too thin a margin, and where it failed says why.**
+ * Observed by the maintainer on 2026-09-18: with the target tab in FRONT every
+ * message submitted, and with another Terminal window in front of it the
+ * message was pasted and left sitting until they pressed Enter by hand. A
+ * background tab is exactly where the first call lands slower — it is the case
+ * the margin is for, so the one that finds it too small. 200 ms is the new
+ * margin, still comfortably under half a second end to end for an act a person
+ * is waiting through.
+ *
+ * Note what the number is NOT derived from. A raw-mode reader shows both calls
+ * arriving as two separate reads at either value — probed the same day in a
+ * background tab, 55 ms apart at `0.05` and 204/208/212 ms apart at `0.2` — so
+ * it cannot show this failure at all, exactly as it could not show #404's. The
+ * evidence is the live TUI's behaviour and nothing else; the probe only
+ * confirms the delay is real and costs what it says.
  *
  * In AppleScript `delay` takes SECONDS, so this is written as seconds and
  * named that way rather than silently being a thousandth of the Windows one.
  */
-const SUBMIT_SPLIT_DELAY_SECONDS = 0.05
+const SUBMIT_SPLIT_DELAY_SECONDS = 0.2
 
 /**
  * The AppleScript: find the tab whose tty is the first argument, put the second

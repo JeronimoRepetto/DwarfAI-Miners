@@ -66,15 +66,25 @@ describe('buildTerminalTabWriteCommand', () => {
    *
    * So the submit is the SECOND call, as on Windows. The delay between them is
    * only a margin against the two being coalesced into one read.
+   *
+   * AMENDED for the margin change: the pinned delay string was `delay 0.05`
+   * and is `delay 0.2`. Pinned here rather than read off the constant, the way
+   * `consoleInputWrite.test.ts` pins its own — a test that imported the value
+   * would agree with any edit to it, including one nobody meant. The name and
+   * every other assertion are untouched; what this proves is the ORDER (payload,
+   * then the wait, then the submit), and only the literal moved.
    */
+  const EXPECTED_SUBMIT_SPLIT_DELAY = 'delay 0.2'
+
   it('follows the payload with a second do script, so the Return is a submit and not paste content', () => {
     const script = buildTerminalTabWriteCommand('/dev/ttys001', 'hola mundo', true)?.args[1] ?? ''
     expect(script.match(/do script .* in t/g)).toHaveLength(2)
     expect(script).toContain('do script payloadText in t')
     expect(script).toContain('do script "" in t')
     const payloadCall = script.indexOf('do script payloadText in t')
-    const delay = script.indexOf('delay 0.05')
+    const delay = script.indexOf(EXPECTED_SUBMIT_SPLIT_DELAY)
     const submitCall = script.indexOf('do script "" in t')
+    expect(delay).toBeGreaterThan(-1)
     expect(payloadCall).toBeLessThan(delay)
     expect(delay).toBeLessThan(submitCall)
   })

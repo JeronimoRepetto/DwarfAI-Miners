@@ -1671,13 +1671,33 @@ read as the opposite of the Windows rule above, wrongly, for the few hours betwe
    > submitted**, and two consecutive messages concatenated there until the maintainer pressed Enter
    > by hand. That is #404 verbatim on a second platform — Ink reads a multi-character chunk arriving
    > in one read as a paste, and inside a paste a carriage return is line content, not a submit
-   > gesture. The fix is #404's: a second `do script "" in t` into the same tab, `delay 0.05` after
+   > gesture. The fix is #404's: a second `do script "" in t` into the same tab, `delay 0.2` after
    > the first, both inside ONE osascript script so it stays one process and one Automation event.
    > Re-probed against the raw reader the same day: two reads, 54 ms apart, the first carrying the
    > bracketed paste and its trailing `\r`, the second carrying a bare `\r`. The Enter-only write
    > (empty payload) stays one call, because that call's own Return is the whole act. **The general
    > lesson, and it has now cost two platforms: a raw-mode receiver that treats a lone `\r` as a
    > submit proves nothing about a TUI that treats a paste as a paste.**
+   >
+   > **Margin raised 0.05 → 0.2 the same day, and WHERE it failed is the finding.** With the target
+   > tab in FRONT every message submitted; with another Terminal window in front of it, the message
+   > was pasted and left sitting until the maintainer pressed Enter by hand. A background tab is
+   > exactly where the first call lands slower, so it is the case the margin exists for and the one
+   > that found 50 ms too thin. 200 ms is still comfortably under half a second end to end.
+   >
+   > Re-probed against the raw reader in a **background** tab, with a second Terminal window
+   > frontmost, on 2026-09-18:
+   >
+   > | `delay` | Gap between the two reads           |
+   > | ------- | ----------------------------------- |
+   > | `0.05`  | 55 ms                               |
+   > | `0.2`   | 204 ms, 208 ms, 212 ms (three runs) |
+   >
+   > Both values produced two separate reads there, which is the point worth writing down rather
+   > than the timings: **the raw reader cannot reproduce this failure either**, for the same reason
+   > it could not reproduce #404's. The evidence for the change is the live TUI's behaviour alone;
+   > the probe only confirms the delay is real and costs what it claims. The lesson above did not
+   > need a third platform to be restated — it needed the same platform twice.
 
 2. **A key that must not submit was assumed not to fit this tier at all.** #203's permission digit
    fires its row by itself and #402's picker keys toggle without confirming; a Return behind either
