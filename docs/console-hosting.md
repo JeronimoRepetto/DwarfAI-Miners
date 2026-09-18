@@ -1662,21 +1662,72 @@ the one that names its own fix.
 
 #### Every call appends exactly ONE carriage return, and that decides the shape
 
-There is no form of `do script` that appends none. Two consequences, and they are the opposite of
-the Windows rules above:
+There is no form of `do script` that appends none. Two consequences — and the first of them was
+read as the opposite of the Windows rule above, wrongly, for the few hours between the scratch-tab probe and the first send from the panel:
 
-1. **A message must travel as ONE call.** The attachment pastes, the words and their embedded
-   newlines all go into a single payload, and that one appended Return submits the lot once. Where
-   §6's Windows write needs a call boundary to make a keystroke a keystroke (#404, #402), here the
-   call boundary IS the Return, so a second call would be a second submit. Against §6's own finding
-   that a bracketed-paste image path attaches the image and a multi-line paste stays one prompt, the
-   single call is also the shape that keeps both true.
-2. **A key that must not submit cannot use this tier at all.** #203's permission digit fires its row
-   by itself and #402's picker keys toggle without confirming; a Return behind either would submit
-   whatever the composer then holds. Those stay on the System Events keystroke path, with its
-   foreground precondition and its Accessibility permission. The split is stated rather than
-   papered over: on macOS the panel can now write a message into a background tab and still be
-   unable to answer a permission prompt in it.
+1. **A message's words must travel as ONE call.** The attachment pastes, the words and their
+   embedded newlines all go into a single payload. Against §6's own finding that a bracketed-paste
+   image path attaches the image and a multi-line paste stays one prompt, the single payload call is
+   the shape that keeps both true.
+
+   > **Corrected 2026-09-18 — the payload's own Return does NOT submit, and this tier needs a second
+   > call exactly as Windows does (#404).** On 2026-09-18 this section read "the call boundary IS the
+   > Return, so a second call would be a second submit", offered as the exact inverse of the Windows
+   > rule. It was true of the raw-mode node reader above and false of a real TUI. Measured from the
+   > panel on 2026-09-18 against a live Claude Code session (main `5553765`, console input on by
+   > default): every message arrived in the composer as the person's own text and **none of them
+   > submitted**, and two consecutive messages concatenated there until the maintainer pressed Enter
+   > by hand. That is #404 verbatim on a second platform — Ink reads a multi-character chunk arriving
+   > in one read as a paste, and inside a paste a carriage return is line content, not a submit
+   > gesture. The fix is #404's: a second `do script "" in t` into the same tab, `delay 0.05` after
+   > the first, both inside ONE osascript script so it stays one process and one Automation event.
+   > Re-probed against the raw reader the same day: two reads, 54 ms apart, the first carrying the
+   > bracketed paste and its trailing `\r`, the second carrying a bare `\r`. The Enter-only write
+   > (empty payload) stays one call, because that call's own Return is the whole act. **The general
+   > lesson, and it has now cost two platforms: a raw-mode receiver that treats a lone `\r` as a
+   > submit proves nothing about a TUI that treats a paste as a paste.**
+
+2. **A key that must not submit was assumed not to fit this tier at all.** #203's permission digit
+   fires its row by itself and #402's picker keys toggle without confirming; a Return behind either
+   looked like it would submit whatever the composer then holds, so all of them stayed on the System
+   Events keystroke path with its foreground precondition and its Accessibility permission.
+
+   > **Measured 2026-09-18 — a single digit DOES fit, and the appended Return is the confirmation
+   > rather than a stray submit (#471).** The assumption above was never measured; it was inferred
+   > from the message shape. Answered through the tab write, against a live Claude Code session:
+   >
+   > |       | Prompt                           | Sent through `do script` | What happened                                                                                                                                                                                   |
+   > | ----- | -------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   > | **A** | Permission dialog                | `4` (No)                 | The dialog closed cleanly. The appended Return was **consumed as the confirmation** — it did not fall through into anything behind the dialog.                                                  |
+   > | **B** | `AskUserQuestion`, single-select | `2`                      | Selected **and** confirmed, in that one call. Same shape as A.                                                                                                                                  |
+   > | **C** | `AskUserQuestion`, multi-select  | `1`, then `1` + Return   | Only partly addressable: the digit **toggled late**, and digit-plus-Return **did not submit**. Submitting needs a **Tab and then a digit** — a sequence nobody has measured through this route. |
+   >
+   > So the routing rule is drawn at the shape that was measured, and no wider: **exactly one digit
+   > `1`–`9` takes the tab write as ONE call** (`submits: false` — the digit is read as a keystroke,
+   > not a paste, so #404's second call does not apply to it and would press Return twice).
+   > **Everything else is handed back to the keystroke path unchanged**: several digits, the Tab,
+   > the cursor-right of #402, the Escape of a deny, and any text that is not one digit. The
+   > adapter says "not mine" by answering `null` rather than by failing, so a key it does not take
+   > is never refused on the tab's behalf — and a key it DOES take is never retried by typing at
+   > the front window when the tab cannot be named, which is #329's refusal arriving on this route.
+   >
+   > Case C is the reason the line is not drawn one step further. Guessing the Tab sequence would
+   > answer a multi-select with a toggle nobody confirmed, which is worse than the keystroke path's
+   > honest preconditions.
+   >
+   > The POSIX port carries an answer tier at all from the same change (#471); it had none before,
+   > and the runtime stated the whole tier as missing. **One caveat that has not been measured
+   > here:** the multi-select route falls back to System Events keystrokes pressing
+   > `questionAnswerChunks`' own sequence — the digits, then `ESC [ C`, then Return — which was
+   > measured live on **Windows** at #402. That measurement is about what the PICKER reads rather
+   > than about ConPTY, so it is the best available shape, but nobody has pressed it through System
+   > Events on macOS, and case C above found a _different_ gesture (Tab, then a digit) through
+   > `do script`. A refusal from that route is honest; a success is not yet proof.
+
+   The split is stated rather than papered over, and it is narrower than it was: on macOS the panel
+   can now answer a **permission prompt** and a **single-select picker** in a background tab, with
+   Automation permission alone and no window raised, and it still needs the window in front and
+   Accessibility permission to answer a **multi-select**.
 
 #### The payload rides argv, so no user text is ever escaped
 

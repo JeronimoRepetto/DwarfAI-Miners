@@ -11262,9 +11262,17 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
   })
 
   it('refuses on a port without the tier, and says so rather than doing nothing', async () => {
-    // An absent optional port method is a per-OS answer: POSIX has no arrow
-    // key behind its console adapter yet, so it omits the method and the
-    // runtime states that instead of failing silently (#367).
+    /*
+     * AMENDED for #471 — the name and every assertion are untouched, the reason
+     * in this comment is not. It read "POSIX has no arrow key behind its
+     * console adapter yet, so it omits the method", which was the live example
+     * of an absent tier and is one no longer: BOTH shipped ports implement it
+     * now, POSIX since #471. What this pins is the RUNTIME's handling of an
+     * absent optional method, which is contract rather than platform — the
+     * method stays optional on `TextDeliveryPort`, and a port that omits it
+     * must be stated rather than failing silently. The fake omits it
+     * deliberately; no shipped port does.
+     */
     const port = fakePort({ answerQuestionAtConsole: undefined })
     const { runtime } = await runtimeWith({ port })
 

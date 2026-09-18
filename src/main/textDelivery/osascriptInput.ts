@@ -100,6 +100,27 @@ export interface ConsoleInputAdapter {
    * refusals decide whether the relay may send the same words again.
    */
   sendMessage?(request: ConsoleMessageRequest): Promise<ConsoleMessageOutcome>
+  /**
+   * Press ONE key in the console at `pid`, ADDRESSED rather than typed — or
+   * answer `null` for a key this route cannot carry (#471).
+   *
+   * `null` is the load-bearing part, and it is a third answer rather than a
+   * refusal: it means "not mine", and the caller then takes the keystroke path
+   * above exactly as it did before this method existed. Only an OUTCOME is an
+   * answer about the console — a key written, or a named reason it was not.
+   *
+   * That distinction is what lets the two live together honestly. A key this
+   * route accepts must never quietly fall back to typing at whatever window is
+   * in front when its tab cannot be named (#329); a key it does not accept must
+   * never be refused on that tab's behalf, because the keystroke path may still
+   * reach it. Collapsing `null` into a failed outcome would lose one of those,
+   * and collapsing it into a delivered one would lose the key.
+   *
+   * Which keys are which is the adapter's own measurement, never the caller's
+   * guess — see `createDarwinConsoleInput`, where today the answer is "exactly
+   * one digit".
+   */
+  sendKey?(request: ConsoleMessageRequest): Promise<ConsoleMessageOutcome | null>
 }
 
 /** The macOS console input adapter. Any osascript failure is reported as false. */

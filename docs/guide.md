@@ -769,9 +769,15 @@ default, which is ON since the maintainer's 2026-09-18 decision (#367 item 3). I
 mechanisms that ask for different permissions. A **message** is written into the Terminal.app tab
 the session's own tty names — no window is raised and no keystroke is synthesized, so macOS asks
 only for Automation permission to control Terminal, which it prompts for the first time a message
-is sent. A **permission or question key** cannot take that route (`do script` always appends a
-Return, and those keys must not submit), so it stays a System Events keystroke at the foreground
-and needs Accessibility permission, which the app cannot detect and will not prompt for.
+is sent. A **permission decision or a single-select question answer** takes the same route, for the
+same one permission: it is a single digit, and the Return `do script` appends is what the dialog
+consumes as the confirmation (measured 2026-09-18). A **multi-select question answer** cannot —
+submitting one needs a Tab and then a digit, a sequence nobody has measured through this route — so
+it stays a System Events keystroke at the foreground and needs Accessibility permission, which the
+app cannot detect and will not prompt for.
+
+So on macOS the panel answers a permission prompt in a tab you are not looking at, and still asks
+for the window to be in front to answer a multi-select picker.
 
 A shared terminal window is refused rather than guessed at now: a tab is matched by tty, so several
 tabs are fine. What is NOT covered is a terminal other than Terminal.app — iTerm2, WezTerm,

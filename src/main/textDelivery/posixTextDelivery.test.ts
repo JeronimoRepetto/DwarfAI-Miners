@@ -558,3 +558,218 @@ describe('PosixTextDelivery.pasteToConsole', () => {
     expect(outcome.error).not.toContain('my-secret-payload')
   })
 })
+
+/*
+ * The KEY route through `sendToConsole` (#471).
+ *
+ * The port offers the adapter the key first and only focuses when the adapter
+ * hands it back. That ordering is the whole point: focusing before asking would
+ * steal the foreground for a key that was never going to need it, which is the
+ * same mistake the no-console-input branch above already refuses to make.
+ */
+describe('PosixTextDelivery.sendToConsole through an addressed key route', () => {
+  function keyed(answer: unknown) {
+    const sendKey = vi.fn().mockResolvedValue(answer)
+    const sendText = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn().mockResolvedValue(true)
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText, sendKey } })
+    return { sendKey, sendText, focus, port }
+  }
+
+  it('lets the adapter write the key, and focuses nothing when it does', async () => {
+    const { sendKey, sendText, focus, port } = keyed({ delivered: true })
+    await expect(
+      port.sendToConsole({ pid: 42, text: '4', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendKey).toHaveBeenCalledWith({ pid: 42, text: '4', pressEnter: false })
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('carries the adapter s refusal through instead of retrying by keystroke', async () => {
+    const { sendText, focus, port } = keyed({
+      delivered: false,
+      error: 'no tab',
+      neverStarted: true
+    })
+    await expect(
+      port.sendToConsole({ pid: 42, text: '4', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: false, error: 'no tab', neverStarted: true })
+    // A named refusal is an answer, not a reason to type at the front window.
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('falls back to focus and keystrokes when the adapter hands the key back', async () => {
+    const { sendKey, sendText, focus, port } = keyed(null)
+    const cursorRight = '[C'
+    await expect(
+      port.sendToConsole({ pid: 42, text: cursorRight, pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendKey).toHaveBeenCalled()
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(sendText).toHaveBeenCalledWith(cursorRight, false)
+  })
+
+  it('keeps the keystroke path exactly as it was for an adapter with no key route', async () => {
+    const input = consoleInput()
+    const focus = vi.fn().mockResolvedValue(true)
+    const port = delivery({ focus, consoleInput: input })
+    await expect(
+      port.sendToConsole({ pid: 42, text: '1', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(input.sendText).toHaveBeenCalledWith('1', false)
+  })
+
+  it('never echoes the key back in a refusal', async () => {
+    const { port } = keyed({ delivered: false, error: 'no tab', neverStarted: true })
+    const outcome = await port.sendToConsole({ pid: 42, text: '7', pressEnter: false })
+    expect(outcome.error).toBe('no tab')
+  })
+})
+
+/*
+ * The ANSWER tier (#471), which this port did not carry until now.
+ *
+ * Its absence was a per-OS answer while it was true: `ConsoleInputAdapter`
+ * could press a key at the foreground and nothing else, so a multi-select's
+ * confirmation had no shape here and the runtime stated the whole tier as
+ * missing rather than offering half of it (NO_ANSWER_KEYSTROKE_TIER). The tab
+ * write changed what is true for ONE of the two gestures, so the tier exists
+ * now and the split moved inside it.
+ */
+describe('PosixTextDelivery.answerQuestionAtConsole', () => {
+  const CURSOR_RIGHT = '[C'
+
+  function answering(sendKeyAnswer: unknown = { delivered: true }) {
+    const sendKey = vi.fn().mockResolvedValue(sendKeyAnswer)
+    const sendText = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn().mockResolvedValue(true)
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText, sendKey } })
+    return { sendKey, sendText, focus, port }
+  }
+
+  it('offers the tier at all, which is the whole of this change', () => {
+    expect(typeof delivery({ platform: 'darwin' }).answerQuestionAtConsole).toBe('function')
+  })
+
+  // A single-select is one digit and no confirmation — the shape measured to
+  // fire and confirm in one addressed call.
+  it('writes a single-select answer through the addressed key route', async () => {
+    const { sendKey, sendText, focus, port } = answering()
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, digits: ['2'], submit: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendKey).toHaveBeenCalledWith({ pid: 42, text: '2', pressEnter: false })
+    // The point of the route: no window is raised to answer a picker.
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('carries the addressed route s refusal through, never retrying by keystroke', async () => {
+    const { sendText, focus, port } = answering({
+      delivered: false,
+      error: 'no tab',
+      neverStarted: true
+    })
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, digits: ['2'], submit: false })
+    ).resolves.toMatchObject({ delivered: false, error: 'no tab', neverStarted: true })
+    // A digit in the wrong tab does not interrupt a stranger's turn, it CHOOSES
+    // an option in it — so a named refusal must never fall through to typing.
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  /*
+   * A multi-select is several digits plus the confirmation, and none of that is
+   * addressable: measured 2026-09-18, the digit toggled late through the tab
+   * write and digit-plus-Return did not submit. It takes the keystroke path,
+   * one key per call the way #402 requires, behind the foreground.
+   */
+  it('types a multi-select answer key by key, behind a focus', async () => {
+    const { sendKey, sendText, focus, port } = answering()
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, digits: ['1', '3'], submit: true })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendKey).not.toHaveBeenCalled()
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(sendText.mock.calls.map((call) => call[0])).toEqual(['1', '3', CURSOR_RIGHT, '\r'])
+    // Never an Enter riding another key: each is its own press (#404, #402).
+    expect(sendText.mock.calls.every((call) => call[1] === false)).toBe(true)
+  })
+
+  // One digit that still needs a confirmation is a multi-select with a single
+  // toggle, not a single-select. It must not take the route that fires a row.
+  it('keeps a single toggle that still needs confirming on the keystroke path', async () => {
+    const { sendKey, sendText, port } = answering()
+    await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: true })
+    expect(sendKey).not.toHaveBeenCalled()
+    expect(sendText.mock.calls.map((call) => call[0])).toEqual(['1', CURSOR_RIGHT, '\r'])
+  })
+
+  it('falls back to keystrokes when the adapter hands a single digit back', async () => {
+    const { sendText, focus, port } = answering(null)
+    await expect(
+      port.answerQuestionAtConsole({ pid: 42, digits: ['2'], submit: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(sendText.mock.calls.map((call) => call[0])).toEqual(['2'])
+  })
+
+  it('refuses when the terminal will not come forward for a keystroke answer', async () => {
+    const sendText = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn().mockResolvedValue(false)
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText } })
+    const outcome = await port.answerQuestionAtConsole({ pid: 42, digits: ['1'], submit: true })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.error).toBeTruthy()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('stops at the first key that will not go, rather than pressing the rest', async () => {
+    const sendText = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false)
+    const port = delivery({ consoleInput: { ...consoleInput(), sendText } })
+    const outcome = await port.answerQuestionAtConsole({
+      pid: 42,
+      digits: ['1', '3'],
+      submit: true
+    })
+    expect(outcome.delivered).toBe(false)
+    expect(sendText).toHaveBeenCalledTimes(2)
+  })
+
+  /*
+   * Linux, unchanged: no console adapter, so no answer can be pressed at all.
+   * The tier now EXISTS on this class, so the refusal has to be a value rather
+   * than the method's absence — the same move `pasteToConsole` already made.
+   */
+  it('refuses on a platform with no console input, and says nothing was pressed', async () => {
+    const outcome = await delivery({ platform: 'linux' }).answerQuestionAtConsole({
+      pid: 42,
+      digits: ['1'],
+      submit: false
+    })
+    expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
+    expect(outcome.error).toBeTruthy()
+  })
+
+  it('refuses digits nothing may press, without focusing or typing', async () => {
+    const { sendKey, sendText, focus, port } = answering()
+    const outcome = await port.answerQuestionAtConsole({ pid: 42, digits: [], submit: true })
+    expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
+    expect(sendKey).not.toHaveBeenCalled()
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('never echoes an option digit back in a refusal', async () => {
+    const outcome = await delivery({ platform: 'linux' }).answerQuestionAtConsole({
+      pid: 42,
+      digits: ['7'],
+      submit: false
+    })
+    expect(outcome.error).not.toContain('7')
+  })
+})

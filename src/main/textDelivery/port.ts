@@ -561,13 +561,22 @@ export interface TextDeliveryPort {
    * write: one child process, one attach, one `WriteConsoleInput` call per key
    * (#402).
    *
-   * Optional for the reason `pasteToConsole` is, and its absence states the
-   * same kind of per-OS fact rather than a gap somebody forgot: only the
-   * Windows port implements it. The POSIX ConsoleInputAdapter has no arrow key
-   * to press, so a multi-select could not be confirmed there and a
-   * single-select tier alone would be one act behind a label that promises two
-   * — see #367, which is where that key belongs. The runtime turns the absence
-   * into a stated refusal (NO_ANSWER_KEYSTROKE_TIER), never a silent no-op.
+   * Optional for the reason `pasteToConsole` is, and an absence would state the
+   * same kind of per-OS fact rather than a gap somebody forgot — the runtime
+   * turns it into a stated refusal (NO_ANSWER_KEYSTROKE_TIER), never a silent
+   * no-op. BOTH shipped ports implement it now, so no shipped platform takes
+   * that branch; it remains optional because the contract, not the current
+   * roster, is what this describes.
+   *
+   * The POSIX one arrived at #471 and is worth reading for HOW. It was absent
+   * because that adapter could only press keys at the foreground, so a
+   * multi-select's confirmation had no shape and a single-select tier alone
+   * would have been one act behind a label promising two. What changed is that
+   * premise rather than the argument: the adapter can ADDRESS a console now, so
+   * a single-select is answered by an addressed write with no window raised,
+   * and a multi-select still takes keystrokes behind a focus. The split moved
+   * INSIDE that port, where the two gestures can be told apart, instead of
+   * standing between two platforms where they could not.
    *
    * An implementation that SYNTHESIZES these keys at a window must refuse a
    * shared terminal window exactly as sendInterrupt does (#329), because a digit
