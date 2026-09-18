@@ -719,7 +719,16 @@ export class CodexProvider implements Provider {
     // so no thread can be in both and the order decides nothing.
     const resume = this.resumeTargets.get(dwarfId)
     if (resume === undefined) return null
-    return { kind: 'codex-exec-resume', threadId: resume.threadId, cwd: resume.cwd }
+    return {
+      kind: 'codex-exec-resume',
+      threadId: resume.threadId,
+      cwd: resume.cwd,
+      // The thread's own observed pair (#462, D2), carried from the address
+      // onto the endpoint every delivery channel is resolved through — see
+      // resume.ts's CodexResumeAddress for why this is a record, not a claim.
+      ...(resume.model === undefined ? {} : { model: resume.model }),
+      ...(resume.effort === undefined ? {} : { effort: resume.effort })
+    }
   }
 
   /**
@@ -820,6 +829,17 @@ export class CodexProvider implements Provider {
     ) {
       context.queueTargets.set(dwarfId, thread.threadId)
     }
+    // ONE reading of what this thread's own label shows (#462, D4), fed to
+    // BOTH the resume address below and mainDwarf beneath it. A resume the
+    // panel sends must name the same pair the label shows: computed
+    // separately, the two could disagree, and a resumed turn starting at a
+    // pair different from the one on screen would move the label the very
+    // next scan and look like a flip nobody asked for. Tail-wins is
+    // untouched — a real `/model` still shows — because both are recomputed
+    // every scan from the same registry/rollout reading.
+    const model = thread?.model ?? rollout?.info.model
+    const effort = thread?.effort ?? rollout?.info.effort
+
     // The other half of the same row, and never both (#450): the thread a
     // resume reaches is exactly the one the queue refuses. Keyed on the
     // registry for the reason above — `source` is a registry fact, and a
@@ -830,7 +850,15 @@ export class CodexProvider implements Provider {
       thread !== undefined &&
       canResumeCodexThread(thread.sourceTag === undefined ? {} : { sourceTag: thread.sourceTag })
     ) {
-      context.resumeTargets.set(dwarfId, { threadId: thread.threadId, cwd })
+      context.resumeTargets.set(dwarfId, {
+        threadId: thread.threadId,
+        cwd,
+        // The thread's own record (#462, D2) — not a claim about what the
+        // NEXT turn will run. Omitted rather than `undefined` so a bare
+        // address (neither key present) stays bare for a `toEqual` caller.
+        ...(model === undefined ? {} : { model }),
+        ...(effort === undefined ? {} : { effort })
+      })
     }
 
     const mainDwarf: Dwarf = {
@@ -842,8 +870,8 @@ export class CodexProvider implements Provider {
       // applies an edge first read in THIS scan.
       role: this.parentSessions.has(sessionId) ? 'foreman' : 'worker',
       name: thread?.agentName ?? rollout?.head.agentName ?? `codex-${sessionId.slice(0, 8)}`,
-      model: thread?.model ?? rollout?.info.model,
-      effort: thread?.effort ?? rollout?.info.effort,
+      model,
+      effort,
       // Codex exposes no structured "alive but blocked mid-turn" evidence: an
       // approval prompt writes nothing at all while it waits, and logs_2.sqlite
       // records only the decision that ended one (re-measured on 0.153.4 over
