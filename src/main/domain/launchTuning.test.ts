@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROVIDER_EFFORT_LEVELS, parseLaunchTuning } from './launchTuning'
+import { PROVIDER_EFFORT_LEVELS, codexTuningArgs, parseLaunchTuning, resumeTuning } from './launchTuning'
 
 describe('PROVIDER_EFFORT_LEVELS', () => {
   /*
@@ -165,5 +165,99 @@ describe('parseLaunchTuning', () => {
     // Half a tuning is a launch nobody asked for: the model would be honoured
     // and the effort silently dropped, at a cost the user cannot see.
     expect(parseLaunchTuning('codex', { model: 'gpt-5.6-sol', effort: 'nope' })).toBeNull()
+  })
+})
+
+describe('codexTuningArgs', () => {
+  /*
+   * Issue #462. One argv fragment, shared by the launch (`buildCodexLaunchArgs`)
+   * and the resume (`buildCodexResumeArgs`), so the key can only be spelled in
+   * one place. `-c model_reasoning_effort=<level>` is Codex's own config key
+   * (`launch.ts:156-159`) — there is no `--effort` flag to fall back on, so a
+   * typo here would silently be TOML nobody reads rather than a compile error.
+   */
+  it('carries nothing when neither field was asked for', () => {
+    expect(codexTuningArgs({})).toEqual([])
+  })
+
+  it('carries the model as its own flag pair', () => {
+    expect(codexTuningArgs({ model: 'gpt-5.6-sol' })).toEqual(['-m', 'gpt-5.6-sol'])
+  })
+
+  it('carries the effort as a config override, spelled exactly as Codex documents the key', () => {
+    // The literal string is asserted, not just the tuple shape: a rename of
+    // this key would fail here even though a `toEqual` on the pair alone
+    // would happily pass a differently-spelled TOML key.
+    expect(codexTuningArgs({ effort: 'high' })).toEqual(['-c', 'model_reasoning_effort=high'])
+    expect(codexTuningArgs({ effort: 'high' })[1]).toContain('model_reasoning_effort=')
+  })
+
+  it('puts the model pair before the effort pair when both are present', () => {
+    // The measured clap trap (`codexResume.test.ts:49-53`): Codex reads
+    // options left to right, so the ORDER here is load-bearing, not cosmetic.
+    expect(codexTuningArgs({ model: 'gpt-5.6-sol', effort: 'high' })).toEqual([
+      '-m',
+      'gpt-5.6-sol',
+      '-c',
+      'model_reasoning_effort=high'
+    ])
+  })
+})
+
+describe('resumeTuning', () => {
+  /*
+   * Issue #462, D3b. Per-field precedence: what the launch explicitly asked
+   * for wins; the thread's own observed settings fill in only the field the
+   * launch left absent. A launch value already passed `parseLaunchTuning` at
+   * the IPC boundary (`runtime.ts:3545-3548`), so it is trusted here without
+   * re-checking it against `PROVIDER_EFFORT_LEVELS` — only the OBSERVED half
+   * is validated, because it is Codex's own record rather than the person's
+   * instruction, and unusable evidence is dropped rather than refused.
+   */
+  it('answers nothing when neither source names anything', () => {
+    const tuning = resumeTuning(undefined, undefined)
+    expect(tuning).toEqual({})
+    expect(Object.keys(tuning)).toEqual([])
+  })
+
+  it('takes the launch pair whole when the launch named both', () => {
+    expect(
+      resumeTuning(
+        { model: 'gpt-5.6-sol', effort: 'high' },
+        { model: 'gpt-5.6-luna', effort: 'medium' }
+      )
+    ).toEqual({ model: 'gpt-5.6-sol', effort: 'high' })
+  })
+
+  it('fills only the field the launch left absent, from the observed pair', () => {
+    expect(resumeTuning({ model: 'gpt-5.6-sol' }, { model: 'gpt-5.6-luna', effort: 'medium' })).toEqual(
+      { model: 'gpt-5.6-sol', effort: 'medium' }
+    )
+  })
+
+  it('falls back to the observed pair entirely when the launch named nothing', () => {
+    expect(resumeTuning(undefined, { model: 'gpt-5.6-luna', effort: 'medium' })).toEqual({
+      model: 'gpt-5.6-luna',
+      effort: 'medium'
+    })
+  })
+
+  it('drops an observed effort outside the codex list rather than refusing the whole pair', () => {
+    expect(resumeTuning(undefined, { model: 'gpt-5.6-luna', effort: 'ludicrous' })).toEqual({
+      model: 'gpt-5.6-luna'
+    })
+  })
+
+  it('drops a blank or whitespace-only observed model', () => {
+    expect(resumeTuning(undefined, { model: '   ', effort: 'medium' })).toEqual({ effort: 'medium' })
+    expect(resumeTuning(undefined, { model: '', effort: 'medium' })).toEqual({ effort: 'medium' })
+  })
+
+  it('passes a launch effort through unvalidated, because parseLaunchTuning already refused it at the boundary', () => {
+    // 'ludicrous' would never survive parseLaunchTuning's own check, so a
+    // launch tuning carrying it here can only mean the boundary already
+    // accepted it for a provider this table has yet to grow for — resumeTuning
+    // is not the second gate.
+    expect(resumeTuning({ effort: 'ludicrous' }, undefined)).toEqual({ effort: 'ludicrous' })
   })
 })
