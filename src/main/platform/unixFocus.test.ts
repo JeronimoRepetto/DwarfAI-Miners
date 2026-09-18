@@ -7,7 +7,8 @@ import {
   buildUnixProcessQueryCommand,
   createDarwinFocus,
   createUnsupportedFocus,
-  parseUnixProcessRows
+  parseUnixProcessRows,
+  runUnixCommand
 } from './unixFocus'
 
 describe('buildUnixProcessQueryCommand', () => {
@@ -134,5 +135,32 @@ describe('createUnsupportedFocus', () => {
     // portals, none of them present by default) to guess at. Reporting an
     // honest "no" sends the click to the terminal/feed fallback instead.
     expect(await createUnsupportedFocus()(1234)).toBe(false)
+  })
+})
+
+/*
+ * `runUnixCommand`'s stdin, which is the one part of this module that is not a
+ * pure builder and could not be asserted without running something (#471).
+ *
+ * Run against `cat`, which is on every POSIX machine and does exactly the two
+ * things worth proving: it echoes what it is given, and it does not exit until
+ * the stream is CLOSED. So a hang here is the regression, not a wrong string —
+ * `tmux load-buffer -` reads its payload the same way, and a runner that wrote
+ * without closing would sit until the timeout killed it with the message
+ * unsent.
+ */
+describe('runUnixCommand stdin', () => {
+  it('writes the payload and closes the stream, so a reader finishes', async () => {
+    const payload = 'hola mundo\nsegunda linea'
+    expect(await runUnixCommand({ command: 'cat', args: [], stdin: payload })).toBe(payload)
+  })
+
+  it('carries bytes a shell would have eaten, because no shell is involved', async () => {
+    const payload = '[200~/tmp/a b.png[201~"quoted" \\back $HOME `tick`'
+    expect(await runUnixCommand({ command: 'cat', args: [], stdin: payload })).toBe(payload)
+  })
+
+  it('closes the stream for a command with no stdin at all, rather than leaving it open', async () => {
+    expect(await runUnixCommand({ command: 'cat', args: [] })).toBe('')
   })
 })

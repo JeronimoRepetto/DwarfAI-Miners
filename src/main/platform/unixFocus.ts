@@ -98,13 +98,19 @@ export function buildDarwinActivateCommand(targetPid: number): ProbeCommand {
  */
 export function runUnixCommand(probe: ProbeCommand): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(probe.command, probe.args, { timeout: 10_000 }, (error, stdout) => {
+    const child = execFile(probe.command, probe.args, { timeout: 10_000 }, (error, stdout) => {
       if (error !== null) {
         reject(error)
         return
       }
       resolve(stdout)
     })
+    // Written and CLOSED, because a command reading its payload from stdin
+    // waits for end-of-file before it does anything (#471). Left open, `tmux
+    // load-buffer -` would sit until the timeout above killed it. Commands with
+    // no `stdin` keep the behaviour they had: nothing is written, and the
+    // stream is closed so nothing waits on it either.
+    child.stdin?.end(probe.stdin ?? '')
   })
 }
 

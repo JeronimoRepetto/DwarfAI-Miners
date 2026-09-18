@@ -6,6 +6,7 @@ import {
   type SessionStatus,
   WAITING_ON_HUMAN_REASON,
   type WaitingReason,
+  RELAY_PROVENANCE_LINE,
   stripRelayProvenance
 } from '../../domain/types'
 import type { TextDeliveryTarget } from '../../textDelivery/port'
@@ -971,6 +972,32 @@ export function parseClaudeTranscriptTail(tailText: string): ClaudeTranscriptInf
 const CROSS_SESSION_MESSAGE_RE = /<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/
 
 /**
+ * The whole of a `user` line's content, once the harness's own preface is
+ * stripped, when it is nothing but a hand-back: what Claude Code writes into
+ * the parent transcript when a subagent's turn ends and its result is fed
+ * back in (issue #493). Unlike `<cross-session-message>`, whose inner text is
+ * a person's own words relayed through another session, an `<agent-message>`
+ * hand-back is model output the harness is reporting to itself — there is no
+ * person's text inside it to unwrap, so a match here drops the whole line
+ * rather than publishing what is between the tags.
+ *
+ * `isMeta` already carries this line on every transcript measured for this
+ * issue (39 of 39 `<agent-message>` lines in one live session), so this check
+ * is defense in depth for a harness build that ever stops setting it — never
+ * the primary gate, and it must not start matching a person's own words: a
+ * typed prompt that happens to open with a literal "<agent-message>" tag
+ * still falls through to the ordinary content checks below.
+ *
+ * Only the start of the content is anchored, not the end: a live hand-back
+ * carries a trailing sentence of the harness's own after the closing tag
+ * (the same shape #378 gave the relay envelope), and none of that is a
+ * person's words either, so it does not need its own capture — the whole
+ * line is dropped once the opening is recognized.
+ */
+const AGENT_HANDBACK_RE =
+  /^(?:Another Claude session sent a message:\s*)?<agent-message[^>]*>[\s\S]*<\/agent-message>/
+
+/**
  * What one unwrapped envelope publishes: the words somebody wrote, or undefined
  * when nothing is left of it.
  *
@@ -1035,6 +1062,12 @@ function userContentText(content: unknown): string | undefined {
  * rather than sent by anybody, so either one on its own is enough — and it is
  * the FLAG that decides, never the content shape, so the block array #216
  * added cannot become a way back in.
+ *
+ * A fourth skip is the defensive one (issue #493): a subagent's hand-back
+ * reaches the parent transcript as a `user` line too, `isMeta` among its
+ * flags exactly as an ordinary meta line's, but AGENT_HANDBACK_RE is checked
+ * on its own rather than folded into the `isMeta` branch below, so the line
+ * stays out even on a harness build that ever stops setting the flag.
  */
 function userMessageText(line: Rec): string | undefined {
   if (line.isCompactSummary === true || line.isVisibleInTranscriptOnly === true) return undefined
@@ -1045,8 +1078,20 @@ function userMessageText(line: Rec): string | undefined {
     const relayed = content.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
     if (relayed !== undefined) return relayedWords(relayed)
   }
+  if (AGENT_HANDBACK_RE.test(content.trim())) return undefined
   if (line.isMeta === true || content.startsWith('<')) return undefined
   return content
+}
+
+/**
+ * Whether `text` opens with RELAY_PROVENANCE_LINE, once leading whitespace is
+ * off — the one fact that tells a peer's own message from this panel's relay
+ * of somebody else's (issue #493). Only the panel's relay route ever prepends
+ * it (#378), so its presence is the peer session SAYING it is carrying the
+ * person's words rather than its own.
+ */
+function hasRelayProvenance(text: string): boolean {
+  return text.trimStart().startsWith(RELAY_PROVENANCE_LINE)
 }
 
 /**
@@ -1058,16 +1103,22 @@ function userMessageText(line: Rec): string | undefined {
  * then removed as `absorbed_mid_turn`. Only the middle record is read, so one
  * message cannot reach the panel three times.
  *
- * `origin.kind` is what separates a person from the harness, and exactly two
- * of its values are somebody speaking. `human` is the message typed into this
- * session's own TUI, and its prompt is the words themselves. `peer` is one
- * relayed in from another session (issue #24) — the same envelope the meta
- * user line above carries, only landing mid-turn — and the origin quotes the
- * message on its own in `body`, with the envelope in the prompt saying it a
- * second time. The body is preferred because it is the direct evidence;
- * unwrapping the prompt is the fallback for an origin whose keys a later
- * Claude Code spells differently. Every other kind — a task-notification's own
- * queued prompt above all — stays out.
+ * `origin.kind` is what separates a person from the harness, but for `peer`
+ * it separates only a SESSION from the harness, and a session is not a
+ * person (issue #493). `human` is the message typed into this session's own
+ * TUI, and its prompt is the words themselves — that kind stays exactly as
+ * before. `peer` is any OTHER session's queued command, and Claude Code's own
+ * subagent hand-back is one: measured live, 9 of 10 `peer` records in one
+ * session carried an `<agent-message>` hand-back, some flagging it with a
+ * `handback` key on the origin, most not. A peer's words become the person's
+ * only when they say so themselves, in the one place this panel's own relay
+ * route (#24) puts it: a leading RELAY_PROVENANCE_LINE (#378), checked on the
+ * body first because it is the direct evidence, then as a fallback on the
+ * envelope inside the prompt, for an origin whose keys a later Claude Code
+ * spells differently. A peer record with neither is somebody else's
+ * words — an agent's report among them — never drawn as the person's own.
+ * Every other kind — a task-notification's own queued prompt above all —
+ * stays out too.
  */
 function typedMidTurnPrompt(line: Rec): string | undefined {
   const attachment = line.attachment
@@ -1081,15 +1132,13 @@ function typedMidTurnPrompt(line: Rec): string | undefined {
   }
   if (origin.kind !== 'peer') return undefined
   const body = asString(origin.body)?.trim()
-  if (body !== undefined && body !== '') {
-    // A body left with nothing after the provenance line falls through to the
-    // prompt rather than answering undefined: the body-first rule is about
-    // which copy is the direct evidence, not about giving up on the message.
+  if (body !== undefined && body !== '' && hasRelayProvenance(body)) {
     const words = relayedWords(body)
     if (words !== undefined) return words
   }
   const relayed = prompt?.match(CROSS_SESSION_MESSAGE_RE)?.[1]?.trim()
-  return relayed === undefined ? undefined : relayedWords(relayed)
+  if (relayed !== undefined && hasRelayProvenance(relayed)) return relayedWords(relayed)
+  return undefined
 }
 
 /**
