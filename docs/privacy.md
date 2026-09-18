@@ -189,8 +189,14 @@ never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
 - **The Send action never opens a socket of its own; what it does depends on the channel.** Writing
   into a console (the default where the panel can reach one) is entirely local: the message is put
   into the input buffer of the console your session's own process is attached to, addressed by
-  process id — no window is raised and nothing is put on your clipboard — see the next section.
-  Handing a message to a Codex
+  process id — no window is raised and nothing is put on your clipboard — see the next section. On
+  macOS, writing a message into a Terminal.app tab asks the OS for one new permission, **Automation
+  control of Terminal** — prompted once, the first time a message is sent, and used for nothing
+  else. Answering a multi-select question or the "Other Thing" prompt there is a different act, a
+  keystroke at the foreground window, and that one needs **Accessibility** permission instead; the
+  app cannot detect either grant and will not prompt in advance for Accessibility. Neither
+  permission lets DwarfAI-Miners read anything from Terminal — both are write-only reach into a
+  window you already own. Handing a message to a Codex
   thread's queue spawns your own `codex` binary with the thread id and the text as argv. The relay
   spawns one throwaway `claude -p` turn from `~/.local/bin/claude` (or `claude.exe` under the same
   path on Windows), in `--safe-mode`, restricted to the `ListAgents` and `SendMessage` tools

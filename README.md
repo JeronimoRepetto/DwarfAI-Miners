@@ -96,8 +96,9 @@ processed.
   acting, ✕ with the reason and a **Send again** beside it.
 - **Attach files to a message** — drop them on the composer or press the paperclip. An image
   travels as the image itself; anything else, as its path for the session to open with its own
-  tools. Windows console sessions and sessions this panel holds only, capped at 5 files and 30 MB
-  of images per message (#408, #417).
+  tools. A Windows console, a macOS Terminal.app tab or tmux pane, a Linux tmux pane, and any
+  session this panel holds can all take one, capped at 5 files and 30 MB of images per message
+  (#408, #417).
 - **Markdown, in agent and person bubbles alike** — bold text, lists, quotes, tables, strikethrough,
   horizontal rules, inline and fenced code draw as such instead of raw asterisks, backticks and
   pipes; an image draws as its alt text, and a link — or that alt text — opens in your system
@@ -105,7 +106,14 @@ processed.
 - **Read back through the conversation** — scroll to the top of a dwarf's panel and the twelve
   things said before those load in place, twelve at a time, as far back as its transcript goes.
 - **Answer an agent's question** — click the option it offered, or toggle several and press
-  **Answer**; the panel presses that at the session's own console. Windows today, and not Codex.
+  **Answer**; the panel presses that at the session's own console. Verified on Windows; on macOS a
+  permission or single-select answer reaches a Terminal.app tab or a tmux pane the same way, and a
+  multi-select or "Other Thing" answer instead types the keys, which needs the foreground window
+  and Accessibility permission. Not Codex.
+- **Talk to a macOS or Linux session without touching its window** — a message written into a
+  Terminal.app tab (macOS) or a tmux pane (either platform) lands by tty, not by focus: a session
+  in a background tab or an unfocused pane receives it exactly as the console-write path already
+  does on Windows.
 - **Kick in one click** — one press ends a session running in a terminal, interrupts one the panel
   is holding, and otherwise sends the dwarf off the rock instead — and says which it did.
 - **Sound** — eight shuffled background tracks, a mine ambience that follows whether the crew is
