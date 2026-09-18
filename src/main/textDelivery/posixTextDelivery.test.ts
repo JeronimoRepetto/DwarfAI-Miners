@@ -408,3 +408,94 @@ describe('PosixTextDelivery.endConsoleSession', () => {
     expect(typeof delivery({ platform: 'linux' }).endConsoleSession).toBe('function')
   })
 })
+
+/*
+ * The MESSAGE tier, added by #367.
+ *
+ * It exists on this port now for the same reason the end tier does (#366): the
+ * absence was not a per-OS truth, it was one capability standing in for two. A
+ * keystroke needs the foreground; an ADDRESSED write does not, and macOS has
+ * one — a Terminal.app tab named by its tty. The method is always present
+ * because a class cannot conditionally have one, so an adapter with no message
+ * tier (Linux, or the keystroke adapter alone) becomes a stated refusal that
+ * says nothing was written, which is what sends the words down the relay.
+ */
+describe('PosixTextDelivery.pasteToConsole', () => {
+  function messenger(outcome: unknown = { delivered: true }) {
+    const sendMessage = vi.fn().mockResolvedValue(outcome)
+    return { sendMessage, port: delivery({ consoleInput: { ...consoleInput(), sendMessage } }) }
+  }
+
+  it('hands the whole request to the adapter s message tier', async () => {
+    const { sendMessage, port } = messenger()
+    const attachments = [{ path: '/tmp/a.png', name: 'a.png', kind: 'image' as const, bytes: 9 }]
+    await expect(
+      port.pasteToConsole({ pid: 42, text: 'hola', pressEnter: true, attachments })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendMessage).toHaveBeenCalledWith({
+      pid: 42,
+      text: 'hola',
+      pressEnter: true,
+      attachments
+    })
+  })
+
+  // No window is raised for a message any more, which is the whole of #367's
+  // item 2: the tab is named, not foregrounded.
+  it('never focuses anything', async () => {
+    const focus = vi.fn().mockResolvedValue(true)
+    const sendMessage = vi.fn().mockResolvedValue({ delivered: true })
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendMessage } })
+    await port.pasteToConsole({ pid: 42, text: 'hola', pressEnter: true })
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('times the write as one spawn stage, the way every other tier does', async () => {
+    const readings = [0, 40]
+    const sendMessage = vi.fn().mockResolvedValue({ delivered: true })
+    const port = delivery({
+      consoleInput: { ...consoleInput(), sendMessage },
+      now: () => readings.shift() ?? 40
+    })
+    const outcome = await port.pasteToConsole({ pid: 42, text: 'hola', pressEnter: true })
+    expect(outcome.stages).toEqual({ spawnMs: 40 })
+  })
+
+  it('carries the adapter s refusal and its neverStarted through unchanged', async () => {
+    const { port } = messenger({ delivered: false, error: 'nope', neverStarted: true })
+    await expect(
+      port.pasteToConsole({ pid: 42, text: 'hola', pressEnter: true })
+    ).resolves.toMatchObject({ delivered: false, error: 'nope', neverStarted: true })
+  })
+
+  it('states the absent tier as never started, so the relay carries the words', async () => {
+    const port = delivery({ consoleInput: consoleInput() })
+    const outcome = await port.pasteToConsole({ pid: 42, text: 'hola', pressEnter: true })
+    expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
+    expect(outcome.error).toBeTruthy()
+  })
+
+  it('states a platform with no console input at all the same way', async () => {
+    const outcome = await delivery().pasteToConsole({ pid: 42, text: 'hola', pressEnter: true })
+    expect(outcome).toMatchObject({ delivered: false, neverStarted: true })
+  })
+
+  // Cautious, exactly as the Windows port is: a throwing adapter may have
+  // written, so nothing here licenses a second tier to send the same words.
+  it('claims nothing about a throwing adapter', async () => {
+    const sendMessage = vi.fn().mockRejectedValue(new Error('boom'))
+    const port = delivery({ consoleInput: { ...consoleInput(), sendMessage } })
+    const outcome = await port.pasteToConsole({ pid: 42, text: 'hola', pressEnter: true })
+    expect(outcome.delivered).toBe(false)
+    expect(outcome.neverStarted).toBeUndefined()
+  })
+
+  it('never echoes the message back in any refusal', async () => {
+    const outcome = await delivery().pasteToConsole({
+      pid: 42,
+      text: 'my-secret-payload',
+      pressEnter: true
+    })
+    expect(outcome.error).not.toContain('my-secret-payload')
+  })
+})

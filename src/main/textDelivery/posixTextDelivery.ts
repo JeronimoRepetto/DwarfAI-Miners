@@ -58,6 +58,18 @@ const NOT_FOREGROUNDED = 'The agent terminal could not be brought to the foregro
 const KEYSTROKES_FAILED = 'The keystrokes could not be sent to the terminal.'
 const INTERRUPT_FAILED = 'The interrupt keystroke could not be sent.'
 const UNREACHABLE = 'The agent terminal could not be reached.'
+/**
+ * This platform's console input can synthesize keys but cannot ADDRESS a
+ * console, so there is no message tier here (#367).
+ *
+ * Linux, and macOS with the keystroke adapter alone. A different fact about the
+ * machine from NO_CONSOLE_INPUT above, and worth its own sentence: keys can be
+ * pressed, and a message still cannot be delivered. Both carry `neverStarted`,
+ * which is what sends the words down the relay rather than dropping them.
+ */
+const NO_CONSOLE_MESSAGE_TIER =
+  'Writing a message into a terminal is not supported on this operating system yet.'
+const MESSAGE_UNREACHABLE = 'The message could not be delivered to that terminal.'
 
 export interface PosixTextDeliveryOptions {
   platform: Platform
@@ -180,6 +192,53 @@ export class PosixTextDelivery implements TextDeliveryPort {
         : { delivered: false, error: KEYSTROKES_FAILED }
     } catch {
       return { delivered: false, error: UNREACHABLE }
+    }
+  }
+
+  /**
+   * The MESSAGE tier on macOS and Linux (#367), and the one place this port
+   * raises no window at all.
+   *
+   * The precondition `sendToConsole` above carries — focus first, because
+   * System Events types into the foreground — does not apply here, and that is
+   * the whole point of the tier. A message is ADDRESSED: on macOS the adapter
+   * writes it into the Terminal.app tab the session's tty names, so the tab
+   * strip is never consulted and #329's shared-window ambiguity has nothing
+   * left to be ambiguous about. That is the same thing the Windows write by pid
+   * bought at #371, reached by a different mechanism.
+   *
+   * An absent `sendMessage` is a per-OS answer stated rather than a silent
+   * no-op: this class always has the method (a class cannot conditionally have
+   * one), so the refusal has to be a value, and it carries `neverStarted` so
+   * the runtime's relay fallback carries the words. A throwing adapter does
+   * NOT, on the cautious reading the Windows port takes — it may have written,
+   * and nothing here can prove otherwise, so nothing licenses a second tier to
+   * send the same words again.
+   *
+   * Like every other tier here, nothing logs the message: only the verdict.
+   */
+  async pasteToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
+    const input = this.consoleInput
+    if (input === null) {
+      return { delivered: false, error: NO_CONSOLE_INPUT, neverStarted: true }
+    }
+    const send = input.sendMessage
+    if (send === undefined) {
+      return { delivered: false, error: NO_CONSOLE_MESSAGE_TIER, neverStarted: true }
+    }
+    const timer = createStageTimer(this.now)
+    try {
+      const outcome = await timer.measure('spawn', () =>
+        send.call(input, {
+          pid: request.pid,
+          text: request.text,
+          pressEnter: request.pressEnter,
+          ...(request.attachments === undefined ? {} : { attachments: request.attachments })
+        })
+      )
+      return { ...outcome, stages: timer.timings() }
+    } catch {
+      return { delivered: false, error: MESSAGE_UNREACHABLE, stages: timer.timings() }
     }
   }
 
