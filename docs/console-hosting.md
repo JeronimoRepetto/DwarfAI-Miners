@@ -1600,6 +1600,95 @@ itemised at its definition in `shared/contracts.ts`:
 comparable overheads rather than a shared derivation — the relay's is gone. The composer for a
 Codex dwarf names this number, and every other dwarf's names the sanity bound.
 
+### macOS writes into a Terminal.app tab, addressed by tty — measured 2026-09-18 (#367, #471)
+
+Everything above this heading is Windows. The console tier existed there alone, which is #471: on
+macOS a message took the relay and arrived framed as a peer's note rather than the person's own
+prompt. What was missing was not a mechanism but a **reach verdict** — the macOS focus answered a
+bare boolean, so a keystroke could land in whichever tab of a shared window happened to be active,
+exactly what #329 refused on Windows.
+
+Measured live by an agent on the maintainer's Mac: **Terminal.app 470.2, macOS 26.6.2**, against a
+scratch tab running a `setRawMode(true)` node reader that appended every chunk it received.
+
+#### A tty names a tab, so nothing has to be guessed at
+
+| Probe                                                                 | Output                                                                 |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `ps -o tty= -p <pid>`                                                 | `ttys002 ` — the short name, with trailing space                       |
+| `ps -o tty= -p <pid>` for a process with no controlling terminal      | `??`                                                                   |
+| `tell application "Terminal" to get tty of every tab of every window` | `/dev/ttys002, /dev/ttys001, /dev/ttys000` — one line, comma-separated |
+
+Two spellings of one device, which is the whole of the normalisation in `darwinTabReach.ts`. Per
+window `selected tab` and `frontmost` are readable and `selected tab` is settable; none of that is
+used, and that is the finding. **The Windows verdict is the result of RAISING a window, so it can
+only ever describe the foreground. This one raises nothing** — a tab is either on that tty or it is
+not, and the answer is the same whichever tab the person is looking at. There is no foreground
+requirement here to get wrong, which is why `own-console` needs no equivalent of #371's phantom-owner
+sibling count.
+
+#### `do script … in <tab>` is a tty write, not a shell command
+
+| Payload sent                            | What the raw reader received                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `hola mundo`                            | `"hola mundo\r"`                                                                            |
+| `ESC[200~/tmp/a b.png ESC[201~` + words | `"\u001b[200~/tmp/a b.png\u001b[201~hola \"quotes\" \\back 'single' $HOME \`tick\` done\r"` |
+| `line one\nline two`                    | `"line one\nline two\r"`                                                                    |
+
+Bytes pass through verbatim. Quotes, backslashes, `$HOME` and a backtick all arrived unchanged
+because nothing parses them — it is input on a tty, not a command line. The foreground did not move,
+System Events was never involved, and **no Accessibility permission was needed**; the only permission
+this path asks for is Automation, to control Terminal. A TCC denial is osascript error `-1743`
+(documented, not reproduced live here), which is why it is told apart from every other failure: it is
+the one that names its own fix.
+
+#### Every call appends exactly ONE carriage return, and that decides the shape
+
+There is no form of `do script` that appends none. Two consequences, and they are the opposite of
+the Windows rules above:
+
+1. **A message must travel as ONE call.** The attachment pastes, the words and their embedded
+   newlines all go into a single payload, and that one appended Return submits the lot once. Where
+   §6's Windows write needs a call boundary to make a keystroke a keystroke (#404, #402), here the
+   call boundary IS the Return, so a second call would be a second submit. Against §6's own finding
+   that a bracketed-paste image path attaches the image and a multi-line paste stays one prompt, the
+   single call is also the shape that keeps both true.
+2. **A key that must not submit cannot use this tier at all.** #203's permission digit fires its row
+   by itself and #402's picker keys toggle without confirming; a Return behind either would submit
+   whatever the composer then holds. Those stay on the System Events keystroke path, with its
+   foreground precondition and its Accessibility permission. The split is stated rather than
+   papered over: on macOS the panel can now write a message into a background tab and still be
+   unable to answer a permission prompt in it.
+
+#### The payload rides argv, so no user text is ever escaped
+
+    osascript -e '<constant script with `on run argv`>' <tty> <payload>
+
+Measured working with `-e`: the remaining arguments reach the `run` handler. This removes the class
+of bug the keystroke path still escapes its way around — `escapeAppleScriptString` has to double `\`
+and `"`, and a quote it missed would close the literal and turn the rest of somebody's message into
+script. It is the same move `consoleInputWrite.ts` made with base64 on Windows: remove the class,
+do not escape its members. `ARG_MAX` is 1 MiB here, and the builder bounds the payload at 32 768
+code points rather than meeting the ceiling blind the way #433 and #437 did; the runtime already
+truncates a message to 4 000 characters well above it.
+
+(In AppleScript, `contents of t` is the dereference operator, not a tab's text — a tab is read with
+`history of t`. Nothing on this path reads a tab; the note is here because getting it wrong looks
+like a working script.)
+
+#### What is NOT measured
+
+**Only Terminal.app.** iTerm2, WezTerm, Alacritty, kitty, Ghostty, Hyper and Warp are all in
+`DARWIN_TERMINAL_HOSTS` and none of them was installed on this machine. iTerm2 is believed to expose
+per-tab tty the same way and nothing here claims it. A session in any of them answers
+`terminal-host` — the honest refusal — rather than a guess at the front tab.
+
+Also unmeasured: this path has been run from a scratch tab and never from the panel end to end,
+which is the whole of what `DARWIN_CONSOLE_INPUT_ENABLED` is still waiting on (#367 item 3), and
+the `-1743` denial has not been reproduced live.
+
+---
+
 ---
 
 ---

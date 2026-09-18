@@ -732,21 +732,29 @@ These are separate from the table above, and deliberately so: they are **real en
 only**, never keys in `config-v1.json`. A debugging device does not belong in the file an installed
 app reads on every launch. Each is on for `1` or `true` and off for anything else.
 
-| Variable               | What it prints                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------- |
-| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                           |
-| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.            |
-| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.          |
-| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable. |
-| `DARWIN_CONSOLE_INPUT` | Turns on the macOS console-input path (`osascript` keystrokes), shipped off (#367).   |
+| Variable               | What it prints                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                           |
+| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                            |
+| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                          |
+| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                 |
+| `DARWIN_CONSOLE_INPUT` | Turns on the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. Shipped off (#367). |
 
 `DWARFAI_PERF` has to be a real environment variable even in a development checkout
 (`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
 arrives too late to be read. The other four work either way.
 
-`DARWIN_CONSOLE_INPUT` is an opt-in for testing macOS console input on a machine that has already
-granted Accessibility permission — and because a shared terminal window is not yet refused on
-macOS (#367), test with one tab only.
+`DARWIN_CONSOLE_INPUT` is an opt-in for testing macOS console input, and it switches on two
+mechanisms that ask for different permissions. A **message** is written into the Terminal.app tab
+the session's own tty names — no window is raised and no keystroke is synthesized, so macOS asks
+only for Automation permission to control Terminal, which it prompts for the first time a message
+is sent. A **permission or question key** cannot take that route (`do script` always appends a
+Return, and those keys must not submit), so it stays a System Events keystroke at the foreground
+and needs Accessibility permission, which the app cannot detect and will not prompt for.
+
+A shared terminal window is refused rather than guessed at now: a tab is matched by tty, so several
+tabs are fine. What is NOT covered is a terminal other than Terminal.app — iTerm2, WezTerm,
+Alacritty, kitty, Ghostty, Hyper and Warp are unmeasured and each says so when you send to one.
 
 The development-only simulated valley (`DWARFAI_SIMULATE=1` and its seven `DWARFAI_SIMULATE_*`
 companions) is documented
