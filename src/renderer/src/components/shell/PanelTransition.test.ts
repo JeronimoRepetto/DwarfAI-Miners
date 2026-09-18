@@ -4,6 +4,7 @@ import { defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PanelTransition from './PanelTransition.vue'
 import { PANEL_MOTION_WATCHDOG_MS } from '../../lib/shell/panelMotion'
+import type { ShellFoldHold } from '../../composables/useShellFold'
 
 // AMENDED for #266 (was: `afterEach(() => vi.unstubAllGlobals())`) — the
 // watchdog owns a timer and the hidden-window release reads `document.hidden`,
@@ -30,10 +31,16 @@ function occlude(hidden: boolean): void {
  * reason: a platform that can report the preference but not its changing is a
  * query with no `addEventListener` on it, and every case above is untouched.
  */
+/*
+ * AMENDED again for #464: the fold answers TWO moments where it answered one.
+ * `folded` is what the shrink waits on and `released` is what may unmount the
+ * column — main resizing the window is a whole IPC round trip after the fold
+ * ends, and the row may not repack inside the old rectangle in between.
+ */
 function harness(
   reduced = false,
   axis?: 'horizontal' | 'vertical',
-  hold?: (column: HTMLElement) => Promise<void> | null,
+  hold?: (column: HTMLElement) => ShellFoldHold | null,
   watchable = true
 ) {
   const media = new EventTarget() as MediaQueryList
@@ -223,7 +230,10 @@ describe('PanelTransition', () => {
     const held = new Promise<void>((resolve) => {
       fold = resolve
     })
-    const test = harness(false, undefined, () => held)
+    // AMENDED for #464: the same one promise, now answered for both moments —
+    // what this case is about is the fold being reported as the leave, and the
+    // case below it is the one that tells the two moments apart.
+    const test = harness(false, undefined, () => ({ folded: held, released: held }))
     test.shown.value = true
     await nextTick()
     expect(test.animate).not.toHaveBeenCalled()
@@ -254,8 +264,44 @@ describe('PanelTransition', () => {
     test.wrapper.unmount()
   })
 
+  /*
+   * ADDED for #464. The fold ending is not the window having been resized: the
+   * shrink it releases is a whole IPC round trip long, and a column unmounted
+   * inside it repacks the row under a clip made for the row that was there.
+   * `.shell-secondary` is `flex: 1`, so what those frames showed was the fold's
+   * strip painted over bare ground.
+   */
+  it('keeps a held column standing after the fold, until the shell releases it', async () => {
+    let fold!: () => void
+    let catchUp!: () => void
+    const folded = new Promise<void>((resolve) => {
+      fold = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      catchUp = resolve
+    })
+    const test = harness(false, undefined, () => ({ folded, released }))
+    test.shown.value = true
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    // The fold is what the shrink waits on, and only the fold: the window
+    // cannot be asked to resize by something that is waiting for it to have.
+    expect(test.leaves).toEqual([folded])
+    fold()
+    await folded
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(true)
+    catchUp()
+    await released
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
+  })
+
   it('releases a held column on teardown, so an unfinished fold cannot strand it', async () => {
-    const test = harness(false, undefined, () => new Promise<void>(() => undefined))
+    const stranded = new Promise<void>(() => undefined)
+    const test = harness(false, undefined, () => ({ folded: stranded, released: stranded }))
     test.shown.value = true
     await nextTick()
     test.shown.value = false
