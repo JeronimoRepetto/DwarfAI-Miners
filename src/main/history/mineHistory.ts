@@ -1,4 +1,3 @@
-import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
 import type { SqliteLike } from '../adapters/sqliteLike'
 import { attributeIssuedMessages } from '../domain/messageIssuer'
@@ -10,7 +9,7 @@ import {
   type MessageIssuer,
   type MineHistorySpeaker
 } from '../domain/types'
-import { currentPlatform, normalizePathKey, type Platform } from '../platform/platform'
+import { currentPlatform, normalizePathKey, pathFor, type Platform } from '../platform/platform'
 import {
   antigravityHistoryPath,
   antigravityTranscriptPath,
@@ -272,6 +271,7 @@ export class MineHistoryReader implements MineHistorySource {
    * the cwd is encoded forwards, which is all a lookup needs.
    */
   private async claudeCandidates(cwd: string): Promise<Candidate[]> {
+    const { join } = pathFor(this.platform)
     const candidates: Candidate[] = []
     for (const root of this.claudeRoots) {
       const projectDir = join(root, 'projects', encodeClaudeProjectDir(cwd))
@@ -311,12 +311,12 @@ export class MineHistoryReader implements MineHistorySource {
    * one name.
    */
   private async claudeSubagents(projectDir: string, sessionId: string): Promise<Candidate[]> {
-    const dir = claudeSubagentDir(projectDir, sessionId)
+    const dir = claudeSubagentDir(projectDir, sessionId, this.platform)
     const candidates: Candidate[] = []
     for (const entry of await this.fs.listDir(dir)) {
       const agentId = CLAUDE_AGENT_RE.exec(entry.name)?.[1]
       if (entry.isDirectory || agentId === undefined) continue
-      const path = join(dir, entry.name)
+      const path = pathFor(this.platform).join(dir, entry.name)
       const stat = await this.fs.stat(path)
       if (stat === null) continue
       // The one sidecar reader, shared with the live board so the panel and
@@ -325,7 +325,7 @@ export class MineHistoryReader implements MineHistorySource {
       // ranked and named from what its position alone can prove.
       const sidecar = await readClaudeSubagentSidecar(
         this.fs,
-        claudeSubagentSidecarPath(projectDir, sessionId, agentId)
+        claudeSubagentSidecarPath(projectDir, sessionId, agentId, this.platform)
       )
       const position: SpeakerPosition = {
         kind: 'subagent',

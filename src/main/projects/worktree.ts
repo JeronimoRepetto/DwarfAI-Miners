@@ -1,7 +1,6 @@
-import { posix, win32 } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
 import type { DwarfWorkplace, ProviderSnapshot } from '../domain/types'
-import { currentPlatform, normalizePathKey, type Platform } from '../platform/platform'
+import { currentPlatform, normalizePathKey, pathFor, type Platform } from '../platform/platform'
 
 /**
  * Which project one session's cwd belongs to — folding every worktree of a
@@ -46,11 +45,6 @@ import { currentPlatform, normalizePathKey, type Platform } from '../platform/pl
  * project", which is exactly the behaviour before this issue: a detection that
  * cannot prove a fold must never invent one.
  */
-
-/** node:path's OS-specific submodule for `platform` — never the running host's (see platform-ports). */
-function pathFor(platform: Platform): typeof posix {
-  return platform === 'win32' ? win32 : posix
-}
 
 /** How far up from a cwd the walk looks for a `.git`, before giving up. */
 const MAX_WALK_UP = 64
@@ -248,7 +242,7 @@ export function foldWorktreeSnapshots(
 async function nearestGitEntry(
   cwd: string,
   fs: FsLike,
-  p: typeof posix
+  p: ReturnType<typeof pathFor>
 ): Promise<{ folder: string; path: string; isDirectory: boolean } | null> {
   let folder = p.normalize(cwd)
   for (let step = 0; step < MAX_WALK_UP; step++) {
@@ -287,7 +281,7 @@ function parseFirstLine(content: string | null): string | null {
 }
 
 /** A path from a pointer file, made absolute against the folder that named it. */
-function absolute(path: string, from: string, p: typeof posix): string {
+function absolute(path: string, from: string, p: ReturnType<typeof pathFor>): string {
   return p.normalize(p.isAbsolute(path) ? path : p.join(from, path))
 }
 
