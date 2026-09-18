@@ -252,6 +252,44 @@ describe('createPlatformAdapters — text delivery', () => {
     ).toBe(false)
   })
 
+  /*
+   * The MESSAGE tier the switch now composes on darwin (#367 item 2): the tab
+   * write, not a keystroke. Proven end to end through composition rather than
+   * at the adapter alone, because the whole point is which adapter the
+   * composition picks — the gate used to hand the POSIX port a keystroke-only
+   * adapter with no message tier at all.
+   */
+  it('writes a macOS message into the Terminal tab its tty names, raising nothing', async () => {
+    const seen: ProbeCommand[] = []
+    const runCommand = async (command: ProbeCommand) => {
+      seen.push(command)
+      if (command.command === 'ps') return 'ttys001\n'
+      return command.args.length > 2 ? 'written\n' : '/dev/ttys002, /dev/ttys001\n'
+    }
+    const adapters = createPlatformAdapters(
+      options('darwin', { darwinConsoleInput: true, runCommand })
+    )
+    await expect(
+      adapters.textDelivery.pasteToConsole?.({ pid: 42, text: 'hola mundo', pressEnter: true })
+    ).resolves.toMatchObject({ delivered: true })
+    // ps for the tty, osascript for the tabs, osascript for the write — and no
+    // System Events activation anywhere in it.
+    expect(seen.map((command) => command.command)).toEqual(['ps', 'osascript', 'osascript'])
+    expect(seen.at(-1)?.args.slice(2)).toEqual(['/dev/ttys001', 'hola mundo'])
+    expect(seen.some((command) => command.args[1]?.includes('System Events'))).toBe(false)
+  })
+
+  /*
+   * The default is still off, and the message tier must go with it: a darwin
+   * port composed without the switch states the refusal rather than writing.
+   */
+  it('keeps the macOS message tier behind the same switch', async () => {
+    const adapters = createPlatformAdapters(options('darwin'))
+    await expect(
+      adapters.textDelivery.pasteToConsole?.({ pid: 42, text: 'hola', pressEnter: true })
+    ).resolves.toMatchObject({ delivered: false, neverStarted: true })
+  })
+
   /**
    * Kick's terminal tier reaches macOS and Linux (#366), and the composition is
    * what carries it there: the port needs the process-END port to signal the pid
