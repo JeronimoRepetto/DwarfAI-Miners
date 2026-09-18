@@ -1,5 +1,5 @@
 import { NOT_LAUNCHABLE } from '../domain/launchProviders'
-import type { LaunchTuning } from '../domain/launchTuning'
+import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
 import type { DwarfProvider } from '../domain/types'
 
 /**
@@ -163,12 +163,11 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * read as an argument to it rather than as an option.
  */
 export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  return [
-    'exec',
-    ...(tuning.model === undefined ? [] : ['-m', tuning.model]),
-    ...(tuning.effort === undefined ? [] : ['-c', `model_reasoning_effort=${tuning.effort}`]),
-    '-'
-  ]
+  // The two flags above come from `codexTuningArgs` (#462), the one builder
+  // this and `buildCodexResumeArgs` both delegate to, so the
+  // `model_reasoning_effort` key is spelled in exactly one place rather than
+  // twice and at risk of drifting apart.
+  return ['exec', ...codexTuningArgs(tuning), '-']
 }
 
 /**

@@ -3746,14 +3746,24 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
   describe('and resuming its thread once that process has gone', () => {
     const CWD = MINE_PATH
 
-    /** The provider a real Codex is now: an exec thread answers with the resume. */
-    function resumableProvider(): Provider {
+    /**
+     * The provider a real Codex is now: an exec thread answers with the
+     * resume. `tuned` is the thread's own OBSERVED pair (#462, D2) —
+     * `resumableProvider()` with no argument answers exactly as it always has.
+     */
+    function resumableProvider(tuned: { model?: string; effort?: string } = {}): Provider {
       const base = execProvider()
       return {
         ...base,
         textDelivery: (dwarfId: string) =>
           dwarfId === DWARF_ID
-            ? { kind: 'codex-exec-resume' as const, threadId: THREAD_ID, cwd: CWD }
+            ? {
+                kind: 'codex-exec-resume' as const,
+                threadId: THREAD_ID,
+                cwd: CWD,
+                ...(tuned.model === undefined ? {} : { model: tuned.model }),
+                ...(tuned.effort === undefined ? {} : { effort: tuned.effort })
+              }
             : null
       }
     }
@@ -3768,14 +3778,22 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
       } as TextDeliveryPort
     }
 
-    async function runtimeWithResumableLaunch(port: TextDeliveryPort = resumePort()) {
+    async function runtimeWithResumableLaunch(
+      port: TextDeliveryPort = resumePort(),
+      options: {
+        /** What the LAUNCH explicitly asked for; retained on the launch record. */
+        launchTuning?: { model?: string; effort?: string }
+        /** What the thread's own registry/rollout OBSERVES; carried on the endpoint. */
+        observed?: { model?: string; effort?: string }
+      } = {}
+    ) {
       const handle = retained()
       const launched = new LaunchedSessionRegistry({
         endProcessTree: vi.fn().mockResolvedValue(true)
       })
       const runtime = new AgentRuntime({
         config: defaultConfig(),
-        providers: [resumableProvider()],
+        providers: [resumableProvider(options.observed ?? {})],
         textDelivery: port,
         launchedSessions: launched,
         onMinesUpdated: vi.fn()
@@ -3784,7 +3802,8 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
         provider: 'codex',
         minePath: MINE_PATH,
         process: handle.process,
-        knownSessionIds: []
+        knownSessionIds: [],
+        ...(options.launchTuning === undefined ? {} : { tuning: options.launchTuning })
       })
       await runtime.refresh()
       return { runtime, handle, port }
@@ -3839,6 +3858,184 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
         text: 'run the tests'
       })
       expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+    })
+
+    /**
+     * Issue #462, D1/D3b: the explicit half of a resume's tuning survives the
+     * launch process's own exit — LaunchedSessionRegistry.tuningOfDwarf keeps
+     * answering after `forget()` has dropped only the store row.
+     */
+    it('carries the launch tuning into the resume once the opening process has exited', async () => {
+      const { runtime, handle, port } = await runtimeWithResumableLaunch(undefined, {
+        launchTuning: { model: 'gpt-5.6-sol', effort: 'high' }
+      })
+      handle.exit()
+      await runtime.refresh()
+
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+      expect(port.resumeCodexThread).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: 'run the tests',
+        tuning: { model: 'gpt-5.6-sol', effort: 'high' }
+      })
+    })
+
+    /**
+     * D2: with no launch tuning at all, the thread's own OBSERVED pair (the
+     * one riding the endpoint) is what a resume carries.
+     */
+    it('forwards the observed pair when the launch named no tuning at all', async () => {
+      const { runtime, handle, port } = await runtimeWithResumableLaunch(undefined, {
+        observed: { model: 'gpt-5.6-luna', effort: 'medium' }
+      })
+      handle.exit()
+      await runtime.refresh()
+
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+      expect(port.resumeCodexThread).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: 'run the tests',
+        tuning: { model: 'gpt-5.6-luna', effort: 'medium' }
+      })
+    })
+
+    /**
+     * D3b end to end: the launch wins per field, and the observed half fills
+     * only the field the launch left absent.
+     */
+    it('merges per field: the launch model wins and the observed effort fills the gap', async () => {
+      const { runtime, handle, port } = await runtimeWithResumableLaunch(undefined, {
+        launchTuning: { model: 'gpt-5.6-sol' },
+        observed: { model: 'gpt-5.6-luna', effort: 'medium' }
+      })
+      handle.exit()
+      await runtime.refresh()
+
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+      expect(port.resumeCodexThread).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: 'run the tests',
+        tuning: { model: 'gpt-5.6-sol', effort: 'medium' }
+      })
+    })
+
+    /**
+     * D3b's validation half: an observed effort outside Codex's own list is
+     * evidence nothing can act on, so it is dropped rather than carried — and
+     * the model beside it, which IS usable, still travels.
+     */
+    it('drops an observed effort codex does not have, and still carries the model', async () => {
+      const { runtime, handle, port } = await runtimeWithResumableLaunch(undefined, {
+        observed: { model: 'gpt-5.6-luna', effort: 'ludicrous' }
+      })
+      handle.exit()
+      await runtime.refresh()
+
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+      expect(port.resumeCodexThread).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: 'run the tests',
+        tuning: { model: 'gpt-5.6-luna' }
+      })
+    })
+
+    /**
+     * The foreman hop (Risk 1): a message resolved through a hop must not be
+     * tuned from the REQUESTING dwarf's own launch record. WORKER_ID here has
+     * its own launch, retained with a pair that must never travel — only the
+     * FOREMAN's endpoint (DWARF_ID's) own observed pair may, because the
+     * observed half rides the endpoint and is hop-safe, while the launch
+     * registry is read only where `resolved.prefix === ''` (no hop occurred).
+     */
+    it("never tunes a hopped resume from the requesting dwarf's own launch record", async () => {
+      const WORKER_ID = 'codex:worker-thread'
+      const provider: Provider = {
+        kind: 'codex',
+        scan: vi.fn<Provider['scan']>().mockResolvedValue([
+          {
+            provider: 'codex',
+            sessionId: THREAD_ID,
+            cwd: CWD,
+            status: 'busy',
+            updatedAt: 1,
+            dwarfs: [
+              {
+                id: DWARF_ID,
+                provider: 'codex',
+                role: 'foreman',
+                name: 'root',
+                status: 'working',
+                sessionId: THREAD_ID
+              },
+              {
+                id: WORKER_ID,
+                provider: 'codex',
+                role: 'worker',
+                name: 'worker',
+                status: 'working',
+                sessionId: 'worker-thread'
+              }
+            ]
+          }
+        ]),
+        feed: vi.fn().mockResolvedValue([]),
+        textDelivery: (dwarfId: string) => {
+          if (dwarfId === WORKER_ID) {
+            return { kind: 'foreman-relay', foremanDwarfId: DWARF_ID, workerName: 'Explorer' }
+          }
+          if (dwarfId === DWARF_ID) {
+            // The FOREMAN's own observed pair — this is what must travel.
+            return {
+              kind: 'codex-exec-resume' as const,
+              threadId: THREAD_ID,
+              cwd: CWD,
+              model: 'gpt-5.6-luna',
+              effort: 'medium'
+            }
+          }
+          return null
+        }
+      }
+
+      const launched = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(true)
+      })
+      const port = resumePort()
+      const runtime = new AgentRuntime({
+        config: defaultConfig(),
+        providers: [provider],
+        textDelivery: port,
+        launchedSessions: launched,
+        onMinesUpdated: vi.fn()
+      })
+      // WORKER_ID's OWN launch — a pair that must never reach the foreman's
+      // resume, however the routing gets to it. THREAD_ID is named as already
+      // known so the claim binds to WORKER_ID's own session and not to the
+      // foreman's, which this launch never started.
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: retained(4243).process,
+        knownSessionIds: [THREAD_ID],
+        tuning: { model: 'wrong-model', effort: 'low' }
+      })
+      await runtime.refresh()
+
+      await runtime.sendDwarfText({
+        dwarfId: WORKER_ID,
+        text: 'stop digging',
+        pressEnter: true
+      })
+      expect(port.resumeCodexThread).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: '[for agent Explorer] stop digging',
+        tuning: { model: 'gpt-5.6-luna', effort: 'medium' }
+      })
     })
 
     /**

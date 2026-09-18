@@ -62,4 +62,15 @@ export function canResumeCodexThread(thread: CodexResumeCandidate): boolean {
 export interface CodexResumeAddress {
   threadId: string
   cwd: string
+  /**
+   * The thread's own observed model/effort (#462, D2), read off the same
+   * registry row/rollout `turn_context` the label on screen is drawn from.
+   * This is a RECORD of what the thread already shows, never a claim about
+   * what the next turn will run — that is `resumeTuning`'s job, one layer up,
+   * where it is merged against what a launch may have explicitly asked for.
+   * Absent when nothing observed it, which keeps a "no tuning anywhere"
+   * address bare rather than carrying `undefined`-valued keys.
+   */
+  model?: string
+  effort?: string
 }
