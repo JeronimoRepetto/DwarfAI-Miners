@@ -5951,7 +5951,11 @@ describe('AgentRuntime projects wiring (#93)', () => {
   }
 
   function projectsStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   async function rows(store: ProjectsStore): Promise<ProjectRecord[]> {
@@ -6157,7 +6161,11 @@ describe('AgentRuntime declared mines (#85)', () => {
   }
 
   function projectsStoreFor(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   /*
@@ -6173,7 +6181,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ADOPTED) })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ADOPTED, 'win32') })
     expect(result.reason).toBeUndefined()
   })
 
@@ -6186,7 +6194,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     runtime.stop()
 
     expect(result.project).toMatchObject({
-      id: mineIdForPath(ADOPTED),
+      id: mineIdForPath(ADOPTED, 'win32'),
       path: ADOPTED,
       declared: true
     })
@@ -6253,7 +6261,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     // under this path attaches to the mine the moment the user adopts it.
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 40_000)
     const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
 
     await runtime.declareMine()
@@ -6371,7 +6379,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     // what makes a re-add find its materials still there.
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(ADOPTED), 40_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 40_000)
     const runtime = declaredRuntime({ chooseDirectory: async () => ADOPTED, ledger })
 
     const declared = await runtime.declareMine()
@@ -6392,7 +6400,7 @@ describe('AgentRuntime declared mines (#85)', () => {
     // the user deleted until they delete them again.
     const projects = projectsStoreFor()
     const declared = await projects.declare({ path: ADOPTED, at: 1 })
-    await projects.forget({ id: mineIdForPath(ADOPTED), at: 2 })
+    await projects.forget({ id: mineIdForPath(ADOPTED, 'win32'), at: 2 })
     expect(declared.ok).toBe(true)
     const runtime = declaredRuntime({ projects })
 
@@ -6560,7 +6568,11 @@ describe('AgentRuntime project queries (#92)', () => {
   }
 
   function queryStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   const newest = { sortBy: 'addedAt', direction: 'desc' } as const
@@ -6576,7 +6588,7 @@ describe('AgentRuntime project queries (#92)', () => {
     expect(result.answered).toBe(true)
     expect(result.projects).toEqual([
       {
-        id: mineIdForPath(WORKED),
+        id: mineIdForPath(WORKED, 'win32'),
         path: WORKED,
         name: 'Cafetería-Ñandú',
         declared: false,
@@ -6627,7 +6639,7 @@ describe('AgentRuntime project queries (#92)', () => {
     await projects.upsertObserved({ path: WORKED, at: 4_000 })
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(WORKED), 9_000)
+    ledger.creditCoal(mineIdForPath(WORKED, 'win32'), 9_000)
     const runtime = queryRuntime({ projects, ledger })
 
     const [project] = (await runtime.queryProjects(newest)).projects
@@ -6687,8 +6699,8 @@ describe('AgentRuntime project queries (#92)', () => {
     await projects.upsertObserved({ path: ADOPTED, at: 1_000 })
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(WORKED), 2_000)
-    ledger.creditCoal(mineIdForPath(ADOPTED), 5_000)
+    ledger.creditCoal(mineIdForPath(WORKED, 'win32'), 2_000)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 5_000)
     const { provider, setWorking } = toggleProvider(WORKED)
     setWorking(true)
     const runtime = queryRuntime({ projects, providers: [provider], ledger })
@@ -6997,7 +7009,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await expect(
       runtime.launchHeldSession({
         provider: 'claude',
-        mineId: mineIdForPath(MINE_PATH),
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig here'
       })
     ).resolves.toEqual({ launched: true })
@@ -7073,7 +7085,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7111,7 +7123,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7144,7 +7156,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7195,7 +7207,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7235,7 +7247,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7300,7 +7312,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig here'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7347,7 +7359,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig here'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7372,7 +7384,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7430,7 +7442,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       onMinesUpdated: vi.fn(),
       now: () => 9_000
     })
-    const mineId = mineIdForPath(MINE_PATH)
+    const mineId = mineIdForPath(MINE_PATH, 'win32')
     const dwarfsOf = (): readonly Dwarf[] =>
       runtime.getMines().find((mine) => mine.id === mineId)?.dwarfs ?? []
 
@@ -7478,7 +7490,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7584,7 +7596,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7638,7 +7650,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     port.reportSessionId(0, 'sess-1')
@@ -7683,7 +7695,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       await runtime.refresh()
       await runtime.launchHeldSession({
         provider: 'claude',
-        mineId: mineIdForPath(MINE_PATH),
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig'
       })
       port.reportSessionId(0, 'sess-1')
@@ -7822,7 +7834,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig',
       model: 'sonnet',
       effort: 'xhigh'
@@ -7843,7 +7855,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     runtime.stop()
@@ -7862,7 +7874,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig',
       permissionMode: 'plan'
     })
@@ -7881,7 +7893,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     runtime.stop()
@@ -7940,13 +7952,16 @@ describe('AgentRuntime.resetMetrics (#138)', () => {
   it('never touches a declared mine while resetting its metrics', async () => {
     const ADOPTED = 'C:\\X\\Adopted'
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
     const store = fakeLedgerStore()
     const ledger = new MaterialLedger({ store })
     await ledger.load()
-    ledger.creditCoal(mineIdForPath(ADOPTED), 500)
+    ledger.creditCoal(mineIdForPath(ADOPTED, 'win32'), 500)
 
     const runtime = new AgentRuntime({
       // AMENDED for #470: see worktreePlatformAdapters above.
@@ -8013,7 +8028,11 @@ describe('AgentRuntime map placement (#136)', () => {
   const WALKED = 'C:\\X\\Walked'
 
   function placementStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   /** A provider reporting one working session in `cwd`, every scan. */
@@ -8110,7 +8129,7 @@ describe('AgentRuntime map placement (#136)', () => {
     const mines = runtime.getMines()
     runtime.stop()
 
-    const stored = await projects.get(mineIdForPath(WALKED))
+    const stored = await projects.get(mineIdForPath(WALKED, 'win32'))
     expect(mines[0]!.mapSite).toBe(stored.ok ? stored.value?.mapSite : null)
     expect(mines[0]!.mapSite).toBeGreaterThan(0)
   })
@@ -8260,7 +8279,7 @@ describe('AgentRuntime map placement (#136)', () => {
       await runtime.settleProjects()
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
-    const stored = await projects.get(mineIdForPath(WALKED))
+    const stored = await projects.get(mineIdForPath(WALKED, 'win32'))
     runtime.stop()
 
     expect(stored.ok && stored.value?.knownTier).not.toBeNull()
@@ -8683,7 +8702,11 @@ describe('AgentRuntime board-and-list coherence (#165)', () => {
   const WORKED = 'C:\\X\\Worked'
 
   function coherenceStore(sqlite = new MemoryWritableSqlite()): ProjectsStore {
-    return createProjectsStore({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+    return createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite,
+      platform: 'win32'
+    })
   }
 
   /** One session in `cwd` whose single dwarf is in `status`. */
@@ -8842,10 +8865,12 @@ describe('AgentRuntime.mineHistory', () => {
     })
     await runtime.refresh()
 
-    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project'))).resolves.toEqual({
-      readable: true,
-      speakers: [SPEAKER]
-    })
+    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project', 'win32'))).resolves.toEqual(
+      {
+        readable: true,
+        speakers: [SPEAKER]
+      }
+    )
     // #348: every folder this mine's work happens in — for a mine nothing
     // folded into, exactly the one folder it always was.
     expect(readAcross).toHaveBeenCalledWith(['C:\\work\\project'])
@@ -8884,10 +8909,12 @@ describe('AgentRuntime.mineHistory', () => {
     })
     await runtime.refresh()
 
-    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project'))).resolves.toEqual({
-      readable: false,
-      speakers: []
-    })
+    await expect(runtime.mineHistory(mineIdForPath('C:\\work\\project', 'win32'))).resolves.toEqual(
+      {
+        readable: false,
+        speakers: []
+      }
+    )
     warn.mockRestore()
   })
 })
@@ -8931,7 +8958,9 @@ describe('AgentRuntime.mineFolderOf', () => {
     })
     await runtime.refresh()
 
-    expect(runtime.mineFolderOf(mineIdForPath('C:\\work\\project'))).toBe('C:\\work\\project')
+    expect(runtime.mineFolderOf(mineIdForPath('C:\\work\\project', 'win32'))).toBe(
+      'C:\\work\\project'
+    )
   })
 
   it('answers undefined for a mine that is not on the board', async () => {
@@ -9077,7 +9106,7 @@ describe('AgentRuntime delivery to a session the panel holds (#210)', () => {
     await runtime.refresh()
     await runtime.launchHeldSession({
       provider: 'claude',
-      mineId: mineIdForPath(MINE_PATH),
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
       prompt: 'dig'
     })
     // The CLI names its own session, and that name is the only link between
@@ -10256,7 +10285,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
     expect(mines).toHaveLength(1)
     expect(mines[0]!.path).toBe(ROOT)
     expect(mines[0]!.name).toBe('Anvil')
-    expect(mines[0]!.id).toBe(mineIdForPath(ROOT))
+    expect(mines[0]!.id).toBe(mineIdForPath(ROOT, 'win32'))
     expect(mines[0]!.dwarfs.map((dwarf) => dwarf.id).sort()).toEqual(['claude:s1', 'claude:s2'])
   })
 
@@ -10321,7 +10350,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
     const runtime = runtimeOver([sessionIn(FORGE, 's1'), sessionIn(BELL, 's2')], repoFs())
 
     await runtime.refresh()
-    const id = mineIdForPath(ROOT)
+    const id = mineIdForPath(ROOT, 'win32')
     const forge = runtime.mineFolderOf(id, 'claude:s1')
     const bell = runtime.mineFolderOf(id, 'claude:s2')
     const noDwarf = runtime.mineFolderOf(id)
@@ -10343,7 +10372,7 @@ describe('AgentRuntime worktree folding (#348)', () => {
     })
 
     await runtime.refresh()
-    await runtime.mineHistory(mineIdForPath(ROOT))
+    await runtime.mineHistory(mineIdForPath(ROOT, 'win32'))
     runtime.stop()
 
     expect(readAcross).toHaveBeenCalledWith([ROOT, FORGE, BELL])
@@ -10384,6 +10413,9 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
 
   it('draws a declared worktree as its project, on the very first read', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
@@ -10401,6 +10433,9 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
 
   it('teaches the store the project, and stops the worktree row drawing a card', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
@@ -10412,11 +10447,11 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
     runtime.stop()
 
     const byId = new Map((rows.ok ? rows.value : []).map((row) => [row.id, row]))
-    expect(byId.get(mineIdForPath(ROOT))?.origin).toBe('declared')
-    expect(byId.get(mineIdForPath(ROOT))?.hiddenAt).toBeNull()
+    expect(byId.get(mineIdForPath(ROOT, 'win32'))?.origin).toBe('declared')
+    expect(byId.get(mineIdForPath(ROOT, 'win32'))?.hiddenAt).toBeNull()
     // FLAGGED, never deleted: the row keeps the ore already credited to that
     // folder's mine id (see ProjectsStore.forget).
-    expect(byId.get(mineIdForPath(FORGE))?.hiddenAt).not.toBeNull()
+    expect(byId.get(mineIdForPath(FORGE, 'win32'))?.hiddenAt).not.toBeNull()
   })
 
   /**
@@ -10427,11 +10462,14 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
    */
   it('never lets a HIDDEN worktree hide the project it folds into', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
     await projects.declare({ path: FORGE, at: 1 })
-    await projects.forget({ id: mineIdForPath(FORGE), at: 2 })
+    await projects.forget({ id: mineIdForPath(FORGE, 'win32'), at: 2 })
     const runtime = new AgentRuntime({
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: [
@@ -10478,11 +10516,11 @@ describe('AgentRuntime declared worktrees (#348, #169)', () => {
     expect(mines.map((mine) => mine.path)).toEqual([ROOT])
     expect(mines[0]!.dwarfs).toHaveLength(1)
     const byId = new Map((rows.ok ? rows.value : []).map((row) => [row.id, row]))
-    expect(byId.get(mineIdForPath(FORGE))?.hiddenAt).not.toBeNull()
+    expect(byId.get(mineIdForPath(FORGE, 'win32'))?.hiddenAt).not.toBeNull()
     // The project's own row is the observer's ordinary sighting of a mine with
     // a crew in it — DISCOVERED, never declared on the user's behalf, because
     // they never declared this project, only one of its worktrees.
-    const project = byId.get(mineIdForPath(ROOT))
+    const project = byId.get(mineIdForPath(ROOT, 'win32'))
     expect(project?.origin).toBe('discovered')
     expect(project?.hiddenAt).toBeNull()
   })
@@ -10513,6 +10551,9 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
       projects:
         projects ??
         createProjectsStore({
+          // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+          platform: 'win32',
+
           filePath: 'C:\\userData\\projects-v1.db',
           sqlite: new MemoryWritableSqlite()
         }),
@@ -10527,6 +10568,9 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
 
   it('asks about a picked worktree instead of declaring it', async () => {
     const projects = createProjectsStore({
+      // AMENDED for #470: keys the win32 id rules by the platform its fixtures name.
+      platform: 'win32',
+
       filePath: 'C:\\userData\\projects-v1.db',
       sqlite: new MemoryWritableSqlite()
     })
@@ -10559,7 +10603,7 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
     const result = await runtime.declareMine()
     runtime.stop()
 
-    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT, 'win32') })
   })
 
   it('adopts the project on the answer, and lands exactly where a plain Add lands', async () => {
@@ -10569,8 +10613,12 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
     const result = await runtime.declareMainProject()
     runtime.stop()
 
-    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT) })
-    expect(result.project).toMatchObject({ id: mineIdForPath(ROOT), path: ROOT, declared: true })
+    expect(result).toMatchObject({ outcome: 'added', mineId: mineIdForPath(ROOT, 'win32') })
+    expect(result.project).toMatchObject({
+      id: mineIdForPath(ROOT, 'win32'),
+      path: ROOT,
+      declared: true
+    })
   })
 
   it('refuses an answer to a question nobody asked, and never guesses a folder', async () => {

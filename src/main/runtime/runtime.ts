@@ -1311,6 +1311,7 @@ export class AgentRuntime {
       providers: this.providers,
       intervalMs: options.config.pollIntervalMs,
       tierOf,
+      platform: platform.platform,
       // Every worktree of one repository lands in the main tree's mine (#348),
       // decided here — before the aggregation groups anything — because that
       // is the one seam where a cwd becomes a mine path.
@@ -1331,7 +1332,7 @@ export class AgentRuntime {
         // snapshots alone. Merged before the lifecycle and the ledger see it,
         // so a declared mine is stamped with its persisted material like any
         // other and a crew arriving in one lands in the mine already there.
-        const merged = mergeDeclaredMines(tracked, this.declared, tierOf)
+        const merged = mergeDeclaredMines(tracked, this.declared, tierOf, platform.platform)
         // Every command of the person's own this panel is holding (#194) —
         // dwarfs no provider can see either, and for a stronger reason than a
         // held session's crew: nothing observes these at all except this

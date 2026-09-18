@@ -2,6 +2,7 @@ import { aggregateMines } from '../domain/aggregate'
 import type { Mine, MineTier, ProviderSnapshot } from '../domain/types'
 import { pollProfiler } from './perf'
 import type { Provider } from '../providers/provider'
+import { currentPlatform, type Platform } from '../platform/platform'
 
 /** Default coalescing window for out-of-band nudges, in milliseconds. */
 const DEFAULT_NUDGE_WINDOW_MS = 300
@@ -34,6 +35,8 @@ export interface PollerOptions {
   logError?: (message: string, error: unknown) => void
   /** How long nudge() coalesces further events after firing; defaults to 300 ms. */
   nudgeWindowMs?: number
+  /** The platform every snapshot's `cwd` belongs to (see platform-ports). Defaults to the running host. */
+  platform?: Platform
 }
 
 /**
@@ -136,7 +139,7 @@ export class Poller {
         }
       })
       const mines = pollProfiler.measureSync('aggregate', () =>
-        aggregateMines(grouped, this.options.tierOf)
+        aggregateMines(grouped, this.options.tierOf, this.options.platform ?? currentPlatform())
       )
       // Awaited rather than fire-and-forgotten (#196): onUpdate can now do
       // real async work of its own before it publishes (reading a watched
