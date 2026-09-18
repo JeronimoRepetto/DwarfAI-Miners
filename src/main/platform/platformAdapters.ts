@@ -13,6 +13,7 @@ import {
 } from './terminalLauncher'
 import type { ConsoleInputAdapter } from '../textDelivery/osascriptInput'
 import { createDarwinConsoleInput } from '../textDelivery/darwinConsoleInput'
+import { createTmuxConsoleInput } from '../textDelivery/tmuxConsoleInput'
 import type { TextDeliveryPort } from '../textDelivery/port'
 import { PosixTextDelivery } from '../textDelivery/posixTextDelivery'
 import type { CodexQueueRunner } from '../textDelivery/codexQueue'
@@ -82,6 +83,37 @@ export type { Platform }
  */
 export const DARWIN_CONSOLE_INPUT_ENABLED = true
 
+/**
+ * Whether the Linux console-input path is offered by default.
+ *
+ * What it gates is ONE mechanism, not the two above: the tmux pane write
+ * (`tmuxConsoleInput.ts`). Linux has no second tier here — a keystroke tier
+ * needs a reach verdict nobody has measured, and #329 is the name of what
+ * happens without one — so the adapter refuses `sendText` and `sendInterrupt`
+ * by name and the port above states that refusal, exactly as it did when there
+ * was no adapter at all.
+ *
+ * **Default `true`, and the decision is the maintainer's of 2026-09-18**:
+ * build everything a pure builder can carry, ship it on, and let the
+ * measurements correct it. What makes that safe rather than optimistic is the
+ * same thing that made it safe on macOS — the reach verdict. A session in a
+ * tmux pane is ADDRESSED; a session in any other terminal, or in none, answers
+ * `terminal-host` and its message goes by relay exactly as it did before this
+ * existed. So nothing gets worse for a person who does not use tmux, and the
+ * cost of being wrong is bounded by a verdict rather than by this flag.
+ *
+ * **Unmeasured on a real Linux desktop.** No command on this path has been run
+ * against a live tmux, on Linux or anywhere else: the command shapes come from
+ * tmux's documented interface and the payload shapes from what #404/#485
+ * measured about the receiving TUI. README's Linux cells say "built,
+ * unmeasured" and must not say Verified until somebody walks the checklist in
+ * `docs/console-hosting.md`. `LINUX_CONSOLE_INPUT` in config.ts's
+ * `linuxConsoleInputOverride` is the way back: `=0`/`=false` forces this OFF
+ * for one run, `=1`/`=true` forces it ON, unset leaves this constant in
+ * charge. Wired in through the `linuxConsoleInput` option below.
+ */
+export const LINUX_CONSOLE_INPUT_ENABLED = true
+
 export interface PlatformAdapters {
   platform: Platform
   /** Brings the terminal window hosting `pid` to the foreground. */
@@ -115,6 +147,13 @@ export interface PlatformAdapterOptions {
    * environment (#367 items 1 and 3).
    */
   darwinConsoleInput?: boolean
+  /**
+   * Overrides LINUX_CONSOLE_INPUT_ENABLED; for tests, and for the
+   * `LINUX_CONSOLE_INPUT` two-way override index.ts feeds in from the real
+   * environment (#471). Separate from the macOS one on purpose: two tiers,
+   * two measurement states, two people who may want one off.
+   */
+  linuxConsoleInput?: boolean
   /** Injected for tests; defaults to a real powershell.exe run. */
   runShell?: ShellRunner
   /** Injected for tests; defaults to a real ps/osascript run. */
@@ -155,6 +194,16 @@ function createConsoleInput(
   platform: Platform,
   options: PlatformAdapterOptions
 ): ConsoleInputAdapter | null {
+  const run = options.runCommand ?? runUnixCommand
+  if (platform === 'linux') {
+    // One mechanism, and the only one Linux has (#471): the tmux pane write.
+    // A session outside tmux is refused by the adapter's own reach verdict and
+    // its message goes by relay, so this is offered to everybody and costs
+    // nothing to a machine that does not run tmux.
+    return (options.linuxConsoleInput ?? LINUX_CONSOLE_INPUT_ENABLED)
+      ? createTmuxConsoleInput(run)
+      : null
+  }
   const enabled = options.darwinConsoleInput ?? DARWIN_CONSOLE_INPUT_ENABLED
   if (platform !== 'darwin' || !enabled) return null
   // Two mechanisms behind one adapter since #367, and which one an act takes is
@@ -162,7 +211,7 @@ function createConsoleInput(
   // tab its tty names, and a key that must not carry a Return stays on System
   // Events. `createOsascriptConsoleInput` is what this composed before, and it
   // is still the half that presses keys.
-  return createDarwinConsoleInput(options.runCommand ?? runUnixCommand)
+  return createDarwinConsoleInput(run)
 }
 
 function createTextDelivery(
