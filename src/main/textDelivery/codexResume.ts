@@ -81,15 +81,13 @@ export type CodexResumeRunner = (invocation: CodexResumeInvocation) => Promise<C
  * same one the opening launch passes, and it is what keeps the message off the
  * command line entirely (#437).
  *
- * AMENDED for #462 (was: "No options are passed today", when the only caller
- * was #450's plain resume). `deliverViaCodexResume` now passes
- * `codexTuningArgs(tuning)` here — the same builder `buildCodexLaunchArgs`
- * delegates to — so a tuned resume's `-m`/`-c model_reasoning_effort=` pair
- * lands in the one place a caller could get catastrophically wrong: putting
- * either flag after the subcommand. `--skip-git-repo-check` stays out for the
- * reason the launch keeps it out — overriding Codex's own refusal to run
- * outside a repository would be this panel making a safety decision inside
- * somebody's folder.
+ * `deliverViaCodexResume` passes `codexTuningArgs(tuning)` here (#462) — the
+ * same builder `buildCodexLaunchArgs` delegates to — so a tuned resume's
+ * `-m`/`-c model_reasoning_effort=` pair lands in the one place a caller
+ * could get catastrophically wrong: putting either flag after the
+ * subcommand. `--skip-git-repo-check` stays out for the reason the launch
+ * keeps it out — overriding Codex's own refusal to run outside a repository
+ * would be this panel making a safety decision inside somebody's folder.
  */
 export function buildCodexResumeArgs(threadId: string, options: readonly string[] = []): string[] {
   return ['exec', ...options, 'resume', threadId, '-']

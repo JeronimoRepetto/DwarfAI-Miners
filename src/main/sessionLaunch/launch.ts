@@ -163,10 +163,10 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * read as an argument to it rather than as an option.
  */
 export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  // AMENDED for #462: the two flags above now come from `codexTuningArgs`,
-  // the one builder this and `buildCodexResumeArgs` both delegate to, so the
-  // `model_reasoning_effort` key is spelled in exactly one place. Argv is
-  // unchanged — this is a delegation, not a new shape.
+  // The two flags above come from `codexTuningArgs` (#462), the one builder
+  // this and `buildCodexResumeArgs` both delegate to, so the
+  // `model_reasoning_effort` key is spelled in exactly one place rather than
+  // twice and at risk of drifting apart.
   return ['exec', ...codexTuningArgs(tuning), '-']
 }
 

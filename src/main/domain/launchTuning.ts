@@ -132,9 +132,9 @@ export function parseLaunchTuning(
  * (`buildCodexLaunchArgs`) and the resume (`buildCodexResumeArgs`) so the
  * `model_reasoning_effort` key is spelled in exactly one place. A typo here
  * is not a compile error — it is TOML nobody's config file documents, parsed
- * by Codex as the literal string `launch.ts:158-159` describes — so this is
- * the one function both call sites delegate to rather than each writing the
- * key out again.
+ * by Codex as the literal string the doc comment above `buildCodexLaunchArgs`
+ * describes — so this is the one function both call sites delegate to rather
+ * than each writing the key out again.
  *
  * ORDER is load-bearing, not cosmetic: Codex reads its options left to
  * right, and every caller of this fragment places the whole thing BEFORE

@@ -2623,13 +2623,13 @@ export class AgentRuntime {
    * Codex declines to run outside a Git repository and a packaged app's own
    * working directory is nothing anybody chose.
    *
-   * AMENDED for #462: `launchDwarfId` names the dwarf whose LAUNCH record may
-   * be read for an explicit tuning, and it is `undefined` on a foreman hop
-   * (Risk 1) — `resolved.prefix !== ''` at the call site means the endpoint
-   * belongs to an ancestor this method was never told the id of, and reading
-   * the launch registry keyed on the REQUESTING dwarf's id would tune an
-   * ancestor's turn from a descendant's launch record. The observed half
-   * (`observed`) is hop-safe either way: it rides the endpoint itself.
+   * `launchDwarfId` names the dwarf whose LAUNCH record may be read for an
+   * explicit tuning (#462), and it is `undefined` on a foreman hop:
+   * `resolved.prefix !== ''` at the call site means the endpoint belongs to
+   * an ancestor this method was never told the id of, and reading the launch
+   * registry keyed on the REQUESTING dwarf's id would tune an ancestor's
+   * turn from a descendant's launch record. The observed half (`observed`)
+   * is hop-safe either way: it rides the endpoint itself.
    */
   private async resumeCodexThread(
     threadId: string,
