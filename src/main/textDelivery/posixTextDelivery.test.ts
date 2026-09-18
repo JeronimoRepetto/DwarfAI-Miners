@@ -558,3 +558,73 @@ describe('PosixTextDelivery.pasteToConsole', () => {
     expect(outcome.error).not.toContain('my-secret-payload')
   })
 })
+
+/*
+ * The KEY route through `sendToConsole` (#471).
+ *
+ * The port offers the adapter the key first and only focuses when the adapter
+ * hands it back. That ordering is the whole point: focusing before asking would
+ * steal the foreground for a key that was never going to need it, which is the
+ * same mistake the no-console-input branch above already refuses to make.
+ */
+describe('PosixTextDelivery.sendToConsole through an addressed key route', () => {
+  function keyed(answer: unknown) {
+    const sendKey = vi.fn().mockResolvedValue(answer)
+    const sendText = vi.fn().mockResolvedValue(true)
+    const focus = vi.fn().mockResolvedValue(true)
+    const port = delivery({ focus, consoleInput: { ...consoleInput(), sendText, sendKey } })
+    return { sendKey, sendText, focus, port }
+  }
+
+  it('lets the adapter write the key, and focuses nothing when it does', async () => {
+    const { sendKey, sendText, focus, port } = keyed({ delivered: true })
+    await expect(
+      port.sendToConsole({ pid: 42, text: '4', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendKey).toHaveBeenCalledWith({ pid: 42, text: '4', pressEnter: false })
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('carries the adapter s refusal through instead of retrying by keystroke', async () => {
+    const { sendText, focus, port } = keyed({
+      delivered: false,
+      error: 'no tab',
+      neverStarted: true
+    })
+    await expect(
+      port.sendToConsole({ pid: 42, text: '4', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: false, error: 'no tab', neverStarted: true })
+    // A named refusal is an answer, not a reason to type at the front window.
+    expect(focus).not.toHaveBeenCalled()
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('falls back to focus and keystrokes when the adapter hands the key back', async () => {
+    const { sendKey, sendText, focus, port } = keyed(null)
+    const cursorRight = '[C'
+    await expect(
+      port.sendToConsole({ pid: 42, text: cursorRight, pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(sendKey).toHaveBeenCalled()
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(sendText).toHaveBeenCalledWith(cursorRight, false)
+  })
+
+  it('keeps the keystroke path exactly as it was for an adapter with no key route', async () => {
+    const input = consoleInput()
+    const focus = vi.fn().mockResolvedValue(true)
+    const port = delivery({ focus, consoleInput: input })
+    await expect(
+      port.sendToConsole({ pid: 42, text: '1', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(focus).toHaveBeenCalledWith(42)
+    expect(input.sendText).toHaveBeenCalledWith('1', false)
+  })
+
+  it('never echoes the key back in a refusal', async () => {
+    const { port } = keyed({ delivered: false, error: 'no tab', neverStarted: true })
+    const outcome = await port.sendToConsole({ pid: 42, text: '7', pressEnter: false })
+    expect(outcome.error).toBe('no tab')
+  })
+})

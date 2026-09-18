@@ -4,6 +4,7 @@ import {
   createDarwinConsoleReach,
   isAutomationPermissionDenied
 } from '../platform/darwinTabReach'
+import type { ProbeCommand } from '../platform/processProbe'
 import type { CommandRunner } from '../platform/unixFocus'
 import { createOsascriptConsoleInput, type ConsoleInputAdapter } from './osascriptInput'
 import type { ConsoleMessageOutcome, ConsoleMessageRequest } from './osascriptInput'
@@ -18,20 +19,32 @@ import { buildTerminalTabWriteCommand, terminalTabPayloadFor } from './terminalT
  *   window is raised, the foreground never moves, and the tab strip is never
  *   consulted, which is the same thing the Windows write by pid bought at #371.
  *   It needs only Automation permission.
- * - A **key that must not submit** — #203's permission digit, and the Escape
- *   behind a deny — stays on System Events keystrokes
- *   (`createOsascriptConsoleInput`). It cannot move, because every `do script`
- *   call appends exactly one carriage return and there is no form of it that
- *   appends none. A digit fires its row by itself and the Return behind it
- *   would then submit whatever the composer holds next. Forcing one mechanism
- *   to carry both acts is the conflation #366 had to undo for the kick; this
- *   states the two acts as two rather than repeating it.
+ * - A **single-digit key** — #203's permission decision, and a single-select
+ *   picker's answer — is written into that same tab as ONE `do script` call
+ *   (#471). Measured 2026-09-18: `4` (No) closed the permission dialog cleanly
+ *   and the appended Return was consumed as the confirmation, and a picker's
+ *   `2` selected and confirmed in the same one call. One call, not the two a
+ *   message takes, because a lone digit is read as a keystroke rather than as a
+ *   paste — #404's rule does not reach it.
+ * - **Every other key** stays on System Events keystrokes
+ *   (`createOsascriptConsoleInput`), and the adapter says so by answering
+ *   `null` rather than by failing.
  *
- * So the keystroke path keeps its own preconditions — the foreground, and
- * Accessibility permission — and the message path is free of both. That
- * asymmetry is real and is stated here rather than smoothed over: the panel can
- * write a message into a background tab and still be unable to answer a
- * permission prompt in it.
+ * **Why the line falls exactly at one digit, and not one step further.**
+ * Measured the same day, a MULTI-SELECT picker was only partly addressable
+ * through `do script`: the digit toggled late, digit-plus-Return did not
+ * submit, and submitting turned out to need a Tab and then a digit — a sequence
+ * nobody has measured through this route. So several digits, the Tab, the
+ * cursor-right of #402 and the Escape of a deny are all refused BY SHAPE and
+ * handed back. Guessing at the rest would answer a multi-select with a toggle
+ * nobody confirmed, which is worse than the keystroke path's honest
+ * preconditions.
+ *
+ * So the keystroke path keeps its own — the foreground, and Accessibility
+ * permission — and everything on the addressed route is free of both. The
+ * asymmetry is real and narrower than it was: the panel can now answer a
+ * permission prompt in a background tab, and still cannot answer a multi-select
+ * there.
  *
  * **What this header claimed until 2026-09-18, and why it was wrong.** It said
  * the message tier was the inverse of the Windows write — one call, whose own
@@ -41,9 +54,9 @@ import { buildTerminalTabWriteCommand, terminalTabPayloadFor } from './terminalT
  * It is #404 on a second platform: Ink reads a chunk arriving in one read as a
  * paste, and a carriage return inside a paste is line content. The submit is a
  * second `do script ""` now, so the two platforms follow the SAME rule. The
- * split above is untouched by that — a digit still travels as one call with its
- * Return, measured 2026-09-18 to be what the permission dialog and a
- * single-select picker take.
+ * split above survived that correction and is the reason it is drawn where it
+ * is: a digit travels as one call with its Return because a lone character is
+ * not a paste, which is the same finding read from the other side.
  */
 
 /** The message could not be turned into one payload — an over-long path (#425). */
@@ -67,14 +80,30 @@ const WRITE_FAILED = 'The message could not be written into that terminal tab.'
 /** The error the write script raises when no tab is on that tty any more. */
 const NO_TAB_ERROR = 'no Terminal tab on that tty'
 
+/** An unexplained osascript failure on the key route: the row may have been pressed. */
+const KEY_WRITE_FAILED = 'The key could not be written into that terminal tab.'
+
+/**
+ * The one key shape the tab write is measured to carry: exactly one digit that
+ * numbers a row (#471).
+ *
+ * `1`–`9` and not `0`, because `0` numbers no row in either prompt — the
+ * permission dialog and the picker both count from 1, the same bound
+ * `questionKeys.ts` holds for its own digits. A `0` arriving here is a caller
+ * that computed a position wrongly, and it belongs on the keystroke path, where
+ * it was already harmless, rather than pressed into somebody's dialog.
+ */
+const ADDRESSABLE_KEY = /^[1-9]$/
+
 /**
  * The macOS console input adapter. Keystroke failures stay booleans, exactly as
  * before; the message tier answers with a reason, because it is the one the
  * panel shows a sentence for and the one whose failures differ from each other.
  */
-export function createDarwinConsoleInput(
-  run: CommandRunner
-): ConsoleInputAdapter & { sendMessage: NonNullable<ConsoleInputAdapter['sendMessage']> } {
+export function createDarwinConsoleInput(run: CommandRunner): ConsoleInputAdapter & {
+  sendMessage: NonNullable<ConsoleInputAdapter['sendMessage']>
+  sendKey: NonNullable<ConsoleInputAdapter['sendKey']>
+} {
   const keystrokes = createOsascriptConsoleInput(run)
   const reachOf = createDarwinConsoleReach(run)
 
@@ -90,13 +119,58 @@ export function createDarwinConsoleInput(
     if (reach.reach === 'terminal-host') {
       return { delivered: false, error: reach.error, neverStarted: true }
     }
-    const command = buildTerminalTabWriteCommand(reach.tty, payload)
+    const command = buildTerminalTabWriteCommand(reach.tty, payload, true)
     // Unreachable through the reach verdict above, which only ever answers a
     // device path — kept because the builder's refusal is fail-closed and a
     // caller that swallowed it would write nothing and report success.
     if (command === null) {
       return { delivered: false, error: MESSAGE_UNBUILDABLE, neverStarted: true }
     }
+    return runWrite(command, WRITE_FAILED)
+  }
+
+  /**
+   * One key into the tab, or `null` for a key this route cannot carry.
+   *
+   * The shape guard comes FIRST, before the reach is even asked: a key that is
+   * not ours must cost no Apple event, no permission prompt, and no `ps`. It
+   * also has to leave the keystroke path exactly as it found it, which is what
+   * `null` does — see `ConsoleInputAdapter.sendKey` for why that is a third
+   * answer rather than a failure.
+   *
+   * `pressEnter` is deliberately ignored. Every caller of the key route passes
+   * `false` (a digit fires its row by itself, and #203's path says so), and
+   * `do script` appends a Return either way. What makes that harmless here, and
+   * is the measurement this whole route rests on, is that the dialog CONSUMES
+   * it as the confirmation rather than leaving it to fall into the next prompt.
+   * That is true of a one-digit answer and of nothing else yet measured.
+   */
+  async function sendKey(request: ConsoleMessageRequest): Promise<ConsoleMessageOutcome | null> {
+    if (!ADDRESSABLE_KEY.test(request.text)) return null
+    const reach = await reachOf(request.pid)
+    if (reach.reach === 'terminal-host') {
+      return { delivered: false, error: reach.error, neverStarted: true }
+    }
+    // `submits` false: the digit is read as a keystroke rather than a paste, so
+    // the Return `do script` already appends is the confirmation. A second call
+    // would press Return again, into whatever the dialog opened onto (#471).
+    const command = buildTerminalTabWriteCommand(reach.tty, request.text, false)
+    if (command === null) return null
+    return runWrite(command, KEY_WRITE_FAILED)
+  }
+
+  /**
+   * Run one built write and turn what osascript did into an outcome.
+   *
+   * Shared by both routes because everything below the builder is the same act
+   * and the same three readings. Only the sentence for the unexplained case
+   * differs, because a half-written message and a key that may have pressed a
+   * row are not the same thing to the person whose session it is.
+   */
+  async function runWrite(
+    command: ProbeCommand,
+    unexplained: string
+  ): Promise<ConsoleMessageOutcome> {
     try {
       await run(command)
       return { delivered: true }
@@ -111,9 +185,9 @@ export function createDarwinConsoleInput(
       if (error instanceof Error && error.message.includes(NO_TAB_ERROR)) {
         return { delivered: false, error: TERMINAL_HOST_UNMEASURED, neverStarted: true }
       }
-      return { delivered: false, error: WRITE_FAILED }
+      return { delivered: false, error: unexplained }
     }
   }
 
-  return { ...keystrokes, sendMessage }
+  return { ...keystrokes, sendMessage, sendKey }
 }

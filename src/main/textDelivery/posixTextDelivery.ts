@@ -175,15 +175,40 @@ export class PosixTextDelivery implements TextDeliveryPort {
   }
 
   /**
-   * Same precondition as the Windows path: keystrokes land in whatever window
-   * holds the foreground, so focusing is a requirement, not an optimization.
-   * On a platform with no console input at all the refusal comes first — a
-   * click should not steal the foreground for a delivery that cannot land.
+   * #203's permission digit, and any other single key this port is asked for.
+   *
+   * TWO routes since #471, tried in this order, and the order is the whole of
+   * the care here.
+   *
+   * The adapter is offered the key FIRST, before anything is focused. A key it
+   * accepts is ADDRESSED — written into the console the pid names — so it needs
+   * no foreground at all, and focusing first would steal it for an act that
+   * never wanted it. That is the same mistake the `null` branch below already
+   * refuses to make for a platform with no console input, one step further in.
+   *
+   * `null` from the adapter means "not my key", not "it failed", and only then
+   * does the keystroke path run, unchanged: focus, then type, with keystrokes
+   * landing in whatever window holds the foreground exactly as before. An
+   * OUTCOME is an answer about the console and is carried through as it stands —
+   * a key the adapter would write but could not must never be retried by typing
+   * at the front window, which is #329's refusal arriving on this route.
+   *
+   * On a platform with no console input at all the refusal still comes first —
+   * a click should not steal the foreground for a delivery that cannot land.
    */
   async sendToConsole(request: ConsoleTextRequest): Promise<TextDeliveryOutcome> {
     const input = this.consoleInput
     if (input === null) return { delivered: false, error: NO_CONSOLE_INPUT }
     try {
+      const sendKey = input.sendKey
+      if (sendKey !== undefined) {
+        const addressed = await sendKey.call(input, {
+          pid: request.pid,
+          text: request.text,
+          pressEnter: request.pressEnter
+        })
+        if (addressed !== null) return addressed
+      }
       if (!(await this.focus(request.pid))) {
         return { delivered: false, error: NOT_FOREGROUNDED }
       }

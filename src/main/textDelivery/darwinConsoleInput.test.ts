@@ -155,10 +155,118 @@ describe('createDarwinConsoleInput sendMessage', () => {
   })
 })
 
+/*
+ * The KEY route (#471), measured 2026-09-18 through the tab write itself.
+ *
+ * `sendKey` answers null for "this key is not mine", which is what sends the
+ * port down its keystroke path — the one that focuses a window and needs
+ * Accessibility permission. A digit answers with an outcome instead, and the
+ * whole point of the route is that it needs neither.
+ */
+describe('createDarwinConsoleInput sendKey', () => {
+  // Measured: `4` (No) closed the permission dialog cleanly and the appended
+  // Return was consumed as the confirmation. ONE call, because a lone digit is
+  // read as a keystroke rather than as a paste — so #404's second call, which a
+  // MESSAGE needs, would be a second Return into whatever comes next.
+  it('writes a single digit into the tab as ONE do script call', async () => {
+    const { run, seen } = runnerFor({ ...REACHABLE, write: 'written\n' })
+    const outcome = await createDarwinConsoleInput(run).sendKey({
+      pid: 4321,
+      text: '4',
+      pressEnter: false
+    })
+    expect(outcome).toEqual({ delivered: true })
+    const write = seen.at(-1)
+    expect(write?.args.slice(2)).toEqual(['/dev/ttys001', '4'])
+    expect(write?.args[1]?.match(/do script .* in t/g)).toHaveLength(1)
+    expect(write?.args[1]).not.toContain('do script "" in t')
+    // Nothing was focused and System Events was never asked.
+    expect(seen.some((command) => command.args[1]?.includes('System Events'))).toBe(false)
+  })
+
+  it('takes a single-select picker digit the same way', async () => {
+    const { run, seen } = runnerFor({ ...REACHABLE, write: 'written\n' })
+    await expect(
+      createDarwinConsoleInput(run).sendKey({ pid: 4321, text: '2', pressEnter: false })
+    ).resolves.toEqual({ delivered: true })
+    expect(seen.at(-1)?.args[3]).toBe('2')
+  })
+
+  /*
+   * Everything a multi-select needs is refused BY SHAPE rather than attempted.
+   * Measured 2026-09-18: the digit toggled late, digit+Return did not submit,
+   * and submitting needs a Tab and then a digit — a sequence nobody has
+   * measured through `do script`. Null hands it back to the keystroke path,
+   * unchanged.
+   */
+  it.each([
+    ['several digits', '12'],
+    ['a Tab', '\t'],
+    ['an Escape', ''],
+    ['the VT cursor-right', '[C'],
+    ['a carriage return', '\r'],
+    ['ordinary words', 'hola'],
+    ['nothing at all', ''],
+    ['a zero, which numbers no row', '0']
+  ])('leaves %s to the keystroke path, running nothing itself', async (_name, text) => {
+    const { run, seen } = runnerFor({ ...REACHABLE, write: 'written\n' })
+    expect(
+      await createDarwinConsoleInput(run).sendKey({ pid: 4321, text, pressEnter: false })
+    ).toBeNull()
+    expect(seen).toEqual([])
+  })
+
+  // The reach verdict binds here exactly as it does for a message: a tab that
+  // cannot be named is a refusal, never a quiet fall-through to pressing a key
+  // at whatever window happens to be in front (#329).
+  it('refuses a digit whose tab it cannot name, and says nothing was written', async () => {
+    const { run } = runnerFor({ ps: 'ttys009\n', tabs: '/dev/ttys001\n' })
+    expect(
+      await createDarwinConsoleInput(run).sendKey({ pid: 4321, text: '1', pressEnter: false })
+    ).toEqual({ delivered: false, error: TERMINAL_HOST_UNMEASURED, neverStarted: true })
+  })
+
+  it('refuses a digit for a session with no controlling terminal', async () => {
+    const { run } = runnerFor({ ps: '??\n' })
+    expect(
+      await createDarwinConsoleInput(run).sendKey({ pid: 4321, text: '1', pressEnter: false })
+    ).toEqual({ delivered: false, error: TTY_UNKNOWN, neverStarted: true })
+  })
+
+  it('names the Automation permission when TCC refuses a digit', async () => {
+    const { run } = runnerFor({
+      ...REACHABLE,
+      write: new Error('execution error: Not authorized to send Apple events (-1743)')
+    })
+    expect(
+      await createDarwinConsoleInput(run).sendKey({ pid: 4321, text: '1', pressEnter: false })
+    ).toEqual({ delivered: false, error: AUTOMATION_PERMISSION_DENIED, neverStarted: true })
+  })
+
+  // Cautious, as everywhere else on this path: an unexplained failure may have
+  // pressed the row, and a row pressed twice is a different answer.
+  it('claims nothing about an unexplained osascript failure', async () => {
+    const { run } = runnerFor({ ...REACHABLE, write: new Error('osascript killed') })
+    const outcome = await createDarwinConsoleInput(run).sendKey({
+      pid: 4321,
+      text: '1',
+      pressEnter: false
+    })
+    expect(outcome?.delivered).toBe(false)
+    expect(outcome?.neverStarted).toBeUndefined()
+  })
+})
+
 describe('createDarwinConsoleInput keystrokes', () => {
-  // The split this adapter exists to hold: a message takes the tab write, and a
-  // key that must NOT carry a Return stays on System Events.
-  it('sends a permission digit through the keystroke path, not do script', async () => {
+  /*
+   * AMENDED for #471. It was 'sends a permission digit through the keystroke
+   * path, not do script' — true of the whole adapter while a digit had nowhere
+   * else to go, and true of `sendText` alone now. A permission digit reaches
+   * `sendKey` above first and is written into the tab. What is pinned here is
+   * that `sendText` ITSELF is untouched, because it is still what every key the
+   * tab write cannot carry falls back to.
+   */
+  it('still types through System Events when sendText is called directly', async () => {
     const { run, seen } = runnerFor({ tabs: '' })
     expect(await createDarwinConsoleInput(run).sendText('1', false)).toBe(true)
     expect(seen).toHaveLength(1)
