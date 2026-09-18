@@ -281,7 +281,11 @@ export class PosixTextDelivery implements TextDeliveryPort {
       text: request.text,
       binaryPath: await this.codexBinary(),
       run: this.runCodexResume,
-      fs: this.fs
+      fs: this.fs,
+      // Forwarded rather than defaulted (#462): an absent request.tuning must
+      // reach codexTuningArgs as absent too, which is what keeps the argv
+      // byte-identical to before this issue.
+      ...(request.tuning === undefined ? {} : { tuning: request.tuning })
     })
   }
 

@@ -511,7 +511,14 @@ describe('CodexProvider with the Codex SQLite registry', () => {
         // The thread's OWN folder, normalized the way the snapshot's is: Codex
         // declines to run outside a Git repository, and this app's own working
         // directory is nothing anybody chose.
-        cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name'
+        cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
+        // AMENDED for #462 (was: no model/effort — the address named only
+        // where to run, never what to run it as). The pair `seedLiveThread`
+        // seeds above (`:97-98`) must ride the address a resume is built
+        // from; tightened rather than weakened, and this is a stricter
+        // assertion of the same shape, not a different one.
+        model: 'gpt-5.6-luna',
+        effort: 'medium'
       })
     })
 
@@ -574,6 +581,105 @@ describe('CodexProvider with the Codex SQLite registry', () => {
       sqlite.exec(STATE_DB, `UPDATE threads SET archived = 1 WHERE id = '${LIVE_ID}'`)
       await provider.scan()
       expect(provider.textDelivery('codex:' + LIVE_ID)).toBeNull()
+    })
+  })
+
+  /**
+   * Issue #462, D2/D4: the resume address is not just WHERE a turn runs, it
+   * also names what the thread already shows, so a resume the panel sends
+   * cannot start at a pair different from the one on screen.
+   */
+  describe('the resumed thread pair the address carries (#462)', () => {
+    const rolloutExecFixture = readFileSync(join(FIXTURES, 'rollout-exec.jsonl'), 'utf8')
+    const ROLLOUT_EXEC_ID = '01a0af41-0000-7621-ba46-000000000458'
+    const ROLLOUT_EXEC_PATH =
+      ROOT + '\\2026\\09\\17\\rollout-2026-09-17T12-05-21-' + ROLLOUT_EXEC_ID + '.jsonl'
+
+    it('falls back to the rollout turn_context when the registry row names neither field', async () => {
+      // The registry row is Codex's own record, but it can be silent about a
+      // thread's settings the same way a restored launch is (D1b) — the
+      // rollout's own turn_context is what the label is drawn from either way.
+      seedLiveThread({
+        source: 'exec',
+        cliVersion: '0.153.4',
+        model: undefined,
+        effort: undefined
+      })
+      const provider = makeProvider()
+      await provider.scan()
+      expect(provider.textDelivery('codex:' + LIVE_ID)).toEqual({
+        kind: 'codex-exec-resume',
+        threadId: LIVE_ID,
+        cwd: 'C:\\Users\\j\\Desktop\\Sample-Project\\agent-name',
+        // The default fixture's own turn_context (`rollout.jsonl:3`).
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+    })
+
+    it('names neither key when nothing anywhere named a pair', async () => {
+      const bareId = 'no-tuning-thread'
+      const barePath = rolloutPathFor(bareId)
+      fake.addFile(
+        barePath,
+        `{"timestamp":"2026-08-29T09:00:00.000Z","type":"session_meta",` +
+          `"payload":{"id":"${bareId}","cwd":"C:\\\\proj"}}\n`,
+        NOW - 30_000
+      )
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: bareId,
+          cwd: 'C:\\proj',
+          rolloutPath: barePath,
+          source: 'exec',
+          cliVersion: '0.153.4',
+          updatedAtMs: NOW - 30_000
+        })
+      )
+      const provider = makeProvider()
+      await provider.scan()
+      // toEqual on the bare object: it fails if `model`/`effort` are present
+      // with any value (including undefined-as-a-key) and passes only when
+      // both are genuinely omitted.
+      expect(provider.textDelivery('codex:' + bareId)).toEqual({
+        kind: 'codex-exec-resume',
+        threadId: bareId,
+        cwd: 'C:\\proj'
+      })
+    })
+
+    /**
+     * D4, the label invariant: on one scan, the pair the resume address
+     * carries is strictly the same pair the dwarf's own label shows — proved
+     * over the fixture where a resumed turn moves effort medium -> high
+     * (`rollout-exec.jsonl` lines 8 and 31), which is the exact symptom this
+     * issue exists to close.
+     */
+    it("names the address with the exact pair the dwarf's own label shows", async () => {
+      fake.addFile(ROLLOUT_EXEC_PATH, rolloutExecFixture, NOW - 30_000)
+      sqlite.exec(
+        STATE_DB,
+        threadInsert({
+          id: ROLLOUT_EXEC_ID,
+          cwd: 'C:\\Users\\j\\Desktop\\Sample-Project',
+          rolloutPath: ROLLOUT_EXEC_PATH,
+          source: 'exec',
+          cliVersion: '0.153.4',
+          updatedAtMs: NOW - 30_000
+        })
+      )
+      const provider = makeProvider()
+      const [snapshot] = await provider.scan()
+      const dwarf = snapshot!.dwarfs.find((item) => item.sessionId === ROLLOUT_EXEC_ID)
+      expect(dwarf?.model).toBe('gpt-5.6-sol')
+      expect(dwarf?.effort).toBe('high')
+      const address = provider.textDelivery('codex:' + ROLLOUT_EXEC_ID)
+      expect(address).toMatchObject({
+        kind: 'codex-exec-resume',
+        model: dwarf?.model,
+        effort: dwarf?.effort
+      })
     })
   })
 

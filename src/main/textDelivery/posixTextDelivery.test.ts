@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { FakeFs } from '../adapters/fakeFs'
 import { PosixTextDelivery } from './posixTextDelivery'
 
 function delivery(overrides: Partial<ConstructorParameters<typeof PosixTextDelivery>[0]> = {}) {
@@ -219,6 +220,64 @@ describe('PosixTextDelivery.queueToCodexThread', () => {
       text: 'my-secret-payload'
     })
     expect(outcome.error).not.toContain('my-secret-payload')
+  })
+})
+
+/**
+ * The Codex resume tier (#450/#462): platform-neutral like the queue above,
+ * reached through the same detected binary. No test named this tier before
+ * #462 — this is new coverage, not an amendment.
+ */
+describe('PosixTextDelivery.resumeCodexThread', () => {
+  const THREAD_ID = '01a0af41-d1c5-7621-ba46-75eaef3eaeb2'
+  const CWD = '/home/j/projects/sample-project'
+
+  it('reaches the detected codex binary with a tuned resume argv', async () => {
+    const runCodexResume = vi.fn().mockResolvedValue({ running: true })
+    const port = delivery({
+      platform: 'linux',
+      codexBinary: async () => '/home/j/.local/bin/codex',
+      runCodexResume,
+      fs: new FakeFs()
+    })
+
+    await expect(
+      port.resumeCodexThread({
+        threadId: THREAD_ID,
+        cwd: CWD,
+        text: 'run the tests',
+        tuning: { model: 'gpt-5.6-sol', effort: 'high' }
+      })
+    ).resolves.toEqual({ delivered: true })
+    expect(runCodexResume.mock.calls[0]?.[0]).toMatchObject({
+      command: '/home/j/.local/bin/codex',
+      args: [
+        'exec',
+        '-m',
+        'gpt-5.6-sol',
+        '-c',
+        'model_reasoning_effort=high',
+        'resume',
+        THREAD_ID,
+        '-'
+      ],
+      cwd: CWD
+    })
+  })
+
+  it('reaches the bare argv when no tuning was asked for', async () => {
+    const runCodexResume = vi.fn().mockResolvedValue({ running: true })
+    const port = delivery({
+      platform: 'linux',
+      codexBinary: async () => '/home/j/.local/bin/codex',
+      runCodexResume,
+      fs: new FakeFs()
+    })
+
+    await port.resumeCodexThread({ threadId: THREAD_ID, cwd: CWD, text: 'hi' })
+    expect(runCodexResume.mock.calls[0]?.[0]).toMatchObject({
+      args: ['exec', 'resume', THREAD_ID, '-']
+    })
   })
 })
 

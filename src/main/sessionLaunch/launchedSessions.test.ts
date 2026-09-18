@@ -334,7 +334,12 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
   /** One run of the app: retain a launch, let the poll claim its session, settle the write. */
   async function runWithLaunch(
     launchStore: LaunchedSessionStore,
-    options: { pid?: number; start?: number | null; sessionId?: string } = {}
+    options: {
+      pid?: number
+      start?: number | null
+      sessionId?: string
+      tuning?: { model?: string; effort?: string }
+    } = {}
   ) {
     const pid = options.pid ?? 4242
     const started = options.start === undefined ? PROC_START : options.start
@@ -348,7 +353,8 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
       provider: 'codex',
       minePath: MINE_PATH,
       process: handle(pid).process,
-      knownSessionIds: []
+      knownSessionIds: [],
+      ...(options.tuning === undefined ? {} : { tuning: options.tuning })
     })
     launched.observe([mine(MINE_PATH, [dwarf({ sessionId: options.sessionId ?? 'thread-new' })])])
     await launched.settle()
@@ -659,4 +665,83 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
     })
   })
   /* --- end of the #450 block ----------------------------------------------- */
+
+  /* --- What a launch asked for, reachable after its process exits (#462) --- */
+
+  /**
+   * D1: the explicit half of a resume's tuning must survive the launch
+   * process's exit, which is exactly when a resume becomes reachable.
+   * `forget()` removes only the store row (`:345-353`); the record itself
+   * stays in `records`/`byDwarf` with `gone: true` for the whole run
+   * (`holdsRunningProcess`, above), so the tuning stays reachable too.
+   */
+  describe('tuningOfDwarf', () => {
+    function boundWithTuning(tuning: { model?: string; effort?: string } | undefined) {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: [],
+        ...(tuning === undefined ? {} : { tuning })
+      })
+      launched.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+      return { launched, exiting }
+    }
+
+    it('answers with the pair a launch asked for, once the dwarf is stamped', () => {
+      const { launched } = boundWithTuning({ model: 'gpt-5.6-sol', effort: 'high' })
+      expect(launched.tuningOfDwarf('codex:thread-new')).toEqual({
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+    })
+
+    /*
+     * The load-bearing case: `forget()` only drops the store row. The record
+     * stays in `records`/`byDwarf` with `gone: true`, so a resume reached
+     * after the opening process has exited still finds what it asked for.
+     */
+    it('still answers with the pair once the launch process has exited', () => {
+      const { launched, exiting } = boundWithTuning({ model: 'gpt-5.6-sol', effort: 'high' })
+      exiting.exit()
+      expect(launched.tuningOfDwarf('codex:thread-new')).toEqual({
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+    })
+
+    it('answers undefined for a launch that asked for nothing, not an empty object', () => {
+      const { launched } = boundWithTuning(undefined)
+      expect(launched.tuningOfDwarf('codex:thread-new')).toBeUndefined()
+    })
+
+    it('answers undefined for a dwarf this panel never launched', () => {
+      const { launched } = boundWithTuning({ model: 'gpt-5.6-sol' })
+      expect(launched.tuningOfDwarf('codex:somebody-elses')).toBeUndefined()
+    })
+
+    /*
+     * D1b's gate expressed as a test: a RESTORED record (`restore()`, `:255-268`
+     * before this issue) has no tuning to carry — the object literal there
+     * never carried one — so it falls to the observed pair D2 supplies.
+     */
+    it('answers undefined for a restored record, which never carried a launch tuning', async () => {
+      const { store: launchStore, sqlite } = store()
+      await runWithLaunch(launchStore, { tuning: { model: 'gpt-5.6-sol', effort: 'high' } })
+
+      const { store: reopened } = store(sqlite)
+      const nextRun = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(true),
+        processStartTimeMs: probe({ 4242: PROC_START }).processStartTimeMs,
+        store: reopened
+      })
+      await nextRun.restore()
+      nextRun.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+
+      expect(nextRun.tuningOfDwarf('codex:thread-new')).toBeUndefined()
+    })
+  })
+  /* --- end of the #462 block ------------------------------------------------ */
 })
