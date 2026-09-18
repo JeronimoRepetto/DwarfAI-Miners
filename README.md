@@ -203,11 +203,11 @@ mileage than Windows, so the table keeps the distinction between verified and ex
 | Codex liveness probe                           | PowerShell `Win32_Process`                                | `pgrep -fl codex`                                                                 | `pgrep -fa codex`                                               |
 | Click-to-focus a terminal                      | user32 via PowerShell                                     | `ps` + System Events (`osascript`)                                                | **Unsupported** — falls back to viewer                          |
 | Live transcript viewer                         | Windows Terminal / PowerShell                             | Terminal.app via `osascript`                                                      | `x-terminal-emulator` → … → `xterm`                             |
-| Write a message into a session's console       | **Verified — the default**                                | **Disabled** (relay instead)                                                      | **Unsupported** (relay instead)                                 |
+| Write a message into a session's console       | **Verified — the default**                                | Implemented for Terminal.app, opt-in via `DARWIN_CONSOLE_INPUT` until verified    | **Unsupported** (relay instead)                                 |
 | Relay a message to a named session             | Supported — the fallback                                  | Supported — the default                                                           | Supported — the default                                         |
 | Queue a message to a Codex CLI session         | **Verified** — a native, npm or pnpm install alike (#413) | Expected to work (spawns `codex`)                                                 | Expected to work (spawns `codex`)                               |
-| Answer a permission or question at the console | **Verified**                                              | **Unsupported** — the card sends you to the terminal instead                      | **Unsupported** — the card sends you to the terminal instead    |
-| Attach files to a message                      | **Verified** — console or held Claude session             | Held Claude session only — no console attach control                              | Held Claude session only — no console attach control            |
+| Answer a permission or question at the console | **Verified**                                              | Implemented for Terminal.app, opt-in via `DARWIN_CONSOLE_INPUT` until verified    | **Unsupported** — the card sends you to the terminal instead    |
+| Attach files to a message                      | **Verified** — console or held Claude session             | Implemented for Terminal.app, opt-in via `DARWIN_CONSOLE_INPUT` until verified    | Held Claude session only — no console attach control            |
 | Kick a session running in a terminal           | **Verified** — clean exit, then force                     | Implemented (SIGTERM, then SIGKILL); unreachable until measured                   | Implemented (SIGTERM, then SIGKILL); unreachable until measured |
 | Start at login                                 | HKCU Run key                                              | `~/Library/LaunchAgents` plist                                                    | `~/.config/autostart` desktop entry                             |
 | Packaging                                      | NSIS + portable                                           | dmg + zip (arm64 & x64)                                                           | AppImage + deb                                                  |
@@ -232,14 +232,20 @@ Notes on the three honest gaps:
 - **Linux window focus** is unsupported on purpose. `wmctrl`/`xdotool` are X11-only, absent by
   default, and blocked outright under Wayland; guessing would mean hanging on a tool that is not
   there. Clicking a dwarf goes straight to the transcript viewer instead.
-- **macOS console input** is implemented (`osascript` + System Events) and unit-tested, but it is
-  gated off behind the `DARWIN_CONSOLE_INPUT_ENABLED` constant in
-  `src/main/platform/platformAdapters.ts` — set the `DARWIN_CONSOLE_INPUT` environment variable
-  (see [Diagnostic switches](docs/guide.md#diagnostic-switches)) to test it; it also needs the
-  user to grant Accessibility permission, which the app cannot detect. While it is off, a session
-  with a registry name still takes the relay, and one without gets a Send and a Kick rendered
-  disabled with their reason rather than silently typing nowhere. A per-OS console-write path for
-  macOS and Linux is a follow-up, not a gap in this one.
+- **macOS console input** is implemented and still gated off behind the
+  `DARWIN_CONSOLE_INPUT_ENABLED` constant in `src/main/platform/platformAdapters.ts` — set the
+  `DARWIN_CONSOLE_INPUT` environment variable (see
+  [Diagnostic switches](docs/guide.md#diagnostic-switches)) to test it. It is two mechanisms, and
+  they ask for different things. A **message** is written into the Terminal.app tab the session's
+  own tty names: no window is raised, no keystroke is synthesized, and macOS asks only for
+  Automation permission to control Terminal. A **permission or question key** must not carry a
+  Return, so it stays a System Events keystroke at the foreground and still needs Accessibility
+  permission, which the app cannot detect. Only Terminal.app has been measured; a session in
+  iTerm2, WezTerm, Alacritty, kitty, Ghostty, Hyper or Warp is refused by name rather than guessed
+  at. While the switch is off, a session with a registry name still takes the relay, and one
+  without gets a Send and a Kick rendered disabled with their reason rather than silently typing
+  nowhere. The measurements are in
+  [`docs/console-hosting.md`](docs/console-hosting.md); Linux has no console-write path yet.
 - **Session-data layouts** (`~/.claude`, `~/.codex`, `~/.gemini/antigravity-cli`,
   `~/.local/share/opencode`) are assumed platforms. They are home-relative already and nothing in
   the formats is Windows-specific, but this has not been confirmed against real macOS/Linux

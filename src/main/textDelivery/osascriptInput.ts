@@ -1,5 +1,6 @@
 import type { ProbeCommand } from '../platform/processProbe'
 import type { CommandRunner } from '../platform/unixFocus'
+import type { DwarfAttachment } from '../domain/types'
 import { toConsoleLine } from './sendKeys'
 
 /**
@@ -56,10 +57,49 @@ export function buildOsascriptInterruptCommand(): ProbeCommand {
   return { command: 'osascript', args: ['-e', tellSystemEvents(`key code ${ESCAPE_KEY_CODE}`)] }
 }
 
+/** What one message delivery into a console amounts to, for the port above it. */
+export interface ConsoleMessageOutcome {
+  delivered: boolean
+  /** The sentence the panel shows; absent when it was delivered. */
+  error?: string
+  /**
+   * Whether the console provably received NOTHING — the half that licenses the
+   * relay to carry the same words. Read exactly as
+   * `TextDeliveryOutcome.neverStarted` is, because that is what it becomes.
+   */
+  neverStarted?: boolean
+}
+
+/** One message for a console, the shape `ConsoleTextRequest` already carries. */
+export interface ConsoleMessageRequest {
+  pid: number
+  text: string
+  pressEnter: boolean
+  attachments?: readonly DwarfAttachment[]
+}
+
 /** Typing into the foreground console, as far as one platform can do it. */
 export interface ConsoleInputAdapter {
   sendText(text: string, pressEnter: boolean): Promise<boolean>
   sendInterrupt(): Promise<boolean>
+  /**
+   * Deliver a whole MESSAGE, attachments included, ADDRESSED rather than typed
+   * (#367).
+   *
+   * Optional, and the absence is a per-OS answer rather than a gap, exactly as
+   * `TextDeliveryPort`'s four optional methods are: the two methods above
+   * synthesize keys at whatever holds the foreground, and a platform with no way
+   * to address a console by name has no message tier at all. macOS has one — a
+   * Terminal.app tab named by its tty, see `darwinConsoleInput.ts` — and Linux
+   * has none, so `PosixTextDelivery` turns the absence into a stated refusal and
+   * the relay carries the message.
+   *
+   * An outcome rather than a boolean, unlike the two above it: this is the tier
+   * whose failures differ from each other in ways the person can act on (a
+   * permission to grant, a terminal that is not Terminal.app), and the one whose
+   * refusals decide whether the relay may send the same words again.
+   */
+  sendMessage?(request: ConsoleMessageRequest): Promise<ConsoleMessageOutcome>
 }
 
 /** The macOS console input adapter. Any osascript failure is reported as false. */

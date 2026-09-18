@@ -11,10 +11,8 @@ import {
   type SpawnFn,
   type ViewerPathOptions
 } from './terminalLauncher'
-import {
-  createOsascriptConsoleInput,
-  type ConsoleInputAdapter
-} from '../textDelivery/osascriptInput'
+import type { ConsoleInputAdapter } from '../textDelivery/osascriptInput'
+import { createDarwinConsoleInput } from '../textDelivery/darwinConsoleInput'
 import type { TextDeliveryPort } from '../textDelivery/port'
 import { PosixTextDelivery } from '../textDelivery/posixTextDelivery'
 import type { CodexQueueRunner } from '../textDelivery/codexQueue'
@@ -52,27 +50,32 @@ export type { Platform }
  */
 
 /**
- * Whether the macOS console-input path (System Events keystrokes) is offered
- * by default.
+ * Whether the macOS console-input path is offered by default.
  *
- * The osascript builders are unit-tested, but nothing here has been run on a
- * real Mac, and System Events additionally requires the user to grant
- * Accessibility permission — which this app cannot detect. Offering an
- * unverified channel would mean a Send button that appears to work and
- * silently types nowhere, so it stays off and the panel shows the honest
- * disabled button with its reason.
+ * What it gates is two mechanisms now, not one (#367 item 2, and see
+ * `darwinConsoleInput.ts`). A MESSAGE is written into the Terminal.app tab the
+ * session's tty names — measured live 2026-09-18, no window raised, no
+ * keystroke synthesized, Automation permission only. A key that must not carry
+ * a Return — #203's permission digit, and the Escape behind a deny — is still a
+ * System Events keystroke at the foreground, and still needs Accessibility
+ * permission this app cannot detect.
  *
- * Set `DARWIN_CONSOLE_INPUT=1` (config.ts's `darwinConsoleInputEnabled`,
- * documented beside the other diagnostic switches in docs/guide.md) to
- * override this constant for one run, through the `darwinConsoleInput` option
- * below, wired in at index.ts's composition root — this unblocks TESTING only
- * (#367 item 1). It does not unblock shipping: `createDarwinFocus` still
- * answers a bare boolean, not the reach verdict `focus.ts`'s Windows port
- * gives (its own console vs. a shared terminal host, #329), so with the
- * switch on a keystroke can still land in the wrong tab of a terminal window
- * shared by two sessions. Flip this constant (and the README support matrix)
- * only once that reach verdict exists and the whole path has been verified
- * end to end on macOS (#367 items 2–3).
+ * So the reach verdict #367 asked for exists: `darwinTabReach.ts` answers
+ * `own-console` for a tty a Terminal.app tab carries and `terminal-host` for
+ * everything else, which is the same refusal the Windows port makes for a
+ * shared tab strip (#329). A message can no longer land in the wrong tab,
+ * because no tab is guessed at — it is addressed.
+ *
+ * What still keeps this `false`: nothing on this path has been run from the
+ * panel end to end, only from a scratch tab, and Terminal.app is the ONLY host
+ * measured — iTerm2, WezTerm, Alacritty, kitty, Ghostty, Hyper and Warp all
+ * refuse until somebody measures them. Set `DARWIN_CONSOLE_INPUT=1` (config.ts's
+ * `darwinConsoleInputEnabled`, documented beside the other diagnostic switches
+ * in docs/guide.md) to override this constant for one run, through the
+ * `darwinConsoleInput` option below, wired in at index.ts's composition root.
+ * Flip this constant, and the README support matrix with it, once the
+ * maintainer has verified the whole path from the panel on a real Mac (#367
+ * item 3).
  */
 export const DARWIN_CONSOLE_INPUT_ENABLED = false
 
@@ -151,7 +154,12 @@ function createConsoleInput(
 ): ConsoleInputAdapter | null {
   const enabled = options.darwinConsoleInput ?? DARWIN_CONSOLE_INPUT_ENABLED
   if (platform !== 'darwin' || !enabled) return null
-  return createOsascriptConsoleInput(options.runCommand ?? runUnixCommand)
+  // Two mechanisms behind one adapter since #367, and which one an act takes is
+  // decided there rather than here: a MESSAGE is written into the Terminal.app
+  // tab its tty names, and a key that must not carry a Return stays on System
+  // Events. `createOsascriptConsoleInput` is what this composed before, and it
+  // is still the half that presses keys.
+  return createDarwinConsoleInput(options.runCommand ?? runUnixCommand)
 }
 
 function createTextDelivery(
