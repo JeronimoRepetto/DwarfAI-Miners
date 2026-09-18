@@ -11,6 +11,7 @@ import type { ConsoleInputAdapter } from './osascriptInput'
 import type {
   CodexQueueRequest,
   CodexResumeRequest,
+  ConsoleAnswerRequest,
   ConsoleTextRequest,
   EndSessionRequest,
   InterruptRequest,
@@ -26,6 +27,7 @@ import {
   SESSION_NOT_ENDED,
   SESSION_NOT_VERIFIED
 } from './endSession'
+import { questionAnswerChunks } from './questionKeys'
 import { deliverViaRelay, runRelayProcess, type RelayRunner } from './relayRunner'
 import { createStageTimer } from './timing'
 
@@ -42,12 +44,15 @@ import { createStageTimer } from './timing'
  *   the terminal back restored. That is why this tier exists here while console
  *   input does not — the two were conflated as one "can this platform reach a
  *   console" question until #366, and they are not the same question.
- * - Console input needs the window server. macOS can do it through System
- *   Events (osascript), Linux has no portable way at all, and even the macOS
- *   path needs Accessibility permission the app cannot check for. So the
- *   adapter is passed in: `null` means this platform cannot type into a
- *   console, and the port says so up front through `supportsConsoleInput`
- *   instead of failing after the user has typed a message.
+ * - Console input is the one that still differs, and since #367/#471 it is two
+ *   things rather than one. SYNTHESIZING a key needs the window server: macOS
+ *   does it through System Events (osascript) with Accessibility permission the
+ *   app cannot check for, and Linux has no portable way at all. ADDRESSING a
+ *   console needs no window — macOS writes into the Terminal.app tab a session's
+ *   tty names, which is what carries a message and a single-digit answer. So the
+ *   adapter is passed in: `null` means this platform can do neither, and the
+ *   port says so up front through `supportsConsoleInput` instead of failing
+ *   after the user has typed a message.
  *
  * Like the Windows port, nothing here logs the message: only channels and
  * verdicts, never the text.
@@ -70,6 +75,17 @@ const UNREACHABLE = 'The agent terminal could not be reached.'
 const NO_CONSOLE_MESSAGE_TIER =
   'Writing a message into a terminal is not supported on this operating system yet.'
 const MESSAGE_UNREACHABLE = 'The message could not be delivered to that terminal.'
+/**
+ * Digits nothing may press (#362) — no digits at all, more than the picker
+ * numbers, or a "digit" that is not one.
+ *
+ * Reachable only through a caller that resolved them itself rather than through
+ * `questionKeystrokesFor`, which refuses the same cases first. The Windows port
+ * states its own guard the same way and for the same reason: swallowed, it
+ * would report a picker answered that nobody touched. Nothing was focused and
+ * nothing was pressed, which is what `neverStarted` says.
+ */
+const ANSWER_KEYS_UNBUILDABLE = 'That answer could not be turned into keystrokes.'
 
 export interface PosixTextDeliveryOptions {
   platform: Platform
@@ -330,20 +346,97 @@ export class PosixTextDelivery implements TextDeliveryPort {
     }
   }
 
-  /*
-   * No `answerQuestionAtConsole` here, and the absence is a per-OS answer
-   * rather than a gap (#362).
+  /**
+   * Answer the AskUserQuestion picker this console is drawing (#362, #471).
    *
-   * `ConsoleInputAdapter` can type text and press Escape, and that is all it
-   * can press. A single-select answer is one digit and would fit — but a
-   * multi-select needs the RIGHT arrow that shows its summary before the Enter
-   * that accepts it, and there is no arrow key behind this adapter. Adding half
-   * the tier would put two acts behind one label, exactly the conflation #366
-   * had to undo for the kick: the panel's Answer control would answer a
-   * multi-select on Windows and refuse it here, with nothing on the card able
-   * to say which. The arrow key belongs to #367, and until it exists the
-   * runtime states the whole tier as absent (NO_ANSWER_KEYSTROKE_TIER).
+   * **This tier used to be absent here, and the absence was true rather than a
+   * gap.** `ConsoleInputAdapter` could type at the foreground and press Escape,
+   * and that was all: a single-select answer is one digit and would have fit,
+   * but a multi-select needs the confirmation behind its toggles, and offering
+   * half a tier would have put two acts behind one label — the conflation #366
+   * had to undo for the kick. So the runtime stated the whole tier as missing
+   * (NO_ANSWER_KEYSTROKE_TIER) rather than answering one gesture and refusing
+   * the other with nothing on the card able to say which.
+   *
+   * What changed is not that argument, it is one of its premises. The adapter
+   * can ADDRESS a console now, so a single-select really is answerable — and
+   * the split moved inside this method, where the two gestures can be told
+   * apart, instead of standing between two platforms where they could not.
+   *
+   * ## The two routes, and why the line is where it is
+   *
+   * A **single-select** is one digit and no confirmation. Measured 2026-09-18,
+   * it fires and confirms in ONE addressed `do script` call, so it takes the
+   * key route: no window is raised and the tab strip is never consulted. That
+   * matters more here than anywhere else on this port — a digit in the wrong
+   * tab does not merely interrupt a stranger's turn, it CHOOSES an option in
+   * it, which is the reason the Windows port moved this act off the foreground
+   * at #402 and the reason a named refusal below must never fall through to
+   * typing.
+   *
+   * A **multi-select** cannot: measured the same day, its digit toggled late
+   * through the tab write and digit-plus-Return did not submit. It takes the
+   * keystroke path, behind a focus, one `sendText` per key — each key its own
+   * press, because a key arriving inside another's is read as pasted content
+   * rather than as a keystroke (#404, #402).
+   *
+   * **The multi-select route is unverified on macOS**, and this is the one
+   * claim here that rests on somebody else's platform. The chunks come from
+   * `questionAnswerChunks`, whose confirmation is `ESC [ C` then a carriage
+   * return — measured live on Windows at #402, and about what the PICKER reads
+   * rather than about ConPTY, which is why it is the best available shape. But
+   * 2026-09-18's own multi-select finding was that submitting through the tab
+   * write needs a Tab and then a digit, a different gesture entirely, and
+   * nobody has yet pressed either through System Events. A refusal from here is
+   * therefore honest and a success is not yet proof.
+   *
+   * The digits arrive already resolved to option positions (questionKeys.ts),
+   * so nothing agent-authored reaches a command and there is nothing to escape.
+   * Linux keeps its old answer through a different door: no console adapter, so
+   * the refusal is a VALUE rather than this method's absence — the move
+   * `pasteToConsole` already made, and for the same reason, a class cannot
+   * conditionally have a method.
    */
+  async answerQuestionAtConsole(request: ConsoleAnswerRequest): Promise<TextDeliveryOutcome> {
+    const input = this.consoleInput
+    if (input === null) {
+      return { delivered: false, error: NO_CONSOLE_INPUT, neverStarted: true }
+    }
+    const chunks = questionAnswerChunks(request.digits, request.submit)
+    if (chunks === null) {
+      return { delivered: false, error: ANSWER_KEYS_UNBUILDABLE, neverStarted: true }
+    }
+    try {
+      // One chunk is a single-select: the digit alone, with no confirmation
+      // behind it. Offered to the adapter rather than shape-checked here — it
+      // owns what it measured, and answers null for a key it cannot carry, so a
+      // single TOGGLE awaiting confirmation never reaches it (that is two
+      // chunks) and neither does anything that is not a row's digit.
+      const sendKey = input.sendKey
+      if (sendKey !== undefined && chunks.length === 1) {
+        const addressed = await sendKey.call(input, {
+          pid: request.pid,
+          text: chunks[0] as string,
+          pressEnter: false
+        })
+        if (addressed !== null) return addressed
+      }
+      if (!(await this.focus(request.pid))) {
+        return { delivered: false, error: NOT_FOREGROUNDED }
+      }
+      for (const chunk of chunks) {
+        // Stop at the first key that will not go. Pressing the rest would leave
+        // a picker half-toggled, which is a different answer from the one the
+        // person gave rather than a partial version of it.
+        if (!(await input.sendText(chunk, false))) {
+          return { delivered: false, error: KEYSTROKES_FAILED }
+        }
+      }
+      return { delivered: true }
+    } catch {
+      return { delivered: false, error: UNREACHABLE }
+    }
+  }
 
   /**
    * Kick's terminal tier on macOS and Linux (#366): ask the session's own

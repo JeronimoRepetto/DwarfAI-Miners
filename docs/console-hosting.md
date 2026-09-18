@@ -1706,6 +1706,15 @@ read as the opposite of the Windows rule above, wrongly, for the few hours betwe
    > Case C is the reason the line is not drawn one step further. Guessing the Tab sequence would
    > answer a multi-select with a toggle nobody confirmed, which is worse than the keystroke path's
    > honest preconditions.
+   >
+   > The POSIX port carries an answer tier at all from the same change (#471); it had none before,
+   > and the runtime stated the whole tier as missing. **One caveat that has not been measured
+   > here:** the multi-select route falls back to System Events keystrokes pressing
+   > `questionAnswerChunks`' own sequence — the digits, then `ESC [ C`, then Return — which was
+   > measured live on **Windows** at #402. That measurement is about what the PICKER reads rather
+   > than about ConPTY, so it is the best available shape, but nobody has pressed it through System
+   > Events on macOS, and case C above found a _different_ gesture (Tab, then a digit) through
+   > `do script`. A refusal from that route is honest; a success is not yet proof.
 
    The split is stated rather than papered over, and it is narrower than it was: on macOS the panel
    can now answer a **permission prompt** and a **single-select picker** in a background tab, with
