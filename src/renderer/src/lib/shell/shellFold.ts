@@ -13,18 +13,24 @@
  * flex would relayout the MineScene inside on every frame, and the cave
  * re-measures its anchors from the box it is given.
  *
- * Two rules carry the whole file:
+ * Three rules carry the whole file:
  *
  * - The kept strip is a WIDTH held against the DOCKED edge, stated as
- *   `calc(100% - w)` on the free side. Never a position, and never the
- *   survivors' bounding box — the rail is the free-most column and survives
- *   every fold, so their box is the whole shell however much closes inside it.
- *   Never a measured pixel inset either: main resizes the window under the
- *   running animation, and a percentage keeps the strip against the edge that
- *   did not move.
+ *   `calc(100% - w)` on the free side. Never a position, and never a measured
+ *   pixel inset: main resizes the window under the running animation, and a
+ *   percentage keeps the strip against the edge that did not move.
  * - A column that leaves takes its own width AND one gap with it, because the
  *   row is anchored on the docked edge and everything on the free side of it
  *   slides over.
+ * - The strip has to CONTAIN the columns that survive, and the width above is
+ *   no promise that it does (#464). The rail stands at the free edge of every
+ *   open composition — the end of the shell the fold clips away — so a strip of
+ *   exactly the right width cut the rail out and reached a padding and a gap
+ *   past the panel that was leaving. The rail therefore travels with the fold,
+ *   to the place the row is about to put it, and `foldedRailOffset` is where
+ *   that is. Which is also the one thing the window may not do for it: a resize
+ *   removes pixels from an EDGE, and the rail is painted inside the band about
+ *   to go, so it has to be out of that band before main shrinks.
  */
 import type { ShellComposition } from './composition'
 import type { PanelEdge } from '../../types'
@@ -84,4 +90,49 @@ export function foldedShellWidth(shell: {
 }): number {
   const kept = shell.leaving.reduce((width, column) => width - column - shell.gap, shell.width)
   return Math.max(0, shell.remaining === 'rail' ? kept - 2 * shell.padding : kept)
+}
+
+/**
+ * Where the rail comes to rest, measured from the DOCKED edge (#464).
+ *
+ * The docked edge is the one main never moves, so it is the only thing a
+ * position may be stated against — the free edge is by definition the one that
+ * is about to be somewhere else. Everything on the free side of a leaving
+ * column slides over when it goes, and the rail is the only column that is ever
+ * on that side, which makes this the whole of the row's rearrangement.
+ *
+ * `padding` goes with the open compositions exactly as it does above: the bare
+ * rail is docked by `.shell.is-rail { justify-content: flex-end }` with no
+ * ground and no padding around it, so it ends flush against the edge itself.
+ */
+export function foldedRailOffset(shell: {
+  /** The strip the fold ends on, from `foldedShellWidth`. */
+  kept: number
+  /** The rail's own width. */
+  rail: number
+  /** The shell's own padding, which only the open compositions reserve. */
+  padding: number
+  /** The composition that will stand once the fold has finished. */
+  remaining: ShellComposition
+}): number {
+  const padding = shell.remaining === 'rail' ? 0 : shell.padding
+  return Math.max(0, shell.kept - padding - shell.rail)
+}
+
+/**
+ * The rail's travel, as the transform it is left holding.
+ *
+ * A transform because it is a compositor property, which is the same rule the
+ * clip is chosen under: the mine interior re-measures its anchors from the box
+ * it is given, and the fold exists to leave that box alone until main resizes
+ * the window around it. Mirrored on `edge`, because travelling toward the
+ * docked side is travelling the other way on a left-docked shell.
+ */
+export function railFoldTransform(travel: number, edge: PanelEdge): string {
+  return `translateX(${edge === 'right' ? travel : -travel}px)`
+}
+
+/** The rail's travel from where it is now to where the change leaves it. */
+export function railFoldKeyframes(from: number, to: number, edge: PanelEdge): Keyframe[] {
+  return [{ transform: railFoldTransform(from, edge) }, { transform: railFoldTransform(to, edge) }]
 }

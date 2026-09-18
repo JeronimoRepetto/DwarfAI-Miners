@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  type ComponentPublicInstance
+} from 'vue'
 import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapView from './components/map/MapView.vue'
@@ -152,10 +160,22 @@ const {
  * clipped to the footprint it had. See composables/useShellFold.ts.
  */
 const shellEl = ref<HTMLElement | null>(null)
+/*
+ * The rail travels with the fold (#464), so the composable is handed it as well
+ * as the ground: it is the one column standing on the free side of everything
+ * that leaves, and the free side is the end of the shell a fold clips away.
+ *
+ * Read off the component rather than queried out of the DOM, and guarded rather
+ * than asserted: what a template ref answers for a component with more than one
+ * root is not an element, and a fold is what a shrink waits on — it may lose the
+ * travel, never the shrink.
+ */
+const railEl = ref<ComponentPublicInstance | null>(null)
 const { hold: holdColumn, settle: settleShellFold } = useShellFold({
   shell: () => shellEl.value,
   edge: () => layout.value.edge,
-  remaining: () => shellComposition(visibleLayout.value)
+  remaining: () => shellComposition(visibleLayout.value),
+  rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null)
 })
 
 /*
@@ -831,7 +851,12 @@ onBeforeUnmount(() => {
       they are one surface in the design: the same #f6b644, with the arrow
       turned round.
     -->
-    <EdgeRail :edge="layout.edge" :composition="composition" @toggle="toggleSecondary" />
+    <EdgeRail
+      ref="railEl"
+      :edge="layout.edge"
+      :composition="composition"
+      @toggle="toggleSecondary"
+    />
 
     <!--
       The three columns of the book hand their motion to the ground they stand
@@ -1066,11 +1091,13 @@ onBeforeUnmount(() => {
   flex-direction: row-reverse;
 }
 /*
- * The closed window is the platform's 32px floor rather than the design's 20px
- * rail, because Windows will not make one narrower (#153, MIN_WINDOW_WIDTH in
- * main/shell/panelBounds.ts). The rail itself is still 20px, held against the
- * DOCKED side so both edges look the same: `flex-end` is the right of a `row`
- * and the left of a `row-reverse`, which is exactly the docked side each time.
+ * The closed window is the design's 20px rail wherever the platform will make
+ * one that narrow, and its own floor where it will not — Windows will not, and
+ * since #465 it is the only one that will not (`minWindowWidth` in
+ * main/platform/windowMetrics.ts, #153). The rail itself is 20px either way,
+ * held against the DOCKED side so both edges look the same: `flex-end` is the
+ * right of a `row` and the left of a `row-reverse`, which is exactly the docked
+ * side each time.
  */
 .shell.is-rail {
   justify-content: flex-end;
