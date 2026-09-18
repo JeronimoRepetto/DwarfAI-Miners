@@ -50,6 +50,18 @@ import type { PanelEdge } from '../types'
  * panel's own window reads it too — three copies of one rule was two too many.
  * What stays here is the only part that is the fold's own: the clip it settles
  * on, written before the animation is let go.
+ *
+ * ## The window is the second deadline (#464)
+ *
+ * The fold ending is not the resize happening, and the two were treated as one
+ * event. What the fold releases is the REQUEST — the shrink may go out — and
+ * three things then wait on main having answered it: the columns, which may not
+ * repack the row inside a rectangle that has not changed; the clip, which may
+ * not be let go of over a box that is still the width the fold started from;
+ * and the rail's travel, which is the row's own again the moment the row is
+ * right. A `resize` listener is the first thing the renderer can observe of the
+ * resize itself, and `PANEL_LEAVE_BOUND_MS` is the floor under a window that
+ * never answers at all.
  */
 export interface ShellFoldOptions {
   /** The element the amber ground is painted on. */
