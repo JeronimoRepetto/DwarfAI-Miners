@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
-import { darwinConsoleInputOverride } from '../config/config'
+import { darwinConsoleInputOverride, linuxConsoleInputOverride } from '../config/config'
 import type { ProbeCommand } from './processProbe'
 import type { EndProcessCommand } from './processEnd'
 import type { SpawnFn, SpawnedProcess } from './terminalLauncher'
@@ -180,8 +180,27 @@ describe('createPlatformAdapters — text delivery', () => {
     expect(createPlatformAdapters(options('win32')).textDelivery.supportsConsoleInput).toBe(true)
   })
 
-  it('never offers console input on Linux', () => {
-    expect(createPlatformAdapters(options('linux')).textDelivery.supportsConsoleInput).toBe(false)
+  /*
+   * AMENDED for #471. It was 'never offers console input on Linux', true for
+   * as long as Linux had no way to address a console at all — a keystroke tier
+   * needs a reach verdict nobody has measured, and #329 is what happens
+   * without one. tmux gives Linux an ADDRESSED tier instead, so the capability
+   * is real now; what is still absent is the keystroke half, and the adapter
+   * refuses that by name rather than by the whole capability being off.
+   *
+   * ON by default, the maintainer's decision of 2026-09-18: a session outside
+   * tmux refuses and the relay carries the message exactly as it does today,
+   * so nothing gets worse for anyone who does not use tmux.
+   */
+  it('offers console input on Linux by default, through the tmux pane tier', () => {
+    expect(createPlatformAdapters(options('linux')).textDelivery.supportsConsoleInput).toBe(true)
+  })
+
+  it('can be switched off for Linux, leaving the port with no console at all', () => {
+    expect(
+      createPlatformAdapters(options('linux', { linuxConsoleInput: false })).textDelivery
+        .supportsConsoleInput
+    ).toBe(false)
   })
 
   // AMENDED for #367 item 3: the maintainer flipped DARWIN_CONSOLE_INPUT_ENABLED
@@ -251,15 +270,68 @@ describe('createPlatformAdapters — text delivery', () => {
    * future refactor cannot let it start mattering on a platform #367 was
    * never about.
    */
-  it('leaves Windows and Linux console input capability unaffected by the switch', () => {
+  /*
+   * AMENDED for #471. Linux's line asserted `false` for a platform that had no
+   * console tier at all; it now has its own switch, and what this pins is the
+   * same claim it always made — the DARWIN switch answers for darwin and for
+   * nothing else. So Linux with the macOS switch forced OFF still follows its
+   * own default, which is on.
+   */
+  it('leaves Windows and Linux console input capability unaffected by the macOS switch', () => {
     expect(
       createPlatformAdapters(options('win32', { darwinConsoleInput: true })).textDelivery
         .supportsConsoleInput
     ).toBe(true)
     expect(
-      createPlatformAdapters(options('linux', { darwinConsoleInput: true })).textDelivery
+      createPlatformAdapters(options('linux', { darwinConsoleInput: false })).textDelivery
         .supportsConsoleInput
+    ).toBe(true)
+  })
+
+  /*
+   * The round trip index.ts composes for Linux (#471), the mirror of the macOS
+   * one above: config.ts's environment-only reader straight into the option
+   * this module accepts. Unset leaves the shipped `true`; `0` forces it off.
+   */
+  it('flips supportsConsoleInput on linux through the real env parser, end to end', () => {
+    expect(
+      createPlatformAdapters(options('linux', { linuxConsoleInput: linuxConsoleInputOverride({}) }))
+        .textDelivery.supportsConsoleInput
+    ).toBe(true)
+    expect(
+      createPlatformAdapters(
+        options('linux', {
+          linuxConsoleInput: linuxConsoleInputOverride({ LINUX_CONSOLE_INPUT: '0' })
+        })
+      ).textDelivery.supportsConsoleInput
     ).toBe(false)
+    expect(
+      createPlatformAdapters(
+        options('linux', {
+          linuxConsoleInput: linuxConsoleInputOverride({ LINUX_CONSOLE_INPUT: '1' })
+        })
+      ).textDelivery.supportsConsoleInput
+    ).toBe(true)
+  })
+
+  /*
+   * The MESSAGE tier the Linux switch composes: the tmux pane write, proven
+   * end to end through composition for the same reason the darwin one is —
+   * the point is WHICH adapter the composition picks.
+   */
+  it('writes a Linux message into the tmux pane its tty names, raising nothing', async () => {
+    const seen: ProbeCommand[] = []
+    const runCommand = async (command: ProbeCommand) => {
+      seen.push(command)
+      return command.command === 'ps' ? 'pts/4\n' : '%3 /dev/pts/4 9876\n'
+    }
+    const adapters = createPlatformAdapters(options('linux', { runCommand }))
+    await expect(
+      adapters.textDelivery.pasteToConsole?.({ pid: 42, text: 'hola mundo', pressEnter: false })
+    ).resolves.toMatchObject({ delivered: true })
+    expect(seen.map((command) => command.command)).toEqual(['ps', 'tmux', 'tmux', 'tmux'])
+    expect(seen[2]?.stdin).toBe('hola mundo')
+    expect(seen[3]?.args).toContain('%3')
   })
 
   /*

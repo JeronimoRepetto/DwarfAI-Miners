@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DWARF_PROVIDERS, TIER_WEIGHT_THRESHOLDS_KB } from '../domain/types'
 import {
   DARWIN_CONSOLE_INPUT_ENV_VAR,
+  LINUX_CONSOLE_INPUT_ENV_VAR,
   SIMULATION_ENV_VAR,
   cliOverridesFrom,
   darwinConsoleInputOverride,
   defaultConfig,
   defaultSimulationConfig,
+  linuxConsoleInputOverride,
   loadConfig,
   loadSimulationConfig
 } from './config'
@@ -538,5 +540,56 @@ describe('darwinConsoleInputOverride', () => {
     expect(darwinConsoleInputOverride()).toBe(false)
     vi.stubEnv(DARWIN_CONSOLE_INPUT_ENV_VAR, '')
     expect(darwinConsoleInputOverride()).toBeUndefined()
+  })
+})
+
+/*
+ * The Linux console-input override (#471), the mirror of the macOS one above
+ * and tri-state for the same reason: the shipped constant is `true`, so
+ * "unset" and "set to false" have to be different answers or nobody could
+ * turn the path off. A real environment variable only, never an AppConfig
+ * key — it gates a route that reaches another program (tmux), which is the
+ * config-layering split the simulated valley and DARWIN_CONSOLE_INPUT both
+ * sit on the same side of.
+ */
+describe('linuxConsoleInputOverride', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('is undefined for an empty environment, leaving the shipped default in charge', () => {
+    expect(linuxConsoleInputOverride({})).toBeUndefined()
+  })
+
+  it.each(['1', 'true', 'TRUE'])('forces the path on for the affirmative value %j', (value) => {
+    expect(linuxConsoleInputOverride({ [LINUX_CONSOLE_INPUT_ENV_VAR]: value })).toBe(true)
+  })
+
+  it.each(['0', 'false', 'FALSE'])('forces the path off for the negative value %j', (value) => {
+    expect(linuxConsoleInputOverride({ [LINUX_CONSOLE_INPUT_ENV_VAR]: value })).toBe(false)
+  })
+
+  it.each(['yes', 'on', '', '   '])('treats the unconsidered value %j as unset', (value) => {
+    expect(linuxConsoleInputOverride({ [LINUX_CONSOLE_INPUT_ENV_VAR]: value })).toBeUndefined()
+  })
+
+  it('never leaks into AppConfig, so the userData config file cannot carry it', () => {
+    expect(loadConfig({ [LINUX_CONSOLE_INPUT_ENV_VAR]: '1' })).toEqual(defaultConfig())
+    expect('linuxConsoleInput' in loadConfig({ [LINUX_CONSOLE_INPUT_ENV_VAR]: '1' })).toBe(false)
+  })
+
+  it('reads process.env when no environment is passed', () => {
+    vi.stubEnv(LINUX_CONSOLE_INPUT_ENV_VAR, '0')
+    expect(linuxConsoleInputOverride()).toBe(false)
+    vi.stubEnv(LINUX_CONSOLE_INPUT_ENV_VAR, '')
+    expect(linuxConsoleInputOverride()).toBeUndefined()
+  })
+
+  // The two switches are separate values and neither may answer for the other:
+  // a macOS operator forcing their own path off must not silently take Linux's
+  // with it, and vice versa.
+  it('is independent of the macOS switch', () => {
+    expect(linuxConsoleInputOverride({ [DARWIN_CONSOLE_INPUT_ENV_VAR]: '0' })).toBeUndefined()
+    expect(darwinConsoleInputOverride({ [LINUX_CONSOLE_INPUT_ENV_VAR]: '0' })).toBeUndefined()
   })
 })

@@ -6,9 +6,11 @@ import {
   TTY_UNKNOWN
 } from '../platform/darwinTabReach'
 import type { DwarfAttachment } from '../domain/types'
+import { TMUX_NOT_RUNNING } from './tmuxPaneWrite'
 import {
   MESSAGE_UNBUILDABLE,
   RETURN_CANNOT_BE_WITHHELD,
+  consoleRefusalNamingBoth,
   createDarwinConsoleInput
 } from './darwinConsoleInput'
 
@@ -16,13 +18,26 @@ function attachment(path: string): DwarfAttachment {
   return { path, name: path.slice(path.lastIndexOf('/') + 1), kind: 'image', bytes: 1024 }
 }
 
-/** A runner answering each command by name, recording what it was asked. */
+/**
+ * A runner answering each command by name, recording what it was asked.
+ *
+ * AMENDED for #471's fall-through: tmux commands answer by their own verb, and
+ * `list-panes` defaults to "no panes at all" so a test that says nothing about
+ * tmux still describes a machine without one.
+ */
 function runnerFor(answers: Partial<Record<string, string | Error>>) {
   const seen: ProbeCommand[] = []
   const run = async (command: ProbeCommand): Promise<string> => {
     seen.push(command)
-    const key = command.command === 'ps' ? 'ps' : command.args.length > 2 ? 'write' : 'tabs'
-    const answer = answers[key]
+    const key =
+      command.command === 'ps'
+        ? 'ps'
+        : command.command === 'tmux'
+          ? (command.args[0] as string)
+          : command.args.length > 2
+            ? 'write'
+            : 'tabs'
+    const answer = answers[key] ?? (command.command === 'tmux' ? '' : undefined)
     if (answer === undefined) throw new Error(`unexpected ${key}`)
     if (answer instanceof Error) throw answer
     return answer
@@ -31,6 +46,9 @@ function runnerFor(answers: Partial<Record<string, string | Error>>) {
 }
 
 const REACHABLE = { ps: 'ttys001\n', tabs: '/dev/ttys002, /dev/ttys001\n' }
+
+/** The panes of a Mac whose session is in tmux rather than in a Terminal.app tab. */
+const IN_TMUX = { 'list-panes': '%3 /dev/ttys001 9876\n', 'load-buffer': '', 'paste-buffer': '' }
 
 describe('createDarwinConsoleInput sendMessage', () => {
   it('writes the whole message into the tab that tty names, in ONE do script call', async () => {
@@ -64,9 +82,17 @@ describe('createDarwinConsoleInput sendMessage', () => {
     ).toHaveLength(1)
   })
 
-  // The refusal that keeps the two mechanisms apart: `do script` always appends
-  // a Return, so a caller that must not submit cannot take this tier.
-  it('refuses to write at all when the Return must be withheld', async () => {
+  /*
+   * The refusal that keeps the two mechanisms apart: `do script` always appends
+   * a Return, so a caller that must not submit cannot take this tier.
+   *
+   * AMENDED for #471. It asserted that NOTHING ran — the refusal came before
+   * the reach. It now comes after it, because the refusal belongs to the TAB
+   * and a session tmux hosts can withhold the Return; what is pinned here is
+   * that a session in a tab still gets the refusal, and that nothing was
+   * written for it.
+   */
+  it('refuses to write into a tab when the Return must be withheld', async () => {
     const { run, seen } = runnerFor({ ...REACHABLE, write: 'written\n' })
     expect(
       await createDarwinConsoleInput(run).sendMessage({
@@ -75,9 +101,14 @@ describe('createDarwinConsoleInput sendMessage', () => {
         pressEnter: false
       })
     ).toEqual({ delivered: false, error: RETURN_CANNOT_BE_WITHHELD, neverStarted: true })
-    expect(seen).toEqual([])
+    expect(seen.map((command) => command.command)).toEqual(['ps', 'osascript'])
+    expect(
+      seen.some((command) => command.command === 'osascript' && command.args.length === 4)
+    ).toBe(false)
   })
 
+  // AMENDED for #471: the refusal now names BOTH tiers, because tmux is asked
+  // before anything is refused and this machine has no tmux either.
   it('refuses a session whose tab it cannot name, and says nothing was written', async () => {
     const { run } = runnerFor({ ps: 'ttys009\n', tabs: '/dev/ttys001\n' })
     expect(
@@ -86,7 +117,11 @@ describe('createDarwinConsoleInput sendMessage', () => {
         text: 'hola',
         pressEnter: true
       })
-    ).toEqual({ delivered: false, error: TERMINAL_HOST_UNMEASURED, neverStarted: true })
+    ).toEqual({
+      delivered: false,
+      error: consoleRefusalNamingBoth(TERMINAL_HOST_UNMEASURED, TMUX_NOT_RUNNING),
+      neverStarted: true
+    })
   })
 
   it('refuses a session with no controlling terminal', async () => {
@@ -96,6 +131,9 @@ describe('createDarwinConsoleInput sendMessage', () => {
     ).toEqual({ delivered: false, error: TTY_UNKNOWN, neverStarted: true })
   })
 
+  // AMENDED for #471: the permission is still named, beside the second tier
+  // that was tried and could not help either. A refused Apple event is exactly
+  // the case tmux CAN rescue, so it must be asked before this is reported.
   it('names the Automation permission when TCC refuses the reach', async () => {
     const { run } = runnerFor({
       ps: 'ttys001\n',
@@ -103,7 +141,11 @@ describe('createDarwinConsoleInput sendMessage', () => {
     })
     expect(
       await createDarwinConsoleInput(run).sendMessage({ pid: 4321, text: 'hi', pressEnter: true })
-    ).toEqual({ delivered: false, error: AUTOMATION_PERMISSION_DENIED, neverStarted: true })
+    ).toEqual({
+      delivered: false,
+      error: consoleRefusalNamingBoth(AUTOMATION_PERMISSION_DENIED, TMUX_NOT_RUNNING),
+      neverStarted: true
+    })
   })
 
   it('names the Automation permission when TCC refuses the write itself', async () => {
@@ -219,11 +261,17 @@ describe('createDarwinConsoleInput sendKey', () => {
   // The reach verdict binds here exactly as it does for a message: a tab that
   // cannot be named is a refusal, never a quiet fall-through to pressing a key
   // at whatever window happens to be in front (#329).
+  // AMENDED for #471: both tiers are named, for the reason the message route's
+  // twin is.
   it('refuses a digit whose tab it cannot name, and says nothing was written', async () => {
     const { run } = runnerFor({ ps: 'ttys009\n', tabs: '/dev/ttys001\n' })
     expect(
       await createDarwinConsoleInput(run).sendKey({ pid: 4321, text: '1', pressEnter: false })
-    ).toEqual({ delivered: false, error: TERMINAL_HOST_UNMEASURED, neverStarted: true })
+    ).toEqual({
+      delivered: false,
+      error: consoleRefusalNamingBoth(TERMINAL_HOST_UNMEASURED, TMUX_NOT_RUNNING),
+      neverStarted: true
+    })
   })
 
   it('refuses a digit for a session with no controlling terminal', async () => {
@@ -233,6 +281,9 @@ describe('createDarwinConsoleInput sendKey', () => {
     ).toEqual({ delivered: false, error: TTY_UNKNOWN, neverStarted: true })
   })
 
+  // Unamended: this one refuses at the WRITE, not at the reach, and the
+  // fall-through is a reach-verdict thing. A write that may have landed is
+  // never handed to a second tier (#329's rule, and the Windows port's).
   it('names the Automation permission when TCC refuses a digit', async () => {
     const { run } = runnerFor({
       ...REACHABLE,
@@ -279,5 +330,88 @@ describe('createDarwinConsoleInput keystrokes', () => {
     expect(await createDarwinConsoleInput(run).sendInterrupt()).toBe(true)
     expect(seen[0]?.args[1]).toContain('System Events')
     expect(seen[0]?.args[1]).toContain('key code 53')
+  })
+})
+
+/*
+ * The fall-through to tmux (#471).
+ *
+ * A Mac session in iTerm2, WezTerm, or in any host under tmux, has no
+ * Terminal.app tab carrying its tty — the whole of TERMINAL_HOST_UNMEASURED —
+ * and until now that was the end of it. It is a tmux PANE, though, and a pane
+ * is addressable wherever tmux runs. So the tab is tried first, because it is
+ * the tier that was measured, and tmux is offered what the tab could not take.
+ *
+ * The order is the claim being pinned here. Trying tmux first would put a
+ * measured tier behind an unmeasured one for every session that has both.
+ */
+describe('createDarwinConsoleInput falling through to tmux', () => {
+  it('writes into the Terminal tab when there is one, never asking tmux', async () => {
+    const { run, seen } = runnerFor({ ...REACHABLE, ...IN_TMUX, write: 'written\n' })
+    expect(
+      await createDarwinConsoleInput(run).sendMessage({ pid: 4321, text: 'hi', pressEnter: true })
+    ).toEqual({ delivered: true })
+    expect(seen.some((command) => command.command === 'tmux')).toBe(false)
+  })
+
+  it('writes into the tmux pane when no tab carries that tty', async () => {
+    const { run, seen } = runnerFor({ ps: 'ttys001\n', tabs: '/dev/ttys009\n', ...IN_TMUX })
+    expect(
+      await createDarwinConsoleInput(run).sendMessage({
+        pid: 4321,
+        text: 'hola',
+        pressEnter: false
+      })
+    ).toEqual({ delivered: true })
+    const tmux = seen.filter((command) => command.command === 'tmux')
+    expect(tmux.map((command) => command.args[0])).toEqual([
+      'list-panes',
+      'load-buffer',
+      'paste-buffer'
+    ])
+    expect(tmux[1]?.stdin).toBe('hola')
+  })
+
+  it('presses a digit in the tmux pane when no tab carries that tty', async () => {
+    const { run, seen } = runnerFor({ ps: 'ttys001\n', tabs: '/dev/ttys009\n', ...IN_TMUX })
+    expect(
+      await createDarwinConsoleInput(run).sendKey({ pid: 4321, text: '4', pressEnter: false })
+    ).toEqual({ delivered: true })
+    expect(seen.at(-1)?.args).toEqual(['send-keys', '-t', '%3', '-l', '4'])
+  })
+
+  it('names both tiers when neither can reach the session', async () => {
+    const { run } = runnerFor({ ps: 'ttys001\n', tabs: '/dev/ttys009\n' })
+    const outcome = await createDarwinConsoleInput(run).sendMessage({
+      pid: 4321,
+      text: 'hola',
+      pressEnter: true
+    })
+    expect(outcome.neverStarted).toBe(true)
+    expect(outcome.error).toContain('Terminal.app')
+    expect(outcome.error).toContain('tmux')
+  })
+
+  /*
+   * A session with no controlling terminal at all is refused BEFORE tmux is
+   * asked, and this is the one place the fall-through is skipped: a pane is
+   * matched by tty, so a session without one can match none, and asking would
+   * spend two commands to learn what the first already said.
+   */
+  it('never asks tmux for a session with no controlling terminal', async () => {
+    const { run, seen } = runnerFor({ ps: '??\n', ...IN_TMUX })
+    expect(
+      await createDarwinConsoleInput(run).sendMessage({ pid: 4321, text: 'hi', pressEnter: true })
+    ).toEqual({ delivered: false, error: TTY_UNKNOWN, neverStarted: true })
+    expect(seen.some((command) => command.command === 'tmux')).toBe(false)
+  })
+
+  // The keystroke path is untouched by any of this: it is still System Events
+  // at the foreground, and tmux has no opinion about it.
+  it('leaves the keystroke path alone', async () => {
+    const { run, seen } = runnerFor({ tabs: '' })
+    expect(await createDarwinConsoleInput(run).sendText('hola', false)).toBe(true)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.args[1]).toContain('System Events')
   })
 })

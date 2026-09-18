@@ -1862,6 +1862,95 @@ is untouched, because a message is not an answer and the picker cannot tell them
 
 ---
 
+### Linux gets the tmux pane tier — built 2026-09-18, unmeasured (#471)
+
+**Nothing in this sub-section was measured.** Everything above it records a probe that was run;
+this one records a tier that was _built_ and the measurements it owes. Read it as a plan with code
+behind it, not as a finding — and say "built, unmeasured" wherever it is summarised, never
+"Verified".
+
+#### The tier order, per platform, after this change
+
+| Platform | First tier                                          | Second tier                 | Fallback |
+| -------- | --------------------------------------------------- | --------------------------- | -------- |
+| Windows  | write by pid into the console (`WriteConsoleInput`) | —                           | relay    |
+| macOS    | the Terminal.app tab its tty names (measured)       | the tmux pane its tty names | relay    |
+| Linux    | the tmux pane its tty names                         | —                           | relay    |
+
+The Terminal.app tab goes first on macOS because it is the tier that was measured; a session with
+both must take the measured one. The fall-through is offered only on a **reach verdict** — no tab
+carries that tty, or Automation permission was refused — and never after a write that may have
+landed, which is the rule the Windows port holds. A session with no controlling terminal at all
+(`ps` answers `??`) skips the offer: a pane is matched by tty, so a session without one matches none.
+
+#### Why the macOS shape does not port, and what Linux has instead
+
+Terminal.app's AppleScript dictionary names a tab by tty and writes into it. No Linux terminal has
+an equivalent: writing to `/dev/pts/N` from another process reaches the _screen_, not the program's
+input, and the ioctl that did inject input (`TIOCSTI`) has been disabled by default since kernel
+6.2. That leaves two mechanisms — a multiplexer that addresses panes exactly, or synthetic
+keystrokes into whatever window has focus. Only the first is built, because the second needs a
+reach verdict nobody has measured and #329 is the name of what happens without one.
+
+#### What is built and wired
+
+| Piece                                                | Where                                     | State              |
+| ---------------------------------------------------- | ----------------------------------------- | ------------------ |
+| `list-panes` parser, pane selection, reach verdict   | `main/textDelivery/tmuxPaneWrite.ts`      | built, unit-tested |
+| `load-buffer -` / `paste-buffer -p -d` / `send-keys` | `main/textDelivery/tmuxPaneWrite.ts`      | built, unit-tested |
+| The adapter that performs those calls                | `main/textDelivery/tmuxConsoleInput.ts`   | built, unit-tested |
+| Linux composition, on by default                     | `platform/platformAdapters.ts`            | wired              |
+| `LINUX_CONSOLE_INPUT` two-way override               | `config/config.ts`, `index.ts`            | wired              |
+| macOS fall-through to the same adapter               | `main/textDelivery/darwinConsoleInput.ts` | wired              |
+
+A message is three calls: the payload into a **named** buffer read from stdin (so no argv ceiling,
+and the person's own paste stack is never disturbed), `paste-buffer -p -d` into the pane (bracketed
+paste, buffer deleted after), then a separate `send-keys Enter` 200 ms later — the submit is its own
+write, which is #404 and #485 on a third transport. A digit answer is one call, `send-keys -l <digit>`,
+with no Enter behind it.
+
+#### What is NOT built
+
+`zellij`, and the keystroke tier (`xdotool` on X11, `wtype`/`ydotool` on Wayland). They are a later
+slice, unwired, with their own measurement notes. Linux therefore has no way to answer a
+multi-select picker or to send the Escape behind a deny, and the adapter refuses both by name.
+
+#### The measurement checklist a Linux desktop owes
+
+For each, record host, version, display server (X11 or Wayland), the exact command and its output
+here, and file a Platform validation report.
+
+1. `ps -o tty= -p <claude pid>` shape under GNOME Terminal, Konsole, Alacritty, kitty, WezTerm, foot
+   (Wayland-native), and inside tmux and zellij.
+2. tmux: `paste-buffer -p` plus a separate `send-keys Enter` against a live Claude Code composer
+   submits **once**; a digit via `send-keys -l` closes a permission dialog and confirms a
+   single-select picker (the macOS measurements of 2026-09-18, repeated); a session in a background
+   window or another tmux window still receives it.
+3. zellij: whether `write-chars` can be aimed at a non-focused pane; if not, its verdict stays
+   `terminal-host`.
+4. xdotool on X11: `xdotool search --pid <terminal pid>` window list per host; `xdotool type
+--window <id> --delay 0` into a NON-focused terminal window — many hosts ignore synthetic events
+   unless focused. Tabs: whether a host exposes the active tab at all. Expect `terminal-host` for
+   tabbed windows, as on Windows.
+5. Wayland: `wtype` types only into the focused surface (so it needs a focus step and inherits the
+   Windows-style refusal); `ydotool` needs `ydotoold` running and uinput access. Record which the
+   maintainer's desktop actually has.
+6. Permissions: whether any of the above prompts for a portal or group membership, and what the
+   refusal must name when it is missing.
+7. Kick on Linux (#366: SIGTERM then SIGKILL) walked once, since it shares the pid resolution.
+
+**Order matters for one of these.** Item 2's first line is the one that decides whether the shipped
+default stays on: if a paste plus a separate Enter does not submit exactly once against a live
+composer, the payload shape is wrong and `LINUX_CONSOLE_INPUT=0` is the stopgap until it is fixed.
+
+#### macOS under tmux
+
+The same adapter serves a Mac session in iTerm2, WezTerm, kitty, Ghostty, Hyper or Warp **when that
+session is under tmux** — the tab tier refuses (no Terminal.app tab carries its tty) and the pane
+tier is offered the same act. Unmeasured there too: the checklist above is what settles it on either
+platform, and item 2 is not Linux-specific. A refusal from both tiers names both, so a person who
+runs tmux is not left reading advice about a terminal they are not using.
+
 ## 7. Open edges
 
 - **`vscode`-source Codex sessions are unproven, not disproven.** Nobody has watched a Desktop-app

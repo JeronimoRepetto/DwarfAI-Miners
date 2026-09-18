@@ -75,7 +75,7 @@ import {
   ensureDefaultAutostart,
   migrateLegacyAutostart
 } from './shell/autostart'
-import { darwinConsoleInputOverride, loadConfig } from './config/config'
+import { darwinConsoleInputOverride, linuxConsoleInputOverride, loadConfig } from './config/config'
 import {
   CONFIG_FILE_NAME,
   createConfigFileStore,
@@ -795,6 +795,11 @@ async function init(): Promise<void> {
   // — in charge; a stated override wins in either direction (#367 items 1
   // and 3).
   const darwinConsoleInputSetting = darwinConsoleInputOverride()
+  // The same round trip for Linux's own tier (#471), read from its own
+  // variable: LINUX_CONSOLE_INPUT_ENABLED is `true` too, and a stated override
+  // wins in either direction. Two switches rather than one, because a macOS
+  // operator turning their path off must not take Linux's tmux tier with it.
+  const linuxConsoleInputSetting = linuxConsoleInputOverride()
 
   runtime = new AgentRuntime({
     config,
@@ -810,6 +815,9 @@ async function init(): Promise<void> {
     readAttachment,
     ...(darwinConsoleInputSetting !== undefined
       ? { darwinConsoleInput: darwinConsoleInputSetting }
+      : {}),
+    ...(linuxConsoleInputSetting !== undefined
+      ? { linuxConsoleInput: linuxConsoleInputSetting }
       : {}),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same

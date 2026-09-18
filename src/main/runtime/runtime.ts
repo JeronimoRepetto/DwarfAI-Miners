@@ -675,6 +675,12 @@ export interface RuntimeOptions {
    */
   darwinConsoleInput?: boolean
   /**
+   * The Linux console-input override (#471), the same round trip as the macOS
+   * one beside it and read off its own variable. Absent leaves
+   * `LINUX_CONSOLE_INPUT_ENABLED` in charge.
+   */
+  linuxConsoleInput?: boolean
+  /**
    * What to type into an observed session's console to answer its permission
    * dialog, or null while nothing this build accepts has been measured (#203).
    *
@@ -1085,7 +1091,10 @@ export class AgentRuntime {
         cliOverrides: cliOverridesFrom(options.config),
         ...(options.darwinConsoleInput === undefined
           ? {}
-          : { darwinConsoleInput: options.darwinConsoleInput })
+          : { darwinConsoleInput: options.darwinConsoleInput }),
+        ...(options.linuxConsoleInput === undefined
+          ? {}
+          : { linuxConsoleInput: options.linuxConsoleInput })
       })
 
     this.now = options.now ?? Date.now

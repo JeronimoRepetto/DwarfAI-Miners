@@ -749,7 +749,7 @@ own.
 These are separate from the table above, and deliberately so: they are **real environment variables
 only**, never keys in `config-v1.json`. A debugging device does not belong in the file an installed
 app reads on every launch. Each is on for `1` or `true` and off for anything else — except
-`DARWIN_CONSOLE_INPUT`, which is a two-way override (see below).
+`DARWIN_CONSOLE_INPUT` and `LINUX_CONSOLE_INPUT`, which are two-way overrides (see below).
 
 | Variable               | What it prints                                                                                                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -758,10 +758,11 @@ app reads on every launch. Each is on for `1` or `true` and off for anything els
 | `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                             |
 | `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                    |
 | `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367). |
+| `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).    |
 
 `DWARFAI_PERF` has to be a real environment variable even in a development checkout
 (`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
-arrives too late to be read. The other four work either way.
+arrives too late to be read. The other five work either way.
 
 `DARWIN_CONSOLE_INPUT` overrides the macOS console-input path in either direction: `=0` (or
 `=false`) forces it OFF, `=1` (or `=true`) forces it ON, and leaving it unset takes the shipped
@@ -781,7 +782,25 @@ for the window to be in front to answer a multi-select picker.
 
 A shared terminal window is refused rather than guessed at now: a tab is matched by tty, so several
 tabs are fine. What is NOT covered is a terminal other than Terminal.app — iTerm2, WezTerm,
-Alacritty, kitty, Ghostty, Hyper and Warp are unmeasured and each says so when you send to one.
+Alacritty, kitty, Ghostty, Hyper and Warp are unmeasured and each says so when you send to one —
+**unless that session is running under tmux**, in which case the tmux pane write below takes it.
+The Terminal.app tab is always tried first, because it is the tier that was measured.
+
+`LINUX_CONSOLE_INPUT` overrides the Linux console-input path the same three ways: `=0` (or `=false`)
+forces it OFF, `=1` (or `=true`) forces it ON, unset takes the shipped default, which is ON. It
+switches ONE mechanism, the tmux pane write: the message is loaded into a private tmux buffer, pasted
+into the pane your session's tty names, and submitted by a separate `send-keys Enter`. No window is
+raised, no keystroke is synthesized and no permission is asked for — a pane is addressed by id.
+Linux has no second tier: answering a multi-select picker, and the Escape behind a deny, need a
+keystroke at the foreground window, and no way of sending one has been measured (a synthetic
+keystroke goes to whatever window has focus, which is the mistake the panel refuses to make).
+
+**Nothing on the Linux path has been measured against a live tmux.** The command shapes come from
+tmux's documented interface. A session that is not in a tmux pane — in any terminal, or in none —
+is refused by name and its message goes by relay exactly as it did before, so the switch costs
+nothing to a machine that does not run tmux. `LINUX_CONSOLE_INPUT=0` turns the whole path off for
+one run if it misbehaves; [`docs/console-hosting.md`](console-hosting.md) holds the checklist a real
+Linux desktop owes.
 
 The development-only simulated valley (`DWARFAI_SIMULATE=1` and its seven `DWARFAI_SIMULATE_*`
 companions) is documented
