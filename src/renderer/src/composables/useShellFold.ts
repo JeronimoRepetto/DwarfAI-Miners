@@ -190,26 +190,6 @@ export function useShellFold(options: ShellFoldOptions) {
   }
 
   /**
-   * Which way the row overflows while a fold is standing over a held column
-   * (#472).
-   *
-   * The one state nothing reconciled: between main resizing the window and the
-   * held column being unmounted, the row still contains that column. It is
-   * `flex: 1`, so it collapses to nothing — but its GAP goes with the column
-   * and not with its width, so the row is one `--space-nav-gap` wider than the
-   * rectangle main just made. A row packed from the free edge overflows at the
-   * docked one, and the docked end of the row is the mine: those frames are the
-   * interior clipped by a gap, and the unmount that ends them is the blink.
-   *
-   * So the row is packed against the DOCKED edge for exactly as long as it is
-   * held, which puts the overflow on the free side — the band the fold has
-   * already clipped away and main is in the middle of taking. Written where
-   * `holding` is written rather than tracked beside it: it is that list said in
-   * CSS, and a second source for it is what this issue is about.
-   */
-  const HOLDING = 'is-holding'
-
-  /**
    * Let the columns a fold is standing over be unmounted.
    *
    * Called where the window has caught up, where the fold was superseded, and
@@ -221,8 +201,6 @@ export function useShellFold(options: ShellFoldOptions) {
     overrun = undefined
     const held = holding
     holding = []
-    // The row is the composition's again the moment nothing is standing in it.
-    options.shell()?.classList.remove(HOLDING)
     for (const one of held) one.release()
   }
 
@@ -376,7 +354,6 @@ export function useShellFold(options: ShellFoldOptions) {
         // what will eventually let them go. The bound is the latest fold's,
         // which is the one the window still owes an answer to.
         holding.push(pending)
-        shell.classList.add(HOLDING)
         clearTimeout(overrun)
         overrun = setTimeout(letGo, PANEL_LEAVE_BOUND_MS)
       },
