@@ -17,6 +17,7 @@
  */
 
 import type { DwarfAttachment } from '../domain/types'
+import type { LaunchTuning } from '../domain/launchTuning'
 import type { StageTimings } from './timing'
 
 /**
@@ -101,6 +102,15 @@ export type TextDeliveryTarget =
        * one folder the measurement covered.
        */
       cwd: string
+      /**
+       * What this thread already shows (#462, D2) — the runtime's own record,
+       * carried here so a capability check can see it without reaching back
+       * into the provider. Never what a resume WILL run: `resumeTuning`, one
+       * layer up, is what decides that, merging this against a launch's
+       * explicit request. Absent when nothing observed it.
+       */
+      model?: string
+      effort?: string
     }
 
 /**
@@ -245,6 +255,13 @@ export interface CodexResumeRequest {
   /** The mine the thread belongs to; Codex declines to run outside a Git repository. */
   cwd: string
   text: string
+  /**
+   * What this resumed turn should carry (#462): the runtime's own
+   * resumeTuning(launch, observed) result. Absent — never `{}` — when
+   * neither source named anything, which is what keeps the argv byte-
+   * identical to before this issue.
+   */
+  tuning?: LaunchTuning
 }
 
 /** A raw interrupt keystroke: no text at all, just the key. */

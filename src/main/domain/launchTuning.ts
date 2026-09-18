@@ -126,3 +126,66 @@ export function parseLaunchTuning(
 
   return tuning
 }
+
+/**
+ * The Codex argv fragment for one tuning (#462), shared between the launch
+ * (`buildCodexLaunchArgs`) and the resume (`buildCodexResumeArgs`) so the
+ * `model_reasoning_effort` key is spelled in exactly one place. A typo here
+ * is not a compile error — it is TOML nobody's config file documents, parsed
+ * by Codex as the literal string the doc comment above `buildCodexLaunchArgs`
+ * describes — so this is the one function both call sites delegate to rather
+ * than each writing the key out again.
+ *
+ * ORDER is load-bearing, not cosmetic: Codex reads its options left to
+ * right, and every caller of this fragment places the whole thing BEFORE
+ * `resume`/the trailing `-`. The model pair comes first, then the `-c` pair,
+ * because that is the order the measured launch argv already uses and a
+ * resume must not invent a second one.
+ */
+export function codexTuningArgs(tuning: LaunchTuning): string[] {
+  const args: string[] = []
+  if (tuning.model !== undefined) args.push('-m', tuning.model)
+  if (tuning.effort !== undefined) args.push('-c', `model_reasoning_effort=${tuning.effort}`)
+  return args
+}
+
+/**
+ * Per-field precedence for a resumed turn (#462, D3b): what the launch
+ * explicitly asked for wins; the thread's own OBSERVED settings (Codex's
+ * registry row or its rollout's `turn_context`) fill in only the field the
+ * launch left absent.
+ *
+ * The launch half is passed through UNVALIDATED. `parseLaunchTuning` already
+ * refused-or-accepted it at the IPC boundary (`runtime.ts:3545-3548`), so
+ * re-checking it here would be a second gate on a request already through
+ * the first one. The observed half gets no such history — it is Codex's own
+ * record, not a person's instruction — so an unusable observed value
+ * (an effort outside this provider's list, a blank model) is DROPPED and
+ * lets the field stay absent, rather than refusing the whole resume the way
+ * an unusable REQUESTED value would be. Codex then applies its own default
+ * for that one field, which is exactly today's behaviour before this issue.
+ */
+export function resumeTuning(
+  launch: LaunchTuning | undefined,
+  observed: LaunchTuning | undefined
+): LaunchTuning {
+  const tuning: LaunchTuning = {}
+
+  if (launch?.model !== undefined) {
+    tuning.model = launch.model
+  } else {
+    const observedModel = observed?.model?.trim()
+    if (observedModel !== undefined && observedModel !== '') tuning.model = observedModel
+  }
+
+  if (launch?.effort !== undefined) {
+    tuning.effort = launch.effort
+  } else if (
+    observed?.effort !== undefined &&
+    PROVIDER_EFFORT_LEVELS.codex.includes(observed.effort)
+  ) {
+    tuning.effort = observed.effort
+  }
+
+  return tuning
+}
