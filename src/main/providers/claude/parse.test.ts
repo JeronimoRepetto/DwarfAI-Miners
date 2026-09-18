@@ -987,9 +987,12 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
   it('shows a relayed message that landed while the assistant was mid-turn', () => {
     // Both failures at once: the envelope of the first shape inside the record
     // of the second. The origin the peer session sent carries the message on
-    // its own, so that is what the panel shows.
+    // its own, so that is what the panel shows. Amended for #493: the peer
+    // body now carries RELAY_PROVENANCE_LINE, since without it this is not a
+    // relayed message at all — see the #493 describe block below.
+    const body = `${RELAY_PROVENANCE_LINE}\nShip it.`
     const feed = extractClaudeFeed(
-      relayedMidTurnLines(crossSessionEnvelope('Ship it.'), peerOrigin('Ship it.')),
+      relayedMidTurnLines(crossSessionEnvelope(body), peerOrigin(body)),
       20
     )
     expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'Ship it.']])
@@ -999,16 +1002,23 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
   it('reads the peer origin body even when the prompt carries nothing', () => {
     // The body is what the sending session put on the wire, so it is read
     // first and stands on its own: the prompt is the same words a second time,
-    // and a record that lost them still has a message to show.
-    const feed = extractClaudeFeed(relayedMidTurnLines('', peerOrigin('Ship it.')), 20)
+    // and a record that lost them still has a message to show. Amended for
+    // #493: a peer body only ever counts as the person's own when it carries
+    // RELAY_PROVENANCE_LINE (#378), so this fixture now carries it — the
+    // fact this test exercises is body-before-prompt, not the provenance
+    // gate, which has its own tests below.
+    const body = `${RELAY_PROVENANCE_LINE}\nShip it.`
+    const feed = extractClaudeFeed(relayedMidTurnLines('', peerOrigin(body)), 20)
     expect(feed.map((m) => m.text)).toEqual(['Ship it.'])
   })
 
   it('unwraps the prompt envelope when a peer origin carries no body', () => {
     // The body is the direct evidence and the envelope is the same words a
     // second time, so the fallback costs nothing and covers a shape whose
-    // origin keys a later Claude Code spells differently.
-    const envelope = crossSessionEnvelope('Ship it.')
+    // origin keys a later Claude Code spells differently. Amended for #493,
+    // for the same reason as the test above: the envelope now carries
+    // RELAY_PROVENANCE_LINE, since that is what this test means to exercise.
+    const envelope = crossSessionEnvelope(`${RELAY_PROVENANCE_LINE}\nShip it.`)
     const feed = extractClaudeFeed(relayedMidTurnLines(envelope, peerOrigin()), 20)
     expect(feed.map((m) => m.text)).toEqual(['Ship it.'])
   })
@@ -1023,18 +1033,30 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
   })
 
   it('reads a relayed mid-turn message once, not from the queue pair around it', () => {
-    const tail = relayedMidTurnLines(crossSessionEnvelope('Ship it.'), peerOrigin('Ship it.'))
+    // Amended for #493: both body and envelope now carry
+    // RELAY_PROVENANCE_LINE, since without it a peer message is not the
+    // person's at all (see the #493 describe block below) and this test
+    // would stop exercising the dedup it names.
+    const withProvenance = `${RELAY_PROVENANCE_LINE}\nShip it.`
+    const tail = relayedMidTurnLines(
+      crossSessionEnvelope(withProvenance),
+      peerOrigin(withProvenance)
+    )
     expect(extractClaudeFeed(tail, 20)).toHaveLength(1)
   })
 
   it('keeps all three kinds in transcript order beside an ordinary exchange', () => {
+    // Amended for #493: the third kind is a relayed mid-turn message, and
+    // that is exactly the peer shape now gated on RELAY_PROVENANCE_LINE, so
+    // this fixture carries it too.
+    const relayedThirdMessage = `${RELAY_PROVENANCE_LINE}\nThen tag the release.`
     const tail =
       parentTranscript +
       relayedMessageLine('Ship the vault fix.') +
       midTurnMessageLines('And update the docs.') +
       relayedMidTurnLines(
-        crossSessionEnvelope('Then tag the release.'),
-        peerOrigin('Then tag the release.')
+        crossSessionEnvelope(relayedThirdMessage),
+        peerOrigin(relayedThirdMessage)
       )
     expect(extractClaudeFeed(tail, 20).map((m) => [m.role, m.text])).toEqual([
       ['user', 'Placeholder user prompt.'],
@@ -1044,6 +1066,151 @@ describe('extractClaudeFeed messages the panel never showed (issue #180)', () =>
       ['user', 'And update the docs.'],
       ['user', 'Then tag the release.']
     ])
+  })
+})
+
+/**
+ * A `queued_command` attachment exactly as Claude Code writes a subagent's
+ * hand-back that lands while the parent turn was already running: `origin.kind`
+ * is `peer`, sometimes with a `handback` key naming what it is and sometimes
+ * without, and `origin.body`/`attachment.prompt` open with an `<agent-message>`
+ * envelope — never with RELAY_PROVENANCE_LINE, because no person's message
+ * is inside it (issue #493). Structure only, placeholder body.
+ */
+function peerHandbackLines(reportBody: string, taggedHandback: boolean): string {
+  const prompt = `<agent-message from="placeholder-agent-id">\n[Subagent hand-back] ${reportBody}\n</agent-message>`
+  const origin: Record<string, unknown> = {
+    kind: 'peer',
+    from: 'placeholder-session',
+    senderTaskId: 'placeholder-task-id',
+    body: prompt,
+    ...(taggedHandback ? { handback: true } : {})
+  }
+  const timestamp = '2026-09-18T07:58:54.000Z'
+  return (
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      timestamp,
+      sessionId: '5efdffdd-53df-4509-b30d-c9e56552a22e',
+      content: prompt
+    }) +
+    '\n' +
+    JSON.stringify({
+      type: 'attachment',
+      attachment: { type: 'queued_command', prompt, origin, timestamp },
+      isSidechain: false,
+      timestamp
+    }) +
+    '\n' +
+    JSON.stringify({
+      type: 'queue-operation',
+      operation: 'remove',
+      content: prompt,
+      reason: 'absorbed_mid_turn',
+      timestamp
+    }) +
+    '\n'
+  )
+}
+
+/**
+ * Issue #493. The maintainer measured this shape live: a subagent's hand-back
+ * that lands mid-turn is a `queued_command` with a `peer` origin — the exact
+ * shape #24 gave a relayed message — but no person is behind it. Only
+ * RELAY_PROVENANCE_LINE, this panel's own relay saying "a person wrote this",
+ * turns a peer's words into the person's; every other peer message, a
+ * hand-back or not, is somebody else's.
+ */
+describe('extractClaudeFeed drops a subagent hand-back landing mid-turn (issue #493)', () => {
+  it('drops a peer hand-back whose origin names itself with a handback key', () => {
+    expect(extractClaudeFeed(peerHandbackLines('Placeholder final report.', true), 20)).toEqual([])
+  })
+
+  it('drops a peer hand-back with no handback key either, on the envelope shape alone', () => {
+    // The key is a hint Claude Code sometimes gives, never the gate: most of
+    // the hand-backs measured live did not carry it, and the envelope shape
+    // without RELAY_PROVENANCE_LINE is what actually decides.
+    expect(extractClaudeFeed(peerHandbackLines('Placeholder final report.', false), 20)).toEqual([])
+  })
+
+  it('still shows a peer message that carries the relay provenance line (#378)', () => {
+    // The one peer that speaks for the person is this panel's own relay, and
+    // it says so in its first line. That must keep working exactly as #378
+    // left it, mid-turn included.
+    const feed = extractClaudeFeed(
+      relayedMidTurnLines(
+        crossSessionEnvelope(`${RELAY_PROVENANCE_LINE}\nShip the vault fix.`),
+        peerOrigin(`${RELAY_PROVENANCE_LINE}\nShip the vault fix.`)
+      ),
+      20
+    )
+    expect(feed.map((m) => m.text)).toEqual(['Ship the vault fix.'])
+  })
+
+  it('leaves a human-typed mid-turn message untouched', () => {
+    // origin.kind === 'human' never went through the peer gate at all; this
+    // pins that down explicitly rather than leaving it implied by the #180
+    // tests above.
+    const feed = extractClaudeFeed(midTurnMessageLines('Stop and read the issue first.'), 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'Stop and read the issue first.']])
+  })
+})
+
+/**
+ * A `user` line exactly as Claude Code writes a subagent's hand-back into the
+ * parent transcript: `isMeta` plus `origin`/`promptSource`, one text block
+ * whose content opens with the harness's own framing sentence and an
+ * `<agent-message>` envelope (issue #493). Structure only — the envelope body
+ * here is invented placeholder text, never a real transcript's.
+ */
+function agentHandbackLine(reportBody: string, meta: { isMeta?: boolean } = {}): string {
+  return (
+    JSON.stringify({
+      type: 'user',
+      isMeta: meta.isMeta ?? true,
+      origin: { kind: 'peer' },
+      promptSource: 'agent',
+      timestamp: '2026-09-18T07:58:54.000Z',
+      message: {
+        role: 'user',
+        content:
+          'Another Claude session sent a message:\n' +
+          '<agent-message from="placeholder-agent-id">\n' +
+          `[Subagent hand-back] ${reportBody}\n` +
+          '</agent-message>\n\n' +
+          'This came from another Claude session, not from your user.'
+      }
+    }) + '\n'
+  )
+}
+
+/**
+ * Issue #493. Claude Code writes a subagent's hand-back into the parent
+ * transcript as a `user` line, because that is how the harness feeds a
+ * delegated result back into the turn that launched it. `isMeta` already
+ * keeps it out (it is set on this line exactly as on every other harness
+ * line), so these prove the second, defensive gate: content that is nothing
+ * but an `<agent-message>` envelope is never the person's, with or without
+ * that flag.
+ */
+describe('extractClaudeFeed drops a subagent hand-back (issue #493)', () => {
+  it('keeps a hand-back out of the feed', () => {
+    expect(extractClaudeFeed(agentHandbackLine('Placeholder final report.'), 20)).toEqual([])
+  })
+
+  it('keeps a hand-back out even on a line missing the isMeta flag', () => {
+    // The defensive gate on its own, isolated from the one `isMeta` already
+    // gives every harness line: a build that ever stopped setting the flag
+    // must not turn this into a bubble the person supposedly typed.
+    expect(
+      extractClaudeFeed(agentHandbackLine('Placeholder final report.', { isMeta: false }), 20)
+    ).toEqual([])
+  })
+
+  it('still shows an ordinary typed prompt that is not a hand-back envelope', () => {
+    const feed = extractClaudeFeed(contentUserLine([{ type: 'text', text: 'dig here' }]), 20)
+    expect(feed.map((m) => [m.role, m.text])).toEqual([['user', 'dig here']])
   })
 })
 
