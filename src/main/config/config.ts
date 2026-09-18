@@ -669,3 +669,43 @@ export function darwinConsoleInputOverride(env: ConfigEnv = process.env): boolea
   if (normalized === '0' || normalized === 'false') return false
   return undefined
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * The Linux console-input override (issue #471)
+ * ---------------------------------------------------------------------------
+ *
+ * The mirror of DARWIN_CONSOLE_INPUT above, for the tier tmux gives Linux
+ * (`tmuxConsoleInput.ts`). Same three states and the same reason for three
+ * rather than two: `LINUX_CONSOLE_INPUT_ENABLED` ships `true`, so "unset" and
+ * "set to false" have to be distinguishable or nobody could turn the path off
+ * on a machine we have not seen — and no machine running this has been seen,
+ * because nothing here has been measured against a live tmux yet.
+ *
+ * A real environment variable only, never a config-v1.json key, on exactly the
+ * grounds the macOS one is: it gates a route that reaches another program, and
+ * the config-layering skill keeps an operator's debugging device out of the
+ * file a packaged app reads on every launch.
+ *
+ * Deliberately a SECOND variable rather than one shared switch. The two tiers
+ * have different mechanisms, different measurement states and different people
+ * wanting them off, and a macOS operator forcing their own path off must not
+ * take Linux's with it.
+ */
+export const LINUX_CONSOLE_INPUT_ENV_VAR = 'LINUX_CONSOLE_INPUT'
+
+/**
+ * The Linux console-input override for this process: `true`/`false` when the
+ * operator has stated one, `undefined` when unset so the caller falls back to
+ * `LINUX_CONSOLE_INPUT_ENABLED`. Same accepted spellings as
+ * `darwinConsoleInputOverride`, and anything else is treated as unset rather
+ * than guessed at.
+ */
+export function linuxConsoleInputOverride(env: ConfigEnv = process.env): boolean | undefined {
+  const raw = env[LINUX_CONSOLE_INPUT_ENV_VAR]
+  if (raw === undefined || raw.trim() === '') return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true') return true
+  if (normalized === '0' || normalized === 'false') return false
+  return undefined
+}

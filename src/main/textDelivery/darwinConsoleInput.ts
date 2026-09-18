@@ -1,6 +1,7 @@
 import {
   AUTOMATION_PERMISSION_DENIED,
   TERMINAL_HOST_UNMEASURED,
+  TTY_UNKNOWN,
   createDarwinConsoleReach,
   isAutomationPermissionDenied
 } from '../platform/darwinTabReach'
@@ -9,6 +10,7 @@ import type { CommandRunner } from '../platform/unixFocus'
 import { createOsascriptConsoleInput, type ConsoleInputAdapter } from './osascriptInput'
 import type { ConsoleMessageOutcome, ConsoleMessageRequest } from './osascriptInput'
 import { buildTerminalTabWriteCommand, terminalTabPayloadFor } from './terminalTabWrite'
+import { createTmuxConsoleInput } from './tmuxConsoleInput'
 
 /**
  * The macOS console input adapter, which since #367 is TWO mechanisms behind
@@ -96,6 +98,20 @@ const KEY_WRITE_FAILED = 'The key could not be written into that terminal tab.'
 const ADDRESSABLE_KEY = /^[1-9]$/
 
 /**
+ * One refusal naming both tiers, for a session neither could reach.
+ *
+ * Both sentences rather than the tab's alone, because after #471 a refusal from
+ * here is two facts and the person can act on either: no Terminal.app tab
+ * carries that tty, AND no tmux pane does. Reporting only the first would leave
+ * somebody who runs tmux reading advice about a terminal they are not using;
+ * reporting only the second would lose the Automation permission, which is the
+ * one refusal on this path that names its own fix.
+ */
+export function consoleRefusalNamingBoth(tabError: string, tmuxError: string): string {
+  return `${tabError} ${tmuxError}`
+}
+
+/**
  * The macOS console input adapter. Keystroke failures stay booleans, exactly as
  * before; the message tier answers with a reason, because it is the one the
  * panel shows a sentence for and the one whose failures differ from each other.
@@ -106,18 +122,40 @@ export function createDarwinConsoleInput(run: CommandRunner): ConsoleInputAdapte
 } {
   const keystrokes = createOsascriptConsoleInput(run)
   const reachOf = createDarwinConsoleReach(run)
+  /*
+   * The second tier, tried when the first cannot name a tab (#471).
+   *
+   * A Mac session in iTerm2, WezTerm, kitty or any other host has no
+   * Terminal.app tab carrying its tty — that is the whole of
+   * TERMINAL_HOST_UNMEASURED — and under tmux it is nonetheless a PANE, which
+   * is addressable exactly as a tab is. So the honest refusal this adapter has
+   * made since #367 becomes a refusal only when both tiers have been asked.
+   *
+   * The tab goes FIRST and the order is not an accident: it is the tier that
+   * was measured (2026-09-18, Terminal.app 470.2), and a session with both
+   * must take the measured one. tmux, on this path as on Linux, is built and
+   * unmeasured.
+   */
+  const tmux = createTmuxConsoleInput(run)
 
   async function sendMessage(request: ConsoleMessageRequest): Promise<ConsoleMessageOutcome> {
-    if (!request.pressEnter) {
-      return { delivered: false, error: RETURN_CANNOT_BE_WITHHELD, neverStarted: true }
-    }
     const payload = terminalTabPayloadFor(request.text, request.attachments ?? [])
     if (payload === null) {
       return { delivered: false, error: MESSAGE_UNBUILDABLE, neverStarted: true }
     }
     const reach = await reachOf(request.pid)
     if (reach.reach === 'terminal-host') {
-      return { delivered: false, error: reach.error, neverStarted: true }
+      return offerToTmux(reach.error, () => tmux.sendMessage(request))
+    }
+    /*
+     * The tab's own constraint, and since #471 it is asked AFTER the reach
+     * rather than before it. `do script` appends a Return no caller can remove,
+     * so this tier cannot carry a message that must not submit — but tmux can,
+     * because its submit is a separate call, and refusing up front would have
+     * denied a tmux-hosted session an act that was available to it.
+     */
+    if (!request.pressEnter) {
+      return { delivered: false, error: RETURN_CANNOT_BE_WITHHELD, neverStarted: true }
     }
     const command = buildTerminalTabWriteCommand(reach.tty, payload, true)
     // Unreachable through the reach verdict above, which only ever answers a
@@ -149,7 +187,9 @@ export function createDarwinConsoleInput(run: CommandRunner): ConsoleInputAdapte
     if (!ADDRESSABLE_KEY.test(request.text)) return null
     const reach = await reachOf(request.pid)
     if (reach.reach === 'terminal-host') {
-      return { delivered: false, error: reach.error, neverStarted: true }
+      // The digit already passed the shape guard above, and tmux's guard is the
+      // same nine characters, so the offer below can only answer an outcome.
+      return offerToTmux(reach.error, async () => (await tmux.sendKey(request)) ?? null)
     }
     // `submits` false: the digit is read as a keystroke rather than a paste, so
     // the Return `do script` already appends is the confirmation. A second call
@@ -157,6 +197,40 @@ export function createDarwinConsoleInput(run: CommandRunner): ConsoleInputAdapte
     const command = buildTerminalTabWriteCommand(reach.tty, request.text, false)
     if (command === null) return null
     return runWrite(command, KEY_WRITE_FAILED)
+  }
+
+  /**
+   * Offer an act the Terminal.app tab could not take to the tmux tier.
+   *
+   * Only a REACH verdict comes here, never a failed write: a write that may
+   * have landed must not be handed to a second tier, which is the same
+   * cautious rule the Windows port holds and the reason `runWrite`'s own
+   * refusals stay where they are.
+   *
+   * TTY_UNKNOWN is the one verdict that skips the offer. A pane is matched by
+   * tty, so a session without one can match none, and asking would spend two
+   * commands to learn what `ps` already said.
+   *
+   * A tmux refusal that proves nothing was written becomes one sentence naming
+   * both tiers. Anything else — delivered, or a failure that may have written —
+   * is tmux's own answer, carried through untouched.
+   */
+  async function offerToTmux(
+    tabError: string,
+    offer: () => Promise<ConsoleMessageOutcome | null>
+  ): Promise<ConsoleMessageOutcome> {
+    if (tabError === TTY_UNKNOWN) {
+      return { delivered: false, error: tabError, neverStarted: true }
+    }
+    const outcome = await offer()
+    if (outcome === null || outcome.neverStarted !== true) {
+      return outcome ?? { delivered: false, error: tabError, neverStarted: true }
+    }
+    return {
+      delivered: false,
+      error: consoleRefusalNamingBoth(tabError, outcome.error ?? ''),
+      neverStarted: true
+    }
   }
 
   /**
