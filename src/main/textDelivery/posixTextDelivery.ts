@@ -27,7 +27,7 @@ import {
   SESSION_NOT_ENDED,
   SESSION_NOT_VERIFIED
 } from './endSession'
-import { questionAnswerChunks } from './questionKeys'
+import { answerChunksPressable, questionAnswerChunks } from './questionKeys'
 import { deliverViaRelay, runRelayProcess, type RelayRunner } from './relayRunner'
 import { createStageTimer } from './timing'
 
@@ -86,18 +86,6 @@ const MESSAGE_UNREACHABLE = 'The message could not be delivered to that terminal
  * nothing was pressed, which is what `neverStarted` says.
  */
 const ANSWER_KEYS_UNBUILDABLE = 'That answer could not be turned into keystrokes.'
-/*
- * The typed form of an answer — the person's own words for the picker's "Other"
- * row (#481) — arrives as finished chunks: a digit, the words, a carriage
- * return. That sequence was measured through the Windows console write; on
- * this port the tab write has carried digits and nothing else, and a digit
- * landing in the wrong tab CHOOSES an option there. So the words are refused
- * before any key is pressed, with `neverStarted` for the reason the two guards
- * above carry it. Measuring the route here belongs to #471, whose port this is.
- */
-const TYPED_ANSWER_UNMEASURED_HERE =
-  'Writing an answer in your own words into the picker has not been measured on this ' +
-  'operating system yet. Choose an option, or answer at the terminal.'
 
 export interface PosixTextDeliveryOptions {
   platform: Platform
@@ -402,6 +390,34 @@ export class PosixTextDelivery implements TextDeliveryPort {
    * nobody has yet pressed either through System Events. A refusal from here is
    * therefore honest and a success is not yet proof.
    *
+   * ## The typed answer cannot take the addressed route, and this is measured
+   *
+   * The "Other" answer of #481 is `[digit, words, Enter]`, and its first two
+   * chunks MUST NOT submit: the digit lands on the Other row and opens its text
+   * field, the words fill it, and only the Enter sends. `do script` appends a
+   * Return to every call and has no form that appends none, so it cannot
+   * express that sequence. Both candidate shapes were driven against a live
+   * Claude Code 2.1.276 picker (three options, Other on row 4) on 2026-09-18,
+   * and both were wrong — silently, which is the part that matters:
+   *
+   * - `do script "4"` alone moved the cursor to the Other row and its appended
+   *   Return SUBMITTED the empty field. The transcript recorded
+   *   `Which option do you pick? → __other__` with no words, and the agent
+   *   answered that the free-text came back empty. An answer the person never
+   *   gave, attributed to them.
+   * - `do script "4in my words"` arrived as ONE read, so the picker took it as
+   *   a paste rather than as a row key, and the trailing Return selected
+   *   whatever row the cursor was on. The transcript recorded
+   *   `Which option do you pick? → Alpha` — an option nobody chose. Worse than
+   *   the first, because it looks like a real answer.
+   *
+   * So the typed form goes to the keystroke path, where System Events CAN press
+   * a key without a Return, and it takes that path's preconditions with it: the
+   * window in front, and Accessibility permission. It joins the multi-select
+   * there rather than being refused as a special case, which is the whole shape
+   * of this method — one rule for every answer the addressed tier cannot carry,
+   * rather than a list of exceptions.
+   *
    * The digits arrive already resolved to option positions (questionKeys.ts),
    * so nothing agent-authored reaches a command and there is nothing to escape.
    * Linux keeps its old answer through a different door: no console adapter, so
@@ -414,10 +430,17 @@ export class PosixTextDelivery implements TextDeliveryPort {
     if (input === null) {
       return { delivered: false, error: NO_CONSOLE_INPUT, neverStarted: true }
     }
-    // The typed form stops here (#481, see TYPED_ANSWER_UNMEASURED_HERE); what
-    // follows is the option form, and only it has been pressed through this port.
-    if (request.chunks !== undefined) {
-      return { delivered: false, error: TYPED_ANSWER_UNMEASURED_HERE, neverStarted: true }
+    // The TYPED form (#481) is finished chunks from the caller, so it skips the
+    // option builder entirely — and it skips the addressed route below with it,
+    // for the measured reason in this method's header. `answerChunksPressable`
+    // is #491's guard, restated here rather than trusted from the caller, on the
+    // discipline every write into somebody else's console holds.
+    const typed = request.chunks
+    if (typed !== undefined) {
+      if (!answerChunksPressable(typed)) {
+        return { delivered: false, error: ANSWER_KEYS_UNBUILDABLE, neverStarted: true }
+      }
+      return this.pressAnswerChunks(input, request.pid, typed)
     }
     const chunks = questionAnswerChunks(request.digits, request.submit)
     if (chunks === null) {
@@ -438,7 +461,29 @@ export class PosixTextDelivery implements TextDeliveryPort {
         })
         if (addressed !== null) return addressed
       }
-      if (!(await this.focus(request.pid))) {
+      return this.pressAnswerChunks(input, request.pid, chunks)
+    } catch {
+      return { delivered: false, error: UNREACHABLE }
+    }
+  }
+
+  /**
+   * Press a finished chunk list at the foreground, one `sendText` per chunk.
+   *
+   * The keystroke half of the answer tier, shared by the multi-select form and
+   * the typed form because it is the same act: keys that must arrive one at a
+   * time, none of them carrying a submit of its own. Each chunk goes with
+   * `pressEnter` false without exception — a Return riding any chunk but the
+   * last is what #404 is about, and on the typed form it is what would submit
+   * an empty Other answer.
+   */
+  private async pressAnswerChunks(
+    input: ConsoleInputAdapter,
+    pid: number,
+    chunks: readonly string[]
+  ): Promise<TextDeliveryOutcome> {
+    try {
+      if (!(await this.focus(pid))) {
         return { delivered: false, error: NOT_FOREGROUNDED }
       }
       for (const chunk of chunks) {

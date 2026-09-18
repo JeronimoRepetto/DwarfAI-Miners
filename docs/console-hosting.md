@@ -1735,6 +1735,30 @@ read as the opposite of the Windows rule above, wrongly, for the few hours betwe
    > answer a multi-select with a toggle nobody confirmed, which is worse than the keystroke path's
    > honest preconditions.
    >
+   > **D. The "Other Thing" answer, measured 2026-09-18 — the tab write cannot carry it, and both
+   > ways of trying are silently WRONG (#481, #471).** #491 measured on Windows that a single-select
+   > ask with N options puts the free-text "Other" row at digit N+1, and that the answer is
+   > `[digit, words, Enter]`. The first two of those must not submit. Every `do script` call appends
+   > a Return and none omits it, so both candidate shapes were driven against a live Claude Code
+   > 2.1.276 picker (three options, "Type something." on row 4):
+   >
+   > | Sequence                                    | What the transcript recorded                                                                                                                                                       | Verdict                                                                                                                                                                                                      |
+   > | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+   > | `do script "4"`, then `do script "<words>"` | `Which option do you pick? → __other__`, free-text **empty**; the agent replied that it could not tell which option was meant, and the second call landed in the ordinary composer | The Return on the freshly-opened, empty Other field **submits it**. The safety condition this candidate needed does not hold.                                                                                |
+   > | `do script "4<words>"` (one call)           | `Which option do you pick? → Alpha`                                                                                                                                                | Arrived as ONE read, so the picker took it as a paste rather than a row key and the trailing Return selected the row the cursor was already on. **An option nobody chose**, and it looks like a real answer. |
+   >
+   > Both failures reach the agent as the person's own answer, which is why this is a refusal rather
+   > than a best effort. The typed answer therefore takes the keystroke path on macOS, where System
+   > Events can press a key without a Return, and inherits that path's preconditions — the window in
+   > front and Accessibility permission. It joins the multi-select there rather than being a special
+   > case: one rule for every answer the addressed tier cannot carry.
+   >
+   > The general shape is worth naming, because it is the third time it has been paid for. `do
+script`'s appended Return is not a nuisance to work around: it makes the tab write able to carry
+   > exactly the acts whose last gesture is a submit (a message, a permission digit, a single-select
+   > digit) and unable to carry any act with a gesture AFTER the one that would submit. That is a
+   > property of the transport, and no amount of sequencing removes it.
+   >
    > The POSIX port carries an answer tier at all from the same change (#471); it had none before,
    > and the runtime stated the whole tier as missing. **One caveat that has not been measured
    > here:** the multi-select route falls back to System Events keystrokes pressing
