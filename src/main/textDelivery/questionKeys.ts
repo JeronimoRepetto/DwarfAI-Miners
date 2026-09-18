@@ -1,4 +1,9 @@
-import type { DwarfQuestion } from '../domain/types'
+import { boundedChunks } from '../../shared/consoleText'
+import {
+  MAX_PICKER_NUMBERED_ROWS,
+  askHasAReachableOtherRow,
+  type DwarfQuestion
+} from '../domain/types'
 
 /**
  * Which digits this app presses in somebody else's console to answer Claude
@@ -91,8 +96,15 @@ export type QuestionKeystrokeRefusal =
 export type QuestionKeystrokes =
   { ok: true; digits: string[]; submit: boolean } | { ok: false; reason: QuestionKeystrokeRefusal }
 
-/** The nine rows the picker numbers. A tenth option has no key to press. */
-const MAX_NUMBERED_OPTIONS = 9
+/**
+ * The nine rows the picker numbers. A tenth option has no key to press.
+ *
+ * Read from contracts since #481, where the renderer began counting to the same
+ * number: the box a card offers and the keys built here have to agree about
+ * which ask can be typed into, and two spellings of a measured nine is how they
+ * would stop agreeing.
+ */
+const MAX_NUMBERED_OPTIONS = MAX_PICKER_NUMBERED_ROWS
 
 /**
  * The digits that answer `question` with `chosenLabels`, or the reason they
@@ -180,4 +192,132 @@ export function questionAnswerChunks(digits: readonly string[], submit: boolean)
   if (digits.length === 0 || digits.length > MAX_NUMBERED_OPTIONS) return null
   if (digits.some((digit) => !ANSWER_DIGIT.test(digit))) return null
   return submit ? [...digits, CURSOR_RIGHT, ACCEPT] : [...digits]
+}
+
+/**
+ * The VT "cursor down" sequence — `ESC`, `[`, `B` — which walks the picker one
+ * row towards its "Other" row (#481).
+ *
+ * `CURSOR_RIGHT`'s sibling and the same finding: three ordinary characters, not
+ * a virtual key. #402 measured `ESC [ B` moving an Ink select through the pid
+ * write on the folder-trust dialog [docs/console-hosting.md §6], and this is
+ * that same key counted rather than a new mechanism.
+ */
+const CURSOR_DOWN = '[B'
+
+/**
+ * Anything below a space, plus DEL — the code points a console reads as KEYS
+ * rather than as letters.
+ *
+ * Three of them are the reason this guard exists and are worth naming: a
+ * carriage return SENDS what is in the Other field, so a pasted paragraph
+ * would answer with its first line; an escape steers the picker out of the
+ * field entirely; and a tab moves between its controls. The rest are refused
+ * with them rather than enumerated, because none of them is a character anybody
+ * meant to type into an answer.
+ */
+const CONTROL_CHARACTER = /[ -]/
+
+/** Why no free-text keystrokes could be derived — one reason per fact (#481). */
+export type QuestionFreeTextRefusal =
+  /** The call carried more than one question, and only its first is on the wire. */
+  | 'several-questions'
+  /** A shape whose Other row nobody has reached: multi-select, or too many options. */
+  | 'other-row-not-measured'
+  /** Nothing to send, so the Enter behind it would answer with an empty field. */
+  | 'nothing-typed'
+  /** A control character, which the picker reads as a key of its own. */
+  | 'text-would-steer-the-picker'
+
+/** The chunks that type an answer in somebody's own words, or the reason there are none. */
+export type QuestionFreeText =
+  { ok: true; chunks: string[] } | { ok: false; reason: QuestionFreeTextRefusal }
+
+/**
+ * The chunks that answer `question` with `text` through the picker's own
+ * "Other" row, or the reason they cannot be derived (#481).
+ *
+ * ## The measurement
+ *
+ * Taken by the maintainer at the keyboard on **Claude Code 2.1.276**, Windows
+ * Terminal, **2026-09-18**, one question per call, single-select:
+ *
+ * - On a **two-option** ask, pressing `3` — the digit one past the last option
+ *   — landed on the Other row with its text field **already ready**: typing
+ *   needed no Enter to open it. The sentence, then **one** Enter, arrived as
+ *   the tool's own answer.
+ * - On a **three-option** ask, `4` did the same. So the reach is the digit
+ *   **N+1**, which is #402's "the picker numbers its OWN rows after the
+ *   agent's" arriving at that row rather than past it.
+ * - Pressing **Down N times** reached the same row in the same state.
+ *
+ * Both were measured at the physical keyboard rather than through
+ * `WriteConsoleInputW`; that these keys carry through the pid write is by
+ * analogy with #402, which measured exactly that for `ESC [ C` and for the
+ * digits. The panel route itself is still to be walked live.
+ *
+ * ## Which reach, and why there are two
+ *
+ * The digit while there is one — ONE chunk, and the payload this path has
+ * trusted since #402. At nine options every digit the picker numbers belongs to
+ * an option, so the Other row has none and the arrows are what is left: N of
+ * them, each its own chunk because each is its own keystroke (#404). That
+ * nine-option case is **derived from the N+1 rule rather than watched** — it is
+ * where the digit runs out, not where anybody counted arrows.
+ *
+ * ## What it refuses, and why none of these is a gap
+ *
+ * `askHasAReachableOtherRow` in contracts is the shape rule, and the card reads
+ * the same one; the reasons below are this file's own spelling of its clauses,
+ * because each is a different thing to tell the person. A multi-select ask is
+ * refused because Enter TOGGLES there (#362, round 1) and what it does on that
+ * picker's Other row is nobody's finding; an ask past nine options because the
+ * rows may scroll where nothing has been read back.
+ *
+ * Text carrying a control character is **refused rather than repaired**, which
+ * is the one place this file departs from the message path's habit of
+ * flattening. A message is the person's words arriving somewhere; this is the
+ * person's ANSWER, and every repair available here — dropping the newline,
+ * turning it into a space — sends the agent a sentence they did not write. They
+ * are told instead, and keep their words.
+ *
+ * The words themselves go through `boundedChunks` for the reason a message does
+ * (#425): one `WriteConsoleInputW` call carrying too much loses its own
+ * beginning between ConPTY and a live TUI's reader. A short answer is the one
+ * chunk it always was.
+ */
+export function questionFreeTextChunks(question: DwarfQuestion, text: string): QuestionFreeText {
+  if (question.questionCount > 1) return { ok: false, reason: 'several-questions' }
+  if (!askHasAReachableOtherRow(question)) return { ok: false, reason: 'other-row-not-measured' }
+  if (text.trim() === '') return { ok: false, reason: 'nothing-typed' }
+  if (CONTROL_CHARACTER.test(text)) return { ok: false, reason: 'text-would-steer-the-picker' }
+
+  const options = question.options.length
+  const reach =
+    options < MAX_NUMBERED_OPTIONS
+      ? [String(options + 1)]
+      : Array.from({ length: options }, () => CURSOR_DOWN)
+  return { ok: true, chunks: [...reach, ...boundedChunks(text), ACCEPT] }
+}
+
+/**
+ * Whether every chunk in a list is a key this app has measured, or letters that
+ * press nothing on their own (#481).
+ *
+ * The second guard in front of the console write, and the free-text route's
+ * equivalent of the digit check `questionAnswerChunks` has held since #402. It
+ * exists because the payload changed: an option's digit is a position this app
+ * derived, while these are a person's own words, and words that smuggled a
+ * carriage return would submit the picker halfway through them.
+ *
+ * Fail-closed and stated at the port rather than trusted from the caller, on
+ * the discipline every write by pid here holds: a write into somebody else's
+ * console cannot be taken back.
+ */
+export function answerChunksPressable(chunks: readonly string[]): boolean {
+  if (chunks.length === 0) return false
+  return chunks.every((chunk) => {
+    if (chunk === CURSOR_RIGHT || chunk === CURSOR_DOWN || chunk === ACCEPT) return true
+    return chunk !== '' && !CONTROL_CHARACTER.test(chunk)
+  })
 }

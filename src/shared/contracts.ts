@@ -968,6 +968,60 @@ export const TYPED_HERE_REACHES_THE_PICKER =
   'above, or answer in your own words at the terminal.'
 
 /**
+ * The rows Claude Code's `AskUserQuestion` picker numbers, and therefore the
+ * last option that has a digit of its own (#362, #402).
+ *
+ * On the wire rather than in main because the renderer counts to the same
+ * number now (see `askHasAReachableOtherRow`), and a second spelling of a
+ * measured nine is how the card and the keys would come to disagree about which
+ * ask can be typed into. The measurement itself stays where it was taken —
+ * main's `textDelivery/questionKeys.ts` and docs/console-hosting.md §§4c, 6.
+ */
+export const MAX_PICKER_NUMBERED_ROWS = 9
+
+/**
+ * Whether this ask's picker has an "Other" row that a MEASURED sequence of keys
+ * reaches (#481).
+ *
+ * One rule, read by both processes and for two different decisions: the card
+ * offers its free-text box off this, and main builds the keystrokes off it (see
+ * `questionFreeTextChunks`). A box a person may type into that main would then
+ * refuse is the worst of the two failures available here, so the two sides read
+ * one function rather than two spellings of one reading.
+ *
+ * Measured on Claude Code 2.1.276, Windows Terminal, 2026-09-18, at the
+ * keyboard: on a single-question, single-select ask the digit one past the last
+ * option lands on the Other row with its field ready, and one Enter behind the
+ * typed text sends it. Each condition below is a shape that reading does NOT
+ * cover, and each is a refusal rather than an attempt:
+ *
+ * - **Several questions in the call.** Only the first reaches the wire, so an
+ *   answer walks the picker on to one the panel cannot see (see
+ *   ANSWER_ONLY_WHERE_IT_RUNS).
+ * - **A multi-select ask.** Enter TOGGLES the row a multi-select cursor is on
+ *   (#362, round 1), so what it does on that picker's Other row is a different
+ *   gesture and nobody's finding.
+ * - **More options than the picker numbers rows.** The digit runs out and the
+ *   list is where the rows may start scrolling, which is exactly where a
+ *   counted arrow walk stops being derivable from the measurement.
+ * - **No options at all.** Both routes to the row are counted off the options —
+ *   the digit is N+1, the arrows are N of them — so an ask with none of them
+ *   counts to a row nobody has seen.
+ *
+ * Says nothing about the CHANNEL, deliberately: where the prompt is drawn is a
+ * separate fact each caller already holds (see DwarfPromptChannel), and folding
+ * it in here would give both of them a second reading of something they know.
+ */
+export function askHasAReachableOtherRow(question: DwarfQuestion): boolean {
+  return (
+    question.questionCount === 1 &&
+    !question.multiSelect &&
+    question.options.length >= 1 &&
+    question.options.length <= MAX_PICKER_NUMBERED_ROWS
+  )
+}
+
+/**
  * A tool call a session is blocked on until somebody approves it (#203).
  *
  * A SIBLING of DwarfQuestion, deliberately not a variant of it. That type's
