@@ -95,6 +95,7 @@ const { state: kickingState, kick, observe: observeKicks } = useDwarfKicking()
 const {
   state: questionState,
   answer: answerDwarfQuestion,
+  answerWithText: answerDwarfQuestionWithText,
   decide: decideDwarfPermission
 } = useDwarfQuestion()
 
@@ -822,6 +823,19 @@ function answerQuestion(dwarf: Dwarf, label: string): void {
 }
 
 /**
+ * Answer that dwarf's ask in the person's own words (#481).
+ *
+ * `answerQuestion`'s sibling, down to the guard: the ask is read off the
+ * dwarf's own `pendingQuestion` and never touched here, and what leaves is an
+ * ANSWER rather than a message — the card decides which, and it only offers
+ * this where the picker's own "Other" row has a measured route to it.
+ */
+function answerQuestionInWords(dwarf: Dwarf, text: string): void {
+  if (dwarf.pendingQuestion === undefined) return
+  void answerDwarfQuestionWithText(dwarf.id, dwarf.pendingQuestion, text)
+}
+
+/**
  * Release the tool call that dwarf's held session is blocked on (#203).
  *
  * Same shape as answerQuestion, for the same reason: the prompt itself is
@@ -1344,6 +1358,7 @@ onBeforeUnmount(() => {
         @send-again="sendAgain(selectedDwarf, $event)"
         @kick="kickDwarf(selectedDwarf)"
         @answer="answerQuestion(selectedDwarf, $event)"
+        @answer-text="answerQuestionInWords(selectedDwarf, $event)"
         @decide="decidePermission(selectedDwarf, $event)"
         @open-console="activate(selectedDwarf)"
         @open-path="openPath"

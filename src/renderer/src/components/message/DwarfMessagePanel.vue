@@ -152,6 +152,12 @@ const emit = defineEmits<{
   close: []
   /** One of the agent's own option labels, once Enter confirmed it. */
   answer: [label: string]
+  /**
+   * An answer in the person's own words, for the row the session's own picker
+   * offers for exactly that (#481). A sibling of `answer` and not of `send`:
+   * both release the agent's blocked tool call, and neither is a message.
+   */
+  'answer-text': [text: string]
   /** One of Claude Code's own two answers to a permission prompt (#203). */
   decide: [decision: DwarfPermissionDecision]
   /**
@@ -1100,6 +1106,7 @@ function onKick(): void {
         :question="dwarf.pendingQuestion"
         :answer-state="answerState"
         @answer="emit('answer', $event)"
+        @answer-text="emit('answer-text', $event)"
         @send-text="emit('send', $event)"
         @open-console="emit('open-console')"
       />

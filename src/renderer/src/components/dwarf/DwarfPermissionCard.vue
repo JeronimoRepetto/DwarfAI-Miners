@@ -49,6 +49,12 @@ import {
  * letters are read by that dialog and the Enter behind them answers it — the
  * same failure the question picker has (#203's channel, #481's shape). Held
  * free text is queued on the stream this panel holds and reaches no dialog.
+ *
+ * The question card took a THIRD route at #481 item 3 and this one did not,
+ * which is a difference in the prompts rather than in the cards. An
+ * `AskUserQuestion` picker offers an "Other" row, and the keys that reach it
+ * have been measured; a y/n dialog offers no such row at all, so there is
+ * nothing here to type into and the refusal is the whole answer.
  */
 
 const props = defineProps<{
@@ -96,7 +102,9 @@ const showJump = computed(
  * Whether the free-text box may be offered at all (#481) — the question card's
  * rule, read from lib so the two cards cannot come apart on it.
  */
-const freeText = computed(() => freeTextRoute(props.permission.channel))
+// `null`, and that is the whole of this card's answer to #481 item 3: a y/n
+// dialog has no "Other" row, so there is no third route for it to take.
+const freeText = computed(() => freeTextRoute(props.permission.channel, null))
 /*
  * ONE jump per card, never two: the refusal row below already carries it
  * wherever a refused decision is showing.

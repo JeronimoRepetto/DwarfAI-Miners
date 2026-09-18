@@ -167,6 +167,75 @@ describe('useDwarfQuestion', () => {
     await answer('claude:s1', question(), 'SQLite')
     expect(stateFor('claude:s2')).toBeUndefined()
   })
+
+  /* --- Answering in the person's own words (#481) — one block, appended ---- */
+
+  it('sends the words as the answer’s own field, with no record beside them', async () => {
+    const sent = vi.fn<(request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>>(
+      () => Promise.resolve({ answered: true })
+    )
+    stubApi(sent)
+    const { answerWithText } = useDwarfQuestion()
+
+    await answerWithText('claude:s1', question({ channel: 'terminal' }), 'put it in Redis')
+    expect(sent).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      text: 'put it in Redis'
+    })
+  })
+
+  it('writes the same verdict the option answer does, into the same store', async () => {
+    // One store for both, because a verdict is about a toolUseId whichever way
+    // the answer was given — the module's own rule since #203.
+    stubApi(() => Promise.resolve({ answered: true }))
+    const { answerWithText, stateFor } = useDwarfQuestion()
+
+    await answerWithText('claude:s1', question({ channel: 'terminal' }), 'put it in Redis')
+    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_01' })
+  })
+
+  it('keeps main’s refusal so the card can print the reason verbatim', async () => {
+    stubApi(() => Promise.resolve({ answered: false, error: 'There was nothing written to send.' }))
+    const { answerWithText, stateFor } = useDwarfQuestion()
+
+    await answerWithText('claude:s1', question({ channel: 'terminal' }), '   ')
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'refused',
+      toolUseId: 'toolu_01',
+      error: 'There was nothing written to send.'
+    })
+  })
+
+  it('treats a bridge that never answered as a refusal here too', async () => {
+    stubApi(() => Promise.reject(new Error('bridge down')))
+    const { answerWithText, stateFor } = useDwarfQuestion()
+
+    await answerWithText('claude:s1', question({ channel: 'terminal' }), 'put it in Redis')
+    expect(stateFor('claude:s1')).toEqual({
+      phase: 'refused',
+      toolUseId: 'toolu_01',
+      error: 'The panel lost contact with the app.'
+    })
+  })
+
+  it('never releases the same tool call twice, whichever form the second takes', async () => {
+    // The in-flight guard is the store's and not the form's: a typed answer
+    // behind an option answer would release the same blocked call twice.
+    const pending = deferred<DwarfQuestionAnswerResult>()
+    const sent = vi.fn<(request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>>(
+      () => pending.promise
+    )
+    stubApi(sent)
+    const { answer, answerWithText } = useDwarfQuestion()
+
+    const first = answer('claude:s1', question(), 'SQLite')
+    await answerWithText('claude:s1', question(), 'put it in Redis')
+    expect(sent).toHaveBeenCalledTimes(1)
+
+    pending.release({ answered: true })
+    await first
+  })
 })
 
 function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {

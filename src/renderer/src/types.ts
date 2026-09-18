@@ -46,6 +46,8 @@ export type {
   DwarfProvider,
   DwarfQuestion,
   DwarfQuestionAnswerRequest,
+  DwarfQuestionLabelAnswer,
+  DwarfQuestionTextAnswer,
   DwarfQuestionAnswerResult,
   DwarfQuestionOption,
   DwarfRole,

@@ -398,37 +398,112 @@ describe('a question answered at the session’s own terminal', () => {
 
   /* --- The free-text box at a picker (#481) — one block, appended ---------- */
 
-  it('offers no free-text box, and says what typing here would really reach', () => {
-    // THE stop-gap #481 is about. Free text from this card leaves on the
-    // ordinary message path, which on this channel writes into the session's
-    // own console — where the open picker swallows the letters and the trailing
-    // Enter confirms whichever option is highlighted.
+  /*
+   * AMENDED for #481 item 3 (was: 'offers no free-text box, and says what
+   * typing here would really reach', asserting `.freeform-input` absent and the
+   * refusal sentence shown). PR #484 shipped that refusal as a stop-gap while
+   * the picker's own "Other" row was unmeasured. It has been measured now
+   * (2026-09-18, Claude Code 2.1.276), so on THIS shape — one question, one
+   * answer — the box is back and what it sends is an ANSWER. The refusal is
+   * unchanged for every shape the measurement does not cover, and those tests
+   * are below and in the multi-select block.
+   */
+  it('offers the box back, because the picker’s own Other row is measured', () => {
     const wrapper = observedSingle()
-    expect(wrapper.find('.freeform-input').exists()).toBe(false)
-    expect(wrapper.find('.freeform-refused').text()).toContain(TYPED_HERE_REACHES_THE_PICKER)
+    expect(wrapper.find('.freeform-input').exists()).toBe(true)
+    expect(wrapper.find('.freeform-refused').exists()).toBe(false)
   })
 
-  it('names the two ways out that do work, and no provider', () => {
-    const text = observedSingle().find('.freeform-refused').text()
+  it('sends what was typed as an ANSWER, never on the message path', async () => {
+    // THE repair. The words are typed into the row the agent's own picker
+    // offers for them; they must not leave as a message, which on this channel
+    // writes into the same console the picker is drawn in.
+    const wrapper = observedSingle()
+    await wrapper.find('.freeform-input').setValue('put it in Redis')
+    pressEnter(wrapper.find('.freeform-input').element)
+    expect(wrapper.emitted('answer-text')).toEqual([['put it in Redis']])
+    expect(wrapper.emitted('send-text')).toBeUndefined()
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it('keeps Shift+Enter writing a newline rather than sending', async () => {
+    const wrapper = observedSingle()
+    await wrapper.find('.freeform-input').setValue('one line')
+    pressEnter(wrapper.find('.freeform-input').element, true)
+    expect(wrapper.emitted('answer-text')).toBeUndefined()
+  })
+
+  it('sends nothing for an empty box', async () => {
+    const wrapper = observedSingle()
+    await wrapper.find('.freeform-input').setValue('   ')
+    pressEnter(wrapper.find('.freeform-input').element)
+    expect(wrapper.emitted('answer-text')).toBeUndefined()
+  })
+
+  it('sends no typed answer while one is already in flight', async () => {
+    // A second release of the same blocked tool call, from the one control on
+    // the card that is not a disabled button.
+    const wrapper = observedSingle()
+    await wrapper.setProps({ answerState: { phase: 'answering', toolUseId: 'toolu_01' } })
+    await wrapper.find('.freeform-input').setValue('put it in Redis')
+    pressEnter(wrapper.find('.freeform-input').element)
+    expect(wrapper.emitted('answer-text')).toBeUndefined()
+  })
+
+  /*
+   * AMENDED for #481 item 3 (was: 'names the two ways out that do work, and no
+   * provider', read off `observedSingle`). That card has no refusal row to read
+   * any more, so the case is re-aimed at the shape that still carries the
+   * sentence — a multi-select ask at a terminal, whose Other row is unmeasured.
+   * Nothing is weaker: the same three clauses are asserted, on the card that
+   * still shows them.
+   */
+  it('names the two ways out that do work, and no provider, where it still refuses', () => {
+    const refused = card({ question: question({ channel: 'terminal', multiSelect: true }) })
+    const text = refused.find('.freeform-refused').text()
     expect(text).toMatch(/picker/i)
     expect(text).toMatch(/terminal/i)
     expect(text).not.toMatch(/codex|claude|gemini/i)
   })
 
-  it('offers the way to that terminal beside the refused box', async () => {
-    const wrapper = observedSingle()
-    const jump = wrapper.find('.freeform-refused .answer-jump')
+  /*
+   * AMENDED for #481 item 3 (was: 'offers the way to that terminal beside the
+   * refused box', read off `observedSingle`). Re-aimed at the same still-refused
+   * shape, for the same reason as the case above, and asserting exactly what it
+   * asserted before.
+   */
+  it('offers the way to that terminal beside a box it still refuses', async () => {
+    const refused = card({ question: question({ channel: 'terminal', multiSelect: true }) })
+    const jump = refused.find('.freeform-refused .answer-jump')
     expect(jump.text()).toBe(JUMP_TO_TERMINAL_NAME)
     expect(jump.attributes('title')).toBe(CONSOLE_HINT)
     await jump.trigger('click')
-    expect(wrapper.emitted('open-console')).toHaveLength(1)
+    expect(refused.emitted('open-console')).toHaveLength(1)
   })
 
-  it('emits nothing on the message path while the box is refused', async () => {
+  it('emits nothing on the message path from this card at all', async () => {
+    // AMENDED for #481 item 3 (was: 'emits nothing on the message path while
+    // the box is refused'). The box is back, so what this pins is the stronger
+    // fact it was always after: on this channel nothing this card can do puts
+    // words on the message path.
+    // The box first, because choosing an option swaps it for the send prompt —
+    // the design's one surface that says what happens next (#125).
     const wrapper = observedSingle()
+    await wrapper.find('.freeform-input').setValue('put it in Redis')
+    pressEnter(wrapper.find('.freeform-input').element)
     await wrapper.findAll('.option-card')[0]!.trigger('click')
     pressEnter(wrapper.find('.question-card').element)
     expect(wrapper.emitted('send-text')).toBeUndefined()
+  })
+
+  it('refuses the box for an ask with more options than the picker numbers', () => {
+    // The digit runs out at nine and the rows may scroll past them, which is
+    // exactly where the counted reach stops being derivable from what was
+    // measured — so the sentence, not a guess.
+    const eleven = Array.from({ length: 11 }, (_, index) => ({ label: `Option ${index + 1}` }))
+    const wrapper = card({ question: question({ channel: 'terminal', options: eleven }) })
+    expect(wrapper.find('.freeform-input').exists()).toBe(false)
+    expect(wrapper.find('.freeform-refused').text()).toContain(TYPED_HERE_REACHES_THE_PICKER)
   })
 
   it('keeps the box on a held session’s ask, whose text touches no picker', () => {

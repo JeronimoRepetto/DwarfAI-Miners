@@ -53,22 +53,31 @@ import {
  * the single-choice gesture it always had, because how the agent's own picker
  * joins several answers is unmeasured (see resolveAnswers in main).
  *
- * Two things this component deliberately does NOT do. It never hides the
+ * One thing this component deliberately does NOT do: it never hides the
  * question — the card is drawn from the dwarf's own `pendingQuestion`, and only
  * main's next snapshot may drop it, so a panel that cleared it on send would be
- * claiming the ask was closed on the strength of its own optimism. And it never
- * sends free-form text as an ANSWER: the answer channel takes back only the
- * agent's own words, so anything typed here leaves on the ordinary message
- * path instead (see the emits below).
+ * claiming the ask was closed on the strength of its own optimism.
  *
- * AMENDED for #481: that last sentence is now true of the HELD channel only,
- * and the box is offered on that channel only. Free text still leaves on the
- * message path — but on the terminal channel that path writes into the
- * session's own console, and a session drawing a picker reads the letters as
- * picker input with the trailing Enter confirming whichever option is
- * highlighted (see freeTextRoute). A held session's free text is queued on the
- * stream this panel holds and touches no picker, which is why #125's box stays
- * exactly as it was there.
+ * ## Where the "Other Thing" box sends what is typed into it
+ *
+ * Three answers, one per route, and `freeTextRoute` decides between them off
+ * the prompt's own channel and the ask's own shape — in lib, because the
+ * permission card reads the same rule and two templates would drift.
+ *
+ * - **Held** (#125, unchanged): the words leave on the ordinary MESSAGE path.
+ *   They are queued on the stream this panel owns and touch no picker.
+ * - **Watched, one question, one answer** (#481): the words leave as an
+ *   ANSWER. Main reaches the row the session's own picker offers for exactly
+ *   this — measured 2026-09-18, the digit one past the ask's options — types
+ *   them, and presses Enter once. The card used to say the answer channel takes
+ *   back only the agent's own words; the agent's own picker offers this row, so
+ *   that is still true of what this app invents, which is nothing.
+ * - **Watched, anything else**: refused, with TYPED_HERE_REACHES_THE_PICKER in
+ *   the box's place. Free text there would leave on the message path, which on
+ *   that channel writes into the session's own console — the picker reads the
+ *   letters as its own input and the Enter behind them confirms whichever
+ *   option is highlighted (#484, the stop-gap this replaced for the one shape
+ *   that has since been measured).
  */
 
 const props = defineProps<{
@@ -80,6 +89,14 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Answer the ask with one of its own option labels. */
   answer: [label: string]
+  /**
+   * Answer the ask in the person's OWN words, through the "Other" row its
+   * picker offers (#481). An ANSWER and not a message: main types it into that
+   * row and presses Enter once, so it releases the same blocked tool call the
+   * options do. Emitted only where that row has a measured route to it — see
+   * freeTextRoute.
+   */
+  'answer-text': [text: string]
   /** A free-form reply, which travels as a message rather than as an answer. */
   'send-text': [payload: { text: string; pressEnter: boolean }]
   /** Focus the console the session runs in, where an unanswerable ask waits. */
@@ -149,7 +166,7 @@ const showJump = computed(() => props.question.channel === 'terminal' && refusal
  * Whether the free-text box may be offered at all (#481), decided in lib rather
  * than as a `channel ===` here so both cards read one rule.
  */
-const freeText = computed(() => freeTextRoute(props.question.channel))
+const freeText = computed(() => freeTextRoute(props.question.channel, props.question))
 /*
  * The refused box's own way to the terminal — and ONE jump per card, never two.
  * The refusal row below already carries it wherever a refusal is showing, and
@@ -208,13 +225,28 @@ function onKeydown(event: KeyboardEvent): void {
   submit()
 }
 
-/** The convention every composer here uses: Enter sends, Shift+Enter writes a newline. */
+/**
+ * The convention every composer here uses: Enter sends, Shift+Enter writes a
+ * newline.
+ *
+ * Where those words GO is `freeText`'s to decide and not this handler's (#481).
+ * On a held session they leave as a message, exactly as they have since #125.
+ * On a watched one whose picker has a measured "Other" row they leave as an
+ * ANSWER — so the in-flight guard applies to them: a typed answer behind an
+ * option answer would release the same blocked tool call twice, and this box is
+ * the one control on the card that is not a button something else disabled.
+ */
 function onFreeformKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || event.shiftKey) return
   event.preventDefault()
   const text = freeform.value.trim()
   if (text === '') return
-  emit('send-text', { text, pressEnter: true })
+  if (freeText.value === 'answer') {
+    if (!answerable.value) return
+    emit('answer-text', text)
+  } else {
+    emit('send-text', { text, pressEnter: true })
+  }
   freeform.value = ''
 }
 </script>
@@ -269,7 +301,7 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       composer’s treatment.
     -->
     <textarea
-      v-else-if="freeText === 'message'"
+      v-else-if="freeText !== 'picker'"
       v-model="freeform"
       class="freeform-input"
       rows="2"
@@ -280,9 +312,9 @@ function onFreeformKeydown(event: KeyboardEvent): void {
     ></textarea>
     <!--
       The box refused, in its own place, because the console it would be written
-      into is drawing a picker (#481). Said here rather than left to the alert
-      row below: a person who learns this AFTER pressing Enter has already had
-      an option confirmed in their name.
+      into is drawing a picker this app has no measured way into (#481). Said
+      here rather than left to the alert row below: a person who learns this
+      AFTER pressing Enter has already had an option confirmed in their name.
     -->
     <p v-else class="freeform-refused" role="note">
       <span>{{ TYPED_HERE_REACHES_THE_PICKER }}</span>

@@ -14,6 +14,7 @@ import {
   decisionForLabel,
   freeTextRoute,
   isAnswerable,
+  textAnswerRequest,
   optionState,
   permissionRequest,
   permissionStatusLine,
@@ -442,16 +443,62 @@ describe('toggledAnswer', () => {
 /* --- Where a card's free text really goes (#481) — one block, appended ----- */
 
 describe('freeTextRoute', () => {
+  /*
+   * AMENDED for #481 item 3 (both cases took only a channel, and the terminal
+   * one expected `'picker'` for every ask on it). The route is three-way now:
+   * the picker's own "Other" row has been measured, so a single-question,
+   * single-select ask on that channel takes the ANSWER path. The ask travels
+   * with the channel because the shape is half the decision — the held case is
+   * unchanged, and the refusal is still what the unmeasured shapes get.
+   */
   it('leaves a held session’s free text on the ordinary message path', () => {
     // The panel owns that stream, so the words are queued on it (#125) and
     // there is no picker anywhere near them.
-    expect(freeTextRoute('held')).toBe('message')
+    expect(freeTextRoute('held', question())).toBe('message')
   })
 
-  it('sends a watched session’s free text into the picker, which is why it is refused', () => {
-    // The message path for this channel writes into the session's own console,
+  it('types a watched session’s words into the picker’s own Other row', () => {
+    // Measured 2026-09-18: the row one past the ask's options, then the words,
+    // then one Enter (see main's questionKeys.ts).
+    expect(freeTextRoute('terminal', question({ channel: 'terminal' }))).toBe('answer')
+  })
+
+  it('refuses the box where that row is unmeasured, which is every other shape', () => {
+    // The message path on this channel writes into the session's own console,
     // and a session drawing a picker reads those keys as picker input — the
     // Enter behind them confirming an option nobody chose (#481).
-    expect(freeTextRoute('terminal')).toBe('picker')
+    const terminal = (overrides: Partial<DwarfQuestion>): DwarfQuestion =>
+      question({ channel: 'terminal', ...overrides })
+    expect(freeTextRoute('terminal', terminal({ multiSelect: true }))).toBe('picker')
+    expect(freeTextRoute('terminal', terminal({ questionCount: 2 }))).toBe('picker')
+    expect(freeTextRoute('terminal', terminal({ options: [] }))).toBe('picker')
+  })
+
+  it('refuses it for a prompt that is not an ask at all', () => {
+    // The permission card's case: a y/n dialog has no Other row to reach, so
+    // there is nothing for a box there to be typed into.
+    expect(freeTextRoute('terminal', null)).toBe('picker')
+    expect(freeTextRoute('held', null)).toBe('message')
+  })
+})
+
+describe('textAnswerRequest (#481)', () => {
+  it('carries the words as the answer’s own field, with no record beside them', () => {
+    // The two wire forms are exclusive: a request carrying both could not say
+    // which answer it meant (see parseAnswerRequest in main).
+    expect(textAnswerRequest('claude:s1', question(), 'neither — put it in Redis')).toEqual({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      text: 'neither — put it in Redis'
+    })
+  })
+
+  it('addresses the ask it was written for, never whatever is open now', () => {
+    const request = textAnswerRequest('claude:s1', question({ toolUseId: 'toolu_09' }), 'mine')
+    expect(request.toolUseId).toBe('toolu_09')
+  })
+
+  it('repeats the words exactly, so main types what the person wrote', () => {
+    expect(textAnswerRequest('d', question(), '  two  spaces  ').text).toBe('  two  spaces  ')
   })
 })
