@@ -1683,9 +1683,10 @@ like a working script.)
 per-tab tty the same way and nothing here claims it. A session in any of them answers
 `terminal-host` — the honest refusal — rather than a guess at the front tab.
 
-Also unmeasured: this path has been run from a scratch tab and never from the panel end to end,
-which is the whole of what `DARWIN_CONSOLE_INPUT_ENABLED` is still waiting on (#367 item 3), and
-the `-1743` denial has not been reproduced live.
+Also unmeasured: this path has been run from a scratch tab and never from the panel end to end, and
+the `-1743` denial has not been reproduced live. The maintainer flipped `DARWIN_CONSOLE_INPUT_ENABLED`
+to `true` on 2026-09-18 ahead of that end-to-end walk (#367 item 3); `DARWIN_CONSOLE_INPUT=0` is the
+way back if a machine we have not seen needs it.
 
 ---
 
