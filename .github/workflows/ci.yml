@@ -17,14 +17,19 @@ env:
 
 jobs:
   checks:
-    name: Privacy guard, typecheck, lint, format, skills-sync, test, build
-    # Windows-only for now. Cross-platform support has landed (issue #5) and
-    # the whole suite is platform-independent — every per-OS builder is tested
-    # by passing the platform explicitly — so a macos-latest/ubuntu-latest
-    # matrix would pass as-is. The `release` job below already covers all
-    # three OSes (issue #16); expanding `checks` to match is a separate,
-    # deliberate follow-up, not an ad-hoc addition.
-    runs-on: windows-latest
+    name: Privacy guard, typecheck, lint, format, skills-sync, test, build (${{ matrix.os }})
+    # All three OSes, because the suite is only platform-independent when a
+    # host other than Windows runs it. This job was Windows-only until #470,
+    # with a comment promising a macOS/Linux leg "would pass as-is"; measured
+    # on a Mac, 28 tests failed, every one a path built with the host's
+    # `join` against a Windows-shaped fixture. A leg per OS is what keeps that
+    # class from coming back; fail-fast is off so one red leg still shows the
+    # other two. The `release` job below covers the same three for packaging.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - name: Checkout
