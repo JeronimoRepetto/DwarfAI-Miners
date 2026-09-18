@@ -198,6 +198,15 @@ here, and the card says so with a jump to the terminal beside it: a call that as
 at once, because only its first reaches the panel and answering that one would move the picker on to
 a question the panel cannot see.
 
+Both cards offer a box for answering in your own words, and it is offered **only for a session the
+panel holds**. A watched session is standing at its own picker or its own y/n dialog, and anything
+this panel writes to it goes into that console — where the picker reads the letters as its own input
+and the Enter behind them confirms whichever option is highlighted, an answer you never chose. So on
+a watched session the box is replaced by a sentence saying that, with the jump to the terminal beside
+it: choose an option on the card, or answer in your own words at the terminal. A message sent to such
+a session from the composer is refused with the same sentence for the same reason, until its prompt
+is dealt with.
+
 For a Codex session, a question card shows the same kind of question — Codex's own
 `request_user_input` tool call — and still cannot be answered from here: a Codex thread is reached
 through its message queue rather than through a console, and a queued message is not an answer to a

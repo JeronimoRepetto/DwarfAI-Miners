@@ -452,7 +452,17 @@ before anything is written. Two things stay refused rather than guessed. A call 
 one question** is refused with its reason, because only its first question reaches the wire —
 answering that one walks the picker on to a question the panel does not know exists. And **Other**
 is left inert, because a free-text answer is a payload the panel would be putting in the person's
-mouth; the composer already carries free text as a message.
+mouth.
+
+**Corrected 2026-09-18 (#481).** That last clause used to end "the composer already carries free
+text as a message", and it was wrong in the one condition this whole section is about. A message on
+this channel is written into the same console the picker is drawn in, so while the picker stands the
+letters ARE picker input and the Enter behind the message confirms the highlighted option — the
+agent receives an answer nobody chose and the person's words are lost. Watched by the maintainer on
+a two-option ask, which received option 1. Both cards therefore refuse their free-text box while a
+prompt of that session's own is open, and `sendDwarfText` refuses a message for such a dwarf, both
+saying `TYPED_HERE_REACHES_THE_PICKER`. **Other** stays inert and unmeasured either way: the keys
+that reach it are #481's own item 3.
 
 **A shared terminal window was refused, not answered blind — and is answered now.** This route
 landed its keys wherever the foreground was, so it met the same shared-window refusal every other
