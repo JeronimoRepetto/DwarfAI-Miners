@@ -16,8 +16,8 @@ pnpm dev
 ```
 
 The panel starts hidden — press **Ctrl+Alt+Shift+P** or click the tray icon to show it.
-pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`; if the
-Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
+Electron 42+ ships no postinstall; `pnpm dev` runs `install-electron` first. If the
+binary is ever missing (an interrupted download, say), run `pnpm exec install-electron`.
 
 Configuration in a checkout is env-based: copy `.env.example` to `.env` if you want to override
 defaults. Every key is optional and invalid values fail fast at startup

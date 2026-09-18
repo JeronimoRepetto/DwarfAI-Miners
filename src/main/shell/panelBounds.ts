@@ -2,26 +2,29 @@
  * Where the docked shell sits and how wide it is (#90).
  *
  * Pure arithmetic on a rectangle somebody else chose (see
- * `platform/screenArea.ts`, which is the only thing here that knows an OS), so
+ * `platform/screenArea.ts`, which is where this file's per-OS story lives), so
  * every edge and every clamp is testable without a display.
+ *
+ * One number in it does differ per OS — the narrowest window a platform will
+ * actually make — and it is not a constant here either: every function that can
+ * reach that floor takes a `Platform` and asks `platform/windowMetrics.ts` for
+ * it, so a macOS width is assertable from a Windows host like everything else.
  */
+import type { Platform } from '../platform/platform'
 import type { ScreenRect } from '../platform/screenArea'
+import { minWindowWidth } from '../platform/windowMetrics'
 import type { PanelEdge, PanelLayoutRequest } from '../domain/types'
 
 /** The design's closed rail: 20px, spanning the usable screen height. */
 export const RAIL_WIDTH = 20
 
-/**
- * The narrowest window the platform will actually make.
- *
- * Measured, not assumed (#153): on Windows a BrowserWindow asked for 20px comes
- * back 32px wide, which is a left/right asymmetry rather than a rounding — a
- * right-docked rail's extra twelve pixels hang off the screen and it still looks
- * like the design's 20px rail, a left-docked one's do not and it comes out fat.
- * Asking for the floor makes both edges the same window; the renderer draws the
- * design's 20px rail against the docked side of it and leaves the rest clear.
+/*
+ * `MIN_WINDOW_WIDTH` stood here until #465. It was a Windows MEASUREMENT (#153)
+ * that every platform paid: on a Mac the collapsed window came out wider than
+ * the rail the renderer paints into it, and macOS drew its own shadow round the
+ * transparent gutter that left. The floors, per platform and with the one still
+ * unmeasured said so, are now `minWindowWidth` in `platform/windowMetrics.ts`.
  */
-export const MIN_WINDOW_WIDTH = 32
 
 /**
  * The display the design's composition was drawn for, and the height every
@@ -201,12 +204,18 @@ export function uiScale(area: ScreenRect): number {
  * which is the honest failure mode for a size the design does not cover
  * (narrow-screen adaptation is Unspecified).
  */
-export function panelWidth(area: ScreenRect, layout: PanelLayoutRequest): number {
+export function panelWidth(
+  area: ScreenRect,
+  layout: PanelLayoutRequest,
+  platform?: Platform
+): number {
   const scale = uiScale(area)
   if (!layout.expanded && !layout.mineOpen) {
     // The rail scales like everything else, but the platform floor is a real
-    // pixel count and does not: a window cannot be made narrower than it.
-    return Math.min(Math.max(MIN_WINDOW_WIDTH, Math.round(RAIL_WIDTH * scale)), area.width)
+    // pixel count and does not: a window cannot be made narrower than it. Where
+    // the floor is wider than the scaled rail the difference is transparent
+    // window, so it is asked for per platform rather than at the widest (#465).
+    return Math.min(Math.max(minWindowWidth(platform), Math.round(RAIL_WIDTH * scale)), area.width)
   }
   const design = layout.expanded
     ? expandedWidth(DESIGN_SCREEN_HEIGHT) +
@@ -224,9 +233,10 @@ export function panelWidth(area: ScreenRect, layout: PanelLayoutRequest): number
 export function panelBounds(
   area: ScreenRect,
   edge: PanelEdge,
-  layout: PanelLayoutRequest
+  layout: PanelLayoutRequest,
+  platform?: Platform
 ): ScreenRect {
-  const width = panelWidth(area, layout)
+  const width = panelWidth(area, layout, platform)
   return {
     x: edge === 'right' ? area.x + area.width - width : area.x,
     y: area.y,
@@ -291,14 +301,19 @@ function messagePanelRoom(area: ScreenRect, shell: ScreenRect, edge: PanelEdge):
  *
  * One floor, and it is the platform's rather than the design's: a window of no
  * width is not a narrow panel, it is a panel that looks as though it never
- * opened. `MIN_WINDOW_WIDTH` is the narrowest window Windows will actually
- * make (measured, see its own comment), so a display with less room than that
- * beside the shell gets a panel overlapping it by at most those 32 pixels.
+ * opened. `minWindowWidth` is the narrowest window this platform will actually
+ * make (see its own comment), so a display with less room than that beside the
+ * shell gets a panel overlapping it by at most that floor.
  */
-export function messagePanelWidth(area: ScreenRect, shell: ScreenRect, edge: PanelEdge): number {
+export function messagePanelWidth(
+  area: ScreenRect,
+  shell: ScreenRect,
+  edge: PanelEdge,
+  platform?: Platform
+): number {
   const design = Math.round(MESSAGE_PANEL_DESIGN_WIDTH * uiScale(area))
   const room = messagePanelRoom(area, shell, edge)
-  return Math.min(area.width, Math.max(MIN_WINDOW_WIDTH, Math.min(design, room)))
+  return Math.min(area.width, Math.max(minWindowWidth(platform), Math.min(design, room)))
 }
 
 /**
@@ -321,9 +336,10 @@ export function messagePanelBounds(
   area: ScreenRect,
   shell: ScreenRect,
   edge: PanelEdge,
-  designHeight: number
+  designHeight: number,
+  platform?: Platform
 ): ScreenRect {
-  const width = messagePanelWidth(area, shell, edge)
+  const width = messagePanelWidth(area, shell, edge, platform)
   const height = Math.min(area.height, Math.max(1, Math.round(designHeight * uiScale(area))))
   const gap = Math.round(MESSAGE_PANEL_GAP * uiScale(area))
   const x =
@@ -371,9 +387,9 @@ export function messagePanelAnchorOf(rect: ScreenRect): MessagePanelAnchor {
  * two limits left are the display it is on and the narrowest window the
  * platform will actually make.
  */
-export function detachedMessagePanelWidth(area: ScreenRect): number {
+export function detachedMessagePanelWidth(area: ScreenRect, platform?: Platform): number {
   const design = Math.round(MESSAGE_PANEL_DESIGN_WIDTH * uiScale(area))
-  return Math.min(area.width, Math.max(MIN_WINDOW_WIDTH, design))
+  return Math.min(area.width, Math.max(minWindowWidth(platform), design))
 }
 
 /** Pull one value back between two bounds; the bounds win over the value. */
@@ -391,8 +407,12 @@ function within(value: number, low: number, high: number): number {
  * is clamped before the origin, because a rectangle bigger than the area has
  * no origin that would fit it.
  */
-export function clampMessagePanelBounds(area: ScreenRect, rect: ScreenRect): ScreenRect {
-  const width = Math.min(area.width, Math.max(MIN_WINDOW_WIDTH, Math.round(rect.width)))
+export function clampMessagePanelBounds(
+  area: ScreenRect,
+  rect: ScreenRect,
+  platform?: Platform
+): ScreenRect {
+  const width = Math.min(area.width, Math.max(minWindowWidth(platform), Math.round(rect.width)))
   const height = Math.min(area.height, Math.max(1, Math.round(rect.height)))
   return {
     x: within(rect.x, area.x, area.x + area.width - width),
@@ -423,10 +443,11 @@ export function clampMessagePanelBounds(area: ScreenRect, rect: ScreenRect): Scr
 export function detachedMessagePanelBounds(
   area: ScreenRect,
   anchor: MessagePanelAnchor,
-  designHeight: number
+  designHeight: number,
+  platform?: Platform
 ): ScreenRect | null {
   if (area.width <= 0 || area.height <= 0) return null
-  const width = detachedMessagePanelWidth(area)
+  const width = detachedMessagePanelWidth(area, platform)
   const height = Math.min(area.height, Math.max(1, Math.round(designHeight * uiScale(area))))
   const asked = { x: Math.round(anchor.x), y: Math.round(anchor.bottom) - height, width, height }
   const touches =
@@ -434,7 +455,7 @@ export function detachedMessagePanelBounds(
     asked.x + asked.width > area.x &&
     asked.y < area.y + area.height &&
     asked.y + asked.height > area.y
-  return touches ? clampMessagePanelBounds(area, asked) : null
+  return touches ? clampMessagePanelBounds(area, asked, platform) : null
 }
 
 /**
@@ -458,8 +479,10 @@ export function messagePanelPlacement(
   shell: ScreenRect,
   edge: PanelEdge,
   designHeight: number,
-  anchor: MessagePanelAnchor | null
+  anchor: MessagePanelAnchor | null,
+  platform?: Platform
 ): ScreenRect {
-  const detached = anchor === null ? null : detachedMessagePanelBounds(area, anchor, designHeight)
-  return detached ?? messagePanelBounds(area, shell, edge, designHeight)
+  const detached =
+    anchor === null ? null : detachedMessagePanelBounds(area, anchor, designHeight, platform)
+  return detached ?? messagePanelBounds(area, shell, edge, designHeight, platform)
 }

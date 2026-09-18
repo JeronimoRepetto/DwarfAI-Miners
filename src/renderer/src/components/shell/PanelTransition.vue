@@ -3,6 +3,7 @@ import { onBeforeUnmount } from 'vue'
 import { createBoundedMotion } from '../../lib/shell/boundedMotion'
 import { watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { panelKeyframes } from '../../lib/shell/panelMotion'
+import type { ShellFoldHold } from '../../composables/useShellFold'
 
 const props = defineProps<{
   axis?: 'horizontal' | 'vertical'
@@ -16,10 +17,16 @@ const props = defineProps<{
    * still HELD, because unmounting it before main has shrunk the window repacks
    * the row inside a rectangle that has not changed yet.
    *
+   * It answers the two moments apart (#464), because they are two: the fold
+   * ending is what the shrink waits on, and main having applied the bounds it
+   * was folded for is what may unmount the column. Held on the first alone, a
+   * `flex: 1` column repacked the row a whole IPC round trip before the window
+   * it is packed into changed.
+   *
    * Answering `null` means there is no motion to wait for (reduced motion, a
    * hidden window), which is the instant path the rest of this file takes too.
    */
-  hold?: (column: HTMLElement) => Promise<void> | null
+  hold?: (column: HTMLElement) => ShellFoldHold | null
 }>()
 const emit = defineEmits<{ leave: [completion: Promise<void>] }>()
 /**
@@ -50,14 +57,14 @@ function held(element: Element, panel: HTMLElement, done: () => void, leaving: b
     done()
     return
   }
-  emit('leave', fold)
+  emit('leave', fold.folded)
   const complete = (): void => {
     if (active.get(element) !== complete) return
     active.delete(element)
     done()
   }
   active.set(element, complete)
-  void fold.then(complete, complete)
+  void fold.released.then(complete, complete)
 }
 
 function run(element: Element, done: () => void, leaving: boolean): void {

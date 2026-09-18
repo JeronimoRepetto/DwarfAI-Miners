@@ -449,6 +449,36 @@ describe('App panel motion (#164)', () => {
   })
 
   /*
+   * ADDED for #464. The blink the issue reports, in the one place it can be
+   * asserted from: the column that leaves is `flex: 1`, so unmounting it the
+   * moment the fold ends repacks the whole row while main has only just been
+   * ASKED to resize. For that round trip the shell paints the fold's strip over
+   * a row that has already moved out from under it.
+   */
+  it('keeps the leaving column standing until main has applied the new bounds', async () => {
+    let apply!: (layout: unknown) => void
+    const { wrapper, api } = await animatedApp({
+      setPanelLayout: vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            apply = resolve
+          })
+      )
+    })
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    animations[0]!.finish()
+    await flushPromises()
+    // The fold has ended and the shrink has gone out, which is the whole of
+    // what the fold releases.
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
+    expect(wrapper.find('.shell-secondary').exists()).toBe(true)
+    apply({ edge: 'right', expanded: false, mineOpen: false })
+    await flushPromises()
+    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
+  })
+
+  /*
    * ADDED for #396. The post-flush watcher listed `layoutApplying` among its
    * sources, so the first settle of every request ran on the flag flipping
    * true — a whole IPC round trip before `layout` could answer, with nothing

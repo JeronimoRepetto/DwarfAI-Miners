@@ -178,8 +178,8 @@ combination is configurable: open the gear in the panel titlebar and record a ne
 another application already owns a combination, registration fails, the previous shortcut is
 re-claimed, and the settings panel says so rather than showing a shortcut that does nothing.
 
-> pnpm 11 build scripts are allowed through `allowBuilds` in `pnpm-workspace.yaml`. If the
-> Electron binary is missing after an interrupted install, run `pnpm rebuild electron`.
+> Electron 42+ ships no postinstall; `pnpm dev` runs `install-electron` first. If the
+> binary is ever missing (an interrupted download, say), run `pnpm exec install-electron`.
 
 The checks CI runs, the testing philosophy and the rest of the contribution workflow are in
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
