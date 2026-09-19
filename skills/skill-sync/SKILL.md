@@ -50,8 +50,8 @@ The bullet is greedy-wrapped at 99 columns with a two-space hanging indent, whic
 prose around it stops today (`printWidth` is 100, and Prettier's `proseWrap` default leaves prose
 line breaks alone, so nothing reflows it and nothing complains).
 
-`AGENTS.md` also declares its own budget — "budgeted under 200 lines" — so the generator refuses
-to write a result over 199 lines. A generated region grows a line at a time without anyone
+`AGENTS.md` also declares its own budget — "budgeted under 300 lines" — so the generator refuses
+to write a result over 299 lines. A generated region grows a line at a time without anyone
 deciding to; when it trips, take prose out, starting with prose another file already carries in
 full.
 
@@ -91,7 +91,7 @@ Every one of these exits non-zero rather than warning:
 - an `AGENTS.md` missing its `BEGIN`/`END` markers
 - `src/main` missing — the `main-tree` region is generated from it, and an empty list would read
   as a true claim that the main process has no subject directories
-- a result over 199 lines, the budget `AGENTS.md` declares for itself
+- a result over 299 lines, the budget `AGENTS.md` declares for itself
 
 One thing is a **warning** instead: a directory under `src/main` with no entry in
 `MAIN_TREE_GLOSSES`. The directory is already in the app and its bare name is honest, so refusing

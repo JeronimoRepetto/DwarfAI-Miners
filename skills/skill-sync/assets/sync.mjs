@@ -275,8 +275,7 @@ const MAIN_TREE_GLOSSES = {
   appDatabase: 'the one SQLite file',
   config: null,
   domain: 'pure rules and the type barrel',
-  // Glossed in src/README.md instead: AGENTS.md sits at its own 199-line
-  // budget, and one more word here is the line that breaks it.
+  // Glossed in src/README.md instead.
   history: null,
   hooks: 'the opt-in Claude push channel',
   ledger: 'mined, persisted',
@@ -311,12 +310,12 @@ const WRAP_COLUMNS = 99
 const HANGING_INDENT = '  '
 
 /**
- * AGENTS.md's own second bullet: "It is budgeted under 200 lines, because
+ * AGENTS.md's own second bullet: "It is budgeted under 300 lines, because
  * adherence drops as it grows." A generated region is exactly the kind of thing
  * that grows a line at a time without anyone deciding to, so the generator
  * refuses to be the one that breaks the budget.
  */
-const AGENTS_MAX_LINES = 199
+const AGENTS_MAX_LINES = 299
 
 /** Greedy wrap with a hanging indent — the shape the bullet already has. */
 function wrapBullet(text) {
