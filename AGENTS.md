@@ -11,7 +11,7 @@ does not — mostly things that have already gone wrong at least once.
 ## How to use this file
 
 - **The single source of truth.** `CLAUDE.md` imports it; every other tool reads it directly.
-- **Budgeted under 200 lines** — a new section takes one out; duplicated prose goes first.
+- **Budgeted under 300 lines** — a new section takes one out; duplicated prose goes first.
 - **Three regions are generated** by `node skills/skill-sync/assets/sync.mjs` — skill tables from
   frontmatter, the `main/` tree bullet from the filesystem. Never hand-edit inside the markers.
 - [`skills/README.md`](skills/README.md) is the spec for the skills system itself.
@@ -95,6 +95,13 @@ does not ask for, on every test file you touched: [`test-safety`](skills/test-sa
 
 ## Boundaries that must survive
 
+**One product on three platforms.** Windows, macOS and Linux are not a primary and two ports.
+A feature is unfinished until it works on all three; a fix is unfinished until it fixes all
+three. A difference in what the user can observe between platforms is a defect in its own
+right, never an acceptable outcome — where the OS forces different mechanics, the difference
+stops at the port ([`platform-ports`](skills/platform-ports/SKILL.md)) and goes no further.
+Shipping one platform and filing the others as follow-up is how the parity was lost before.
+
 **`src/shared/contracts.ts` is the single declaration point for data crossing main ↔ preload ↔
 renderer** — payloads, domain shapes, and the `IPC_CHANNELS` table. It must stay free of Electron
 and Node imports. Two things deliberately live outside it: the API method signatures
@@ -170,7 +177,7 @@ there. When a document and the history disagree, the history is usually right: r
 adding a file. This is the index — one line per group, so you can tell what a thing is _for_.
 
 - **`shared/`** — the wire boundary: `contracts.ts`, `accelerator.ts`, `truncate.ts`,
-  `externalLink.ts`. No Electron and no Node imports anywhere in it.
+  `externalLink.ts`.
 - **`preload/`** — the one typed API surface handed to the renderer.
 
 <!-- BEGIN GENERATED: main-tree -->

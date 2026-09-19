@@ -13,6 +13,7 @@ node_modules/
 .codex/*
 .claude/*
 .agent/*
+.engram/*
 
 .env
 *.local
