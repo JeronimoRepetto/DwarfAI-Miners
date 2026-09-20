@@ -21,7 +21,7 @@ anyway — was never implemented**. This is that step.
 
 - **Not closing the terminal.** The panel never opened it, Windows Terminal exposes no
   close-tab-by-pid (the same wall #329 hit), and the tab may hold the person's own work. The damage
-  to undo is the terminal's *mode*, not its existence.
+  to undo is the terminal's _mode_, not its existence.
 - **Not weakening #329's refusal.** The keystroke stays forbidden in a tab strip. This repairs after
   the kill instead of typing into an unidentifiable tab.
 - **`CONOUT$`, not `CONIN$`.** The existing write-by-pid path (`consoleInputWrite.ts`) writes key
@@ -29,13 +29,13 @@ anyway — was never implemented**. This is that step.
   through the console's output handle, with `ENABLE_VIRTUAL_TERMINAL_PROCESSING` on, or the ESC bytes
   render as literal glyphs — which is worse than the bug.
 - **Attach to an ancestor, not the agent.** The agent's pid is gone by the time the reset is due, so
-  the chain is captured *before* the kill (`processChain`, `focus.ts:115`) and the surviving shell on
+  the chain is captured _before_ the kill (`processChain`, `focus.ts:115`) and the surviving shell on
   that console is the attach target.
 
 ## Scope
 
-**Authorized:** `src/main/textDelivery/` (new `consoleReset.ts` + its test, `windowsTextDelivery.ts`
-+ its test), `docs/console-hosting.md`. Nothing else.
+**Authorized:** `src/main/textDelivery/` — the new `consoleReset.ts` and its test, plus
+`windowsTextDelivery.ts` and its test — and `docs/console-hosting.md`. Nothing else.
 
 **Out of scope, stated rather than silently dropped:**
 
@@ -70,10 +70,10 @@ Mode: enabled`) and the repo's own [`tdd`](../../skills/tdd/SKILL.md) skill. Run
       `WriteConsoleW(<resets>)` reaches a **Windows Terminal** tab the app did not spawn, and that a
       terminal left in mouse-reporting mode goes quiet after it. Record the reading in
       `docs/console-hosting.md` in the house register, dated, with what was and was not proven.
-      *No code until this passes — an unmeasured restore is the exit-0-shaped lie this repo refuses.*
+      _No code until this passes — an unmeasured restore is the exit-0-shaped lie this repo refuses._
       Route: inline (measurement, not a write).
 
-- [ ] **T2 — `consoleReset.ts`: the pure builder and its exit-code contract.**
+- [x] **T2 — `consoleReset.ts`: the pure builder and its exit-code contract.** ✅ 2026-09-20
       `buildConsoleResetCommand(pids: readonly number[]): string | null` emitting the PowerShell
       P/Invoke script, mirroring `consoleInputWrite.ts`'s style exactly (decimal constants,
       `Add-Type -Namespace Win32 -MemberDefinition @'…'@`, numbered exits). Tries each candidate pid
@@ -81,8 +81,8 @@ Mode: enabled`) and the repo's own [`tdd`](../../skills/tdd/SKILL.md) skill. Run
       not a real positive integer — the same fail-closed guard the input builder holds.
       Tests: `consoleReset.test.ts`. Route: delegated (writer).
 
-- [ ] **T3 — Wire it into `forceEndSession`, and only there.**
-      Capture the ancestor chain *before* the kill, run the reset after `endProcessTree` reports the
+- [x] **T3 — Wire it into `forceEndSession`, and only there.** ✅ 2026-09-20
+      Capture the ancestor chain _before_ the kill, run the reset after `endProcessTree` reports the
       tree gone, log the outcome, never touch the verdict. The graceful path gets no reset: the TUI
       already restored its own terminal. Tests appended to `windowsTextDelivery.test.ts` — a reset
       after a forced kill, no reset after a clean exit, and a failed reset that still reports the
@@ -126,8 +126,31 @@ spawn (`powershell.exe` whose parent is `WindowsTerminal.exe`):
 Two findings that bind T2 and T3:
 
 1. **`CONOUT$` + `WriteConsoleW`**, not `CONIN$` + `WriteConsoleInputW`. A reset is output; written
-   as key records the shell would *type* the escape bytes instead of obeying them.
+   as key records the shell would _type_ the escape bytes instead of obeying them.
 2. **The ancestor chain must be read before the kill**, because `taskkill /T /F` has already removed
    the agent's pid by the time the reset is due.
 
-Next step: T2.
+**T2 and T3 done, 2026-09-20.** Written under strict TDD, RED observed before each implementation.
+Verified by the parent, not taken on report: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`,
+`node skills/skill-sync/assets/sync.mjs --check`, `pnpm test` (277 files, 7637 passed, 5 skipped —
+the skips pre-existing and unrelated) and `pnpm build` all re-run here and observed green. Test
+census: `consoleReset.test.ts` 0 → 11, `windowsTextDelivery.test.ts` 85 → 90, no file lost a test.
+
+Two corrections the parent made on review:
+
+- The builder's doc comment cited the host as 10.0.26100; the measured host is **10.0.26200**.
+- The two amended assertions on the forced-kill path checked only `SendWait('^c')`. Narrowed to
+  `SendKeys`, so a future keystroke that is not the clean exit's own cannot reach a console the
+  panel is unsure of without a test noticing.
+
+Disclosed under [`test-safety`](../../skills/test-safety/SKILL.md): two existing assertions in
+`windowsTextDelivery.test.ts` were **amended, none deleted**. Both used to assert `runPowerShell`
+was never called on the forced path; that seam is now legitimately read once, before the kill, to
+resolve the ancestor chain. The guarantee they always owed — no keystroke reaches an unsure console
+— is preserved and, after the correction above, is stated more strictly than before.
+
+**Still unmeasured, and stated rather than implied:** VS Code's integrated terminal, a legacy
+conhost with VT off, and the POSIX `kill -KILL` escalation. The end-to-end against the real panel —
+launch a session, kick it, confirm the terminal comes back usable — is the maintainer's to run.
+
+Next step: the end-to-end acceptance run, then the delivery decision.

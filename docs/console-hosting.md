@@ -1960,10 +1960,10 @@ parent is `WindowsTerminal.exe` directly, the ConPTY shape #371 refuses to type 
 
 The act is the `CONIN$` write-by-pid above with two substitutions, and both matter:
 
-| | write-by-pid (#371) | the reset (#504) |
-| --- | --- | --- |
-| Handle | `CreateFileW("CONIN$")` | `CreateFileW("CONOUT$")` |
-| Call | `WriteConsoleInputW` (key records) | `WriteConsoleW` (characters) |
+|        | write-by-pid (#371)                | the reset (#504)             |
+| ------ | ---------------------------------- | ---------------------------- |
+| Handle | `CreateFileW("CONIN$")`            | `CreateFileW("CONOUT$")`     |
+| Call   | `WriteConsoleInputW` (key records) | `WriteConsoleW` (characters) |
 
 A DECSET reset is **output**, not input. Writing it as key records would hand the ESC bytes to
 whatever is reading the console, which is the shell — it would type them, not obey them.
@@ -1971,10 +1971,10 @@ whatever is reading the console, which is the shell — it would type them, not 
 **`FreeConsole` → `AttachConsole(pid)` → `CONOUT$` → `WriteConsoleW` → `CloseHandle` →
 `FreeConsole`.** Two readings, on a tab sitting at its own prompt with mouse reporting on:
 
-| Target | Attach | `GetConsoleMode` | `WriteConsoleW` | Exit |
-| --- | --- | --- | --- | --- |
-| live pid 22988 in a WT tab | `true` | **7** | **54 of 54** | 0 |
-| a pid whose process had exited | `false`, `GetLastError` **87** | — | — | 2 |
+| Target                         | Attach                         | `GetConsoleMode` | `WriteConsoleW` | Exit |
+| ------------------------------ | ------------------------------ | ---------------- | --------------- | ---- |
+| live pid 22988 in a WT tab     | `true`                         | **7**            | **54 of 54**    | 0    |
+| a pid whose process had exited | `false`, `GetLastError` **87** | —                | —               | 2    |
 
 **`ENABLE_VIRTUAL_TERMINAL_PROCESSING` was already on — mode `7` is `PROCESSED_OUTPUT |
 WRAP_AT_EOL | VIRTUAL_TERMINAL`, the ConPTY default.** The `SetConsoleMode` that turns it on stays

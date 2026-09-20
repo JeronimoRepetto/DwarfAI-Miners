@@ -953,14 +953,23 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
    */
   it('sends no clean-exit keystroke when the console will not come forward, and force-kills the tree (#358)', async () => {
     const focus = vi.fn().mockResolvedValue(NOT_FOCUSED)
-    const runPowerShell = vi.fn()
+    // AMENDED for #504: `runPowerShell` used to be asserted uncalled outright
+    // on this path. It is legitimately reached once now — read-only, to
+    // resolve the ancestor chain the terminal reset may attach to — so the
+    // guarantee this test actually owes is narrowed to what it always meant:
+    // no KEYSTROKE of any kind reaches a console the panel is not sure of.
+    // `SendKeys` rather than the clean exit's own `^c`, so a future key that
+    // is not that one cannot slip onto this path unnoticed.
+    const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
     const { port, endProcessTree } = ender(undefined, undefined, { focus, runPowerShell })
 
     await expect(
       port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     ).resolves.toMatchObject({ delivered: true })
     expect(endProcessTree).toHaveBeenCalledWith(4242)
-    expect(runPowerShell).not.toHaveBeenCalled()
+    expect(runPowerShell.mock.calls.some((call) => String(call[0]).includes('SendKeys'))).toBe(
+      false
+    )
   })
 
   /*
@@ -1127,7 +1136,12 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     await expect(
       port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
     ).resolves.toMatchObject({ delivered: true })
-    expect(runPowerShell).not.toHaveBeenCalled()
+    // AMENDED for #504: see the #358 case above — the forced path now reads
+    // the ancestor chain through this same seam before it kills, so the
+    // guarantee narrows to "no keystroke", not "no call at all".
+    expect(runPowerShell.mock.calls.some((call) => String(call[0]).includes('SendKeys'))).toBe(
+      false
+    )
     expect(endProcessTree).toHaveBeenCalledWith(4242)
   })
 
@@ -1166,6 +1180,145 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
     expect(endProcessTree).toHaveBeenCalledWith(4242)
     expect(terminateProcess).not.toHaveBeenCalled()
     expect(killProcess).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #504, step 2 of #358: once the forced tree kill has actually ended the
+   * session, the terminal it leaves behind gets the DECSET resets a killed
+   * TUI never sent itself. `taskkill /T /F` has already removed the agent's
+   * OWN pid by the time this runs (docs/console-hosting.md §6), so the
+   * ancestor chain — the shell that launched it — must be read BEFORE the
+   * kill, through the same `runPowerShell` seam every other query on this
+   * port uses. A terminal HOST (Windows Terminal, VS Code, …) ends the walk
+   * without becoming a candidate: attaching to its console is not this
+   * session's console (#329's reasoning, applied to a write rather than a
+   * keystroke).
+   */
+  describe('the terminal reset after a forced kill (#504)', () => {
+    /** One WMI row, the shape `parseProcessRows` reads. */
+    function row(pid: number, parentPid: number, name: string) {
+      return { ProcessId: pid, ParentProcessId: parentPid, Name: name }
+    }
+
+    it('reads the ancestor chain before the kill and resets the shell that launched the session, never the agent or a terminal host', async () => {
+      const runPowerShell = vi.fn().mockResolvedValue({
+        stdout: JSON.stringify([
+          row(4242, 1000, 'claude.exe'),
+          row(1000, 500, 'powershell.exe'),
+          row(500, 1, 'WindowsTerminal.exe')
+        ]),
+        exitCode: 0
+      })
+      const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+      const { port, endProcessTree } = ender(undefined, undefined, {
+        focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
+        runPowerShell,
+        runConsoleWrite
+      })
+
+      await expect(
+        port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+      ).resolves.toMatchObject({ delivered: true })
+      expect(endProcessTree).toHaveBeenCalledWith(4242)
+      expect(runConsoleWrite).toHaveBeenCalledTimes(1)
+      const script = String(runConsoleWrite.mock.calls[0]?.[0])
+      expect(script).toContain('AttachConsole(1000)')
+      // Neither the agent's own (already-dead) pid nor the terminal host it
+      // sits under may be tried: the first is gone by the time this runs, and
+      // the second draws several sessions in tabs of one window (#329).
+      expect(script).not.toContain('AttachConsole(4242)')
+      expect(script).not.toContain('AttachConsole(500)')
+    })
+
+    it('sends no terminal reset after a clean graceful exit — the TUI already restored its own terminal', async () => {
+      const endProcessTree = vi.fn().mockResolvedValue(true)
+      const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+      const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+      // Verified alive at the keystroke, still there on the first look, then gone.
+      const processStartTimeMs = vi
+        .fn()
+        .mockResolvedValueOnce(EXPECTED_START_MS)
+        .mockResolvedValueOnce(EXPECTED_START_MS)
+        .mockResolvedValue(null)
+      const { port } = ender(endProcessTree, processStartTimeMs, {
+        runPowerShell,
+        runConsoleWrite
+      })
+
+      await expect(
+        port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+      ).resolves.toMatchObject({ delivered: true })
+      expect(endProcessTree).not.toHaveBeenCalled()
+      expect(runConsoleWrite).not.toHaveBeenCalled()
+    })
+
+    it('runs no reset when the ancestor query finds no usable candidate, and still reports the session ended', async () => {
+      const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 1 })
+      const runConsoleWrite = vi.fn()
+      const { port, endProcessTree } = ender(undefined, undefined, {
+        focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
+        runPowerShell,
+        runConsoleWrite
+      })
+
+      await expect(
+        port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+      ).resolves.toMatchObject({ delivered: true })
+      expect(endProcessTree).toHaveBeenCalledWith(4242)
+      expect(runConsoleWrite).not.toHaveBeenCalled()
+    })
+
+    /*
+     * The hard constraint from the feature document: the restore is
+     * best-effort and NEVER part of the kick's verdict. The session ended —
+     * `endProcessTree` said so — so a reset that reports failure must not
+     * turn that into a failed kick.
+     */
+    it('still reports the session ended when the reset script itself fails', async () => {
+      const runPowerShell = vi.fn().mockResolvedValue({
+        stdout: JSON.stringify([row(4242, 1000, 'claude.exe'), row(1000, 1, 'powershell.exe')]),
+        exitCode: 0
+      })
+      const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 2 })
+      const { port, endProcessTree } = ender(undefined, undefined, {
+        focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
+        runPowerShell,
+        runConsoleWrite
+      })
+
+      const outcome = await port.endConsoleSession({
+        pid: 4242,
+        expectedStartMs: EXPECTED_START_MS
+      })
+      expect(outcome).toMatchObject({ delivered: true })
+      expect(endProcessTree).toHaveBeenCalledWith(4242)
+    })
+
+    /*
+     * A throwing reset must not propagate into `endConsoleSession`'s catch —
+     * that catch exists for a probe or a kill that did not happen, and this
+     * repair runs only AFTER the kill already succeeded.
+     */
+    it('still reports the session ended when the reset script throws', async () => {
+      const runPowerShell = vi.fn().mockResolvedValue({
+        stdout: JSON.stringify([row(4242, 1000, 'claude.exe'), row(1000, 1, 'powershell.exe')]),
+        exitCode: 0
+      })
+      const runConsoleWrite = vi.fn().mockRejectedValue(new Error('powershell.exe is missing'))
+      const { port, endProcessTree } = ender(undefined, undefined, {
+        focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
+        runPowerShell,
+        runConsoleWrite
+      })
+
+      const outcome = await port.endConsoleSession({
+        pid: 4242,
+        expectedStartMs: EXPECTED_START_MS
+      })
+      expect(outcome.delivered).toBe(true)
+      expect(outcome.error).toBeUndefined()
+      expect(endProcessTree).toHaveBeenCalledWith(4242)
+    })
   })
 })
 

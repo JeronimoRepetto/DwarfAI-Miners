@@ -1,7 +1,15 @@
 import { execFile, spawn as spawnChild } from 'node:child_process'
 import { homedir } from 'node:os'
 import { NodeFs, type FsLike } from '../adapters/fsLike'
-import { focusSessionConsole, type FocusOutcome, type ShellRunner } from '../platform/focus'
+import {
+  buildProcessQueryCommand,
+  focusSessionConsole,
+  parseProcessRows,
+  processChain,
+  WINDOWS_TERMINAL_HOSTS,
+  type FocusOutcome,
+  type ShellRunner
+} from '../platform/focus'
 import { createProcessEnd, type ProcessEndPort } from '../platform/processEnd'
 import {
   createProcessProbe,
@@ -45,6 +53,7 @@ import {
   buildConsoleInputWriteCommand,
   consoleWriteFailureFor
 } from './consoleInputWrite'
+import { buildConsoleResetCommand } from './consoleReset'
 import { consoleChunksFor } from './attachmentDelivery'
 import { answerChunksPressable, questionAnswerChunks } from './questionKeys'
 import { buildGracefulExitCommand, buildSendInterruptCommand } from './sendKeys'
@@ -111,6 +120,20 @@ const ANSWER_KEYS_UNBUILDABLE = 'That answer could not be turned into keystrokes
  * `neverStarted` says — the relay may still carry the message.
  */
 const CONSOLE_WRITE_UNBUILDABLE = 'That console could not be addressed by process id.'
+
+/**
+ * How many ancestor rungs the terminal-reset walk (#504) will collect before
+ * it stops climbing.
+ *
+ * The shape that needs more than one candidate is narrow — the immediate
+ * parent is the shell that launched the agent, and everything past it is a
+ * safety margin for a wrapper in between (the same reasoning
+ * `MAX_ANCESTOR_CONSOLE_PROBES` in `platform/focus.ts` names for its own
+ * short climb). A long chain past that is heading toward `explorer.exe` and
+ * service hosts, which own no console this script could attach to, so
+ * spending more PowerShell round trips on them buys nothing.
+ */
+const RESET_CANDIDATE_LIMIT = 4
 
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
@@ -852,13 +875,86 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * unreadable process list alike. This is the one guard in the app that fails
    * closed. A throwing probe or kill propagates to `endConsoleSession`'s catch,
    * which reports SESSION_NOT_ENDED rather than a session ended.
+   *
+   * #504 adds one repair AFTER the kill takes: the ancestor chain is read
+   * BEFORE `taskkill /T /F` runs, because the kill removes the agent's own pid
+   * and there is nothing left to walk up from once it has. The reset itself
+   * is attempted only once `endProcessTree` has actually reported the tree
+   * gone — never before, and never in place of the verdict below.
    */
   private async forceEndSession(request: EndSessionRequest): Promise<TextDeliveryOutcome> {
     const probedMs = await this.processProbe.processStartTimeMs(request.pid)
     if (probedMs === null || !sameProcessStart(probedMs, request.expectedStartMs)) {
       return { delivered: false, error: SESSION_NOT_VERIFIED }
     }
+    const resetCandidates = await this.resetCandidatesFor(request.pid)
     const ended = await this.processEnd.endProcessTree(request.pid)
-    return ended ? { delivered: true } : { delivered: false, error: SESSION_NOT_ENDED }
+    if (!ended) return { delivered: false, error: SESSION_NOT_ENDED }
+    await this.repairTerminalAfterKick(resetCandidates)
+    return { delivered: true }
+  }
+
+  /**
+   * The ancestors of `pid`, nearest first, that #504's reset may try to
+   * attach to — read before the kill, because `taskkill /T /F` removes the
+   * agent's own row from the process list and there is nothing left here to
+   * walk up from once it has (docs/console-hosting.md §6).
+   *
+   * `pid` itself is never a candidate: it is the row this method starts the
+   * walk from, not a target for the reset. Excluded too is anything from the
+   * first TERMINAL HOST onward — Windows Terminal, VS Code, … — because
+   * attaching to a host's console is not this session's console (#329's
+   * reasoning, aimed at a write instead of a keystroke): the walk stops
+   * there rather than trying the host or anything above it.
+   *
+   * An unreadable process list — the query itself refusing, or a throw from
+   * the seam — answers no candidates at all rather than propagating: this
+   * repair is best-effort by construction, so "nothing to try" and "could not
+   * find out" are the same answer here.
+   */
+  private async resetCandidatesFor(pid: number): Promise<number[]> {
+    try {
+      const query = await this.runPowerShell(buildProcessQueryCommand())
+      if (query.exitCode !== 0) return []
+      const rows = parseProcessRows(JSON.parse(query.stdout))
+      const candidates: number[] = []
+      for (const process of processChain(rows, pid).slice(1)) {
+        if (WINDOWS_TERMINAL_HOSTS.has(process.name.toLowerCase())) break
+        candidates.push(process.pid)
+        if (candidates.length >= RESET_CANDIDATE_LIMIT) break
+      }
+      return candidates
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Write #504's DECSET resets into whichever `candidates` entry the script
+   * can attach to, and log the outcome — never throw, never touch the kick's
+   * verdict.
+   *
+   * This runs only after `forceEndSession` has already decided the session
+   * ended, so every branch here is best-effort repair: a candidate list with
+   * nothing usable, a script the write seam refused, or a seam that threw are
+   * all the same shape from the caller's side — the terminal may still be
+   * left in mouse-reporting mode, and the session ended regardless.
+   */
+  private async repairTerminalAfterKick(candidates: readonly number[]): Promise<void> {
+    const command = buildConsoleResetCommand(candidates)
+    if (command === null) {
+      console.warn('[kick] no ancestor console to reset after the forced kill (#504)')
+      return
+    }
+    try {
+      const result = await this.runConsoleWrite(command)
+      if (result.exitCode !== 0) {
+        console.warn(
+          `[kick] terminal reset after the forced kill did not complete (exit ${result.exitCode}) (#504)`
+        )
+      }
+    } catch (error) {
+      console.warn('[kick] terminal reset after the forced kill threw (#504)', error)
+    }
   }
 }
