@@ -125,15 +125,27 @@ const CONSOLE_WRITE_UNBUILDABLE = 'That console could not be addressed by proces
  * How many ancestor rungs the terminal-reset walk (#504) will collect before
  * it stops climbing.
  *
- * The shape that needs more than one candidate is narrow — the immediate
- * parent is the shell that launched the agent, and everything past it is a
- * safety margin for a wrapper in between (the same reasoning
- * `MAX_ANCESTOR_CONSOLE_PROBES` in `platform/focus.ts` names for its own
- * short climb). A long chain past that is heading toward `explorer.exe` and
- * service hosts, which own no console this script could attach to, so
- * spending more PowerShell round trips on them buys nothing.
+ * The TERMINAL HOST is the real stop, and this is only the backstop behind it
+ * — deliberately generous, because the cost of an extra rung is nothing and
+ * the cost of one too few is the whole repair.
+ *
+ * It was 4, reasoned by analogy to `MAX_ANCESTOR_CONSOLE_PROBES` in
+ * `platform/focus.ts`. That analogy was wrong, and the acceptance run is what
+ * said so: a real launch measured on 2026-09-20 ran
+ * `claude.exe -> python.exe -> py.exe -> cmd.exe -> powershell.exe ->
+ * WindowsTerminal.exe`, which cleared a budget of four with NOTHING to spare,
+ * and an npm/pnpm `.cmd` shim in front (`resolveShimTarget`, #193/#413) is one
+ * ordinary rung more. The shell is always the DEEPEST rung before the host, so
+ * a budget that truncates truncates precisely the candidate that matters.
+ *
+ * The asymmetry that licenses generosity: every rung on this chain shares the
+ * ONE console, so a surplus candidate is an extra `AttachConsole` inside a
+ * script already being run — not a round trip, not a second spawn — and the
+ * first one that attaches ends the attempt. `focus.ts`'s own probe budget is
+ * short because each of ITS rungs costs a separate window probe; this one
+ * costs a line of PowerShell.
  */
-const RESET_CANDIDATE_LIMIT = 4
+const RESET_CANDIDATE_LIMIT = 12
 
 export interface WindowsTextDeliveryOptions {
   /** Cheap model the one-shot relay turn runs on. */
@@ -178,6 +190,26 @@ export interface WindowsTextDeliveryOptions {
    * transport outright, which is the shape the unit tests want.
    */
   runPowerShell?: ShellRunner
+  /**
+   * The one shell runner on this port whose STDOUT is read (#504).
+   *
+   * It exists because neither seam above can answer one, and both look as
+   * though they could: `ShellResult` carries a `stdout` field that each of
+   * them fills with `''` and nothing else. `runPowerShell` rides the
+   * long-lived worker, whose `buildWorkerRequest` pipes every command to
+   * `Out-Null` and reports only an exit code through its sentinel
+   * (consoleWorker.ts); `runConsoleWrite` spawns its child with stdout
+   * `'ignore'`, because a pipe nobody drains is a child that can block on its
+   * own output. Both are WRITE seams, and reading a process list through
+   * either one answers an empty string with exit 0 — a success-shaped nothing,
+   * which is exactly how #504's first attempt shipped a reset that never ran.
+   *
+   * So a query gets its own per-action child, the same plain `execFile` that
+   * `platform/focus.ts` keeps privately for this identical process query. Kept
+   * separate rather than widening one of the others: what makes them fast and
+   * safe for a keystroke is precisely what makes them deaf.
+   */
+  runQuery?: ShellRunner
   /** Injected for tests; defaults to a real long-lived powershell.exe. */
   spawnConsoleWorker?: () => ConsoleWorkerProcess
   /** Injected for tests; defaults to a real claude.exe spawn. */
@@ -427,6 +459,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly focus: (pid: number) => Promise<FocusOutcome>
   private readonly runPowerShell: ShellRunner
   private readonly runConsoleWrite: ShellRunner
+  private readonly runQuery: ShellRunner
   private readonly runRelay: RelayRunner
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
@@ -453,6 +486,15 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     // console.
     this.runConsoleWrite =
       options.runConsoleWrite ?? options.runPowerShell ?? createConsoleWriteRunner()
+    // The same fallback shape as the write seam above, and it is safe for the
+    // same reason: nothing in production passes `runPowerShell`, so a real
+    // port always lands on the per-action `execFile` — the one runner here
+    // that answers stdout at all (#504). What it must never become is
+    // `this.runPowerShell`, which is the long-lived worker and is deaf by
+    // construction; the difference is the whole point of this field. A test
+    // injecting the transport keeps answering queries through it, and one that
+    // needs the two to differ names `runQuery` outright.
+    this.runQuery = options.runQuery ?? options.runPowerShell ?? runPowerShellCommand
     this.runRelay = options.runRelay ?? runRelayProcess
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
@@ -907,6 +949,12 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    * reasoning, aimed at a write instead of a keystroke): the walk stops
    * there rather than trying the host or anything above it.
    *
+   * The query runs on `runQuery` and may not run on either other seam: both
+   * answer `stdout: ''` whatever they were asked, so reading a process list
+   * through one of them is a success-shaped nothing that silently costs every
+   * forced kick its reset. That is not a hypothetical — it is how #504's first
+   * attempt shipped, and what its acceptance run caught.
+   *
    * An unreadable process list — the query itself refusing, or a throw from
    * the seam — answers no candidates at all rather than propagating: this
    * repair is best-effort by construction, so "nothing to try" and "could not
@@ -914,7 +962,7 @@ export class WindowsTextDelivery implements TextDeliveryPort {
    */
   private async resetCandidatesFor(pid: number): Promise<number[]> {
     try {
-      const query = await this.runPowerShell(buildProcessQueryCommand())
+      const query = await this.runQuery(buildProcessQueryCommand())
       if (query.exitCode !== 0) return []
       const rows = parseProcessRows(JSON.parse(query.stdout))
       const candidates: number[] = []

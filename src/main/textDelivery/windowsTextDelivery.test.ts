@@ -1188,8 +1188,8 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
    * TUI never sent itself. `taskkill /T /F` has already removed the agent's
    * OWN pid by the time this runs (docs/console-hosting.md §6), so the
    * ancestor chain — the shell that launched it — must be read BEFORE the
-   * kill, through the same `runPowerShell` seam every other query on this
-   * port uses. A terminal HOST (Windows Terminal, VS Code, …) ends the walk
+   * kill, through the one seam on this port whose stdout is readable at all
+   * (`runQuery`; the two write seams answer `''`). A terminal HOST ends the walk
    * without becoming a candidate: attaching to its console is not this
    * session's console (#329's reasoning, applied to a write rather than a
    * keystroke).
@@ -1228,6 +1228,94 @@ describe('WindowsTextDelivery.endConsoleSession', () => {
       // the second draws several sessions in tabs of one window (#329).
       expect(script).not.toContain('AttachConsole(4242)')
       expect(script).not.toContain('AttachConsole(500)')
+    })
+
+    /*
+     * The regression that shipped and was caught in the acceptance run: the
+     * chain was read through `runPowerShell`, which on a real machine is the
+     * long-lived worker — and `buildWorkerRequest` pipes every command to
+     * `Out-Null`, reporting only an exit code through its sentinel. That seam
+     * can never answer stdout, so the query came back empty, `parseProcessRows`
+     * saw nothing, and every forced kick logged "no ancestor console to reset".
+     *
+     * The query therefore has its own READ seam, and this test is what keeps it
+     * one: `runPowerShell` answers exactly what the worker really answers — an
+     * empty stdout with exit 0 — and the reset must still be built.
+     */
+    it('reads the chain through a seam that can answer stdout, never the write-only worker (#504)', async () => {
+      const runPowerShell = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+      const runQuery = vi.fn().mockResolvedValue({
+        stdout: JSON.stringify([row(4242, 1000, 'claude.exe'), row(1000, 500, 'powershell.exe')]),
+        exitCode: 0
+      })
+      const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+      const { port } = ender(undefined, undefined, {
+        focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
+        runPowerShell,
+        runQuery,
+        runConsoleWrite
+      })
+
+      await expect(
+        port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+      ).resolves.toMatchObject({ delivered: true })
+      expect(runQuery).toHaveBeenCalledTimes(1)
+      expect(runConsoleWrite).toHaveBeenCalledTimes(1)
+      expect(String(runConsoleWrite.mock.calls[0]?.[0])).toContain('AttachConsole(1000)')
+    })
+
+    /*
+     * The chain a real launch actually has, measured on the maintainer's
+     * machine on 2026-09-20 while #504 was being accepted:
+     *
+     *   claude.exe -> python.exe -> py.exe -> cmd.exe -> powershell.exe
+     *              -> WindowsTerminal.exe
+     *
+     * FOUR rungs before the host, because a wrapper that launches the CLI is
+     * ordinary rather than exotic — and four was the whole candidate budget,
+     * so that real machine cleared it with nothing to spare. The shell is the
+     * rung that matters and it is always the LAST one, so a bound tight
+     * enough to cut it off turns the repair into a no-op on exactly the
+     * machines that need it.
+     *
+     * The chain below is that measured one with a `.cmd` shim in front, which
+     * this repo documents as the ordinary npm/pnpm install shape
+     * (`resolveShimTarget`, #193/#413) — one rung more, and the budget of four
+     * loses the shell.
+     *
+     * Every rung shares the one console, so trying more of them costs nothing:
+     * they are `AttachConsole` calls inside a script that is being run anyway,
+     * not round trips. The terminal host stays the real stop.
+     */
+    it('still reaches the shell through a shim-and-wrapper chain deeper than four rungs', async () => {
+      const runQuery = vi.fn().mockResolvedValue({
+        stdout: JSON.stringify([
+          row(4242, 8000, 'claude.exe'),
+          row(8000, 8001, 'cmd.exe'),
+          row(8001, 8002, 'python.exe'),
+          row(8002, 8003, 'py.exe'),
+          row(8003, 8004, 'cmd.exe'),
+          row(8004, 8005, 'powershell.exe'),
+          row(8005, 1, 'WindowsTerminal.exe')
+        ]),
+        exitCode: 0
+      })
+      const runConsoleWrite = vi.fn().mockResolvedValue({ stdout: '', exitCode: 0 })
+      const { port } = ender(undefined, undefined, {
+        focus: vi.fn().mockResolvedValue(NOT_FOCUSED),
+        runQuery,
+        runConsoleWrite
+      })
+
+      await expect(
+        port.endConsoleSession({ pid: 4242, expectedStartMs: EXPECTED_START_MS })
+      ).resolves.toMatchObject({ delivered: true })
+      const script = String(runConsoleWrite.mock.calls[0]?.[0])
+      // The shell at 8004 is the one that matters, and it is the deepest rung.
+      for (const pid of [8000, 8001, 8002, 8003, 8004]) {
+        expect(script).toContain(`AttachConsole(${pid})`)
+      }
+      expect(script).not.toContain('AttachConsole(8005)')
     })
 
     it('sends no terminal reset after a clean graceful exit — the TUI already restored its own terminal', async () => {
