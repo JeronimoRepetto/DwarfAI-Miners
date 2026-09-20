@@ -153,4 +153,33 @@ resolve the ancestor chain. The guarantee they always owed — no keystroke reac
 conhost with VT off, and the POSIX `kill -KILL` escalation. The end-to-end against the real panel —
 launch a session, kick it, confirm the terminal comes back usable — is the maintainer's to run.
 
-Next step: the end-to-end acceptance run, then the delivery decision.
+**T4 — the acceptance run, and what it caught. 2026-09-20.** The first implementation shipped a
+reset that never ran. Every forced kick logged `[kick] no ancestor console to reset (#504)`, and the
+terminal came back exactly as broken as before. Two defects behind it, both found by running the
+real app and neither reachable from the test suite as it stood:
+
+1. **The chain query rode a write-only seam.** `this.runPowerShell` is the long-lived console
+   worker in production, and `buildWorkerRequest` pipes every command to `Out-Null`, reporting only
+   an exit code through its sentinel (`consoleWorker.ts`). It answered `stdout: ''` with exit 0 — a
+   success-shaped nothing. `runConsoleWrite` is no better: it spawns with stdout `'ignore'` on
+   purpose. **Both seams on this port are deaf, and both look as though they are not**, because
+   `ShellResult` carries a `stdout` field each fills with `''`. The query now has its own
+   `runQuery` seam, the same plain `execFile` `platform/focus.ts` keeps privately for this identical
+   query. Measured here: 24 KB over 372 rows in 228 ms, well inside `execFile`'s default buffer.
+2. **The candidate bound was one rung from useless.** The real chain on this machine ran
+   `claude.exe → python.exe → py.exe → cmd.exe → powershell.exe → WindowsTerminal.exe` — five rungs,
+   clearing a budget of four with nothing to spare, and an npm `.cmd` shim in front is one ordinary
+   rung more. The shell is always the deepest rung before the host, so truncating loses precisely
+   the candidate that matters. Raised to 12; every rung shares the one console, so a surplus
+   candidate is another `AttachConsole` inside a script already running, not a round trip.
+
+Both were written test-first and both new tests fail against the previous commit.
+
+**Acceptance: PASSED.** Confirmed by the maintainer against a real kick in the running app — the
+session ends, the terminal stays open, and it comes back usable.
+
+The lesson worth keeping past this change: a unit test that fakes a seam can only ever assert what
+the fake does, and this one faked a seam answering stdout that the real one cannot produce. That is
+why the acceptance run is a step in this document and not a formality.
+
+Next step: the pull request.
