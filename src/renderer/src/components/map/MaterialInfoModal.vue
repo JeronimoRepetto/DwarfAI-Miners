@@ -10,6 +10,7 @@
  * Presentational: the only state it owns is its own presence, and the only
  * thing that leaves is the dismissal signal.
  */
+import { NUGGET_SRC } from '../../lib/art'
 import { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../../types'
 
 const emit = defineEmits<{ close: [] }>()
@@ -28,12 +29,14 @@ const emit = defineEmits<{ close: [] }>()
         <thead>
           <tr>
             <th>Material</th>
-            <th>Tokens per unit</th>
+            <th class="info-tokens-header">Tokens per unit</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="material in MATERIALS" :key="material">
-            <td class="info-material">{{ material }}</td>
+            <td class="info-material">
+              <img class="info-nugget" :src="NUGGET_SRC[material]" alt="" draggable="false" />{{ material }}
+            </td>
             <td class="info-tokens">{{ MATERIAL_TOKENS_PER_UNIT[material].toLocaleString() }}</td>
           </tr>
         </tbody>
@@ -112,8 +115,19 @@ const emit = defineEmits<{ close: [] }>()
 .info-table td {
   padding: 4px 6px;
 }
+.info-tokens-header {
+  text-align: center;
+}
 .info-tokens {
   color: var(--color-accent);
-  text-align: right;
+  text-align: center;
+}
+.info-nugget {
+  display: inline-block;
+  width: 14px;
+  height: auto;
+  margin-right: 4px;
+  vertical-align: middle;
+  user-select: none;
 }
 </style>
