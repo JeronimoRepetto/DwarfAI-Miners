@@ -35,7 +35,9 @@ const emit = defineEmits<{ close: [] }>()
         <tbody>
           <tr v-for="material in MATERIALS" :key="material">
             <td class="info-material">
-              <img class="info-nugget" :src="NUGGET_SRC[material]" alt="" draggable="false" />{{ material }}
+              <img class="info-nugget" :src="NUGGET_SRC[material]" alt="" draggable="false" />{{
+                material
+              }}
             </td>
             <td class="info-tokens">{{ MATERIAL_TOKENS_PER_UNIT[material].toLocaleString() }}</td>
           </tr>
