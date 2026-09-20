@@ -1951,6 +1951,69 @@ tier is offered the same act. Unmeasured there too: the checklist above is what 
 platform, and item 2 is not Linux-specific. A refusal from both tiers names both, so a person who
 runs tmux is not left reading advice about a terminal they are not using.
 
+### Handing the terminal back after a forced kill — measured 2026-09-20 (#504)
+
+**#358's step 2 is real: a process that never touched the console can write the DECSET resets into
+it afterwards, and the terminal honours them.** Measured on Windows 11 Pro 10.0.26200, PowerShell
+5.1.26100.9444, against a **Windows Terminal tab the app did not spawn** — a `powershell.exe` whose
+parent is `WindowsTerminal.exe` directly, the ConPTY shape #371 refuses to type into.
+
+The act is the `CONIN$` write-by-pid above with two substitutions, and both matter:
+
+| | write-by-pid (#371) | the reset (#504) |
+| --- | --- | --- |
+| Handle | `CreateFileW("CONIN$")` | `CreateFileW("CONOUT$")` |
+| Call | `WriteConsoleInputW` (key records) | `WriteConsoleW` (characters) |
+
+A DECSET reset is **output**, not input. Writing it as key records would hand the ESC bytes to
+whatever is reading the console, which is the shell — it would type them, not obey them.
+
+**`FreeConsole` → `AttachConsole(pid)` → `CONOUT$` → `WriteConsoleW` → `CloseHandle` →
+`FreeConsole`.** Two readings, on a tab sitting at its own prompt with mouse reporting on:
+
+| Target | Attach | `GetConsoleMode` | `WriteConsoleW` | Exit |
+| --- | --- | --- | --- | --- |
+| live pid 22988 in a WT tab | `true` | **7** | **54 of 54** | 0 |
+| a pid whose process had exited | `false`, `GetLastError` **87** | — | — | 2 |
+
+**`ENABLE_VIRTUAL_TERMINAL_PROCESSING` was already on — mode `7` is `PROCESSED_OUTPUT |
+WRAP_AT_EOL | VIRTUAL_TERMINAL`, the ConPTY default.** The `SetConsoleMode` that turns it on stays
+in the builder for a legacy conhost that lacks it, restoring the previous mode afterwards, but on
+this host it is a no-op. It is not optional reasoning: with VT off, the ESC bytes render as literal
+glyphs in the buffer, which is a worse terminal than the one being repaired.
+
+**What proved it, and what did not.** The first attempt looked for the mouse reports echoing on
+screen and **found nothing, on a terminal whose mode was demonstrably on** — PowerShell's own
+prompt reads those records and drops them silently, where the shell in #358's report echoed them.
+The echo is a property of the reader, not of the mode, so it is the wrong signal to measure. The
+right one is **text selection**: while an application holds mouse tracking, Windows Terminal routes
+the pointer to it instead of selecting, so selection is broken exactly while the mode is on.
+
+Read from the target rather than claimed by the writer, in that order:
+
+1. Selection with the mouse — **refused** (mode on, confirmed by the maintainer at the tab).
+2. The reset written from outside — `attached: true`, 54 of 54, exit 0.
+3. Selection with the mouse — **restored**, and the buffer copied out of the tab as the evidence.
+
+A separate reading, on a throwaway console, read the target's own screen buffer back through
+`GetBufferContents`: it held the marker written after the resets and **not** the literal `[?1006l`,
+so the sequences were consumed by the VT parser rather than drawn.
+
+**`ESC[?1049l` is deliberately absent** from the payload. Leaving the alternate screen is not a
+repair for a shell that was never on it — it can clear or rewind what the person was reading. The
+resets that ship are `1000l 1002l 1003l 1006l 1015l 2004l` and `25h`, and nothing else.
+
+**The dead-pid reading is the one that shapes the caller.** `taskkill /T /F` has already run by the
+time the reset is due, so the agent's own pid cannot be the attach target; an ancestor on the same
+console — the shell that launched it — is, and the chain has to be read **before** the kill. When no
+candidate attaches, `AttachConsole` answers `false` and the act reports that it did not happen. It
+never turns an ended session into a failed kick: the session did end, and the repair is best-effort
+by construction.
+
+**What is still unmeasured:** VS Code's integrated terminal, a legacy conhost window with VT off,
+and the POSIX escalation — `kill -KILL` after an ignored `SIGTERM` leaves the same terminal on macOS
+and Linux, and nobody has watched it.
+
 ## 7. Open edges
 
 - **`vscode`-source Codex sessions are unproven, not disproven.** Nobody has watched a Desktop-app
