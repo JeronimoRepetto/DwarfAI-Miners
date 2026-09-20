@@ -77,6 +77,7 @@ import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 import iconAttach from '../../../../docs/assets/icons/attach.svg?url'
+import iconInfo from '../../../../docs/assets/icons/info.svg?url'
 import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
 import iconKick from '../../../../docs/assets/icons/klck.svg?url'
 import iconDelete from '../../../../docs/assets/icons/delete.svg?url'
@@ -340,6 +341,13 @@ export const SLEEP_ICON_SRC = iconSleep
  */
 export const MUSIC_ON_ICON_SRC = iconMusicOn
 export const MUSIC_OFF_ICON_SRC = iconMusicOff
+
+/**
+ * The map's material-info trigger (#506): a circle with a lowercase "i",
+ * drawn through the same mask as the shell icons so the committed SVG keeps
+ * its black fill while the control takes its colour from the tokens.
+ */
+export const INFO_ICON_SRC = iconInfo
 
 /**
  * The question-put-to-the-user glyph (#153), and the one icon in this file that

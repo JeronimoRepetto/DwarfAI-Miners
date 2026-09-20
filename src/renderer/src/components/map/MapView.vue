@@ -17,7 +17,7 @@
  * it. See lib/map/mapPopulation.ts.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
+import { INFO_ICON_SRC, MAP_ART_SIZE, MAP_BG_SRC, maskImageValue } from '../../lib/art'
 import { clampToMapBox, projectToMapBox } from '../../lib/map/mapProjection'
 import { MAP_TIME_REFRESH_MS, mapVariantAt } from '../../lib/map/mapTime'
 import {
@@ -33,6 +33,7 @@ import { assignSlots } from '../../lib/placement'
 import type { MaterialTotals, Mine, ProjectSummary } from '../../types'
 import MineMarker from './MineMarker.vue'
 import VaultChip from '../vault/VaultChip.vue'
+import MaterialInfoModal from './MaterialInfoModal.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -76,6 +77,8 @@ const population = computed(() => mapMines(props.mines, props.projects))
 const mapAspect = `${MAP_ART_SIZE.width} / ${MAP_ART_SIZE.height}`
 
 const emit = defineEmits<{ open: [mineId: string] }>()
+
+const showInfoModal = ref(false)
 
 /**
  * The painting the valley is wearing, re-read from the clock on a slow tick
@@ -319,6 +322,23 @@ const tooltipStyle = computed<Record<string, string>>(() => {
         <span class="tooltip-name">{{ tooltipCopy.name }}</span>
         <span class="tooltip-agents">{{ tooltipCopy.agents }}</span>
       </div>
+      <!--
+        Material-to-tokens reference (#506): a small info trigger in the map's
+        bottom-right corner, the counterpart to the vault chip in the upper-right.
+        The modal reuses the shared confirmation shell so it does not invent a
+        new panel language.
+      -->
+      <button
+        class="map-info"
+        type="button"
+        aria-label="Material values"
+        title="Material values"
+        :style="{ '--info-icon': maskImageValue(INFO_ICON_SRC) }"
+        @click="showInfoModal = true"
+      >
+        <span class="map-info-glyph" aria-hidden="true"></span>
+      </button>
+      <MaterialInfoModal v-if="showInfoModal" @close="showInfoModal = false" />
     </div>
   </div>
 </template>
@@ -436,5 +456,37 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+  The info trigger (#506): a small masked glyph in the bottom-right corner of
+  the map, paired with the vault chip in the upper-right. Drawn at the shell
+  icon size so it matches the navigation stack's own scale.
+*/
+.map-info {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-highlight);
+  border-radius: var(--radius-default);
+  cursor: pointer;
+  background: #0a0806e6;
+}
+.map-info-glyph {
+  display: block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  background: var(--color-cream);
+  mask: var(--info-icon) center / contain no-repeat;
+}
+.map-info:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 </style>

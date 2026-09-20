@@ -389,3 +389,29 @@ describe('MapView global vault', () => {
     expect(wrapper.get('.vault-empty').text()).toBe('no ore yet')
   })
 })
+
+/**
+ * The material-info popup (#506): a small info button in the map's bottom-right
+ * corner that opens a read-only modal with the material-to-tokens table.
+ */
+describe('MapView material info', () => {
+  it('shows the info button on the map', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    expect(wrapper.find('.map-info').exists()).toBe(true)
+  })
+
+  it('opens the modal when the info button is clicked', async () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    expect(wrapper.find('.info-modal').exists()).toBe(false)
+    await wrapper.get('.map-info').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(true)
+  })
+
+  it('closes the modal when the modal emits close', async () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    await wrapper.get('.map-info').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(true)
+    await wrapper.get('.info-modal .modal-close').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(false)
+  })
+})
