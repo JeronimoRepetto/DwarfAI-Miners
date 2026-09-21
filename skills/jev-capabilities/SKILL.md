@@ -2,7 +2,7 @@
 name: jev-capabilities
 description: >
   How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet.
-  Trigger: before adding a provider or a model the app can launch, changing a model catalogue builder, or editing a Jev question, criterion or confidence floor.
+  Trigger: before adding a provider or a model the app can launch, changing a model catalogue builder, editing a Jev question, criterion or confidence floor, or adding a provider whose models come from a live catalogue instead of a hand-verified list.
 license: MIT
 metadata:
   author: JeronimoRepetto
@@ -12,6 +12,7 @@ metadata:
     - 'adding a provider or a model the app can launch'
     - 'changing a model catalogue builder'
     - 'editing a Jev question, criterion or confidence floor'
+    - 'adding a provider whose models come from a live catalogue'
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
@@ -121,6 +122,39 @@ model.` versus `... "Haiku" ...` — the consistency cookbook's own documented f
    (`CLAUDE_FIXTURE_IDS`/`CODEX_FIXTURE_IDS`/`ANTIGRAVITY_FIXTURE_IDS` are the pattern) so the
    exhaustiveness suite actually runs the real catalogue builder over them.
 
+## A provider with a live catalogue: derive, do not curate (#547)
+
+OpenCode's own catalogue moves with every `models.dev` update and every person's configured
+provider keys, so a hand-maintained table would be stale on arrival. Its table is DERIVED at
+route time from the installed CLI's own `opencode models --verbose`
+(`src/main/providers/opencode/models.ts`), one `ModelCapabilityEntry` per model whose
+`status === 'active'` — unlike `claude.ts`/`codex.ts`/`antigravity.ts`, which are hand-written.
+
+- **The bands and the tier rule are written once, and pinned.** Cost bands (`$0.50` / `$2` / `$5`
+  per million output tokens) and the tier rule (reasoning plus the top band → `frontier`; cheapest
+  band, free included → `fast-cheap`, checked ahead of context so a free huge-context model still
+  reads as cheap; ≥1,000,000-token context → `long-context`; else `balanced`) live once in
+  `capabilities/opencodeDerived.ts` (`OPENCODE_COST_BAND_THRESHOLDS`, `opencodeTier`), boundaries
+  pinned by tests rather than restated per model.
+- **The overlay is the curated exception, and it wins.** `capabilities/opencode.ts`'s
+  `OPENCODE_CAPABILITY_OVERLAY` (empty today) replaces a derived entry per id
+  (`mergeOpenCodeCapabilityTable`, overlay spread last), for an id hand-verified well enough to
+  earn real, sourced prose the way `claude.ts` does.
+- **An absent CLI stays honest by omission.** `hasAnyLaunchTarget` (`routeRequest.ts`) drops a
+  provider from Jev's `provider` question when its table has zero `launchTarget: true` entries —
+  missing, timed-out or unparseable all read the same: nothing derived, nothing offered.
+
+**Copy this for the next live-catalogue provider:** derive entries from the catalogue's own
+facts, template `what`/`notFor`/`examples` from those facts, and cite the exact command plus the
+catalogue's own source (`OPENCODE_CATALOGUE_SOURCES`). **Never invent per-model prose** — no
+maintainer reviews a guess before it ships on the next install.
+
+**Known limitation, pinned in `routeDecision.test.ts`:** the table carries cost _bands_, not
+prices, so a free OpenCode model and a low-band curated model both land in `'low'` and tie;
+`cheapestLaunchableProviderFor` cannot see $0 beat $1 and falls back to the contract's provider
+order (`DWARF_PROVIDERS`), where `claude` comes first. A free OpenCode model is chosen only when
+Jev names OpenCode directly, or OpenCode is the person's configured default provider.
+
 ## Getting it wrong
 
 - **Adding a model id without an entry.** `capabilities.test.ts` fails, naming the id — this is the
@@ -136,4 +170,7 @@ model.` versus `... "Haiku" ...` — the consistency cookbook's own documented f
 - [`src/main/jev/capabilities/modelCapability.ts`](../../src/main/jev/capabilities/modelCapability.ts) — `ModelCapabilityEntry`, `MODEL_CAPABILITIES`, `lookupModelCapability`
 - [`src/main/jev/capabilities/capabilities.test.ts`](../../src/main/jev/capabilities/capabilities.test.ts) — the exhaustiveness suite
 - [`src/main/jev/routeDecision.ts`](../../src/main/jev/routeDecision.ts) — the profile/tier rule that reads `tier`
+- [`src/main/jev/capabilities/opencodeDerived.ts`](../../src/main/jev/capabilities/opencodeDerived.ts) — the cost bands, tier rule and template OpenCode's derived table is built from
+- [`src/main/jev/capabilities/opencode.ts`](../../src/main/jev/capabilities/opencode.ts) — the curated overlay, and the merge that lets it win per id
+- [`src/main/jev/routeDecision.test.ts`](../../src/main/jev/routeDecision.test.ts) — the pinned cost-band tie between a free OpenCode model and a low-band curated one
 - [`docs/privacy.md`](../../docs/privacy.md#what-it-transmits) — the full boundary of what Jev receives

@@ -46,6 +46,7 @@ This table is the imperative form, and it is the one that binds.
 | When you are about to…                                          | ALWAYS invoke this skill first                         |
 | --------------------------------------------------------------- | ------------------------------------------------------ |
 | adding a provider or a model the app can launch                 | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
+| adding a provider whose models come from a live catalogue       | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | adding art, icons or sprite assets for the new interface        | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
 | adding behaviour that differs per operating system              | [`platform-ports`](skills/platform-ports/SKILL.md)     |
 | adding or changing a configuration setting                      | [`config-layering`](skills/config-layering/SKILL.md)   |
