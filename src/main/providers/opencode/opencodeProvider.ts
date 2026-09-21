@@ -145,6 +145,13 @@ interface SessionFacts {
   /** Redacted newest assistant text — read only for a session still inside its silence window. */
   lastMessage?: string
   /**
+   * This session's own `session.tokens_*` sum (#540), read straight through
+   * from `OpenCodeSession.tokensUsed` — always a number, never absent, so a
+   * session that has burned nothing stamps `tokensObserved: 0` rather than
+   * omitting the field, exactly like `tokensUsed` itself (state.ts).
+   */
+  tokensUsed: number
+  /**
    * `Dwarf.transcriptUpdatedAt` (#459): the newest of the three per-session
    * facts D3 names for liveness — `updatedMs`, the newest assistant row's own
    * time, `seqChangedAtMs` — and never lower than the value last published.
@@ -274,7 +281,8 @@ export class OpenCodeProvider implements Provider {
         updatedMs: session.updatedMs,
         seq,
         seqChangedAtMs: seqAdvanced ? nowMs : (previous?.seqChangedAtMs ?? nowMs),
-        transcriptUpdatedAt: 0
+        transcriptUpdatedAt: 0,
+        tokensUsed: session.tokensUsed
       }
       if (session.parentSessionId !== undefined) read.parentSessionId = session.parentSessionId
       if (session.agent !== undefined) read.agent = session.agent
@@ -346,7 +354,13 @@ export class OpenCodeProvider implements Provider {
         // contract's absent-reads-as-'unknown' fallback, so design and code
         // agree out loud (#444).
         attendance: 'unknown',
-        transcriptUpdatedAt: facts.transcriptUpdatedAt
+        transcriptUpdatedAt: facts.transcriptUpdatedAt,
+        // AMENDED for #540 (was omitted, DET-R5/#444): this session's own
+        // row, never a parent's or a sum across the crew — a worker mines
+        // exactly what its own session burned. Feeds observationsFrom/accrue
+        // (domain/ledger.ts) with no new ledger code, the same path Claude
+        // and Codex already credit through.
+        tokensObserved: facts.tokensUsed
       }
       if (facts.modelId !== undefined) dwarf.model = facts.modelId
       if (facts.parentSessionId !== undefined) {
