@@ -105,7 +105,10 @@ export interface AntigravityProviderOptions {
  *   what an unmatched session already gets.
  * - **No tokens.** The private transcript records no usage figure anywhere
  *   (verified on 1.1.26). A message count or a byte size wearing a token's
- *   name would corrupt the ledger permanently, so this dwarf mines nothing.
+ *   name would corrupt the ledger permanently, so this dwarf mines nothing —
+ *   pinned by `PROVIDER_TOKEN_DECLARATION.antigravity` (`registry.ts`, #540),
+ *   `{ tokenless: true, verifiedOn: '1.1.26' }`, so a later build that starts
+ *   writing usage is a visible change against this exact pin.
  * - **No `waiting`.** In this app a session `waiting` means a structured block
  *   a human can act on. This store carries no approval, elicitation or
  *   input-request record of any kind, so a quiet conversation is `idle` — the

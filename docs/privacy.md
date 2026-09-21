@@ -75,12 +75,16 @@ can be checked rather than trusted.
 The widest read this app performs happens on its first launches, and you should know about it
 before you install. To fill the coal pile — the material standing for every token burned
 _before_ DwarfAI-Miners existed on your machine — it walks **every Claude project directory
-under every configured Claude root, and every day directory under the Codex sessions root**,
-not only the sessions that are live. In each one it reads the transcripts and rollouts whose
-last write pre-dates that first launch: 64 KB from the end of a Claude transcript, and 16 KB
-from the start plus 128 KB from the end of a Codex rollout. From each file it keeps two
-things — the project path the transcript records, and its final token count. Message text is
-parsed and discarded (`src/main/ledger/coalBackfill.ts`, `src/main/ledger/coalScan.ts`).
+under every configured Claude root, every day directory under the Codex sessions root, and every
+session row in the OpenCode store**, not only the sessions that are live. In each Claude and Codex
+file it reads only the transcripts and rollouts whose last write pre-dates that first launch: 64 KB
+from the end of a Claude transcript, and 16 KB from the start plus 128 KB from the end of a Codex
+rollout. The OpenCode read is a single SQL query over `opencode.db` instead of individual files,
+since one session row already carries its own token counters and its own last-write time; a
+session still being written to at that first launch is skipped the same way a Claude or Codex file
+still being written to is. From each source it keeps two things — the project path it records, and
+its final token count. Message text is parsed and discarded (`src/main/ledger/coalBackfill.ts`,
+`src/main/ledger/coalScan.ts`).
 
 Antigravity is not part of that scan, and not by choice: its format records no token usage at all,
 so there is nothing in it to count.

@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import { MemorySqlite } from '../adapters/memorySqlite'
@@ -9,7 +11,12 @@ import { AgentRuntime } from '../runtime/runtime'
 // growing a second one.
 import { worktreePlatformAdapters } from '../platform/fakePlatformAdapters'
 import type { Provider } from './provider'
-import { PROVIDER_REGISTRY, createProviders, type ProviderContext } from './registry'
+import {
+  PROVIDER_REGISTRY,
+  PROVIDER_TOKEN_DECLARATION,
+  createProviders,
+  type ProviderContext
+} from './registry'
 
 /*
  * Issue #78. `realProviders()` was an array literal inside the runtime's
@@ -144,5 +151,47 @@ describe('registering a provider', () => {
     await runtime.refresh()
 
     expect(published.at(-1)).toEqual([])
+  })
+})
+
+/*
+ * Issue #540. `PROVIDER_TOKEN_DECLARATION` is the one pin: every provider
+ * whose on-disk record can carry token usage says 'mines' here, and every
+ * provider whose record proves none declares itself token-less, in its own
+ * words, pinned to the build that reading was verified on. The table's type
+ * is Record<DwarfProvider, ...>, exactly like PROVIDER_REGISTRY above, so a
+ * provider added to DWARF_PROVIDERS with no row here stops this file
+ * compiling — the same enforcement, proven the same indirect way the
+ * registry's own describe above proves it: by asserting the two key sets
+ * agree, not by trying to add a member to a string-literal union at runtime.
+ */
+describe('PROVIDER_TOKEN_DECLARATION', () => {
+  it('declares exactly one entry per provider identity', () => {
+    expect(Object.keys(PROVIDER_TOKEN_DECLARATION).sort()).toEqual([...DWARF_PROVIDERS].sort())
+  })
+
+  it('every token-less declaration names the build it was verified on', () => {
+    for (const provider of DWARF_PROVIDERS) {
+      const declaration = PROVIDER_TOKEN_DECLARATION[provider]
+      if (declaration === 'mines') continue
+      expect(declaration.tokenless).toBe(true)
+      expect(declaration.verifiedOn.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('proves every "mines" provider has its own test asserting tokensObserved', () => {
+    // A canary, not a re-run of those suites: if a provider's declaration
+    // ever says 'mines' while its own test directory stops proving
+    // tokensObserved anywhere, this fails loudly instead of the claim going
+    // silently stale.
+    for (const provider of DWARF_PROVIDERS) {
+      if (PROVIDER_TOKEN_DECLARATION[provider] !== 'mines') continue
+      const dir = join(import.meta.dirname, provider)
+      const testFiles = readdirSync(dir).filter((name) => name.endsWith('.test.ts'))
+      const provesTokens = testFiles.some((name) =>
+        readFileSync(join(dir, name), 'utf8').includes('tokensObserved')
+      )
+      expect(provesTokens, `${provider}'s own tests never mention tokensObserved`).toBe(true)
+    }
   })
 })
