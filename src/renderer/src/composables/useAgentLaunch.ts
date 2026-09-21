@@ -17,6 +17,7 @@ import {
   detachedTimedOut,
   jevAnswered,
   jevAsked,
+  JEV_NO_CHOICE_REFUSAL,
   launchCommand,
   launchFailed,
   launchPermissionMode,
@@ -30,6 +31,7 @@ import {
   submitRefused,
   submitStarted,
   toggleJev,
+  toggleJevAutoAccept,
   typeCommand,
   typePrompt,
   OTHER_CHOICE,
@@ -153,6 +155,8 @@ export interface AgentLaunch {
   setPermissionMode: (value: HeldPermissionMode) => void
   /** The person's own Jev toggle (#509) — a no-op outside `ready`. */
   toggleJevEnabled: () => void
+  /** The #523 checkbox beside it — same guard, same no-op, same session. */
+  toggleJevAutoAccept: () => void
   /** Dismiss the decision card, restoring the pickers it overwrote (#509). */
   dismissJevDecision: () => void
   submit: () => Promise<void>
@@ -269,6 +273,13 @@ export function useAgentLaunch(): AgentLaunch {
     state.value = toggleJev(state.value)
   }
 
+  // Named apart from the transition it calls for the same reason
+  // `toggleJevEnabled` is: a local `function` of the import's own name would
+  // shadow it and make the body recurse.
+  function toggleJevAutoAcceptChoice(): void {
+    state.value = toggleJevAutoAccept(state.value)
+  }
+
   function dismissJevDecision(): void {
     state.value = clearJevDecision(state.value)
   }
@@ -297,6 +308,20 @@ export function useAgentLaunch(): AgentLaunch {
    * criterion: every way Jev can fail still launches and says that it did.
    * The refusal check and everything after it therefore reads state AFTER
    * this detour, never before — a decision may have just changed `choice`.
+   *
+   * ## AMENDED for #523: the detour without a chip, and what it ends in
+   *
+   * The composer now opens on the toggle alone, so this detour is the whole
+   * entry path, not a detour across a pickers' launch. Two rules moved with
+   * that: a decision stops the Enter only while auto-accept is off — with it
+   * on, the same Enter applies the decision and falls through to launch it —
+   * and a fallback that falls through onto NO chip launches nothing and must
+   * say so rather than swallow the press. It does not need the error line to
+   * say it: `jevAnswered` has already left a `fellBack` routing with
+   * `launchedOnFallback` false, and AddPanel words that line into the refusal
+   * the moment the answer lands. The error line is for the one no-chip case
+   * with no line of its own — the answer that arrived after the prompt moved
+   * on, which leaves the routing idle and the screen otherwise silent.
    */
   async function submit(): Promise<void> {
     if (!canSubmit(state.value) || mineId.value === null) return
@@ -324,7 +349,12 @@ export function useAgentLaunch(): AgentLaunch {
       // already dropped this back to idle (clearJevDecision, via setPrompt),
       // and an answer that arrived too late to apply must not silently
       // swallow this Enter either.
-      if (state.value.jev.routing.phase === 'decided') return
+      // #523: unless the person asked for exactly this — auto-accept collapses
+      // the confirm, and the decision just applied IS the launch they pressed
+      // for. A fallback was never up for auto-accepting: there is no decision
+      // to accept in it, and `jevAnswered` has already said what it fell back
+      // from onto.
+      if (state.value.jev.routing.phase === 'decided' && !state.value.jev.autoAccept) return
     }
 
     const refused = refusal.value
@@ -334,7 +364,18 @@ export function useAgentLaunch(): AgentLaunch {
     }
 
     const choice = state.value.choice
-    if (choice === null) return
+    if (choice === null) {
+      // #523. Silent until this line existed, because nothing could reach it:
+      // only Jev's unlocked composer opens a submit with no chip. A fallback
+      // owns its own reworded line (see the doc above) and this Enter has
+      // already been answered by it; everything else that lands here — today,
+      // the answer that arrived after the prompt moved on — gets the honest
+      // refusal, prompt intact, manual path still open.
+      if (state.value.jev.routing.phase !== 'fellBack') {
+        state.value = submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
+      }
+      return
+    }
     const prompt = launchPrompt(state.value)
     state.value = submitStarted(state.value)
     try {
@@ -471,6 +512,7 @@ export function useAgentLaunch(): AgentLaunch {
     setEffort,
     setPermissionMode,
     toggleJevEnabled,
+    toggleJevAutoAccept: toggleJevAutoAcceptChoice,
     dismissJevDecision,
     submit,
     observe,

@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  COMPOSER_ENABLED_PLACEHOLDER,
   DETACHED_TIMEOUT_MESSAGE,
   DETACHED_TIMEOUT_MS,
+  JEV_NO_CHOICE_REFUSAL,
   OTHER_CHOICE
 } from '../lib/launch/launchState'
 import { defaultDwarf, defaultMine } from '../testing/factories'
@@ -1001,5 +1003,200 @@ describe('a detached launch that fails after it started (#263)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/*
+ * Issue #523. The toggle as an entry path: the composer opens on it alone, the
+ * #509 detour then runs without a chip having ever been pressed, and every way
+ * that detour can end without a launch has to SAY so rather than swallow the
+ * Enter. The pure gates are pinned in launchState.test.ts; the two-Enter flow
+ * itself was #509's and is re-pinned here only to prove it survives the no-chip
+ * case it never had to carry before.
+ */
+describe('the Jev entry path (#523)', () => {
+  const DECISION = {
+    kind: 'decision' as const,
+    provider: 'codex' as const,
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+    confidence: 0.87,
+    truncated: false
+  }
+  const FALLBACK = { kind: 'fallback' as const, reason: 'timeout' as const }
+
+  function jevApi(overrides: Record<string, unknown> = {}) {
+    return stubApi({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: vi.fn().mockResolvedValue(DECISION),
+      ...overrides
+    })
+  }
+
+  /** The panel entered on Jev alone: ready, toggled on, prompt typed — no chip. */
+  async function readyOnJev(overrides: Record<string, unknown> = {}) {
+    const api = jevApi(overrides)
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.toggleJevEnabled()
+    launch.setPrompt('dig the east gallery')
+    return { api, launch }
+  }
+
+  describe('the composer with no chip', () => {
+    it('opens on the Jev toggle alone, and locks again when it comes back off, typing kept', async () => {
+      const { launch } = await readyOnJev()
+
+      expect(launch.enabled.value).toBe(true)
+      expect(launch.placeholder.value).toBe(COMPOSER_ENABLED_PLACEHOLDER)
+      expect(launch.phase.value).toBe('prompt-ready')
+
+      launch.toggleJevEnabled()
+
+      expect(launch.enabled.value).toBe(false)
+      expect(launch.phase.value).toBe('provider-selection')
+      expect(launch.state.value.prompt).toBe('dig the east gallery')
+    })
+  })
+
+  describe('the two-Enter flow, carried with no chip', () => {
+    it('asks on the first Enter, stops at the decision, and launches on the second', async () => {
+      const { api, launch } = await readyOnJev()
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
+      expect(launch.state.value.choice).toBe('codex')
+
+      await launch.submit()
+
+      // The applied provider routes exactly as a clicked one would — Codex
+      // detached, carrying the model and effort Jev named (#168's channel rule
+      // unchanged; this is #509's, re-pinned without a chip in front of it).
+      expect(api.launchAgent).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'codex',
+        prompt: 'dig the east gallery',
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('auto-accept', () => {
+    it('flips through the composable only once ready', async () => {
+      stubApi({ getJevSettings: vi.fn().mockResolvedValue({ configured: true }) })
+      const { open, jev, toggleJevAutoAccept } = useAgentLaunch()
+      await open(MINE)
+
+      expect(jev.value.autoAccept).toBe(false)
+      toggleJevAutoAccept()
+      expect(jev.value.autoAccept).toBe(true)
+    })
+
+    it('applies the decision and launches on the same Enter', async () => {
+      const { api, launch } = await readyOnJev()
+      launch.toggleJevAutoAccept()
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+      expect(launch.state.value.choice).toBe('codex')
+      expect(api.launchAgent).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'codex',
+        prompt: 'dig the east gallery',
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+      expect(launch.phase.value).toBe('started-detached')
+    })
+
+    it('never auto-accepts a fallback: with no chip it launches nothing, and the fallback line owns the refusal', async () => {
+      const { api, launch } = await readyOnJev({
+        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK)
+      })
+      launch.toggleJevAutoAccept()
+
+      await launch.submit()
+
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(launch.state.value.prompt).toBe('dig the east gallery')
+      expect(launch.jev.value.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'timeout',
+        confidence: undefined
+      })
+      // The refusal is the reworded fallback line, not a second error line —
+      // `launchedOnFallback: false` is what tells AddPanel the launch it used
+      // to promise did not happen. So `error` stays empty, and the prompt
+      // stands. A second Enter changes nothing: no re-ask, no launch, no
+      // swallowed silence — the line is already on screen, still true.
+      expect(launch.state.value.error).toBeNull()
+      expect(launch.jev.value.launchedOnFallback).toBe(false)
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(launch.state.value.prompt).toBe('dig the east gallery')
+    })
+
+    it('leaves a fallback onto a chosen chip launching, exactly as #509 had it', async () => {
+      const api = jevApi({ routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK) })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      launch.choose('claude')
+      launch.toggleJevEnabled()
+      launch.toggleJevAutoAccept()
+      launch.setPrompt('dig the east gallery')
+
+      await launch.submit()
+
+      expect(api.launchHeldSession).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'claude',
+        prompt: 'dig the east gallery'
+      })
+      expect(launch.jev.value.launchedOnFallback).toBe(true)
+    })
+  })
+
+  describe('an Enter with nothing behind it', () => {
+    it('refuses out loud when a late answer reaches a no-chip panel, and keeps the prompt', async () => {
+      let resolveAsk: (result: unknown) => void = () => {}
+      const api = jevApi({
+        routeJevLaunch: vi.fn().mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              resolveAsk = resolve
+            })
+        )
+      })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      launch.toggleJevEnabled()
+      launch.setPrompt('dig the east gallery')
+
+      const inFlight = launch.submit()
+      // The prompt moves on while the ask is still out — the answer that
+      // arrives after that is about a prompt nobody is writing, and with no
+      // chip to fall back onto this Enter has nothing left to launch. The old
+      // code swallowed it; #523 makes it say so.
+      launch.setPrompt('shore the north wall')
+      resolveAsk(DECISION)
+      await inFlight
+
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(launch.state.value.error).toBe(JEV_NO_CHOICE_REFUSAL)
+      expect(launch.state.value.prompt).toBe('shore the north wall')
+      expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
+    })
   })
 })

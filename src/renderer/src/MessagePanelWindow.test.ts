@@ -1648,6 +1648,44 @@ describe('the add panel', () => {
       'dig the east gallery'
     )
   })
+
+  /*
+   * Issue #523's wiring, end to end: the toggle opens this panel's composer
+   * with no chip pressed, and the checkbox beside it collapses #509's two
+   * Enters into one. Nothing above this line could tell a missing listener
+   * from a dead rule — the Add Panel emits, this window decides where the
+   * press goes, and the decision is exactly what this pins.
+   */
+  it('launches an auto-accepted Jev decision in one Enter, with no chip chosen', async () => {
+    // Local spies for the two members this file's stub does not carry by
+    // default — asked is exactly what the no-chip Enter must now do, and the
+    // assertion has to reach it even though the base stub answers "hidden".
+    const askJev = vi.fn().mockResolvedValue({
+      kind: 'decision',
+      provider: 'claude',
+      confidence: 0.9,
+      truncated: false
+    })
+    const { api, wrapper } = await openAddPanel({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: askJev
+    })
+
+    await wrapper.get('.jev-toggle').trigger('click')
+    await wrapper.get('.jev-auto').setValue(true)
+    await wrapper.find('.launch-input').setValue('dig the east gallery')
+    await wrapper.find('.launch-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(askJev).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
+    // The decision's own provider, applied to the pickers and launched on the
+    // same Enter — the second press the card used to demand is gone.
+    expect(api.launchHeldSession).toHaveBeenCalledWith({
+      mineId: MINE.id,
+      provider: 'claude',
+      prompt: 'dig the east gallery'
+    })
+  })
 })
 
 /**

@@ -141,6 +141,7 @@ const {
   setEffort: setLaunchEffort,
   setPermissionMode: setLaunchPermissionMode,
   toggleJevEnabled: toggleLaunchJev,
+  toggleJevAutoAccept: toggleLaunchJevAutoAccept,
   dismissJevDecision: dismissLaunchJevDecision,
   submit: submitLaunch,
   observe: observeLaunch,
@@ -1339,6 +1340,7 @@ onBeforeUnmount(() => {
         @effort="setLaunchEffort"
         @permission-mode="setLaunchPermissionMode"
         @toggle-jev="toggleLaunchJev"
+        @toggle-jev-auto="toggleLaunchJevAutoAccept"
         @dismiss-jev="dismissLaunchJevDecision"
         @submit="submitLaunch"
         @close="close"
