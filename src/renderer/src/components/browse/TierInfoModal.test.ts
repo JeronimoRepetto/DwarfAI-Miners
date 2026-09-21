@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { MOUND_SRC } from '../../lib/art'
 import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 import TierInfoModal from './TierInfoModal.vue'
 
@@ -49,5 +50,31 @@ describe('TierInfoModal', () => {
     expect(title.text()).toBe('Tier thresholds')
     // The colour is applied by the scoped style; asserting the class is enough.
     expect(title.classes()).toContain('modal-title')
+  })
+})
+
+/*
+ * The entrance painting beside each tier name (#538 follow-up). The table named
+ * a tier and nothing else, which left the reader matching a word to a mine they
+ * had only ever seen drawn — the same reference MaterialInfoModal gives with
+ * its nuggets.
+ */
+describe('TierInfoModal tier art', () => {
+  it('draws the entrance painting of every tier beside its name', () => {
+    const wrapper = mount(TierInfoModal)
+    const rows = wrapper.findAll('.info-table tbody tr')
+    rows.forEach((row, index) => {
+      const tier = MINE_TIERS[index]!
+      expect(row.get('.info-mound').attributes('src')).toBe(MOUND_SRC[tier])
+    })
+  })
+
+  it('keeps the art out of the accessible name the tier text already carries', () => {
+    const wrapper = mount(TierInfoModal)
+    const art = wrapper.findAll('.info-mound')
+    expect(art).toHaveLength(MINE_TIERS.length)
+    art.forEach((image) => {
+      expect(image.attributes('alt')).toBe('')
+    })
   })
 })
