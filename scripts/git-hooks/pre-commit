@@ -26,11 +26,26 @@ if [ ! -s "$staged" ]; then
   exit 0
 fi
 
+# Fail with the real cause rather than a misleading "prettier rejected"
+# message when there is nothing to run prettier WITH.
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "" >&2
+  echo "pnpm not found on PATH, so staged files could not be checked with prettier." >&2
+  echo "Install pnpm, or skip this check for a genuine emergency with git commit --no-verify." >&2
+  exit 1
+fi
+
 if xargs -0 pnpm exec prettier --check --ignore-unknown <"$staged"; then
   exit 0
 fi
 
-names="$(tr '\0' ' ' <"$staged")"
+# Each staged path, individually single-quoted (embedded quotes escaped with
+# the '\'' idiom) and space-joined, so the printed fix command still runs
+# correctly against a path that itself contains a space (#454).
+names=$(tr '\0' '\n' <"$staged" | while IFS= read -r path; do
+  printf "'%s' " "$(printf '%s' "$path" | sed "s/'/'\\''/g")"
+done)
+
 echo "" >&2
 echo "prettier rejected one or more staged files. Fix and re-stage with:" >&2
 echo "" >&2

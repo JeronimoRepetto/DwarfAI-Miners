@@ -85,7 +85,9 @@ run the checks above first. The hook is one committed `sh` script, run through g
 bundled `sh` on every platform including Windows, wired through `core.hooksPath` rather
 than a dependency: no network, no new package, and `format:check` above stays the CI
 backstop for anyone who bypasses it. For a genuine emergency commit, skip it with
-`git commit --no-verify`.
+`git commit --no-verify`. The script's executable bit is tracked in git (POSIX git silently
+skips a non-executable hook): `git ls-files -s scripts/git-hooks/pre-commit` should show
+`100755`, and `git update-index --chmod=+x scripts/git-hooks/pre-commit` restores it if not.
 
 The whole test suite is platform-independent and must stay that way: it runs and passes on
 any host OS, because per-OS behavior is tested through pure builders (see below), never by
