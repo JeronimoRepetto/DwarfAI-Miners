@@ -305,6 +305,28 @@ is written narrower than Codex's twin for the same reason: it never claims "a tu
 running" as the cause of a silent non-zero exit, because this measurement rules that cause out for
 OpenCode specifically — a busy session is accepted, not refused.
 
+## Row 14 — `session.tokens_*` is a cumulative per-session counter — POSITIVE `[V]`
+
+Measured 2026-09-21, OpenCode 1.18.31, read-only, 13 scratch sessions (no real project paths,
+process ids or usernames recorded — none of the figures below identify a machine or a person).
+
+- `session.tokens_input/output/reasoning/cache_read/cache_write` equal, in every session measured,
+  the sum of the same five fields over that session's own assistant messages (`message.data.tokens
+{input, output, reasoning, cache: {read, write}}`) — including an 8-message session summing to
+  135,530 input, 90 output, 149 reasoning, 224,512 cache read. The session row is therefore a
+  **cumulative counter per session**, exactly the shape `accrue` (`domain/ledger.ts`) already
+  differences for Codex's `tokens_used` — not a per-poll delta, and not something that needs a
+  message-level sum on the live path (the message sum was the cross-check, not the source).
+- A worker (child) session carries its own row with its own five counters; `session.parent_id`
+  names its root, exactly as Row 4 already established for topology alone.
+- `session.cost` read 0 across every measured session (all on a free model) — not used here; #335
+  decides cost.
+
+**Consequence:** this closes #444's "maintainer question 3 pending" (Row 2/"What this settles"
+below): the answer is yes, `session.tokens_*` feeds `tokensObserved` — see `state.ts`'s
+`opencodeUsageTokens` for exactly which of the five columns count and why, and #540 for the change
+that acts on it.
+
 ## What this settles for the design
 
 | Question              | Answer                                                                                                                                                                                       |
@@ -317,7 +339,7 @@ OpenCode specifically — a busy session is accepted, not refused.
 | Model catalogue       | **Live** (Row 6, #534) — `opencode models --verbose`, `source: 'provider'`, with a per-model effort picker where `variants` is non-empty.                                                    |
 | Delivery channel      | **`opencode-run-continue`** (Row 11–13, #534) — offered for every ROOT session, launched or observed. A worker still gets none: the foreman hop for OpenCode is unmeasured and out of scope. |
 | `transcriptPath`      | Always `undefined` — there is no per-session file to tail (Row 2).                                                                                                                           |
-| `tokensObserved`      | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                                                                                            |
+| `tokensObserved`      | **From `session.tokens_*`** (Row 14, #540) — the five columns summed under `opencodeUsageTokens`'s shared cross-provider definition, on the root and on each worker from its own row.        |
 | `transcriptUpdatedAt` | The newest of `session.time_updated`, the newest assistant row's time and the scan that last saw its `event.seq` advance; never the WAL mtime (#459).                                        |
 
 ## Poll cost
