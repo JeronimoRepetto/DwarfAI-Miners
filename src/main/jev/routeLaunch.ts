@@ -29,7 +29,7 @@ import { buildJevRouteRequest } from './routeRequest'
  * `DEFAULT_MAX_RETRIES`). A launch must never wait longer than THIS, whatever
  * the SDK does with its own retries inside that window. The adapter owns no
  * clock of its own on purpose: one place decides how long a launch may wait,
- * and it is this one (recorded in odd/tasks/jev-launch-routing.md).
+ * and it is this one (a product decision, recorded in the commit that introduced it).
  */
 const DEFAULT_TOTAL_BUDGET_MS = 15_000
 

@@ -27,3 +27,6 @@ src/renderer/src/assets/art/aseprite
 src/renderer/src/assets/art/dwarf-base
 src/renderer/src/assets/art/skins
 docs/dwarfai-miners-design/*
+
+# ODD feature documents: the orchestrator's working notes, kept local and mirrored to Engram
+odd/
