@@ -233,3 +233,34 @@ Windows console-hosting hop for an unrecognised `.cmd` wrapper still refuses wit
 (`launchRunner.ts:465-470`, needs its own measurement); no new per-platform convention rows were
 added to `conventionalCliPaths`; `FsLike.exists` is still a bare `stat` with no executability
 check.
+
+### Verification of record, 2026-09-21
+
+**Parent spot check.** `git log main..HEAD`: three Conventional Commits, no attribution trailers,
+clean tree. Re-ran `pnpm vitest run src/main/sessionLaunch/launchRunner.test.ts
+src/main/platform/cliDetection.test.ts`: 96 passed, 0 failed.
+
+**Native review (RDD): abandoned, not closed.** `gentle-ai review assess` rated the candidate
+`high` (`process_boundary` in `launchRunner.test.ts`); consent was granted and a four-lens
+transaction started (`review-f249a1d72bcd174e`). `review-risk` and `review-readability` were
+admitted. `review-resilience` and `review-reliability` failed twice with the same provider-side
+refusal to process the reviewer context, so the transaction was abandoned by the maintainer's
+decision (`operator_disposition`). The two admitted lenses had recorded findings; their artifacts
+did not survive the reclaim, so those findings are lost. No receipt exists for this candidate;
+delivery follows ordinary repository policy.
+
+**Independent verifier (Sonnet, read-only), the RDD-off path for a `high` candidate:**
+`pass-with-follow-ups`. Traced all three refusal paths end to end; a recognised `cmd-shim` and a
+POSIX bare name are untouched; all three `resolveProgram` callers handle the new union and cannot
+leak a refusal into a success path. The new string does not pass through `redactSecrets`, and that
+is correct: it only ever carries an errno code or an fs exception message plus a path on the user's
+own machine, never child-process output. Census `--base main`: +6, +1, 0, 0, no file lost a test.
+All checks re-run green (typecheck, lint, format:check, sync --check, test 7654 passed, build).
+
+Follow-ups, neither blocking:
+
+1. The `needs-cmd-exe` refusal is proven only in `cliDetection.test.ts`; none of the three callers
+   drives it end to end. One `launch()` case per caller with that fixture would close the gap.
+2. The composed `needs-cmd-exe` sentence stacks two colon clauses after the dash. Cosmetic.
+
+Next step: the pull request.
