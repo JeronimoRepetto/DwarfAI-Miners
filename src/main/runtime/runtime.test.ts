@@ -10,7 +10,6 @@ import {
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
 import type { PlatformAdapters } from '../platform/platformAdapters'
 import { worktreePlatformAdapters } from '../platform/fakePlatformAdapters'
-import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
@@ -6038,17 +6037,30 @@ describe('AgentRuntime.launchAgent (#86)', () => {
   })
 
   /*
-   * Issue #444. Unlike every other test in this block, `launchSession` is
-   * NOT overridden here — the point is to exercise the runtime's own DEFAULT
-   * composition (launchClaudeSession + platform.cliDetector), so the gate
-   * `launchRunner.ts` gained is proven through the real path a crafted IPC
-   * request would actually take, not against a seam only the test can see.
+   * AMENDED for #534 (was: 'refuses to launch OpenCode before ever probing
+   * its own detector', a detection verdict claiming `installed: true` with a
+   * path, asserting `cliDetector.detect` was NEVER called and the result was
+   * the fixed NOT_LAUNCHABLE refusal — proof that #444's own gate in
+   * `launchRunner.ts` refused OpenCode through the runtime's REAL default
+   * composition, `launchSession` deliberately left uninjected). That gate no
+   * longer refuses OpenCode (#534), so leaving `launchSession` uninjected
+   * here now would let this test reach the real default `run`
+   * (`runLaunchProcess`, an actual `child_process.spawn`) for a path this
+   * test invents — exactly the real-spawn-in-a-unit-test hazard `tdd`'s own
+   * "no real disk, ever" rule exists to catch, verified live: before this
+   * amendment the assertion failed with `OpenCode could not be started:
+   * /opt/opencode — ENOENT`, a REAL spawn attempt, not a mock.
+   *
+   * What is still worth proving through the real, uninjected composition is
+   * that the detector IS reached now (the fact that changed) — so this
+   * reports `installed: false` instead, which is what stays safe: OpenCode's
+   * own `notInstalledReason` returns from `launchClaudeSession` before
+   * `resolveProgram`/`run` are ever reached, on the same terms every other
+   * "not installed" case in this file already relies on.
    */
-  it('refuses to launch OpenCode before ever probing its own detector', async () => {
+  it('reaches its own detector for OpenCode now, refusing only because it is not installed', async () => {
     const cliDetector = {
-      detect: vi
-        .fn()
-        .mockResolvedValue({ cli: 'opencode', installed: true, path: '/opt/opencode' }),
+      detect: vi.fn().mockResolvedValue({ cli: 'opencode', installed: false }),
       peek: vi.fn().mockReturnValue('unprobed')
     }
     const runtime = new AgentRuntime({
@@ -6086,9 +6098,9 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     ).resolves.toEqual({
       launched: false,
       provider: 'opencode',
-      error: NOT_LAUNCHABLE
+      error: 'OpenCode is not installed on this machine.'
     })
-    expect(cliDetector.detect).not.toHaveBeenCalledWith('opencode')
+    expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
   })
 })
 

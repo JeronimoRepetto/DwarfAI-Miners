@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
-import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
 import type { CliDetection, CliDetector } from '../platform/cliDetection'
@@ -27,7 +26,30 @@ import {
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
 const CODEX_PATH = '/home/j/.local/bin/codex'
+const OPENCODE_PATH = '/home/j/.local/bin/opencode'
 const MINE_PATH = '/home/j/work/project'
+
+/** npm's cmd-shim for opencode, the same shape the Codex fixture above is. */
+const OPENCODE_SHIM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
+const OPENCODE_SHIM = `${OPENCODE_SHIM_DIR}\\opencode.cmd`
+const OPENCODE_SHIM_ENTRY = `${OPENCODE_SHIM_DIR}\\node_modules\\opencode-ai\\bin\\opencode.js`
+const OPENCODE_SHIM_TEXT = [
+  '@ECHO off',
+  'GOTO start',
+  ':find_dp0',
+  'SET dp0=%~dp0',
+  'EXIT /b',
+  ':start',
+  'SETLOCAL',
+  'CALL :find_dp0',
+  'IF EXIST "%dp0%\\node.exe" (',
+  '  SET "_prog=%dp0%\\node.exe"',
+  ') ELSE (',
+  '  SET "_prog=node"',
+  '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+  ')',
+  'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\opencode-ai\\bin\\opencode.js" %*'
+].join('\r\n')
 
 /** npm's cmd-shim for codex, as `npm i -g @openai/codex` writes it on Windows. */
 const NPM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
@@ -65,6 +87,14 @@ function installed(): CliDetector {
 
 function installedCodex(): CliDetector {
   return detector({ cli: 'codex', installed: true, path: CODEX_PATH, source: 'convention' })
+}
+
+function installedOpenCode(): CliDetector {
+  return detector({ cli: 'opencode', installed: true, path: OPENCODE_PATH, source: 'convention' })
+}
+
+function shimDetectorFor(cli: 'codex' | 'opencode', path: string): CliDetector {
+  return detector({ cli, installed: true, path, source: 'convention' })
 }
 
 function launch(options: {
@@ -170,24 +200,29 @@ describe('launchClaudeSession', () => {
   })
 
   /*
-   * Issue #444. The gate `launchRunner.ts` lacked entirely: `parseLaunchRequest`
-   * admits any `isDwarfProvider`, and until this gate a crafted request for a
-   * non-launchable provider reached `buildLaunchArgs` inside a try. Cheapest
-   * refusal first (the function's own `:609` order) — LAUNCHABLE_PROVIDERS is
-   * checked BEFORE `detector.detect`, so an unlaunchable provider costs no
-   * disk probe either, exactly as an empty prompt costs none above.
+   * AMENDED for #534 (was: 'refuses OpenCode before ever probing the disk
+   * for it', asserting the LAUNCHABLE_PROVIDERS gate refused OpenCode by
+   * name before detect() ran — the state this test now proves the opposite
+   * of). `run` on stdin landed (buildOpenCodeLaunchArgs, launch.ts), so a
+   * detected OpenCode now starts exactly like Claude, Codex and Antigravity
+   * above. That leaves the LAUNCHABLE_PROVIDERS gate itself with no real
+   * provider left to prove it against — every DWARF_PROVIDERS member is
+   * launchable now — the same conclusion launchProviders.test.ts's own
+   * #237 comment already reached for NOT_LAUNCHABLE.
    */
-  it('refuses OpenCode before ever probing the disk for it', async () => {
-    const cli = detector({ cli: 'opencode', installed: true, path: '/opt/opencode/opencode' })
-    const { run, result } = launch({ provider: 'opencode', cli })
+  it('starts a detected OpenCode binary in the mine folder, with the prompt on stdin', async () => {
+    const cli = installedOpenCode()
+    const { run, result } = launch({ provider: 'opencode', cli, prompt: 'dig' })
 
-    await expect(result).resolves.toEqual({
-      launched: false,
-      provider: 'opencode',
-      error: NOT_LAUNCHABLE
-    })
-    expect(run).not.toHaveBeenCalled()
-    expect(cli.detect).not.toHaveBeenCalled()
+    await expect(result).resolves.toEqual({ launched: true, provider: 'opencode' })
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).toBe(OPENCODE_PATH)
+    // cwd is the whole trick here too (#534): the OpenCode observer reads
+    // opencode.db's own `session.directory`, so this is what files the new
+    // session under the right mine.
+    expect(invocation.cwd).toBe(MINE_PATH)
+    expect(invocation.args).toEqual(['run', '--format', 'json'])
+    expect(invocation.stdin).toBe('dig')
   })
 
   it('gives "not installed" its own reason, carrying what detection said', async () => {
@@ -457,6 +492,116 @@ describe('launching Codex', () => {
     await expect(launch({ provider: 'codex', cli: installedCodex() }).result).resolves.toEqual({
       launched: true,
       provider: 'codex'
+    })
+  })
+})
+
+/*
+ * OpenCode's launch (#534), on the same DETACHED, one-shot terms as
+ * Antigravity's and Codex's above: no held-session engine, discovered
+ * afterwards by the ordinary poll reading `opencode.db` — where
+ * `session.directory` is what puts it in the right mine, the same trick
+ * every other provider's launch relies on.
+ */
+describe('launching OpenCode (#534)', () => {
+  it('never puts the prompt in argv for OpenCode either', async () => {
+    const secret = 'rotate the deploy key'
+    const { run, result } = launch({
+      provider: 'opencode',
+      cli: installedOpenCode(),
+      prompt: secret
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.args.join(' ')).not.toContain(secret)
+    expect(invocation.stdin).toBe(secret)
+  })
+
+  it('says OpenCode is missing in its own words, carrying what detection said', async () => {
+    const { run, result } = launch({
+      provider: 'opencode',
+      cli: detector({ cli: 'opencode', installed: false, reason: 'opencode not found on PATH' })
+    })
+
+    const verdict = await result
+    expect(verdict.provider).toBe('opencode')
+    expect(verdict.error).toContain('OpenCode')
+    expect(verdict.error).not.toContain('Claude')
+    expect(verdict.error).toContain('opencode not found on PATH')
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The npm-global install, the common one for OpenCode (`npx opencode-ai` /
+   * `npm i -g opencode-ai`), on the same terms #193 already proved for
+   * Codex's own npm shim: `resolveProgram` reads it and runs the node entry
+   * it names directly, detached — never through cmd.exe, which is exactly
+   * the shell hop the measurement report's own trap reproduced (M3
+   * addendum: a session recorded under the PARENT directory, 2/2).
+   */
+  it('starts an npm .cmd shim by running the node entry it names, instead of a shell hop', async () => {
+    const fs = new FakeFs()
+    fs.addFile(OPENCODE_SHIM, OPENCODE_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'opencode',
+      platform: 'win32',
+      prompt: 'dig',
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
+      fs
+    })
+
+    await expect(result).resolves.toEqual({ launched: true, provider: 'opencode' })
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).toBe('node')
+    expect(invocation.args).toEqual([OPENCODE_SHIM_ENTRY, 'run', '--format', 'json'])
+    expect(invocation.stdin).toBe('dig')
+    expect(invocation.cwd).toBe(MINE_PATH)
+    expect(invocation.viaNodeEntry).toBe(true)
+  })
+
+  it('never hands an OpenCode shim to a shell, in either direction', async () => {
+    const fs = new FakeFs()
+    fs.addFile(OPENCODE_SHIM, OPENCODE_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'opencode',
+      platform: 'win32',
+      cli: shimDetectorFor('opencode', OPENCODE_SHIM),
+      fs
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation).not.toHaveProperty('shell')
+    expect(invocation.command.toLowerCase().endsWith('.cmd')).toBe(false)
+  })
+
+  it('asks the detected OpenCode binary directly on POSIX, no shim to read', async () => {
+    const fs = new FakeFs()
+    const { run, result } = launch({ provider: 'opencode', cli: installedOpenCode(), fs })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.command).toBe(OPENCODE_PATH)
+    expect(invocation.args).toEqual(['run', '--format', 'json'])
+    expect(invocation.viaNodeEntry).toBe(false)
+  })
+
+  it('detects OpenCode, not another provider, when OpenCode is the provider asked for', async () => {
+    const cli = installedOpenCode()
+    await launch({ provider: 'opencode', cli }).result
+
+    expect(cli.detect).toHaveBeenCalledWith('opencode')
+  })
+
+  it('claims only that the process started, and never a dwarf', async () => {
+    // OpenCode's dwarf is discovered by the poll off opencode.db, up to a
+    // poll interval later, exactly as a session a human started is.
+    await expect(
+      launch({ provider: 'opencode', cli: installedOpenCode() }).result
+    ).resolves.toEqual({
+      launched: true,
+      provider: 'opencode'
     })
   })
 })
