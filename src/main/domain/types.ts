@@ -131,8 +131,12 @@ export type {
   ModelTier,
   JevRouteAnsweredPart,
   JevRouteNoulPart,
-  JevRouteParts
+  JevRouteParts,
   /* --- end of the jev-routing-profiles T3 block ------------------------------ */
+  /* --- Turn outcome (#510) — one block, appended ---------------------------- */
+  TurnOutcome,
+  TurnOutcomeKind
+  /* --- end of the #510 block ------------------------------------------------- */
 } from '../../shared/contracts'
 
 /**
@@ -231,8 +235,11 @@ export {
   DEFAULT_JEV_ROUTING_PROFILE,
   DEFAULT_JEV_PREFERENCES,
   isJevRoutingProfile,
-  parseJevPreferences
+  parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- Turn outcome (#510) — one block, appended ---------------------------- */
+  boundTurnText
+  /* --- end of the #510 block ------------------------------------------------- */
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

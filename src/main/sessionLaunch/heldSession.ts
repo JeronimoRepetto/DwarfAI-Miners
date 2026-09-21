@@ -17,6 +17,7 @@ import type {
   FeedActivity,
   FeedMessage,
   Mine,
+  TurnOutcome,
   WaitingReason
 } from '../domain/types'
 import { trimFeed } from '../providers/feedWindow'
@@ -370,6 +371,16 @@ export interface HeldSessionTelemetryUpdate {
    */
   contextUsage?: HeldSessionContextUsage
   /**
+   * The turn this update's own `result`/end-of-turn message just closed
+   * (#510) — carried on the SAME update that sets `turn: 'ended'` below,
+   * never a separate one, because both are read off the one message that
+   * closes a turn. A plain merge replaces the whole object rather than
+   * folding fields together, the same idiom `contextUsage` and
+   * `totalCostUsd` already follow: a LATER turn's outcome supersedes an
+   * earlier one entirely, never partially.
+   */
+  lastTurn?: TurnOutcome
+  /**
    * Which edge of a turn this update reports, when it reports one at all
    * (issue #245). `init` and `result` sit at OPPOSITE ends of the same turn —
    * `init` is re-emitted at its start ("the newest frame wins"), `result`
@@ -450,6 +461,15 @@ export interface HeldSessionStartRequest {
   permissionMode?: string
   /** A ceiling on agent turns, or undefined for the CLI's own default. */
   maxTurns?: number
+  /**
+   * This host's own clock (#510) — the same one `HeldSessionRegistry` stamps
+   * every other timestamp with (see `appendMessage`'s "this host's clock"
+   * comment). Supplied unconditionally, like `onTelemetry`, so both engine
+   * implementations stamp `TurnOutcome.endedAt` off ONE clock the registry
+   * owns, rather than each reaching for `Date.now()` on its own and drifting
+   * from whatever the rest of this record's timestamps read.
+   */
+  now: () => number
   /** The CLI reporting the session id it chose, once it does. */
   onSessionId: (sessionId: string) => void
   /**
@@ -1049,6 +1069,7 @@ export function heldTelemetryToWire(telemetry: HeldSessionTelemetryUpdate): {
   mcpServers?: DwarfMcpServerStatus[]
   totalCostUsd?: number
   contextUsage?: DwarfContextUsage
+  lastTurn?: TurnOutcome
 } {
   const mcpServers = telemetry.mcpServers
     ?.filter((server): server is DwarfMcpServerStatus => isMcpConnectionStatus(server.status))
@@ -1058,6 +1079,7 @@ export function heldTelemetryToWire(telemetry: HeldSessionTelemetryUpdate): {
     ...(telemetry.effort === undefined ? {} : { effort: telemetry.effort }),
     ...(mcpServers === undefined ? {} : { mcpServers }),
     ...(telemetry.totalCostUsd === undefined ? {} : { totalCostUsd: telemetry.totalCostUsd }),
+    ...(telemetry.lastTurn === undefined ? {} : { lastTurn: telemetry.lastTurn }),
     // Rebuilt field by field rather than passed through (issue #96's mutating
     // slice): a pull answers with the model it also read, and `DwarfContextUsage`
     // is the two counts and nothing else. Spreading the SDK's own answer would
@@ -1293,7 +1315,8 @@ export function stampHeldTelemetry(mines: Mine[], stateOf: HeldTelemetryLookup):
         ...(state.effort === undefined ? {} : { effort: state.effort }),
         ...(state.mcpServers === undefined ? {} : { mcpServers: state.mcpServers }),
         ...(state.totalCostUsd === undefined ? {} : { totalCostUsd: state.totalCostUsd }),
-        ...(state.contextUsage === undefined ? {} : { contextUsage: state.contextUsage })
+        ...(state.contextUsage === undefined ? {} : { contextUsage: state.contextUsage }),
+        ...(state.lastTurn === undefined ? {} : { lastTurn: state.lastTurn })
       }
     })
   }))
