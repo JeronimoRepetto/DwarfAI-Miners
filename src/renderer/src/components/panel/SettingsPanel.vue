@@ -136,6 +136,24 @@ const resetModalOpen = ref(false)
       <div class="settings-divider" role="presentation"></div>
     </header>
 
+    <!--
+      The sections are ruled into GROUPS (maintainer request, 2026-09-21).
+
+      Settings grew from the design's three sections to eight, each drawing
+      its own heading — `settings.md` records the growth itself, "previously
+      listed three sections and now lists four", then five. Eight headings in
+      one column with nothing between them stopped reading as a list.
+
+      A rule between groups, never between every section: the point is to say
+      which sections belong together, and a rule after each one says nothing.
+      The first group is the two the design source already names as a pair,
+      `Panel shortcut` and `Panel position`; the last keeps Data Base with
+      Application, which DataBaseSection's own comment already treats as one
+      bottom cluster.
+
+      No group headings. Every section draws its own name, and a heading over
+      them would print half of those names twice.
+    -->
     <ShortcutSettings
       :state="shortcutState"
       :error="shortcutError"
@@ -150,18 +168,26 @@ const resetModalOpen = ref(false)
 
     <PositionSettings :edge="edge" :applying="edgeApplying" @select="emit('select-edge', $event)" />
 
+    <div class="group-divider" role="presentation"></div>
+
     <TypographySettings
       :preferences="typography"
       :applying="typographyApplying"
       @change="emit('typography-change', $event)"
     />
 
+    <div class="group-divider" role="presentation"></div>
+
     <AudioSettings :settings="audioSettings" @change="emit('audio-change', $event)" />
+
+    <div class="group-divider" role="presentation"></div>
 
     <NotificationSettings
       :enabled="notificationsEnabled"
       @change="emit('notifications-change', $event)"
     />
+
+    <div class="group-divider" role="presentation"></div>
 
     <JevSettings
       :settings="jevSettings"
@@ -172,6 +198,8 @@ const resetModalOpen = ref(false)
       @clear="emit('jev-clear')"
       @preferences-change="emit('jev-preferences-change', $event)"
     />
+
+    <div class="group-divider" role="presentation"></div>
 
     <DataBaseSection @open-reset="resetModalOpen = true" />
 
@@ -240,6 +268,19 @@ const resetModalOpen = ref(false)
 }
 .settings-divider {
   height: 2px;
+  background: var(--color-accent);
+}
+/*
+ * The rule between groups. Deliberately 1px where the title's is 2px: the
+ * heavier line belongs to the panel's own name, and a group boundary that
+ * matched it would flatten the two into one level. The design source draws no
+ * grouping at all — `screens/settings.md` has grown by maintainer amendment
+ * three times without one — so the weight is ours, recorded here the way
+ * `--size-scrollbar-width` and `--elevation-5` record theirs.
+ */
+.group-divider {
+  flex: none;
+  height: 1px;
   background: var(--color-accent);
 }
 .application-settings {

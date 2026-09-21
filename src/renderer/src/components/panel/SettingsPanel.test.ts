@@ -347,3 +347,85 @@ describe('SettingsPanel — the reset-metrics modal', () => {
     expect(wrapper.find('[role="alert"]').text()).toBe('Nothing was deleted.')
   })
 })
+
+/*
+ * Grouping the sections (maintainer request, 2026-09-21).
+ *
+ * Settings grew from the design's three sections to eight — Panel shortcut,
+ * Position, Typography, Audio, Notifications, Jev, Data Base, Application —
+ * each drawing its own heading, all in one column with nothing between them.
+ * `settings.md` says so itself twice over: "previously listed three sections
+ * and now lists four", then five. Eight headings in a row is not a list any
+ * more, it is a wall, and the maintainer's word for it was that the panel is
+ * hard to read.
+ *
+ * So a rule between GROUPS, not between every section. The first group is the
+ * two the design source already names together — `Panel shortcut` and `Panel
+ * position` share that prefix in `screens/settings.md` — and the bottom
+ * cluster keeps Data Base with Application, which DataBaseSection's own
+ * comment already treats as one.
+ *
+ * Asserted as a SEQUENCE rather than a count: a separator in the wrong place
+ * groups the wrong things, and a count would pass for any arrangement.
+ */
+describe('SettingsPanel section grouping', () => {
+  /** The panel's children in render order, as either a heading or a rule. */
+  function layout(wrapper: ReturnType<typeof render>): string[] {
+    const panel = wrapper.get('.settings-panel').element
+    const read: string[] = []
+    for (const child of Array.from(panel.children)) {
+      if (child.classList.contains('settings-head')) {
+        read.push('title')
+        continue
+      }
+      if (child.classList.contains('group-divider')) {
+        read.push('---')
+        continue
+      }
+      // A section identifies itself by the heading it already draws; the
+      // grouping adds no second label, which would say every name twice.
+      const heading = child.querySelector('.field-label, .section-label')
+      if (heading?.textContent) read.push(heading.textContent.trim())
+    }
+    return read
+  }
+
+  it('rules between groups, leaving the two Panel sections together', () => {
+    expect(layout(render())).toEqual([
+      'title',
+      'Panel shortcut',
+      'Position',
+      '---',
+      'Typography',
+      '---',
+      'Audio',
+      '---',
+      'Notifications',
+      '---',
+      'Jev',
+      '---',
+      'Data Base',
+      'Application'
+    ])
+  })
+
+  it('draws no rule directly under the title, which has its own', () => {
+    // `.settings-head` already ends in `.settings-divider`. A group rule
+    // immediately after it would read as a double line under the heading.
+    const order = layout(render())
+    expect(order[0]).toBe('title')
+    expect(order[1]).not.toBe('---')
+  })
+
+  it('never ends on a rule, which would underline the panel', () => {
+    const order = layout(render())
+    expect(order[order.length - 1]).not.toBe('---')
+  })
+
+  it('marks every group rule presentational, since it names nothing', () => {
+    const wrapper = render()
+    const rules = wrapper.findAll('.group-divider')
+    expect(rules.length).toBeGreaterThan(0)
+    for (const rule of rules) expect(rule.attributes('role')).toBe('presentation')
+  })
+})
