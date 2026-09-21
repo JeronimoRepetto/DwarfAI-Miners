@@ -123,7 +123,7 @@ import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
 import { createJevApiKeyStore } from './shell/jevApiKey'
 import { createJevLaunchRouter } from './jev/routeLaunch'
-import { createTypesafeJevRouter } from './jev/typesafeJevRouter'
+import { createTypesafeJevRouter, jevDebugEnabled } from './jev/typesafeJevRouter'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -697,7 +697,17 @@ async function init(): Promise<void> {
   // this point in startup, and reading it lazily inside the closure is what
   // lets every call ask what THIS machine can launch NOW rather than a stale
   // answer from before the runtime existed.
-  const jevRouterPort = createTypesafeJevRouter({ readKey: jevApiKeyStore.readKey })
+  const jevRouterPort = createTypesafeJevRouter({
+    readKey: jevApiKeyStore.readKey,
+    // JEV_DEBUG (#525): the dev-console trace, read straight from the real
+    // environment here and deliberately never through `config` — on for
+    // `1`/`true` only (blank, `0` and junk mean off, per jevDebugEnabled),
+    // and reachable from the repo `.env` because this runs after
+    // loadDotenv() above. It prints the person's own prompt, so the only
+    // thing ever wired into `debugLog` is this console line, and only when
+    // the flag says so.
+    ...(jevDebugEnabled() ? { debugLog: (line: string) => console.log(line) } : {})
+  })
   const jevLaunchRouter = createJevLaunchRouter({
     router: jevRouterPort,
     listProviders: async () => (await runtime?.listAgentProviders())?.providers ?? [],
