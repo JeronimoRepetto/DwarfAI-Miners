@@ -166,7 +166,10 @@ change that choice from the tray menu. The first run never sends session data an
 Three things worth knowing on that first run:
 
 - **You need nothing to configure.** Start a Claude Code, Codex, Antigravity or OpenCode session in
-  any project and its dwarf appears within about two seconds.
+  any project and its dwarf appears within about two seconds. Claude, Codex and OpenCode turn that
+  session's tokens into mined coal and ore as it runs; Antigravity's dwarf appears and works the
+  mine too, but its CLI records no token figure to mine from (verified on 1.1.26), so it never adds
+  material — see [Provider support](#provider-support).
 - **Music starts playing.** That is the shipped default; the note button at the bottom of the
   navigation column silences it for this run, and Settings' **Music at startup** is where you say
   it should stay off. See [Sound](docs/guide.md#sound).

@@ -1,9 +1,11 @@
 import { join } from 'node:path'
 import type { FsLike } from '../adapters/fsLike'
+import type { SqliteLike } from '../adapters/sqliteLike'
 import { mineIdForPath } from '../domain/aggregate'
+import { opencodeDbPath } from '../providers/opencode/store'
 import { createProjectRootResolver, type ProjectRootResolver } from '../projects/worktree'
 import { currentPlatform, type Platform } from '../platform/platform'
-import { claudeCoalFromTail, codexCoalFromRollout } from './coalScan'
+import { claudeCoalFromTail, codexCoalFromRollout, opencodeCoalFromStore } from './coalScan'
 import { writeFileAtomic, type LedgerFsLike } from './ledgerStore'
 
 /**
@@ -28,6 +30,10 @@ import { writeFileAtomic, type LedgerFsLike } from './ledgerStore'
  *  - Every Codex rollout under `<sessionsRoot>/YYYY/MM/DD/rollout-*.jsonl`
  *    that pre-dates the install moment, counted from the last `token_count`
  *    record's running `total_token_usage.total_tokens`.
+ *  - Every OpenCode session in `opencode.db` whose `time_updated` pre-dates
+ *    the install moment, counted from `session.tokens_*` summed the same way
+ *    the live provider sums them (#540) — one row, not a file tree, so this
+ *    unit is the whole store rather than a directory walk.
  *
  * It does NOT include:
  *  - Claude SUBAGENT transcripts (`<projectDir>/<sessionId>/subagents/*.jsonl`).
@@ -107,6 +113,8 @@ export interface CoalBackfillResult {
 export interface CoalBackfillOptions {
   /** Read-only filesystem port for the transcript trees. */
   fs: FsLike
+  /** Read-only SQLite port for the OpenCode store (#540) — no config key of its own. */
+  sqlite: SqliteLike
   /** Read/write port for the marker; the same shape the ledger store uses. */
   markerFs: LedgerFsLike
   markerPath: string
@@ -114,6 +122,12 @@ export interface CoalBackfillOptions {
   claudeRoots: readonly string[]
   /** Codex sessions root, already home-expanded. */
   codexSessionsRoot: string
+  /**
+   * OpenCode store root, already home-expanded — the same
+   * `config.providers.opencode.storeRoot` the live provider reads (#540); no
+   * new configuration key exists for the backfill's own use.
+   */
+  opencodeStoreRoot: string
   /** Pays coal into the vault. Called once per project per unit. */
   credit: (mineId: string, tokens: number) => void
   now: () => number
@@ -140,9 +154,14 @@ export interface CoalBackfillOptions {
   warn?: (message: string, error: unknown) => void
 }
 
-/** One directory the scan treats as an all-or-nothing unit of work. */
+/**
+ * One all-or-nothing unit of work: a directory for `'claude'`/`'codex'`, or
+ * the whole store for `'opencode'` — there is only one `opencode.db`, so its
+ * single unit's `path` is the db path itself, the same string `credited`
+ * remembers to skip it on a later launch.
+ */
 interface ScanUnit {
-  kind: 'claude' | 'codex'
+  kind: 'claude' | 'codex' | 'opencode'
   path: string
 }
 
@@ -220,6 +239,16 @@ async function codexUnits(fs: FsLike, sessionsRoot: string): Promise<ScanUnit[]>
 }
 
 /**
+ * The OpenCode store as a single atomic unit (#540). There is no tree to
+ * walk — `opencode.db` is the one file, exactly as `store.ts`'s own comment
+ * says the live provider treats it — so one unit stands for the whole store,
+ * scanned and credited (or abandoned and retried) whole, never per file.
+ */
+function opencodeUnits(storeRoot: string): ScanUnit[] {
+  return [{ kind: 'opencode', path: opencodeDbPath(storeRoot) }]
+}
+
+/**
  * Read one file's contribution, or null when it proves nothing.
  *
  * The mtime gate comes first and costs no read: a file touched at or after the
@@ -249,6 +278,55 @@ async function readCoal(
 }
 
 /**
+ * Scan the whole OpenCode store, returning what it owes each project.
+ *
+ * There is no directory to list: one `session` row is one session's whole
+ * account of itself, so every session this store knows about is read in one
+ * query (`opencodeCoalFromStore`) rather than walked file by file. The same
+ * install-moment boundary `readCoal` applies to a Claude/Codex file's own
+ * record timestamp is applied here to `record.lastRecordAt`
+ * (`session.time_updated`) — a session still being lived in at install time
+ * is left for live accrual instead, exactly the same rule, applied to the
+ * one column that plays both mtime's and the record timestamp's role at once.
+ *
+ * A missing or unopenable store credits nothing and throws nothing: an
+ * OpenCode install that predates this app, or one this build cannot read, is
+ * "not observed" here for the same reason the live provider treats it that
+ * way (`opencodeProvider.ts`).
+ */
+async function scanOpenCodeUnit(
+  options: CoalBackfillOptions,
+  unit: ScanUnit,
+  installedAt: number,
+  platform: Platform,
+  projectRoots: ProjectRootResolver
+): Promise<{ credits: Map<string, number>; filesRead: number }> {
+  const credits = new Map<string, number>()
+
+  let db: Awaited<ReturnType<SqliteLike['openReadOnly']>>
+  try {
+    db = await options.sqlite.openReadOnly(unit.path)
+  } catch (error) {
+    options.warn?.('[coal] Failed to open the OpenCode store for the historical scan:', error)
+    return { credits, filesRead: 0 }
+  }
+  if (db === null) return { credits, filesRead: 0 }
+
+  try {
+    for (const record of opencodeCoalFromStore(db)) {
+      if (record.lastRecordAt >= installedAt) continue
+      const mineId = mineIdForPath((await projectRoots.resolve(record.cwd)).root, platform)
+      credits.set(mineId, (credits.get(mineId) ?? 0) + record.tokens)
+    }
+  } finally {
+    db.close()
+  }
+  // One store read stands for "one file" on the shared budget: unlike a
+  // directory of transcripts, the cost here is one query, not N file opens.
+  return { credits, filesRead: 1 }
+}
+
+/**
  * Scan one directory whole, returning what it owes each project.
  *
  * Credits are accumulated and returned rather than paid as they are found, so
@@ -265,6 +343,10 @@ async function scanUnit(
   platform: Platform,
   projectRoots: ProjectRootResolver
 ): Promise<{ credits: Map<string, number>; filesRead: number }> {
+  if (unit.kind === 'opencode') {
+    return scanOpenCodeUnit(options, unit, installedAt, platform, projectRoots)
+  }
+
   const credits = new Map<string, number>()
   let filesRead = 0
 
@@ -326,7 +408,8 @@ export async function runCoalBackfill(options: CoalBackfillOptions): Promise<Coa
 
   const units = [
     ...(await claudeUnits(options.fs, options.claudeRoots)),
-    ...(await codexUnits(options.fs, options.codexSessionsRoot))
+    ...(await codexUnits(options.fs, options.codexSessionsRoot)),
+    ...opencodeUnits(options.opencodeStoreRoot)
   ]
 
   const startedAt = options.now()

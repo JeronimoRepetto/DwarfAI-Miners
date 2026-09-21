@@ -154,13 +154,13 @@ function onOpen(): void {
 /* Cancel is the quiet half of the pair: the same model, without the filled
    surface that marks the action this dialog is actually offering. */
 .modal-cancel {
-  border: 2px solid var(--color-control);
+  border: 2px solid var(--color-control-idle);
   background: transparent;
 }
 .modal-open:disabled {
   cursor: default;
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
+  border: 2px solid var(--color-control-disabled);
+  color: var(--color-control-disabled);
   background: var(--color-panel-deep);
 }
 </style>

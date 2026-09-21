@@ -31,7 +31,10 @@ observer, and eventually part game.
 ### What it is today
 
 - **Observer:** reads the session data Claude Code, Codex, Antigravity and OpenCode already write
-  locally and turns projects, agents, status, messages, and mined materials into a living colony.
+  locally and turns projects, agents, status and messages into a living colony. Claude, Codex and
+  OpenCode also turn each session's tokens into mined coal and ore as it runs; Antigravity's
+  sessions are read and shown the same way, but its CLI records no token figure (verified on
+  1.1.26), so its dwarf works without adding to the vault.
 - **Control surface:** lets you launch supported sessions, choose their model and effort, focus
   their external terminal, open a live transcript viewer, send messages, kick work, and answer
   agent questions.

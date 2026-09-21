@@ -163,13 +163,18 @@ describe('OpenCodeProvider.scan — discovery', () => {
     expect(snapshot?.dwarfs[0]?.attendance).toBe('unknown')
   })
 
-  it('never puts tokens or cost on the wire, even once a finished turn fills those columns (DET-R5, #444)', async () => {
+  // AMENDED for #540 (was DET-R5, #444: "never puts tokens or cost on the
+  // wire"). #444 left the answer to its own "maintainer question 3" pending;
+  // the answer is yes — tokensObserved now rides the wire from session.tokens_*,
+  // the same shared definition opencodeUsageTokens documents (state.ts).
+  // cost stays off the wire: #335, not this issue, decides that field.
+  it('puts tokens on the wire from the session row, but never cost (AMENDED for #540)', async () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
     sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
     // sessionInsert hardcodes the token/cost columns to 0 (D1 note); a raw
-    // UPDATE against the real column names proves the omission against
+    // UPDATE against the real column names proves the reading against
     // non-zero values, not merely against sessionInsert's own default.
     sqlite.exec(
       DB_PATH,
@@ -178,8 +183,50 @@ describe('OpenCodeProvider.scan — discovery', () => {
     )
     const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
     const dwarf = snapshot?.dwarfs[0]
-    expect(dwarf !== undefined && 'tokensObserved' in dwarf).toBe(false)
+    expect(dwarf?.tokensObserved).toBe(310)
     expect(dwarf !== undefined && 'cost' in dwarf).toBe(false)
+  })
+
+  it('reads a session with all-zero counters as tokensObserved: 0, not absent (#540)', async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    const [snapshot] = await makeProvider({ fs: fake, sqlite }).scan()
+    const dwarf = snapshot?.dwarfs[0]
+    expect(dwarf).toHaveProperty('tokensObserved')
+    expect(dwarf?.tokensObserved).toBe(0)
+  })
+
+  it("gives a worker its OWN tokensObserved, never the foreman's (#540)", async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
+    sqlite.exec(DB_PATH, `UPDATE session SET tokens_input = 1000 WHERE id = 'ses_parent'`)
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_child',
+        directory: '/home/j/p',
+        parentId: 'ses_parent',
+        timeUpdatedMs: NOW
+      })
+    )
+    sqlite.exec(DB_PATH, `UPDATE session SET tokens_input = 42 WHERE id = 'ses_child'`)
+
+    // scan() publishes one ProviderSnapshot per session, each carrying its
+    // own single dwarf — the crew is spread across snapshots, not collected
+    // under one, so both rows are read across the whole result.
+    const snapshots = await makeProvider({ fs: fake, sqlite }).scan()
+    const dwarfs = snapshots.flatMap((snapshot) => snapshot.dwarfs)
+    const parentDwarf = dwarfs.find((dwarf) => dwarf.id === 'opencode:ses_parent')
+    const childDwarf = dwarfs.find((dwarf) => dwarf.id === 'opencode:ses_child')
+    expect(parentDwarf?.tokensObserved).toBe(1000)
+    expect(childDwarf?.tokensObserved).toBe(42)
   })
 
   it('returns no snapshots and does not throw when no store exists', async () => {
