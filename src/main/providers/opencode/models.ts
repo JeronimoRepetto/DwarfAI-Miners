@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process'
 import type { FsLike } from '../../adapters/fsLike'
-import type { OpenCodeModelInfo } from '../../domain/agentModelCatalog'
 import { describeShimRefusal, resolveProgram } from '../../platform/cliDetection'
 
 /**
@@ -106,21 +105,92 @@ function readBraceBlock(
   throw new Error('opencode models: an unterminated JSON block (unbalanced braces)')
 }
 
+/**
+ * OpenCode's own richer per-model facts (#547) — everything `--verbose`
+ * prints that a Jev capability entry needs (`opencodeDerived.ts`), beside the
+ * `value`/`displayName`/`effortLevels` triple `ModelOption` already carries
+ * for the Add Panel. A structural superset of that triple, not a second
+ * shape: every existing caller that only reads those three fields
+ * (`openCodeModelCatalog` in `agentModelCatalog.ts`) keeps working
+ * unchanged, since they are still here under the same names.
+ *
+ * Field names mirror the raw JSON block's own grouping (`cost`, `limit`,
+ * `capabilities`) rather than flattening it, so a reader can still find a
+ * fact next to the key `opencode models --verbose` printed it under.
+ */
+export interface OpenCodeCatalogueModel {
+  value: string
+  displayName: string
+  /** `Object.keys(variants)` off this model's own JSON block; `[]` when it named none (M1). */
+  effortLevels: string[]
+  /** `active` on every model measured so far (M1) — read verbatim, never assumed. */
+  status: string
+  /** The block's own `release_date`, read verbatim (already ISO `YYYY-MM-DD`). */
+  releaseDate: string
+  cost: {
+    /** USD per million input tokens. */
+    input: number
+    /** USD per million output tokens — what `opencodeDerived.ts` bands `relativeCost` from. */
+    output: number
+    /** `cost.cache.read`, USD per million tokens — omitted when the block carries none. */
+    cacheRead?: number
+  }
+  limit: {
+    /** The documented context window, in tokens. */
+    context: number
+    /** The documented max output, in tokens. */
+    output: number
+  }
+  capabilities: {
+    reasoning: boolean
+  }
+}
+
+/** `value` when `value` is a finite number, `fallback` otherwise — the same "degrade rather than assume a rigid format" rule this file's own id/brace parsing already holds to. */
+function asFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** `value` as a plain object to read optional fields off, or `{}` when it is not one — never a throw for a field this app only reads defensively. */
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
 /** One id line's JSON block, turned into the domain's shape — or a throw. */
-function toModelInfo(id: string, parsed: unknown): OpenCodeModelInfo {
+function toCatalogueModel(id: string, parsed: unknown): OpenCodeCatalogueModel {
   if (typeof parsed !== 'object' || parsed === null) {
     throw new Error(`opencode models: the block for "${id}" is not a JSON object`)
   }
   const record = parsed as Record<string, unknown>
   const displayName = typeof record.name === 'string' ? record.name : ''
-  const variants =
-    typeof record.variants === 'object' && record.variants !== null
-      ? (record.variants as Record<string, unknown>)
-      : {}
+  const variants = asRecord(record.variants)
   // M1: presence check is `Object.keys(variants).length > 0`; do not assume
   // only paid models have it — 19 of 34 measured models carry one, several
   // free.
-  return { value: id, displayName, effortLevels: Object.keys(variants) }
+  const cost = asRecord(record.cost)
+  const cache = asRecord(cost.cache)
+  const limit = asRecord(record.limit)
+  const capabilities = asRecord(record.capabilities)
+  const cacheRead = asFiniteNumber(cache.read, Number.NaN)
+  return {
+    value: id,
+    displayName,
+    effortLevels: Object.keys(variants),
+    status: typeof record.status === 'string' ? record.status : '',
+    releaseDate: typeof record.release_date === 'string' ? record.release_date : '',
+    cost: {
+      input: asFiniteNumber(cost.input, 0),
+      output: asFiniteNumber(cost.output, 0),
+      ...(Number.isFinite(cacheRead) ? { cacheRead } : {})
+    },
+    limit: {
+      context: asFiniteNumber(limit.context, 0),
+      output: asFiniteNumber(limit.output, 0)
+    },
+    capabilities: {
+      reasoning: capabilities.reasoning === true
+    }
+  }
 }
 
 /**
@@ -138,9 +208,9 @@ function toModelInfo(id: string, parsed: unknown): OpenCodeModelInfo {
  * Catalog` has only the one path to its own caller's fallback either way, so
  * throwing here keeps that a single branch there too.
  */
-export function parseOpenCodeModelsOutput(stdout: string): OpenCodeModelInfo[] {
+export function parseOpenCodeModelsOutput(stdout: string): OpenCodeCatalogueModel[] {
   const lines = stdout.split('\n')
-  const models: OpenCodeModelInfo[] = []
+  const models: OpenCodeCatalogueModel[] = []
   let index = 0
   while (index < lines.length) {
     const line = lines[index]!.trim()
@@ -166,7 +236,7 @@ export function parseOpenCodeModelsOutput(stdout: string): OpenCodeModelInfo[] {
     } catch (error) {
       throw new Error(`opencode models: the block for "${id}" is not valid JSON (${String(error)})`)
     }
-    models.push(toModelInfo(id, parsed))
+    models.push(toCatalogueModel(id, parsed))
   }
   if (models.length === 0) {
     throw new Error('opencode models produced no readable model list')
@@ -177,7 +247,7 @@ export function parseOpenCodeModelsOutput(stdout: string): OpenCodeModelInfo[] {
 /** Ask the OpenCode CLI, read-only, for its own model list (#534). */
 export type OpenCodeModelCatalogPort = (options: {
   executablePath: string
-}) => Promise<OpenCodeModelInfo[]>
+}) => Promise<OpenCodeCatalogueModel[]>
 
 export interface OpenCodeModelCatalogOptions {
   /** Reads a batch shim for the detected binary — the same fs detection probes with. */

@@ -738,6 +738,13 @@ async function init(): Promise<void> {
     // Settings' Jev section (profile, default launch) can change between
     // one launch and the next (jev-routing-profiles T3).
     readPreferences: jevPreferenceStore.load,
+    // OpenCode's own RAW live catalogue (#547) — routeLaunch.ts's own
+    // capability derivation needs the cost/limit/capabilities/status facts
+    // listAgentModels' folded AgentModelCatalog already drops; `runtime` is
+    // still null this early exactly as the two closures above already
+    // account for, and readOpenCodeCatalogue never throws on its own (see
+    // runtime.ts's own comment), so `?? []` only ever covers a null runtime.
+    readOpenCodeCatalogue: async () => (await runtime?.readOpenCodeCatalogue()) ?? [],
     ...(jevDebugLog === undefined ? {} : { debugLog: jevDebugLog })
   })
   /* --- end of the #509 block ------------------------------------------------ */
