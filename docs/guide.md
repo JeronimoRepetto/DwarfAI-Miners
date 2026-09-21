@@ -39,9 +39,10 @@ observer, and eventually part game.
   a terminal emulator. The panel is already the interactive surface for the actions it supports;
   the underlying provider still owns the actual process and terminal.
 
-Three of the four providers can be **read** and **launched**; OpenCode is read-only, because no
-launch invocation for it has been measured yet. How far past reading each one can go differs by
-provider, and the [provider table](../README.md#provider-support) is the detail. More providers
+All four providers can be **read** and **launched**. How far past reading each one can go differs
+by provider — Claude and Antigravity can be **held**, so their replies reach the message panel;
+OpenCode's launch has no message channel yet — and the
+[provider table](../README.md#provider-support) is the detail. More providers
 can be added once their session artifacts and interaction paths meet the project's verification
 bar.
 
@@ -456,18 +457,27 @@ blocked, and cannot have its terminal focused. Its transcript can still be taile
 A session started from the panel's Add panel can also carry a **model and an effort level**. The
 effort levels are each CLI's own documented set, not one shared list — Claude Code accepts `low`,
 `medium`, `high`, `xhigh` and `max`; Codex those five plus `ultra`, which is Codex's alone;
-Antigravity only `low`, `medium` and `high` — and a level a CLI does not have is refused outright
+Antigravity only `low`, `medium` and `high`; OpenCode's own picker draws on `none`, `minimal`,
+`low`, `medium`, `high`, `xhigh`, `max` and `thinking` — the union of every key its live catalogue
+has named across a model with reasoning variants, since which of those a given model actually
+takes is read live per model rather than assumed — and a level a CLI does not have is refused outright
 rather than quietly dropped, because a launch that discarded `max` would start a real session at the
 CLI's default and report success. Model names are never hardcoded here: each provider's
 catalogue is read live from that CLI. For a Claude session the panel is holding, the same model and
 effort can be changed later, from the session strip in the mine.
 
-**OpenCode is observed only, and says so.** DwarfAI-Miners reads `opencode.db` — the SQLite store
-OpenCode 1.18.31 keeps under `~/.local/share/opencode` — and nothing else: no launch invocation for
-it has been measured, so the Add Panel shows it installed but not launchable, and its dwarf offers
-no Send or Boost, with the same fixed reason every un-launchable provider gets. Kick dismisses the
-dwarf from the board, and it returns on its own when its session moves — a new row, or the store's
-event log advancing for it — rather than only when a poll catches it working. There is no
+**OpenCode can be launched, and its dwarf still says what it cannot do yet.** DwarfAI-Miners
+reads `opencode.db` — the SQLite store OpenCode 1.18.31 keeps under `~/.local/share/opencode` —
+and nothing else. A launch is detached, the same shape Codex's and Antigravity's own launches
+already are: `opencode run` starts in the mine's folder with the model and effort chosen from a
+live `opencode models --verbose` catalogue, the prompt on stdin, and the dwarf is discovered
+afterwards by the ordinary poll reading the store back. Its composer still offers no Send — no
+message channel reaches a launched or observed OpenCode session yet — with the same fixed reason
+every provider with no channel gets, and Boost is unbuilt for every provider alike. Kick ends the
+process for a session this panel launched, the same as it does for a detached Codex or Antigravity
+launch; for a session opened outside this panel, nothing here can end it, so Kick only dismisses
+its dwarf from the board, and it returns on its own when its session moves — a new row, or the
+store's event log advancing for it — rather than only when a poll catches it working. There is no
 per-session file either, so there is nothing for the terminal-focus fallback to tail; the message
 panel's own feed, paged from the store, is the whole reading surface. An OpenCode dwarf mines no
 ore: token counts sit in the store but are not read onto the wire in this release.

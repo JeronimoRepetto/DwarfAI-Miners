@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createJevPreferenceStore, type JevPreferenceFsLike } from './jevPreferences'
+import type { DwarfProvider } from '../domain/types'
 
 /**
  * The persisted routing profile and default launch behind Settings' Jev
@@ -93,13 +94,25 @@ describe('createJevPreferenceStore — saving a valid default', () => {
   })
 })
 
+/*
+ * AMENDED for #534 (was: `default: { provider: 'opencode' }`, relying on
+ * OpenCode being the one detected provider this build never launched). #534
+ * made OpenCode launchable, so every `DWARF_PROVIDERS` member now passes the
+ * launch gate and no real value reaches the refusal these cases pin. The
+ * branch still exists for the next provider that is read before it can be
+ * started, so it is pinned with an id this build does not know, cast for the
+ * type: the gate reads `LAUNCHABLE_PROVIDERS.includes`, which is exactly what
+ * an unknown id fails.
+ */
+const NEVER_LAUNCHED = 'nonesuch' as DwarfProvider
+
 describe('createJevPreferenceStore — refusing a default the launch gate would reject', () => {
   it('refuses a provider this build never launches, and never touches the file', async () => {
     const { fs, events } = fakeFs()
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const result = await store.save({
       profile: 'balanced',
-      default: { provider: 'opencode' }
+      default: { provider: NEVER_LAUNCHED }
     })
     expect(result).toEqual({ saved: false, reason: 'default-provider-not-launchable' })
     expect(events).toHaveLength(0)
@@ -134,7 +147,7 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
     const good = { profile: 'balanced' as const, default: { provider: 'claude' as const } }
     await store.save(good)
 
-    await store.save({ profile: 'premium', default: { provider: 'opencode' } })
+    await store.save({ profile: 'premium', default: { provider: NEVER_LAUNCHED } })
 
     const rebooted = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     expect(await rebooted.load()).toEqual(good)

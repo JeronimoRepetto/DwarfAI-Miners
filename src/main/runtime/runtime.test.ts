@@ -10,7 +10,6 @@ import {
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
 import type { PlatformAdapters } from '../platform/platformAdapters'
 import { worktreePlatformAdapters } from '../platform/fakePlatformAdapters'
-import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import { mineIdForPath } from '../domain/aggregate'
 import { emptyLedger, type LedgerState } from '../domain/ledger'
 import { emptyMaterialTotals } from '../domain/materials'
@@ -50,6 +49,7 @@ import {
   type ClaudeModelCatalogPort
 } from '../sessionLaunch/sdkHeldSession'
 import type { AntigravityModelCatalogPort } from '../providers/antigravity/models'
+import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
@@ -6037,17 +6037,30 @@ describe('AgentRuntime.launchAgent (#86)', () => {
   })
 
   /*
-   * Issue #444. Unlike every other test in this block, `launchSession` is
-   * NOT overridden here — the point is to exercise the runtime's own DEFAULT
-   * composition (launchClaudeSession + platform.cliDetector), so the gate
-   * `launchRunner.ts` gained is proven through the real path a crafted IPC
-   * request would actually take, not against a seam only the test can see.
+   * AMENDED for #534 (was: 'refuses to launch OpenCode before ever probing
+   * its own detector', a detection verdict claiming `installed: true` with a
+   * path, asserting `cliDetector.detect` was NEVER called and the result was
+   * the fixed NOT_LAUNCHABLE refusal — proof that #444's own gate in
+   * `launchRunner.ts` refused OpenCode through the runtime's REAL default
+   * composition, `launchSession` deliberately left uninjected). That gate no
+   * longer refuses OpenCode (#534), so leaving `launchSession` uninjected
+   * here now would let this test reach the real default `run`
+   * (`runLaunchProcess`, an actual `child_process.spawn`) for a path this
+   * test invents — exactly the real-spawn-in-a-unit-test hazard `tdd`'s own
+   * "no real disk, ever" rule exists to catch, verified live: before this
+   * amendment the assertion failed with `OpenCode could not be started:
+   * /opt/opencode — ENOENT`, a REAL spawn attempt, not a mock.
+   *
+   * What is still worth proving through the real, uninjected composition is
+   * that the detector IS reached now (the fact that changed) — so this
+   * reports `installed: false` instead, which is what stays safe: OpenCode's
+   * own `notInstalledReason` returns from `launchClaudeSession` before
+   * `resolveProgram`/`run` are ever reached, on the same terms every other
+   * "not installed" case in this file already relies on.
    */
-  it('refuses to launch OpenCode before ever probing its own detector', async () => {
+  it('reaches its own detector for OpenCode now, refusing only because it is not installed', async () => {
     const cliDetector = {
-      detect: vi
-        .fn()
-        .mockResolvedValue({ cli: 'opencode', installed: true, path: '/opt/opencode' }),
+      detect: vi.fn().mockResolvedValue({ cli: 'opencode', installed: false }),
       peek: vi.fn().mockReturnValue('unprobed')
     }
     const runtime = new AgentRuntime({
@@ -6085,9 +6098,9 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     ).resolves.toEqual({
       launched: false,
       provider: 'opencode',
-      error: NOT_LAUNCHABLE
+      error: 'OpenCode is not installed on this machine.'
     })
-    expect(cliDetector.detect).not.toHaveBeenCalledWith('opencode')
+    expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
   })
 })
 
@@ -8893,6 +8906,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
   // AMENDED for #282 (added): the stem cliExecutableStem gives Antigravity —
   // its convention path is '.local/bin/agy', never the provider name itself.
   const ANTIGRAVITY_BIN = '/home/j/.local/bin/agy'
+  // AMENDED for #534 (added): the convention path for OpenCode's own stem —
+  // cliExecutableStem has no override for it, so this is `.local/bin/opencode`.
+  const OPENCODE_BIN = '/home/j/.local/bin/opencode'
 
   function runtimeWith(options: {
     claudeInstalled: boolean
@@ -8902,10 +8918,15 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     // exactly as Claude asks the SDK — see the fakes below.
     antigravityInstalled?: boolean
     antigravityModelCatalog?: AntigravityModelCatalogPort
+    // AMENDED for #534 (added): OpenCode now asks its own CLI live too, on
+    // the same terms as Antigravity above.
+    openCodeInstalled?: boolean
+    openCodeModelCatalog?: OpenCodeModelCatalogPort
   }) {
     const fs = new FakeFs()
     if (options.claudeInstalled) fs.addFile(CLAUDE_BIN, '#!/bin/sh\n')
     if (options.antigravityInstalled) fs.addFile(ANTIGRAVITY_BIN, '#!/bin/sh\n')
+    if (options.openCodeInstalled) fs.addFile(OPENCODE_BIN, '#!/bin/sh\n')
     const adapters: PlatformAdapters = {
       platform: 'linux',
       focusPid: async () => false,
@@ -8937,7 +8958,8 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
       onMinesUpdated: vi.fn(),
       claudeModelCatalog: options.claudeModelCatalog ?? (async () => []),
       codexModelHistory: options.codexModelHistory ?? (async () => []),
-      antigravityModelCatalog: options.antigravityModelCatalog ?? (async () => [])
+      antigravityModelCatalog: options.antigravityModelCatalog ?? (async () => []),
+      openCodeModelCatalog: options.openCodeModelCatalog ?? (async () => [])
     })
   }
 
@@ -9197,6 +9219,120 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
       })
       // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
       // the answer, so the count these cases pin grew from 3 to 4.
+      expect(list.catalogs).toHaveLength(4)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /*
+   * Issue #534. `opencode models --verbose` measured live: this mirrors the
+   * Antigravity block above exactly, including the same four cases (not
+   * installed, live success, throw, timeout) on the same terms.
+   */
+  it('answers OpenCode as none when the CLI is not installed', async () => {
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: false
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'none'
+    })
+  })
+
+  it("asks the CLI for OpenCode's own live models when installed", async () => {
+    const openCodeModelCatalog = vi.fn<OpenCodeModelCatalogPort>().mockResolvedValue([
+      {
+        value: 'opencode-go/glm-5.3',
+        displayName: 'GLM 5.3',
+        effortLevels: ['low', 'high', 'max']
+      }
+    ])
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: true,
+      openCodeModelCatalog
+    }).listAgentModels()
+
+    expect(openCodeModelCatalog).toHaveBeenCalledWith({ executablePath: OPENCODE_BIN })
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [
+        { value: 'opencode-go/glm-5.3', label: 'GLM 5.3', effortLevels: ['low', 'high', 'max'] }
+      ],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'provider'
+    })
+  })
+
+  it('never spawns anything when OpenCode is not installed', async () => {
+    const openCodeModelCatalog = vi.fn<OpenCodeModelCatalogPort>().mockResolvedValue([])
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: false,
+      openCodeModelCatalog
+    }).listAgentModels()
+
+    expect(openCodeModelCatalog).not.toHaveBeenCalled()
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'none'
+    })
+  })
+
+  it('answers OpenCode as source: none, never a rejection, when the spawn or the parse itself throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const openCodeModelCatalog = vi
+      .fn<OpenCodeModelCatalogPort>()
+      .mockRejectedValue(new Error('opencode models produced no readable model list'))
+
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: true,
+      openCodeModelCatalog
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'none'
+    })
+    expect(list.catalogs).toHaveLength(4)
+    warn.mockRestore()
+  })
+
+  it('answers OpenCode as source: none once the catalogue ask outruns its bound, rather than hanging', async () => {
+    vi.useFakeTimers()
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // Never resolves and never rejects — exactly a stuck CLI's own promise.
+      const openCodeModelCatalog = vi
+        .fn<OpenCodeModelCatalogPort>()
+        .mockReturnValue(new Promise(() => {}))
+
+      const pending = runtimeWith({
+        claudeInstalled: false,
+        openCodeInstalled: true,
+        openCodeModelCatalog
+      }).listAgentModels()
+      await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS)
+      const list = await pending
+
+      expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+        provider: 'opencode',
+        models: [],
+        efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+        source: 'none'
+      })
       expect(list.catalogs).toHaveLength(4)
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()

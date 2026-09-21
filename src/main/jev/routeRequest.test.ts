@@ -189,10 +189,17 @@ describe('mapEffortScore', () => {
     expect(mapEffortScore(provider, score, PROVIDER_EFFORT_LEVELS)).toBe(expected)
   })
 
+  /*
+   * AMENDED for #534 (was: passing `PROVIDER_EFFORT_LEVELS` unmodified,
+   * relying on OpenCode's own entry being `[]` — #534 gave it a real,
+   * non-empty boundary list). A synthetic table with one provider forced
+   * empty, since every real DWARF_PROVIDERS member now has a ladder.
+   */
   it('returns undefined for a provider with an empty effort ladder, at every score', () => {
-    expect(mapEffortScore('opencode', 0, PROVIDER_EFFORT_LEVELS)).toBeUndefined()
-    expect(mapEffortScore('opencode', 1.5, PROVIDER_EFFORT_LEVELS)).toBeUndefined()
-    expect(mapEffortScore('opencode', 3, PROVIDER_EFFORT_LEVELS)).toBeUndefined()
+    const noEffort = { ...PROVIDER_EFFORT_LEVELS, opencode: [] }
+    expect(mapEffortScore('opencode', 0, noEffort)).toBeUndefined()
+    expect(mapEffortScore('opencode', 1.5, noEffort)).toBeUndefined()
+    expect(mapEffortScore('opencode', 3, noEffort)).toBeUndefined()
   })
 })
 

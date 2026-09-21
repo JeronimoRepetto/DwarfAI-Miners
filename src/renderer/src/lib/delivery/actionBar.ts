@@ -58,10 +58,15 @@ const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
   // Antigravity dwarf runs in — the same shorthand 'claude -p' and
   // 'codex exec' already are, not the full argv.
   antigravity: 'agy --input-format text',
-  // #444. Unreachable in this build — OpenCode is never launched or held, so
-  // neither launchedNoInboxReason nor oneShotNoExitReason is ever called for
-  // it — but the record is exhaustive over DwarfProvider, so the arm must
-  // exist. `opencode run` is the documented headless form (exploration §2.4).
+  // AMENDED for #534 (was: "Unreachable in this build — OpenCode is never
+  // launched or held, so neither launchedNoInboxReason nor
+  // oneShotNoExitReason is ever called for it" — #444's own claim, made
+  // false by the measured `run` route joining OpenCode to
+  // LAUNCHABLE_PROVIDERS). A launched OpenCode dwarf is DETACHED, on the
+  // same terms as Codex's and Antigravity's above — no held-session engine
+  // for it — so `launchedNoInboxReason` is reachable for it now too; this
+  // string is still the documented headless form the measurement report
+  // verified (`opencode run -m … --format json`).
   opencode: 'opencode run'
 }
 
