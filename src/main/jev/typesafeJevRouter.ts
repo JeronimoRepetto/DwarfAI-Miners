@@ -40,6 +40,34 @@ import {
  */
 export const JEV_MIN_CONFIDENCE = 0.5
 
+/** The name of the dev-only routing-trace switch (issue #525). */
+const JEV_DEBUG_ENV_VAR = 'JEV_DEBUG'
+
+/**
+ * Whether this process should trace every Jev routing call to the console.
+ *
+ * Read straight from the real environment at the composition point, never
+ * through `AppConfig` — the omission is the point, exactly as
+ * `DWARFAI_SIMULATE`'s switch is kept out of `loadConfig` (see config.ts's
+ * simulation block for why: whatever `loadConfig` can reach, an installed
+ * app can be made to honour, and a flag that prints the person's own
+ * prompts must never be a setting a packaged app carries). Unlike
+ * `DWARFAI_PERF`, which is read at import time and so needs a real
+ * environment variable, this one is read after index.ts's `loadDotenv()`,
+ * so a repo `.env` line reaches it.
+ *
+ * The spellings mirror config.ts's `readFlag`: `1` or `true`, trimmed and
+ * case-insensitive, is on; absence, blank, `0`, `false` and anything else
+ * are off — the safe reading of an unconsidered answer is "print nothing",
+ * here as it is for inventing mines.
+ */
+export function jevDebugEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[JEV_DEBUG_ENV_VAR]
+  if (raw === undefined) return false
+  const normalized = raw.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true'
+}
+
 /**
  * Our own budget for "the launch must not hang". TypeSafe publishes no
  * latency figure for System One — a circulating "~100ms" is not in any
@@ -71,6 +99,16 @@ export interface CreateTypesafeJevRouterOptions {
   fetch?: typeof fetch
   /** Per-attempt timeout in ms; see DEFAULT_TIMEOUT_MS for why 8000. */
   timeoutMs?: number
+  /**
+   * Dev-console trace sink for every routing call that got as far as having
+   * a key (#525): one request line, then one answer or one fallback line, all
+   * prefixed `[jev:debug]` and each a single line. It carries the person's
+   * own prompt, so composition wires it only when JEV_DEBUG is on — and it
+   * bypasses `SILENT_LOGGER` entirely rather than raising the SDK's log level,
+   * whose debug mode dumps request bodies unredacted. The key appears in no
+   * payload this sink ever receives.
+   */
+  debugLog?: (line: string) => void
 }
 
 /** The SDK adapter for JevRouterPort — see this module's own comment. */
@@ -84,6 +122,20 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
       // only fail, and never a stray call this app cannot account for.
       if (apiKey === undefined) return { kind: 'fallback', reason: 'no-key' }
 
+      // #525: the opt-in trace. Everything it says goes through `debugLog`
+      // and nowhere else, so an absent sink means zero output AND zero clock
+      // reads — the same no-op-when-off shape perf.ts holds to. The key is
+      // read above and names no payload below: it must never be logged.
+      const debugLog = options.debugLog
+      const startedAt = debugLog === undefined ? undefined : Date.now()
+      const elapsedMs = (): number => (startedAt === undefined ? 0 : Date.now() - startedAt)
+      const emit = (event: string, payload: Record<string, unknown>): void => {
+        if (debugLog === undefined) return
+        // JSON.stringify escapes newlines inside `state`, so one emit is
+        // one physical line no matter what the person typed.
+        debugLog(`[jev:debug] ${event} ${JSON.stringify(payload)}`)
+      }
+
       const client = new TypeSafeClient({
         apiKey,
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
@@ -95,6 +147,12 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
       const modelCriteria = Object.fromEntries(
         request.modelChoices.map((entry) => [entry.key, entry.criteria])
       )
+
+      emit('request', {
+        state: request.state,
+        truncated: request.truncated,
+        choices: modelCriteria
+      })
 
       try {
         const result = await client.systemOne(
@@ -115,14 +173,29 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
         // never trusted on its own word: an id that fails to match one of
         // OUR OWN choices is an answer this launch cannot act on, however it
         // happened.
-        if (chosen === undefined) return { kind: 'fallback', reason: 'invalid-response' }
+        if (chosen === undefined) {
+          emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
+          return { kind: 'fallback', reason: 'invalid-response' }
+        }
 
         if (modelAnswer.confidence < JEV_MIN_CONFIDENCE) {
+          emit('fallback', {
+            reason: 'low-confidence',
+            confidence: modelAnswer.confidence,
+            elapsedMs: elapsedMs()
+          })
           return { kind: 'fallback', reason: 'low-confidence', confidence: modelAnswer.confidence }
         }
 
         const effortAnswer = result.answers.effort
         const effort = mapEffortScore(chosen.provider, effortAnswer.score, PROVIDER_EFFORT_LEVELS)
+
+        emit('answer', {
+          choice: chosen.key,
+          confidence: modelAnswer.confidence,
+          effortScore: effortAnswer.score,
+          inputTokens: result.usage.input_tokens
+        })
 
         return {
           kind: 'decision',
@@ -133,7 +206,9 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
           usage: { inputTokens: result.usage.input_tokens }
         }
       } catch (error) {
-        return { kind: 'fallback', reason: classifyError(error) }
+        const reason = classifyError(error)
+        emit('fallback', { reason, elapsedMs: elapsedMs() })
+        return { kind: 'fallback', reason }
       }
     }
   }
