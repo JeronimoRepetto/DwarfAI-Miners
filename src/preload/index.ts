@@ -47,8 +47,11 @@ import type {
   OpenMineId,
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  TypographyPreferences
+  TypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  JevSettings
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -57,8 +60,11 @@ import {
   isMessagePanelDragPhase,
   isMessagePanelSurface,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  parseTypographyPreferences
+  parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  parseJevApiKeyInput
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 
 /**
@@ -515,6 +521,20 @@ export interface DwarfAiMinersApi {
    */
   onTypographyPreferences: (listener: (preferences: TypographyPreferences) => void) => () => void
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /** Whether a TypeSafe key is configured, and why it might never be — Settings' control. */
+  getJevSettings: () => Promise<JevSettings>
+  /**
+   * Enter or replace the key. Parsed through the SAME shared parser the store
+   * reads, before it ever crosses — the discipline `setAudioPreferences`
+   * holds for its document — so a key the store would refuse anyway never
+   * reaches the bridge. Resolves with what main STORED; the key itself never
+   * comes back, on either side of a refusal.
+   */
+  setJevApiKey: (key: string) => Promise<JevSettings>
+  /** Forget the key. Resolves with what main STORED, the same discipline every write here holds. */
+  clearJevApiKey: () => Promise<JevSettings>
+  /* --- end of the #509 block ------------------------------------------------ */
 }
 
 const api: DwarfAiMinersApi = {
@@ -879,8 +899,26 @@ const api: DwarfAiMinersApi = {
       listener(parseTypographyPreferences(preferences))
     ipcRenderer.on(IPC_CHANNELS.typographyPreferencesChanged, wrapped)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.typographyPreferencesChanged, wrapped)
-  }
+  },
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  getJevSettings: () => ipcRenderer.invoke(IPC_CHANNELS.getJevSettings),
+  // Parsed through the SHARED parser before it crosses, the same reasoning
+  // setAudioPreferences carries: one parser, read by the store too, so a key
+  // the store would refuse anyway never reaches the bridge at all. Unlike
+  // that parser, this one THROWS on a key it cannot read (empty, too long, or
+  // carrying a character no key uses) rather than degrading — a rejected
+  // promise here is the honest end for a value nobody could have typed as a
+  // key, never a default nobody chose.
+  setJevApiKey: (key) => {
+    try {
+      return ipcRenderer.invoke(IPC_CHANNELS.setJevApiKey, parseJevApiKeyInput(key))
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  },
+  clearJevApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.clearJevApiKey)
+  /* --- end of the #509 block ------------------------------------------------ */
 }
 
 contextBridge.exposeInMainWorld('api', api)

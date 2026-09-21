@@ -59,6 +59,11 @@ function render(props: Record<string, unknown> = {}) {
       // flight. No existing prop or assertion changed.
       typography: { ...DEFAULT_TYPOGRAPHY_PREFERENCES },
       typographyApplying: false,
+      // AMENDED for #509: two more required props, the Jev API-key verdict and
+      // whether a save/clear is in flight. No existing prop or assertion
+      // changed.
+      jevSettings: { configured: false },
+      jevSaving: false,
       ...props
     }
   })
@@ -169,6 +174,26 @@ describe('SettingsPanel — sections in the design’s order', () => {
     const wrapper = render({ typographyApplying: true })
     expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('disabled')).toBeDefined()
   })
+
+  /*
+   * APPENDED for #509. Jev's Settings section is a maintainer-specified
+   * extension of `screens/settings.md`, like Audio and Notifications before
+   * it — composed after Notifications and before Data Base, per the task.
+   */
+  it('mounts the Jev section with the settings it was given', () => {
+    const wrapper = render({ jevSettings: { configured: true } })
+    expect(wrapper.find('.jev-configured').exists()).toBe(true)
+  })
+
+  it('draws Jev after Notifications and before Data Base', () => {
+    const sections = render()
+      .findAll('section')
+      .map((section) => section.classes()[0])
+    expect(sections.indexOf('jev-settings')).toBeGreaterThan(
+      sections.indexOf('notification-settings')
+    )
+    expect(sections.indexOf('jev-settings')).toBeLessThan(sections.indexOf('data-base-settings'))
+  })
 })
 
 describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
@@ -214,6 +239,22 @@ describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
     const wrapper = render()
     await wrapper.find('.messaging-font[data-font="roboto"]').trigger('click')
     expect(wrapper.emitted('typography-change')).toEqual([[{ messagingFont: 'roboto' }]])
+  })
+
+  // APPENDED for #509.
+  it('forwards a Jev save as jev-save, carrying the typed key', async () => {
+    const wrapper = render()
+    const input = wrapper.find('.jev-key-input')
+    ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
+    await input.trigger('input')
+    await wrapper.find('.jev-save').trigger('click')
+    expect(wrapper.emitted('jev-save')).toEqual([['sk-typesafe-abc123']])
+  })
+
+  it('forwards a Jev clear as jev-clear', async () => {
+    const wrapper = render({ jevSettings: { configured: true } })
+    await wrapper.find('.jev-clear').trigger('click')
+    expect(wrapper.emitted('jev-clear')).toHaveLength(1)
   })
 })
 
