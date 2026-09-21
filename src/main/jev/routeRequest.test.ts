@@ -179,15 +179,22 @@ describe('buildJevRouteRequest', () => {
     expect(result).toEqual({ kind: 'skip', reason: 'budget-exceeded' })
   })
 
+  /*
+   * AMENDED for #534 (was: reading `PROVIDER_EFFORT_LEVELS` unmodified and
+   * relying on OpenCode's own entry being `[]` — true at #509's time, before
+   * #534 gave OpenCode a real, non-empty boundary list of its own). Every
+   * `DWARF_PROVIDERS` member now has a non-empty ladder, so this is a fully
+   * synthetic scenario rather than a shortcut through a real provider's
+   * current gap — the table this test builds, not PROVIDER_EFFORT_LEVELS
+   * itself, is what has the empty entry now.
+   */
   it('says in its own criteria when a provider cannot act on the effort score', () => {
-    // A synthetic scenario: no real LAUNCHABLE_PROVIDERS member has an empty
-    // effort ladder today (see launchTuning.ts), so this pins the wording for
-    // the day one does, using opencode's already-empty table entry.
+    const noEffort = { ...PROVIDER_EFFORT_LEVELS, opencode: [] }
     const result = buildJevRouteRequest({
       prompt: 'anything',
       providers: [provider({ provider: 'opencode' })],
       catalogs: [catalog({ provider: 'opencode' })],
-      effortLevels: PROVIDER_EFFORT_LEVELS
+      effortLevels: noEffort
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
@@ -210,10 +217,17 @@ describe('mapEffortScore', () => {
     expect(mapEffortScore(provider, score, PROVIDER_EFFORT_LEVELS)).toBe(expected)
   })
 
+  /*
+   * AMENDED for #534 (was: passing `PROVIDER_EFFORT_LEVELS` unmodified,
+   * relying on OpenCode's own entry being `[]` — #534 gave it a real,
+   * non-empty boundary list). A synthetic table with one provider forced
+   * empty, since every real DWARF_PROVIDERS member now has a ladder.
+   */
   it('returns undefined for a provider with an empty effort ladder, at every score', () => {
-    expect(mapEffortScore('opencode', 0, PROVIDER_EFFORT_LEVELS)).toBeUndefined()
-    expect(mapEffortScore('opencode', 1.5, PROVIDER_EFFORT_LEVELS)).toBeUndefined()
-    expect(mapEffortScore('opencode', 3, PROVIDER_EFFORT_LEVELS)).toBeUndefined()
+    const noEffort = { ...PROVIDER_EFFORT_LEVELS, opencode: [] }
+    expect(mapEffortScore('opencode', 0, noEffort)).toBeUndefined()
+    expect(mapEffortScore('opencode', 1.5, noEffort)).toBeUndefined()
+    expect(mapEffortScore('opencode', 3, noEffort)).toBeUndefined()
   })
 })
 

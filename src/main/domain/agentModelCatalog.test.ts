@@ -3,10 +3,13 @@ import {
   antigravityModelCatalog,
   claudeModelCatalog,
   codexModelCatalog,
+  openCodeModelCatalog,
   unavailableAntigravityModelCatalog,
   unavailableClaudeModelCatalog,
   unavailableOpenCodeModelCatalog
 } from './agentModelCatalog'
+
+const OPENCODE_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking']
 
 describe('claudeModelCatalog (#239)', () => {
   it('carries a live answer as source: provider, with the effort levels the boundary checks', () => {
@@ -250,17 +253,82 @@ describe('unavailableAntigravityModelCatalog (#282)', () => {
 })
 
 /*
- * Issue #444. OpenCode has no live model-list command this app has measured,
- * so its catalogue is always `source: 'none'` with no effort levels — the
- * same answer PROVIDER_EFFORT_LEVELS.opencode gives, because no launch can
- * ever reach it to offer one.
+ * Issue #534. `opencode models --verbose` measured live: this now mirrors
+ * antigravityModelCatalog's own shape and its two describe blocks above,
+ * including the per-model `effortLevels` Antigravity's own catalogue does not
+ * carry.
  */
-describe('unavailableOpenCodeModelCatalog (#444)', () => {
-  it('answers source: none with no models and no effort levels', () => {
+describe('openCodeModelCatalog (#534)', () => {
+  it('carries a live answer as source: provider, with a model’s own effort levels', () => {
+    expect(
+      openCodeModelCatalog([
+        {
+          value: 'opencode-go/glm-5.3',
+          displayName: 'GLM 5.3',
+          effortLevels: ['low', 'high', 'max']
+        },
+        { value: 'opencode/big-pickle', displayName: 'Big Pickle', effortLevels: [] }
+      ])
+    ).toEqual({
+      provider: 'opencode',
+      models: [
+        { value: 'opencode-go/glm-5.3', label: 'GLM 5.3', effortLevels: ['low', 'high', 'max'] },
+        { value: 'opencode/big-pickle', label: 'Big Pickle' }
+      ],
+      efforts: OPENCODE_EFFORTS,
+      source: 'provider'
+    })
+  })
+
+  it('drops the label when the display name is empty', () => {
+    expect(
+      openCodeModelCatalog([{ value: 'opencode/model', displayName: '', effortLevels: [] }])
+    ).toEqual({
+      provider: 'opencode',
+      models: [{ value: 'opencode/model' }],
+      efforts: OPENCODE_EFFORTS,
+      source: 'provider'
+    })
+  })
+
+  it('drops the label when it only repeats the value, rather than showing it twice', () => {
+    expect(
+      openCodeModelCatalog([
+        { value: 'opencode/model', displayName: 'opencode/model', effortLevels: [] }
+      ])
+    ).toEqual({
+      provider: 'opencode',
+      models: [{ value: 'opencode/model' }],
+      efforts: OPENCODE_EFFORTS,
+      source: 'provider'
+    })
+  })
+
+  it('answers an empty catalogue for an installed CLI that named no models', () => {
+    expect(openCodeModelCatalog([])).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: OPENCODE_EFFORTS,
+      source: 'provider'
+    })
+  })
+})
+
+/*
+ * AMENDED for #534 (was: 'OpenCode has no live model-list command this app
+ * has measured, so its catalogue is always source: none with no effort
+ * levels' — #444's own permanent answer, before #534 measured `opencode
+ * models --verbose` and gave PROVIDER_EFFORT_LEVELS.opencode a non-empty
+ * boundary). This is now the FAILURE fallback only, on the same terms as
+ * unavailableAntigravityModelCatalog: `efforts` still carries the boundary
+ * list even while `models` stays empty.
+ */
+describe('unavailableOpenCodeModelCatalog (#534)', () => {
+  it('answers source: none with no models, but still the provider’s effort boundary', () => {
     expect(unavailableOpenCodeModelCatalog()).toEqual({
       provider: 'opencode',
       models: [],
-      efforts: [],
+      efforts: OPENCODE_EFFORTS,
       source: 'none'
     })
   })

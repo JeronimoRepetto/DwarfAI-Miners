@@ -80,9 +80,24 @@ export const PROVIDER_EFFORT_LEVELS: Record<DwarfProvider, readonly string[]> = 
   // from LAUNCHABLE_PROVIDERS — #237 gave it a launch path, and this is its
   // own documented three, verified live above).
   antigravity: ['low', 'medium', 'high'],
-  // #444. OpenCode is observed only — LAUNCHABLE_PROVIDERS does not grow —
-  // so no launch can ever carry an effort level for it.
-  opencode: []
+  // AMENDED for #534 (was: `[]` — #444 left OpenCode observed only, so no
+  // launch could ever carry an effort level). `run --variant <key>` is real
+  // (M1: `opencode run --help` documents `--variant <string>`, echoed back in
+  // `session.model.variant`), and the picker's effort SELECT is driven by
+  // this provider-wide boundary list alone: `effortPicker`
+  // (renderer/src/lib/launch/modelTuning.ts) and AddPanel.vue's effort
+  // `<select>` both read `AgentModelCatalog.efforts` — never a chosen
+  // model's own `ModelOption.effortLevels` — so leaving this `[]` would keep
+  // the effort row hidden for every OpenCode model regardless of what #534's
+  // live catalogue says a specific one supports. The list below is the union
+  // of every key M1 observed across the 19 of 34 measured models that carry
+  // a non-empty `variants` map, vendor-specific unlike Claude/Codex/
+  // Antigravity's own documented flags — so a value this list accepts can
+  // still be one the CHOSEN model's own block did not name. That is the
+  // CLI's refusal to give, on the same "present and unusable takes the whole
+  // request down" terms this file's own header states, rather than this app
+  // inventing a per-model gate the renderer does not read yet.
+  opencode: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking']
 }
 
 /**
