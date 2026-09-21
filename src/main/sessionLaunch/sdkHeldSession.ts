@@ -9,7 +9,7 @@ import {
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 import { resultTurnOutcome } from './claudeTurnOutcome'
-import type { HeldSessionSubagentSignal } from './heldCrew'
+import type { HeldSessionSubagentSignal, HeldTaskEndStatus } from './heldCrew'
 import {
   heldMessageEntries,
   isReplayedUserMessage,
@@ -136,6 +136,25 @@ const TERMINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
  *   a held subagent's model is ever stated: `SDKTaskStartedMessage` has no
  *   model field at all (#447). A turn with `parent_tool_use_id: null` is the
  *   root session's own and is not a crew signal — its model arrives on `init`.
+ * - That SAME message is also, since #510, the only place a subagent's own
+ *   CONCLUSION is ever stated. Neither of the messages that end a task carries
+ *   its result text: `SDKTaskUpdatedMessage`'s own doc comment says its patch
+ *   "Excludes … result" outright, and `SDKTaskNotificationMessage.summary`,
+ *   while present, sits beside fields shaped for a progress readout
+ *   (`SDKTaskProgressMessage` carries the same-named field for exactly that)
+ *   rather than being documented as the subagent's own final words — so this
+ *   reaches for the one text this app knows for certain the subagent itself
+ *   wrote: its own text blocks, read the identical way `heldMessageEntries`
+ *   already reads a root turn's. `heldCrew.ts`'s `task-text` signal carries
+ *   it; only the LAST one this crew hears for a call is kept.
+ * - The ending's own `status` (#510) travels on the `task-ended` signal
+ *   itself, verbatim off whichever message reported it — `task_updated`'s
+ *   `patch.status` or `task_notification`'s `status`. Both are already
+ *   checked against `TERMINAL_TASK_STATUSES` below before either ever builds
+ *   one, so the cast alongside each is the same liberty this file already
+ *   takes for `effort`/`permissionMode`: the value was checked against a
+ *   closed list at the boundary. What each status MEANS — concluded, errored
+ *   or interrupted — is heldCrew.ts's decision, under test, same as the text.
  */
 function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
   if (message.type === 'assistant' && message.parent_tool_use_id !== null) {
@@ -147,11 +166,20 @@ function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
         : []
     const content = message.message.content
     if (!Array.isArray(content)) return signals
+    const textBlocks: string[] = []
     for (const block of content) {
       if (block.type === 'tool_use') {
         signals.push({ kind: 'tool-call', toolUseId: block.id, insideToolUseId })
+      } else if (block.type === 'text') {
+        textBlocks.push(block.text)
       }
     }
+    // Joined the same way heldMessageEntries joins a finished message's own
+    // text blocks. Absent when this turn wrote none (a tool-call-only turn,
+    // above all) — never an empty string standing in for words the subagent
+    // never said.
+    const text = textBlocks.join('\n')
+    if (text !== '') signals.push({ kind: 'task-text', insideToolUseId, text })
     return signals
   }
   if (message.type !== 'system') return []
@@ -173,12 +201,13 @@ function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
   if (message.subtype === 'task_updated') {
     const status = message.patch.status
     return status !== undefined && TERMINAL_TASK_STATUSES.has(status)
-      ? [{ kind: 'task-ended', taskId: message.task_id }]
+      ? [{ kind: 'task-ended', taskId: message.task_id, status: status as HeldTaskEndStatus }]
       : []
   }
   if (message.subtype === 'task_notification') {
-    return TERMINAL_TASK_STATUSES.has(message.status)
-      ? [{ kind: 'task-ended', taskId: message.task_id }]
+    const status = message.status
+    return TERMINAL_TASK_STATUSES.has(status)
+      ? [{ kind: 'task-ended', taskId: message.task_id, status: status as HeldTaskEndStatus }]
       : []
   }
   return []

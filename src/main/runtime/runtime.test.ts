@@ -8593,7 +8593,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       // The observed sessions' own rule: a session is the foreman whether or
       // not it currently has agents out, so promotion does not reverse when the
       // last one finishes. Both paths say the same thing about the same dwarf.
-      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1' })
+      // AMENDED for #510: status is now required on this signal's type.
+      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1', status: 'completed' })
       await runtime.refresh()
       runtime.stop()
       // The rank alone: the finished subagent is still on the board, walking
@@ -8611,7 +8612,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
       port.reportSubagent(0, launched('a1'))
       await runtime.refresh()
-      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1' })
+      // AMENDED for #510: status is now required on this signal's type.
+      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1', status: 'completed' })
       await runtime.refresh()
       runtime.stop()
 

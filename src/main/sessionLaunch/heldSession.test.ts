@@ -754,7 +754,8 @@ describe('stampHeldRank', () => {
     // has agents out. Deriving the rank from the headcount is what made the
     // same dwarf swap identity mid-session (claudeProvider).
     const crew = crewThatCoordinated()
-    crew.apply({ kind: 'task-ended', taskId: 'a1' })
+    // AMENDED for #510: status is now required on this signal's type.
+    crew.apply({ kind: 'task-ended', taskId: 'a1', status: 'completed' })
     const stamped = stampHeldRank(board(), () => ({ held: true, crew }))
     expect(stamped[0]!.dwarfs[0]!.role).toBe('foreman')
   })

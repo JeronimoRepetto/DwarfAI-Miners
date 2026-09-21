@@ -421,7 +421,11 @@ export class HeldSessionRegistry {
     // and a launch signal dropped is a dwarf that never appears at all, for the
     // life of the session. The asks above accept that race because a dropped
     // ask is re-asked; a launch is announced once.
-    const crew = new HeldCrew()
+    // The same clock every other timestamp on this record is stamped with
+    // (#510's own endedAt among them), rather than each reaching for
+    // Date.now() on its own — the reasoning HeldSessionStartRequest.now's
+    // own comment states for the two held engines.
+    const crew = new HeldCrew(this.now)
     try {
       const handle = await engine({
         executablePath: detection.path,
