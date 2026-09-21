@@ -1,4 +1,19 @@
+import type { SDKResultSuccess } from '@anthropic-ai/claude-agent-sdk'
 import { boundTurnText, type TurnOutcome, type TurnOutcomeKind } from '../domain/types'
+
+type Assert<T extends true> = T
+
+/**
+ * Compile-time tripwire (#510). `ClaudeResultMessage` below keeps `result`
+ * optional so a real error result is assignable to it, and that leniency has
+ * one failure mode: an SDK release that renamed the success result's text
+ * field would still compile, and every concluded turn would then be recorded
+ * as an empty conclusion without a single test noticing — `sdkHeldSession.ts`
+ * has no test through the live SDK stream. This alias fails `pnpm typecheck`
+ * the moment `SDKResultSuccess['result']` stops being a string, which is the
+ * only place that rename could be caught before it shipped.
+ */
+export type SuccessResultIsText = Assert<SDKResultSuccess['result'] extends string ? true : false>
 
 /**
  * The slice of Claude's own `result` message this function reads — narrower
