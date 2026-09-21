@@ -66,6 +66,33 @@ resolved config object**, so the `userData` file cannot carry it. A tripwire tes
 that. If you are tempted to route a development-only switch through the normal config path, read
 [`simulated-valley`](../simulated-valley/SKILL.md) first — that omission is the point.
 
+## A secret is not a setting either
+
+`jevApiKey.ts` (#509) is the second thing that never enters the three layers above, for a
+different reason than the simulated valley's switch: a TypeSafe API key is not an operator
+preference at all — it is a secret the person types into Settings themselves, and this app never
+ships or generates one. It lives in its own tiny userData document, exactly like every preference
+above, except that the document may never hold the key itself — only ciphertext, behind an
+injected `safeStorage` port (`src/main/adapters/safeStorageLike.ts`), the same "real thing behind
+an interface" discipline `FsLike` holds for the filesystem.
+
+A secret earns two rules the ordinary shape/value asymmetry above does not need, because failing a
+secret closed is cheaper than failing it open:
+
+- **No plaintext fallback, ever.** Where the OS offers no encryption
+  (`safeStorage.isEncryptionAvailable()` false — commonly a Linux box with no real keyring behind
+  it), `save` refuses to persist the key rather than writing it in the clear, and the option shows
+  disabled with that reason instead of silently degrading to storing it anyway.
+- **An undecryptable file degrades to unconfigured, never to a startup failure.** Corrupt or
+  unreadable ciphertext is the ordinary shape error this skill already names above —
+  indistinguishable from a file that was never written — so it is treated the same way: `load`
+  warns by name and reports "not configured" rather than blocking the app from starting over one
+  bad file.
+
+Adding a second secret? Read `jevApiKey.ts`'s own module comment before reaching for the
+three-layer resolver above — a secret is stored per-setting and encrypted, and it is never resolved
+alongside `AppConfig` at all.
+
 ## References
 
 - [`README.md`](../../README.md) — the user-facing Configuration section, including the

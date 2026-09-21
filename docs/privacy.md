@@ -1,10 +1,12 @@
 # Privacy and data boundary
 
-DwarfAI-Miners is a local desktop app. Everything it does happens on your machine: it reads
+DwarfAI-Miners is a local desktop app. Almost everything it does happens on your machine: it reads
 the local files Claude Code, Codex, Antigravity and OpenCode already write, renders them in a
-floating panel, and keeps a handful of small files of its own. This document states exactly what
-is read, what is stored, and what is transmitted. Every claim names the source that implements it,
-so it can be checked rather than trusted.
+floating panel, and keeps a handful of small files of its own. The one exception is Jev, an
+optional launch assist that calls out to TypeSafe's API — off unless you turn it on, and covered
+in full in [What it transmits](#what-it-transmits). This document states exactly what is read,
+what is stored, and what is transmitted. Every claim names the source that implements it, so it
+can be checked rather than trusted.
 
 ## What it reads
 
@@ -99,7 +101,7 @@ Everything the app keeps lives in Electron's per-user data directory:
 | macOS    | `~/Library/Application Support/DwarfAI-Miners` |
 | Linux    | `~/.config/DwarfAI-Miners`                     |
 
-Twelve entries: eleven the app writes, and one (`config-v1.json`) it only reads. All but
+Thirteen entries: twelve the app writes, and one (`config-v1.json`) it only reads. All but
 `hook-token` and the SQLite database are plain JSON or an empty marker, so you can read them in any
 text editor.
 
@@ -116,11 +118,12 @@ setting:
 
 **Markers and secrets:**
 
-| File                          | Purpose                                                                                                                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `autostart-default-v1.marker` | Remembers that the packaged app already applied its one-time autostart default, so a tray opt-out is never overridden (`src/main/index.ts`).                                         |
-| `hooks-enabled.marker`        | Remembers that you opted into instant updates (`src/main/hooks/hookChannel.ts`).                                                                                                     |
-| `hook-token`                  | The per-install random secret that authenticates hook requests. It is embedded in the hook commands in your own Claude config and goes nowhere else (`src/main/hooks/hookToken.ts`). |
+| File                          | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `autostart-default-v1.marker` | Remembers that the packaged app already applied its one-time autostart default, so a tray opt-out is never overridden (`src/main/index.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `hooks-enabled.marker`        | Remembers that you opted into instant updates (`src/main/hooks/hookChannel.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `hook-token`                  | The per-install random secret that authenticates hook requests. It is embedded in the hook commands in your own Claude config and goes nowhere else (`src/main/hooks/hookToken.ts`).                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `jev-api-key-v1.json`         | The TypeSafe API key you type into Settings for Jev, holding only Electron `safeStorage` ciphertext — base64 in `{ "encrypted": "..." }` — never the plaintext key. Clearing the key rewrites the file to `{}`. There is no plaintext fallback: on a machine (typically Linux, with no real keyring behind it) where `safeStorage.isEncryptionAvailable()` reads false, nothing is ever written here and the option shows why it is off instead (`src/main/shell/jevApiKey.ts`, `src/main/adapters/safeStorageLike.ts`). See [What it transmits](#what-it-transmits) for what the key is used for. |
 
 **Read, never written:**
 
@@ -176,9 +179,82 @@ in place, and no message text the panel displays is written to disk by this app.
 
 ## What it transmits
 
-Nothing. The application code contains no outbound HTTP client, no telemetry, no analytics,
-no crash reporting, and no auto-updater — session data, transcripts, and project paths are
-never sent anywhere by DwarfAI-Miners. Three boundaries keep that claim precise:
+The application code contains exactly one outbound HTTP client, and it exists for exactly one
+reason: Jev, an optional launch assist that asks TypeSafe's API to pick a provider, model and
+effort for a prompt before you launch it (#509). Outside of Jev there is still no telemetry, no
+analytics, no crash reporting, and no auto-updater — session data, transcripts, and project paths
+are never sent anywhere by DwarfAI-Miners. What follows says exactly what that one call carries,
+then the boundaries that keep everything else local.
+
+### Jev: the one outbound call
+
+Jev fires only when both are true: you have entered your own TypeSafe key in Settings, and turned
+on **Let Jev choose** in the Add Panel. With both true, pressing Enter on the composer sends
+**one** request to `https://api.typesafe.ai/v1/systemone`, over TypeSafe's own `@typesafe-ai/sdk`
+(`createTypesafeJevRouter`, `src/main/jev/typesafeJevRouter.ts`; the exact URL is pinned in
+`typesafeJevRouter.test.ts`), before the launch itself goes out
+(`submit`, `src/renderer/src/composables/useAgentLaunch.ts`).
+
+**What leaves, in that one request:**
+
+- **The prompt, as typed.** If it is too long for Jev's own budget, the head and the tail are kept
+  and the cut is marked in between; the request also says whether it was cut
+  (`buildJevRouteRequest`, `truncateHeadTail`, `src/main/jev/routeRequest.ts`).
+- **The providers this machine can launch right now**, each named by its product name, and every
+  model it offers by id and label — or, for a provider reporting none, a line saying the CLI picks
+  its own default — so Jev is only ever choosing among things this app could actually start
+  (`modelChoiceCriteria`, `buildJevRouteRequest`, `src/main/jev/routeRequest.ts`).
+- **A fixed four-level difficulty rubric**, asked of every request the same way regardless of which
+  provider ends up chosen (`EFFORT_RUBRIC`, `src/main/jev/routeRequest.ts`).
+- **The TypeSafe API key**, as the request's bearer token — read from the encrypted store at call
+  time and never logged (`createTypesafeJevRouter`, `src/main/jev/typesafeJevRouter.ts`).
+
+**What never leaves:** project paths, session data, transcripts, usernames, or anything else about
+this machine beyond the prompt's own text. `routeRequest.test.ts` pins exactly that: a test builds
+a request from a prompt containing a fake local path and asserts the path appears in the prompt
+state and nowhere else in the request (`'carries nothing about this machine but the prompt
+itself'`, `src/main/jev/routeRequest.test.ts`).
+
+**What comes back, and what is done with it:** one decision — a provider, an optional model, an
+optional effort level, and Jev's own confidence in the choice — or a typed reason it could not
+decide (`JevRouteLaunchResult`, `src/shared/contracts.ts`). Before that answer ever reaches the
+renderer, main checks it against the same gate every launch goes through (`parseLaunchTuning`) and
+confirms the chosen provider is still one this machine can launch
+(`createJevLaunchRouter`, `src/main/jev/routeLaunch.ts`) — nothing crosses that `agent:launch`
+could not itself carry out. The decision is then shown in a card, applied to the pickers, and can
+be overridden or dismissed; it is never a launch by itself; pressing Launch again is what actually
+starts the session (`src/renderer/src/components/launch/AddPanel.vue`,
+`src/renderer/src/composables/useAgentLaunch.ts`).
+
+**When it does not happen:** no key is configured, the toggle is off, or the option is hidden
+outright (no key) or shown disabled with the reason (this machine has no encrypted place to keep
+one) — `JevSettings`/`JevUnavailableReason`, `src/shared/contracts.ts`. Whatever goes wrong after
+that — unreachable, rate-limited, unauthorized, timed out, a low-confidence or unusable answer, no
+launchable provider, or a request too large for TypeSafe's own budget — degrades to a typed
+fallback reason, and the launch still happens on the pickers' current values, saying that it did
+(`classifyError`, `src/main/jev/typesafeJevRouter.ts`; `createJevLaunchRouter`,
+`src/main/jev/routeLaunch.ts`). The whole call is bounded at 15 seconds of this app's own
+wall-clock time (`DEFAULT_TOTAL_BUDGET_MS`, `src/main/jev/routeLaunch.ts`), whatever TypeSafe's own
+retries do underneath, so Jev can delay a launch but never hang one.
+
+**Retention on TypeSafe's side.** This app controls only what it sends, not what TypeSafe keeps
+once it has been sent, and this document states only what TypeSafe's own primary sources say
+rather than paraphrasing beyond them. TypeSafe's [Privacy Policy](https://typesafe.ai/legal/privacy-policy)
+states it will not "train or fine tune any artificial intelligence or machine learning models on
+your prompts or other Input," and that it retains personal data "for as long as reasonably
+necessary to provide you with the Services, or otherwise in support of our business or commercial
+purposes" — no fixed number of days is published there. Its
+[Data Processing Agreement](https://typesafe.ai/legal/data-processing) states the same open-ended
+standard for data it processes on a customer's behalf: retained "for as long as necessary taking
+into account the purpose of the Processing." Neither document verifies a specific retention period
+for a System One request, so this document does not claim one. TypeSafe's
+[legal index](https://docs.typesafe.ai/legal) separately names zero data retention as an option
+for enterprise customers, reachable at `privacy@typesafe.ai`; this app makes no claim about which
+tier its own requests fall under, and you would need to arrange that directly with TypeSafe.
+
+### Everything else stays local
+
+Three boundaries keep the rest of this app from opening a socket of its own:
 
 - **The hooks channel is inbound and loopback-only.** The listener binds `127.0.0.1` and is
   never reachable from the network; requests without the per-install token are dropped before
