@@ -119,6 +119,24 @@ process probe is added in this slice: `textDelivery` returns `null` for every Op
 `SimulatedProvider` does, and `LAUNCHABLE_PROVIDERS`/`HELDABLE_PROVIDERS` do not gain `'opencode'`.
 Only a live process check could ever add a join here, and none is attempted.
 
+## Row 5b — no port join for a TUI-started server — NEGATIVE `[V]`
+
+Measured 2026-09-21, OpenCode 1.18.31, Windows 11, read-only (`Get-CimInstance Win32_Process`,
+`Get-NetTCPConnection`). Two interactive OpenCode TUI processes were running at the time. Neither
+owned a TCP socket in LISTEN state, and neither did any of their child processes. The only
+established TCP connection from a TUI process went to an unrelated editor's local service, not to
+an OpenCode server.
+
+**Consequence:** on this build, the TUI's own internal server — confirmed by Row 3's residue note
+to be a separate process from the TUI itself — is not reachable from another process **by port**,
+and (Row 5) `opencode.db` carries no pid, process, host or port column either. There is no registry
+to consult by any route this app has. A session opened outside this panel cannot be addressed from
+the outside without guessing, and this project refuses to guess (#231): `chatAction`
+(`src/renderer/src/lib/delivery/actionBar.ts`) now names this explicitly for an observed OpenCode
+dwarf (`observedOpenCodeNoChannelReason`) instead of the generic no-channel placeholder (#507),
+and it stays a refusal — not a "not yet" — until #445 gives a **panel-launched** OpenCode session a
+channel this row's absence does not apply to.
+
 ## Row 10 — native binary and detection `[V]`
 
 The native Windows binary runs cleanly through `npx opencode-ai`; WSL is not required. A
@@ -169,6 +187,8 @@ wrote a byte; a fresh provider instance against the same store answered `idle` a
 
 - No `storage/` JSON tree on this build (Row 1).
 - No pid, process, host or port column anywhere in the schema (Row 5).
+- No TUI-started OpenCode process, or any of its children, holds a listening TCP port — there is
+  no port-based join to a session started outside this panel either (Row 5b).
 - No per-session JSONL transcript file (Row 2).
 - `session_message` and `session_input` stay empty for both an interactive-TUI turn and (by
   inference from the identical schema and the measured negative) a headless invocation; nothing in
