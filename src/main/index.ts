@@ -192,6 +192,22 @@ function shortcutPlatform(): ShortcutPlatform {
   return 'other'
 }
 
+/**
+ * The `warn` every port here is handed.
+ *
+ * Every one of those ports declares its second argument OPTIONAL — `warn?:
+ * (message: string, error?: unknown) => void` — and several call sites use
+ * the one-argument form because they already put the cause in the sentence.
+ * Passing `error` straight through then printed a bare `undefined` on the end
+ * of a line somebody is reading precisely because something went wrong (#555,
+ * observed as "...is not valid JSON undefined"). The caller is obeying the
+ * contract; this is the side that was not.
+ */
+function warnWithOptionalCause(message: string, error?: unknown): void {
+  if (error === undefined) console.warn(message)
+  else console.warn(message, error)
+}
+
 function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.hidePanel)
   ipcMain.removeAllListeners(IPC_CHANNELS.raisePanel)
@@ -651,7 +667,7 @@ async function init(): Promise<void> {
     isPackaged: app.isPackaged,
     markerPath: join(app.getPath('userData'), 'autostart-default-v1.marker'),
     enable: enableAutostart,
-    warn: (message, error) => console.warn(message, error)
+    warn: warnWithOptionalCause
   })
 
   // The pin ("always on top") preference lives next to the autostart marker
@@ -1010,7 +1026,7 @@ async function init(): Promise<void> {
     opencodeStoreRoot: expandHomePath(config.providers.opencode.storeRoot),
     credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
     now: Date.now,
-    warn: (message, error) => console.warn(message, error)
+    warn: warnWithOptionalCause
   })
     .then((result) => {
       if (!result.ran) return
@@ -1047,7 +1063,7 @@ async function init(): Promise<void> {
       runtime?.nudge()
     },
     log: (message) => console.log(message),
-    warn: (message, error) => console.warn(message, error)
+    warn: warnWithOptionalCause
   })
   await hooks.restore()
 

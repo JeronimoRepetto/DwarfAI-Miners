@@ -1,4 +1,5 @@
 import type { DirEntry, FileStat, FsLike } from './fsLike'
+import { parseJsonText } from './jsonText'
 
 interface FakeFile {
   content: string
@@ -74,7 +75,10 @@ export class FakeFs implements FsLike {
     await this.onBeforeRead?.(path)
     const file = this.files.get(normalize(path))
     if (!file) throw new Error(`FakeFs: no such file ${path}`)
-    return JSON.parse(file.content)
+    // In step with NodeFs (#555): both tolerate the BOM a Windows editor
+    // writes, because a fake that parsed differently from the real adapter
+    // would make every test that reads through it prove the wrong thing.
+    return parseJsonText(file.content)
   }
 
   async listDir(path: string): Promise<DirEntry[]> {
