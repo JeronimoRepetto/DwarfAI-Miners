@@ -1,25 +1,34 @@
-import { parseLaunchTuning, PROVIDER_EFFORT_LEVELS } from '../domain/launchTuning'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
+  JevFallbackReason,
+  JevPreferences,
   JevRouteLaunchRequest,
   JevRouteLaunchResult
 } from '../domain/types'
+import { MODEL_CAPABILITIES } from './capabilities/modelCapability'
 import type { JevRouteOutcome, JevRouterPort } from './jevRouterPort'
+import { decideLaunch } from './routeDecision'
 import { buildJevRouteRequest } from './routeRequest'
 
 /**
  * The main-side service behind the `jev:route` IPC channel (#509): turns one
  * launch prompt into a routing SUGGESTION — never a launch itself, see
  * `JevRouteLaunchResult`'s own comment in contracts.ts — by asking the
- * injected `JevRouterPort` and validating whatever it answers before it is
- * ever shown.
+ * injected `JevRouterPort` for Jev's own answers and `routeDecision.ts`'s
+ * `decideLaunch` for what they mean, before either is ever shown.
  *
- * `listProviders`/`listModels` are asked FRESH on every call, exactly like
- * `useAgentLaunch.open` on the renderer side: the choice set has to be what
- * this machine can launch RIGHT NOW, not a catalogue snapshot from whenever
- * this service was composed, because a CLI can be installed or removed
- * between one launch and the next.
+ * `listProviders`/`listModels`/`readPreferences` are asked FRESH on every
+ * call, exactly like `useAgentLaunch.open` on the renderer side: the choice
+ * set has to be what this machine can launch RIGHT NOW, not a snapshot from
+ * whenever this service was composed — a CLI can be installed or removed,
+ * and Settings' Jev section can change, between one launch and the next.
+ *
+ * request v2 (jev-routing-profiles T3) drops the old belt-and-braces
+ * "is the decided provider still launchable" re-check that lived here: the
+ * SAME `providers` list this call fetched is what `decideLaunch` derives its
+ * OWN provider from (never outside `launchableProviders`), so the property
+ * is now held by construction rather than by a second, redundant check.
  */
 
 /**
@@ -39,6 +48,8 @@ export interface CreateJevLaunchRouterOptions {
   listProviders: () => Promise<AgentProviderOption[]>
   /** Every provider's own model catalogue, asked fresh — same reason as `listProviders`. */
   listModels: () => Promise<AgentModelCatalog[]>
+  /** The routing profile and default launch Settings holds, asked fresh — same reason as `listProviders`. */
+  readPreferences: () => Promise<JevPreferences>
   /** Overridable for tests; see `DEFAULT_TOTAL_BUDGET_MS` for why 15000. */
   totalBudgetMs?: number
   /** Injected clock, so a failure log can note how long the call ran without a real timer. */
@@ -75,19 +86,37 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
   async function route(request: JevRouteLaunchRequest): Promise<JevRouteLaunchResult> {
     const startedAt = now()
     try {
-      const [providers, models] = await Promise.all([options.listProviders(), options.listModels()])
+      const [providers, models, preferences] = await Promise.all([
+        options.listProviders(),
+        options.listModels(),
+        options.readPreferences()
+      ])
+      const userDefault = preferences.default
+
+      // Every fallback this call ever returns goes through here, so the
+      // user's own configured default is attached uniformly — whether Jev
+      // could not be asked at all (no-key, unreachable, timeout, ...) or
+      // `decideLaunch` itself refused a derived pairing. Absent exactly when
+      // no default is configured, which keeps today's behaviour unchanged
+      // (the decisions doc's own words: "If no default is set, today's
+      // behaviour stays").
+      const fallback = (reason: JevFallbackReason, confidence?: number): JevRouteLaunchResult => ({
+        kind: 'fallback',
+        reason,
+        ...(confidence === undefined ? {} : { confidence }),
+        ...(userDefault.provider === undefined ? {} : { fallbackTo: userDefault })
+      })
 
       const built = buildJevRouteRequest({
         prompt: request.prompt,
-        providers,
-        catalogs: models,
-        effortLevels: PROVIDER_EFFORT_LEVELS
+        routingProfile: preferences.profile,
+        providers
       })
       if (built.kind === 'skip') {
         // Both of buildJevRouteRequest's own skip reasons ('no-launchable-provider',
         // 'budget-exceeded') are already members of JevFallbackReason, so this
         // is a direct pass-through rather than a second mapping to keep in step.
-        return { kind: 'fallback', reason: built.reason }
+        return fallback(built.reason)
       }
 
       const controller = new AbortController()
@@ -103,45 +132,28 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
       }
 
       if (outcome.kind === 'fallback') {
-        return {
-          kind: 'fallback',
-          reason: outcome.reason,
-          ...(outcome.confidence === undefined ? {} : { confidence: outcome.confidence })
-        }
+        return fallback(outcome.reason, outcome.confidence)
       }
 
-      // A decision this app's own launch gate refuses is never carried out —
-      // the choice set came from the live catalogue, but parseLaunchTuning is
-      // the single source of truth for what a launch actually accepts (see
-      // launchTuning.ts's own module comment).
-      const stillLaunchable = providers.some(
-        (option) => option.provider === outcome.provider && option.launchable
-      )
-      if (!stillLaunchable) {
-        // Belt and braces: buildJevRouteRequest only ever offers launchable
-        // providers as choices, but the live set could have changed between
-        // building the request and the router's answer coming back.
-        return { kind: 'fallback', reason: 'invalid-response' }
-      }
-      const tuning = parseLaunchTuning(outcome.provider, {
-        ...(outcome.model === undefined ? {} : { model: outcome.model }),
-        ...(outcome.effort === undefined ? {} : { effort: outcome.effort })
+      const decided = decideLaunch({
+        answers: outcome,
+        profile: preferences.profile,
+        providers,
+        catalogs: models,
+        capabilities: MODEL_CAPABILITIES,
+        userDefault
       })
-      if (tuning === null) {
-        return { kind: 'fallback', reason: 'invalid-response' }
+      if (decided.kind === 'fallback') {
+        return fallback(decided.reason)
       }
 
-      return {
-        kind: 'decision',
-        provider: outcome.provider,
-        ...(tuning.model === undefined ? {} : { model: tuning.model }),
-        ...(tuning.effort === undefined ? {} : { effort: tuning.effort }),
-        confidence: outcome.confidence,
-        truncated: built.request.truncated
-      }
+      return { ...decided, truncated: built.request.truncated }
     } catch (error) {
       // Never thrown onward — a launch must always have something honest to
       // fall back to. Logged WITHOUT the prompt, only how long the call ran.
+      // No `fallbackTo` here: the failure may be the preferences read itself,
+      // so this is the one fallback that never guesses a default it could
+      // not actually confirm.
       console.warn(`[jev] Route request failed after ${now() - startedAt}ms:`, error)
       return { kind: 'fallback', reason: 'invalid-response' }
     }

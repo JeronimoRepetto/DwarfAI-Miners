@@ -12,53 +12,83 @@ import type { JevRouteRequest } from './jevRouterPort'
 import {
   EFFORT_QUESTION_INSTRUCTIONS,
   EFFORT_RUBRIC,
-  MODEL_QUESTION_INSTRUCTIONS,
-  mapEffortScore
+  IS_TRIVIAL_CRITERIA,
+  IS_TRIVIAL_INSTRUCTIONS,
+  MODEL_TIER_CRITERIA,
+  MODEL_TIER_QUESTION_INSTRUCTIONS,
+  NEEDS_LARGE_CONTEXT_CRITERIA,
+  NEEDS_LARGE_CONTEXT_INSTRUCTIONS,
+  PROVIDER_QUESTION_INSTRUCTIONS
 } from './routeRequest'
-import {
-  JEV_MIN_CONFIDENCE,
-  classifyError,
-  createTypesafeJevRouter,
-  jevDebugEnabled
-} from './typesafeJevRouter'
+import { classifyError, createTypesafeJevRouter, jevDebugEnabled } from './typesafeJevRouter'
+
+/*
+ * request v2 (jev-routing-profiles T3) rewrites this suite around the new
+ * five-question shape. Two prior sections are REMOVED outright rather than
+ * amended, both because the scenario they pinned no longer exists:
+ * - `JEV_MIN_CONFIDENCE` / "degrades to the pickers below the confidence
+ *   floor": the adapter no longer gates on one overall confidence — every
+ *   per-question floor now resolves to a safe default in `routeDecision.ts`
+ *   instead of refusing the whole call (see typesafeJevRouter.ts's own
+ *   module comment).
+ * - the matching "low-confidence" line in the debugLog trace tests, for the
+ *   same reason.
+ */
 
 function routeRequest(overrides: Partial<JevRouteRequest> = {}): JevRouteRequest {
   return {
-    state: 'fix the bug in the parser',
+    prompt: 'fix the bug in the parser',
+    routingProfile: 'balanced',
     truncated: false,
-    modelChoices: [
-      {
-        key: 'claude:sonnet-4.5',
-        provider: 'claude',
-        model: 'sonnet-4.5',
-        criteria: 'Claude Code, running the "sonnet-4.5" model.'
+    providerCriteria: {
+      claude: {
+        what: 'Claude Code — runs as a held session this panel keeps live. Offers balanced and frontier models.',
+        examples: ['Keep working on this while I watch.', 'Investigate this bug and report back.']
+      },
+      no_preference: {
+        what: 'No requirement for a specific provider or its tooling — any capable provider works.',
+        examples: ['Fix this bug.', 'Add this feature.']
       }
-    ],
+    },
     ...overrides
   }
 }
 
 function successBody(
   overrides: Partial<{
-    choice: string
-    modelConfidence: number
-    score: number
+    providerChoice: string
+    providerConfidence: number
+    tierChoice: string
+    tierConfidence: number
+    trivialProbability: number
+    largeContextProbability: number
+    effortScore: number
   }> = {}
 ): unknown {
+  const providerChoice = overrides.providerChoice ?? 'claude'
+  const providerConfidence = overrides.providerConfidence ?? 0.9
+  const tierChoice = overrides.tierChoice ?? 'balanced'
+  const tierConfidence = overrides.tierConfidence ?? 0.85
   return {
     model: 'jev-latest-v1',
     answers: {
-      model: {
+      is_trivial: { type: 'noul', noul: overrides.trivialProbability ?? 0.05 },
+      needs_large_context: { type: 'noul', noul: overrides.largeContextProbability ?? 0.05 },
+      provider: {
         type: 'choice',
-        choice: overrides.choice ?? 'claude:sonnet-4.5',
-        confidence: overrides.modelConfidence ?? 0.9,
-        probabilities: {
-          [overrides.choice ?? 'claude:sonnet-4.5']: overrides.modelConfidence ?? 0.9
-        }
+        choice: providerChoice,
+        confidence: providerConfidence,
+        probabilities: { [providerChoice]: providerConfidence }
+      },
+      model_tier: {
+        type: 'choice',
+        choice: tierChoice,
+        confidence: tierConfidence,
+        probabilities: { [tierChoice]: tierConfidence }
       },
       effort: {
         type: 'score',
-        score: overrides.score ?? 1.5,
+        score: overrides.effortScore ?? 1.5,
         legend: { 0: 'trivial', 1: 'small', 2: 'multi-file', 3: 'architectural' },
         probabilities: { 0: 0.1, 1: 0.6, 2: 0.2, 3: 0.1 }
       }
@@ -116,51 +146,66 @@ describe('createTypesafeJevRouter', () => {
     expect((captured!.init.headers as Record<string, string>).Authorization).toBe('Bearer sk-test')
     const body = JSON.parse(captured!.init.body as string) as Record<string, unknown>
     expect(Object.keys(body)).toEqual(['state', 'model', 'questions'])
-    expect(body.state).toBe(request.state)
+    expect(body.state).toEqual({ prompt: request.prompt, routing_profile: request.routingProfile })
     expect(body.model).toBe('jev-latest')
-    expect(body.questions).toEqual({
-      model: {
-        type: 'choice',
-        instructions: MODEL_QUESTION_INSTRUCTIONS,
-        criteria: { 'claude:sonnet-4.5': request.modelChoices[0]!.criteria }
-      },
-      effort: {
-        type: 'score',
-        instructions: EFFORT_QUESTION_INSTRUCTIONS,
-        criteria: EFFORT_RUBRIC
-      }
+    const questions = body.questions as Record<string, unknown>
+    expect(Object.keys(questions)).toEqual([
+      'is_trivial',
+      'needs_large_context',
+      'provider',
+      'model_tier',
+      'effort'
+    ])
+    expect(questions.is_trivial).toEqual({
+      type: 'noul',
+      instructions: IS_TRIVIAL_INSTRUCTIONS,
+      criteria: IS_TRIVIAL_CRITERIA
+    })
+    expect(questions.needs_large_context).toEqual({
+      type: 'noul',
+      instructions: NEEDS_LARGE_CONTEXT_INSTRUCTIONS,
+      criteria: NEEDS_LARGE_CONTEXT_CRITERIA
+    })
+    expect(questions.provider).toEqual({
+      type: 'choice',
+      instructions: PROVIDER_QUESTION_INSTRUCTIONS,
+      criteria: request.providerCriteria
+    })
+    expect(questions.model_tier).toEqual({
+      type: 'choice',
+      instructions: MODEL_TIER_QUESTION_INSTRUCTIONS,
+      criteria: MODEL_TIER_CRITERIA
+    })
+    expect(questions.effort).toEqual({
+      type: 'score',
+      instructions: EFFORT_QUESTION_INSTRUCTIONS,
+      criteria: EFFORT_RUBRIC
     })
 
-    const expectedEffort = mapEffortScore('claude', 1.5, {
-      claude: ['low', 'medium', 'high', 'xhigh', 'max'],
-      codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
-      antigravity: ['low', 'medium', 'high'],
-      opencode: []
-    })
     expect(outcome).toEqual({
-      kind: 'decision',
-      provider: 'claude',
-      model: 'sonnet-4.5',
-      effort: expectedEffort,
-      confidence: 0.9,
+      kind: 'answers',
+      provider: { choice: 'claude', confidence: 0.9 },
+      tier: { choice: 'balanced', confidence: 0.85 },
+      trivial: { probability: 0.05 },
+      largeContext: { probability: 0.05 },
+      effort: { score: 1.5 },
       usage: { inputTokens: 512 }
     })
   })
 
-  it('degrades to the pickers below the confidence floor, keeping the confidence for display', async () => {
-    const belowFloor = JEV_MIN_CONFIDENCE - 0.1
+  it('refuses an answer that names a provider choice this launch never sent', async () => {
     const fetchFake: typeof fetch = async () =>
-      jsonResponse(successBody({ modelConfidence: belowFloor }))
+      jsonResponse(successBody({ providerChoice: 'unknown-provider' }))
     const router = createTypesafeJevRouter({ readKey: () => 'sk-test', fetch: fetchFake })
 
     const outcome = await router.route(routeRequest(), {})
 
-    expect(outcome).toEqual({ kind: 'fallback', reason: 'low-confidence', confidence: belowFloor })
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'invalid-response' })
   })
 
-  it('refuses an answer that names a choice this launch never sent', async () => {
+  it('refuses an answer that names a tier this app never offered', async () => {
     const fetchFake: typeof fetch = async () =>
-      jsonResponse(successBody({ choice: 'codex:unknown-model' }))
+      jsonResponse(successBody({ tierChoice: 'ultra-mega' }))
     const router = createTypesafeJevRouter({ readKey: () => 'sk-test', fetch: fetchFake })
 
     const outcome = await router.route(routeRequest(), {})
@@ -259,13 +304,17 @@ describe('the debugLog trace (#525)', () => {
     return { lines, router }
   }
 
-  it('logs exactly a request line and an answer line for a routed decision', async () => {
+  it('logs exactly a request line and an answer line for a successful call, showing the full request and the full answers', async () => {
     const request = routeRequest()
     const { lines, router } = tracingRouter(async () => jsonResponse(successBody()))
 
     const outcome = await router.route(request, {})
 
-    expect(outcome).toMatchObject({ kind: 'decision', provider: 'claude', confidence: 0.9 })
+    expect(outcome).toMatchObject({
+      kind: 'answers',
+      provider: { choice: 'claude', confidence: 0.9 },
+      tier: { choice: 'balanced', confidence: 0.85 }
+    })
     expect(lines).toHaveLength(2)
     for (const line of lines) {
       // "one line each" is what makes the trace greppable — a payload that
@@ -273,54 +322,53 @@ describe('the debugLog trace (#525)', () => {
       expect(line).not.toContain('\n')
     }
     expect(lines[0]!.startsWith(REQUEST_PREFIX)).toBe(true)
-    expect(JSON.parse(lines[0]!.slice(REQUEST_PREFIX.length))).toEqual({
-      state: request.state,
-      truncated: false,
-      choices: { [request.modelChoices[0]!.key]: request.modelChoices[0]!.criteria }
+    const requestPayload = JSON.parse(lines[0]!.slice(REQUEST_PREFIX.length)) as Record<
+      string,
+      unknown
+    >
+    expect(requestPayload.state).toEqual({
+      prompt: request.prompt,
+      routing_profile: request.routingProfile
     })
+    expect(requestPayload.truncated).toBe(false)
+    expect(Object.keys(requestPayload.questions as object)).toEqual([
+      'is_trivial',
+      'needs_large_context',
+      'provider',
+      'model_tier',
+      'effort'
+    ])
+
     expect(lines[1]!.startsWith(ANSWER_PREFIX)).toBe(true)
-    expect(JSON.parse(lines[1]!.slice(ANSWER_PREFIX.length))).toEqual({
-      choice: 'claude:sonnet-4.5',
+    const answerPayload = JSON.parse(lines[1]!.slice(ANSWER_PREFIX.length)) as Record<
+      string,
+      unknown
+    >
+    // The FULL answers, probabilities included — never just the fields the
+    // typed outcome above carries forward.
+    expect(answerPayload.provider).toEqual({
+      type: 'choice',
+      choice: 'claude',
       confidence: 0.9,
-      effortScore: 1.5,
-      inputTokens: 512
+      probabilities: { claude: 0.9 }
     })
+    expect(answerPayload.is_trivial).toEqual({ type: 'noul', noul: 0.05 })
+    expect(answerPayload.inputTokens).toBe(512)
   })
 
-  it('marks a truncated state as truncated in the request line', async () => {
+  it('marks a truncated prompt as truncated in the request line', async () => {
     const { lines, router } = tracingRouter(async () => jsonResponse(successBody()))
 
-    await router.route(routeRequest({ state: 'a trimmed prompt', truncated: true }), {})
+    await router.route(routeRequest({ prompt: 'a trimmed prompt', truncated: true }), {})
 
     const payload = JSON.parse(lines[0]!.slice(REQUEST_PREFIX.length)) as Record<string, unknown>
-    expect(payload.state).toBe('a trimmed prompt')
+    expect((payload.state as Record<string, unknown>).prompt).toBe('a trimmed prompt')
     expect(payload.truncated).toBe(true)
   })
 
-  it('logs the reason, the confidence and the elapsed time on a low-confidence fallback', async () => {
-    const belowFloor = JEV_MIN_CONFIDENCE - 0.1
+  it('logs invalid-response when the answer names a provider choice this launch never sent', async () => {
     const { lines, router } = tracingRouter(async () =>
-      jsonResponse(successBody({ modelConfidence: belowFloor }))
-    )
-
-    const outcome = await router.route(routeRequest(), {})
-
-    // The trace changes no behavior: the exact outcome the pre-#525 router
-    // returned is still the exact outcome returned here.
-    expect(outcome).toEqual({ kind: 'fallback', reason: 'low-confidence', confidence: belowFloor })
-    expect(lines).toHaveLength(2)
-    expect(lines[0]!.startsWith(REQUEST_PREFIX)).toBe(true)
-    expect(lines[1]!.startsWith(FALLBACK_PREFIX)).toBe(true)
-    const payload = JSON.parse(lines[1]!.slice(FALLBACK_PREFIX.length)) as Record<string, unknown>
-    expect(payload.reason).toBe('low-confidence')
-    expect(payload.confidence).toBe(belowFloor)
-    expect(typeof payload.elapsedMs).toBe('number')
-    expect(payload.elapsedMs).toBeGreaterThanOrEqual(0)
-  })
-
-  it('logs invalid-response when the answer names a choice this launch never sent', async () => {
-    const { lines, router } = tracingRouter(async () =>
-      jsonResponse(successBody({ choice: 'codex:unknown-model' }))
+      jsonResponse(successBody({ providerChoice: 'unknown-provider' }))
     )
 
     const outcome = await router.route(routeRequest(), {})
@@ -367,10 +415,9 @@ describe('the debugLog trace (#525)', () => {
 
   it('keeps the API key out of every line, on every path', async () => {
     const lines: string[] = []
-    const belowFloor = JEV_MIN_CONFIDENCE - 0.1
     const responses: (() => Response | Promise<Response>)[] = [
       () => jsonResponse(successBody()),
-      () => jsonResponse(successBody({ modelConfidence: belowFloor })),
+      () => jsonResponse(successBody({ providerChoice: 'unknown-provider' })),
       async () => {
         throw new Error('connection reset')
       }
@@ -397,21 +444,18 @@ describe('the debugLog trace (#525)', () => {
       readKey: () => 'sk-test',
       fetch: async () => jsonResponse(successBody())
     })
-    const belowFloor = JEV_MIN_CONFIDENCE - 0.1
     const fallbackRouter = createTypesafeJevRouter({
       readKey: () => 'sk-test',
-      fetch: async () => jsonResponse(successBody({ modelConfidence: belowFloor }))
+      fetch: async () => jsonResponse(successBody({ providerChoice: 'unknown-provider' }))
     })
 
     expect(await router.route(routeRequest(), {})).toMatchObject({
-      kind: 'decision',
-      provider: 'claude',
-      confidence: 0.9
+      kind: 'answers',
+      provider: { choice: 'claude', confidence: 0.9 }
     })
     expect(await fallbackRouter.route(routeRequest(), {})).toEqual({
       kind: 'fallback',
-      reason: 'low-confidence',
-      confidence: belowFloor
+      reason: 'invalid-response'
     })
   })
 })

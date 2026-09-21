@@ -489,10 +489,26 @@ describe('the Jev option (#509)', () => {
     preferences: DEFAULT_JEV_PREFERENCES
   }
 
+  // request v2 (jev-routing-profiles T3) adds `tier`/`parts` to the
+  // decision arm — mechanical fixture default, T4 owns actually rendering
+  // them; `overrides` can still replace either per test.
   function decision(
     overrides: Partial<Extract<JevRouteLaunchResult, { kind: 'decision' }>> = {}
   ): JevRouteLaunchResult {
-    return { kind: 'decision', provider: 'codex', confidence: 0.9, truncated: false, ...overrides }
+    return {
+      kind: 'decision',
+      provider: 'codex',
+      confidence: 0.9,
+      truncated: false,
+      tier: 'balanced',
+      parts: {
+        provider: { value: 'codex', confidence: 0.9, applied: 'answered' },
+        tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
+        trivial: { value: false, probability: 0.05 },
+        largeContext: { value: false, probability: 0.05 }
+      },
+      ...overrides
+    }
   }
 
   function fallback(
@@ -767,11 +783,21 @@ describe('the Jev entry path (#523)', () => {
   })
 
   describe('the auto-accept checkbox', () => {
+    // request v2 (jev-routing-profiles T3): mechanical fixture update, same
+    // as `decision()` above — this block only exercises the toggle, not the
+    // decision's own content.
     const DECISION: JevRouteLaunchResult = {
       kind: 'decision',
       provider: 'codex',
       confidence: 0.9,
-      truncated: false
+      truncated: false,
+      tier: 'balanced',
+      parts: {
+        provider: { value: 'codex', confidence: 0.9, applied: 'answered' },
+        tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
+        trivial: { value: false, probability: 0.05 },
+        largeContext: { value: false, probability: 0.05 }
+      }
     }
 
     it('starts off — the person’s own choice for this session, never assumed, like enabled', () => {

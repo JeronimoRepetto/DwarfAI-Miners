@@ -4389,6 +4389,59 @@ export function parseJevRouteLaunchRequest(payload: unknown): JevRouteLaunchRequ
 }
 
 /**
+ * How a model earns a place in a routing profile, independent of its own
+ * name (jev-routing-profiles T1/T3). Declared here — the ONE declaration
+ * point for anything crossing main -> renderer (#77) — and re-exported
+ * unchanged from `main/jev/capabilities/modelCapability.ts`, which is where
+ * the full capability TABLE actually lives (main-only; never on the wire).
+ *
+ * `'special-purpose'` is a real capability-table tier (an image model, an
+ * internal reviewer) but a routing DECISION never lands on it: the
+ * `model_tier` question T3 sends offers no such option, so nothing
+ * downstream ever assigns it to `JevRouteLaunchResult.tier` below.
+ */
+export type ModelTier = 'fast-cheap' | 'balanced' | 'frontier' | 'long-context' | 'special-purpose'
+
+/**
+ * One routing part Jev answered as a Choice, or that a confidence floor or a
+ * profile rule overrode (jev-routing-profiles T3) — `provider` and
+ * `model_tier` both report this shape in `JevRouteParts` below, so the
+ * renderer can say "Jev chose this" or "this was too unsure, so the safe
+ * value was used" without a second vocabulary per part.
+ */
+export interface JevRouteAnsweredPart<T> {
+  value: T
+  /** Jev's own reported confidence for its answer — kept even when a rule overrode `value`, so the card can show what Jev actually said. */
+  confidence: number
+  /** Whether `value` is Jev's own answer, or a floor/profile safe value substituted for it. */
+  applied: 'answered' | 'safe-default'
+}
+
+/**
+ * One yes/no part Jev answered as a Noul (jev-routing-profiles T3):
+ * `probability`, never `confidence` — a Noul reports how likely "yes" is,
+ * not how sure Jev is of a single chosen label (TypeSafe's own
+ * `NoulResponse` carries no confidence field either). `value` is the floored
+ * boolean the local decision actually acted on.
+ */
+export interface JevRouteNoulPart {
+  value: boolean
+  probability: number
+}
+
+/**
+ * Every part behind one routing decision (jev-routing-profiles T3) — what
+ * the renderer reads to say WHICH part was unsure, rather than only the
+ * single overall `confidence` on `JevRouteLaunchResult`.
+ */
+export interface JevRouteParts {
+  provider: JevRouteAnsweredPart<DwarfProvider>
+  tier: JevRouteAnsweredPart<ModelTier>
+  trivial: JevRouteNoulPart
+  largeContext: JevRouteNoulPart
+}
+
+/**
  * What the `jev:route` channel ever answers with (#509) — a SUGGESTION,
  * never a launch. The decision is SHOWN before it is acted on and can be
  * OVERRIDDEN (issue #509's own acceptance criterion), so the renderer applies
@@ -4400,6 +4453,14 @@ export function parseJevRouteLaunchRequest(payload: unknown): JevRouteLaunchRequ
  * (`parseLaunchTuning`) before it ever reaches this shape, so what crosses is
  * always something `agent:launch` could actually carry out — but never
  * anything about the REQUEST that produced it.
+ *
+ * AMENDED for jev-routing-profiles T3: `tier` and `parts` carry the local
+ * decision's own working, so the renderer can show the tier Jev landed on
+ * and name whichever part fell back to a safe value. `fallbackTo` carries
+ * the user's OWN configured default (Settings' Jev section) when one is set
+ * and this call still fell back — the renderer applies it like a decision
+ * and says "your default" (T4); absent exactly when no default is
+ * configured, which keeps today's behaviour unchanged.
  */
 export type JevRouteLaunchResult =
   | {
@@ -4407,16 +4468,21 @@ export type JevRouteLaunchResult =
       provider: DwarfProvider
       model?: string
       effort?: string
-      /** The model question's own reported confidence. */
+      /** The MIN of the applied parts' (provider, tier) own confidences — the function-calling cookbook's own rule for a multi-part answer. */
       confidence: number
       /** Whether the prompt sent to Jev was shortened to fit its own token budget. */
       truncated: boolean
+      /** The tier the local decision actually landed on, after every floor and profile rule — see ModelTier. */
+      tier: ModelTier
+      /** Every part behind this decision — see JevRouteParts. */
+      parts: JevRouteParts
     }
   | {
       kind: 'fallback'
       reason: JevFallbackReason
       /** Carried only for `'low-confidence'` — see `JevRouteFallback`'s own comment. */
       confidence?: number
+      fallbackTo?: JevLaunchDefault
     }
 
 /* --- end of the #509 block ------------------------------------------------- */

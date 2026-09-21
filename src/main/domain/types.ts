@@ -125,8 +125,14 @@ export type {
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
   JevRoutingProfile,
   JevLaunchDefault,
-  JevPreferences
+  JevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- Jev routing v2: the request and decision vocabulary (jev-routing-profiles T3) — one block, appended --- */
+  ModelTier,
+  JevRouteAnsweredPart,
+  JevRouteNoulPart,
+  JevRouteParts
+  /* --- end of the jev-routing-profiles T3 block ------------------------------ */
 } from '../../shared/contracts'
 
 /**
