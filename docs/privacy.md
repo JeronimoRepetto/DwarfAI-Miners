@@ -182,6 +182,35 @@ likewise lists transcript directory paths.
 Beyond those files nothing is copied. Transcripts, rollouts, and Codex's SQLite files are read
 in place, and no message text the panel displays is written to disk by this app.
 
+**A finished turn's own conclusion, kept in memory only (#510).** A held session (Claude,
+Antigravity) keeps its most recently finished turn's outcome: whether it concluded, was capped,
+errored, or was interrupted; the provider's own word for what happened; the turn's own final
+text, when the provider handed one over, bounded to the same 250,000-character ceiling every
+message on this wire answers to; and when it ended (`Dwarf.lastTurn`, the `TurnOutcome` type in
+`src/shared/contracts.ts`, read off the provider's own end-of-turn message by
+`claudeTurnOutcome.ts`'s `resultTurnOutcome` and `antigravityHeldSession.ts`'s `turnOutcomeOf`). A
+held Claude session's own subagent crew keeps the same shape for the last 50 conclusions it has
+sealed (`HeldCrew`, `MAX_ENDED_CONCLUSIONS`, `heldCrew.ts`). A one-shot launch this app started and
+is still watching — Codex or OpenCode today — keeps one outcome the same way, read off its own
+exit status and stdout (`oneShotTurnOutcome.ts`, kept on the launch's own record in
+`LaunchedSessionRegistry`, `launchedSessions.ts`). None of it reaches `projects-v1.db` or any
+preference file: it lives only in this process's memory, for as long as the session or the launch
+record does, and is gone the moment the app restarts.
+
+That does not loosen the promise just above. A held session's turn text is still never written to
+disk — it is the same conversation text this app already keeps only in memory, carried one field
+further. A one-shot launch is where that promise now has one transient, honest exception. To read
+back what its own process actually wrote, this app captures that process's stdout to a temp file
+it creates beside the stderr file it already captured for early-failure detection
+(`StdoutFile`/`StderrFile`, `launchRunner.ts`) — both under Node's own OS temp directory, never
+this app's own data directory — reads back a bounded tail of it once the process exits (16 KB,
+`STDOUT_TAIL_BYTES`), and deletes it. Codex's own `--output-last-message` file, which Codex writes
+itself with just the turn's clean final message, is read back and deleted the same way whenever it
+has anything in it. Both happen only if this app is still running to see the process exit: a
+detached launch is built to survive the panel quitting, so a launch that outlives the panel leaves
+its temp file behind in the OS temp directory, orphaned — exactly as its stderr counterpart
+already could, before this app ever read either back.
+
 ## What it transmits
 
 The application code contains exactly one outbound HTTP client, and it exists for exactly one

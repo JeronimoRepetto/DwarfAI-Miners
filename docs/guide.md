@@ -136,6 +136,16 @@ unplugged, a resolution change — it comes back beside the shell rather than of
 
 What is in it:
 
+- **How the last turn ended**, directly under the header, its own row rather than a rewrite of the
+  delivery marks below the composer: "Last turn concluded: …" with the turn's own final text when
+  the provider handed one over, "Last turn stopped at a limit (…)" for a turn the provider stopped
+  on its own limit rather than finishing it, "Last turn failed (…)" for an execution failure, or
+  "Last turn was interrupted (…)" for one cut short — the word in parentheses is the provider's
+  own, carried verbatim. A capped, failed or interrupted turn is never drawn as if it had
+  concluded. It appears for a held session (Claude, Antigravity) when a turn ends, and for a
+  one-shot launch when its process exits while the panel is running to see it — never invented for
+  a launch the panel was not around for. "(trimmed)" marks a concluded turn's own text that hit the
+  wire's bound.
 - **The conversation**, oldest first, opening on the newest message. It shows the latest twelve
   things said — the agent's replies and your own prompts — with the tool runs between them carried
   and folded, however long the agent has been working since it last spoke. It does not resize
