@@ -678,13 +678,64 @@ describe('OpenCodeProvider — feed', () => {
     })
   })
 
-  it('never returns a transcriptPath and never offers a delivery channel', async () => {
+  // AMENDED for #534 (was: 'never returns a transcriptPath and never offers a
+  // delivery channel', asserting textDelivery('opencode:ses_a') === null).
+  // `session.directory` is now a joinable address ('opencode-run-continue'),
+  // read live from `opencode.db`, never a guessed pid (#231). transcriptPath
+  // stays undefined either way — there is still no per-session file to tail.
+  it('returns no transcriptPath, but offers a continuation channel for a root session', async () => {
     const { fake, sqlite } = seededSession()
     const provider = makeProvider({ fs: fake, sqlite })
     await provider.scan()
     expect(provider.transcriptPath('opencode:ses_a')).toBeUndefined()
-    expect(provider.textDelivery?.('opencode:ses_a')).toBeNull()
+    expect(provider.textDelivery?.('opencode:ses_a')).toEqual({
+      kind: 'opencode-run-continue',
+      sessionId: 'ses_a',
+      directory: normalize('/home/j/p')
+    })
   })
+
+  /* --- The opencode-run-continue channel (#534) — appended ----------------- */
+
+  /**
+   * Workers get no channel of their own: the foreman hop for OpenCode is
+   * unmeasured and out of scope for this issue (see the feature document's
+   * "Why this shape"). `parentSessionId` is the only root/worker fact this
+   * schema carries (D4) — checked directly rather than through `role`,
+   * because `role` also promotes a middle-tier WORKER to `'foreman'` once it
+   * becomes somebody else's parent (see the topology describe block below),
+   * and that promoted worker must still get no channel.
+   */
+  it('offers no channel for a worker session, even one that is itself a foreman', async () => {
+    const { fake, sqlite } = seededSession()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_child',
+        directory: '/home/j/p',
+        parentId: 'ses_a',
+        timeUpdatedMs: NOW
+      })
+    )
+    const provider = makeProvider({ fs: fake, sqlite })
+    await provider.scan()
+    expect(provider.textDelivery?.('opencode:ses_child')).toBeNull()
+  })
+
+  it('offers no channel for a dwarf id this provider never published', async () => {
+    const { fake, sqlite } = seededSession()
+    const provider = makeProvider({ fs: fake, sqlite })
+    await provider.scan()
+    expect(provider.textDelivery?.('opencode:ses_never_scanned')).toBeNull()
+  })
+
+  it('offers no channel for a dwarf id from a different provider', async () => {
+    const { fake, sqlite } = seededSession()
+    const provider = makeProvider({ fs: fake, sqlite })
+    await provider.scan()
+    expect(provider.textDelivery?.('codex:ses_a')).toBeNull()
+  })
+  /* --- end of the #534 block ------------------------------------------------ */
 })
 
 /*

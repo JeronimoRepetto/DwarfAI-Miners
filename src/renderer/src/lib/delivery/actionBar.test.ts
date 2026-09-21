@@ -553,13 +553,22 @@ describe('buildActionBar', () => {
   /*
    * DET-R6 ("Panel offers actions for an observed OpenCode dwarf"), proven
    * for the provider itself rather than only through the generic
-   * PANEL_OBSERVER case above (#453). OpenCode's own textDelivery() and
-   * transcriptPath() are constants (opencodeProvider.ts) — no channel ever
-   * reaches the wire — so its capabilities are all-null, but it is never
-   * `oneShot`: that flag names a single-prompt run, and OpenCode is neither
-   * launched nor held by this panel at all, just observed.
+   * PANEL_OBSERVER case above (#453).
+   *
+   * AMENDED for #534 (was: "OpenCode's own textDelivery() and
+   * transcriptPath() are constants — no channel ever reaches the wire — so
+   * its capabilities are all-null"). That is no longer true of every
+   * OpenCode dwarf: a ROOT session now answers `opencode-run-continue` (see
+   * "an OpenCode session continued with opencode run --session" below,
+   * which covers that case). What THIS block still proves accurately is a
+   * WORKER — `opencodeDwarf()`'s all-null capabilities are exactly what
+   * `opencodeProvider.ts`'s `textDelivery()` still returns for one, since
+   * the foreman hop for OpenCode is unmeasured and out of scope for #534.
+   * transcriptPath() stays a constant either way. Never `oneShot`: that flag
+   * names a single-prompt run, and an observed worker is neither launched
+   * nor held by this panel at all, just observed.
    */
-  describe('observed OpenCode dwarf (DET-R6)', () => {
+  describe('observed OpenCode dwarf (DET-R6), and a worker session since #534', () => {
     function opencodeDwarf(overrides: Partial<Dwarf> = {}): Dwarf {
       return capableDwarf({
         provider: 'opencode',
@@ -833,16 +842,21 @@ describe('kick while a turn nothing here can interrupt is open (#305)', () => {
     expect(entry.hint).not.toBe(DISMISS_HINT)
   })
 
+  // AMENDED for #534 (was: also asserting `.toMatch(/esc/i)`). This hint is no
+  // longer read only off a Codex dwarf: `opencode-run-continue` reaches it on
+  // the identical `cancel === null` + `working` shape (see port.ts's KickEndpoint
+  // exclusion), and no Esc-at-terminal mechanism has been measured for OpenCode
+  // — naming one unconditionally would be wrong for that provider. The sentence
+  // now names no mechanism at all, which is what stays true of every provider
+  // that reaches it; the Esc-content assertion is gone with the claim it pinned.
   it('names the fact and the way out, in KICK_HINT’s two-clause idiom', () => {
     // The limit first, then what the control does with it — the shape every
     // other sentence in this module keeps.
     expect(OPEN_TURN_NO_INTERRUPT_HINT).toMatch(/cannot be stopped from here/i)
-    expect(OPEN_TURN_NO_INTERRUPT_HINT).toMatch(/esc/i)
     expect(OPEN_TURN_NO_INTERRUPT_HINT).toMatch(/once the turn ends/i)
-    // Never a promise the panel keeps: nothing here presses that key. #329
+    // Never a promise the panel keeps: nothing here presses a key at all. #329
     // rules that the panel sends no keystroke into a window it cannot prove is
-    // the session's own, so the Esc named here is the person's, at their
-    // terminal.
+    // the session's own.
     expect(OPEN_TURN_NO_INTERRUPT_HINT).not.toMatch(/sends an interrupt/i)
   })
 
@@ -1070,3 +1084,109 @@ describe('a launched Codex session the panel cannot reach yet (#457)', () => {
   })
 })
 /* --- end of the #457 block -------------------------------------------------- */
+
+/* --- The OpenCode continuation channel (#534) -------------------------------- */
+
+/**
+ * The OpenCode twin of the #450 Codex block above: an `opencode run` session
+ * is no longer mute, and the same two sentences that described a Codex
+ * thread as having no inbox apply here for the identical reason.
+ */
+describe('an OpenCode session continued with opencode run --session (#534)', () => {
+  function continuable(overrides: Partial<Dwarf> = {}): Dwarf {
+    return capableDwarf({
+      provider: 'opencode',
+      oneShot: true,
+      textDelivery: 'opencode-run-continue',
+      capabilities: {
+        sendText: 'opencode-run-continue',
+        cancel: null,
+        adjustEffort: null,
+        attach: null
+      },
+      ...overrides
+    })
+  }
+
+  it('enables chat on a one-shot session, rather than refusing it for being one', () => {
+    const entry = entryFor('chat', continuable())
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(CHANNEL_HINT['opencode-run-continue'])
+    expect(entry.hint).not.toBe(oneShotNoExitReason('opencode'))
+  })
+
+  it('says the message starts the next turn, rather than promising an inbox', () => {
+    expect(CHANNEL_HINT['opencode-run-continue']).toContain('next turn')
+    expect(CHANNEL_HINT['opencode-run-continue'].toLowerCase()).not.toContain('queue')
+  })
+
+  it('offers the dismissal rather than an exit it does not have', () => {
+    const entry = entryFor('kick', continuable({ status: 'waiting' }))
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(DISMISS_HINT)
+  })
+
+  it('says nothing on the panel, because the composer works', () => {
+    expect(refusalLine(continuable())).toBeNull()
+  })
+
+  /** The launched sentence, qualified (#534) — the same qualification #450 gave Codex's. */
+  it('tells an OpenCode launch what happens once the panel can reach its session', () => {
+    const hint = entryFor(
+      'chat',
+      continuable({
+        textDelivery: undefined,
+        capabilities: {
+          sendText: null,
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
+      })
+    ).hint
+    expect(hint).toBe(launchedNoInboxReason('opencode'))
+    expect(hint).toContain('opencode run')
+    // The promise #217 made is kept: this session still has an exit here.
+    expect(hint).toContain('Kick ends it')
+    expect(hint).toContain('waits here')
+  })
+
+  /*
+   * Evidence, never symmetry: the continuation was measured on OpenCode and
+   * on nothing else beyond it and Codex, so no third CLI's launch is told it
+   * can be written to later.
+   */
+  it('promises no such thing for a CLI the continuation was never measured on', () => {
+    expect(launchedNoInboxReason('claude')).not.toContain('waits here')
+    expect(launchedNoInboxReason('antigravity')).not.toContain('waits here')
+    expect(launchedNoInboxReason('claude')).not.toContain('The composer opens')
+    expect(launchedNoInboxReason('antigravity')).not.toContain('The composer opens')
+  })
+
+  /**
+   * `chatAction` has never read `busy` and must not start (#534, mirroring
+   * #457): it reads whether the session has ENDED and whether there is a
+   * channel, and nothing else. A working dwarf with a continuation channel
+   * keeps its composer.
+   */
+  it('keeps the composer on a working dwarf that has a channel', () => {
+    const entry = entryFor(
+      'chat',
+      defaultDwarf({
+        provider: 'opencode',
+        status: 'working',
+        textDelivery: 'opencode-run-continue',
+        capabilities: {
+          sendText: 'opencode-run-continue',
+          cancel: 'launched-process',
+          adjustEffort: null,
+          attach: null
+        }
+      })
+    )
+
+    expect(entry.enabled).toBe(true)
+    expect(entry.hint).toBe(CHANNEL_HINT['opencode-run-continue'])
+  })
+})
+/* --- end of the #534 block ---------------------------------------------------- */

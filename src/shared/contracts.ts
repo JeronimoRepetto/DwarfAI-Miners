@@ -718,6 +718,32 @@ export type TextDeliveryChannel =
    * the launch this panel held was the OPENING turn's, and it has exited.
    */
   | 'codex-exec-resume'
+  /**
+   * A NEW `opencode run --session <id>` process continuing a session that
+   * already exists (#534) — OpenCode's answer to the same shape
+   * 'codex-exec-resume' is: the CLI reads one prompt, runs one turn and
+   * exits, so nothing is left running to hand a second message to, and a new
+   * process on the SAME session id continues it. `opencode run --session
+   * <id> --format json` was measured live on OpenCode 1.18.31 (M4): same
+   * session id, prior context intact, prompt on stdin, `session.directory`
+   * unchanged.
+   *
+   * Offered for every ROOT session this store knows of, launched by this
+   * panel or opened in a terminal — the join is the session id read from
+   * `opencode.db`, never a guessed pid (#231 stays intact). A worker gets no
+   * channel of its own: the foreman hop for OpenCode is unmeasured and out
+   * of scope (#534).
+   *
+   * A ✓ means what it means everywhere else and no more: the turn was
+   * handed over, not read. The verdict is taken once the process has
+   * survived a short bounded start window, exactly as the Codex sibling's
+   * is — see opencodeContinue.ts.
+   *
+   * It carries no attachment (`run -f` exists and is unmeasured here) and no
+   * kick: the turn a continuation starts runs in its own process, which this
+   * panel never holds a handle to.
+   */
+  | 'opencode-run-continue'
 
 /**
  * One answer an agent said it would accept, in its own words.
@@ -2194,7 +2220,10 @@ const CHANNEL_CARRIER: Record<TextDeliveryChannel, string> = {
   // Named apart from the queue above (#450) because they are two acts against
   // one session, and a refusal that said "queue" would send the reader looking
   // for something this route never touched.
-  'codex-exec-resume': "this Codex session's next turn"
+  'codex-exec-resume': "this Codex session's next turn",
+  // The OpenCode sibling of the line above (#534): the same act, against a
+  // session `opencode run --session` reaches rather than `codex exec resume`.
+  'opencode-run-continue': "this OpenCode session's next turn"
 }
 
 /**
@@ -2648,10 +2677,10 @@ export interface DwarfTextResult {
    */
   unconfirmed?: boolean
   /**
-   * Present exactly when the message was HELD rather than sent (#457): a
-   * panel-launched Codex thread whose turn is still running takes no second
-   * turn, so the panel keeps the words and resumes the thread when that turn
-   * ends.
+   * Present exactly when the message was HELD rather than sent (#457, #534):
+   * a panel-launched Codex thread or OpenCode session whose turn is still
+   * running takes no second turn, so the panel keeps the words and continues
+   * the session when that turn ends.
    *
    * `delivered` is false beside it and means what it always means — nothing
    * has been handed to anything — so a reader that knows nothing of this
@@ -2738,14 +2767,15 @@ export interface DwarfKickResult {
  */
 export interface DwarfSendState {
   /**
-   * 'held' is the one phase that claims NOTHING (#457). A message the panel
-   * is holding for a Codex thread whose turn is still running sits in this
-   * app's own memory: no channel has been asked anything, so 'sending' would
-   * say it is in flight and 'delivered' would say it was handed over, and
-   * both are false. It is its own phase for exactly that reason, and it is
-   * never a resting place — every held message ends as 'delivered' when its
-   * resume fires, or as 'failed' when it cannot (the session was kicked, the
-   * wait ran out, or the resume itself refused).
+   * 'held' is the one phase that claims NOTHING (#457, #534). A message the
+   * panel is holding for a Codex thread or an OpenCode session whose turn is
+   * still running sits in this app's own memory: no channel has been asked
+   * anything, so 'sending' would say it is in flight and 'delivered' would
+   * say it was handed over, and both are false. It is its own phase for
+   * exactly that reason, and it is never a resting place — every held
+   * message ends as 'delivered' when its continuation fires, or as 'failed'
+   * when it cannot (the session was kicked, the wait ran out, or the
+   * continuation itself refused).
    */
   phase: 'sending' | 'held' | 'delivered' | 'reacted' | 'failed'
   /** The channel the delivery used, once one was chosen. */
@@ -4539,9 +4569,9 @@ export const IPC_CHANNELS = {
    * see `DwarfSendSettledPush`.
    *
    * Push rather than pull, exactly like `launchFailed` and for the same
-   * reason: main learns this asynchronously, when a Codex turn ends minutes
-   * after the call already answered, so there is nothing for the panel to ask
-   * for and no moment to poll at.
+   * reason: main learns this asynchronously, when a Codex turn or an
+   * OpenCode continuation ends minutes after the call already answered, so
+   * there is nothing for the panel to ask for and no moment to poll at.
    */
   dwarfSendSettled: 'dwarf:sendText:settled',
   /**

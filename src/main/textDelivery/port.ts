@@ -89,25 +89,30 @@ export type TextDeliveryTarget =
       kind: 'launched-process'
       launchId: string
       /**
-       * The resume this launch is standing in front of, while its opening
-       * process still runs (#457).
+       * The continuation this launch is standing in front of, while its
+       * opening process still runs (#457, #534).
        *
-       * Present only for a Codex launch whose thread really can be resumed,
-       * and it is what lets ONE walk answer the send and the kick differently
-       * for the same dwarf. The SEND takes this endpoint — the panel holds the
-       * message and resumes the thread when that process exits, because
-       * `codex exec resume` on a thread already running a turn exits 1 at once
-       * (measured 2026-09-18, codex-cli 0.153.4) and Codex queues nothing. The
+       * Present only for a Codex or OpenCode launch whose session really can
+       * be continued, and it is what lets ONE walk answer the send and the
+       * kick differently for the same dwarf. The SEND takes this endpoint —
+       * the panel holds the message and continues the session when that
+       * process exits, because a second continuation while one is already
+       * running either exits 1 at once (Codex, measured 2026-09-18,
+       * codex-cli 0.153.4) or races rather than queues cleanly (OpenCode,
+       * M6, opencode-format.md) — neither of which this panel may cause. The
        * KICK keeps the launch itself, because ending that process is the one
        * act that reaches anything while it runs, and it is the person's later
        * decision either way.
        *
        * Absent is the ordinary case and means exactly what a launched process
        * has always meant: a message has nowhere to go (#217). Every other
-       * provider's launch, and a Codex one whose thread this panel cannot
-       * resume, keep that refusal and its copy unchanged.
+       * provider's launch, and a launch whose session this panel cannot
+       * continue, keep that refusal and its copy unchanged.
        */
-      heldResume?: Extract<TextDeliveryTarget, { kind: 'codex-exec-resume' }>
+      heldResume?: Extract<
+        TextDeliveryTarget,
+        { kind: 'codex-exec-resume' } | { kind: 'opencode-run-continue' }
+      >
     }
   | { kind: 'hosted-stdin'; hostedId: string }
   | {
@@ -135,6 +140,22 @@ export type TextDeliveryTarget =
       model?: string
       effort?: string
     }
+  | {
+      kind: 'opencode-run-continue'
+      /** The OpenCode session's own id, which is what `opencode run --session` takes. */
+      sessionId: string
+      /**
+       * The session's own directory, and where its next turn is run.
+       *
+       * Carried rather than inherited from this process, for the same reason
+       * `codex-exec-resume`'s `cwd` is: measured live (M4), a continuation
+       * started from a DIFFERENT directory than the session's own hangs the
+       * foreground CLI process for the full 120 s with no output, even though
+       * the turn completes in the store in about 2.5 s — so it is always run
+       * in the one folder the measurement covered.
+       */
+      directory: string
+    }
 
 /**
  * A target that can actually be written to (a foreman hop has been resolved away).
@@ -159,6 +180,7 @@ export type TextDeliveryEndpoint = Extract<
   | { kind: 'launched-process' }
   | { kind: 'hosted-stdin' }
   | { kind: 'codex-exec-resume' }
+  | { kind: 'opencode-run-continue' }
 >
 
 /**
@@ -187,6 +209,11 @@ export type TextDeliveryEndpoint = Extract<
  * NEW process on that thread with the message on stdin. So a launched dwarf is
  * unreachable only for as long as its opening process is the thing being
  * addressed; the session behind it is not.
+ *
+ * 'opencode-run-continue' is INCLUDED for the same answer (#534): the
+ * launched `opencode run` process also closed its stdin and exited, and the
+ * SESSION it wrote survives in `opencode.db`, reachable by a new
+ * `opencode run --session <id>` process on the same terms.
  */
 export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-process' }>
 
@@ -236,10 +263,15 @@ export type SendEndpoint = Exclude<TextDeliveryEndpoint, { kind: 'launched-proce
  * exited — so there is no pid to end and no stream to interrupt, and a kick
  * routed here would have to invent one. The panel dismisses the dwarf instead,
  * which is the honest act and the one #293 already provides.
+ *
+ * 'opencode-run-continue' is excluded for the identical reason (#534): the
+ * turn `opencode run --session` starts runs in its own process, and the
+ * launch this panel held, if any, was the opening `run`'s — already exited.
+ * Same dismissal, same act, a different CLI.
  */
 export type KickEndpoint = Exclude<
   TextDeliveryEndpoint,
-  { kind: 'codex-queue' } | { kind: 'codex-exec-resume' }
+  { kind: 'codex-queue' } | { kind: 'codex-exec-resume' } | { kind: 'opencode-run-continue' }
 >
 
 export interface ConsoleTextRequest {
@@ -285,6 +317,22 @@ export interface CodexResumeRequest {
    * identical to before this issue.
    */
   tuning?: LaunchTuning
+}
+
+/**
+ * One continued OpenCode session (#534): same session id, new process,
+ * prompt on stdin — the OpenCode sibling of `CodexResumeRequest`.
+ *
+ * Carries no tuning field: unlike Codex's resume (#462), nothing measured
+ * here asks a continuation to carry an explicit model or effort — omitting
+ * `-m`/`--variant` keeps the session on the model it already has (M4).
+ */
+export interface OpenCodeContinueRequest {
+  /** The OpenCode session's own id, which is what `opencode run --session` takes. */
+  sessionId: string
+  /** The session's own directory; a continuation hangs from any other (M4). */
+  cwd: string
+  text: string
 }
 
 /** A raw interrupt keystroke: no text at all, just the key. */
@@ -537,6 +585,21 @@ export interface TextDeliveryPort {
    * window and the reasoning behind its length.
    */
   resumeCodexThread?(request: CodexResumeRequest): Promise<TextDeliveryOutcome>
+  /**
+   * Continue an OpenCode session that was started with `opencode run`, by
+   * starting its next turn with this message as the prompt (#534).
+   *
+   * Optional on the same terms `resumeCodexThread` is, and both shipped
+   * ports implement it for the same reason: it spawns a CLI, so it is
+   * platform-neutral like the relay.
+   *
+   * The one tier that does not wait for its own act to finish, exactly like
+   * its Codex sibling: an implementation reports the hand-over once the
+   * process has taken the message on stdin and survived a short bounded
+   * start window, and reports a failure for one that died inside it. See
+   * opencodeContinue.ts.
+   */
+  continueOpenCodeSession?(request: OpenCodeContinueRequest): Promise<TextDeliveryOutcome>
   /**
    * Send a raw interrupt keystroke (ESC) to the console hosting `pid`. Never
    * routed through the message path: there is no text to escape, only a

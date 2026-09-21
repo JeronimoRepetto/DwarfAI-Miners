@@ -80,6 +80,7 @@ import {
 import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 // #457: the panel's own queue for a launched Codex thread mid-turn.
 import { CODEX_HOLD_MAX_MS } from '../textDelivery/codexHold'
+import { OPENCODE_HOLD_MAX_MS } from '../textDelivery/opencodeHold'
 import { TierService, type TierThresholds } from '../tier/tierService'
 import { AgentRuntime, expandHomePath } from './runtime'
 
@@ -4489,6 +4490,320 @@ describe('AgentRuntime ending a session it launched (#217)', () => {
   })
   /* --- end of the #450 block ----------------------------------------------- */
 })
+
+/**
+ * The OpenCode twin of the #450/#457 Codex blocks above (#534): a launched
+ * `opencode run` process closes its stdin and exits with its one turn, and
+ * the SESSION it wrote survives in `opencode.db` — reachable by a new
+ * `opencode run --session <id>` process, on the same hold-while-busy terms
+ * #457 gave a launched Codex dwarf. No tuning is carried on a continuation
+ * (unlike Codex's #462): nothing measured for OpenCode asks a continuation
+ * to name a model or effort, so omitting the flag keeps the session on the
+ * one it already has (M4/M5).
+ */
+describe('AgentRuntime continuing an OpenCode session it launched (#534)', () => {
+  const MINE_PATH = 'C:\\work\\project'
+  const SESSION_ID = 'ses_launched'
+  const DWARF_ID = `opencode:${SESSION_ID}`
+  const CWD = MINE_PATH
+
+  function retained(pid = 4242): { process: LaunchedProcess; exit: () => void } {
+    const listeners: Array<() => void> = []
+    return {
+      process: {
+        pid,
+        onExit(listener) {
+          listeners.push(listener)
+        }
+      },
+      exit: () => {
+        for (const listener of listeners) listener()
+      }
+    }
+  }
+
+  /** An OpenCode session answering with the continuation channel for DWARF_ID alone. */
+  function continuableProvider(): Provider {
+    return {
+      kind: 'opencode',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'opencode',
+          sessionId: SESSION_ID,
+          cwd: MINE_PATH,
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: DWARF_ID,
+              provider: 'opencode',
+              role: 'foreman',
+              name: 'opencode-session',
+              status: 'working',
+              sessionId: SESSION_ID
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([]),
+      textDelivery: (dwarfId: string) =>
+        dwarfId === DWARF_ID
+          ? { kind: 'opencode-run-continue' as const, sessionId: SESSION_ID, directory: CWD }
+          : null
+    }
+  }
+
+  function continuePort(overrides: Partial<Record<keyof TextDeliveryPort, unknown>> = {}) {
+    return {
+      sendToConsole: vi.fn().mockResolvedValue({ delivered: true }),
+      relayToClaudeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      sendInterrupt: vi.fn().mockResolvedValue({ delivered: true }),
+      continueOpenCodeSession: vi.fn().mockResolvedValue({ delivered: true }),
+      ...overrides
+    } as TextDeliveryPort
+  }
+
+  async function runtimeWithContinuableLaunch(
+    port: TextDeliveryPort = continuePort(),
+    options: {
+      onSendSettled?: (push: DwarfSendSettledPush) => void
+      now?: () => number
+      endProcessTree?: (pid: number) => Promise<boolean>
+    } = {}
+  ) {
+    const handle = retained()
+    const endProcessTree = options.endProcessTree ?? vi.fn().mockResolvedValue(true)
+    const launched = new LaunchedSessionRegistry({ endProcessTree })
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [continuableProvider()],
+      textDelivery: port,
+      launchedSessions: launched,
+      onMinesUpdated: vi.fn(),
+      ...(options.onSendSettled === undefined ? {} : { onSendSettled: options.onSendSettled }),
+      ...(options.now === undefined ? {} : { now: options.now })
+    })
+    launched.retain({
+      provider: 'opencode',
+      minePath: MINE_PATH,
+      process: handle.process,
+      knownSessionIds: []
+    })
+    await runtime.refresh()
+    return { runtime, handle, port, endProcessTree }
+  }
+
+  it('keeps the launch’s exit AND the composer while the opening turn is still running', async () => {
+    const { runtime } = await runtimeWithContinuableLaunch()
+    const dwarf = runtime.getMines()[0]?.dwarfs[0]
+
+    expect(dwarf?.capabilities?.cancel).toBe('launched-process')
+    expect(dwarf?.textDelivery).toBe('opencode-run-continue')
+    expect(dwarf?.capabilities?.sendText).toBe('opencode-run-continue')
+  })
+
+  it('hands the dwarf its composer once the opening process has exited', async () => {
+    const { runtime, handle } = await runtimeWithContinuableLaunch()
+    handle.exit()
+    await runtime.refresh()
+    const dwarf = runtime.getMines()[0]?.dwarfs[0]
+
+    expect(dwarf?.textDelivery).toBe('opencode-run-continue')
+    expect(dwarf?.capabilities?.sendText).toBe('opencode-run-continue')
+    // No kick: the turn a continuation starts runs in a process nothing here
+    // holds, and the one this panel did hold has exited.
+    expect(dwarf?.capabilities?.cancel).toBeNull()
+    // The message is stdin, so no command line bounds it (#437's precedent).
+    expect(dwarf?.capabilities?.maxTextChars).toBe(MAX_DWARF_TEXT_CHARS)
+  })
+
+  it('continues the session in its own folder, rather than refusing the message', async () => {
+    const { runtime, handle, port } = await runtimeWithContinuableLaunch()
+    handle.exit()
+    await runtime.refresh()
+
+    await expect(
+      runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'run the tests', pressEnter: true })
+    ).resolves.toEqual({ delivered: true, via: 'opencode-run-continue' })
+    expect(port.continueOpenCodeSession).toHaveBeenCalledWith({
+      sessionId: SESSION_ID,
+      cwd: CWD,
+      text: 'run the tests'
+    })
+    expect(port.relayToClaudeSession).not.toHaveBeenCalled()
+  })
+
+  /* --- Holding a message for a busy session (#534, mirroring #457) --------- */
+
+  /**
+   * OpenCode's own reason to hold is stronger than Codex's: a concurrent
+   * `--session` call is not refused at all, it RACES (M6) — so the guard
+   * that keeps one continuation in flight per session is what stands between
+   * a second message and a corrupted turn, not merely a wasted refusal.
+   */
+  describe('and holding what is typed while that turn still runs (#534, mirroring #457)', () => {
+    /** A continuation whose turn this test ends by hand — the port's own `turnEnded`. */
+    function endableTurn(): { port: TextDeliveryPort; end: () => void } {
+      let end = (): void => {}
+      const ended = new Promise<void>((resolve) => {
+        end = resolve
+      })
+      const port = continuePort({
+        continueOpenCodeSession: vi.fn().mockResolvedValue({ delivered: true, turnEnded: ended })
+      })
+      return { port, end }
+    }
+
+    it('holds the message instead of starting a second turn on the session', async () => {
+      const { runtime, port } = await runtimeWithContinuableLaunch()
+
+      const result = await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'also run the linter',
+        pressEnter: true
+      })
+
+      // Not delivered, and saying so: nothing has been handed to anything.
+      expect(result.delivered).toBe(false)
+      expect(result.via).toBe('opencode-run-continue')
+      expect(result.holdId).toEqual(expect.any(String))
+      expect(result.error).toBeUndefined()
+      expect(port.continueOpenCodeSession).not.toHaveBeenCalled()
+    })
+
+    it('continues the session with the held message once the opening process exits', async () => {
+      const { runtime, handle, port } = await runtimeWithContinuableLaunch()
+      await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'also run the linter',
+        pressEnter: true
+      })
+
+      handle.exit()
+      await runtime.refresh()
+      await runtime.settleHeldMessages()
+
+      expect(port.continueOpenCodeSession).toHaveBeenCalledWith({
+        sessionId: SESSION_ID,
+        cwd: CWD,
+        text: 'also run the linter'
+      })
+    })
+
+    it('reports that message its own verdict, under the id the send answered', async () => {
+      const onSendSettled = vi.fn()
+      const { runtime, handle } = await runtimeWithContinuableLaunch(undefined, { onSendSettled })
+      const held = await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'also run the linter',
+        pressEnter: true
+      })
+
+      handle.exit()
+      await runtime.refresh()
+      await runtime.settleHeldMessages()
+
+      expect(onSendSettled).toHaveBeenCalledWith({
+        holdId: held.holdId,
+        dwarfId: DWARF_ID,
+        result: { delivered: true, via: 'opencode-run-continue' }
+      })
+    })
+
+    /**
+     * FIFO, one turn each, and never merged into one prompt — the very thing
+     * M6 found OpenCode itself will NOT do for two concurrent calls.
+     */
+    it('sends several held messages in order, one turn at a time', async () => {
+      const { port, end } = endableTurn()
+      const { runtime, handle } = await runtimeWithContinuableLaunch(port)
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'first', pressEnter: true })
+      await runtime.sendDwarfText({ dwarfId: DWARF_ID, text: 'second', pressEnter: true })
+
+      handle.exit()
+      await runtime.refresh()
+      await runtime.settleHeldMessages()
+
+      // Only the first: the second cannot start while this turn runs.
+      expect(port.continueOpenCodeSession).toHaveBeenCalledTimes(1)
+      expect(port.continueOpenCodeSession).toHaveBeenLastCalledWith({
+        sessionId: SESSION_ID,
+        cwd: CWD,
+        text: 'first'
+      })
+
+      end()
+      // The turn's end reaches the runtime as a reaction on the port's own
+      // promise, and the drain is chained behind that — so one tick has to
+      // pass before there is a drain to settle.
+      await Promise.resolve()
+      await runtime.settleHeldMessages()
+
+      expect(port.continueOpenCodeSession).toHaveBeenCalledTimes(2)
+      expect(port.continueOpenCodeSession).toHaveBeenLastCalledWith({
+        sessionId: SESSION_ID,
+        cwd: CWD,
+        text: 'second'
+      })
+    })
+
+    it('drops a held message when the session is kicked, and never sends it after', async () => {
+      const onSendSettled = vi.fn()
+      const { runtime, port, endProcessTree } = await runtimeWithContinuableLaunch(undefined, {
+        onSendSettled
+      })
+      const held = await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'never mind',
+        pressEnter: true
+      })
+
+      await expect(runtime.kickDwarf({ dwarfId: DWARF_ID })).resolves.toEqual({
+        delivered: true,
+        via: 'launched-process'
+      })
+      await runtime.refresh()
+      await runtime.settleHeldMessages()
+
+      expect(endProcessTree).toHaveBeenCalledWith(4242)
+      expect(port.continueOpenCodeSession).not.toHaveBeenCalled()
+      const push = onSendSettled.mock.calls[0]?.[0] as DwarfSendSettledPush
+      expect(push.holdId).toBe(held.holdId)
+      expect(push.result.delivered).toBe(false)
+      expect(push.result.error).toMatch(/ended/i)
+      expect(push.result.error).not.toMatch(/handed/i)
+    })
+
+    it('gives up a message held past the bound, claiming no hand-over at all', async () => {
+      const onSendSettled = vi.fn()
+      const clock = { now: 1_000 }
+      const { runtime, port } = await runtimeWithContinuableLaunch(undefined, {
+        onSendSettled,
+        now: () => clock.now
+      })
+      const held = await runtime.sendDwarfText({
+        dwarfId: DWARF_ID,
+        text: 'still waiting',
+        pressEnter: true
+      })
+
+      clock.now += OPENCODE_HOLD_MAX_MS + 1
+      await runtime.refresh()
+      await runtime.settleHeldMessages()
+
+      expect(port.continueOpenCodeSession).not.toHaveBeenCalled()
+      const push = onSendSettled.mock.calls[0]?.[0] as DwarfSendSettledPush
+      expect(push.holdId).toBe(held.holdId)
+      expect(push.result.delivered).toBe(false)
+      expect(push.result.error).toMatch(/not sent/i)
+      expect(push.result.error).not.toMatch(/handed/i)
+    })
+  })
+  /* --- end of the #534 hold block ------------------------------------------ */
+})
+/* --- end of the #534 block --------------------------------------------------- */
 
 /*
  * #231: the register #217 added lives in memory, so a session launched before

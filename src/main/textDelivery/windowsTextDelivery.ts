@@ -23,12 +23,18 @@ import type {
   ConsoleTextRequest,
   EndSessionRequest,
   InterruptRequest,
+  OpenCodeContinueRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
   TextDeliveryPort
 } from './port'
 import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
 import { deliverViaCodexResume, runCodexResumeProcess, type CodexResumeRunner } from './codexResume'
+import {
+  deliverViaOpenCodeContinue,
+  runOpenCodeContinueProcess,
+  type OpenCodeContinueRunner
+} from './opencodeContinue'
 import {
   GRACEFUL_EXIT_POLL_COUNT,
   GRACEFUL_EXIT_POLL_INTERVAL_MS,
@@ -224,6 +230,14 @@ export interface WindowsTextDeliveryOptions {
   runCodexQueue?: CodexQueueRunner
   /** Injected for tests; defaults to a real codex.exe spawn (#450). */
   runCodexResume?: CodexResumeRunner
+  /**
+   * Resolves the opencode binary through the CLI detection port (#534), on
+   * the same terms `codexBinary` is. Omitted, the continuation tier has no
+   * binary to address and refuses with a reason.
+   */
+  opencodeBinary?: () => Promise<string | undefined>
+  /** Injected for tests; defaults to a real opencode.exe spawn (#534). */
+  runOpenCodeContinue?: OpenCodeContinueRunner
   /**
    * Reads a `.cmd`/`.bat` shim for the program it names, the same way CLI
    * detection does (#413) — needed here too, since the queue tier now
@@ -464,6 +478,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
   private readonly runCodexResume: CodexResumeRunner
+  private readonly opencodeBinary: () => Promise<string | undefined>
+  private readonly runOpenCodeContinue: OpenCodeContinueRunner
   private readonly fs: FsLike
   private readonly processEnd: ProcessEndPort
   private readonly processProbe: ProcessProbePort
@@ -499,6 +515,8 @@ export class WindowsTextDelivery implements TextDeliveryPort {
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
     this.runCodexResume = options.runCodexResume ?? runCodexResumeProcess
+    this.opencodeBinary = options.opencodeBinary ?? (async () => undefined)
+    this.runOpenCodeContinue = options.runOpenCodeContinue ?? runOpenCodeContinueProcess
     this.fs = options.fs ?? new NodeFs()
     // Pinned to 'win32' rather than asked of the machine: this class IS the
     // Windows port, and reading process.platform here would be a fourth call
@@ -707,6 +725,23 @@ export class WindowsTextDelivery implements TextDeliveryPort {
       // reach codexTuningArgs as absent too, which is what keeps the argv
       // byte-identical to before this issue.
       ...(request.tuning === undefined ? {} : { tuning: request.tuning })
+    })
+  }
+
+  /**
+   * The OpenCode continuation tier (#534) — the OpenCode twin of the Codex
+   * resume above, on the same terms: no PowerShell, no window and no pid, it
+   * spawns the detected opencode binary on the session's own folder and
+   * writes the message to its stdin.
+   */
+  async continueOpenCodeSession(request: OpenCodeContinueRequest): Promise<TextDeliveryOutcome> {
+    return deliverViaOpenCodeContinue({
+      sessionId: request.sessionId,
+      cwd: request.cwd,
+      text: request.text,
+      binaryPath: await this.opencodeBinary(),
+      run: this.runOpenCodeContinue,
+      fs: this.fs
     })
   }
 

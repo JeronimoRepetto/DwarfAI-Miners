@@ -1013,6 +1013,32 @@ describe('stampTextDelivery: the per-route message ceiling (#431)', () => {
     })
   })
   /* --- end of the #450 block ----------------------------------------------- */
+
+  /* --- The OpenCode continuation channel (#534) — appended ----------------- */
+
+  /** The OpenCode twin of the Codex case above: same asymmetry, a different CLI. */
+  it('stamps the continuation for sending and nothing for cancelling on an OpenCode session', () => {
+    const [stamped] = stampTextDelivery(
+      [mine([dwarf({ id: 'opencode:s1', provider: 'opencode' })])],
+      targetsFrom({
+        'opencode:s1': {
+          kind: 'opencode-run-continue',
+          sessionId: 's1',
+          directory: 'C:\\work\\sample'
+        }
+      })
+    )
+    expect(stamped?.dwarfs[0]?.textDelivery).toBe('opencode-run-continue')
+    expect(stamped?.dwarfs[0]?.capabilities).toEqual({
+      sendText: 'opencode-run-continue',
+      cancel: null,
+      adjustEffort: null,
+      // The message is stdin and nothing else; no file was measured onto it.
+      attach: null,
+      maxTextChars: MAX_DWARF_TEXT_CHARS
+    })
+  })
+  /* --- end of the #534 block ------------------------------------------------ */
 })
 /* --- end of the #431 block -------------------------------------------------- */
 
@@ -1121,3 +1147,91 @@ describe('a launch whose opening process is still running (#457)', () => {
     expect(dwarf.capabilities?.cancel).toBe('launched-process')
   })
 })
+
+/* --- The OpenCode continuation channel (#534) --------------------------------- */
+
+/**
+ * The OpenCode twin of the #450 Codex block above: same shape, proven
+ * against `opencode-run-continue` instead of `codex-exec-resume`. The
+ * session id and directory travel WITH the endpoint for the same reason
+ * Codex's thread id and folder do — `opencode run --session` hangs from any
+ * directory but the session's own (M4), and the working directory of a
+ * packaged app is nothing anybody chose.
+ */
+describe('resolving an OpenCode session continued with opencode run --session (#534)', () => {
+  const TARGET: TextDeliveryTarget = {
+    kind: 'opencode-run-continue',
+    sessionId: 's1',
+    directory: 'C:\\work\\sample'
+  }
+
+  it('resolves a session to its continuation endpoint, folder and all', () => {
+    expect(resolveTextDelivery('opencode:s1', targetsFrom({ 'opencode:s1': TARGET }))).toEqual({
+      channel: 'opencode-run-continue',
+      endpoint: TARGET,
+      prefix: ''
+    })
+  })
+
+  /**
+   * The send/kick split again, for the same reason as Codex's: the turn a
+   * continuation starts runs in a process nothing on this board holds a
+   * handle to. The panel dismisses instead.
+   */
+  it('refuses to route a kick over it, because nothing here holds that process', () => {
+    expect(resolveKickDelivery('opencode:s1', targetsFrom({ 'opencode:s1': TARGET }))).toBeNull()
+  })
+})
+/* --- end of the #534 block ------------------------------------------------- */
+
+/**
+ * The OpenCode twin of the #457 held-launch block above (#534): the same
+ * `heldResume` field, carrying an `opencode-run-continue` target instead of
+ * a `codex-exec-resume` one. `heldForSend` reads the field, never its kind,
+ * so one function already answers both — this proves it does.
+ */
+describe('a launch whose opening OpenCode process is still running (#534, mirroring #457)', () => {
+  const heldLaunch: TextDeliveryTarget = {
+    kind: 'launched-process',
+    launchId: 'launch:1',
+    heldResume: { kind: 'opencode-run-continue', sessionId: 'session-a', directory: '/mine' }
+  }
+
+  it('routes a message to the continuation the launch is holding back', () => {
+    expect(resolveTextDelivery('opencode:s1', targetsFrom({ 'opencode:s1': heldLaunch }))).toEqual({
+      channel: 'opencode-run-continue',
+      endpoint: { kind: 'opencode-run-continue', sessionId: 'session-a', directory: '/mine' },
+      prefix: ''
+    })
+  })
+
+  it('still routes a kick to the launch, which is what can be ended', () => {
+    expect(resolveKickDelivery('opencode:s1', targetsFrom({ 'opencode:s1': heldLaunch }))).toEqual({
+      channel: 'launched-process',
+      endpoint: { kind: 'launched-process', launchId: 'launch:1' },
+      prefix: ''
+    })
+  })
+
+  it('stamps the composer live on that dwarf, and the exit beside it', () => {
+    const mines: Mine[] = [
+      {
+        id: 'mine-1',
+        path: '/mine',
+        name: 'mine',
+        tier: 'bronze',
+        dwarfs: [
+          { id: 'opencode:s1', sessionId: 's1', provider: 'opencode', status: 'working' } as Dwarf
+        ],
+        tokensObserved: 0
+      } as Mine
+    ]
+    const stamped = stampTextDelivery(mines, targetsFrom({ 'opencode:s1': heldLaunch }))
+    const dwarf = stamped[0]!.dwarfs[0]!
+
+    expect(dwarf.textDelivery).toBe('opencode-run-continue')
+    expect(dwarf.capabilities?.sendText).toBe('opencode-run-continue')
+    expect(dwarf.capabilities?.cancel).toBe('launched-process')
+  })
+})
+/* --- end of the #534 block (mirroring #457) --------------------------------- */

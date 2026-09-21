@@ -12,6 +12,7 @@ import {
 import { cursorIndex, feedPageOf, textCount, trimFeed, type FeedWindowRead } from '../feedWindow'
 import type { Provider } from '../provider'
 import { pollProfiler } from '../../runtime/perf'
+import type { TextDeliveryTarget } from '../../textDelivery/port'
 import { lastAssistantText, openCodeFeedRows, type OpenCodeMessage } from './parse'
 import {
   readOpenCodeEventSeqs,
@@ -31,9 +32,13 @@ import { opencodeDbPath, opencodeWalPath } from './store'
  * `parse.ts`, SQL in `state.ts`, this class the orchestration — `stat` two
  * files, open the database read-only, read four things, decide, publish. No
  * process probe (the schema carries no pid or process column anywhere, D3/
- * Row 5), no delivery channel (`textDelivery` returns `null`, as
- * `SimulatedProvider` does), no transcript file (`transcriptPath` returns
- * `undefined` — the conversation lives as rows, not a file to tail).
+ * Row 5), no transcript file (`transcriptPath` returns `undefined` — the
+ * conversation lives as rows, not a file to tail).
+ *
+ * `textDelivery` is the one exception, since #534: a root session's own id
+ * IS the join `opencode run --session <id>` needs, so it answers
+ * `'opencode-run-continue'` for every root and stays `null` for a worker,
+ * whose foreman hop is unmeasured and out of scope for that issue.
  *
  * ## Liveness (D3), without a probe
  *
@@ -443,8 +448,28 @@ export class OpenCodeProvider implements Provider {
     return undefined
   }
 
-  /** No pid-to-session join exists in this schema (Row 5) — no channel, ever. */
-  textDelivery(_dwarfId: string): null {
-    return null
+  /**
+   * The `opencode-run-continue` channel (#534), for every ROOT session this
+   * scan knows about — launched by this panel or opened in a terminal,
+   * since the join is the session id read from the store rather than a pid
+   * (#231 stays intact; Row 5 is still true of pid-to-session joins, which
+   * this is not one of).
+   *
+   * `facts.parentSessionId === undefined` rather than `role === 'foreman'`:
+   * `roleOf` ALSO promotes a middle-tier worker to `'foreman'` once it
+   * becomes somebody else's parent (D4), and that promoted worker must
+   * still get no channel — `parentSessionId` is the one field this schema
+   * carries that answers root-or-not on its own (see the topology tests).
+   *
+   * `directory` is `facts.cwd`, the same normalized value `scan()` already
+   * grouped this session under — never a fresh read, and never the raw
+   * backslash form M7 measured `session list --format json` to carry.
+   */
+  textDelivery(dwarfId: string): TextDeliveryTarget | null {
+    const sessionId = this.sessionIdOf(dwarfId)
+    if (sessionId === undefined) return null
+    const facts = this.facts.get(sessionId)
+    if (facts === undefined || facts.parentSessionId !== undefined) return null
+    return { kind: 'opencode-run-continue', sessionId: facts.sessionId, directory: facts.cwd }
   }
 }
