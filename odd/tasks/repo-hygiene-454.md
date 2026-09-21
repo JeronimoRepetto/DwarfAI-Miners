@@ -116,3 +116,36 @@ off `main` 1be0e19.
 All three tasks done, one work-unit commit each: T1 `665bc98`, T2 `a67c68f`, T3 `01b59e4`. Full verification run after T3, in CI order: `pnpm typecheck` clean; `pnpm lint` no issues; `pnpm format:check` all files formatted correctly (after fixing this document's own formatting — a genuine Prettier markdown non-idempotency: `prettier --write` followed by `prettier --check` on the same file kept disagreeing with itself whenever a list item held 3+ blank-line-separated paragraphs, confirmed with a minimal repro outside the repo; fixed by merging each task's evidence and commit line into a single second paragraph per item, verified stable across two write/check cycles); `node skills/skill-sync/assets/sync.mjs --check` up to date; `pnpm test` 278 passed, 2 skipped (280 files), 7643 passed, 5 skipped (7648 tests), 0 failed — including `runtime.test.ts` (414/414), so the documented #477 environmental failure was not observed on this base; `pnpm build` succeeded. Privacy guard: the `PRIVACY_GUARD_PATTERN` secret is unavailable locally, so this was a manual review instead of the CI command — grepped every touched file for the maintainer's account name and for absolute host paths; the only matches are the project's existing public identity (GitHub handle, Ko-fi link, bundle id, author block), unchanged by this branch, and no host-specific path leaked into any tracked file.
 
 T4 (this same commit) addresses an independent verifier's review of the pushed branch: the printed fix command breaking on a staged path with a space, a missing-`pnpm` failure printing a misleading cause, and a missing maintainer note on restoring the hook's tracked executable bit. `pnpm format:check` and `pnpm lint` re-run clean; `core.hooksPath` remained unset and `.git/hooks` untouched throughout.
+
+### Verification of record, 2026-09-21
+
+**Parent spot check.** Four commits plus the correction `54d953b`, all Conventional Commits, no
+attribution trailers, clean tree. Re-ran `pnpm vitest run` on the three touched test files: 146
+passed, 0 failed. `sync.mjs --check` up to date; `AGENTS.md` at 216 lines. `core.hooksPath` unset
+and `.git/hooks` untouched throughout, as required by the shared `.git`.
+
+**Native review (RDD): frozen, not closed.** `gentle-ai review assess` rated the candidate `high`
+(`executable_mode` on `scripts/git-hooks/pre-commit`); consent was granted and a four-lens
+transaction started (`review-0c68e1d7c065cacd`). `review-readability` was admitted; `review-risk`
+and `review-resilience` failed with the same provider-side refusal seen on #502; the fourth capture
+was refused with `rdd_disabled` because the maintainer turned the global switch off. The transaction
+is frozen. No receipt exists; delivery follows ordinary repository policy.
+
+**Independent verifier (Sonnet, read-only), the RDD-off path for a `high` candidate:**
+`pass-with-follow-ups`, then one correction. The verifier reproduced a real defect in the first hook:
+the printed fix command word-split a staged path containing a space, so the named exit did not run.
+`54d953b` quotes each path individually (POSIX `sh`, `'\''` idiom), names the real cause when `pnpm`
+is not on PATH instead of blaming prettier, and documents how to check and restore the executable
+bit in `CONTRIBUTING.md`. The parent then reproduced the space-path case by direct invocation:
+refusal exit 1 with `pnpm exec prettier --write 'scratch dir/my file.ts'`, the printed command ran
+(exit 0), the re-run accepted (exit 0), scratch removed, tree clean.
+
+Everything else the verifier confirmed independently: pnpm runs `prepare` on install and CI's only
+workflow never runs `git commit`, so `core.hooksPath` being set there is harmless; census
+`vault.test.ts` 17 → 13 with the four named tests, `panelBounds.test.ts` and `window.test.ts`
+68 → 68; the corrected `window.test.ts` history claim matches the real commit timestamps of #137
+and #153; `world.test.ts` already complied. All checks green (typecheck, lint, format:check,
+sync --check, test 7643 passed, build). Not verified: the hook under a real macOS `/bin/sh` or
+Linux `dash`; it is bashism-free by static reading only.
+
+Next step: the pull request. Activation of the hook happens on the next `pnpm install` after merge.
