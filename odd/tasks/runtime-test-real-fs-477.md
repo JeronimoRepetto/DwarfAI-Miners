@@ -131,7 +131,7 @@ committed, deleted immediately after) calling `resolveProjectRoot('C:\\work\\pro
 at the `'refuses to launch OpenCode before ever probing its own detector'` block — returned
 
 ```
-+       "root": "C:/Users/jeron/Desktop/DwarfAI-Miners",
++       "root": "C:/Users/j/Desktop/DwarfAI-Miners",
 +       "worktree": { "branch": "fix/runtime-test-real-fs-477", "path": "C:\\work\\project" },
 ```
 
