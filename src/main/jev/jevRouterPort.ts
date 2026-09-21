@@ -1,37 +1,22 @@
-import type { DwarfProvider } from '../domain/types'
+import type { DwarfProvider, JevFallbackReason } from '../domain/types'
 
 /**
  * The Jev routing port (issue #509): asking TypeSafe's System One model to
  * pick a provider, model and effort from a launch prompt, and the typed
  * outcome every launch path can act on without ever being blocked by it.
  *
- * T3 lifts a WIRE-SAFE SUBSET of `JevRouteOutcome` into `shared/contracts.ts`,
- * so the panel can show what Jev chose and let a person override it — see
- * `AGENTS.md`'s rule that every type crossing main/preload/renderer lives
- * there. Until that lift these types stay here, next to the port that
- * produces them, rather than guessing at the exact wire shape before the
- * display work that needs it exists.
+ * T3 lifted `JevFallbackReason` into `shared/contracts.ts` — a launch result
+ * now carries that same vocabulary across the wire (`JevRouteLaunchResult`),
+ * so the renderer can say WHY a launch fell back to the pickers' own values.
+ * `JevRouteDecision`, `JevRouteFallback` and `JevRouteOutcome` stay here,
+ * next to the port that produces them: they carry `usage.inputTokens`, which
+ * the wire result never may — see `JevRouteLaunchResult`'s own comment in
+ * contracts.ts, which also carries the full reasoning for the fallback
+ * vocabulary itself (why `route` can never throw).
  */
 
-/**
- * Why `route` can never throw: a network dependency on the launch path is
- * only acceptable if every way it can fail still lets the session launch,
- * using the pickers' current values — issue #509's own acceptance criterion
- * ("When Jev is unreachable, rate-limited, or returns low confidence, the
- * launch still happens ... and says that it did."). So every failure this
- * port cannot recover from becomes one of these named reasons instead of an
- * exception, and a caller always has something honest to act on.
- */
-export type JevFallbackReason =
-  | 'no-key'
-  | 'no-launchable-provider'
-  | 'unreachable'
-  | 'timeout'
-  | 'rate-limited'
-  | 'unauthorized'
-  | 'low-confidence'
-  | 'invalid-response'
-  | 'budget-exceeded'
+/** Re-exported so every existing `import ... from './jevRouterPort'` keeps working unchanged. */
+export type { JevFallbackReason }
 
 /**
  * One option the model question may answer — see routeRequest.ts's

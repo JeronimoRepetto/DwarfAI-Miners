@@ -4200,6 +4200,112 @@ export function parseJevApiKeyInput(payload: unknown): string {
 
 /* --- end of the #509 block ------------------------------------------------- */
 
+/* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+
+/**
+ * Why Jev could not route a launch, or why its answer could not be acted on
+ * (#509). Every member is a real, named way this can happen — never a
+ * generic "failed" — because a network dependency on the launch path is only
+ * acceptable if every way it can fail still lets the session launch, using
+ * the pickers' current values (issue #509's own acceptance criterion: "When
+ * Jev is unreachable, rate-limited, or returns low confidence, the launch
+ * still happens ... and says that it did.").
+ *
+ * Lifted here from `jevRouterPort.ts` by T3: a launch result now carries this
+ * same vocabulary across the wire (`JevRouteLaunchResult` below), so the
+ * renderer can say WHY it fell back rather than just that it did.
+ * `JevRouteDecision`, `JevRouteFallback` and `JevRouteOutcome` stay in
+ * `jevRouterPort.ts` — they carry `usage.inputTokens`, which this wire
+ * vocabulary's own result type never may (see `JevRouteLaunchResult`).
+ */
+export type JevFallbackReason =
+  | 'no-key'
+  | 'no-launchable-provider'
+  | 'unreachable'
+  | 'timeout'
+  | 'rate-limited'
+  | 'unauthorized'
+  | 'low-confidence'
+  | 'invalid-response'
+  | 'budget-exceeded'
+
+/**
+ * The one thing a Jev routing request ever carries across the wire (#509):
+ * the prompt the person typed, nothing else. Provider, model and effort are
+ * derived from what THIS machine can launch right now, asked fresh on the
+ * main side — never sent from the renderer, so there is no second copy of
+ * the launchable set that could drift out of step with the real one.
+ */
+export interface JevRouteLaunchRequest {
+  prompt: string
+}
+
+/**
+ * Boundary parser for the prompt a Jev route request carries (#509). THROWS
+ * rather than degrading — the same bad-VALUE half of the `config-layering`
+ * asymmetry `parseJevApiKeyInput` reads a typed value by: a legible
+ * instruction that cannot be carried out is refused with a message naming
+ * what was wrong, never silently swapped for a default nobody chose.
+ *
+ * Capped at `MAX_DWARF_TEXT_CHARS` rather than a new number invented for this
+ * one call: a Jev route request carries the SAME prompt a launch would carry
+ * (see `AgentLaunchRequest.prompt`'s own comment, "capped like any delivered
+ * message"), so this boundary must never refuse a prompt a launch itself
+ * would accept. `buildJevRouteRequest` (routeRequest.ts) trims further, to
+ * fit TypeSafe's own much smaller token budget — a separate concern from "is
+ * this a well-formed request", which is all a boundary parser ever decides.
+ */
+export function parseJevRouteLaunchRequest(payload: unknown): JevRouteLaunchRequest {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error(`Jev route request must be an object, received ${typeof payload}`)
+  }
+  const prompt = (payload as Record<string, unknown>).prompt
+  if (typeof prompt !== 'string') {
+    throw new Error(`Jev route request's prompt must be a string, received ${typeof prompt}`)
+  }
+  const trimmed = prompt.trim()
+  if (trimmed === '') {
+    throw new Error('Jev route request must not have an empty prompt')
+  }
+  if (trimmed.length > MAX_DWARF_TEXT_CHARS) {
+    throw new Error(`Jev route request's prompt must be at most ${MAX_DWARF_TEXT_CHARS} characters`)
+  }
+  return { prompt: trimmed }
+}
+
+/**
+ * What the `jev:route` channel ever answers with (#509) — a SUGGESTION,
+ * never a launch. The decision is SHOWN before it is acted on and can be
+ * OVERRIDDEN (issue #509's own acceptance criterion), so the renderer applies
+ * this to its own pickers rather than starting a session from it directly;
+ * only `agent:launch` ever starts one.
+ *
+ * Deliberately never the prompt, the key, or token usage. Main validates the
+ * decision against the same gate every launch goes through
+ * (`parseLaunchTuning`) before it ever reaches this shape, so what crosses is
+ * always something `agent:launch` could actually carry out — but never
+ * anything about the REQUEST that produced it.
+ */
+export type JevRouteLaunchResult =
+  | {
+      kind: 'decision'
+      provider: DwarfProvider
+      model?: string
+      effort?: string
+      /** The model question's own reported confidence. */
+      confidence: number
+      /** Whether the prompt sent to Jev was shortened to fit its own token budget. */
+      truncated: boolean
+    }
+  | {
+      kind: 'fallback'
+      reason: JevFallbackReason
+      /** Carried only for `'low-confidence'` — see `JevRouteFallback`'s own comment. */
+      confidence?: number
+    }
+
+/* --- end of the #509 block ------------------------------------------------- */
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -4671,6 +4777,19 @@ export const IPC_CHANNELS = {
    */
   getJevSettings: 'jev:settings:get',
   setJevApiKey: 'jev:apiKey:set',
-  clearJevApiKey: 'jev:apiKey:clear'
+  clearJevApiKey: 'jev:apiKey:clear',
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  /**
+   * Ask Jev to route one launch prompt to a provider, model and effort
+   * (#509). The request IS the prompt (`JevRouteLaunchRequest`), and the only
+   * thing that ever crosses back is a decision or a typed fallback reason —
+   * never the prompt, the key, or token usage. Main validates the decision
+   * against the same gate every launch goes through (`parseLaunchTuning`)
+   * before it ever reaches this channel's caller, but the result is still
+   * only a SUGGESTION: the renderer shows it before acting and the person may
+   * override it, never a launch by itself.
+   */
+  routeJevLaunch: 'jev:route'
   /* --- end of the #509 block ------------------------------------------------ */
 } as const

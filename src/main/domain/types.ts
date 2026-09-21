@@ -115,7 +115,12 @@ export type {
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   JevSettings,
-  JevUnavailableReason
+  JevUnavailableReason,
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  JevFallbackReason,
+  JevRouteLaunchRequest,
+  JevRouteLaunchResult
   /* --- end of the #509 block ------------------------------------------------ */
 } from '../../shared/contracts'
 
@@ -205,7 +210,10 @@ export {
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   DEFAULT_JEV_SETTINGS,
   MAX_JEV_API_KEY_CHARS,
-  parseJevApiKeyInput
+  parseJevApiKeyInput,
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  parseJevRouteLaunchRequest
   /* --- end of the #509 block ------------------------------------------------ */
 } from '../../shared/contracts'
 

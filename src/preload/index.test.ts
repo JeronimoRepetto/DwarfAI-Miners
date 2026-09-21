@@ -1296,3 +1296,37 @@ describe('preload Jev API-key contract (#509)', () => {
     expect(invoke).toHaveBeenLastCalledWith('jev:apiKey:clear')
   })
 })
+
+/**
+ * Jev launch routing: routing a launch (#509) — APPENDED, nothing above
+ * changed.
+ *
+ * The prompt is parsed through the SAME shared boundary parser main's own
+ * service reads, the same discipline `setJevApiKey` holds for the key: a
+ * request the service would refuse anyway never reaches the bridge at all.
+ */
+describe('preload Jev route contract (#509)', () => {
+  it('parses the prompt through the shared parser before it crosses, trimming what it carries', async () => {
+    const decision = {
+      kind: 'decision',
+      provider: 'claude',
+      confidence: 0.9,
+      truncated: false
+    }
+    invoke.mockResolvedValueOnce(decision)
+    await expect(api.routeJevLaunch({ prompt: '  fix the bug  ' })).resolves.toEqual(decision)
+    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: 'fix the bug' })
+  })
+
+  it('refuses locally, before the bridge, a request the shared parser would refuse anyway', async () => {
+    const callsBefore = invoke.mock.calls.length
+    await expect(api.routeJevLaunch({ prompt: '   ' })).rejects.toThrow()
+    expect(invoke.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('hands back a fallback verdict untouched, including its reason', async () => {
+    const fallback = { kind: 'fallback', reason: 'no-key' }
+    invoke.mockResolvedValueOnce(fallback)
+    await expect(api.routeJevLaunch({ prompt: 'anything' })).resolves.toEqual(fallback)
+  })
+})
