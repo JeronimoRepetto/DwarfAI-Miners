@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { DEFAULT_JEV_SETTINGS, type JevSettings } from '../domain/types'
+import type { JevSettings } from '../domain/types'
 import { electronSafeStorage, type SafeStorageLike } from '../adapters/safeStorageLike'
 
 /**
@@ -56,9 +56,21 @@ export type JevApiKeySaveRefusalReason = 'empty' | 'encryption-unavailable'
 export type JevApiKeySaveResult =
   { saved: true } | { saved: false; reason: JevApiKeySaveRefusalReason }
 
+/**
+ * This store's OWN verdict — `configured`/`unavailableReason`, and never the
+ * `preferences` half of the wire `JevSettings` (#509 follow-up). Main
+ * composes this with `jevPreferences.ts`'s own document into the full
+ * `JevSettings` the `getJevSettings`/`setJevApiKey`/`clearJevApiKey` channels
+ * actually answer with — this store knows nothing about the OTHER file on
+ * disk, and has no business inventing a value for it.
+ */
+export type JevKeyVerdict = Omit<JevSettings, 'preferences'>
+
+export const DEFAULT_JEV_KEY_VERDICT: JevKeyVerdict = { configured: false }
+
 export interface JevApiKeyStore {
   /** The wire-safe verdict: configured or not, and why it might never be. */
-  load: () => Promise<JevSettings>
+  load: () => Promise<JevKeyVerdict>
   /** Trims and persists; refuses empty or an unencryptable machine with a typed reason. */
   save: (key: string) => Promise<JevApiKeySaveResult>
   /** Forgets the key, on disk and in memory. A no-op when none was ever saved. */
@@ -122,7 +134,7 @@ export function createJevApiKeyStore(options: JevApiKeyStoreOptions): JevApiKeyS
     await fs.rename(tempPath, filePath)
   }
 
-  async function load(): Promise<JevSettings> {
+  async function load(): Promise<JevKeyVerdict> {
     if (!safeStorage.isEncryptionAvailable()) {
       // Whatever the file says, none of it can be read without encryption —
       // and the honest answer is WHY, not "not configured", because a key
@@ -133,7 +145,7 @@ export function createJevApiKeyStore(options: JevApiKeyStoreOptions): JevApiKeyS
     const encoded = await readEncrypted(fs, filePath)
     if (encoded === undefined) {
       cachedKey = undefined
-      return { ...DEFAULT_JEV_SETTINGS }
+      return { ...DEFAULT_JEV_KEY_VERDICT }
     }
     try {
       cachedKey = safeStorage.decryptString(Buffer.from(encoded, 'base64'))
@@ -144,7 +156,7 @@ export function createJevApiKeyStore(options: JevApiKeyStoreOptions): JevApiKeyS
       // by name so the loss is not silent (config-layering skill).
       console.warn('[jev] Stored API key could not be decrypted; treating it as unset:', error)
       cachedKey = undefined
-      return { ...DEFAULT_JEV_SETTINGS }
+      return { ...DEFAULT_JEV_KEY_VERDICT }
     }
   }
 

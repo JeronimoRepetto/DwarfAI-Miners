@@ -1,6 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { JevSettings, JevUnavailableReason } from '../../types'
+import type {
+  AgentModelCatalog,
+  AgentProviderOption,
+  DwarfProvider,
+  JevLaunchDefault,
+  JevPreferences,
+  JevRoutingProfile,
+  JevSettings,
+  JevUnavailableReason
+} from '../../types'
+import { DEFAULT_JEV_PREFERENCES, JEV_ROUTING_PROFILES } from '../../types'
+import { effortPicker, modelPicker } from '../../lib/launch/modelTuning'
 
 /**
  * The Jev section of the Settings screen (#509): the TypeSafe API key a
@@ -20,12 +31,27 @@ import type { JevSettings, JevUnavailableReason } from '../../types'
  * shown OVER an already-configured key. Nothing outside this screen needs
  * either local ref, the same reason ResetMetricsModal's open/closed flag
  * stays in SettingsPanel rather than crossing a prop.
+ *
+ * AMENDED for the #509 follow-up: below the key controls, once `configured`
+ * is true, two more controls read and write `settings.preferences` — the
+ * routing profile and the default launch. Both are PURE presentational
+ * pickers, exactly like the key row above: every choice leaves as one
+ * `preferences-change` event carrying the WHOLE document (never a patch —
+ * `default`'s three fields are too entangled for a patch to merge safely,
+ * unlike TypographySettings' two independent rows), and nothing here is ever
+ * redrawn from a local draft. `providers`/`catalogs` are asked by
+ * `useJevSettings` the same way the launch surface asks them, reused here
+ * through `modelTuning.ts` rather than reinvented.
  */
 const props = defineProps<{
   /** Whether a key is configured, and why it might never be — main's verdict. */
   settings: JevSettings
   /** True while a save or a clear this section asked for is in flight. */
   saving: boolean
+  /** Every known provider's availability (#509 follow-up) — for the default-launch picker. */
+  providers: AgentProviderOption[]
+  /** What each provider can start on (#509 follow-up) — for the model/effort pickers. */
+  catalogs: AgentModelCatalog[]
 }>()
 
 const emit = defineEmits<{
@@ -33,6 +59,8 @@ const emit = defineEmits<{
   save: [key: string]
   /** Forget the stored key. */
   clear: []
+  /** The routing profile and/or the default launch should become this whole document. */
+  'preferences-change': [preferences: JevPreferences]
 }>()
 
 /** The unsaved key as typed so far. Never persisted anywhere by this component. */
@@ -87,6 +115,102 @@ const unavailableMessage = computed(() => {
   const reason = props.settings.unavailableReason
   return reason === undefined ? '' : UNAVAILABLE_MESSAGES[reason]
 })
+
+/**
+ * A stale mock or a main that has not answered fully may omit `preferences`
+ * even though the wire type now requires it — degrade to the documented
+ * default exactly like every other stored preference here, rather than
+ * crash the one section that still has a real key to show.
+ */
+const preferences = computed<JevPreferences>(
+  () => props.settings.preferences ?? DEFAULT_JEV_PREFERENCES
+)
+
+const PROFILE_LABEL: Record<JevRoutingProfile, string> = {
+  economy: 'Economy',
+  balanced: 'Balanced',
+  premium: 'Premium'
+}
+
+/** One line each, the user's own words (2026-09-21). */
+const PROFILE_DESCRIPTION: Record<JevRoutingProfile, string> = {
+  economy: 'Cheapest model that can do the job',
+  balanced: 'Cost and capability weighed per prompt',
+  premium: 'Most capable model when the task warrants it; trivial prompts still go cheap'
+}
+
+/**
+ * Display names for the default-launch provider select (#509 follow-up) —
+ * mirrors `launchProviders.ts`'s own `PRODUCT_NAME` table, copied rather than
+ * imported: main/ and renderer/ never cross in production code (AGENTS.md),
+ * and this is copy a person reads, not a value read for capability.
+ */
+const PRODUCT_NAME: Record<DwarfProvider, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex CLI',
+  antigravity: 'Antigravity CLI',
+  opencode: 'OpenCode'
+}
+
+/** Only a provider a launch could actually start with belongs in this picker. */
+const launchableProviders = computed(() => props.providers.filter((entry) => entry.launchable))
+
+const defaultProvider = computed(() => preferences.value.default.provider)
+
+// Reused from the launch surface (#239) rather than reinvented: the same
+// catalogue answers both the Add Panel's contextual row and this stored one.
+const defaultModelPicker = computed(() =>
+  modelPicker(props.catalogs, defaultProvider.value ?? null)
+)
+const defaultEffortPicker = computed(() =>
+  effortPicker(props.catalogs, defaultProvider.value ?? null)
+)
+
+/** No provider chosen means nothing here CAN be validated against a ladder or CLI yet. */
+const modelSelectDisabled = computed(
+  () => props.saving || defaultProvider.value === undefined || defaultModelPicker.value.disabled
+)
+const effortSelectDisabled = computed(
+  () =>
+    props.saving ||
+    defaultProvider.value === undefined ||
+    defaultEffortPicker.value.efforts.length === 0
+)
+
+function selectProfile(profile: JevRoutingProfile): void {
+  emit('preferences-change', { ...preferences.value, profile })
+}
+
+/**
+ * A new provider clears model and effort (#509 follow-up): both belonged to
+ * the OLD provider's own ladder and catalogue, and carrying them over risks
+ * a pairing the new provider's launch gate would refuse outright — the same
+ * reason `jevPreferences.ts`'s `save` re-validates the pair at all.
+ */
+function selectDefaultProvider(value: string): void {
+  const nextDefault: JevLaunchDefault = value === '' ? {} : { provider: value as DwarfProvider }
+  emit('preferences-change', { ...preferences.value, default: nextDefault })
+}
+
+function selectDefaultModel(value: string): void {
+  const nextDefault: JevLaunchDefault = { ...preferences.value.default }
+  if (value === '') {
+    delete nextDefault.model
+  } else {
+    nextDefault.model = value
+  }
+  emit('preferences-change', { ...preferences.value, default: nextDefault })
+}
+
+function selectDefaultEffort(value: string): void {
+  const nextDefault: JevLaunchDefault = { ...preferences.value.default }
+  if (value === '') {
+    delete nextDefault.effort
+  } else {
+    nextDefault.effort = value
+  }
+  emit('preferences-change', { ...preferences.value, default: nextDefault })
+}
 </script>
 
 <template>
@@ -123,6 +247,76 @@ const unavailableMessage = computed(() => {
         >
           Cancel
         </button>
+      </div>
+
+      <div v-if="props.settings.configured" class="jev-profile">
+        <span class="row-label">Routing profile</span>
+        <div class="segments">
+          <button
+            v-for="profile in JEV_ROUTING_PROFILES"
+            :key="profile"
+            class="profile-option"
+            type="button"
+            :class="{ 'is-selected': preferences.profile === profile }"
+            :aria-pressed="preferences.profile === profile ? 'true' : 'false'"
+            :disabled="props.saving"
+            @click="selectProfile(profile)"
+          >
+            <span class="profile-name">{{ PROFILE_LABEL[profile] }}</span>
+            <span class="profile-description">{{ PROFILE_DESCRIPTION[profile] }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="props.settings.configured" class="jev-default-launch">
+        <span class="row-label">Default launch</span>
+        <div class="default-launch-row">
+          <select
+            class="tuning-select"
+            aria-label="Default provider"
+            :value="defaultProvider ?? ''"
+            :disabled="props.saving"
+            @change="selectDefaultProvider(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">None</option>
+            <option
+              v-for="entry in launchableProviders"
+              :key="entry.provider"
+              :value="entry.provider"
+            >
+              {{ PRODUCT_NAME[entry.provider] }}
+            </option>
+          </select>
+          <select
+            class="tuning-select"
+            aria-label="Default model"
+            :value="preferences.default.model ?? ''"
+            :disabled="modelSelectDisabled"
+            @change="selectDefaultModel(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">CLI default</option>
+            <option
+              v-for="option in defaultModelPicker.models"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label ?? option.value }}
+            </option>
+          </select>
+          <select
+            class="tuning-select"
+            aria-label="Default effort"
+            :value="preferences.default.effort ?? ''"
+            :disabled="effortSelectDisabled"
+            @change="selectDefaultEffort(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">CLI default</option>
+            <option v-for="level in defaultEffortPicker.efforts" :key="level" :value="level">
+              {{ level }}
+            </option>
+          </select>
+        </div>
+        <p class="hint">Used when Jev cannot decide.</p>
       </div>
     </template>
 
@@ -205,5 +399,86 @@ const unavailableMessage = computed(() => {
   color: var(--color-cream);
   font-size: var(--text-helper);
   line-height: 1.4;
+}
+
+/* The routing profile (#509 follow-up): TypographySettings' own row-label +
+   segments model, because this is the same kind of mutually-exclusive choice
+   — reused rather than reinvented, down to the class names. */
+.jev-profile,
+.jev-default-launch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.row-label {
+  color: var(--color-cream);
+  font-size: var(--text-meta);
+}
+.segments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-settings);
+}
+.profile-option {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px var(--space-settings);
+  border: 2px solid var(--color-control);
+  border-radius: var(--radius-default);
+  color: var(--color-control);
+  cursor: pointer;
+  background: var(--color-panel-deep);
+  font: inherit;
+  text-align: left;
+}
+.profile-option.is-selected {
+  border: var(--border-active);
+  color: var(--color-cream);
+  background: var(--color-control);
+}
+.profile-option:disabled {
+  cursor: default;
+}
+.profile-option:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
+}
+.profile-name {
+  font-size: var(--text-meta);
+}
+.profile-description {
+  font-size: var(--text-helper);
+  line-height: 1.4;
+}
+
+/* The default-launch row: AddPanel's own `.tuning-select` (launch.md),
+   because the model and effort pickers ARE that row's controls, reused for a
+   stored default instead of a live composer. */
+.default-launch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-settings);
+}
+.tuning-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px var(--space-settings);
+  border: var(--border-active);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
+  background: var(--color-panel-deep);
+  font: inherit;
+  font-size: var(--text-meta);
+}
+.tuning-select:disabled {
+  border: 2px solid var(--color-control);
+  color: var(--color-control);
+  cursor: default;
+}
+.tuning-select:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 </style>

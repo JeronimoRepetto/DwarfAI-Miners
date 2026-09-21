@@ -103,9 +103,12 @@ const {
 const {
   settings: jevSettings,
   saving: jevSaving,
+  providers: jevProviders,
+  catalogs: jevCatalogs,
   sync: syncJevSettings,
   save: saveJevApiKey,
-  clear: clearJevApiKey
+  clear: clearJevApiKey,
+  setPreferences: setJevPreferences
 } = useJevSettings()
 /* --- end of the #509 block ------------------------------------------------- */
 
@@ -970,6 +973,8 @@ onBeforeUnmount(() => {
               :typography-applying="typographyApplying"
               :jev-settings="jevSettings"
               :jev-saving="jevSaving"
+              :jev-providers="jevProviders"
+              :jev-catalogs="jevCatalogs"
               @start-recording="startShortcutRecording"
               @stop-recording="stopShortcutRecording"
               @record="recordShortcut"
@@ -984,6 +989,7 @@ onBeforeUnmount(() => {
               @typography-change="setTypography"
               @jev-save="saveJevApiKey"
               @jev-clear="clearJevApiKey"
+              @jev-preferences-change="setJevPreferences"
             />
           </PanelFrame>
 

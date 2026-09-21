@@ -4126,6 +4126,106 @@ export function parseTypographyPreferences(document: unknown): TypographyPrefere
 export type JevUnavailableReason = 'encryption-unavailable'
 
 /**
+ * The three routing profiles Settings offers (#509 follow-up): how readily
+ * Jev may reach for a more capable, more expensive model. Closed and fixed,
+ * like `DwarfProvider` — the request layer that actually SENDS one to Jev is
+ * a separate task, and this is only the vocabulary Settings and that request
+ * share.
+ */
+export const JEV_ROUTING_PROFILES = ['economy', 'balanced', 'premium'] as const
+
+export type JevRoutingProfile = (typeof JEV_ROUTING_PROFILES)[number]
+
+/** Whether an unknown value names a profile this build offers. */
+export function isJevRoutingProfile(value: unknown): value is JevRoutingProfile {
+  return typeof value === 'string' && (JEV_ROUTING_PROFILES as readonly string[]).includes(value)
+}
+
+/**
+ * What Settings' profile picker reads before anybody has chosen — the middle
+ * of the three, weighing cost and capability per prompt rather than starting
+ * a first run already pinned to either end (user decision, 2026-09-21).
+ */
+export const DEFAULT_JEV_ROUTING_PROFILE: JevRoutingProfile = 'balanced'
+
+/**
+ * The launch Jev falls back to when it cannot decide (#509 follow-up): a
+ * provider, model and effort the PERSON chose in Settings, never a guess this
+ * app makes for them. Every field is independently optional — a default that
+ * only pins a provider leaves the model and effort to that CLI's own
+ * default, exactly like an ordinary untuned launch today.
+ */
+export interface JevLaunchDefault {
+  provider?: DwarfProvider
+  model?: string
+  effort?: string
+}
+
+/**
+ * What Settings' Jev section reads and writes once a key is configured
+ * (#509 follow-up): the routing profile, and the default launch above.
+ *
+ * A PREFERENCE, not a secret — see the `config-layering` skill's "A secret is
+ * not a setting either": unlike the key beside it, both of these are shown
+ * back to the person exactly as stored, they carry nothing that must stay off
+ * the wire, and a bad value degrades rather than blocking Settings from
+ * opening at all.
+ */
+export interface JevPreferences {
+  profile: JevRoutingProfile
+  default: JevLaunchDefault
+}
+
+/**
+ * What Settings' Jev section reads before main has ever answered, and what a
+ * document too corrupt to read degrades to — balanced, and no default at
+ * all, which is exactly today's behaviour before this preference existed.
+ */
+export const DEFAULT_JEV_PREFERENCES: JevPreferences = {
+  profile: DEFAULT_JEV_ROUTING_PROFILE,
+  default: {}
+}
+
+/**
+ * Stored or wire document -> preferences, degrading field by field — the
+ * same shape half of the `config-layering` asymmetry `parseAudioPreferences`
+ * reads by, and DELIBERATELY not the `parseJevApiKeyInput` half beside it:
+ * this parser reads a whole STORED document, read at startup and on every
+ * Settings paint, where corruption must never block the section from
+ * opening — unlike the key input, one typed value refused outright the
+ * moment it cannot be a key. A default whose provider or model/effort
+ * pairing could not actually be launched is refused ONE LAYER DOWN, in
+ * `jevPreferences.ts`'s own `save`; this parser only ever checks shape.
+ */
+export function parseJevPreferences(document: unknown): JevPreferences {
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    return { profile: DEFAULT_JEV_PREFERENCES.profile, default: {} }
+  }
+  const record = document as Record<string, unknown>
+
+  const profile = isJevRoutingProfile(record.profile)
+    ? record.profile
+    : DEFAULT_JEV_PREFERENCES.profile
+
+  const rawDefault = record.default
+  const defaultRecord =
+    typeof rawDefault === 'object' && rawDefault !== null && !Array.isArray(rawDefault)
+      ? (rawDefault as Record<string, unknown>)
+      : {}
+
+  const launchDefault: JevLaunchDefault = {}
+  if (isDwarfProvider(defaultRecord.provider)) launchDefault.provider = defaultRecord.provider
+  if (typeof defaultRecord.model === 'string' && defaultRecord.model.trim() !== '') {
+    launchDefault.model = defaultRecord.model.trim()
+  }
+  if (typeof defaultRecord.effort === 'string' && defaultRecord.effort.trim() !== '') {
+    launchDefault.effort = defaultRecord.effort.trim()
+  }
+
+  return { profile, default: launchDefault }
+}
+
+/**
  * What Settings' Jev section reads, and all it may EVER read (#509).
  *
  * Deliberately never the key. The renderer is told whether one is configured
@@ -4133,10 +4233,19 @@ export type JevUnavailableReason = 'encryption-unavailable'
  * either direction. The launch router (#509) reads the real value through
  * `jevApiKey.ts`'s `readKey()`, which is main-only and never wired to an IPC
  * channel; this is the one shape that may.
+ *
+ * AMENDED for the #509 follow-up: `preferences` rides along on the same
+ * verdict, merged in main from the key store and `jevPreferences.ts` (two
+ * different files on disk, one shape on the wire). The renderer shows and
+ * edits the profile and the default launch ONLY while `configured` is true —
+ * Settings hides both controls otherwise — but the preferences themselves
+ * are never a secret; they are plain preferences that happen to be gated on
+ * one.
  */
 export interface JevSettings {
   configured: boolean
   unavailableReason?: JevUnavailableReason
+  preferences: JevPreferences
 }
 
 /**
@@ -4147,8 +4256,14 @@ export interface JevSettings {
  * here would be a guess about this machine dressed as a fact from main, the
  * same trap `DEFAULT_AUDIO_PREFERENCES` exists to avoid: the renderer paints
  * before main has answered, so both processes need the same starting value.
+ * `preferences` starts at `DEFAULT_JEV_PREFERENCES` for the same reason —
+ * moot while `configured` is false, since nothing renders it, but still a
+ * real value rather than an absent one, so this stays a total `JevSettings`.
  */
-export const DEFAULT_JEV_SETTINGS: JevSettings = { configured: false }
+export const DEFAULT_JEV_SETTINGS: JevSettings = {
+  configured: false,
+  preferences: DEFAULT_JEV_PREFERENCES
+}
 
 /**
  * Far past any real TypeSafe key, and the point of it: not a length that key
@@ -4790,6 +4905,15 @@ export const IPC_CHANNELS = {
    * only a SUGGESTION: the renderer shows it before acting and the person may
    * override it, never a launch by itself.
    */
-  routeJevLaunch: 'jev:route'
+  routeJevLaunch: 'jev:route',
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  /**
+   * Settings' profile and default-launch controls (#509 follow-up). `get`
+   * stays `getJevSettings` — the merged verdict now carries `preferences`
+   * too — and only the WRITE gets a channel of its own, the same split
+   * `setJevApiKey`/`clearJevApiKey` already hold beside `getJevSettings`.
+   */
+  setJevPreferences: 'jev:preferences:set'
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } as const
