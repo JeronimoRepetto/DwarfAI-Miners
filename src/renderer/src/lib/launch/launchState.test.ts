@@ -9,6 +9,7 @@ import {
   DETACHED_TIMEOUT_MESSAGE,
   OTHER_CHOICE,
   adoptLaunchedDwarf,
+  canSubmit,
   chooseEffort,
   chooseModel,
   choosePermissionMode,
@@ -35,6 +36,7 @@ import {
   startedDetached,
   submitStarted,
   toggleJev,
+  toggleJevAutoAccept,
   typeCommand,
   typePrompt
 } from './launchState'
@@ -686,6 +688,175 @@ describe('the Jev option (#509)', () => {
 
       const ready = toggleJev(setJevSettings(opened(), READY))
       expect(shouldAskJev(jevAsked(ready))).toBe(false)
+    })
+  })
+})
+
+/*
+ * Issue #523. The toggle becomes a full entry path: Jev exists to choose the
+ * provider, so demanding a provider pick before it can be asked was the gate
+ * this issue exists to open. What the gate then says — the same phases a
+ * chosen chip reaches, and only for as long as the toggle stands — is all
+ * here; what a decision and a fallback DO from the unlocked composer is the
+ * composable's own detour, tested beside it.
+ */
+describe('the Jev entry path (#523)', () => {
+  const READY: JevSettings = { configured: true }
+  const HIDDEN: JevSettings = { configured: false }
+  const UNAVAILABLE: JevSettings = {
+    configured: false,
+    unavailableReason: 'encryption-unavailable'
+  }
+
+  const jevOn = () => toggleJev(setJevSettings(opened(), READY))
+
+  describe('the composer the toggle unlocks', () => {
+    it('opens with no provider chip at all once the toggle is on', () => {
+      const state = jevOn()
+
+      expect(state.choice).toBeNull()
+      expect(composerEnabled(state)).toBe(true)
+      expect(composerPlaceholder(state)).toBe(COMPOSER_ENABLED_PLACEHOLDER)
+    })
+
+    it('re-locks when the toggle comes back off, and keeps what was typed', () => {
+      const off = toggleJev(typePrompt(jevOn(), 'dig the east gallery'))
+
+      expect(composerEnabled(off)).toBe(false)
+      expect(composerPlaceholder(off)).toBe(COMPOSER_DISABLED_PLACEHOLDER)
+      expect(off.prompt).toBe('dig the east gallery')
+      expect(launchPhase(off)).toBe('provider-selection')
+    })
+
+    it('reaches the same phases a chosen chip reaches, gate for gate', () => {
+      expect(launchPhase(jevOn())).toBe('known-provider-ready')
+
+      const typed = typePrompt(jevOn(), 'dig')
+      expect(launchPhase(typed)).toBe('prompt-ready')
+      expect(canSubmit(typed)).toBe(true)
+    })
+
+    it('does not unlock Other without its committed command', () => {
+      const state = toggleJev(setJevSettings(withOther(), READY))
+
+      expect(composerEnabled(state)).toBe(false)
+      expect(launchPhase(state)).toBe('other-command-required')
+      expect(composerEnabled(commitCommand(typeCommand(state, 'lalolanda')))).toBe(true)
+    })
+
+    it('changes nothing while the toggle is off — every gate stays as it was', () => {
+      const readyOff = setJevSettings(opened(), READY)
+
+      expect(composerEnabled(readyOff)).toBe(false)
+      expect(launchPhase(readyOff)).toBe('provider-selection')
+      expect(launchPhase(typePrompt(readyOff, 'dig'))).toBe('provider-selection')
+    })
+
+    it('does not unlock an unavailable Jev, however its toggle is pressed', () => {
+      expect(composerEnabled(toggleJev(setJevSettings(opened(), UNAVAILABLE)))).toBe(false)
+    })
+  })
+
+  describe('the auto-accept checkbox', () => {
+    const DECISION: JevRouteLaunchResult = {
+      kind: 'decision',
+      provider: 'codex',
+      confidence: 0.9,
+      truncated: false
+    }
+
+    it('starts off — the person’s own choice for this session, never assumed, like enabled', () => {
+      expect(closedLaunch().jev.autoAccept).toBe(false)
+      expect(setJevSettings(opened(), READY).jev.autoAccept).toBe(false)
+    })
+
+    it('flips on and off once ready, and does nothing outside ready', () => {
+      const ready = setJevSettings(opened(), READY)
+
+      expect(toggleJevAutoAccept(ready).jev.autoAccept).toBe(true)
+      expect(toggleJevAutoAccept(toggleJevAutoAccept(ready)).jev.autoAccept).toBe(false)
+      expect(toggleJevAutoAccept(setJevSettings(opened(), UNAVAILABLE)).jev.autoAccept).toBe(false)
+      expect(toggleJevAutoAccept(setJevSettings(opened(), HIDDEN)).jev.autoAccept).toBe(false)
+    })
+
+    it('is pressable with the Jev toggle still off — it configures the next ask, not this one', () => {
+      const state = toggleJevAutoAccept(setJevSettings(opened(), READY))
+
+      expect(state.jev.enabled).toBe(false)
+      expect(state.jev.autoAccept).toBe(true)
+    })
+
+    it('rides the same availability guard as enabled when settings stop being ready', () => {
+      const wasOn = toggleJevAutoAccept(setJevSettings(opened(), READY))
+      expect(wasOn.jev.autoAccept).toBe(true)
+
+      expect(setJevSettings(wasOn, HIDDEN).jev.autoAccept).toBe(false)
+      expect(setJevSettings(wasOn, UNAVAILABLE).jev.autoAccept).toBe(false)
+    })
+
+    it('survives a settings answer that keeps it ready, and a toggle of Jev itself', () => {
+      const on = toggleJevAutoAccept(setJevSettings(opened(), READY))
+
+      expect(setJevSettings(on, READY).jev.autoAccept).toBe(true)
+      expect(toggleJev(on).jev.autoAccept).toBe(true)
+    })
+
+    it('is forgotten when the panel closes and reopens, like every other session choice', () => {
+      const on = toggleJevAutoAccept(jevOn())
+
+      expect(closeLaunch(on).jev.autoAccept).toBe(false)
+      expect(openLaunch(on).jev.autoAccept).toBe(false)
+    })
+
+    it('collapses nothing in the pure model — the guard it drives lives in submit', () => {
+      // The state says only what the person asked for; whether the Enter that
+      // receives a decision stops at the card or falls through to a launch is
+      // the composable's detour, asserted in useAgentLaunch.test.ts.
+      const asked = jevAsked(jevOn())
+      const applied = jevAnswered(asked, DECISION)
+
+      expect(applied.jev.routing.phase).toBe('decided')
+      expect(applied.choice).toBe('codex')
+    })
+
+    it('records that a decision itself accepted nothing — it carries no fallback promise', () => {
+      const applied = jevAnswered(jevAsked(jevOn()), DECISION)
+
+      expect(applied.jev.launchedOnFallback).toBe(false)
+    })
+  })
+
+  describe('what a fallback line is allowed to promise', () => {
+    const FALLBACK: JevRouteLaunchResult = { kind: 'fallback', reason: 'unreachable' }
+
+    it('records that a fallback onto chosen pickers launched — #509’s original case', () => {
+      const fellBack = jevAnswered(jevAsked(chooseProvider(opened(), 'claude')), FALLBACK)
+
+      expect(fellBack.jev.routing.phase).toBe('fellBack')
+      expect(fellBack.jev.launchedOnFallback).toBe(true)
+    })
+
+    it('records that a fallback with no chip launched nothing — the #523 case', () => {
+      const fellBack = jevAnswered(jevAsked(jevOn()), FALLBACK)
+
+      expect(fellBack.jev.routing.phase).toBe('fellBack')
+      expect(fellBack.choice).toBeNull()
+      expect(fellBack.jev.launchedOnFallback).toBe(false)
+    })
+
+    it('keeps its promise across the gates, but not across the answer it describes', () => {
+      // A stale fallback line must not outlive its prompt — clearJevDecision
+      // already returns the routing to idle, and the promise belongs to that
+      // routing, so it goes with it.
+      const fellBack = jevAnswered(jevAsked(chooseProvider(opened(), 'claude')), FALLBACK)
+
+      expect(clearJevDecision(fellBack).jev.routing).toEqual({ phase: 'idle' })
+      expect(clearJevDecision(fellBack).jev.launchedOnFallback).toBe(false)
+    })
+
+    it('is false before any fallback has ever arrived', () => {
+      expect(opened().jev.launchedOnFallback).toBe(false)
+      expect(chooseProvider(opened(), 'claude').jev.launchedOnFallback).toBe(false)
     })
   })
 })

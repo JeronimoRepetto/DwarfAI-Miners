@@ -73,6 +73,8 @@ const emit = defineEmits<{
   permissionMode: [value: HeldPermissionMode]
   /** The Jev toggle (#509). */
   'toggle-jev': []
+  /** The #523 auto-accept checkbox beside it. */
+  'toggle-jev-auto': []
   /** The decision card's own Dismiss control (#509). */
   'dismiss-jev': []
   submit: []
@@ -177,6 +179,11 @@ const jevDecisionSummary = computed(() => {
  * Kept here, display text only — the wire only ever carries the reason, on
  * the same split `contracts.ts` states for every prompt-sentence-that-names-
  * no-provider.
+ *
+ * AMENDED in the ending below for #523: “still launches” was true because a
+ * chip always stood under it. On the toggle-alone entry path there may be
+ * nothing to launch onto, and then the line says what IS owed instead —
+ * nothing launched, the prompt stands, a provider is missing.
  */
 const JEV_FALLBACK_REASONS: Record<JevFallbackReason, string> = {
   'no-key': 'No TypeSafe key is set',
@@ -198,7 +205,13 @@ const jevFallbackMessage = computed(() => {
     routing.reason === 'low-confidence' && routing.confidence !== undefined
       ? `${reason} (${Math.round(routing.confidence * 100)}%)`
       : reason
-  return `${withConfidence}. Launched with your pickers' values.`
+  // The ending is `launchState`'s fact — `launchedOnFallback`, recorded at
+  // the moment the answer landed — never a reading of the current chips: a
+  // chip clicked afterwards must not rewrite whether this fallback launched.
+  const ending = props.jev.launchedOnFallback
+    ? "Launched with your pickers' values."
+    : 'Your prompt was kept — choose a provider to launch.'
+  return `${withConfidence}. ${ending}`
 })
 
 /** Enter commits the command. The gate behind it decides whether that opens anything. */
@@ -347,15 +360,31 @@ function onCommandKeydown(event: KeyboardEvent): void {
         off, and pressable once ready.
       -->
       <div v-if="jev.availability !== 'hidden'" class="jev-row">
-        <button
-          v-if="jev.availability === 'ready'"
-          class="jev-toggle"
-          type="button"
-          :aria-pressed="jev.enabled"
-          @click="emit('toggle-jev')"
-        >
-          Let Jev choose
-        </button>
+        <template v-if="jev.availability === 'ready'">
+          <button
+            class="jev-toggle"
+            type="button"
+            :aria-pressed="jev.enabled"
+            @click="emit('toggle-jev')"
+          >
+            Let Jev choose
+          </button>
+          <!--
+            #523: with the toggle now a full entry path, its two-Enter confirm
+            can be collapsed by request. The checkbox stands beside the toggle
+            and appears exactly where the toggle is pressable — an
+            auto-accept for an option that cannot be accepted is nothing's.
+          -->
+          <label class="jev-auto-label">
+            <input
+              class="jev-auto"
+              type="checkbox"
+              :checked="jev.autoAccept"
+              @change="emit('toggle-jev-auto')"
+            />
+            Auto-accept Jev's choice
+          </label>
+        </template>
         <template v-else>
           <button class="jev-toggle" type="button" disabled aria-pressed="false">
             Let Jev choose
@@ -770,6 +799,21 @@ function onCommandKeydown(event: KeyboardEvent): void {
   color: var(--color-tooltip-text);
   font-size: var(--text-helper);
   opacity: 0.75;
+}
+/*
+ * The #523 checkbox, drawn with what this screen already has: the toggle's
+ * own cream meta type, and the browser's checkbox itself — the one control
+ * whose two states need no new surface here.
+ */
+.jev-auto-label {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  color: var(--color-cream);
+  cursor: pointer;
+  font-size: var(--text-meta);
+  white-space: nowrap;
 }
 .jev-status {
   padding: 0 8px;

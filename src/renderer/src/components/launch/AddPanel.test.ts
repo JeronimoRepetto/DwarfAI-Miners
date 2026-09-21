@@ -24,8 +24,12 @@ const HIDDEN_EFFORT_PICKER: EffortPicker = { visible: false, efforts: [] }
 const HIDDEN_JEV: JevState = {
   availability: 'hidden',
   enabled: false,
+  // AMENDED for #523: the two fields the state grew. Defaults off, as the
+  // state machine itself starts them; tests that want them on say so.
+  autoAccept: false,
   routing: { phase: 'idle' },
-  previousChoice: null
+  previousChoice: null,
+  launchedOnFallback: false
 }
 
 const CLAUDE: AgentProviderOption = { provider: 'claude', installed: true, launchable: true }
@@ -507,8 +511,12 @@ describe('the Jev option', () => {
   const READY_JEV: JevState = {
     availability: 'ready',
     enabled: false,
+    // AMENDED for #523: the two fields the state grew, defaulted as the state
+    // machine itself starts them. Tests that want them on say so.
+    autoAccept: false,
     routing: { phase: 'idle' },
-    previousChoice: null
+    previousChoice: null,
+    launchedOnFallback: false
   }
   const ASKING_JEV: JevState = { ...READY_JEV, enabled: true, routing: { phase: 'asking' } }
   const DECISION: JevState['routing'] = {
@@ -533,8 +541,11 @@ describe('the Jev option', () => {
       availability: 'unavailable',
       unavailableReason: 'encryption-unavailable',
       enabled: false,
+      // AMENDED for #523: the two required fields, at their defaults.
+      autoAccept: false,
       routing: { phase: 'idle' },
-      previousChoice: null
+      previousChoice: null,
+      launchedOnFallback: false
     }
     const wrapper = panel({ jev: unavailable })
 
@@ -687,6 +698,10 @@ describe('the Jev option', () => {
   })
 
   describe('the fallback line', () => {
+    // AMENDED for #523: `chosen: 'claude'` plus a fallback is exactly the case
+    // that DOES launch on the pickers' values — #509's own — so the promise
+    // the state machine would have recorded for it is recorded here. The
+    // no-chip refusal beside it is asserted in its own block below.
     function fellBackWith(reason: string, confidence?: number) {
       return panel({
         chosen: 'claude',
@@ -696,6 +711,7 @@ describe('the Jev option', () => {
         jev: {
           ...READY_JEV,
           enabled: true,
+          launchedOnFallback: true,
           routing: { phase: 'fellBack', reason, confidence }
         }
       })
@@ -736,11 +752,106 @@ describe('the Jev option', () => {
         jev: {
           ...READY_JEV,
           enabled: true,
+          launchedOnFallback: true,
           routing: { phase: 'fellBack', reason: 'timeout' }
         }
       })
 
       expect(wrapper.get('.jev-fallback').text()).toContain('Jev took too long')
+    })
+
+    /*
+     * Issue #523. With the toggle now a full entry path, a fallback can arrive
+     * with no chip behind it — and then nothing launched, so the line must say
+     * what stands instead: the prompt was kept, and a provider is what the
+     * launch still needs. The `launchedOnFallback` flag is `launchState`'s
+     * reading of that moment, decided when the answer lands, never re-read
+     * off the chips that may move afterwards.
+     */
+    describe('the fallback with no chip', () => {
+      function fellBackAlone(reason: string, confidence?: number) {
+        return panel({
+          // No `chosen`: this is the toggle-as-entry-path panel, composer open
+          // on Jev alone exactly as `launchState` unlocks it.
+          phase: 'prompt-ready',
+          enabled: true,
+          placeholder: COMPOSER_ENABLED_PLACEHOLDER,
+          prompt: 'dig the east gallery',
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            launchedOnFallback: false,
+            routing: { phase: 'fellBack', reason, confidence }
+          }
+        })
+      }
+
+      it('says the prompt was kept and a provider must be chosen, instead of claiming a launch', () => {
+        const text = fellBackAlone('timeout').get('.jev-fallback').text()
+
+        expect(text).toContain('Jev took too long')
+        expect(text).toContain('Your prompt was kept')
+        expect(text).toContain('choose a provider')
+        expect(text).not.toContain("Launched with your pickers' values.")
+      })
+
+      it('keeps the reason wording per name, with the refusal as the only changed half', () => {
+        // The reason sentences themselves are #509's, untouched; only the
+        // ending split moves. One named reason is enough to pin the split.
+        expect(fellBackAlone('rate-limited').get('.jev-fallback').text()).toContain(
+          'Jev is rate-limited right now'
+        )
+      })
+
+      it('still names the confidence for a low-confidence no-chip fallback', () => {
+        const text = fellBackAlone('low-confidence', 0.42).get('.jev-fallback').text()
+
+        expect(text).toContain('42%')
+        expect(text).toContain('not confident enough')
+        expect(text).toContain('Your prompt was kept')
+      })
+    })
+  })
+
+  /*
+   * Issue #523's checkbox: visible exactly when the toggle is pressable, its
+   * tick carried in from the state, and its press reported as its own gesture
+   * — the component decides nothing about what auto-accept means at submit.
+   */
+  describe('the auto-accept checkbox (#523)', () => {
+    it('sits beside the pressable toggle, and nowhere else', () => {
+      const ready = panel({ jev: READY_JEV })
+      expect(ready.find('.jev-auto').exists()).toBe(true)
+      expect(ready.get('.jev-row').text()).toContain("Auto-accept Jev's choice")
+
+      expect(panel({ jev: HIDDEN_JEV }).find('.jev-auto').exists()).toBe(false)
+      const unavailable: JevState = {
+        availability: 'unavailable',
+        unavailableReason: 'encryption-unavailable',
+        enabled: false,
+        autoAccept: false,
+        routing: { phase: 'idle' },
+        previousChoice: null,
+        launchedOnFallback: false
+      }
+      expect(panel({ jev: unavailable }).find('.jev-auto').exists()).toBe(false)
+    })
+
+    it('draws the tick from the state, checked and unchecked', () => {
+      const off = panel({ jev: READY_JEV }).get('.jev-auto')
+      const on = panel({ jev: { ...READY_JEV, autoAccept: true } }).get('.jev-auto')
+
+      expect((off.element as HTMLInputElement).checked).toBe(false)
+      expect((on.element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('reports its press and nothing else', async () => {
+      const wrapper = panel({ jev: READY_JEV })
+
+      await wrapper.get('.jev-auto').setValue(true)
+
+      expect(wrapper.emitted('toggle-jev-auto')).toHaveLength(1)
+      expect(wrapper.emitted('toggle-jev')).toBeUndefined()
     })
   })
 })

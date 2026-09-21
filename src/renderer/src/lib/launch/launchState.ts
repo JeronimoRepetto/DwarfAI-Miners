@@ -270,13 +270,31 @@ export function launchPermissionMode(state: LaunchState): HeldPermissionMode | u
 }
 
 /**
+ * Whether a Jev toggle left on stands in for a provider chip (#523) — the one
+ * reading of "Jev exists to choose the provider" that needs no new phase: the
+ * option is pressable, the person pressed it, and what it chooses is exactly
+ * what a chip would have been. Availability is checked here rather than
+ * trusted from `enabled` alone because the two are forced in step by
+ * `setJevSettings`, and a gate that reads both says so rather than inheriting.
+ */
+function jevStandsForAChoice(state: LaunchState): boolean {
+  return state.jev.availability === 'ready' && state.jev.enabled
+}
+
+/**
  * Whether the gate the composer is behind is open.
  *
  * Two ways through, and the source draws them as two: a known provider opens it
  * outright, Other opens it only once a command is committed.
+ *
+ * AMENDED for #523: with no chip at all, a Jev toggle left on opens it too.
+ * With a chip chosen the gate stays the chip's own — including Other's commit
+ * check, which the toggle does not unlock — so every path that had a chip is
+ * untouched, and with the toggle off this reads exactly as it did.
  */
 export function composerEnabled(state: LaunchState): boolean {
-  if (!state.open || state.choice === null) return false
+  if (!state.open) return false
+  if (state.choice === null) return jevStandsForAChoice(state)
   if (state.choice === OTHER_CHOICE) return state.committedCommand !== ''
   return true
 }
@@ -296,8 +314,17 @@ export function launchPhase(state: LaunchState): LaunchPhase {
   // back to a composer would invite a second one.
   if (state.detached) return 'started-detached'
   if (state.submitting) return 'submitted-spawning'
-  if (state.choice === null) return 'provider-selection'
-  if (!composerEnabled(state)) return 'other-command-required'
+  // AMENDED for #523. This used to read `choice === null` outright, because a
+  // panel with no chip was a panel with a locked composer; now Jev can stand
+  // in for the chip, so what separates `provider-selection` from the rest is
+  // the gate itself, and a no-chip panel only keeps selecting its supplier
+  // while that gate is shut. An OPEN no-chip panel is the chip-chose-it
+  // reading carried forward: it falls through to the same phases a chosen
+  // known provider reaches, because as far as the gate model is concerned
+  // one has been.
+  if (!composerEnabled(state)) {
+    return state.choice === null ? 'provider-selection' : 'other-command-required'
+  }
   // A prompt of pure whitespace is not a prompt. Unspecified in the source, but
   // main has already answered it for itself: both launch paths trim before
   // testing for empty and refuse with "Type a prompt first." Offering an Enter
@@ -512,16 +539,35 @@ export interface JevState {
    * an option that just stopped being offered is not a decision anybody made.
    */
   enabled: boolean
+  /**
+   * The #523 checkbox beside the toggle: with it on, the Enter that receives
+   * a decision applies it AND launches, collapsing #509's two-Enter confirm.
+   * The same session-only promise as `enabled`, the same forced-off guard —
+   * and the same reason to exist: a choice the person can make once can be
+   * made once for a whole panel.
+   */
+  autoAccept: boolean
   routing: JevRoutingPhase
   previousChoice: JevPreviousChoice | null
+  /**
+   * Whether the fallback now on screen fell through into a launch of the
+   * pickers' own values (#509's case, which needs a chosen chip to fall
+   * back ONTO) or was refused for want of one (#523). `AddPanel` words its
+   * fallback line from this rather than from the current chips, because a
+   * chip clicked afterwards would otherwise rewrite the past: a fallback
+   * that launched nothing must never start claiming it launched.
+   */
+  launchedOnFallback: boolean
 }
 
 function closedJevState(): JevState {
   return {
     availability: 'hidden',
     enabled: false,
+    autoAccept: false,
     routing: { phase: 'idle' },
-    previousChoice: null
+    previousChoice: null,
+    launchedOnFallback: false
   }
 }
 
@@ -539,7 +585,10 @@ export function setJevSettings(state: LaunchState, settings: JevSettings): Launc
       ...state.jev,
       availability,
       unavailableReason: settings.unavailableReason,
-      enabled: availability === 'ready' && state.jev.enabled
+      enabled: availability === 'ready' && state.jev.enabled,
+      // #523: the same guard for auto-accept, for the same reason — a checkbox
+      // for an option that stopped being offered is nobody's decision either.
+      autoAccept: availability === 'ready' && state.jev.autoAccept
     }
   }
 }
@@ -548,6 +597,17 @@ export function setJevSettings(state: LaunchState, settings: JevSettings): Launc
 export function toggleJev(state: LaunchState): LaunchState {
   if (state.jev.availability !== 'ready') return state
   return { ...state, jev: { ...state.jev, enabled: !state.jev.enabled } }
+}
+
+/**
+ * The #523 checkbox beside that toggle. Mirrors it exactly — a no-op outside
+ * `ready`, because there is nothing to accept — and deliberately shares its
+ * guard rather than also requiring `enabled`: the checkbox configures the next
+ * ask, and checking it before pressing the toggle is pressing both.
+ */
+export function toggleJevAutoAccept(state: LaunchState): LaunchState {
+  if (state.jev.availability !== 'ready') return state
+  return { ...state, jev: { ...state.jev, autoAccept: !state.jev.autoAccept } }
 }
 
 /** The ask has left for TypeSafe. Only ever from idle — a second ask mid-flight would be a second request for one launch. */
@@ -579,7 +639,11 @@ export function jevAnswered(state: LaunchState, result: JevRouteLaunchResult): L
       ...state,
       jev: {
         ...state.jev,
-        routing: { phase: 'fellBack', reason: result.reason, confidence: result.confidence }
+        routing: { phase: 'fellBack', reason: result.reason, confidence: result.confidence },
+        // #523: recorded at the moment the answer lands, not read off the
+        // chips later — the sentence this feeds says what DID, and the only
+        // thing that can still say it truthfully is the gate as it stood.
+        launchedOnFallback: state.choice !== null
       }
     }
   }
@@ -618,8 +682,30 @@ export function clearJevDecision(state: LaunchState): LaunchState {
     restore === null
       ? state
       : { ...state, choice: restore.choice, model: restore.model, effort: restore.effort }
-  return { ...restored, jev: { ...restored.jev, routing: { phase: 'idle' }, previousChoice: null } }
+  return {
+    ...restored,
+    jev: {
+      ...restored.jev,
+      routing: { phase: 'idle' },
+      previousChoice: null,
+      // The #523 promise belongs to the routing being cleared, so it goes
+      // with it — no fallback line outlives the answer it describes, and no
+      // stale promise reaches the next one.
+      launchedOnFallback: false
+    }
+  }
 }
+
+/**
+ * The sentence a no-chip Enter becomes when the Jev path cannot answer it
+ * (#523) — the honest face of the return that used to be silent. It stands
+ * ONLY where no fallback line is already saying the same thing on screen:
+ * a routing-fallback with no chip owns its own reworded line, and this is for
+ * everything else that can reach a submit with the composer open on nothing
+ * but Jev (today: the answer that arrived after the prompt moved on).
+ */
+export const JEV_NO_CHOICE_REFUSAL =
+  'Jev could not pick a provider for this prompt. Your prompt was kept — choose a provider to launch.'
 
 /** Whether `submit` should ask Jev first rather than launch straight off the pickers. */
 export function shouldAskJev(state: LaunchState): boolean {
