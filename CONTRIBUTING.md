@@ -75,6 +75,18 @@ pnpm test
 pnpm build
 ```
 
+**A committed hook runs the formatter before it ever reaches you.** Once `pnpm install`
+has wired it (the `prepare` script sets `core.hooksPath` to `scripts/git-hooks`), a
+`pre-commit` hook runs `prettier --check` on whatever you staged and refuses the commit if
+it fails, naming the exact `prettier --write` and `git add` to fix and re-stage. It exists
+because three agents working #444/#449 each committed files prettier rejected on
+2026-09-17 — PR #451 went red in CI on exactly that, although this file already said to
+run the checks above first. The hook is one committed `sh` script, run through git's own
+bundled `sh` on every platform including Windows, wired through `core.hooksPath` rather
+than a dependency: no network, no new package, and `format:check` above stays the CI
+backstop for anyone who bypasses it. For a genuine emergency commit, skip it with
+`git commit --no-verify`.
+
 The whole test suite is platform-independent and must stay that way: it runs and passes on
 any host OS, because per-OS behavior is tested through pure builders (see below), never by
 executing platform commands.

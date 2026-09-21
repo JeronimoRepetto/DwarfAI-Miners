@@ -1,0 +1,41 @@
+#!/bin/sh
+# Refuse a commit that stages a file prettier would reformat, locally rather
+# than only in CI (#454). Three agents working #444/#449 each committed
+# files prettier rejects on 2026-09-17, and PR #451 went red in CI on
+# exactly that, although AGENTS.md and CONTRIBUTING.md both say to run the
+# seven checks before pushing. An instruction that fails three times in a
+# day needs a mechanism, not another repetition of itself.
+#
+# Checks, never rewrites: a hook that silently reformats what was staged
+# hides the change from whoever staged it. CI's `format:check` stays the
+# backstop for anyone who skips this with `--no-verify`
+# (see CONTRIBUTING.md).
+#
+# Wired via `core.hooksPath` (the `prepare` script in package.json), which
+# git runs through its own bundled `sh` on every platform including
+# Windows, so this one script covers all three.
+set -eu
+
+staged="$(mktemp)"
+trap 'rm -f "$staged"' EXIT
+
+git diff --cached --name-only --diff-filter=ACMR -z >"$staged"
+
+# Nothing staged that prettier could have an opinion on either way.
+if [ ! -s "$staged" ]; then
+  exit 0
+fi
+
+if xargs -0 pnpm exec prettier --check --ignore-unknown <"$staged"; then
+  exit 0
+fi
+
+names="$(tr '\0' ' ' <"$staged")"
+echo "" >&2
+echo "prettier rejected one or more staged files. Fix and re-stage with:" >&2
+echo "" >&2
+echo "  pnpm exec prettier --write $names" >&2
+echo "  git add $names" >&2
+echo "" >&2
+echo "Emergency opt-out: git commit --no-verify (see CONTRIBUTING.md)." >&2
+exit 1
