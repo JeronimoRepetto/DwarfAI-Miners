@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 // #168 additions are asserted in their own describe at the foot of this file.
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
-import type { LaunchFailedPush } from '../../types'
+import type { JevRouteLaunchResult, JevSettings, LaunchFailedPush } from '../../types'
 import {
   COMPOSER_DISABLED_PLACEHOLDER,
   COMPOSER_ENABLED_PLACEHOLDER,
@@ -12,6 +12,7 @@ import {
   chooseEffort,
   chooseModel,
   choosePermissionMode,
+  clearJevDecision,
   closeLaunch,
   closedLaunch,
   commitCommand,
@@ -19,6 +20,8 @@ import {
   composerPlaceholder,
   chooseProvider,
   detachedTimedOut,
+  jevAnswered,
+  jevAsked,
   launchFailed,
   launchFailureMessage,
   launchPermissionMode,
@@ -26,9 +29,12 @@ import {
   launchPrompt,
   launchTuning,
   openLaunch,
+  setJevSettings,
+  shouldAskJev,
   submitRefused,
   startedDetached,
   submitStarted,
+  toggleJev,
   typeCommand,
   typePrompt
 } from './launchState'
@@ -458,6 +464,228 @@ describe('a detached launch that failed after it started (#263)', () => {
       const adopted = adoptLaunchedDwarf(started(), 'codex:sess-9')
 
       expect(detachedTimedOut(adopted, 'receipt:1')).toBe(adopted)
+    })
+  })
+})
+
+/*
+ * Jev (#509): the Add Panel's own reading of a routed launch. Main already
+ * proved the decision is launchable (`routeLaunch.ts`, T3) and never sends
+ * the prompt, the key or token usage back — what is left here is entirely
+ * about what the pickers show and what the person is told, both pure.
+ */
+describe('the Jev option (#509)', () => {
+  const READY: JevSettings = { configured: true }
+  const HIDDEN: JevSettings = { configured: false }
+  const UNAVAILABLE: JevSettings = {
+    configured: false,
+    unavailableReason: 'encryption-unavailable'
+  }
+
+  function decision(
+    overrides: Partial<Extract<JevRouteLaunchResult, { kind: 'decision' }>> = {}
+  ): JevRouteLaunchResult {
+    return { kind: 'decision', provider: 'codex', confidence: 0.9, truncated: false, ...overrides }
+  }
+
+  function fallback(
+    overrides: Partial<Extract<JevRouteLaunchResult, { kind: 'fallback' }>> = {}
+  ): JevRouteLaunchResult {
+    return { kind: 'fallback', reason: 'unreachable', ...overrides }
+  }
+
+  describe('availability, from main’s own settings verdict', () => {
+    it('starts hidden, the honest state before main has ever answered', () => {
+      expect(closedLaunch().jev.availability).toBe('hidden')
+    })
+
+    it('is hidden with no key configured and no reason given — #509’s own first option', () => {
+      const state = setJevSettings(opened(), HIDDEN)
+
+      expect(state.jev.availability).toBe('hidden')
+      expect(state.jev.unavailableReason).toBeUndefined()
+    })
+
+    it('is unavailable, with the reason, when main names one', () => {
+      const state = setJevSettings(opened(), UNAVAILABLE)
+
+      expect(state.jev.availability).toBe('unavailable')
+      expect(state.jev.unavailableReason).toBe('encryption-unavailable')
+    })
+
+    it('is ready once a key is configured', () => {
+      expect(setJevSettings(opened(), READY).jev.availability).toBe('ready')
+    })
+
+    it('forces a stale toggle off when settings stop being ready', () => {
+      const wasOn = toggleJev(setJevSettings(opened(), READY))
+      expect(wasOn.jev.enabled).toBe(true)
+
+      expect(setJevSettings(wasOn, HIDDEN).jev.enabled).toBe(false)
+    })
+  })
+
+  describe('the toggle', () => {
+    it('starts off — the person’s own choice for this panel session, never assumed', () => {
+      expect(setJevSettings(opened(), READY).jev.enabled).toBe(false)
+    })
+
+    it('does nothing outside ready — nothing to turn on', () => {
+      expect(toggleJev(setJevSettings(opened(), UNAVAILABLE)).jev.enabled).toBe(false)
+      expect(toggleJev(setJevSettings(opened(), HIDDEN)).jev.enabled).toBe(false)
+    })
+
+    it('flips on and off once ready', () => {
+      const ready = setJevSettings(opened(), READY)
+
+      expect(toggleJev(ready).jev.enabled).toBe(true)
+      expect(toggleJev(toggleJev(ready)).jev.enabled).toBe(false)
+    })
+  })
+
+  describe('asking', () => {
+    it('moves from idle to asking', () => {
+      expect(jevAsked(opened()).jev.routing).toEqual({ phase: 'asking' })
+    })
+
+    it('is a no-op once already asking — one ask per submit', () => {
+      const asking = jevAsked(opened())
+
+      expect(jevAsked(asking)).toBe(asking)
+    })
+  })
+
+  describe('a decision, applied to the pickers it can override', () => {
+    it('applies the provider, model and effort through the same paths a click would', () => {
+      const asked = jevAsked(chooseProvider(opened(), 'claude'))
+
+      const applied = jevAnswered(
+        asked,
+        decision({ provider: 'codex', model: 'gpt-5.6-sol', effort: 'high' })
+      )
+
+      expect(applied.choice).toBe('codex')
+      expect(applied.model).toBe('gpt-5.6-sol')
+      expect(applied.effort).toBe('high')
+      expect(applied.jev.routing).toEqual({
+        phase: 'decided',
+        decision: decision({ provider: 'codex', model: 'gpt-5.6-sol', effort: 'high' })
+      })
+    })
+
+    it('leaves model and effort unset when Jev named none — say nothing, not the first option', () => {
+      const asked = jevAsked(opened())
+
+      const applied = jevAnswered(asked, decision({ provider: 'claude' }))
+
+      expect(applied.model).toBeNull()
+      expect(applied.effort).toBeNull()
+    })
+
+    it('keeps the pre-decision pickers so they can be put back', () => {
+      const asked = jevAsked(
+        chooseEffort(chooseModel(chooseProvider(opened(), 'claude'), 'sonnet'), 'xhigh')
+      )
+
+      const applied = jevAnswered(asked, decision({ provider: 'codex' }))
+
+      expect(applied.jev.previousChoice).toEqual({
+        choice: 'claude',
+        model: 'sonnet',
+        effort: 'xhigh'
+      })
+    })
+
+    it('ignores an answer that is not the ask this panel is waiting on', () => {
+      const idle = opened()
+
+      expect(jevAnswered(idle, decision())).toBe(idle)
+    })
+  })
+
+  describe('a fallback, which touches no picker at all', () => {
+    it('records the reason and leaves the pickers exactly as they were — #509’s own acceptance criterion', () => {
+      const asked = jevAsked(chooseProvider(opened(), 'claude'))
+
+      const fellBack = jevAnswered(asked, fallback({ reason: 'timeout' }))
+
+      expect(fellBack.choice).toBe('claude')
+      expect(fellBack.jev.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'timeout',
+        confidence: undefined
+      })
+      expect(fellBack.jev.previousChoice).toBeNull()
+    })
+
+    it('carries confidence only when the wire type sends one', () => {
+      const asked = jevAsked(opened())
+
+      const fellBack = jevAnswered(asked, fallback({ reason: 'low-confidence', confidence: 0.2 }))
+
+      expect(fellBack.jev.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'low-confidence',
+        confidence: 0.2
+      })
+    })
+  })
+
+  describe('clearing a decision', () => {
+    it('restores the pickers a decision overwrote', () => {
+      const asked = jevAsked(
+        chooseEffort(chooseModel(chooseProvider(opened(), 'claude'), 'sonnet'), 'xhigh')
+      )
+      const applied = jevAnswered(
+        asked,
+        decision({ provider: 'codex', model: 'gpt-5.6-sol', effort: 'high' })
+      )
+
+      const cleared = clearJevDecision(applied)
+
+      expect(cleared.choice).toBe('claude')
+      expect(cleared.model).toBe('sonnet')
+      expect(cleared.effort).toBe('xhigh')
+      expect(cleared.jev.routing).toEqual({ phase: 'idle' })
+      expect(cleared.jev.previousChoice).toBeNull()
+    })
+
+    it('leaves the pickers alone for a fallback — there is nothing there to restore', () => {
+      const asked = jevAsked(chooseProvider(opened(), 'claude'))
+      const fellBack = jevAnswered(asked, fallback())
+
+      const cleared = clearJevDecision(fellBack)
+
+      expect(cleared.choice).toBe('claude')
+      expect(cleared.jev.routing).toEqual({ phase: 'idle' })
+    })
+
+    it('is a no-op already idle', () => {
+      const state = opened()
+
+      expect(clearJevDecision(state)).toBe(state)
+    })
+
+    it('also drops a stale ask still in flight — an edited prompt outlives no answer it never got', () => {
+      const asking = jevAsked(opened())
+
+      expect(clearJevDecision(asking).jev.routing).toEqual({ phase: 'idle' })
+    })
+  })
+
+  describe('shouldAskJev', () => {
+    it('is true only once ready, enabled and idle', () => {
+      const ready = toggleJev(setJevSettings(opened(), READY))
+
+      expect(shouldAskJev(ready)).toBe(true)
+    })
+
+    it('is false while unavailable, while off, or once already asked', () => {
+      expect(shouldAskJev(setJevSettings(opened(), UNAVAILABLE))).toBe(false)
+      expect(shouldAskJev(setJevSettings(opened(), READY))).toBe(false)
+
+      const ready = toggleJev(setJevSettings(opened(), READY))
+      expect(shouldAskJev(jevAsked(ready))).toBe(false)
     })
   })
 })

@@ -5,12 +5,13 @@ import {
   COMMAND_PLACEHOLDER,
   COMPOSER_DISABLED_PLACEHOLDER,
   OTHER_CHOICE,
+  type JevState,
   type LaunchChoice,
   type LaunchPhase
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { HELD_PERMISSION_MODES, type HeldPermissionMode } from '../../types'
+import { HELD_PERMISSION_MODES, type HeldPermissionMode, type JevFallbackReason } from '../../types'
 
 /**
  * The design's Add Panel (#86): the surface the mine's Add action opens, where
@@ -54,6 +55,8 @@ const props = defineProps<{
   effortPicker: EffortPicker
   /** Whether the Permissions select belongs on screen — held Claude only. */
   permissionsVisible: boolean
+  /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
+  jev: JevState
 }>()
 
 const emit = defineEmits<{
@@ -68,6 +71,10 @@ const emit = defineEmits<{
   model: [value: string]
   effort: [value: string]
   permissionMode: [value: HeldPermissionMode]
+  /** The Jev toggle (#509). */
+  'toggle-jev': []
+  /** The decision card's own Dismiss control (#509). */
+  'dismiss-jev': []
   submit: []
   close: []
 }>()
@@ -97,14 +104,102 @@ const showCommand = computed(() =>
  *
  * The disabled attribute already stops a keystroke reaching a closed gate;
  * checking again costs nothing and means the rule does not depend on the
- * browser honouring it.
+ * browser honouring it. A second guard blocks it while Jev is being asked
+ * (#509) — the "submit control disabled" state the source's own amendment
+ * asks for, since this composer draws no separate submit button for Enter
+ * to disable.
  */
 function onPromptKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || event.shiftKey) return
   event.preventDefault()
-  if (!props.enabled) return
+  if (!props.enabled || props.jev.routing.phase === 'asking') return
   emit('submit')
 }
+
+/*
+ * Jev (#509): a toggle beside the pickers it can fill in for, a decision
+ * card once it has, and a fallback line when it could not. Nothing here
+ * decides whether Jev SHOULD be asked or what its answer means — `jev` is
+ * already `launchState`'s own resolved reading; this only turns it into
+ * text and controls.
+ */
+
+/** Duplicated from JevSettings.vue's own `UNAVAILABLE_MESSAGES` deliberately — the same reason main gave, in main's own words, wherever the option is explained. */
+const JEV_UNAVAILABLE_MESSAGES: Record<NonNullable<JevState['unavailableReason']>, string> = {
+  'encryption-unavailable':
+    'This machine offers no encrypted place to keep a key, so Jev cannot be turned on here.'
+}
+
+const jevUnavailableMessage = computed(() => {
+  const reason = props.jev.unavailableReason
+  return reason === undefined ? '' : JEV_UNAVAILABLE_MESSAGES[reason]
+})
+
+const jevDecision = computed(() =>
+  props.jev.routing.phase === 'decided' ? props.jev.routing.decision : null
+)
+
+/** The provider's label off the SAME source the chip row already resolved it from — never the CLI binary name. */
+const jevProviderLabel = computed(() => {
+  const decision = jevDecision.value
+  if (decision === null) return ''
+  return props.chips.find((chip) => chip.choice === decision.provider)?.label ?? decision.provider
+})
+
+/** The model's label off the picker's own catalogue, falling back to the raw id it could not resolve. */
+const jevModelLabel = computed(() => {
+  const decision = jevDecision.value
+  if (decision === null || decision.model === undefined) return null
+  return (
+    props.modelPicker.models.find((option) => option.value === decision.model)?.label ??
+    decision.model
+  )
+})
+
+const jevConfidencePercent = computed(() => {
+  const decision = jevDecision.value
+  return decision === null ? 0 : Math.round(decision.confidence * 100)
+})
+
+/** The one sentence the card states Jev chose, provider/model/effort/confidence together. */
+const jevDecisionSummary = computed(() => {
+  const decision = jevDecision.value
+  if (decision === null) return ''
+  const parts = [jevProviderLabel.value]
+  if (jevModelLabel.value !== null) parts.push(jevModelLabel.value)
+  if (decision.effort !== undefined) parts.push(`${decision.effort} effort`)
+  return `Jev chose ${parts.join(', ')} (${jevConfidencePercent.value}% confidence).`
+})
+
+/**
+ * Fixed English sentences per fallback reason (#509's own acceptance
+ * criterion: every way Jev can fail still launches and says that it did).
+ * Kept here, display text only — the wire only ever carries the reason, on
+ * the same split `contracts.ts` states for every prompt-sentence-that-names-
+ * no-provider.
+ */
+const JEV_FALLBACK_REASONS: Record<JevFallbackReason, string> = {
+  'no-key': 'No TypeSafe key is set',
+  'no-launchable-provider': 'No launchable provider to choose from',
+  unreachable: 'Jev could not be reached',
+  timeout: 'Jev took too long',
+  'rate-limited': 'Jev is rate-limited right now',
+  unauthorized: 'TypeSafe rejected the API key',
+  'low-confidence': 'Jev was not confident enough',
+  'invalid-response': "Jev's answer could not be used",
+  'budget-exceeded': "The prompt and catalogue do not fit Jev's request budget"
+}
+
+const jevFallbackMessage = computed(() => {
+  const routing = props.jev.routing
+  if (routing.phase !== 'fellBack') return ''
+  const reason = JEV_FALLBACK_REASONS[routing.reason]
+  const withConfidence =
+    routing.reason === 'low-confidence' && routing.confidence !== undefined
+      ? `${reason} (${Math.round(routing.confidence * 100)}%)`
+      : reason
+  return `${withConfidence}. Launched with your pickers' values.`
+})
 
 /** Enter commits the command. The gate behind it decides whether that opens anything. */
 function onCommandKeydown(event: KeyboardEvent): void {
@@ -244,6 +339,51 @@ function onCommandKeydown(event: KeyboardEvent): void {
           </option>
         </select>
       </div>
+
+      <!--
+        Jev (#509): a toggle beside the pickers it can fill in for. Absent
+        outright with no key configured — issue #509's own first option —
+        shown disabled with main's reason for anything else that keeps it
+        off, and pressable once ready.
+      -->
+      <div v-if="jev.availability !== 'hidden'" class="jev-row">
+        <button
+          v-if="jev.availability === 'ready'"
+          class="jev-toggle"
+          type="button"
+          :aria-pressed="jev.enabled"
+          @click="emit('toggle-jev')"
+        >
+          Let Jev choose
+        </button>
+        <template v-else>
+          <button class="jev-toggle" type="button" disabled aria-pressed="false">
+            Let Jev choose
+          </button>
+          <p class="jev-unavailable-reason">{{ jevUnavailableMessage }}</p>
+        </template>
+      </div>
+
+      <p v-if="jev.routing.phase === 'asking'" class="launch-note jev-status" role="status">
+        Asking Jev…
+      </p>
+
+      <!--
+        The decision card (#509): shown before it is acted on, and can be
+        overridden — the pickers above have already been set to it (through
+        the same choose/model/effort paths a click would use), so Dismiss
+        puts them back rather than this card undoing anything itself.
+      -->
+      <div v-else-if="jevDecision !== null" class="jev-decision">
+        <p class="jev-decision-summary">{{ jevDecisionSummary }}</p>
+        <p v-if="jevDecision.truncated" class="jev-decision-truncated">
+          The prompt sent to Jev was trimmed to fit its request budget.
+        </p>
+        <p class="jev-decision-note">
+          The pickers below now show this choice — change them, or press Launch again to start it.
+        </p>
+        <button class="jev-dismiss" type="button" @click="emit('dismiss-jev')">Dismiss</button>
+      </div>
     </template>
 
     <!--
@@ -271,6 +411,17 @@ function onCommandKeydown(event: KeyboardEvent): void {
       once its transcript proves which one it is.
     </p>
     <p v-else-if="refusal" class="launch-note" role="status">{{ refusal }}</p>
+
+    <!--
+      The fallback line (#509) is deliberately OUTSIDE the chain above and the
+      launched/composer split: issue #509's own acceptance criterion is that
+      the launch still happens and the panel SAYS that it did, so this has to
+      survive past `launched` becoming true rather than vanish with the
+      composer the moment the fallback's own launch starts.
+    -->
+    <p v-if="jev.routing.phase === 'fellBack'" class="launch-note jev-fallback" role="status">
+      {{ jevFallbackMessage }}
+    </p>
   </section>
 </template>
 
@@ -570,5 +721,95 @@ function onCommandKeydown(event: KeyboardEvent): void {
 }
 .launch-alert {
   color: var(--danger-ink);
+}
+/*
+ * Jev (#509). No new tokens: the toggle borrows the provider chip's own box
+ * (`.provider-chip`), the decision card borrows the key row's panel-deep
+ * ground (`.jev-key-row`/`.jev-key-input` in JevSettings.vue), and the
+ * Dismiss control borrows the same button model every settings action here
+ * already uses.
+ */
+.jev-row {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-nav-gap);
+  padding: 0 8px;
+}
+.jev-toggle {
+  flex: none;
+  height: var(--size-chip-height);
+  padding: 0 14px;
+  border: 2px solid var(--color-accent);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
+  cursor: pointer;
+  background: var(--color-panel);
+  font: inherit;
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+.jev-toggle[aria-pressed='true'] {
+  border-color: var(--color-cream);
+  color: var(--color-panel);
+  background: var(--color-accent);
+}
+.jev-toggle:disabled {
+  border-color: var(--color-nav-idle);
+  color: var(--color-nav-idle);
+  cursor: not-allowed;
+}
+.jev-toggle:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
+}
+.jev-unavailable-reason {
+  flex: none;
+  margin: 0;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-helper);
+  opacity: 0.75;
+}
+.jev-status {
+  padding: 0 8px;
+}
+.jev-decision {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 8px;
+  padding: 8px 10px;
+  border: var(--border-active);
+  border-radius: var(--radius-default);
+  background: var(--color-panel-deep);
+}
+.jev-decision-summary {
+  margin: 0;
+  color: var(--color-cream);
+  font-size: var(--text-meta);
+}
+.jev-decision-truncated,
+.jev-decision-note {
+  margin: 0;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-helper);
+  opacity: 0.75;
+}
+.jev-dismiss {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: var(--border-active);
+  border-radius: var(--radius-default);
+  color: var(--color-cream);
+  cursor: pointer;
+  background: var(--color-control);
+  font: inherit;
+  font-size: var(--text-helper);
+}
+.jev-dismiss:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
 }
 </style>
