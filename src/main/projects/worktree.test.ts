@@ -164,6 +164,38 @@ describe('resolveProjectRoot', () => {
       worktree: { path: '/home/j/anvil/wt/forge', branch: 'feat/forge' }
     })
   })
+
+  /*
+   * #477. POSIX `dirname` does not recognise '\\' as a separator, so a
+   * Windows-shaped cwd degenerates to '.' on the very first step — and '.'
+   * is the process's real cwd, never a folder the caller named. In a linked
+   * worktree that real cwd's `.git` is a FILE, so the walk went on to read
+   * this checkout's own real commondir and HEAD (see the issue for the
+   * measured leak). The walk must leave the path it was given alone rather
+   * than ever asking the fs about '.'.
+   */
+  it('stops before the fs is ever asked about "." or a path outside the given root', async () => {
+    const fake = new FakeFs()
+    const statPaths: string[] = []
+    const fs: FsLike = {
+      readTextTail: (path, maxBytes) => fake.readTextTail(path, maxBytes),
+      readTextHead: (path, maxBytes) => fake.readTextHead(path, maxBytes),
+      readJson: (path) => fake.readJson(path),
+      listDir: (path) => fake.listDir(path),
+      exists: (path) => fake.exists(path),
+      async stat(path) {
+        statPaths.push(path)
+        return fake.stat(path)
+      }
+    }
+
+    expect(await resolveProjectRoot('C:\\work\\project', fs, 'linux')).toEqual({
+      root: 'C:\\work\\project'
+    })
+    // One stat, for the root the caller gave — never a second one for '.' or
+    // anything the degenerate dirname would have reached past it.
+    expect(statPaths).toEqual(['C:\\work\\project/.git'])
+  })
 })
 
 describe('createProjectRootResolver', () => {

@@ -80,11 +80,11 @@ test files import a plain module with no test side effects. Reported here rather
       let `pnpm typecheck` enumerate every site, give each a `FakeFs` and an explicit platform
       through the existing shared helper. GREEN: `runtime.test.ts` passes in this worktree, and
       `pnpm typecheck` is clean. Done — see Progress.
-- [ ] **T2 — `resolveProjectRoot` stops when its walk leaves the path it was given.** Route:
+- [x] **T2 — `resolveProjectRoot` stops when its walk leaves the path it was given.** Route:
       delegated (same writer). A test in `worktree.test.ts` with a fake fs and a POSIX `dirname`
       over a Windows-shaped cwd asserts the walk never asks the fs about `.` (or any path outside the
       given root) and answers "no repository" instead. Then the guard: stop when `dirname(p) === p`
-      or the walk reaches `.`. Existing walk tests keep passing.
+      or the walk reaches `.`. Existing walk tests keep passing. Done — see Progress.
 
 ## Acceptance
 
@@ -184,5 +184,48 @@ skills/skill-sync/assets/sync.mjs --check`: `AGENTS.md already up to date`. `pnp
 only ever imported from test files). Privacy guard: `PRIVACY_GUARD_PATTERN` is not set in this
 environment (a maintainer/CI secret), so the literal command could not run; `git diff` and the new
 file were read by eye against the placeholder table instead — no real path, host or username found.
-Commit: recorded at the top of T2's Progress entry below (this document is part of T1's own commit,
-so it cannot carry that commit's own hash).
+Commit: `e887301` — `test(runtime): require fs and platform adapters so no test reads the checkout
+it runs in (#477)`.
+
+### T2 — done, 2026-09-21
+
+**RED, observed for the right reason.** Test written first in `worktree.test.ts` (`describe
+resolveProjectRoot`, appended): a hand-wired `FsLike` wraps a `FakeFs` and records every path
+`stat` is asked about, then calls `resolveProjectRoot('C:\\work\\project', fs, 'linux')` and
+asserts the recorded paths equal exactly one entry — the root the caller gave, never `.` or
+anything past it. Run before the guard existed:
+`pnpm vitest run src/main/projects/worktree.test.ts -t "stops before the fs is ever asked"` failed
+with `expected [ 'C:\work\project/.git', '.git' ] to deeply equal [ 'C:\work\project/.git' ]` — a
+second, real stat call for `'.git'` alone, exactly the call that reads the real process cwd in a
+linked worktree. Same mechanism T1's throwaway repro proved, now pinned as a real test.
+
+**Fix.** `nearestGitEntry` in `worktree.ts`: the loop already stopped when `dirname(p) === p` (a
+real filesystem root); added `|| parent === '.'` to the same check, before the next iteration's
+`fs.stat` call rather than after — '.' means the walk has already left the path it was given, so
+it must never be asked about.
+
+**GREEN observed.** Same targeted run: passed. Full file:
+`pnpm vitest run src/main/projects/worktree.test.ts` → 20 passed (19 existing + 1 new), 0 failed —
+every existing walk test (win32 fold, POSIX fold, submodule refusal, bare-repo refusal, orphaned
+gitdir, no-gitdir-line, no-repository-at-all, relative gitdir, cache behaviour) still passes
+unchanged. `pnpm typecheck`: clean. `pnpm lint`: clean. `pnpm format:check`: clean (prettier
+already matched both touched files). `node skills/skill-sync/assets/sync.mjs --check`: up to date.
+Full `pnpm test`: 7648 passed (one more than T1's 7647, matching the census `+1`), 5 skipped
+(pre-existing, unrelated), 0 failed, 278 files passed + 2 skipped. `pnpm build`: succeeded. Privacy
+guard: same as T1 — secret unavailable locally, diff read by eye instead, no real path or username
+(the fixture stays `'C:\\work\\project'`, already used throughout `runtime.test.ts`).
+
+**Census:** `worktree.test.ts` 19 → 20 (+1, the new case). No file lost test statements.
+
+**Files touched:** `src/main/projects/worktree.ts` (the guard), `src/main/projects/worktree.test.ts`
+(the one new test, appended — no existing case edited). Commit: `<recorded after this commit is
+made — see the closing report>`.
+
+### Acceptance, re-checked against both tasks together
+
+`pnpm vitest run src/main/runtime/runtime.test.ts` passes all 414 cases (the plan's "382" was the
+2026-09-18 count on a since-moved `main`; 414 is this branch's own baseline, unchanged by either
+task — see T1's census). `pnpm test` is green with no diff mentioning this branch's name anywhere
+in the suite (confirmed by both full-suite runs above; nothing in either failure list, when there
+was one, ever again after T2). The main checkout was never touched — every command above ran only
+inside `DwarfAI-Miners-worktrees/fix-477`.
