@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
+import { MemorySqlite } from '../adapters/memorySqlite'
 import { mineIdForPath } from '../domain/aggregate'
+import { OPENCODE_SCHEMA, sessionInsert } from '../providers/opencode/stateSeed'
+import { opencodeDbPath } from '../providers/opencode/store'
 import { COAL_BACKFILL_VERSION, runCoalBackfill, type CoalBackfillOptions } from './coalBackfill'
 import type { LedgerFsLike } from './ledgerStore'
 
@@ -9,6 +12,8 @@ const LONG_AGO = Date.parse('2026-01-01T10:00:00.000Z')
 const MARKER = 'C:\\userData\\coal-backfill-v1.json'
 const CLAUDE_ROOT = 'C:/home/.claude'
 const CODEX_ROOT = 'C:/home/.codex/sessions'
+const OPENCODE_ROOT = 'C:/home/.local/share/opencode'
+const OPENCODE_DB_PATH = opencodeDbPath(OPENCODE_ROOT)
 
 /** Deterministic marker filesystem, mirroring the store's read/write/rename port. */
 function markerFs(
@@ -71,6 +76,8 @@ function codexRollout(cwd: string, tokens: number, at = LONG_AGO): string {
 interface Harness {
   fs: FakeFs
   marker: ReturnType<typeof markerFs>
+  /** A MemorySqlite pre-registered with the empty OpenCode store; tests add sessions to it. */
+  sqlite: MemorySqlite
   credits: { mineId: string; tokens: number }[]
   run: (overrides?: Partial<CoalBackfillOptions>) => ReturnType<typeof runCoalBackfill>
 }
@@ -78,10 +85,16 @@ interface Harness {
 function harness(seedMarker: Record<string, string> = {}): Harness {
   const fs = new FakeFs()
   const marker = markerFs(seedMarker)
+  const sqlite = new MemorySqlite()
+  // Empty by default — every existing Claude/Codex-focused test scans a real
+  // but session-less store, exactly as a machine with OpenCode installed but
+  // never used would, and credits nothing from it.
+  sqlite.define(OPENCODE_DB_PATH, OPENCODE_SCHEMA)
   const credits: { mineId: string; tokens: number }[] = []
   return {
     fs,
     marker,
+    sqlite,
     credits,
     run: (overrides = {}) =>
       runCoalBackfill({
@@ -90,6 +103,8 @@ function harness(seedMarker: Record<string, string> = {}): Harness {
         markerPath: MARKER,
         claudeRoots: [CLAUDE_ROOT],
         codexSessionsRoot: CODEX_ROOT,
+        sqlite,
+        opencodeStoreRoot: OPENCODE_ROOT,
         credit: (mineId, tokens) => credits.push({ mineId, tokens }),
         now: () => NOW,
         platform: 'win32',
@@ -192,6 +207,116 @@ describe('runCoalBackfill — Codex history', () => {
       LONG_AGO
     )
     await h.run()
+    expect(h.credits).toEqual([])
+  })
+})
+
+/**
+ * Mirrors the Claude/Codex describes above, over the OpenCode store instead
+ * of a directory tree: one `session` row already carries a session's whole
+ * account of itself, so there is no per-file walk here (#540).
+ */
+describe('runCoalBackfill — OpenCode history', () => {
+  it('credits a pre-install session as coal on its own project', async () => {
+    const h = harness()
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: 'C:\\Users\\j\\OpenCoded', timeUpdatedMs: LONG_AGO })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_input = 6_000 WHERE id = 'ses_a'`)
+
+    const result = await h.run()
+
+    expect(creditedTo(h, 'C:\\Users\\j\\OpenCoded')).toBe(6_000)
+    expect(result.done).toBe(true)
+  })
+
+  it('sums several historical sessions of one project into one mine', async () => {
+    const h = harness()
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: 'C:\\Users\\j\\Proj', timeUpdatedMs: LONG_AGO })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_input = 1_000 WHERE id = 'ses_a'`)
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({ id: 'ses_b', directory: 'C:\\Users\\j\\Proj', timeUpdatedMs: LONG_AGO })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_output = 2_500 WHERE id = 'ses_b'`)
+
+    await h.run()
+    expect(creditedTo(h, 'C:\\Users\\j\\Proj')).toBe(3_500)
+  })
+
+  it('credits the mine id live aggregation would give the same project', async () => {
+    const h = harness()
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({
+        id: 'ses_a',
+        directory: 'C:\\Users\\j\\Real-Project',
+        timeUpdatedMs: LONG_AGO
+      })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_input = 900 WHERE id = 'ses_a'`)
+    await h.run()
+    expect(h.credits[0]!.mineId).toBe(mineIdForPath('C:\\Users\\j\\Real-Project', 'win32'))
+  })
+
+  it('skips the OpenCode unit entirely when the store does not exist', async () => {
+    const h = harness()
+    // No sqlite.define() for a different root — openReadOnly answers null.
+    h.fs.addFile(`${CLAUDE_ROOT}/projects/p/a.jsonl`, claudeTranscript('C:\\A', 10), LONG_AGO)
+    const result = await h.run({ opencodeStoreRoot: 'C:/nope/opencode' })
+    expect(result.done).toBe(true)
+    expect(creditedTo(h, 'C:\\A')).toBe(10)
+    expect(h.credits.filter((c) => c.mineId !== mineIdForPath('C:\\A', 'win32'))).toEqual([])
+  })
+
+  it('survives a store the reader cannot open, without throwing', async () => {
+    const h = harness()
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: 'C:\\Users\\j\\Proj', timeUpdatedMs: LONG_AGO })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_input = 1 WHERE id = 'ses_a'`)
+    const throwingSqlite = {
+      ...h.sqlite,
+      openReadOnly: async () => {
+        throw new Error('EACCES')
+      }
+    }
+    await expect(h.run({ sqlite: throwingSqlite })).resolves.toMatchObject({ done: true })
+    expect(h.credits).toEqual([])
+  })
+
+  it('never credits a session whose newest write reaches the install moment', async () => {
+    // That session is still being lived in; live accrual credits it instead.
+    const h = harness()
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: 'C:\\Users\\j\\Live', timeUpdatedMs: NOW })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_input = 5_000 WHERE id = 'ses_a'`)
+    await h.run()
+    expect(h.credits).toEqual([])
+  })
+
+  it('credits an old OpenCode session exactly once across two app starts', async () => {
+    const h = harness()
+    h.sqlite.exec(
+      OPENCODE_DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: 'C:\\Users\\j\\Proj', timeUpdatedMs: LONG_AGO })
+    )
+    h.sqlite.exec(OPENCODE_DB_PATH, `UPDATE session SET tokens_input = 4_200 WHERE id = 'ses_a'`)
+
+    const first = await h.run()
+    expect(first.ran).toBe(true)
+    expect(creditedTo(h, 'C:\\Users\\j\\Proj')).toBe(4_200)
+
+    h.credits.length = 0
+    const second = await h.run()
+    expect(second.ran).toBe(false)
     expect(h.credits).toEqual([])
   })
 })

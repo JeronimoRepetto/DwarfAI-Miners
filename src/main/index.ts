@@ -107,6 +107,7 @@ import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
+import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
 import {
   MINE_PATH_OUTSIDE_REASON,
@@ -991,10 +992,15 @@ async function init(): Promise<void> {
   // next one, and its credits reach the panel through the next ordinary poll.
   void runCoalBackfill({
     fs: new NodeFs(),
+    // A fresh port, exactly as the live OpenCode provider opens its own
+    // (registry.ts): SqliteLike carries no state worth sharing across a
+    // one-time scan and a running poll loop.
+    sqlite: new NodeSqlite(),
     markerFs: { readFile, writeFile, rename },
     markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
     claudeRoots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
     codexSessionsRoot: expandHomePath(config.providers.codex.sessionsRoot),
+    opencodeStoreRoot: expandHomePath(config.providers.opencode.storeRoot),
     credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
     now: Date.now,
     warn: (message, error) => console.warn(message, error)
