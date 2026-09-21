@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type {
+  AgentModelCatalog,
+  AgentProviderOption,
   AudioPreferences,
+  JevPreferences,
   JevSettings as JevSettingsType,
   PanelEdge,
   ShortcutState,
@@ -83,6 +86,12 @@ defineProps<{
   /** True while a save or a clear this section asked for is in flight. */
   jevSaving: boolean
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  /** Every known provider's availability — for the default-launch picker. */
+  jevProviders: AgentProviderOption[]
+  /** What each provider can start on — for the default-launch model/effort pickers. */
+  jevCatalogs: AgentModelCatalog[]
+  /* --- end of the #509 follow-up block --------------------------------------- */
 }>()
 
 const emit = defineEmits<{
@@ -111,6 +120,10 @@ const emit = defineEmits<{
   /** Forget the stored key. */
   'jev-clear': []
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  /** The routing profile and/or the default launch should become this whole document. */
+  'jev-preferences-change': [preferences: JevPreferences]
+  /* --- end of the #509 follow-up block --------------------------------------- */
 }>()
 
 const resetModalOpen = ref(false)
@@ -153,8 +166,11 @@ const resetModalOpen = ref(false)
     <JevSettings
       :settings="jevSettings"
       :saving="jevSaving"
+      :providers="jevProviders"
+      :catalogs="jevCatalogs"
       @save="emit('jev-save', $event)"
       @clear="emit('jev-clear')"
+      @preferences-change="emit('jev-preferences-change', $event)"
     />
 
     <DataBaseSection @open-reset="resetModalOpen = true" />

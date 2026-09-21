@@ -14,6 +14,7 @@ import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useView } from './composables/useView'
 import {
   DEFAULT_AUDIO_PREFERENCES,
+  DEFAULT_JEV_PREFERENCES,
   DEFAULT_JEV_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES
 } from './types'
@@ -257,8 +258,23 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      * request is one it can act on. No existing assertion changed.
      */
     getJevSettings: vi.fn().mockResolvedValue({ ...DEFAULT_JEV_SETTINGS }),
-    setJevApiKey: vi.fn().mockResolvedValue({ configured: true }),
-    clearJevApiKey: vi.fn().mockResolvedValue({ configured: false }),
+    setJevApiKey: vi
+      .fn()
+      .mockResolvedValue({ configured: true, preferences: DEFAULT_JEV_PREFERENCES }),
+    clearJevApiKey: vi.fn().mockResolvedValue({
+      configured: false,
+      preferences: DEFAULT_JEV_PREFERENCES
+    }),
+    /*
+     * AMENDED for the #509 follow-up (was: absent). The routing profile and
+     * default launch controls answer with what main STORED, the same
+     * discipline `setJevApiKey` holds. No existing assertion changed.
+     */
+    setJevPreferences: vi
+      .fn()
+      .mockImplementation((preferences: unknown) =>
+        Promise.resolve({ configured: true, preferences })
+      ),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2555,6 +2571,51 @@ describe('Jev API-key setting (#509)', () => {
     await flushPromises()
     expect(api.clearJevApiKey).toHaveBeenCalled()
     expect(wrapper.find('.jev-configured').exists()).toBe(false)
+  })
+})
+
+/**
+ * Jev routing profiles: profile and defaults (#509 follow-up) — APPENDED,
+ * nothing above changed.
+ *
+ * The round trip a user actually walks: a configured section loads the
+ * launchable providers, a profile or a default-launch pick asks main for one,
+ * and what main answered with is what the section draws.
+ */
+describe('Jev routing profiles (#509 follow-up)', () => {
+  it('loads the launchable providers once the section is configured, for the default picker', async () => {
+    const { wrapper } = await mountOpenApp({
+      getJevSettings: vi
+        .fn()
+        .mockResolvedValue({ configured: true, preferences: DEFAULT_JEV_PREFERENCES })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    const options = wrapper
+      .find('[aria-label="Default provider"]')
+      .findAll('option')
+      .map((node) => node.text())
+    expect(options).toEqual(['None', 'Claude Code'])
+  })
+
+  it('asks main to save a profile choice, and renders the verdict', async () => {
+    const setJevPreferences = vi
+      .fn()
+      .mockResolvedValue({ configured: true, preferences: { profile: 'premium', default: {} } })
+    const { wrapper, api } = await mountOpenApp({
+      getJevSettings: vi
+        .fn()
+        .mockResolvedValue({ configured: true, preferences: DEFAULT_JEV_PREFERENCES }),
+      setJevPreferences
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    const options = wrapper.findAll('.profile-option')
+    await options[2]?.trigger('click')
+    await flushPromises()
+    expect(api.setJevPreferences).toHaveBeenCalledWith({ profile: 'premium', default: {} })
+    const selected = wrapper
+      .findAll('.profile-option')
+      .filter((node) => node.classes('is-selected'))
+    expect(selected[0]?.find('.profile-name').text()).toBe('Premium')
   })
 })
 

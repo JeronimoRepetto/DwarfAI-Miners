@@ -1330,3 +1330,42 @@ describe('preload Jev route contract (#509)', () => {
     await expect(api.routeJevLaunch({ prompt: 'anything' })).resolves.toEqual(fallback)
   })
 })
+
+/**
+ * Jev routing profiles: profile and defaults (#509 follow-up) — APPENDED,
+ * nothing above changed.
+ *
+ * One member, and — the same discipline `setJevApiKey` holds for the key —
+ * it parses the document through the SAME shared parser `jevPreferences.ts`
+ * reads, before it ever crosses. Unlike that parser, this one DEGRADES a bad
+ * shape rather than throwing (`parseJevPreferences`'s own asymmetry), so a
+ * malformed document is fixed up rather than refused at the bridge.
+ */
+describe('preload Jev preferences contract (#509 follow-up)', () => {
+  it('parses the document through the shared parser before it crosses, trimming what it carries', async () => {
+    const stored = {
+      configured: true,
+      preferences: { profile: 'premium', default: { provider: 'claude', model: 'sonnet' } }
+    }
+    invoke.mockResolvedValueOnce(stored)
+    await api.setJevPreferences({
+      profile: 'premium',
+      default: { provider: 'claude', model: '  sonnet  ' }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('jev:preferences:set', {
+      profile: 'premium',
+      default: { provider: 'claude', model: 'sonnet' }
+    })
+  })
+
+  it('hands back what main STORED, the merged verdict, untouched', async () => {
+    const stored = {
+      configured: true,
+      preferences: { profile: 'economy', default: { provider: 'claude' } }
+    }
+    invoke.mockResolvedValueOnce(stored)
+    await expect(
+      api.setJevPreferences({ profile: 'economy', default: { provider: 'claude' } })
+    ).resolves.toEqual(stored)
+  })
+})

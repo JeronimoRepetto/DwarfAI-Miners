@@ -54,8 +54,11 @@ import type {
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
   JevRouteLaunchRequest,
-  JevRouteLaunchResult
+  JevRouteLaunchResult,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  JevPreferences
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -70,8 +73,11 @@ import {
   parseJevApiKeyInput,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  parseJevRouteLaunchRequest
+  parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  parseJevPreferences
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from '../shared/contracts'
 
 /**
@@ -553,6 +559,20 @@ export interface DwarfAiMinersApi {
    */
   routeJevLaunch: (request: JevRouteLaunchRequest) => Promise<JevRouteLaunchResult>
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  /**
+   * Change the routing profile and/or the default launch (#509 follow-up).
+   * Parsed through the SAME shared parser `jevPreferences.ts` reads, before
+   * it ever crosses — the discipline `setAudioPreferences` holds for its
+   * document. Unlike `setJevApiKey`'s parser, this one DEGRADES a bad shape
+   * rather than throwing, so a malformed document is fixed up rather than
+   * refused at the bridge. Resolves with the merged STORED verdict, never
+   * the request: a default the store's own launch-gate check refused
+   * answers with whatever preference is REALLY in force, exactly like every
+   * other write here.
+   */
+  setJevPreferences: (preferences: JevPreferences) => Promise<JevSettings>
+  /* --- end of the #509 follow-up block --------------------------------------- */
 }
 
 const api: DwarfAiMinersApi = {
@@ -951,8 +971,15 @@ const api: DwarfAiMinersApi = {
     } catch (error) {
       return Promise.reject(error)
     }
-  }
+  },
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  // Parsed through the SHARED parser before it crosses, the same reasoning
+  // setAudioPreferences carries: a document the store would degrade anyway
+  // never reaches the bridge in a shape main has to fix up first.
+  setJevPreferences: (preferences) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setJevPreferences, parseJevPreferences(preferences))
+  /* --- end of the #509 follow-up block --------------------------------------- */
 }
 
 contextBridge.exposeInMainWorld('api', api)

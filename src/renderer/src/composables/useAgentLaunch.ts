@@ -48,7 +48,7 @@ import {
   type ModelPicker
 } from '../lib/launch/modelTuning'
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
-import { HELDABLE_PROVIDERS } from '../types'
+import { DEFAULT_JEV_SETTINGS, HELDABLE_PROVIDERS } from '../types'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
@@ -221,7 +221,9 @@ export function useAgentLaunch(): AgentLaunch {
     const [providersAnswer, catalogsAnswer, jevSettings] = await Promise.all([
       safelyAsk(() => window.api.listAgentProviders(), { providers: [] }),
       safelyAsk(() => window.api.listAgentModels(), { catalogs: [] }),
-      safelyAsk<JevSettings>(() => window.api.getJevSettings(), { configured: false })
+      // AMENDED for the #509 follow-up: the fallback carries the documented
+      // default's `preferences` too, now that JevSettings always has one.
+      safelyAsk<JevSettings>(() => window.api.getJevSettings(), { ...DEFAULT_JEV_SETTINGS })
     ])
     providers.value = providersAnswer.providers
     catalogs.value = catalogsAnswer.catalogs

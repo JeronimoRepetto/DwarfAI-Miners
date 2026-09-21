@@ -7,8 +7,11 @@ import {
   DEFAULT_AUDIO_PREFERENCES,
   DEFAULT_NOTIFICATIONS_ENABLED,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  DEFAULT_TYPOGRAPHY_PREFERENCES
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  DEFAULT_JEV_PREFERENCES
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from '../../types'
 import PanelTransition from '../shell/PanelTransition.vue'
 import SettingsPanel from './SettingsPanel.vue'
@@ -62,8 +65,13 @@ function render(props: Record<string, unknown> = {}) {
       // AMENDED for #509: two more required props, the Jev API-key verdict and
       // whether a save/clear is in flight. No existing prop or assertion
       // changed.
-      jevSettings: { configured: false },
+      jevSettings: { configured: false, preferences: DEFAULT_JEV_PREFERENCES },
       jevSaving: false,
+      // AMENDED for the #509 follow-up: two more required props, the
+      // launchable providers and model catalogues the default-launch pickers
+      // draw from. No existing prop or assertion changed.
+      jevProviders: [],
+      jevCatalogs: [],
       ...props
     }
   })
@@ -194,6 +202,19 @@ describe('SettingsPanel — sections in the design’s order', () => {
     )
     expect(sections.indexOf('jev-settings')).toBeLessThan(sections.indexOf('data-base-settings'))
   })
+
+  // APPENDED for the #509 follow-up.
+  it('passes the launchable providers through to the default-launch picker', () => {
+    const wrapper = render({
+      jevSettings: { configured: true, preferences: DEFAULT_JEV_PREFERENCES },
+      jevProviders: [{ provider: 'claude', installed: true, launchable: true }]
+    })
+    const options = wrapper
+      .find('[aria-label="Default provider"]')
+      .findAll('option')
+      .map((node) => node.text())
+    expect(options).toEqual(['None', 'Claude Code'])
+  })
 })
 
 describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
@@ -255,6 +276,18 @@ describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
     const wrapper = render({ jevSettings: { configured: true } })
     await wrapper.find('.jev-clear').trigger('click')
     expect(wrapper.emitted('jev-clear')).toHaveLength(1)
+  })
+
+  // APPENDED for the #509 follow-up.
+  it('forwards a routing profile choice as jev-preferences-change, carrying the whole document', async () => {
+    const wrapper = render({
+      jevSettings: { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+    })
+    const options = wrapper.findAll('.profile-option')
+    await options[2]?.trigger('click')
+    expect(wrapper.emitted('jev-preferences-change')).toEqual([
+      [{ profile: 'premium', default: {} }]
+    ])
   })
 })
 
