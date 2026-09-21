@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { PROVIDER_EFFORT_LEVELS } from '../domain/launchTuning'
 import type { AgentProviderOption, DwarfProvider } from '../domain/types'
+import type { ModelCapabilityEntry } from './capabilities/modelCapability'
+import { MODEL_CAPABILITIES } from './capabilities/modelCapability'
+import type { JevCapabilityTable } from './routeDecision'
 import {
   EFFORT_RUBRIC,
   IS_TRIVIAL_CRITERIA,
@@ -11,10 +14,36 @@ import {
   mapEffortScore
 } from './routeRequest'
 
+/*
+ * AMENDED for #547 (was: buildJevRouteRequest reading MODEL_CAPABILITIES
+ * itself, so no test call needed to pass one). `capabilities` is now an
+ * injected, required input — see BuildJevRouteRequestInput's own comment —
+ * so every call below gains `capabilities: MODEL_CAPABILITIES`, the same
+ * real static table it used to read implicitly. Only the tests further down
+ * that exercise the NEW omission/derived-tier behaviour build their own
+ * small synthetic table instead.
+ */
+
 function provider(
   overrides: { provider: DwarfProvider } & Partial<AgentProviderOption>
 ): AgentProviderOption {
   return { installed: true, launchable: true, ...overrides }
+}
+
+function capabilityEntry(
+  overrides: Partial<ModelCapabilityEntry> & Pick<ModelCapabilityEntry, 'tier'>
+): ModelCapabilityEntry {
+  return {
+    what: 'test fixture',
+    notFor: 'test fixture',
+    examples: ['a', 'b'],
+    launchTarget: true,
+    effortLevels: 'all',
+    relativeCost: 'medium',
+    sources: ['test fixture'],
+    verifiedOn: '2026-09-21',
+    ...overrides
+  }
 }
 
 /*
@@ -39,7 +68,8 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: 'do the thing',
       routingProfile: 'balanced',
-      providers: [provider({ provider: 'claude', launchable: false })]
+      providers: [provider({ provider: 'claude', launchable: false })],
+      capabilities: MODEL_CAPABILITIES
     })
 
     expect(result).toEqual({ kind: 'skip', reason: 'no-launchable-provider' })
@@ -49,7 +79,8 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: 'do the thing',
       routingProfile: 'balanced',
-      providers: []
+      providers: [],
+      capabilities: MODEL_CAPABILITIES
     })
 
     expect(result).toEqual({ kind: 'skip', reason: 'no-launchable-provider' })
@@ -59,7 +90,8 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: 'a short prompt',
       routingProfile: 'premium',
-      providers: [provider({ provider: 'claude' })]
+      providers: [provider({ provider: 'claude' })],
+      capabilities: MODEL_CAPABILITIES
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
@@ -73,7 +105,8 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: long,
       routingProfile: 'balanced',
-      providers: [provider({ provider: 'claude' })]
+      providers: [provider({ provider: 'claude' })],
+      capabilities: MODEL_CAPABILITIES
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
@@ -92,7 +125,8 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: `open ${fakePath} and fix the import`,
       routingProfile: 'balanced',
-      providers: [provider({ provider: 'claude' })]
+      providers: [provider({ provider: 'claude' })],
+      capabilities: MODEL_CAPABILITIES
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
@@ -109,7 +143,8 @@ describe('buildJevRouteRequest', () => {
         provider({ provider: 'claude' }),
         provider({ provider: 'codex', launchable: false }),
         provider({ provider: 'antigravity' })
-      ]
+      ],
+      capabilities: MODEL_CAPABILITIES
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
@@ -122,7 +157,8 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: 'anything',
       routingProfile: 'balanced',
-      providers: [provider({ provider: 'claude' })]
+      providers: [provider({ provider: 'claude' })],
+      capabilities: MODEL_CAPABILITIES
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
@@ -138,12 +174,87 @@ describe('buildJevRouteRequest', () => {
     const result = buildJevRouteRequest({
       prompt: 'anything',
       routingProfile: 'balanced',
-      providers: [provider({ provider: 'claude' })]
+      providers: [provider({ provider: 'claude' })],
+      capabilities: MODEL_CAPABILITIES
     })
 
     if (result.kind !== 'request') throw new Error('expected a request')
     expect(result.request.providerCriteria.no_preference!.what).not.toContain('Claude')
     expect(result.request.providerCriteria.no_preference!.examples).toHaveLength(2)
+  })
+
+  /*
+   * New for #547: `capabilities` is now what decides whether a LAUNCHABLE
+   * provider gets a `provider` option at all — a provider can be started but
+   * still have nothing this question could truthfully describe, which is
+   * exactly OpenCode's own honest state when its live catalogue could not be
+   * read (routeLaunch.ts derives an empty table for it in that case).
+   */
+  it('omits a launchable provider whose capability table has zero launch-target entries', () => {
+    const emptyOpenCode: JevCapabilityTable = { ...MODEL_CAPABILITIES, opencode: {} }
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'claude' }), provider({ provider: 'opencode' })],
+      capabilities: emptyOpenCode
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    expect(Object.keys(result.request.providerCriteria).sort()).toEqual(
+      ['claude', 'no_preference'].sort()
+    )
+  })
+
+  it('skips with no-launchable-provider when the only launchable provider has an empty capability table', () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'opencode' })],
+      capabilities: { ...MODEL_CAPABILITIES, opencode: {} }
+    })
+
+    expect(result).toEqual({ kind: 'skip', reason: 'no-launchable-provider' })
+  })
+
+  it("lists OpenCode's own real tiers from its injected (derived) capability table", () => {
+    const opencodeCapabilities: JevCapabilityTable = {
+      ...MODEL_CAPABILITIES,
+      opencode: {
+        'opencode/free-fast': capabilityEntry({ tier: 'fast-cheap' }),
+        'opencode-go/kimi-k3': capabilityEntry({ tier: 'frontier' })
+      }
+    }
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'opencode' })],
+      capabilities: opencodeCapabilities
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    const criteria = result.request.providerCriteria.opencode!
+    expect(criteria.what).toContain('fast-cheap')
+    expect(criteria.what).toContain('frontier')
+    expect(criteria.examples).toHaveLength(2)
+  })
+
+  it("states OpenCode's own tooling note as a fact, not the old empty placeholder", () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'opencode' })],
+      capabilities: {
+        ...MODEL_CAPABILITIES,
+        opencode: { 'opencode/free-fast': capabilityEntry({ tier: 'fast-cheap' }) }
+      }
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    const criteria = result.request.providerCriteria.opencode!
+    expect(criteria.what).not.toBe('')
+    expect(criteria.what.length).toBeGreaterThan(0)
+    expect(criteria.examples[0]).not.toBe('')
+    expect(criteria.examples[1]).not.toBe('')
   })
 })
 
