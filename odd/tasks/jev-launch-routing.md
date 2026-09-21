@@ -93,7 +93,7 @@ checks plus, for the high tier, an independent verifier beside the writer's own 
 - [x] **T4 — AddPanel Jev option.** Hidden or disabled-with-reason without a key; decision card
       shown before launch, editable; "chosen by Jev" legible on the launched session; fallback message.
       Route: delegated writer.
-- [ ] **T5 — Docs.** `docs/privacy.md` "What it transmits" rewritten honestly, README
+- [x] **T5 — Docs.** `docs/privacy.md` "What it transmits" rewritten honestly, README
       configuration entry, `config-layering` skill note if a new rule emerged. Route: inline.
 
 ## Acceptance criteria
@@ -295,9 +295,61 @@ every invalidation, and a manual re-pick leaves the card standing because the ca
 that edit. Follow-up recorded, not built: a per-session "Jev-routed" marker on the launched dwarf
 needs a wire field on the launch request and persistence in main.
 
+**T4 delivery** — PR #521, CI green. Independent verifier: **pass-with-notes**, one medium finding
+accepted and fixed in `b2dcbb5`: a second `submit()` during the Jev ask was blocked only by the
+composer's Enter guard, so in state it could launch on the unapplied pickers and let the late
+decision rewrite them behind a started session; `submit` now refuses during `asking`, pinned by a
+composable-level test written first (RED observed, then GREEN). Two low notes recorded, not acted
+on: close-with-live-decision relies on `closedLaunch()` structurally and has no dedicated test, and
+the fallback line's visibility after launch is pinned for `submitted-spawning` only.
+
+**T5 (writer report)** — route: inline, worktree
+`../DwarfAI-Miners-worktrees/docs-jev-privacy` (branch `docs/jev-privacy` from `main` at `4f8f5f7`).
+Documentation only, no source changes; read T1–T3's merged code in `main` plus T4's still-open
+`feat/jev-addpanel` (`AddPanel.vue`, `useAgentLaunch.ts`) for the exact UI copy and flow, since T5
+was scheduled to run before T4 merges.
+
+- `docs/privacy.md` — rewrote "What it transmits": the old "no outbound HTTP client" opening claim
+  is now false, so it states there is exactly one, names the one call
+  (`https://api.typesafe.ai/v1/systemone`, `typesafeJevRouter.ts`, URL pinned in
+  `typesafeJevRouter.test.ts`) and the two conditions that gate it, then what leaves (prompt,
+  trimmed to Jev's budget; the launchable providers and their models; the fixed effort rubric; the
+  API key as bearer token), what never leaves (pinned by `routeRequest.test.ts`'s own
+  `'carries nothing about this machine but the prompt itself'` test), what comes back and how it is
+  validated before ever reaching the renderer, when the call never happens, and TypeSafe's own
+  retention language sourced from its Privacy Policy and DPA (primary sources, quoted rather than
+  paraphrased — no fixed retention period is published for a System One request specifically, so
+  none is claimed). Also updated "What it stores, and where" for `jev-api-key-v1.json` (ciphertext
+  only, `{}` on clear, no plaintext fallback) and the file-count sentence (twelve written + one
+  read), and softened the intro's "everything happens on your machine" to name the one exception.
+- `README.md` — added a Configuration-section paragraph: the Jev key is a secret, not a layered
+  setting, so `.env`/`config-v1.json` never carry it; set from Settings only; stored encrypted;
+  links `docs/privacy.md#what-it-transmits`.
+- `skills/config-layering/SKILL.md` — added "A secret is not a setting either", recording
+  `jevApiKey.ts` as the second thing (beside the simulated-valley switch) that never enters the
+  three layers, and the two rules a secret needs that a preference does not: no plaintext fallback,
+  ever, and an undecryptable file degrades to unconfigured rather than blocking startup. Frontmatter
+  untouched.
+
+Verification: `pnpm format:check` clean (prettier reformatted `docs/privacy.md`'s tables once,
+`pnpm exec prettier --write` applied, re-check clean); `pnpm typecheck` clean; `pnpm test` — 284
+files / 7771 tests passed, 5 skipped (unchanged from T3's count, as expected for a docs-only
+change); `node skills/skill-sync/assets/sync.mjs --check` — already up to date (10 skills), no
+regeneration needed since no frontmatter changed.
+
+Could not verify from a primary source: an exact retention _period_ (in days) for a System One
+request specifically — TypeSafe's Privacy Policy and DPA both use open-ended "as long as
+necessary/reasonably necessary" language rather than a number, so the document says that rather
+than inventing a figure.
+
+**T5 (orchestrator)** — read the rewritten "What it transmits", the stores table entry, the README
+paragraph and the skill section against the code they cite. Removed two "on the T4 branch at the
+time of writing" qualifiers so the document reads as final once both PRs are in. The docs branch
+was fast-forwarded onto `feat/jev-addpanel` so both edits to this document land in order; its PR
+shows only the docs diff once #521 merges.
+
 ## Next step
 
-T5 — docs: rewrite `docs/privacy.md` "What it transmits" (the app now has one outbound HTTP
-client, used only when the Jev option is on), add the Configuration entry to `README.md` (the key
-is set from Settings, never from `.env`), and note in `skills/config-layering` that a secret is
-stored through `safeStorage` rather than the JSON layers. Branch from `main` once T4's PR merges.
+All five tasks are done. Remaining, as separate work: the per-session "Jev-routed" marker on the
+launched dwarf (wire field on the launch request plus persistence in main), and #510/#511/#512
+(turn-result capture and the MCP delegation server), which the user deferred.

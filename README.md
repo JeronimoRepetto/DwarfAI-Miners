@@ -295,6 +295,12 @@ and a development checkout with a `.env` behaves exactly as it always has.
 The config file's location per platform, every setting with its default, and the diagnostic
 switches are in the [configuration reference](docs/guide.md#configuration-reference).
 
+**The Jev API key is not one of those layers.** It is a secret you type into Settings, not an
+operator value, so it is never read from `.env` or written into `config-v1.json` — enter, replace
+or clear it from the Jev section of Settings only, on either setup. It is stored encrypted on this
+machine rather than as plain configuration; [`docs/privacy.md`](docs/privacy.md#what-it-transmits)
+says what it is used for and what leaves the machine once it is set.
+
 ## Reporting a problem
 
 - **Bugs, features and roadmap** → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues).
