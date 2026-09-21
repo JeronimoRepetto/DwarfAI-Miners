@@ -1000,6 +1000,29 @@ describe('the Jev option', () => {
         expect(text).not.toContain("Launched with your pickers' values.")
       })
 
+      it('offers Dismiss, the same way the decision card does, so the applied default can be put back', async () => {
+        // The default was applied to the pickers exactly like a decision, and
+        // clearJevDecision already knows how to restore what stood before —
+        // so the affordance has to be here too, not only on the decided card,
+        // or the person's one way back is to retype the prompt.
+        const wrapper = fellBackWithDefault()
+
+        await wrapper.get('.jev-fallback-dismiss').trigger('click')
+
+        expect(wrapper.emitted('dismiss-jev')).toHaveLength(1)
+      })
+
+      it('shows no Dismiss on a plain fallback that applied nothing', () => {
+        const wrapper = panel({
+          chosen: 'claude',
+          enabled: true,
+          prompt: 'dig the east gallery',
+          jev: { ...READY_JEV, enabled: true, routing: { phase: 'fellBack', reason: 'timeout' } }
+        })
+
+        expect(wrapper.find('.jev-fallback-dismiss').exists()).toBe(false)
+      })
+
       it('resolves the model off the picker’s own catalogue, falling back to the raw id', () => {
         const text = fellBackWithDefault({
           modelPicker: { visible: true, models: [], disabled: true, note: null }

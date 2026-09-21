@@ -548,6 +548,21 @@ function onCommandKeydown(event: KeyboardEvent): void {
     <p v-if="jev.routing.phase === 'fellBack'" class="launch-note jev-fallback" role="status">
       {{ jevFallbackMessage }}
     </p>
+    <!--
+      Only when a default was APPLIED: the pickers below were just overwritten
+      exactly as a decision would overwrite them, and clearJevDecision already
+      restores what stood before — so the same Dismiss the decided card offers
+      belongs here too, or the one way back is retyping the prompt. A plain
+      fallback applied nothing, so there is nothing to put back.
+    -->
+    <button
+      v-if="jev.routing.phase === 'fellBack' && jev.routing.appliedDefault !== undefined"
+      class="jev-dismiss jev-fallback-dismiss"
+      type="button"
+      @click="emit('dismiss-jev')"
+    >
+      Dismiss
+    </button>
   </section>
 </template>
 
