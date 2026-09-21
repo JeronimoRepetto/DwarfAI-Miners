@@ -8,12 +8,14 @@ import {
   antigravityModelCatalog,
   claudeModelCatalog,
   codexModelCatalog,
+  openCodeModelCatalog,
   unavailableAntigravityModelCatalog,
   unavailableClaudeModelCatalog,
   unavailableOpenCodeModelCatalog,
   type AntigravityModelInfo,
   type ClaudeModelInfo,
-  type CodexThreadModel
+  type CodexThreadModel,
+  type OpenCodeModelInfo
 } from '../domain/agentModelCatalog'
 import { MineHistoryReader, type MineHistorySource } from '../history/mineHistory'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
@@ -145,6 +147,10 @@ import {
   createAntigravityModelCatalog,
   type AntigravityModelCatalogPort
 } from '../providers/antigravity/models'
+import {
+  createOpenCodeModelCatalog,
+  type OpenCodeModelCatalogPort
+} from '../providers/opencode/models'
 import { createSimulation } from '../providers/simulated/simulation'
 import type { ViewerPathOptions } from '../platform/terminalLauncher'
 import type {
@@ -726,6 +732,15 @@ export interface RuntimeOptions {
    */
   antigravityModelCatalog?: AntigravityModelCatalogPort
   /**
+   * OpenCode's own live model list (#534) — a short-lived, read-only
+   * `opencode models --verbose` spawn, injected for tests, which must never
+   * spawn a real process, exactly as `antigravityModelCatalog` above is. The
+   * default drives the real one over the binary CLI detection found (#91);
+   * see createOpenCodeModelCatalog for what it costs and what a failure to
+   * read the answer becomes.
+   */
+  openCodeModelCatalog?: OpenCodeModelCatalogPort
+  /**
    * Sessions the panel STARTED detached and still holds the process of, so
    * that it can end one (#217). Injected for tests, which must never end a
    * real process tree; the default ends it through the platform port.
@@ -839,6 +854,8 @@ export class AgentRuntime {
   private readonly codexModelHistory: () => Promise<CodexThreadModel[]>
   /** Antigravity's own live model list, over a read-only `agy models` spawn (#282). */
   private readonly antigravityModelCatalog: AntigravityModelCatalogPort
+  /** OpenCode's own live model list, over a read-only `opencode models --verbose` spawn (#534). */
+  private readonly openCodeModelCatalog: OpenCodeModelCatalogPort
   /** Sessions this panel started and let go of, but can still end (#217). */
   private readonly launched: LaunchedSessionRegistry
   /**
@@ -1196,6 +1213,7 @@ export class AgentRuntime {
     // listAgentModels, not from anything built here (#282).
     this.antigravityModelCatalog =
       options.antigravityModelCatalog ?? createAntigravityModelCatalog()
+    this.openCodeModelCatalog = options.openCodeModelCatalog ?? createOpenCodeModelCatalog({ fs })
     // Ending a process tree is NOT the same act on all three platforms, so
     // unlike the two registries around it this one takes its per-OS half from
     // platformAdapters — the single composition point — and keeps only the
@@ -3942,11 +3960,26 @@ export class AgentRuntime {
           )
         : unavailableAntigravityModelCatalog()
 
-    // #444. Unasked, unlike the three above: OpenCode has no live model-list
-    // command this app has measured and no launch that could ever carry a
-    // chosen model, so there is nothing to ask a detector for in the first
-    // place — the answer is always this one, fixed value.
-    const opencode = unavailableOpenCodeModelCatalog()
+    // AMENDED for #534 (was: `unavailableOpenCodeModelCatalog()` with no
+    // detection at all — #444 left OpenCode observed only, so nothing was
+    // ever asked). On the same terms as Claude and Antigravity above: bounded
+    // by the same timeout, and a failed OR unparseable ask both fall back to
+    // `unavailableOpenCodeModelCatalog()` behind one warn line.
+    const openCodeDetection = await this.cliDetector.detect('opencode')
+    const opencode =
+      openCodeDetection.installed && openCodeDetection.path !== undefined
+        ? await withTimeout(
+            this.openCodeModelCatalog({ executablePath: openCodeDetection.path }),
+            MODEL_CATALOG_TIMEOUT_MS,
+            `The model catalogue ask took longer than ${MODEL_CATALOG_TIMEOUT_MS}ms`
+          ).then(
+            (models: OpenCodeModelInfo[]) => openCodeModelCatalog(models),
+            (error: unknown) => {
+              console.warn("[runtime] Could not ask OpenCode's own CLI for its model list", error)
+              return unavailableOpenCodeModelCatalog()
+            }
+          )
+        : unavailableOpenCodeModelCatalog()
 
     return { catalogs: [claude, codexModelCatalog(codexThreads), antigravity, opencode] }
   }

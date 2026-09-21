@@ -353,10 +353,17 @@ export function useAgentLaunch(): AgentLaunch {
       // swallow this Enter either.
       // #523: unless the person asked for exactly this — auto-accept collapses
       // the confirm, and the decision just applied IS the launch they pressed
-      // for. A fallback was never up for auto-accepting: there is no decision
-      // to accept in it, and `jevAnswered` has already said what it fell back
-      // from onto.
-      if (state.value.jev.routing.phase === 'decided' && !state.value.jev.autoAccept) return
+      // for. A fallback was never up for auto-accepting UNLESS it applied a
+      // configured default (jev-routing-profiles T4): that default was just
+      // set on the pickers exactly like a decision (`jevAnswered`'s own
+      // detour), so it shares the same stop-for-confirmation guard — a plain
+      // fallback with no default carries no `appliedDefault` and keeps
+      // falling straight through below, #509's own acceptance criterion.
+      const routing = state.value.jev.routing
+      const awaitingConfirmation =
+        routing.phase === 'decided' ||
+        (routing.phase === 'fellBack' && routing.appliedDefault !== undefined)
+      if (awaitingConfirmation && !state.value.jev.autoAccept) return
     }
 
     const refused = refusal.value

@@ -49,8 +49,23 @@ export interface CliPresence {
  * launch can be STARTED, that one says it can be WATCHED, and Antigravity
  * stays out of the second — no round trip through its documented
  * stream-json protocol has been proven by this app.
+ *
+ * AMENDED for #534 (was: `['claude', 'codex', 'antigravity']`, with OpenCode
+ * deliberately absent per #444's own D5 — "OpenCode reads opencode.db
+ * only"). D5 stood on "no launch invocation this app has measured"; #534
+ * measured one — `opencode run -m <provider/model> --variant <effort>
+ * --format json` with the prompt on stdin (docs/opencode-format.md) — so
+ * OpenCode joins on the same DETACHED, one-shot terms Codex and Antigravity
+ * already do: no held-session engine, discovered afterwards by the ordinary
+ * poll off `opencode.db`. HELDABLE_PROVIDERS does not grow — no round trip
+ * through a bidirectional protocol has been proven for OpenCode either.
  */
-export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex', 'antigravity']
+export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = [
+  'claude',
+  'codex',
+  'antigravity',
+  'opencode'
+]
 
 /**
  * What a detected provider with no launch path says for itself.
@@ -66,6 +81,15 @@ export const LAUNCHABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex'
  * #168's original comment intended: honest copy waiting for whichever
  * provider can be READ but has no launch invocation yet, so the next one
  * finds it already written rather than a hole to fill under pressure.
+ *
+ * AMENDED for #534. OpenCode's own D5 ended too — the measured `run` route
+ * (docs/opencode-format.md) joined it to `LAUNCHABLE_PROVIDERS` above, so
+ * this string is unreachable again: every `DWARF_PROVIDERS` member is also
+ * a `LAUNCHABLE_PROVIDERS` member once more, exactly the state this
+ * comment's own #444 paragraph describes ending and then re-entered. Kept
+ * in the same words regardless, for the same reason: honest copy waiting
+ * for whichever provider arrives next with a store this app can read but
+ * no launch invocation yet.
  *
  * Fixed copy this app wrote, which is the whole reason it is safe to publish:
  * the detector's own reasons name `~/.local/bin` and, for a configured
@@ -97,8 +121,13 @@ export const PRODUCT_NAME: Readonly<Record<DwarfProvider, string>> = {
   // the same engine, and a refusal — not installed, could not be started —
   // must name the product, not its `agy` executable.
   antigravity: 'Antigravity CLI',
-  // #444. Observed only — this name reaches the panel through NOT_LAUNCHABLE
-  // and nothing else, since OpenCode never reaches a launch attempt.
+  // AMENDED for #534 (was: "Observed only — this name reaches the panel
+  // through NOT_LAUNCHABLE and nothing else, since OpenCode never reaches a
+  // launch attempt" — #444's own claim, made false by the measured `run`
+  // route joining OpenCode to LAUNCHABLE_PROVIDERS). Reachable the same way
+  // Claude's, Codex's and Antigravity's own names above are: a missing
+  // CLI's refusal (notInstalledReason) and a spawn failure's (couldNotStart,
+  // launchRunner.ts) both name it.
   opencode: 'OpenCode'
 }
 

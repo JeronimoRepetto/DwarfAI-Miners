@@ -193,9 +193,69 @@ export function unavailableAntigravityModelCatalog(): AgentModelCatalog {
 }
 
 /**
- * OpenCode's catalogue (#444) — always `source: 'none'`, unasked: it has no
- * live model-list command this app has measured and no launch could ever
- * carry a chosen model, so there is nothing to ask for and nothing to offer.
+ * One model OpenCode's own `models --verbose` block named — id, display name
+ * and its own effort-variant keys, parsed by providers/opencode/models.ts
+ * (#534). Kept distinct from `ModelOption` for the same reason
+ * `AntigravityModelInfo` is: this is what the CLI seam hands the domain,
+ * before the label-dropping rule below decides what the wire actually
+ * carries.
+ */
+export interface OpenCodeModelInfo {
+  value: string
+  displayName: string
+  /** `Object.keys(variants)` off this model's own JSON block; `[]` when it named none (M1). */
+  effortLevels: string[]
+}
+
+/**
+ * OpenCode's catalogue from a live `opencode models --verbose` answer (#534)
+ * — `source: 'provider'`, on the same terms as Claude's and Antigravity's:
+ * asked live, on demand, so it can never be stale. Until this issue the
+ * answer was always none (#444: no live list had been measured and no
+ * launch could ever carry a chosen model); #534 measured both.
+ *
+ * `effortLevels` rides each option whenever this model's own block named a
+ * non-empty `variants` map (M1: 19 of 34 measured models do, including free
+ * ones) — carried through even though the Add Panel's picker does not read
+ * it yet: `effortPicker` (renderer/src/lib/launch/modelTuning.ts) and
+ * `AddPanel.vue`'s effort `<select>` both draw their options from
+ * `AgentModelCatalog.efforts` alone, never from a model's own `effortLevels`
+ * — see `PROVIDER_EFFORT_LEVELS.opencode`'s own comment in launchTuning.ts
+ * for why that provider-wide boundary, not this per-model field, is what
+ * actually lights up the picker.
+ *
+ * `label` is dropped on the same terms as Claude's and Antigravity's: a
+ * picker with no distinct label just shows the value.
+ */
+export function openCodeModelCatalog(models: readonly OpenCodeModelInfo[]): AgentModelCatalog {
+  return {
+    provider: 'opencode',
+    models: models.map((model): ModelOption => ({
+      value: model.value,
+      ...(model.displayName !== '' && model.displayName !== model.value
+        ? { label: model.displayName }
+        : {}),
+      ...(model.effortLevels.length > 0 ? { effortLevels: [...model.effortLevels] } : {})
+    })),
+    efforts: effortsFor('opencode'),
+    source: 'provider'
+  }
+}
+
+/**
+ * OpenCode's catalogue when nothing could be asked live — not installed, a
+ * shim this build could not read, the spawn failed, or its output could not
+ * be read as a model list (#534). `source: 'none'`, on the same terms as
+ * `unavailableAntigravityModelCatalog`.
+ *
+ * AMENDED for #534 (was: the PERMANENT answer, because no live list had ever
+ * been measured — #444's own comment said so, and `efforts` was `[]` to
+ * match). It is now the FAILURE fallback only, exactly like Claude's and
+ * Antigravity's; `efforts` still carries `PROVIDER_EFFORT_LEVELS.opencode`'s
+ * boundary list even while `models` is empty, because the picker's boundary
+ * and a live model list are different questions — see `claudeModelCatalog`'s
+ * own precedent, where `unavailableClaudeModelCatalog` keeps `efforts`
+ * non-empty for exactly this reason.
  */
 export function unavailableOpenCodeModelCatalog(): AgentModelCatalog {
   return { provider: 'opencode', models: [], efforts: effortsFor('opencode'), source: 'none' }

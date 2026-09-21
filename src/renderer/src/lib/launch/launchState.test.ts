@@ -654,6 +654,83 @@ describe('the Jev option (#509)', () => {
     })
   })
 
+  /*
+   * jev-routing-profiles T4. When the person has configured a default launch
+   * in Settings and Jev itself could not decide, that default is APPLIED to
+   * the pickers exactly like a decision would be — through the same
+   * chooseProvider/chooseModel/chooseEffort paths, with previousChoice kept
+   * so Dismiss can put things back — rather than leaving the composer on
+   * whatever it already showed. A fallback with no configured default keeps
+   * the untouched-pickers behaviour pinned in the block above.
+   */
+  describe('a fallback with a configured default (jev-routing-profiles T4)', () => {
+    it('applies the default through the same paths a decision would, and keeps the pre-fallback pickers for Dismiss', () => {
+      const asked = jevAsked(
+        chooseEffort(chooseModel(chooseProvider(opened(), 'claude'), 'sonnet'), 'xhigh')
+      )
+
+      const fellBack = jevAnswered(
+        asked,
+        fallback({
+          reason: 'unreachable',
+          fallbackTo: { provider: 'codex', model: 'gpt-5.6-sol', effort: 'high' }
+        })
+      )
+
+      expect(fellBack.choice).toBe('codex')
+      expect(fellBack.model).toBe('gpt-5.6-sol')
+      expect(fellBack.effort).toBe('high')
+      expect(fellBack.jev.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'unreachable',
+        confidence: undefined,
+        appliedDefault: { provider: 'codex', model: 'gpt-5.6-sol', effort: 'high' }
+      })
+      expect(fellBack.jev.previousChoice).toEqual({
+        choice: 'claude',
+        model: 'sonnet',
+        effort: 'xhigh'
+      })
+    })
+
+    it('leaves model and effort unset when the default named none — say nothing, not the first option', () => {
+      const asked = jevAsked(opened())
+
+      const fellBack = jevAnswered(asked, fallback({ fallbackTo: { provider: 'codex' } }))
+
+      expect(fellBack.choice).toBe('codex')
+      expect(fellBack.model).toBeNull()
+      expect(fellBack.effort).toBeNull()
+    })
+
+    it('is put back by Dismiss exactly like a decision', () => {
+      const asked = jevAsked(chooseProvider(opened(), 'claude'))
+      const fellBack = jevAnswered(
+        asked,
+        fallback({ fallbackTo: { provider: 'codex', effort: 'high' } })
+      )
+
+      const cleared = clearJevDecision(fellBack)
+
+      expect(cleared.choice).toBe('claude')
+      expect(cleared.jev.routing).toEqual({ phase: 'idle' })
+      expect(cleared.jev.previousChoice).toBeNull()
+    })
+
+    it('records whether it will fall straight through to a launch, off autoAccept — mirrors a decision', () => {
+      const READY: JevSettings = { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+
+      const off = jevAnswered(jevAsked(opened()), fallback({ fallbackTo: { provider: 'codex' } }))
+      expect(off.jev.launchedOnFallback).toBe(false)
+
+      const withAutoAccept = jevAnswered(
+        jevAsked(toggleJevAutoAccept(setJevSettings(opened(), READY))),
+        fallback({ fallbackTo: { provider: 'codex' } })
+      )
+      expect(withAutoAccept.jev.launchedOnFallback).toBe(true)
+    })
+  })
+
   describe('clearing a decision', () => {
     it('restores the pickers a decision overwrote', () => {
       const asked = jevAsked(

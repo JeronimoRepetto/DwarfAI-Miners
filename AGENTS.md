@@ -23,6 +23,7 @@ does not — mostly things that have already gone wrong at least once.
 | Skill                                                  | What it covers                                                                                                                                                  |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`config-layering`](skills/config-layering/SKILL.md)   | The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value                                |
+| [`jev-capabilities`](skills/jev-capabilities/SKILL.md) | How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet                                                        |
 | [`platform-ports`](skills/platform-ports/SKILL.md)     | How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host                                                          |
 | [`privacy-guard`](skills/privacy-guard/SKILL.md)       | Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in                                                |
 | [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building                                        |
@@ -44,17 +45,20 @@ This table is the imperative form, and it is the one that binds.
 
 | When you are about to…                                          | ALWAYS invoke this skill first                         |
 | --------------------------------------------------------------- | ------------------------------------------------------ |
+| adding a provider or a model the app can launch                 | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | adding art, icons or sprite assets for the new interface        | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
 | adding behaviour that differs per operating system              | [`platform-ports`](skills/platform-ports/SKILL.md)     |
 | adding or changing a configuration setting                      | [`config-layering`](skills/config-layering/SKILL.md)   |
 | adding or changing a skill under skills/                        | [`skill-creator`](skills/skill-creator/SKILL.md)       |
 | adding or editing a test fixture                                | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
+| changing a model catalogue builder                              | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | changing an existing test file                                  | [`test-safety`](skills/test-safety/SKILL.md)           |
 | changing packaging or the release workflow                      | [`release`](skills/release/SKILL.md)                   |
 | committing a screenshot or a captured terminal transcript       | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
 | cutting a release or publishing installers                      | [`release`](skills/release/SKILL.md)                   |
 | deleting or replacing a test                                    | [`test-safety`](skills/test-safety/SKILL.md)           |
 | documenting a configuration option                              | [`config-layering`](skills/config-layering/SKILL.md)   |
+| editing a Jev question, criterion or confidence floor           | [`jev-capabilities`](skills/jev-capabilities/SKILL.md) |
 | finishing a change under skills/                                | [`skill-sync`](skills/skill-sync/SKILL.md)             |
 | fixing a bug                                                    | [`tdd`](skills/tdd/SKILL.md)                           |
 | fixing a skill that is missing from a table in AGENTS.md        | [`skill-sync`](skills/skill-sync/SKILL.md)             |

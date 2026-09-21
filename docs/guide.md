@@ -39,9 +39,10 @@ observer, and eventually part game.
   a terminal emulator. The panel is already the interactive surface for the actions it supports;
   the underlying provider still owns the actual process and terminal.
 
-Three of the four providers can be **read** and **launched**; OpenCode is read-only, because no
-launch invocation for it has been measured yet. How far past reading each one can go differs by
-provider, and the [provider table](../README.md#provider-support) is the detail. More providers
+All four providers can be **read** and **launched**. How far past reading each one can go differs
+by provider — Claude and Antigravity can be **held**, so their replies reach the message panel;
+OpenCode's launch has no message channel yet — and the
+[provider table](../README.md#provider-support) is the detail. More providers
 can be added once their session artifacts and interaction paths meet the project's verification
 bar.
 
@@ -456,18 +457,27 @@ blocked, and cannot have its terminal focused. Its transcript can still be taile
 A session started from the panel's Add panel can also carry a **model and an effort level**. The
 effort levels are each CLI's own documented set, not one shared list — Claude Code accepts `low`,
 `medium`, `high`, `xhigh` and `max`; Codex those five plus `ultra`, which is Codex's alone;
-Antigravity only `low`, `medium` and `high` — and a level a CLI does not have is refused outright
+Antigravity only `low`, `medium` and `high`; OpenCode's own picker draws on `none`, `minimal`,
+`low`, `medium`, `high`, `xhigh`, `max` and `thinking` — the union of every key its live catalogue
+has named across a model with reasoning variants, since which of those a given model actually
+takes is read live per model rather than assumed — and a level a CLI does not have is refused outright
 rather than quietly dropped, because a launch that discarded `max` would start a real session at the
 CLI's default and report success. Model names are never hardcoded here: each provider's
 catalogue is read live from that CLI. For a Claude session the panel is holding, the same model and
 effort can be changed later, from the session strip in the mine.
 
-**OpenCode is observed only, and says so.** DwarfAI-Miners reads `opencode.db` — the SQLite store
-OpenCode 1.18.31 keeps under `~/.local/share/opencode` — and nothing else: no launch invocation for
-it has been measured, so the Add Panel shows it installed but not launchable, and its dwarf offers
-no Send or Boost, with the same fixed reason every un-launchable provider gets. Kick dismisses the
-dwarf from the board, and it returns on its own when its session moves — a new row, or the store's
-event log advancing for it — rather than only when a poll catches it working. There is no
+**OpenCode can be launched, and its dwarf still says what it cannot do yet.** DwarfAI-Miners
+reads `opencode.db` — the SQLite store OpenCode 1.18.31 keeps under `~/.local/share/opencode` —
+and nothing else. A launch is detached, the same shape Codex's and Antigravity's own launches
+already are: `opencode run` starts in the mine's folder with the model and effort chosen from a
+live `opencode models --verbose` catalogue, the prompt on stdin, and the dwarf is discovered
+afterwards by the ordinary poll reading the store back. Its composer still offers no Send — no
+message channel reaches a launched or observed OpenCode session yet — with the same fixed reason
+every provider with no channel gets, and Boost is unbuilt for every provider alike. Kick ends the
+process for a session this panel launched, the same as it does for a detached Codex or Antigravity
+launch; for a session opened outside this panel, nothing here can end it, so Kick only dismisses
+its dwarf from the board, and it returns on its own when its session moves — a new row, or the
+store's event log advancing for it — rather than only when a poll catches it working. There is no
 per-session file either, so there is nothing for the terminal-focus fallback to tail; the message
 panel's own feed, paged from the store, is the whole reading surface. An OpenCode dwarf mines no
 ore: token counts sit in the store but are not read onto the wire in this release.
@@ -485,6 +495,40 @@ crew as soon as its `<task-notification>` reports `completed`, `failed` or `kill
 DwarfAI-Miners remembers that so an agent whose notification later scrolls out of the transcript
 tail can never come back as a ghost. Codex promotion still comes from a verified
 `thread_spawn` parent link, and OpenCode's own promotion comes from `session.parent_id` the same way.
+
+## Jev
+
+An optional launch assist, off until you enter your own TypeSafe key in the Jev section of
+Settings — see [Settings](#settings). With a key set, a **Let Jev choose** toggle appears beside the
+Add Panel's own pickers, hidden outright without a key and shown disabled with the reason when this
+machine has no encrypted place to keep one. Turn it on and press Enter on the composer to ask Jev
+for a provider, model and effort for what you typed; **Auto-accept Jev's choice** beside it collapses
+that into a single Enter once the toggle is on.
+
+While Jev is deciding, the composer says **Asking Jev…**. Once it answers, a card states what it
+chose — provider, model and effort together with its confidence — and then says, part by part,
+what Jev answered and what fell to a safe value: "Jev chose the balanced tier (85% sure) and Claude
+Code (88% sure)", or "Jev was unsure about the provider (37%); the safe value Claude Code was used".
+The card also notes when the prompt was treated as trivial, when a large-context model was
+preferred, and when the prompt was trimmed to fit Jev's own request budget. The pickers above are
+already set to that choice; change them, or press Launch again to start the session as shown.
+**Dismiss** puts the pickers back without undoing anything already launched.
+
+Jev can fail to decide in several distinct, named ways — unreachable, rate-limited, unauthorized,
+timed out, an unusable answer, no launchable provider, or a request too large for its own budget.
+What happens next depends on Settings' Jev section. With a **default launch** configured there (a
+provider, model and effort meant for exactly this case), the panel sets the pickers to that default
+exactly as it would to a decision and says so — "Jev could not decide (Jev took too long). Your
+default, Codex CLI · gpt-5.6-terra · high, is set below — press Launch again or change it" — with
+its own **Dismiss** to put the pickers back; **Auto-accept** launches it at once. Without a
+default, a chosen provider still launches on the pickers' current values, saying so in a line under
+the composer; with no provider chosen either, nothing launches and your prompt is kept.
+
+Settings' Jev section, visible only once a key is configured, also holds the **routing profile** —
+economy, balanced or premium; see [Configuration](../README.md#configuration) for what each one
+means, and the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for how a model earns
+a place in the table the profile routes through. `JEV_DEBUG=1` traces every routing call to the
+terminal — see [Diagnostic switches](#diagnostic-switches).
 
 ## Sound
 
@@ -571,7 +615,7 @@ it may look slightly different from one platform to the next.
 
 ## Settings
 
-Reached from the top button of the navigation column. Six sections and a small group of
+Reached from the top button of the navigation column. Seven sections and a small group of
 application controls:
 
 | Section            | What it holds                                                                                                                                                                                                                                                            |
@@ -581,6 +625,7 @@ application controls:
 | **Typography**     | **Interface** and **Messaging** fonts, chosen independently — Tiny5, Pixelify Sans, Roboto or Arial for the interface, and the same list without Tiny5 for messages. See [Typography](#typography).                                                                      |
 | **Audio**          | **Music at startup** (on by default), plus a volume slider each for **Music**, **Ambience** and **Effects**. They start at 10%, 100% and 70%. See [Sound](#sound).                                                                                                       |
 | **Notifications**  | **System notifications** (on by default) — one switch, for the whole feature. See [Notifications](#notifications).                                                                                                                                                       |
+| **Jev**            | The TypeSafe API key, and — once a key is configured — the routing profile and the default launch. See [Jev](#jev).                                                                                                                                                      |
 | **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
 | _Application_      | **Always on top**, **Hide panel**, and the running version.                                                                                                                                                                                                              |
 
@@ -762,23 +807,26 @@ only**, never keys in `config-v1.json`. A debugging device does not belong in th
 app reads on every launch. Each is on for `1` or `true` and off for anything else — except
 `DARWIN_CONSOLE_INPUT` and `LINUX_CONSOLE_INPUT`, which are two-way overrides (see below).
 
-| Variable               | What it prints                                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                              |
-| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                               |
-| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                             |
-| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                    |
-| `JEV_DEBUG`            | Each Jev routing call: the request it sent, then the answer or the fallback reason and elapsed ms.                       |
-| `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367). |
-| `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).    |
+| Variable               | What it prints                                                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                                                   |
+| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                                                    |
+| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                                                  |
+| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                                         |
+| `JEV_DEBUG`            | Each Jev routing call: the request it sent, the answer or the fallback reason, and — once Jev answered — the local decision, plus elapsed ms. |
+| `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367).                      |
+| `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).                         |
 
 `DWARFAI_PERF` has to be a real environment variable even in a development checkout
 (`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
 arrives too late to be read. The other six work either way.
 
-`JEV_DEBUG=1 pnpm dev` prints every Jev routing request and answer to the terminal — one
-`[jev:debug]` line each. The request line carries the person's own prompt text, so turn it off
-before recording a transcript of that terminal.
+`JEV_DEBUG=1 pnpm dev` prints every Jev routing request, answer (or fallback reason) and, once Jev
+answered, the local decision — each as a one-line `[jev:debug]` HEADER (`request →`, `answers ←`,
+`decision =`, or `fallback`) followed by that call's own payload, pretty-printed
+(`JSON.stringify(value, null, 2)`) across as many lines as it needs (jev-routing-profiles T4). The
+request block carries the person's own prompt text, so turn it off before recording a transcript of
+that terminal.
 
 `DARWIN_CONSOLE_INPUT` overrides the macOS console-input path in either direction: `=0` (or
 `=false`) forces it OFF, `=1` (or `=true`) forces it ON, and leaving it unset takes the shipped

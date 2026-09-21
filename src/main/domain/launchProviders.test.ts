@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DWARF_PROVIDERS, type DwarfProvider } from './types'
-import {
-  LAUNCHABLE_PROVIDERS,
-  NOT_LAUNCHABLE,
-  agentProviderList,
-  type CliPresence
-} from './launchProviders'
+import { LAUNCHABLE_PROVIDERS, agentProviderList, type CliPresence } from './launchProviders'
 
 // AMENDED for #237 (was: 'claude' | 'codex'). Widened to the provider table
 // itself so an observer-only identity can be handed in as a detection.
@@ -81,13 +76,16 @@ describe('agentProviderList', () => {
   })
 
   it('names every provider a launch can actually be started for (#168)', () => {
-    // AMENDED for #237, step 4 (was: ['claude', 'codex']). Antigravity gained
-    // a DETACHED, one-shot launch — the verified `agy --input-format text`
-    // argv (`-p` was dropped in a same-day hotfix: it takes a value on this
-    // CLI and swallowed --input-format, see launch.ts) — while staying out
-    // of HELDABLE_PROVIDERS: this list only answers "can a launch be
-    // started", never "can it be watched".
-    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'antigravity'])
+    // AMENDED for #534 (was: ['claude', 'codex', 'antigravity'], with
+    // OpenCode deliberately absent per #444's own D5 — "OpenCode reads
+    // opencode.db only"). D5 stood on "no launch invocation this app has
+    // measured"; #534 measured one — `opencode run -m <provider/model>
+    // --variant <effort> --format json` with the prompt on stdin
+    // (docs/opencode-format.md) — so OpenCode joins on the same DETACHED,
+    // one-shot terms Codex and Antigravity already do, while staying out of
+    // HELDABLE_PROVIDERS: this list only answers "can a launch be started",
+    // never "can it be watched".
+    expect([...LAUNCHABLE_PROVIDERS]).toEqual(['claude', 'codex', 'antigravity', 'opencode'])
   })
 
   /*
@@ -138,26 +136,17 @@ describe('agentProviderList', () => {
   })
 
   /*
-   * Issue #444. OpenCode reads opencode.db only; the launch chip therefore
-   * behaves for it exactly the way this constant was originally written to
-   * describe — installed, but not launchable, with the fixed refusal copy —
-   * the case NOT_LAUNCHABLE had no real provider left to prove itself
-   * against once #237 gave Antigravity a launch path.
-   *
-   * AMENDED (#453, WARNING 4): titled as a pin rather than as if it drove the
-   * implementation — it passed GREEN on first run, since `agentProviderList`
-   * was already generic over `DWARF_PROVIDERS`/`LAUNCHABLE_PROVIDERS` before
-   * this case existed.
+   * AMENDED for #534 (was: asserted a detected OpenCode was REFUSED, with
+   * NOT_LAUNCHABLE as its reason — the state this test now proves the
+   * opposite of). The measured `run` route joined OpenCode to
+   * LAUNCHABLE_PROVIDERS above, so a detected OpenCode is launchable exactly
+   * as Claude, Codex and Antigravity are, with no refusal to explain — the
+   * same conclusion #237's own amendment reached for Antigravity.
    */
-  it('pins that a detected OpenCode is marked installed but not launchable, with NOT_LAUNCHABLE as its reason', () => {
+  it('marks a detected OpenCode launchable now that #534 gives it a detached launch', () => {
     const [, , , opencode] = agentProviderList([found('opencode')]).providers
 
-    expect(opencode).toEqual({
-      provider: 'opencode',
-      installed: true,
-      launchable: false,
-      reason: NOT_LAUNCHABLE
-    })
+    expect(opencode).toEqual({ provider: 'opencode', installed: true, launchable: true })
   })
 
   it('offers no refusal copy for an OpenCode nobody has installed', () => {
