@@ -492,15 +492,29 @@ reordered and #319 reordered back. Two acts, two orders, one target: a `terminal
 carries a registry `sessionName` is one session with two answers, and `resolveTextDelivery` /
 `resolveKickDelivery` give them separately [code: `src/main/textDelivery/resolve.ts`].
 
-| Target                             | Message (`sendDwarfText`)                               | Kick (`kickDwarf`)                             | Touches a window? |
-| ---------------------------------- | ------------------------------------------------------- | ---------------------------------------------- | ----------------- |
-| `terminal` **with** a session name | `terminal` (write by pid), relay only if it never wrote | **ends the verified pid** (#329), relay behind | no                |
-| `terminal` **without** one         | `terminal` (write by pid) — the only channel it has     | **ends the verified pid**, nothing behind it   | no                |
-| `claude-relay`                     | `claude-relay`                                          | `claude-relay` (a semantic ask)                | no                |
-| `codex-queue`                      | `codex-queue`                                           | refused — drains between turns (#97)           | no                |
-| `held-session`                     | the stream this panel holds                             | a real interrupt, where the protocol has one   | no                |
-| `hosted-stdin`                     | the pipe this panel holds                               | ends the process (#194)                        | no                |
-| `launched-process`                 | refused — no inbox (#217)                               | ends the process                               | no                |
+| Target                             | Message (`sendDwarfText`)                                         | Kick (`kickDwarf`)                                    | Touches a window? |
+| ---------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- | ----------------- |
+| `terminal` **with** a session name | `terminal` (write by pid), relay only if it never wrote           | **ends the verified pid** (#329), relay behind        | no                |
+| `terminal` **without** one         | `terminal` (write by pid) — the only channel it has               | **ends the verified pid**, nothing behind it          | no                |
+| `claude-relay`                     | `claude-relay`                                                    | `claude-relay` (a semantic ask)                       | no                |
+| `codex-queue`                      | `codex-queue`                                                     | refused — drains between turns (#97)                  | no                |
+| `codex-exec-resume`                | starts the next turn, held if one is already running (#450, #457) | refused — runs in a process nothing here holds (#450) | no                |
+| `opencode-run-continue`            | starts the next turn, held if one is already running (#534)       | refused — runs in a process nothing here holds (#534) | no                |
+| `held-session`                     | the stream this panel holds                                       | a real interrupt, where the protocol has one          | no                |
+| `hosted-stdin`                     | the pipe this panel holds                                         | ends the process (#194)                               | no                |
+| `launched-process`                 | refused — no inbox (#217)                                         | ends the process                                      | no                |
+
+**`codex-exec-resume` and `opencode-run-continue` are the two "new process per turn" channels**
+(#450, #534) — the queue's opposite: rather than an inbox something drains, each spawns a fresh CLI
+process addressed by the session's own id (a Codex thread UUID, an OpenCode session id), with the
+message on stdin and the verdict taken at a short start window rather than at the process's own
+exit, which blocks for the whole turn. Neither carries a kick, for the same reason: the turn it
+starts runs in a process nothing on this board holds a handle to, so Kick can only dismiss the
+dwarf (#293) — never end that specific turn. Both are held rather than sent again while a turn is
+already running on the same session, mirroring #457's queue for a launched Codex dwarf: Codex
+refuses a concurrent resume outright (exit 1), where OpenCode's own CLI was measured to accept one
+and RACE instead (M6, `docs/opencode-format.md` Row 13) — so the hold is what stops a second
+`opencode run --session` from ever being spawned at all, not merely what avoids a wasted refusal.
 
 **Attachments (#408) narrow this further.** Only `terminal` and `held-session` ever carry a file —
 the second only for a Claude session, per `ATTACHMENT_CHANNELS`/`ATTACHMENT_HELD_PROVIDERS` in

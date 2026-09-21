@@ -321,6 +321,19 @@ Three boundaries keep the rest of this app from opening a socket of its own:
   (`src/main/textDelivery/relay.ts`, `relayRunner.ts`). That turn runs under your Claude account,
   and its network behavior is Claude Code's — the text you typed travels to Anthropic the same way
   anything you type into Claude Code does, and DwarfAI-Miners itself opens no connection.
+- **Launching or continuing OpenCode spawns your own `opencode` binary, and never puts your words
+  on its command line.** Pressing Launch starts `opencode run` in the mine's folder with your first
+  prompt written to its stdin and the pipe closed right after — the same detached shape Codex's and
+  Antigravity's own launches already run on (`src/main/sessionLaunch/launchRunner.ts`). Sending a
+  message to a root OpenCode session afterwards — launched by this panel or opened in your own
+  terminal — spawns `opencode run --session <id>` again, your message on its stdin the same way; a
+  message typed while a turn is already running waits here and is sent once that turn ends, rather
+  than starting a second process on the same session
+  (`src/main/textDelivery/opencodeContinue.ts`). Codex's own resumed-thread channel,
+  `codex-exec-resume`, spawns `codex exec resume <id> -` on the identical terms — the model's
+  reply, in both cases, is read back from the CLI's own local store on the next poll, the same way
+  every other session's reply already is; neither process is a second network connection this app
+  opens.
 - **An attached image, on a held session, leaves inside that same turn.** A session this app holds
   runs on the Agent SDK, driving the `claude` binary you already installed and logged into, exactly
   as the relay's turn does. Since #408 an attachment's image bytes ride along as one more content

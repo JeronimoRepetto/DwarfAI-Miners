@@ -39,9 +39,10 @@ observer, and eventually part game.
   a terminal emulator. The panel is already the interactive surface for the actions it supports;
   the underlying provider still owns the actual process and terminal.
 
-All four providers can be **read** and **launched**. How far past reading each one can go differs
-by provider — Claude and Antigravity can be **held**, so their replies reach the message panel;
-OpenCode's launch has no message channel yet — and the
+All four providers can be **read**, **launched** and **sent a message** — Claude and Antigravity
+can additionally be **held**, so their replies reach the message panel live. OpenCode's message
+reaches its session through a new process per turn rather than a held stream, and only for a root
+session; a worker still has no message channel of its own — and the
 [provider table](../README.md#provider-support) is the detail. More providers
 can be added once their session artifacts and interaction paths meet the project's verification
 bar.
@@ -466,21 +467,26 @@ CLI's default and report success. Model names are never hardcoded here: each pro
 catalogue is read live from that CLI. For a Claude session the panel is holding, the same model and
 effort can be changed later, from the session strip in the mine.
 
-**OpenCode can be launched, and its dwarf still says what it cannot do yet.** DwarfAI-Miners
-reads `opencode.db` — the SQLite store OpenCode 1.18.31 keeps under `~/.local/share/opencode` —
-and nothing else. A launch is detached, the same shape Codex's and Antigravity's own launches
-already are: `opencode run` starts in the mine's folder with the model and effort chosen from a
-live `opencode models --verbose` catalogue, the prompt on stdin, and the dwarf is discovered
-afterwards by the ordinary poll reading the store back. Its composer still offers no Send — no
-message channel reaches a launched or observed OpenCode session yet — with the same fixed reason
-every provider with no channel gets, and Boost is unbuilt for every provider alike. Kick ends the
-process for a session this panel launched, the same as it does for a detached Codex or Antigravity
-launch; for a session opened outside this panel, nothing here can end it, so Kick only dismisses
-its dwarf from the board, and it returns on its own when its session moves — a new row, or the
-store's event log advancing for it — rather than only when a poll catches it working. There is no
-per-session file either, so there is nothing for the terminal-focus fallback to tail; the message
-panel's own feed, paged from the store, is the whole reading surface. An OpenCode dwarf mines no
-ore: token counts sit in the store but are not read onto the wire in this release.
+**OpenCode can be launched, and now spoken to.** DwarfAI-Miners reads `opencode.db` — the SQLite
+store OpenCode 1.18.31 keeps under `~/.local/share/opencode` — and nothing else. A launch is
+detached, the same shape Codex's and Antigravity's own launches already are: `opencode run` starts
+in the mine's folder with the model and effort chosen from a live `opencode models --verbose`
+catalogue, the prompt on stdin, and the dwarf is discovered afterwards by the ordinary poll reading
+the store back. Its composer offers Send for a **root** session, launched by this panel or opened
+in a terminal — the join is the session id `opencode.db` itself carries, never a pid — by spawning
+a new `opencode run --session <id>` process per turn, the message on its stdin. A message typed
+while a turn is already running waits rather than being refused, and is sent once that turn ends:
+a concurrent `--session` call was measured to race rather than cleanly refuse, so this panel never
+starts a second one itself. A **worker** session still offers no Send — the foreman hop is
+unmeasured for OpenCode — with the same fixed reason every provider with no channel gets, and
+Boost is unbuilt for every provider alike. Kick ends the process for a session this panel launched,
+the same as it does for a detached Codex or Antigravity launch; for a session opened outside this
+panel, nothing here can end it, so Kick only dismisses its dwarf from the board, and it returns on
+its own when its session moves — a new row, or the store's event log advancing for it — rather than
+only when a poll catches it working. There is no per-session file either, so there is nothing for
+the terminal-focus fallback to tail; the message panel's own feed, paged from the store, is the
+whole reading surface. An OpenCode dwarf mines no ore: token counts sit in the store but are not
+read onto the wire in this release.
 `OPENCODE_CLI_PATH` documents a working binary for a broken PATH shim (a package-manager global
 install can skip the postinstall step that downloads the platform binary); `XDG_DATA_HOME` is
 deliberately not read, since the default store root is fixed rather than derived from the

@@ -62,6 +62,7 @@ interface CapabilityRow {
 const NO_PASTE_TIER = "This build can't write into a session's console."
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 const NO_RESUME_TIER = "This build can't start a new turn on a Codex session."
+const NO_OPENCODE_CONTINUE_TIER = "This build can't start a new turn on an OpenCode session."
 const NO_TERMINAL_END_TIER = "This build can't end a session running in a terminal."
 // The one row whose constant IS exported and importable for real.
 const NO_ANSWER_KEYSTROKE_TIER_LITERAL = 'This build cannot answer a question at the terminal.'
@@ -73,6 +74,11 @@ const CAPABILITY_TABLE: Record<keyof TextDeliveryPort, CapabilityRow> = {
   relayToClaudeSession: { kind: 'required', outcome: true },
   queueToCodexThread: { kind: 'optional', outcome: true, absence: NO_QUEUE_TIER },
   resumeCodexThread: { kind: 'optional', outcome: true, absence: NO_RESUME_TIER },
+  continueOpenCodeSession: {
+    kind: 'optional',
+    outcome: true,
+    absence: NO_OPENCODE_CONTINUE_TIER
+  },
   sendInterrupt: { kind: 'required', outcome: true },
   answerQuestionAtConsole: {
     kind: 'optional',
@@ -93,6 +99,7 @@ const OUTCOME_CAPABILITIES = (Object.keys(CAPABILITY_TABLE) as (keyof TextDelive
  * ---------------------------------------------------------------------- */
 
 const THREAD_ID = '01a04d79-5c87-7a31-9b1a-4aacc350d6fd'
+const SESSION_ID = 'ses_f3b6efd4dffeEeQQKDLkwjGTyL'
 const EXPECTED_START_MS = 1_788_001_972_136
 
 function windowsPort(): WindowsTextDelivery {
@@ -108,6 +115,8 @@ function windowsPort(): WindowsTextDelivery {
     codexBinary: async () => 'C:\\Users\\j\\.local\\bin\\codex.exe',
     runCodexQueue: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     runCodexResume: vi.fn().mockResolvedValue({ running: true }),
+    opencodeBinary: async () => 'C:\\Users\\j\\.local\\bin\\opencode.exe',
+    runOpenCodeContinue: vi.fn().mockResolvedValue({ running: true }),
     fs: new FakeFs(),
     processEnd: {
       endProcessTree: vi.fn().mockResolvedValue(true),
@@ -149,6 +158,8 @@ function posixPort(
     codexBinary: async () => '/usr/local/bin/codex',
     runCodexQueue: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false }),
     runCodexResume: vi.fn().mockResolvedValue({ running: true }),
+    opencodeBinary: async () => '/usr/local/bin/opencode',
+    runOpenCodeContinue: vi.fn().mockResolvedValue({ running: true }),
     fs: new FakeFs(),
     processEnd: {
       endProcessTree: vi.fn().mockResolvedValue(true),
@@ -199,6 +210,7 @@ const EXPECTED_PRESENCE: Record<
     pasteToConsole: 'present',
     queueToCodexThread: 'present',
     resumeCodexThread: 'present',
+    continueOpenCodeSession: 'present',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
   },
@@ -206,6 +218,7 @@ const EXPECTED_PRESENCE: Record<
     pasteToConsole: 'present',
     queueToCodexThread: 'present',
     resumeCodexThread: 'present',
+    continueOpenCodeSession: 'present',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
   },
@@ -213,6 +226,7 @@ const EXPECTED_PRESENCE: Record<
     pasteToConsole: 'present',
     queueToCodexThread: 'present',
     resumeCodexThread: 'present',
+    continueOpenCodeSession: 'present',
     answerQuestionAtConsole: 'present',
     endConsoleSession: 'present'
   }
@@ -241,6 +255,12 @@ async function invoke(
     case 'resumeCodexThread':
       return port.resumeCodexThread!({
         threadId: THREAD_ID,
+        cwd: '/home/j/project',
+        text: 'hi'
+      })
+    case 'continueOpenCodeSession':
+      return port.continueOpenCodeSession!({
+        sessionId: SESSION_ID,
         cwd: '/home/j/project',
         text: 'hi'
       })

@@ -92,6 +92,15 @@ const LAUNCH_COMMAND: Record<DwarfProvider, string> = {
 const AFTER_THE_TURN: Partial<Record<DwarfProvider, string>> = {
   codex:
     ' The composer opens as soon as the panel finds the thread it is writing; ' +
+    'a message typed while its turn is still running waits here and is sent when that turn ends.',
+  // AMENDED for #534 (was: absent — a launched OpenCode dwarf had no such
+  // clause because launching it was refused entirely until this issue).
+  // `opencode-run-continue` gives OpenCode the same hold-while-busy
+  // behaviour #457 gave Codex, so the same promise applies: the composer
+  // opens once the panel finds the session, and a message typed mid-turn
+  // waits rather than being refused.
+  opencode:
+    ' The composer opens as soon as the panel finds the session it is writing; ' +
     'a message typed while its turn is still running waits here and is sent when that turn ends.'
 }
 
@@ -198,7 +207,11 @@ export const CHANNEL_HINT: Record<TextDeliveryChannel, string> = {
   // reply to take as long as a turn does. Says "starts" rather than promising
   // an answer — what a ✓ means here is still only that the turn began.
   'codex-exec-resume':
-    'Starts the next turn on this Codex session, with your message as its prompt.'
+    'Starts the next turn on this Codex session, with your message as its prompt.',
+  // The OpenCode twin of the line above (#534): the same act, against a
+  // session `opencode run --session` reaches rather than `codex exec resume`.
+  'opencode-run-continue':
+    'Starts the next turn on this OpenCode session, with your message as its prompt.'
 }
 
 /**
@@ -281,7 +294,11 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
   // honest thing is the dismissal beside it, and this line is only ever read if
   // something routes a kick here by mistake.
   'codex-exec-resume':
-    "Nothing: the turn a resume starts runs in its own process, which this panel doesn't hold."
+    "Nothing: the turn a resume starts runs in its own process, which this panel doesn't hold.",
+  // The OpenCode twin of the line above (#534), same reasoning: the turn a
+  // continuation starts runs in its own process too.
+  'opencode-run-continue':
+    "Nothing: the turn a continuation starts runs in its own process, which this panel doesn't hold."
 }
 
 /**
@@ -300,10 +317,21 @@ export const KICK_HINT: Record<TextDeliveryChannel, string> = {
  * has no terminal at all; and the panel is never the thing that presses Esc
  * — #329 rules that no keystroke goes into a window this app cannot prove is
  * the session's own, so the Esc named here is the person's.
+ *
+ * AMENDED for #534 (was: '...which for a Codex thread is its own terminal
+ * (Esc). Kick sends...'). This hint is read off `cancel === null`, which is
+ * no longer a Codex-only shape: an OpenCode dwarf reaches it too, on the
+ * identical terms — `opencode-run-continue` is excluded from KickEndpoint
+ * for the same reason `codex-exec-resume` is (see port.ts). Naming Codex's
+ * own Esc-at-terminal mechanism unconditionally would be wrong for the
+ * OpenCode case, and no equivalent has been measured for OpenCode to name
+ * in its place (interruption is #445, out of scope for #534) — so the
+ * sentence stays true of every provider that reaches it by naming no
+ * mechanism at all, rather than guessing at one.
  */
 export const OPEN_TURN_NO_INTERRUPT_HINT =
-  'This turn cannot be stopped from here — only where the session runs, which for a Codex ' +
-  'thread is its own terminal (Esc). Kick sends the dwarf off the rock once the turn ends.'
+  'This turn cannot be stopped from here — only where the session itself is running. Kick ' +
+  'sends the dwarf off the rock once the turn ends.'
 
 export const NO_EFFORT_REASON = "No provider supports changing a running session's effort yet."
 

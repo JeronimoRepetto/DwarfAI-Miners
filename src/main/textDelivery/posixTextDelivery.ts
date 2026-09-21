@@ -15,12 +15,18 @@ import type {
   ConsoleTextRequest,
   EndSessionRequest,
   InterruptRequest,
+  OpenCodeContinueRequest,
   RelayTextRequest,
   TextDeliveryOutcome,
   TextDeliveryPort
 } from './port'
 import { deliverViaCodexQueue, runCodexQueueProcess, type CodexQueueRunner } from './codexQueue'
 import { deliverViaCodexResume, runCodexResumeProcess, type CodexResumeRunner } from './codexResume'
+import {
+  deliverViaOpenCodeContinue,
+  runOpenCodeContinueProcess,
+  type OpenCodeContinueRunner
+} from './opencodeContinue'
 import {
   GRACEFUL_EXIT_POLL_COUNT,
   GRACEFUL_EXIT_POLL_INTERVAL_MS,
@@ -113,6 +119,14 @@ export interface PosixTextDeliveryOptions {
   /** Injected for tests; defaults to a real codex spawn (#450). */
   runCodexResume?: CodexResumeRunner
   /**
+   * Resolves the opencode binary through the CLI detection port (#534), on
+   * the same terms `codexBinary` is. Omitted, the continuation tier has no
+   * binary to address and refuses with a reason.
+   */
+  opencodeBinary?: () => Promise<string | undefined>
+  /** Injected for tests; defaults to a real opencode spawn (#534). */
+  runOpenCodeContinue?: OpenCodeContinueRunner
+  /**
    * Reads a `.cmd`/`.bat` shim for the program it names, the same way CLI
    * detection does (#413). Codex never ships a shim on POSIX, but the plumbing
    * is uniform across both ports rather than one of them alone knowing it can
@@ -160,6 +174,8 @@ export class PosixTextDelivery implements TextDeliveryPort {
   private readonly codexBinary: () => Promise<string | undefined>
   private readonly runCodexQueue: CodexQueueRunner
   private readonly runCodexResume: CodexResumeRunner
+  private readonly opencodeBinary: () => Promise<string | undefined>
+  private readonly runOpenCodeContinue: OpenCodeContinueRunner
   private readonly fs: FsLike
   private readonly processEnd: ProcessEndPort
   private readonly processProbe: ProcessProbePort
@@ -178,6 +194,8 @@ export class PosixTextDelivery implements TextDeliveryPort {
     this.codexBinary = options.codexBinary ?? (async () => undefined)
     this.runCodexQueue = options.runCodexQueue ?? runCodexQueueProcess
     this.runCodexResume = options.runCodexResume ?? runCodexResumeProcess
+    this.opencodeBinary = options.opencodeBinary ?? (async () => undefined)
+    this.runOpenCodeContinue = options.runOpenCodeContinue ?? runOpenCodeContinueProcess
     this.fs = options.fs ?? new NodeFs()
     // The platform this port was CONSTRUCTED for, never asked of the machine:
     // this class is the POSIX port for whichever POSIX platform composed it, and
@@ -327,6 +345,22 @@ export class PosixTextDelivery implements TextDeliveryPort {
       // reach codexTuningArgs as absent too, which is what keeps the argv
       // byte-identical to before this issue.
       ...(request.tuning === undefined ? {} : { tuning: request.tuning })
+    })
+  }
+
+  /**
+   * The OpenCode continuation tier (#534): platform-neutral for the reason
+   * the queue and the resume beside it are, and reached through the same
+   * detected binary.
+   */
+  async continueOpenCodeSession(request: OpenCodeContinueRequest): Promise<TextDeliveryOutcome> {
+    return deliverViaOpenCodeContinue({
+      sessionId: request.sessionId,
+      cwd: request.cwd,
+      text: request.text,
+      binaryPath: await this.opencodeBinary(),
+      run: this.runOpenCodeContinue,
+      fs: this.fs
     })
   }
 

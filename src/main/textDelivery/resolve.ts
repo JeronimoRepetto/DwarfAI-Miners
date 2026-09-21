@@ -216,14 +216,14 @@ function channelOf(hops: ForemanHops, endpoint: TextDeliveryEndpoint): TextDeliv
  */
 /**
  * A launch whose opening process is still running, seen by the SEND as the
- * resume it is standing in front of (#457) — the fourth place send and kick
- * routing part company, and the only one where the send gets MORE than the
- * kick rather than less.
+ * continuation it is standing in front of (#457, #534) — the fourth place
+ * send and kick routing part company, and the only one where the send gets
+ * MORE than the kick rather than less.
  *
  * The sibling of `degradedForSend` below, and deliberately beside it: both
  * rewrite one endpoint for the message alone, and both exist because an act's
  * needs and a session's shape are different questions. There the machine
- * cannot type, so a console becomes a relay; here the thread cannot take a
+ * cannot type, so a console becomes a relay; here the session cannot take a
  * second turn RIGHT NOW, which is a fact about a moment rather than about the
  * session — and a moment is something the panel can wait out. The kick route
  * never asks this, because ending that process is the act it is for, and it is
@@ -231,7 +231,9 @@ function channelOf(hops: ForemanHops, endpoint: TextDeliveryEndpoint): TextDeliv
  *
  * Only a launched process is ever rewritten, and only one carrying
  * `heldResume`: an absent one is #217's own refusal, which is still true of
- * every provider whose launched thread cannot be resumed at all.
+ * every provider whose launched session cannot be continued at all. Which
+ * channel `heldResume` names — Codex's resume or OpenCode's continuation —
+ * is not asked here: this function reads it, never its kind.
  */
 function heldForSend(endpoint: TextDeliveryEndpoint): TextDeliveryEndpoint {
   if (endpoint.kind !== 'launched-process' || endpoint.heldResume === undefined) return endpoint
@@ -294,12 +296,17 @@ function canCarryText(endpoint: TextDeliveryEndpoint): endpoint is SendEndpoint 
  * resolveKickDelivery and stampTextDelivery read it (#97). Duplicating it is
  * how the panel and the runtime would start disagreeing about the same dwarf.
  *
- * See KickEndpoint in port.ts for why the queue and the resume are excluded —
- * two Codex channels refused for two different reasons, which is why the
- * exclusion is a list rather than one rule about Codex.
+ * See KickEndpoint in port.ts for why the queue, the Codex resume and the
+ * OpenCode continuation are excluded — channels refused for their own
+ * reasons, which is why the exclusion is a list rather than one rule about
+ * one provider.
  */
 function canCarryKick(endpoint: TextDeliveryEndpoint): endpoint is KickEndpoint {
-  return endpoint.kind !== 'codex-queue' && endpoint.kind !== 'codex-exec-resume'
+  return (
+    endpoint.kind !== 'codex-queue' &&
+    endpoint.kind !== 'codex-exec-resume' &&
+    endpoint.kind !== 'opencode-run-continue'
+  )
 }
 
 /**
@@ -347,12 +354,12 @@ function kickEndpointOf(hops: ForemanHops): KickEndpoint | null {
   if (!canCarryKick(hops.endpoint)) return null
   if (!canInterrupt(hops.endpoint)) return null
   if (hops.endpoint.kind === 'launched-process' && hops.workerNames.length > 0) return null
-  // The held resume comes OFF here (#457). It is the send route's own reading
-  // of this endpoint — `heldForSend` above — and a kick that carried it would
-  // invite a reader to think ending the process has something to do with the
-  // message waiting behind it. It does, but in the other direction: the wait is
-  // abandoned because the session was ended, which the runtime decides, not
-  // this endpoint.
+  // The held continuation comes OFF here (#457, #534). It is the send route's
+  // own reading of this endpoint — `heldForSend` above — and a kick that
+  // carried it would invite a reader to think ending the process has something
+  // to do with the message waiting behind it. It does, but in the other
+  // direction: the wait is abandoned because the session was ended, which the
+  // runtime decides, not this endpoint.
   if (hops.endpoint.kind === 'launched-process') {
     return { kind: 'launched-process', launchId: hops.endpoint.launchId }
   }

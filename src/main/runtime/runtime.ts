@@ -167,6 +167,10 @@ import {
 } from '../textDelivery/resolve'
 // #457: the panel's own wait for a Codex thread that is mid-turn.
 import { CodexHoldQueue, type HeldCodexMessage } from '../textDelivery/codexHold'
+// #534: the same wait, for an OpenCode session that is mid-turn — a
+// separate queue rather than a shared one, so the two id spaces never meet
+// (see opencodeHold.ts's own comment on `hold`).
+import { OpenCodeHoldQueue, type HeldOpenCodeMessage } from '../textDelivery/opencodeHold'
 import { heldContentFor, type AttachmentReader } from '../textDelivery/attachmentDelivery'
 import { permissionKeystrokeFor, type PermissionKeystroke } from '../textDelivery/permissionKeys'
 import {
@@ -254,6 +258,8 @@ const EMPTY_MESSAGE = 'Type a message first.'
 const NO_QUEUE_TIER = "This build can't reach a Codex session's message queue."
 /** The same refusal for the resume tier, which is optional on the port too (#450). */
 const NO_RESUME_TIER = "This build can't start a new turn on a Codex session."
+/** The OpenCode twin of the refusal above, on the same terms (#534). */
+const NO_OPENCODE_CONTINUE_TIER = "This build can't start a new turn on an OpenCode session."
 /*
  * The three ways a HELD message stops being held without being sent (#457).
  *
@@ -902,6 +908,23 @@ export class AgentRuntime {
    * resume, which blocks for a whole model turn.
    */
   private codexHoldDrain: Promise<void> = Promise.resolve()
+  /**
+   * The OpenCode twin of `codexHolds`/`codexTurns`/`codexHoldDrain` above
+   * (#534) — kept as its own parallel set rather than folded into the Codex
+   * one, on the same terms `OpenCodeHoldQueue` itself is: mirror the shape,
+   * do not invent a shared abstraction neither CLI asked for.
+   *
+   * The reason to hold is stronger here than for Codex: `codex exec resume`
+   * on a busy thread refuses outright (exit 1), where `opencode run
+   * --session` on a busy session was measured to RACE instead (M6) — so
+   * this guard is what stops a second continuation from ever being spawned
+   * at all, not merely what avoids a wasted refusal.
+   */
+  private readonly openCodeHolds = new OpenCodeHoldQueue()
+  /** OpenCode sessions a continuation THIS panel spawned is still running a turn on. */
+  private readonly openCodeTurns = new Set<string>()
+  /** Serializes the OpenCode hold drain, on the same terms `codexHoldDrain` is. */
+  private openCodeHoldDrain: Promise<void> = Promise.resolve()
   /** Told the verdict of a held message once it settles; see RuntimeOptions. */
   private readonly onSendSettled: (push: DwarfSendSettledPush) => void
   /**
@@ -1521,6 +1544,9 @@ export class AgentRuntime {
         // read below is: one resumed turn blocks for as long as a model takes,
         // and this callback is the thread the panel paints from.
         this.drainCodexHolds()
+        // And the OpenCode twin of the line above (#534) — same reasoning,
+        // a separate queue.
+        this.drainOpenCodeHolds()
         // And which dwarf each launch of ours IS (#191), which is a different
         // question with a different answer — see launchReceipts.ts. Started on
         // this board and deliberately NOT awaited: proving it reads the head of
@@ -2520,6 +2546,16 @@ export class AgentRuntime {
         if (launchId === undefined) break
         return { kind: 'launched-process', launchId, heldResume: target }
       }
+      // The OpenCode twin of the branch above (#534), for the identical
+      // reason: a launched `opencode run` is still running its opening turn,
+      // and starting `opencode run --session` underneath it would put two
+      // processes on one session — which OpenCode does not refuse, it RACES
+      // (M6), so this panel must not be what causes it.
+      if (target.kind === 'opencode-run-continue' && this.launched.holdsRunningProcess(dwarfId)) {
+        const launchId = this.launched.launchIdOfDwarf(dwarfId)
+        if (launchId === undefined) break
+        return { kind: 'launched-process', launchId, heldResume: target }
+      }
       return target
     }
     // LAST, and deliberately: this is the channel of last resort (#217). It
@@ -2909,9 +2945,15 @@ export class AgentRuntime {
       })
   }
 
-  /** Settles the held-message drain; a test seam, exactly like the register's. */
-  settleHeldMessages(): Promise<void> {
-    return this.codexHoldDrain
+  /**
+   * Settles every held-message drain; a test seam, exactly like the
+   * register's. Both queues, since #534: a test that holds an OpenCode
+   * message must be able to wait it out on the same call a Codex test
+   * already uses, and awaiting a queue with nothing pending resolves at
+   * once.
+   */
+  async settleHeldMessages(): Promise<void> {
+    await Promise.all([this.codexHoldDrain, this.openCodeHoldDrain])
   }
 
   private async runCodexHoldDrain(): Promise<void> {
@@ -2996,6 +3038,162 @@ export class AgentRuntime {
       result: { delivered: false, via: 'codex-exec-resume', error }
     })
   }
+
+  /* --- The OpenCode continuation tier and its hold queue (#534) ------------- */
+
+  /**
+   * The OpenCode continuation tier, on the same terms as the Codex resume
+   * above (#534): an optional port method, so a port without one states a
+   * refusal rather than quietly doing nothing.
+   *
+   * Carries no tuning: unlike `resumeCodexThread` (#462), nothing measured
+   * here asks a continuation to name a model or effort, so there is no
+   * per-field merge to do — the request either goes out exactly as the send
+   * route built it, or it does not go out at all.
+   */
+  private async continueOpenCodeSession(
+    sessionId: string,
+    cwd: string,
+    text: string
+  ): Promise<TextDeliveryOutcome> {
+    const run = this.textDelivery.continueOpenCodeSession
+    if (run === undefined) return { delivered: false, error: NO_OPENCODE_CONTINUE_TIER }
+    const outcome = await run.call(this.textDelivery, { sessionId, cwd, text })
+    this.watchOpenCodeTurn(sessionId, outcome)
+    return outcome
+  }
+
+  /**
+   * Remember that a turn this panel started is running on `sessionId`, until
+   * that process ends (#534) — the OpenCode twin of `watchCodexTurn`, for
+   * the identical reason: a live send and a held one going out both start
+   * the same kind of process, and a rule that only one of them applied
+   * would let a held message follow a live send straight into a race (M6).
+   */
+  private watchOpenCodeTurn(sessionId: string, outcome: TextDeliveryOutcome): void {
+    const ended = outcome.turnEnded
+    if (!outcome.delivered || ended === undefined) return
+    this.openCodeTurns.add(sessionId)
+    const done = (): void => {
+      this.openCodeTurns.delete(sessionId)
+      this.drainOpenCodeHolds()
+    }
+    void ended.then(done, done)
+  }
+
+  /**
+   * Hold this message instead of sending it, when its OpenCode session is
+   * already running a turn (#534) — or `null`, which means send it now. The
+   * OpenCode twin of `holdForBusyCodexThread`, minus the per-field tuning
+   * that method resolves for #462: nothing here carries a model or effort,
+   * so there is nothing to merge.
+   *
+   * `launchDwarfId` still follows the same hop rule `holdForBusyCodexThread`
+   * does, kept even though no OpenCode provider today returns a
+   * 'foreman-relay' hop that terminates on this channel (roots only, #534):
+   * reading the launch registry keyed on the wrong dwarf across a hop is
+   * exactly the mistake #462's Risk 1 was, and this guard costs nothing to
+   * keep even where the hop it guards against cannot occur yet.
+   */
+  private holdForBusyOpenCodeSession(
+    request: DwarfTextRequest,
+    resolved: ResolvedTextDelivery,
+    payload: string
+  ): DwarfTextResult | null {
+    const endpoint = resolved.endpoint
+    if (endpoint.kind !== 'opencode-run-continue') return null
+    const launchDwarfId = resolved.prefix === '' ? request.dwarfId : undefined
+    const busy =
+      this.openCodeTurns.has(endpoint.sessionId) ||
+      (launchDwarfId !== undefined && this.launched.holdsRunningProcess(launchDwarfId))
+    if (!busy) return null
+    const held = this.openCodeHolds.hold(
+      {
+        dwarfId: request.dwarfId,
+        sessionId: endpoint.sessionId,
+        cwd: endpoint.directory,
+        text: payload,
+        ...(launchDwarfId === undefined ? {} : { launchDwarfId })
+      },
+      this.now()
+    )
+    console.log(
+      `[runtime] Message to ${request.dwarfId} via ${resolved.channel}: ` +
+        `held (${payload.length} chars) until the current turn ends [${held.holdId}]`
+    )
+    return { delivered: false, via: resolved.channel, holdId: held.holdId }
+  }
+
+  /** The OpenCode twin of `drainCodexHolds`, on the same fire-and-forget terms. */
+  private drainOpenCodeHolds(): void {
+    this.openCodeHoldDrain = this.openCodeHoldDrain
+      .then(() => this.runOpenCodeHoldDrain())
+      .catch((error: unknown) => {
+        console.warn('[runtime] A held OpenCode message could not be sent on this pass', error)
+      })
+  }
+
+  private async runOpenCodeHoldDrain(): Promise<void> {
+    for (const message of this.openCodeHolds.expired(this.now())) {
+      this.settleHeldOpenCodeMessage(message, HELD_WAIT_ELAPSED)
+    }
+    const waiting = this.openCodeHolds.held()
+    for (const sessionId of this.openCodeHolds.sessions()) {
+      const head = waiting.find((message) => message.sessionId === sessionId)
+      if (head === undefined) continue
+      if (this.openCodeTurns.has(sessionId)) continue
+      if (head.launchDwarfId !== undefined && this.launched.holdsRunningProcess(head.launchDwarfId))
+        continue
+      const message = this.openCodeHolds.next(sessionId)
+      if (message === undefined) continue
+      await this.sendHeldOpenCodeMessage(message)
+    }
+  }
+
+  /**
+   * One held message, going out through exactly the path a live send takes
+   * — the OpenCode twin of `sendHeldCodexMessage`.
+   */
+  private async sendHeldOpenCodeMessage(message: HeldOpenCodeMessage): Promise<void> {
+    const outcome = await this.continueOpenCodeSession(message.sessionId, message.cwd, message.text)
+    console.log(
+      `[runtime] Held message to ${message.dwarfId} via opencode-run-continue: ` +
+        `${outcome.delivered ? 'delivered' : 'failed'} (${message.text.length} chars)` +
+        failureReasonSuffix(outcome) +
+        ` [${message.holdId}]`
+    )
+    this.onSendSettled({
+      holdId: message.holdId,
+      dwarfId: message.dwarfId,
+      result: outcome.delivered
+        ? { delivered: true, via: 'opencode-run-continue' }
+        : {
+            delivered: false,
+            via: 'opencode-run-continue',
+            ...(outcome.error === undefined ? {} : { error: outcome.error })
+          }
+    })
+  }
+
+  /** Give up every OpenCode message held for `dwarfId` — the twin of `dropHeldCodexMessages`. */
+  private dropHeldOpenCodeMessages(dwarfId: string, reason: string): void {
+    for (const message of this.openCodeHolds.dropDwarf(dwarfId)) {
+      this.settleHeldOpenCodeMessage(message, reason)
+    }
+  }
+
+  /** One held OpenCode message that will never be sent, and the sentence saying so. */
+  private settleHeldOpenCodeMessage(message: HeldOpenCodeMessage, error: string): void {
+    console.log(
+      `[runtime] Held message to ${message.dwarfId} dropped [${message.holdId}]: ${error}`
+    )
+    this.onSendSettled({
+      holdId: message.holdId,
+      dwarfId: message.dwarfId,
+      result: { delivered: false, via: 'opencode-run-continue', error }
+    })
+  }
+  /* --- end of the #534 block ------------------------------------------------ */
 
   /**
    * Second attempt behind a failed console delivery: an observed session with a
@@ -3702,6 +3900,11 @@ export class AgentRuntime {
     // endpoint, same payload, same hop rule — deferred rather than refused.
     const held = this.holdForBusyCodexThread(request, resolved, payload)
     if (held !== null) return held
+    // The OpenCode twin of the check above (#534) — same reasoning, and
+    // mutually exclusive with it: `resolved.endpoint.kind` can only ever be
+    // one channel at a time, so at most one of the two ever holds anything.
+    const heldOpenCode = this.holdForBusyOpenCodeSession(request, resolved, payload)
+    if (heldOpenCode !== null) return heldOpenCode
     const timer = createStageTimer(this.now)
     try {
       // 'total' is everything the caller waited for; the tier below reports the
@@ -3795,6 +3998,16 @@ export class AgentRuntime {
               },
               resolved.prefix === '' ? request.dwarfId : undefined
             )
+          )
+        }
+        if (endpoint.kind === 'opencode-run-continue') {
+          // The OpenCode twin of the branch above (#534): 'spawn' for the
+          // same reason, the start-window verdict for the same reason, and
+          // request.pressEnter dropped for the same reason. Carries no
+          // tuning — see continueOpenCodeSession's own comment on why there
+          // is nothing to merge.
+          return timer.measure('spawn', () =>
+            this.continueOpenCodeSession(endpoint.sessionId, endpoint.directory, payload)
           )
         }
         return timer.measure('relay', () =>
@@ -4239,6 +4452,7 @@ export class AgentRuntime {
         // to name the tiers is a rule that would be forgotten when a fourth
         // one arrives.
         this.dropHeldCodexMessages(request.dwarfId, HELD_SESSION_ENDED)
+        this.dropHeldOpenCodeMessages(request.dwarfId, HELD_SESSION_ENDED)
         return { delivered: true, via: resolved.channel }
       }
       // Same fallback as sendDwarfText, carrying the exact instruction the
@@ -4301,6 +4515,7 @@ export class AgentRuntime {
     // minute later. The session is not ENDED here, which is why the sentence
     // differs — the marker says the dwarf went, not that the process did.
     this.dropHeldCodexMessages(dwarfId, HELD_DWARF_DISMISSED)
+    this.dropHeldOpenCodeMessages(dwarfId, HELD_DWARF_DISMISSED)
     this.lifecycle.dismiss(dwarfId)
     return { delivered: true, via: 'dismiss' }
   }
