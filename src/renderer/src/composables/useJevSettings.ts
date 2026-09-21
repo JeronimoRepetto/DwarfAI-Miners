@@ -118,9 +118,27 @@ export function useJevSettings() {
     if (saving.value) return
     saving.value = true
     try {
+      // Main answers with what is STORED plus, when the request did not take,
+      // why — so a refusal arrives here as an ordinary value carrying its own
+      // `preferencesError`, and nothing has to be inferred from silence.
       settings.value = await window.api.setJevPreferences(preferences)
-    } catch {
-      await sync()
+    } catch (error) {
+      /*
+       * A rejection means the call itself never landed, so the stored state
+       * is whatever it already was: the last known value is still the most
+       * honest thing to draw, and the reason goes beside it.
+       *
+       * This used to `await sync()` instead. That re-read is what turned a
+       * failed click into a LOADING one — `sync()` re-queries the launch
+       * catalogue, which spawns a provider CLI — and it ran while `saving`
+       * was still held, so the control stayed disabled and the next click
+       * was eaten by the in-flight guard above. One swallowed failure
+       * therefore looked exactly like a control that ignores you.
+       */
+      settings.value = {
+        ...settings.value,
+        preferencesError: error instanceof Error ? error.message : String(error)
+      }
     } finally {
       saving.value = false
     }

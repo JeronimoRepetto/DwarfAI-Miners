@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_JEV_SETTINGS } from '../types'
+import { DEFAULT_JEV_SETTINGS, type JevSettings } from '../types'
 import { useJevSettings } from './useJevSettings'
 
 /**
@@ -250,15 +250,32 @@ describe('useJevSettings — setPreferences', () => {
     await first
   })
 
-  it('re-reads the real state when a save breaks mid-flight', async () => {
+  /*
+   * AMENDED 2026-09-21. This case used to assert the opposite: that a broken
+   * preferences save calls `getJevSettings` to re-read the real state. That
+   * recovery is what the reported defect turned out to be.
+   *
+   * `sync()` does not only re-read — when the section is configured it also
+   * re-queries the launch catalogue, which spawns a provider CLI, and it ran
+   * with `saving` still held. So a failed click on a routing profile paused
+   * visibly, changed nothing, released nothing in time for the next click,
+   * and said nothing anywhere the person could see. The state it re-read was
+   * correct and entirely beside the point.
+   *
+   * The last known value is just as honest when the call never landed, and
+   * the reason now rides on it. The API-key `save`/`clear` above keep their
+   * own `sync()` recovery untouched: neither is a per-click control, and
+   * neither had this failure.
+   */
+  it('keeps the last known state and the reason when a save breaks mid-flight', async () => {
     const api = fakeApi({
       setJevPreferences: vi.fn().mockRejectedValue(new Error('no bridge')),
       getJevSettings: vi.fn().mockResolvedValue({ configured: true })
     })
     const { settings, setPreferences } = useJevSettings()
     await setPreferences({ profile: 'balanced', default: {} })
-    expect(api.getJevSettings).toHaveBeenCalled()
-    expect(settings.value).toEqual({ configured: true })
+    expect(api.getJevSettings).not.toHaveBeenCalled()
+    expect(settings.value.preferencesError).toContain('no bridge')
   })
 
   it('sets saving true only while a preferences save is actually in flight', async () => {
@@ -278,5 +295,91 @@ describe('useJevSettings — setPreferences', () => {
     release({ configured: true })
     await pending
     expect(saving.value).toBe(false)
+  })
+})
+
+/*
+ * A preference write that did not happen has to SAY so.
+ *
+ * Reported 2026-09-21: clicking Economy or Premium "loads something and then
+ * nothing is selected". The load was the tell. `setPreferences` caught its
+ * own failure and called `sync()`, which re-queries the launch catalogue —
+ * spawning a provider CLI — and it did all of that while still holding
+ * `saving`, so the control stayed disabled and every further click was eaten
+ * by the in-flight guard. The person saw a spinner-shaped pause, no change,
+ * and nothing anywhere to read: the only account of the failure was a
+ * console.warn in the MAIN process, which reaches a terminal, not a user.
+ */
+describe('useJevSettings reporting a preference write that did not happen', () => {
+  it('keeps the failure on the settings it renders, rather than only in a log', async () => {
+    fakeApi({
+      setJevPreferences: vi.fn().mockRejectedValue(new Error('no handler registered'))
+    })
+    const { settings, setPreferences } = useJevSettings()
+
+    await setPreferences({ profile: 'economy', default: {} })
+
+    expect(settings.value.preferencesError).toContain('no handler registered')
+  })
+
+  it('lets go of the control even when the write failed', async () => {
+    // The defect behind "I click again and nothing happens at all": `saving`
+    // gates the next attempt, so one swallowed failure disabled the control
+    // for as long as the recovery took.
+    fakeApi({ setJevPreferences: vi.fn().mockRejectedValue(new Error('boom')) })
+    const { saving, setPreferences } = useJevSettings()
+
+    await setPreferences({ profile: 'economy', default: {} })
+
+    expect(saving.value).toBe(false)
+  })
+
+  it('does not re-query the launch catalogue on the way out of a failure', async () => {
+    // That query spawns a provider CLI. Doing it inside the failure path is
+    // what made a failed click look like a loading click.
+    const api = fakeApi({ setJevPreferences: vi.fn().mockRejectedValue(new Error('boom')) })
+    const { setPreferences } = useJevSettings()
+
+    await setPreferences({ profile: 'economy', default: {} })
+
+    expect(api.listAgentModels).not.toHaveBeenCalled()
+  })
+
+  it('carries a refusal main reported, the same way it carries a rejection', async () => {
+    // Main answers with what is STORED plus why the request did not take, so
+    // a refusal is an ordinary answer rather than an exception.
+    fakeApi({
+      setJevPreferences: vi.fn().mockResolvedValue({
+        configured: true,
+        preferences: { profile: 'balanced', default: {} },
+        preferencesError: 'That default names a provider this build cannot launch.'
+      })
+    })
+    const { settings, setPreferences } = useJevSettings()
+
+    await setPreferences({ profile: 'economy', default: {} })
+
+    expect(settings.value.preferences.profile).toBe('balanced')
+    expect(settings.value.preferencesError).toContain('cannot launch')
+  })
+
+  it('clears a stale failure once a write goes through', async () => {
+    // Fails once, then behaves: the second answer carries no error, and the
+    // field must go with it rather than sticking to a resolved complaint.
+    fakeApi({
+      setJevPreferences: vi
+        .fn(async (): Promise<JevSettings> => ({
+          configured: true,
+          preferences: { profile: 'economy', default: {} }
+        }))
+        .mockRejectedValueOnce(new Error('boom'))
+    })
+    const { settings, setPreferences } = useJevSettings()
+
+    await setPreferences({ profile: 'economy', default: {} })
+    expect(settings.value.preferencesError).toBeTruthy()
+
+    await setPreferences({ profile: 'economy', default: {} })
+    expect(settings.value.preferencesError).toBeUndefined()
   })
 })
