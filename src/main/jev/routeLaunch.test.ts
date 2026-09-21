@@ -75,6 +75,7 @@ function serviceWith(options: {
   preferences?: JevPreferences
   totalBudgetMs?: number
   now?: () => number
+  debugLog?: (line: string) => void
 }) {
   return createJevLaunchRouter({
     router: options.router,
@@ -82,7 +83,8 @@ function serviceWith(options: {
     listModels: async () => options.models ?? CLAUDE_CATALOGS,
     readPreferences: async () => options.preferences ?? DEFAULT_PREFERENCES,
     ...(options.totalBudgetMs === undefined ? {} : { totalBudgetMs: options.totalBudgetMs }),
-    ...(options.now === undefined ? {} : { now: options.now })
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.debugLog === undefined ? {} : { debugLog: options.debugLog })
   })
 }
 
@@ -270,5 +272,110 @@ describe('createJevLaunchRouter', () => {
     const result = await service.route({ prompt: 'THE-SECRET-PROMPT-TEXT' })
 
     expect(JSON.stringify(result)).not.toContain('THE-SECRET-PROMPT-TEXT')
+  })
+})
+
+/*
+ * The local-decision half of the #525 dev-console trace (jev-routing-profiles
+ * T4): the SDK adapter's own debugLog (typesafeJevRouter.ts) shows the
+ * request Jev was sent and the answers it gave; this service is where those
+ * answers turn into a concrete provider/model/effort, so it gets its own
+ * header and pretty-printed payload for the LOCAL decision, wired through
+ * the identical sink (main/index.ts shares one). No prompt ever reaches this
+ * line — decideLaunch's own result never carries one — so there is nothing
+ * here that JEV_DEBUG's opt-in, dev-only scope does not already cover.
+ */
+describe('the decision debugLog trace (jev-routing-profiles T4)', () => {
+  function incrementingClock(step = 10): () => number {
+    let now = 0
+    return () => {
+      now += step
+      return now
+    }
+  }
+
+  it('logs a decision header and the pretty-printed local decision, with elapsedMs, once Jev answered', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    const lines: string[] = []
+    const service = serviceWith({
+      router: fake,
+      debugLog: (line) => lines.push(line),
+      now: incrementingClock()
+    })
+
+    const result = await service.route({ prompt: 'fix the flaky test' })
+
+    expect(result.kind).toBe('decision')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toBe('[jev:debug] decision =')
+    const payload = JSON.parse(lines[1]!) as Record<string, unknown>
+    expect(payload.kind).toBe('decision')
+    expect(payload.provider).toBe('claude')
+    expect(payload.model).toBe('sonnet')
+    expect(payload.tier).toBe('balanced')
+    expect(payload.parts).toBeDefined()
+    expect(typeof payload.elapsedMs).toBe('number')
+  })
+
+  it('logs a decision block for a decision that itself fell back to a safe-default provider', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers({ provider: { choice: 'codex', confidence: 0.95 } }))
+    const lines: string[] = []
+    const service = serviceWith({
+      router: fake,
+      providers: [
+        provider({ provider: 'claude' }),
+        provider({ provider: 'codex', launchable: false })
+      ],
+      models: [
+        catalog({ provider: 'claude', models: [{ value: 'sonnet' }] }),
+        catalog({ provider: 'codex' })
+      ],
+      debugLog: (line) => lines.push(line)
+    })
+
+    await service.route({ prompt: 'anything' })
+
+    expect(lines).toHaveLength(2)
+    const payload = JSON.parse(lines[1]!) as Record<string, unknown>
+    expect(payload.provider).toBe('claude')
+  })
+
+  it('logs nothing when the request was skipped before Jev was ever asked', async () => {
+    const fake = new FakeJevRouter()
+    const lines: string[] = []
+    const service = serviceWith({
+      router: fake,
+      providers: [provider({ provider: 'claude', launchable: false })],
+      debugLog: (line) => lines.push(line)
+    })
+
+    const result = await service.route({ prompt: 'anything' })
+
+    expect(result).toEqual({ kind: 'fallback', reason: 'no-launchable-provider' })
+    expect(lines).toEqual([])
+  })
+
+  it('logs nothing when Jev itself fell back — there is no local decision to show', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome({ kind: 'fallback', reason: 'unreachable' })
+    const lines: string[] = []
+    const service = serviceWith({ router: fake, debugLog: (line) => lines.push(line) })
+
+    const result = await service.route({ prompt: 'anything' })
+
+    expect(result).toEqual({ kind: 'fallback', reason: 'unreachable' })
+    expect(lines).toEqual([])
+  })
+
+  it('behaves identically with no debugLog sink', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    const service = serviceWith({ router: fake })
+
+    const result = await service.route({ prompt: 'fix the flaky test' })
+
+    expect(result.kind).toBe('decision')
   })
 })

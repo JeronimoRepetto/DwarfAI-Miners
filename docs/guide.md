@@ -762,23 +762,26 @@ only**, never keys in `config-v1.json`. A debugging device does not belong in th
 app reads on every launch. Each is on for `1` or `true` and off for anything else — except
 `DARWIN_CONSOLE_INPUT` and `LINUX_CONSOLE_INPUT`, which are two-way overrides (see below).
 
-| Variable               | What it prints                                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                              |
-| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                               |
-| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                             |
-| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                    |
-| `JEV_DEBUG`            | Each Jev routing call: the request it sent, then the answer or the fallback reason and elapsed ms.                       |
-| `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367). |
-| `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).    |
+| Variable               | What it prints                                                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                                                   |
+| `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                                                    |
+| `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                                                  |
+| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                                         |
+| `JEV_DEBUG`            | Each Jev routing call: the request it sent, the answer or the fallback reason, and — once Jev answered — the local decision, plus elapsed ms. |
+| `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367).                      |
+| `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).                         |
 
 `DWARFAI_PERF` has to be a real environment variable even in a development checkout
 (`DWARFAI_PERF=1 pnpm dev`): its module is imported before `.env` is loaded, so a `.env` line
 arrives too late to be read. The other six work either way.
 
-`JEV_DEBUG=1 pnpm dev` prints every Jev routing request and answer to the terminal — one
-`[jev:debug]` line each. The request line carries the person's own prompt text, so turn it off
-before recording a transcript of that terminal.
+`JEV_DEBUG=1 pnpm dev` prints every Jev routing request, answer (or fallback reason) and, once Jev
+answered, the local decision — each as a one-line `[jev:debug]` HEADER (`request →`, `answers ←`,
+`decision =`, or `fallback`) followed by that call's own payload, pretty-printed
+(`JSON.stringify(value, null, 2)`) across as many lines as it needs (jev-routing-profiles T4). The
+request block carries the person's own prompt text, so turn it off before recording a transcript of
+that terminal.
 
 `DARWIN_CONSOLE_INPUT` overrides the macOS console-input path in either direction: `=0` (or
 `=false`) forces it OFF, `=1` (or `=true`) forces it ON, and leaving it unset takes the shipped

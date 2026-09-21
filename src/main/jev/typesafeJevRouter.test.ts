@@ -285,11 +285,22 @@ describe('classifyError', () => {
  * construction (identical outcomes; without the option there is nothing to
  * emit into): this file has never spied on the console and inventing that
  * idiom for an unobservable absence would prove nothing anyway.
+ *
+ * AMENDED for jev-routing-profiles T4: a single greppable line per event is
+ * REPLACED by a header line (still single-line and greppable on its own —
+ * `grep '\[jev:debug\]'` still finds one per event) followed by that event's
+ * payload PRETTY-PRINTED (`JSON.stringify(value, null, 2)`), because the
+ * whole point of T4 is a trace a person can actually read on the dev console
+ * rather than one packed line per call. This is why the old "one line each,
+ * never a raw newline" assertion is gone rather than amended — the thing it
+ * was pinning is exactly what T4 asked to change — and every assertion below
+ * that read a slice off the front of a combined line now reads the payload
+ * line on its own instead.
  */
-describe('the debugLog trace (#525)', () => {
-  const REQUEST_PREFIX = '[jev:debug] request '
-  const ANSWER_PREFIX = '[jev:debug] answer '
-  const FALLBACK_PREFIX = '[jev:debug] fallback '
+describe('the debugLog trace (#525, jev-routing-profiles T4)', () => {
+  const REQUEST_HEADER = '[jev:debug] request →'
+  const ANSWERS_HEADER = '[jev:debug] answers ←'
+  const FALLBACK_HEADER = '[jev:debug] fallback'
 
   function tracingRouter(
     fetchFake: typeof fetch,
@@ -304,7 +315,7 @@ describe('the debugLog trace (#525)', () => {
     return { lines, router }
   }
 
-  it('logs exactly a request line and an answer line for a successful call, showing the full request and the full answers', async () => {
+  it('logs a request block and an answers block for a successful call, showing the full request and the full answers', async () => {
     const request = routeRequest()
     const { lines, router } = tracingRouter(async () => jsonResponse(successBody()))
 
@@ -315,17 +326,12 @@ describe('the debugLog trace (#525)', () => {
       provider: { choice: 'claude', confidence: 0.9 },
       tier: { choice: 'balanced', confidence: 0.85 }
     })
-    expect(lines).toHaveLength(2)
-    for (const line of lines) {
-      // "one line each" is what makes the trace greppable — a payload that
-      // smuggled a raw newline would break `grep '\[jev:debug\]' | wc -l`.
-      expect(line).not.toContain('\n')
-    }
-    expect(lines[0]!.startsWith(REQUEST_PREFIX)).toBe(true)
-    const requestPayload = JSON.parse(lines[0]!.slice(REQUEST_PREFIX.length)) as Record<
-      string,
-      unknown
-    >
+    // Header, payload, header, payload — two debugLog calls per event.
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toBe(REQUEST_HEADER)
+    expect(lines[2]).toBe(ANSWERS_HEADER)
+
+    const requestPayload = JSON.parse(lines[1]!) as Record<string, unknown>
     expect(requestPayload.state).toEqual({
       prompt: request.prompt,
       routing_profile: request.routingProfile
@@ -339,11 +345,7 @@ describe('the debugLog trace (#525)', () => {
       'effort'
     ])
 
-    expect(lines[1]!.startsWith(ANSWER_PREFIX)).toBe(true)
-    const answerPayload = JSON.parse(lines[1]!.slice(ANSWER_PREFIX.length)) as Record<
-      string,
-      unknown
-    >
+    const answerPayload = JSON.parse(lines[3]!) as Record<string, unknown>
     // The FULL answers, probabilities included — never just the fields the
     // typed outcome above carries forward.
     expect(answerPayload.provider).toEqual({
@@ -356,12 +358,12 @@ describe('the debugLog trace (#525)', () => {
     expect(answerPayload.inputTokens).toBe(512)
   })
 
-  it('marks a truncated prompt as truncated in the request line', async () => {
+  it('marks a truncated prompt as truncated in the request block', async () => {
     const { lines, router } = tracingRouter(async () => jsonResponse(successBody()))
 
     await router.route(routeRequest({ prompt: 'a trimmed prompt', truncated: true }), {})
 
-    const payload = JSON.parse(lines[0]!.slice(REQUEST_PREFIX.length)) as Record<string, unknown>
+    const payload = JSON.parse(lines[1]!) as Record<string, unknown>
     expect((payload.state as Record<string, unknown>).prompt).toBe('a trimmed prompt')
     expect(payload.truncated).toBe(true)
   })
@@ -374,9 +376,10 @@ describe('the debugLog trace (#525)', () => {
     const outcome = await router.route(routeRequest(), {})
 
     expect(outcome).toEqual({ kind: 'fallback', reason: 'invalid-response' })
-    expect(lines).toHaveLength(2)
-    expect(lines[1]!.startsWith(FALLBACK_PREFIX)).toBe(true)
-    expect(JSON.parse(lines[1]!.slice(FALLBACK_PREFIX.length))).toEqual({
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toBe(REQUEST_HEADER)
+    expect(lines[2]).toBe(FALLBACK_HEADER)
+    expect(JSON.parse(lines[3]!)).toEqual({
       reason: 'invalid-response',
       elapsedMs: expect.any(Number)
     })
@@ -396,9 +399,9 @@ describe('the debugLog trace (#525)', () => {
     const outcome = await router.route(routeRequest(), {})
 
     expect(outcome).toEqual({ kind: 'fallback', reason: 'unreachable' })
-    expect(lines).toHaveLength(2)
-    expect(lines[1]!.startsWith(FALLBACK_PREFIX)).toBe(true)
-    const payload = JSON.parse(lines[1]!.slice(FALLBACK_PREFIX.length)) as Record<string, unknown>
+    expect(lines).toHaveLength(4)
+    expect(lines[2]).toBe(FALLBACK_HEADER)
+    const payload = JSON.parse(lines[3]!) as Record<string, unknown>
     expect(payload.reason).toBe('unreachable')
     expect(typeof payload.elapsedMs).toBe('number')
   })
@@ -433,7 +436,8 @@ describe('the debugLog trace (#525)', () => {
       await router.route(routeRequest(), {})
     }
 
-    expect(lines).toHaveLength(6)
+    // Three calls, four lines each (header+payload per event, two events per call).
+    expect(lines).toHaveLength(12)
     for (const line of lines) {
       expect(line).not.toContain('sk-secret-test-key')
     }
