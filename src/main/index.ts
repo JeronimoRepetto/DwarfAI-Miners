@@ -49,7 +49,10 @@ import type {
   ProjectQueryResult,
   ProjectSortDirection,
   ProjectSortKey,
-  WatchedFeedPush
+  WatchedFeedPush,
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  JevRouteLaunchResult
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -68,7 +71,10 @@ import {
   parseDwarfText,
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
-  parseJevApiKeyInput
+  parseJevApiKeyInput,
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  parseJevRouteLaunchRequest
   /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
@@ -109,6 +115,8 @@ import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
 import { createJevApiKeyStore } from './shell/jevApiKey'
+import { createJevLaunchRouter } from './jev/routeLaunch'
+import { createTypesafeJevRouter } from './jev/typesafeJevRouter'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -231,6 +239,9 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getJevSettings)
   ipcMain.removeHandler(IPC_CHANNELS.setJevApiKey)
   ipcMain.removeHandler(IPC_CHANNELS.clearJevApiKey)
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  ipcMain.removeHandler(IPC_CHANNELS.routeJevLaunch)
   /* --- end of the #509 block ------------------------------------------------ */
 }
 
@@ -670,6 +681,21 @@ async function init(): Promise<void> {
   // the cache it reads has to be warm before that can happen.
   const jevApiKeyStore = createJevApiKeyStore({ userDataDir: app.getPath('userData') })
   await jevApiKeyStore.load()
+  /* --- end of the #509 block ------------------------------------------------ */
+
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  // The SDK adapter reads the key through readKey() above — never a channel,
+  // never the renderer. listProviders/listModels close over the module-level
+  // `runtime` variable rather than a value captured here: it is still null at
+  // this point in startup, and reading it lazily inside the closure is what
+  // lets every call ask what THIS machine can launch NOW rather than a stale
+  // answer from before the runtime existed.
+  const jevRouterPort = createTypesafeJevRouter({ readKey: jevApiKeyStore.readKey })
+  const jevLaunchRouter = createJevLaunchRouter({
+    router: jevRouterPort,
+    listProviders: async () => (await runtime?.listAgentProviders())?.providers ?? [],
+    listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? []
+  })
   /* --- end of the #509 block ------------------------------------------------ */
 
   /* --- Typography preferences (#370) — one block, appended ----------------- */
@@ -1137,6 +1163,25 @@ async function init(): Promise<void> {
     }
     return { configured: jevApiKeyStore.readKey() !== undefined }
   })
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  // A payload the shared parser refuses never reaches the router at all — the
+  // same trusted-but-typed discipline every request here holds — and becomes
+  // a typed fallback rather than a thrown IPC error, so the renderer always
+  // has something honest to fall back the launch to.
+  const jevRouteRefused: JevRouteLaunchResult = { kind: 'fallback', reason: 'invalid-response' }
+  ipcMain.handle(
+    IPC_CHANNELS.routeJevLaunch,
+    async (_event, payload: unknown): Promise<JevRouteLaunchResult> => {
+      try {
+        const request = parseJevRouteLaunchRequest(payload)
+        return await jevLaunchRouter.route(request)
+      } catch (error) {
+        console.warn('[jev] Refused a route request:', error)
+        return jevRouteRefused
+      }
+    }
+  )
   /* --- end of the #509 block ------------------------------------------------ */
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle

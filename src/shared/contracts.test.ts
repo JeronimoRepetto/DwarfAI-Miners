@@ -58,7 +58,10 @@ import {
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   MAX_JEV_API_KEY_CHARS,
   DEFAULT_JEV_SETTINGS,
-  parseJevApiKeyInput
+  parseJevApiKeyInput,
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  parseJevRouteLaunchRequest
   /* --- end of the #509 block ------------------------------------------------ */
 } from './contracts'
 
@@ -1130,3 +1133,47 @@ describe('DEFAULT_JEV_SETTINGS', () => {
   })
 })
 /* --- end of the #509 block ------------------------------------------------- */
+
+/*
+ * Jev launch routing: routing a launch (#509) — APPENDED, nothing above
+ * changed.
+ *
+ * `parseJevRouteLaunchRequest` is the one place the shape of a routable
+ * prompt is decided, read by main before it ever asks the router. It THROWS
+ * rather than degrading, the same bad-VALUE half of the `config-layering`
+ * asymmetry `parseJevApiKeyInput` holds: a request with no prompt at all is a
+ * legible instruction that cannot be carried out, never corruption to paper
+ * over.
+ */
+describe('parseJevRouteLaunchRequest', () => {
+  it('trims the surrounding whitespace a paste routinely carries', () => {
+    expect(parseJevRouteLaunchRequest({ prompt: '  fix the bug  ' })).toEqual({
+      prompt: 'fix the bug'
+    })
+  })
+
+  it('refuses anything that is not an object', () => {
+    for (const value of [undefined, null, 42, 'a prompt', []]) {
+      expect(() => parseJevRouteLaunchRequest(value)).toThrow()
+    }
+  })
+
+  it('refuses a prompt that is not a string, or that is missing entirely', () => {
+    expect(() => parseJevRouteLaunchRequest({})).toThrow()
+    expect(() => parseJevRouteLaunchRequest({ prompt: 42 })).toThrow()
+  })
+
+  it('refuses an empty prompt, including one that is only whitespace', () => {
+    expect(() => parseJevRouteLaunchRequest({ prompt: '' })).toThrow()
+    expect(() => parseJevRouteLaunchRequest({ prompt: '   ' })).toThrow()
+  })
+
+  it('accepts a prompt up to the same cap a delivered message is held to, refuses past it', () => {
+    expect(() =>
+      parseJevRouteLaunchRequest({ prompt: 'a'.repeat(MAX_DWARF_TEXT_CHARS) })
+    ).not.toThrow()
+    expect(() =>
+      parseJevRouteLaunchRequest({ prompt: 'a'.repeat(MAX_DWARF_TEXT_CHARS + 1) })
+    ).toThrow()
+  })
+})

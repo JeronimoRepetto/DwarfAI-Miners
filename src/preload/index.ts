@@ -50,7 +50,11 @@ import type {
   TypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
-  JevSettings
+  JevSettings,
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  JevRouteLaunchRequest,
+  JevRouteLaunchResult
   /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 import {
@@ -63,7 +67,10 @@ import {
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
-  parseJevApiKeyInput
+  parseJevApiKeyInput,
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  parseJevRouteLaunchRequest
   /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 
@@ -535,6 +542,17 @@ export interface DwarfAiMinersApi {
   /** Forget the key. Resolves with what main STORED, the same discipline every write here holds. */
   clearJevApiKey: () => Promise<JevSettings>
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  /**
+   * Ask Jev to route one launch prompt. Parsed through the SAME shared parser
+   * `routeLaunch.ts` reads, before it ever crosses — the discipline
+   * `setJevApiKey` holds for the key — so a request the service would refuse
+   * anyway never reaches the bridge. Resolves with a decision or a typed
+   * fallback reason, NEVER the prompt: see `JevRouteLaunchResult`'s own
+   * comment in contracts.ts for why the result is a suggestion, not a launch.
+   */
+  routeJevLaunch: (request: JevRouteLaunchRequest) => Promise<JevRouteLaunchResult>
+  /* --- end of the #509 block ------------------------------------------------ */
 }
 
 const api: DwarfAiMinersApi = {
@@ -917,7 +935,23 @@ const api: DwarfAiMinersApi = {
       return Promise.reject(error)
     }
   },
-  clearJevApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.clearJevApiKey)
+  clearJevApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.clearJevApiKey),
+  /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
+  // Parsed through the SHARED parser before it crosses, the same reasoning
+  // setJevApiKey carries: one parser, read by the service too, so a request
+  // it would refuse anyway never reaches the bridge at all. Throws on a
+  // prompt it cannot read (not a string, empty once trimmed, or past the
+  // cap) rather than degrading — a rejected promise here is the honest end
+  // for a request nobody could have typed as one, never a default nobody
+  // chose.
+  routeJevLaunch: (request) => {
+    try {
+      return ipcRenderer.invoke(IPC_CHANNELS.routeJevLaunch, parseJevRouteLaunchRequest(request))
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
   /* --- end of the #509 block ------------------------------------------------ */
 }
 
