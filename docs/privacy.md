@@ -101,20 +101,21 @@ Everything the app keeps lives in Electron's per-user data directory:
 | macOS    | `~/Library/Application Support/DwarfAI-Miners` |
 | Linux    | `~/.config/DwarfAI-Miners`                     |
 
-Thirteen entries: twelve the app writes, and one (`config-v1.json`) it only reads. All but
+Fourteen entries: thirteen the app writes, and one (`config-v1.json`) it only reads. All but
 `hook-token` and the SQLite database are plain JSON or an empty marker, so you can read them in any
 text editor.
 
 **Your preferences** — one tiny JSON document each, so a corrupt one can only cost you that one
 setting:
 
-| File                             | Purpose                                                                                       |
-| -------------------------------- | --------------------------------------------------------------------------------------------- |
-| `pin-preference-v1.json`         | Whether you left the panel pinned always-on-top (`src/main/shell/pinPreference.ts`).          |
-| `shortcut-preference-v1.json`    | The global panel-toggle accelerator you chose (`src/main/shell/shortcutPreference.ts`).       |
-| `panel-edge-v1.json`             | Which screen edge the docked shell opens on (`src/main/shell/panelEdgePreference.ts`).        |
-| `message-panel-position-v1.json` | Where you last dragged the message panel's window (`src/main/shell/messagePanelPosition.ts`). |
-| `audio-preferences-v1.json`      | Whether music starts on launch, and the three volumes (`src/main/shell/audioPreference.ts`).  |
+| File                             | Purpose                                                                                                                                                                                                                                |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pin-preference-v1.json`         | Whether you left the panel pinned always-on-top (`src/main/shell/pinPreference.ts`).                                                                                                                                                   |
+| `shortcut-preference-v1.json`    | The global panel-toggle accelerator you chose (`src/main/shell/shortcutPreference.ts`).                                                                                                                                                |
+| `panel-edge-v1.json`             | Which screen edge the docked shell opens on (`src/main/shell/panelEdgePreference.ts`).                                                                                                                                                 |
+| `message-panel-position-v1.json` | Where you last dragged the message panel's window (`src/main/shell/messagePanelPosition.ts`).                                                                                                                                          |
+| `audio-preferences-v1.json`      | Whether music starts on launch, and the three volumes (`src/main/shell/audioPreference.ts`).                                                                                                                                           |
+| `jev-preferences-v1.json`        | Your Jev routing profile (`economy` / `balanced` / `premium`) and default launch (provider, model, effort) — plain JSON, not a secret; re-validated against the launch gate before it is written (`src/main/shell/jevPreferences.ts`). |
 
 **Markers and secrets:**
 
@@ -195,47 +196,88 @@ on **Let Jev choose** in the Add Panel. With both true, pressing Enter on the co
 `typesafeJevRouter.test.ts`), before the launch itself goes out
 (`submit`, `src/renderer/src/composables/useAgentLaunch.ts`).
 
-**What leaves, in that one request:**
+**What leaves, in that one request (request v2, jev-routing-profiles #509 follow-up):** the `state`
+object is now exactly `{ prompt, routing_profile }` — the prompt as typed, and the routing profile
+you chose in Settings (`economy`, `balanced` or `premium`, one of those three words and nothing else
+about this machine). Jev no longer receives any model name at all. Instead it answers **five fixed
+questions about the prompt**, asked in one request, with criteria written by this project rather than
+read off any model's own description (`buildJevRouteRequest`, `src/main/jev/routeRequest.ts`):
 
-- **The prompt, as typed.** If it is too long for Jev's own budget, the head and the tail are kept
-  and the cut is marked in between; the request also says whether it was cut
-  (`buildJevRouteRequest`, `truncateHeadTail`, `src/main/jev/routeRequest.ts`).
-- **The providers this machine can launch right now**, each named by its product name, and every
-  model it offers by id and label — or, for a provider reporting none, a line saying the CLI picks
-  its own default — so Jev is only ever choosing among things this app could actually start
-  (`modelChoiceCriteria`, `buildJevRouteRequest`, `src/main/jev/routeRequest.ts`).
-- **A fixed four-level difficulty rubric**, asked of every request the same way regardless of which
+- **`is_trivial`** — is this small talk or a one-line factual question, or a real request to write,
+  read, debug, explain or change code.
+- **`needs_large_context`** — does this need many files, modules or a large pasted corpus, or is it
+  scoped to one file or function.
+- **`provider`** — which agent CLI this machine can launch right now is the best tooling fit, judged
+  on tooling and ecosystem fit only, never cost.
+- **`model_tier`** — how capable a model this needs (`fast-cheap` / `balanced` / `frontier` /
+  `long-context`), judged against the chosen routing profile's own rule.
+- **`effort`** — a fixed four-level difficulty rubric, asked the same way regardless of which
   provider ends up chosen (`EFFORT_RUBRIC`, `src/main/jev/routeRequest.ts`).
-- **The TypeSafe API key**, as the request's bearer token — read from the encrypted store at call
-  time and never logged (`createTypesafeJevRouter`, `src/main/jev/typesafeJevRouter.ts`).
 
-**What never leaves:** project paths, session data, transcripts, usernames, or anything else about
-this machine beyond the prompt's own text. `routeRequest.test.ts` pins exactly that: a test builds
-a request from a prompt containing a fake local path and asserts the path appears in the prompt
-state and nowhere else in the request (`'carries nothing about this machine but the prompt
-itself'`, `src/main/jev/routeRequest.test.ts`).
+The concrete model is never asked for and never sent — it is decided **locally**, after Jev answers,
+by matching the five answers against a maintained, source-verified model capability table
+(`src/main/jev/capabilities/`, `src/main/jev/routeDecision.ts`; see the
+[`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for how an entry earns its place in
+that table and what evidence it needs).
 
-**What comes back, and what is done with it:** one decision — a provider, an optional model, an
-optional effort level, and Jev's own confidence in the choice — or a typed reason it could not
-decide (`JevRouteLaunchResult`, `src/shared/contracts.ts`). Before that answer ever reaches the
-renderer, main checks it against the same gate every launch goes through (`parseLaunchTuning`) and
-confirms the chosen provider is still one this machine can launch
-(`createJevLaunchRouter`, `src/main/jev/routeLaunch.ts`) — nothing crosses that `agent:launch`
-could not itself carry out. The decision is then shown in a card, applied to the pickers, and can
-be overridden or dismissed; it is never a launch by itself; pressing Launch again is what actually
-starts the session (`src/renderer/src/components/launch/AddPanel.vue`,
-`src/renderer/src/composables/useAgentLaunch.ts`).
+**What comes back, in that one response:** five answers — a probability for each of the two yes/no
+questions, a choice and Jev's own confidence for `provider` and `model_tier`, and a score for
+`effort` — never a model name, since none was ever offered as an option
+(`JevRouteAnswers`, `src/main/jev/jevRouterPort.ts`).
+
+**The TypeSafe API key** rides the same request as its bearer token — read from the encrypted store
+at call time and never logged (`createTypesafeJevRouter`, `src/main/jev/typesafeJevRouter.ts`).
+
+**What never leaves:** project paths, session data, transcripts, usernames, model names, or anything
+else about this machine beyond the prompt's own text and the three-word routing profile.
+`routeRequest.test.ts` pins exactly that for the prompt: a test builds a request from a prompt
+containing a fake local path and asserts the path appears in the prompt state and nowhere else in
+the request (`'carries nothing about this machine but the prompt itself'`,
+`src/main/jev/routeRequest.test.ts`).
+
+**Request size, as observed.** TypeSafe publishes no fixed per-request token count, so this is a
+measurement from the maintainer's own `JEV_DEBUG` traces on this machine, not a guarantee: a live
+route request under request v2 ran **about 1,550–1,650 input tokens**, observed 2026-09-21. A future
+change to the question set, the criteria copy, or the launchable-provider count will move this
+figure; re-measure from a live trace rather than trusting this number to stay current.
+
+**What comes back from the local decision, and what is done with it:** one decision on the wire — a
+provider, an optional model, an optional effort level, the tier the local decision landed on, and a
+per-part breakdown naming which parts were Jev's own answer versus a safe default a confidence floor
+or the routing profile substituted — or a typed reason it could not decide, carrying your own
+configured default launch when one is set (`JevRouteLaunchResult`, `src/shared/contracts.ts`). Before
+that answer ever reaches the renderer, main checks it against the same gate every launch goes through
+(`parseLaunchTuning`) — nothing crosses that `agent:launch` could not itself carry out
+(`createJevLaunchRouter`, `src/main/jev/routeLaunch.ts`; `decideLaunch`,
+`src/main/jev/routeDecision.ts`). The decision is then shown in a card that states the chosen
+provider, model and effort with the overall confidence, then says part by part what Jev answered and
+what fell to a safe value, with Jev's own reported confidence for each, and whether the prompt was
+treated as trivial or a large-context model was preferred (`jevDecisionSummary`, `jevPartsSummary`,
+`src/renderer/src/components/launch/AddPanel.vue`). It is applied to the pickers, and can be
+overridden or dismissed; it is never a launch by itself; pressing Launch again is what actually starts
+the session (`src/renderer/src/composables/useAgentLaunch.ts`).
 
 **When it does not happen:** no key is configured, the toggle is off, or the option is hidden
 outright (no key) or shown disabled with the reason (this machine has no encrypted place to keep
 one) — `JevSettings`/`JevUnavailableReason`, `src/shared/contracts.ts`. Whatever goes wrong after
-that — unreachable, rate-limited, unauthorized, timed out, a low-confidence or unusable answer, no
-launchable provider, or a request too large for TypeSafe's own budget — degrades to a typed
-fallback reason, and the launch still happens on the pickers' current values, saying that it did
-(`classifyError`, `src/main/jev/typesafeJevRouter.ts`; `createJevLaunchRouter`,
-`src/main/jev/routeLaunch.ts`). The whole call is bounded at 15 seconds of this app's own
-wall-clock time (`DEFAULT_TOTAL_BUDGET_MS`, `src/main/jev/routeLaunch.ts`), whatever TypeSafe's own
-retries do underneath, so Jev can delay a launch but never hang one.
+that — unreachable, rate-limited, unauthorized, timed out, an unusable answer, no launchable
+provider, or a request too large for TypeSafe's own budget — degrades to a typed fallback reason,
+and the launch still happens on the pickers' current values, saying that it did (`classifyError`,
+`src/main/jev/typesafeJevRouter.ts`; `createJevLaunchRouter`, `src/main/jev/routeLaunch.ts`).
+`'low-confidence'` is still a named reason on the wire, kept for a distinguishable low-confidence
+failure worth naming again in the future, but no path produces it today: every per-question floor
+now resolves to a safe default instead — see the
+[`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill's own tier-routing section. When you
+have set a default provider, model or effort in Settings
+(see [What it stores](#what-it-stores-and-where)), main attaches it to the fallback on the wire
+(`fallbackTo`, `JevRouteLaunchResult`), and the panel applies it to the pickers exactly as it would
+a decision, names it in the fallback line ("Your default, … is set below — press Launch again or
+change it"), and waits for your Enter unless Auto-accept is on (`jevAnswered`,
+`src/renderer/src/lib/launch/launchState.ts`; `AddPanel.vue`). Without a default, a chosen provider
+launches on the pickers' current values; with none chosen either, nothing launches and the prompt is
+kept (#523). The whole call is bounded at 15 seconds of this app's own wall-clock time
+(`DEFAULT_TOTAL_BUDGET_MS`, `src/main/jev/routeLaunch.ts`), whatever TypeSafe's own retries do
+underneath, so Jev can delay a launch but never hang one.
 
 **Retention on TypeSafe's side.** This app controls only what it sends, not what TypeSafe keeps
 once it has been sent, and this document states only what TypeSafe's own primary sources say

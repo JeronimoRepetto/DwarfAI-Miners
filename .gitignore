@@ -8,6 +8,7 @@ node_modules/
 /release/
 /out/
 /coverage/
+docs/investigations/*
 # tsc's incremental build cache — one per tsconfig, regenerated every build.
 *.tsbuildinfo
 .codex/*

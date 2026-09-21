@@ -49,7 +49,7 @@ describe('MineCard naming', () => {
   // 'Copper mine -' instead.
   it('states the tier its measured weight puts it in, art and all', () => {
     const wrapper = mount(MineCard, {
-      props: { project: defaultProject({ name: 'Galactic-CV', weightBytes: 331 * 1024 }) }
+      props: { project: defaultProject({ name: 'Galactic-CV', weightBytes: 400 * 1024 }) }
     })
     expect(wrapper.get('.card-tier').text()).toBe('Copper mine -')
     expect(wrapper.get('.card-art').attributes('src')).toBeTruthy()
@@ -59,10 +59,10 @@ describe('MineCard naming', () => {
 
   it('draws the same row whether the tier was recorded or derived', () => {
     const recorded = mount(MineCard, {
-      props: { project: defaultProject({ knownTier: 'copper', weightBytes: 331 * 1024 }) }
+      props: { project: defaultProject({ knownTier: 'copper', weightBytes: 400 * 1024 }) }
     })
     const derived = mount(MineCard, {
-      props: { project: defaultProject({ weightBytes: 331 * 1024 }) }
+      props: { project: defaultProject({ weightBytes: 400 * 1024 }) }
     })
     expect(derived.get('.card-art').attributes('src')).toBe(
       recorded.get('.card-art').attributes('src')
@@ -230,21 +230,21 @@ describe('MineCard level bar', () => {
     })
     expect(wrapper.find('.card-level').exists()).toBe(true)
     expect(wrapper.get('.level-label-text').text()).toBe('Next level:')
-    expect(wrapper.get('.level-label-value').text()).toBe('80/100')
+    expect(wrapper.get('.level-label-value').text()).toBe('80/350')
   })
 
   it('sizes the fill to the bracket ratio', () => {
     const wrapper = mount(MineCard, {
       props: { project: defaultProject({ weightBytes: 235 * 1024 }) }
     })
-    expect(wrapper.get('.level-fill').attributes('style')).toContain(`width: ${(235 / 500) * 100}%`)
+    expect(wrapper.get('.level-fill').attributes('style')).toContain(`width: ${(235 / 350) * 100}%`)
   })
 
   it('prints infinite for a mine with no further tier to climb toward', () => {
     const wrapper = mount(MineCard, {
-      props: { project: defaultProject({ weightBytes: 10975 * 1024 }) }
+      props: { project: defaultProject({ weightBytes: 150000 * 1024 }) }
     })
-    expect(wrapper.get('.level-label-value').text()).toBe('10975/infinite')
+    expect(wrapper.get('.level-label-value').text()).toBe('150000/infinite')
   })
 
   it('draws no bar and no label for a project no walk has weighed yet', () => {
@@ -370,7 +370,7 @@ describe('MineCard while the mine is being measured', () => {
     // Either fact ends the state, and they end it separately: a recorded tier
     // with no weight still draws no bar (the bar reads the weight alone), and a
     // weight with no recorded tier draws both the tier and the bar.
-    for (const measured of [{ knownTier: 'uranium' } as const, { weightBytes: 9000 * 1024 }]) {
+    for (const measured of [{ knownTier: 'uranium' } as const, { weightBytes: 150000 * 1024 }]) {
       const wrapper = mount(MineCard, {
         props: { project: defaultProject({ declared: true, ...measured }) }
       })

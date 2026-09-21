@@ -2356,10 +2356,10 @@ export const HELD_CONVERSATION_LIMIT = 200
  * copy that could drift.
  */
 export const TIER_WEIGHT_THRESHOLDS_KB = {
-  copperKb: 100,
-  silverKb: 500,
-  goldKb: 2048,
-  uraniumKb: 8192
+  copperKb: 350,
+  silverKb: 1500,
+  goldKb: 12000,
+  uraniumKb: 100000
 }
 
 /**

@@ -715,16 +715,20 @@ async function init(): Promise<void> {
   // this point in startup, and reading it lazily inside the closure is what
   // lets every call ask what THIS machine can launch NOW rather than a stale
   // answer from before the runtime existed.
+  // JEV_DEBUG (#525/T4): the dev-console trace, read straight from the real
+  // environment here and deliberately never through `config` — on for
+  // `1`/`true` only (blank, `0` and junk mean off, per jevDebugEnabled), and
+  // reachable from the repo `.env` because this runs after loadDotenv()
+  // above. ONE sink, shared by both the SDK adapter's own request/answer
+  // trace and the launch router's local-decision trace below, so a route
+  // call reads as one continuous [jev:debug] story on the dev console
+  // rather than two independently-wired sinks that could drift out of step.
+  // It prints the person's own prompt, so the only thing ever wired into
+  // either `debugLog` is this one console line, and only when the flag says so.
+  const jevDebugLog = jevDebugEnabled() ? (line: string) => console.log(line) : undefined
   const jevRouterPort = createTypesafeJevRouter({
     readKey: jevApiKeyStore.readKey,
-    // JEV_DEBUG (#525): the dev-console trace, read straight from the real
-    // environment here and deliberately never through `config` — on for
-    // `1`/`true` only (blank, `0` and junk mean off, per jevDebugEnabled),
-    // and reachable from the repo `.env` because this runs after
-    // loadDotenv() above. It prints the person's own prompt, so the only
-    // thing ever wired into `debugLog` is this console line, and only when
-    // the flag says so.
-    ...(jevDebugEnabled() ? { debugLog: (line: string) => console.log(line) } : {})
+    ...(jevDebugLog === undefined ? {} : { debugLog: jevDebugLog })
   })
   const jevLaunchRouter = createJevLaunchRouter({
     router: jevRouterPort,
@@ -733,7 +737,8 @@ async function init(): Promise<void> {
     // Read fresh on every call, same reason listProviders/listModels are:
     // Settings' Jev section (profile, default launch) can change between
     // one launch and the next (jev-routing-profiles T3).
-    readPreferences: jevPreferenceStore.load
+    readPreferences: jevPreferenceStore.load,
+    ...(jevDebugLog === undefined ? {} : { debugLog: jevDebugLog })
   })
   /* --- end of the #509 block ------------------------------------------------ */
 

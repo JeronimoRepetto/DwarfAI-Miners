@@ -304,10 +304,10 @@ describe('dwarfSilenceWindowKey', () => {
 describe('TIER_WEIGHT_THRESHOLDS_KB', () => {
   it('names the documented KB boundaries, in ascending order', () => {
     expect(TIER_WEIGHT_THRESHOLDS_KB).toEqual({
-      copperKb: 100,
-      silverKb: 500,
-      goldKb: 2048,
-      uraniumKb: 8192
+      copperKb: 350,
+      silverKb: 1500,
+      goldKb: 12000,
+      uraniumKb: 100000
     })
     expect(TIER_WEIGHT_THRESHOLDS_KB.copperKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.silverKb)
     expect(TIER_WEIGHT_THRESHOLDS_KB.silverKb).toBeLessThan(TIER_WEIGHT_THRESHOLDS_KB.goldKb)

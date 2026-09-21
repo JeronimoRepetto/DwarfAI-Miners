@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ADD_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
+import { ADD_ICON_SRC, INFO_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { browseRows } from '../../lib/browse/boardRows'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type {
@@ -12,6 +12,7 @@ import type {
 } from '../../types'
 import MineCard from './MineCard.vue'
 import RemoveMineModal from './RemoveMineModal.vue'
+import TierInfoModal from './TierInfoModal.vue'
 import WorktreeFoldModal from './WorktreeFoldModal.vue'
 
 const props = defineProps<{
@@ -79,6 +80,7 @@ const empty = computed(() => !props.loading && props.error === null && rows.valu
  * below — which is what closes the modal by itself once the card is gone.
  */
 const removingId = ref<string | null>(null)
+const showTierInfoModal = ref(false)
 
 /**
  * The row the confirmation is about, or undefined when there is none to ask
@@ -281,6 +283,23 @@ onBeforeUnmount(stopWatching)
       @open="emit('open-main-project')"
       @close="emit('dismiss-worktree')"
     />
+    <!--
+      Tier threshold reference (#538): the map's own info trigger, in this
+      panel's bottom-right corner rather than in the header row it started in.
+      The two popups answer the same kind of question, so they are one control
+      drawn twice — see `.mines-info` below, which carries MapView's geometry.
+    -->
+    <button
+      class="mines-info"
+      type="button"
+      aria-label="Tier thresholds"
+      title="Tier thresholds"
+      :style="{ '--info-icon': maskImageValue(INFO_ICON_SRC) }"
+      @click="showTierInfoModal = true"
+    >
+      <span class="mines-info-glyph" aria-hidden="true"></span>
+    </button>
+    <TierInfoModal v-if="showTierInfoModal" @close="showTierInfoModal = false" />
   </section>
 </template>
 
@@ -367,6 +386,36 @@ onBeforeUnmount(stopWatching)
   mask: var(--control-icon) center / contain no-repeat;
 }
 /*
+ * MapView's `.map-info`, to the value: the same 28px bordered square on the
+ * same near-opaque ground, offset by the panel's own padding so it lands in
+ * the corner of the content box rather than under it. Copied rather than
+ * shared because the two screens compose nothing today, and a corner control
+ * that drifts from the map's is the defect this replaced.
+ */
+.mines-info {
+  position: absolute;
+  z-index: 5;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-highlight);
+  border-radius: var(--radius-default);
+  cursor: pointer;
+  background: #0a0806e6;
+}
+.mines-info-glyph {
+  display: block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  background: var(--color-cream);
+  mask: var(--info-icon) center / contain no-repeat;
+}
+/*
  * The disabled model the source gives every other control: the glyph drops to
  * the control colour, which on this ground reads as switched off rather than
  * as missing.
@@ -378,7 +427,8 @@ onBeforeUnmount(stopWatching)
   background: var(--color-control);
 }
 .sort-control:focus-visible,
-.add-control:focus-visible {
+.add-control:focus-visible,
+.mines-info:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }
