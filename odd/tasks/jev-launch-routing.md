@@ -70,30 +70,31 @@ privacy-guard pattern on anything tracked.
 
 Strategy: `ask-on-risk` (default). Forecast ≈ 1400 authored changed lines across five tasks, above
 the ~400 budget. Chain strategy chosen by the user on 2026-09-21: **`stacked-to-main`** — one PR per
-task against `main`, each mergeable on its own. Running count: 0. RDD: **on** (global); each work-unit commit is assessed
-with `gentle-ai review assess --base-ref <last reviewed boundary> --committed-only --json`. First
-boundary: 1be0e19.
+task against `main`, each mergeable on its own. Running count: 1752 (T1, two commits). RDD: **off**
+since 2026-09-21 — the user ran `gentle-ai review mode disable` when the T1 candidate (assessed
+`high`) asked for consent; no native review runs from here on, and verification is the ordinary
+checks plus, for the high tier, an independent verifier beside the writer's own run.
 
 ## Tasks
 
-- [ ] **T1 — API key setting.** Encrypted key store (`safeStorage`, per-setting file under
-  userData) with load/save/clear; `JevSettings` wire shape in `contracts.ts` exposing only
-  `configured: boolean` and an `unavailableReason`; IPC get/set/clear; preload methods; a
-  `JevSettings.vue` section in `SettingsPanel.vue` with the privacy notice, wired through
-  `App.vue` like audio. Route: delegated writer (4+ files). Trigger: writer + mapping.
+- [x] **T1 — API key setting.** Encrypted key store (`safeStorage`, per-setting file under
+      userData) with load/save/clear; `JevSettings` wire shape in `contracts.ts` exposing only
+      `configured: boolean` and an `unavailableReason`; IPC get/set/clear; preload methods; a
+      `JevSettings.vue` section in `SettingsPanel.vue` with the privacy notice, wired through
+      `App.vue` like audio. Route: delegated writer (4+ files). Trigger: writer + mapping.
 - [ ] **T2 — Router port and request builder.** `JevRouterPort` + SDK adapter
-  (`@typesafe-ai/sdk`) + fake; pure builder that turns prompt + launchable providers + catalogue +
-  effort levels into the System One request within the documented token budget; typed result with
-  confidence and a fallback reason. Route: delegated writer. Verify the SDK surface against the
-  official docs first.
+      (`@typesafe-ai/sdk`) + fake; pure builder that turns prompt + launchable providers + catalogue +
+      effort levels into the System One request within the documented token budget; typed result with
+      confidence and a fallback reason. Route: delegated writer. Verify the SDK surface against the
+      official docs first.
 - [ ] **T3 — `routeLaunch` IPC.** Main handler with its own timeout, fallback to the submitted
-  pickers, never a provider the app cannot launch; result validated by `parseLaunchTuning`.
-  Route: inline or delegated by size.
+      pickers, never a provider the app cannot launch; result validated by `parseLaunchTuning`.
+      Route: inline or delegated by size.
 - [ ] **T4 — AddPanel Jev option.** Hidden or disabled-with-reason without a key; decision card
-  shown before launch, editable; "chosen by Jev" legible on the launched session; fallback message.
-  Route: delegated writer.
+      shown before launch, editable; "chosen by Jev" legible on the launched session; fallback message.
+      Route: delegated writer.
 - [ ] **T5 — Docs.** `docs/privacy.md` "What it transmits" rewritten honestly, README
-  configuration entry, `config-layering` skill note if a new rule emerged. Route: inline.
+      configuration entry, `config-layering` skill note if a new rule emerged. Route: inline.
 
 ## Acceptance criteria
 
@@ -107,10 +108,32 @@ boundary: 1be0e19.
 
 ## Progress and evidence
 
-(none yet)
+**T1** — route: delegated writer (mapping and writer triggers fired: 20 files). Commits on
+`feat/jev-launch-routing`: `a6fd071` (store, port, contracts, barrels, IPC, preload) and `bc41601`
+(JevSettings section, composable, SettingsPanel and App wiring). Writer evidence: RED observed then
+GREEN on all 7 test files; `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, skill-sync check,
+`pnpm test` (281 files, 7713 tests passed, 5 skipped) and `pnpm build` green; test census +66 with
+no statements lost. Orchestrator corrections before committing: the privacy notice no longer claims
+the key never leaves the machine (it is the bearer token of the TypeSafe request), and four
+comments that pointed at #511 now point at #509. Native review: assessed `high`
+(`process_boundary` in `contracts.test.ts`); the user disabled RDD at the consent prompt, so the
+off path applies. Independent verifier (fresh worker, read-only): **pass-with-notes** — all six
+checks re-run green except `pnpm format:check`, which flagged only this document (fixed in the
+docs commit below); `readKey()` reaches no IPC channel, no log and no renderer code; no plaintext
+fallback; all five contracts symbols re-exported from both barrels; the persisted file holds only
+base64 ciphertext and `clear()` removes it; no `process.platform` branching; test counts matched
+the writer's exactly.
+
+**T2 design decision** (recorded here because it departs from the issue's literal wording): one
+System One request with two questions instead of three. `model` is a Choice over
+`<provider>:<model>` keys derived from the providers launchable right now, and the provider is
+derived from the chosen key, so the choice is launchable and the model is in its catalogue by
+construction. `effort` is a Score over a fixed four-level difficulty rubric, mapped locally onto
+each provider's own effort ladder. A separate `provider` Choice was dropped because two
+independent answers could disagree, and resolving that would need a rule nobody chose.
 
 ## Next step
 
-T1 writer running. After the T1 commit: return the root checkout to `main` (user decision,
-2026-09-21), move `feat/jev-launch-routing` into a worktree for the PR, and run T2 onwards in
-worktrees only.
+T1 is complete on `feat/jev-launch-routing`; opening its PR against `main` is the user's call.
+T2 writer running in `../DwarfAI-Miners-worktrees/feat-jev-router-port` (branch
+`feat/jev-router-port` from `main`).
