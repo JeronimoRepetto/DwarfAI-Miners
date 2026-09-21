@@ -90,7 +90,7 @@ checks plus, for the high tier, an independent verifier beside the writer's own 
 - [x] **T3 — `routeLaunch` IPC.** Main handler with its own timeout, fallback to the submitted
       pickers, never a provider the app cannot launch; result validated by `parseLaunchTuning`.
       Route: inline or delegated by size.
-- [ ] **T4 — AddPanel Jev option.** Hidden or disabled-with-reason without a key; decision card
+- [x] **T4 — AddPanel Jev option.** Hidden or disabled-with-reason without a key; decision card
       shown before launch, editable; "chosen by Jev" legible on the launched session; fallback message.
       Route: delegated writer.
 - [ ] **T5 — Docs.** `docs/privacy.md` "What it transmits" rewritten honestly, README
@@ -202,7 +202,102 @@ comment edited to name where the wall-clock decision is recorded instead of poin
 Commit and PR recorded in the Engram mirror; PR opened against `main` under the standing push-and-PR
 authorization.
 
+**T4 (writer report)** — route: delegated writer, worktree
+`../DwarfAI-Miners-worktrees/feat-jev-addpanel` (branch `feat/jev-addpanel` from `main` at `4f8f5f7`).
+Built the Add Panel's own Jev option, renderer only, per the task brief:
+
+- `src/renderer/src/lib/launch/launchState.ts` — a `jev: JevState` field on `LaunchState`
+  (`availability: 'hidden' | 'unavailable' | 'ready'` derived from `JevSettings`, `unavailableReason`,
+  the person's own `enabled` toggle for the panel session, a `routing` phase
+  `idle | asking | decided(JevDecision) | fellBack(reason, confidence?)`, and `previousChoice` — the
+  pickers a decision is about to overwrite). Five pure transitions: `setJevSettings`, `toggleJev`,
+  `jevAsked`, `jevAnswered`, `clearJevDecision`, plus a `shouldAskJev` predicate `submit` reads. A
+  decision applies through the SAME `chooseProvider`/`chooseModel`/`chooseEffort` paths a person's own
+  click uses, so the row under the composer needs no second rendering path for "Jev chose this" versus
+  "I chose this"; a fallback touches no picker. `clearJevDecision` restores `previousChoice` and is the
+  one function behind both the decision card's Dismiss control and every prompt edit — an ask or a
+  decision about one prompt does not outlive it.
+- `src/renderer/src/composables/useAgentLaunch.ts` — `open()` now asks `getJevSettings()` alongside
+  `listAgentProviders()`/`listAgentModels()`, all three fired together through a new `safelyAsk` helper
+  (catches a synchronous throw from a missing bridge member exactly like a rejected promise, so the
+  three could be asked in parallel without losing the per-member safety the old sequential try/catches
+  had). `submit()` gained one detour: when `shouldAskJev` is true it asks first, applies a decision and
+  STOPS (return before any launch), or falls through to the ordinary launch on a fallback — reading
+  `state.value.jev.routing.phase === 'decided'` after applying the answer, not the raw IPC result,
+  so a decision that arrived after the prompt was edited mid-flight (and was therefore already dropped
+  back to idle) cannot silently swallow that Enter. A rejected/missing `routeJevLaunch` becomes a
+  fallback with reason `'invalid-response'`. `setPrompt` now also calls `clearJevDecision` on every
+  keystroke. New exports: `jev`, `toggleJevEnabled`, `dismissJevDecision`.
+- `src/renderer/src/components/launch/AddPanel.vue` — new `jev: JevState` prop, new `toggle-jev`/
+  `dismiss-jev` emits. Absent with no key configured; disabled with main's reason (duplicated from
+  `JevSettings.vue`'s own `UNAVAILABLE_MESSAGES` deliberately, so both surfaces explain
+  `encryption-unavailable` in the same words) when `unavailable`; a pressable toggle when `ready`. An
+  "Asking Jev…" status line while asking, which also blocks a second Enter from resubmitting. A
+  decision card (provider label off the SAME source the chip row resolves it from, never the CLI
+  binary name; model label off the model picker's own catalogue, falling back to the raw id; effort;
+  confidence as a percentage; a truncated-prompt note; Dismiss). A fallback line, placed OUTSIDE the
+  launched/composer split on purpose — it has to survive into the spawning/detached view, because a
+  fallback's whole point is that the launch still happened and the panel says so. No new colour
+  literals: every new class reuses tokens and box shapes already in this file or in `JevSettings.vue`.
+- `src/renderer/src/MessagePanelWindow.vue` — wired `jev`/`toggleJevEnabled`/`dismissJevDecision` into
+  `<AddPanel>` beside the existing `modelPicker`/`effortPicker` wiring. The task brief named `App.vue`
+  for this; the real mount site is `MessagePanelWindow.vue` (`AGENTS.md`'s own "TWO roots" split, and
+  confirmed by `codegraph_explore`), so the wiring went there instead.
+
+RED→GREEN evidence: `launchState.test.ts` (+22 statements, new `describe('the Jev option (#509)', …)`)
+failed on `setJevSettings is not a function` / `Cannot read properties of undefined (reading
+'availability')` before the state existed, 72/72 green after. `useAgentLaunch.test.ts` (+14, new
+`describe('Jev launch routing (#509)', …)`) failed on `toggleJevEnabled is not a function` /
+`Cannot read properties of undefined (reading 'value')`, 52/52 green after. `AddPanel.test.ts` (+18,
+new `describe('the Jev option', …)`) failed on missing `.jev-toggle`/`.jev-status`/`.jev-decision`/
+`.jev-fallback` elements and an unguarded second Enter reaching `submit`, 62/62 green after.
+
+Verification (all in the worktree): `pnpm typecheck` — clean after adding `getJevSettings`/
+`routeJevLaunch` to `useAgentLaunch.test.ts`'s shared `stubApi` base object (the override-only pattern
+typechecked at the call site but not against the helper's own inferred return type); `pnpm lint` — no
+issues; `pnpm format:check` — flagged the three new/changed test files, fixed with `pnpm format`
+(`prettier --write`), re-check clean; `node skills/skill-sync/assets/sync.mjs --check` — up to date;
+`pnpm test` — 284 files / 7832 tests passed (2 files / 5 tests skipped, pre-existing per T3's note);
+`pnpm build` — green (main, preload, renderer). `node skills/test-safety/assets/test-census.mjs` — net
++54 test statements across the 3 touched test files (`launchState.test.ts` +22, `AddPanel.test.ts`
++18, `useAgentLaunch.test.ts` +14), no file lost test statements. `MessagePanelWindow.test.ts` (not
+touched, but exercises the real `AddPanel` mount) re-run separately: 98/98 green, unaffected because
+its own `window.api` stub has no `getJevSettings`, so `safelyAsk` degrades that surface to `hidden`
+exactly as a bridge that cannot answer already degrades providers/models there.
+
+Decisions beyond the brief, returned rather than invented silently: (1) `clearJevDecision` restores
+`previousChoice` on EVERY call, not only from the explicit Dismiss button — the brief named one
+function for both "on prompt edit or panel close" and the Dismiss control's own restore, and treating
+an edited prompt as abandoning the suggestion (reverting the pickers, not just hiding the card) reads
+as the more honest option: a decision was about the OLD prompt, and carrying its picker values forward
+onto a new one it never evaluated would look live when it is not. (2) Manually re-choosing a chip,
+model or effort after a decision is showing does not itself clear the card — only an edited prompt,
+Dismiss, or panel close does, per the brief's own list; a stale card next to a since-changed picker is
+a small rough edge the brief did not ask this task to resolve. (3) `pnpm typecheck`'s failure surfaced
+a pre-existing gap in `useAgentLaunch.test.ts`'s `stubApi` helper (its return type is inferred from the
+base object, so an override-only member typechecks at the call site but not against the helper's own
+signature) — fixed by adding `getJevSettings`/`routeJevLaunch` to the base object, following the
+file's own stated reason for naming awaited members there rather than per test.
+
+Follow-up not built, out of scope per the brief: a per-session marker on the launched dwarf saying it
+was Jev-routed needs a wire field on the launch request and persistence in main, which this task's
+renderer-only, no-contracts-changes scope explicitly excludes.
+
+**T3 delivery** — PR #520, independent verifier **pass**, merged into `main` (`4f8f5f7`).
+
+**T4 (orchestrator)** — readback of the pure `jev` slice in `launchState.ts`, the `submit` detour in
+`useAgentLaunch.ts`, the `MessagePanelWindow.vue` wiring and the template hooks in `AddPanel.vue`;
+spot check re-ran the four renderer test files (284 passed) and `pnpm typecheck`. Confirmed that
+the fallback line renders independently of the launch phase and is pinned by a test in
+`submitted-spawning`, so "launched with your pickers' values" is actually visible after the launch
+it explains. Accepted the writer's two judgment calls: `clearJevDecision` restores the pickers on
+every invalidation, and a manual re-pick leaves the card standing because the card itself invites
+that edit. Follow-up recorded, not built: a per-session "Jev-routed" marker on the launched dwarf
+needs a wire field on the launch request and persistence in main.
+
 ## Next step
 
-T4 — the AddPanel Jev option — branches from `main` once T3 (PR for `feat/jev-route-launch`) is
-merged, because it consumes `JevRouteLaunchResult` and `routeJevLaunch`. Then T5 docs.
+T5 — docs: rewrite `docs/privacy.md` "What it transmits" (the app now has one outbound HTTP
+client, used only when the Jev option is on), add the Configuration entry to `README.md` (the key
+is set from Settings, never from `.env`), and note in `skills/config-layering` that a secret is
+stored through `safeStorage` rather than the JSON layers. Branch from `main` once T4's PR merges.

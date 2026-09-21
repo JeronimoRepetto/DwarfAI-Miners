@@ -8,12 +8,15 @@ import {
   chooseModel,
   choosePermissionMode,
   chooseProvider,
+  clearJevDecision,
   closeLaunch,
   closedLaunch,
   commitCommand,
   composerEnabled,
   composerPlaceholder,
   detachedTimedOut,
+  jevAnswered,
+  jevAsked,
   launchCommand,
   launchFailed,
   launchPermissionMode,
@@ -21,12 +24,16 @@ import {
   launchPrompt,
   launchTuning,
   openLaunch,
+  setJevSettings,
+  shouldAskJev,
   startedDetached,
   submitRefused,
   submitStarted,
+  toggleJev,
   typeCommand,
   typePrompt,
   OTHER_CHOICE,
+  type JevState,
   type LaunchChoice,
   type LaunchPhase,
   type LaunchState
@@ -44,6 +51,8 @@ import type {
   AgentModelCatalog,
   AgentProviderOption,
   HeldPermissionMode,
+  JevRouteLaunchResult,
+  JevSettings,
   LaunchFailedPush,
   Mine
 } from '../types'
@@ -130,6 +139,8 @@ export interface AgentLaunch {
   effortPicker: ComputedRef<EffortPicker>
   /** Whether the Permissions select belongs on screen — held Claude only. */
   permissionsVisible: ComputedRef<boolean>
+  /** The Add Panel's Jev option (#509) — availability, the person's toggle, and the routing card/line. */
+  jev: ComputedRef<JevState>
   open: (mine: string) => Promise<void>
   close: () => void
   choose: (choice: LaunchChoice) => void
@@ -140,6 +151,10 @@ export interface AgentLaunch {
   setModel: (value: string) => void
   setEffort: (value: string) => void
   setPermissionMode: (value: HeldPermissionMode) => void
+  /** The person's own Jev toggle (#509) — a no-op outside `ready`. */
+  toggleJevEnabled: () => void
+  /** Dismiss the decision card, restoring the pickers it overwrote (#509). */
+  dismissJevDecision: () => void
   submit: () => Promise<void>
   observe: (mines: readonly Mine[]) => void
   /**
@@ -152,10 +167,28 @@ export interface AgentLaunch {
   listenFailures: () => () => void
 }
 
+/**
+ * Ask the bridge for one thing, and answer with `fallback` for EITHER way it
+ * can fail to: a real rejection, or the member not existing on `window.api`
+ * at all (a bare `vi.fn()`-free test double, or a build this bridge member
+ * has not reached yet). The call itself happens inside the `try` — not
+ * before it — so a missing member's synchronous throw is caught exactly like
+ * a rejected promise's asynchronous one; see `open`'s own note on why this
+ * had to keep that property while asking three members at once.
+ */
+async function safelyAsk<T>(ask: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await ask()
+  } catch {
+    return fallback
+  }
+}
+
 export function useAgentLaunch(): AgentLaunch {
   const chips = computed(() => providerChips(providers.value, state.value.choice))
   const phase = computed(() => launchPhase(state.value))
   const refusal = computed(() => launchRefusal(providers.value, state.value.choice))
+  const jev = computed(() => state.value.jev)
 
   /**
    * Open the panel on a mine, and ask what this machine has.
@@ -170,23 +203,25 @@ export function useAgentLaunch(): AgentLaunch {
    * cannot answer degrades to no catalogues, which reads as every model
    * picker showing 'This provider does not report its models.' rather than
    * the panel failing to open at all.
+   *
+   * Jev's settings verdict (#509) is asked the same way, alongside the other
+   * two rather than after them — all three fire together through
+   * `safelyAsk`, so a slow or unreachable Jev answer never holds up
+   * providers or models reaching the panel, and a bridge that cannot answer
+   * it degrades to `configured: false`, which reads as the option simply not
+   * being offered yet — never a reason to fail the open itself.
    */
   async function open(mine: string): Promise<void> {
     mineId.value = mine
     state.value = openLaunch(state.value)
-    try {
-      providers.value = (await window.api.listAgentProviders()).providers
-    } catch {
-      // The bridge is the only source there is, and an empty list is honest:
-      // nothing was detected. Other is appended regardless, so the panel still
-      // offers what the design guarantees is always offered.
-      providers.value = []
-    }
-    try {
-      catalogs.value = (await window.api.listAgentModels()).catalogs
-    } catch {
-      catalogs.value = []
-    }
+    const [providersAnswer, catalogsAnswer, jevSettings] = await Promise.all([
+      safelyAsk(() => window.api.listAgentProviders(), { providers: [] }),
+      safelyAsk(() => window.api.listAgentModels(), { catalogs: [] }),
+      safelyAsk<JevSettings>(() => window.api.getJevSettings(), { configured: false })
+    ])
+    providers.value = providersAnswer.providers
+    catalogs.value = catalogsAnswer.catalogs
+    state.value = setJevSettings(state.value, jevSettings)
   }
 
   function close(): void {
@@ -210,6 +245,12 @@ export function useAgentLaunch(): AgentLaunch {
 
   function setPrompt(text: string): void {
     state.value = typePrompt(state.value, text)
+    // A Jev card or fallback line describes the PROMPT that produced it
+    // (#509) — see clearJevDecision's own comment — so editing it here drops
+    // whatever the last ask left standing, and puts back any picker values a
+    // decision had overwritten, rather than let a stale answer outlive the
+    // request it was about.
+    state.value = clearJevDecision(state.value)
   }
 
   function setModel(value: string): void {
@@ -224,6 +265,14 @@ export function useAgentLaunch(): AgentLaunch {
     state.value = choosePermissionMode(state.value, value)
   }
 
+  function toggleJevEnabled(): void {
+    state.value = toggleJev(state.value)
+  }
+
+  function dismissJevDecision(): void {
+    state.value = clearJevDecision(state.value)
+  }
+
   /**
    * Enter on a ready composer.
    *
@@ -236,9 +285,48 @@ export function useAgentLaunch(): AgentLaunch {
    * choice IS, and each is the only honest route for its own case: a command of
    * the person's own has no provider to name, a Claude session can be held, and
    * anything else is started detached.
+   *
+   * ## Jev's one detour (#509)
+   *
+   * When Jev is enabled and ready and nothing has asked it yet, this Enter
+   * asks Jev FIRST rather than launching straight off the pickers. A decision
+   * stops here — it is SHOWN, never acted on by itself, so the person presses
+   * Launch again on the pickers it just applied, or changes them first. A
+   * fallback falls straight through into the ordinary launch below, on
+   * whatever the pickers already show, which is issue #509's own acceptance
+   * criterion: every way Jev can fail still launches and says that it did.
+   * The refusal check and everything after it therefore reads state AFTER
+   * this detour, never before — a decision may have just changed `choice`.
    */
   async function submit(): Promise<void> {
     if (!canSubmit(state.value) || mineId.value === null) return
+    // An ask in flight is this panel's one launch in flight, held by the model
+    // and not only by the view's Enter guard: a second submit here would find
+    // `shouldAskJev` false (the ask already left) and launch on the pickers
+    // the decision has not reached yet, and the late answer would then
+    // rewrite them behind a session already started.
+    if (state.value.jev.routing.phase === 'asking') return
+
+    if (shouldAskJev(state.value)) {
+      state.value = jevAsked(state.value)
+      let result: JevRouteLaunchResult
+      try {
+        result = await window.api.routeJevLaunch({ prompt: launchPrompt(state.value) })
+      } catch {
+        // The bridge refused or threw outright — 'invalid-response' names
+        // exactly this: an answer that cannot be turned into something this
+        // panel can act on, never a reason to hang on a promise that will
+        // not resolve into a usable shape.
+        result = { kind: 'fallback', reason: 'invalid-response' }
+      }
+      state.value = jevAnswered(state.value, result)
+      // Read off `state`, not `result`: a prompt edited during the ask
+      // already dropped this back to idle (clearJevDecision, via setPrompt),
+      // and an answer that arrived too late to apply must not silently
+      // swallow this Enter either.
+      if (state.value.jev.routing.phase === 'decided') return
+    }
+
     const refused = refusal.value
     if (refused !== null) {
       state.value = submitRefused(state.value, refused)
@@ -372,6 +460,7 @@ export function useAgentLaunch(): AgentLaunch {
     modelPicker: computed(() => modelPicker(catalogs.value, state.value.choice)),
     effortPicker: computed(() => effortPicker(catalogs.value, state.value.choice)),
     permissionsVisible: computed(() => permissionsVisible(state.value.choice)),
+    jev,
     open,
     close,
     choose,
@@ -381,6 +470,8 @@ export function useAgentLaunch(): AgentLaunch {
     setModel,
     setEffort,
     setPermissionMode,
+    toggleJevEnabled,
+    dismissJevDecision,
     submit,
     observe,
     listenFailures

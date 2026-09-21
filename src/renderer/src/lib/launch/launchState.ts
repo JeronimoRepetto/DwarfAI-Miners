@@ -1,4 +1,12 @@
-import { type DwarfProvider, type HeldPermissionMode, type LaunchFailedPush } from '../../types'
+import {
+  type DwarfProvider,
+  type HeldPermissionMode,
+  type JevFallbackReason,
+  type JevRouteLaunchResult,
+  type JevSettings,
+  type JevUnavailableReason,
+  type LaunchFailedPush
+} from '../../types'
 
 /**
  * The Add Panel's gates, as `screens/launch.md` states them (#86).
@@ -112,6 +120,8 @@ export interface LaunchState {
   launchedDwarfId: string | null
   /** Main's reason for refusing the last launch, or null. */
   error: string | null
+  /** The Add Panel's Jev option (#509) — see JevState's own comment. */
+  jev: JevState
 }
 
 export function closedLaunch(): LaunchState {
@@ -128,7 +138,8 @@ export function closedLaunch(): LaunchState {
     detached: false,
     launchId: null,
     launchedDwarfId: null,
-    error: null
+    error: null,
+    jev: closedJevState()
   }
 }
 
@@ -447,3 +458,174 @@ export function detachedTimedOut(state: LaunchState, launchId: string | null): L
   if (state.launchId !== launchId) return state
   return { ...state, detached: false, launchId: null, error: DETACHED_TIMEOUT_MESSAGE }
 }
+
+/* --- Jev launch routing: the Add Panel's own state (#509) — one block, appended --- */
+
+/**
+ * Whether the Jev option belongs on screen at all, and how (#509's own
+ * acceptance criteria): `hidden` while no key is configured — the option
+ * does not exist yet, and there is nothing to explain — `unavailable` once
+ * main names a reason it cannot be turned on (today only
+ * `encryption-unavailable`), shown with that reason rather than hidden, and
+ * `ready` once a key is configured. Derived from `JevSettings` rather than
+ * stored twice, the same reason `launchPhase` is derived rather than held.
+ */
+export type JevAvailability = 'hidden' | 'unavailable' | 'ready'
+
+function jevAvailability(settings: JevSettings): JevAvailability {
+  if (settings.unavailableReason !== undefined) return 'unavailable'
+  return settings.configured ? 'ready' : 'hidden'
+}
+
+/** The decision arm of `JevRouteLaunchResult` — the one Jev answer this panel ever APPLIES to its pickers. */
+export type JevDecision = Extract<JevRouteLaunchResult, { kind: 'decision' }>
+
+/**
+ * Where a Jev ask is, in the source's own promise (#509): the decision is
+ * SHOWN before it is acted on and can be OVERRIDDEN. `idle` is both before
+ * any ask and after one's card has been dismissed or invalidated by an
+ * edited prompt — see `clearJevDecision`, which is the only way back to it.
+ */
+export type JevRoutingPhase =
+  | { phase: 'idle' }
+  | { phase: 'asking' }
+  | { phase: 'decided'; decision: JevDecision }
+  | { phase: 'fellBack'; reason: JevFallbackReason; confidence?: number }
+
+/**
+ * The pickers' values a decision is about to overwrite, kept so
+ * `clearJevDecision` can put them back exactly — Dismiss, and an edited
+ * prompt, both read this rather than guessing what "before" was.
+ */
+export interface JevPreviousChoice {
+  choice: LaunchChoice | null
+  model: string | null
+  effort: string | null
+}
+
+export interface JevState {
+  availability: JevAvailability
+  unavailableReason?: JevUnavailableReason
+  /**
+   * The person's own toggle for this panel session (#509) — off by default,
+   * and never left on once `availability` stops being `ready`: a toggle for
+   * an option that just stopped being offered is not a decision anybody made.
+   */
+  enabled: boolean
+  routing: JevRoutingPhase
+  previousChoice: JevPreviousChoice | null
+}
+
+function closedJevState(): JevState {
+  return {
+    availability: 'hidden',
+    enabled: false,
+    routing: { phase: 'idle' },
+    previousChoice: null
+  }
+}
+
+/**
+ * Main's verdict on the Jev option has arrived (#509) — asked once, on open,
+ * alongside the provider and model lists. A toggle left on from a still-
+ * `ready` answer survives; anything else forces it off, for `JevState`'s own
+ * reason.
+ */
+export function setJevSettings(state: LaunchState, settings: JevSettings): LaunchState {
+  const availability = jevAvailability(settings)
+  return {
+    ...state,
+    jev: {
+      ...state.jev,
+      availability,
+      unavailableReason: settings.unavailableReason,
+      enabled: availability === 'ready' && state.jev.enabled
+    }
+  }
+}
+
+/** The person's own toggle. A no-op outside `ready` — there is nothing to turn on. */
+export function toggleJev(state: LaunchState): LaunchState {
+  if (state.jev.availability !== 'ready') return state
+  return { ...state, jev: { ...state.jev, enabled: !state.jev.enabled } }
+}
+
+/** The ask has left for TypeSafe. Only ever from idle — a second ask mid-flight would be a second request for one launch. */
+export function jevAsked(state: LaunchState): LaunchState {
+  if (state.jev.routing.phase !== 'idle') return state
+  return { ...state, jev: { ...state.jev, routing: { phase: 'asking' } } }
+}
+
+/**
+ * Jev answered (#509). A decision APPLIES through the same paths a person's
+ * own click would use — `chooseProvider`/`chooseModel`/`chooseEffort` — so
+ * the row under the composer needs no second rendering path for "Jev chose
+ * this" versus "I chose this", and the pre-decision values are kept so
+ * `clearJevDecision` can put them back exactly. An absent model or effort is
+ * left unset rather than guessed at, on the same "say nothing" reading the
+ * row under the composer already holds. A fallback touches no picker at all
+ * — issue #509's own acceptance criterion is that the launch still happens
+ * on whatever they already show.
+ *
+ * Guarded to `asking` only: an answer arriving after the ask was abandoned
+ * (the prompt changed under it — see `clearJevDecision`) describes a request
+ * that is no longer this panel's own, and applying it would show a stale
+ * suggestion as if it were live.
+ */
+export function jevAnswered(state: LaunchState, result: JevRouteLaunchResult): LaunchState {
+  if (state.jev.routing.phase !== 'asking') return state
+  if (result.kind === 'fallback') {
+    return {
+      ...state,
+      jev: {
+        ...state.jev,
+        routing: { phase: 'fellBack', reason: result.reason, confidence: result.confidence }
+      }
+    }
+  }
+  const previousChoice: JevPreviousChoice = {
+    choice: state.choice,
+    model: state.model,
+    effort: state.effort
+  }
+  let applied = chooseProvider(state, result.provider)
+  if (result.model !== undefined) applied = chooseModel(applied, result.model)
+  if (result.effort !== undefined) applied = chooseEffort(applied, result.effort)
+  return {
+    ...applied,
+    jev: { ...applied.jev, routing: { phase: 'decided', decision: result }, previousChoice }
+  }
+}
+
+/**
+ * Throws away whatever the last ask left standing — the card, the fallback
+ * line, or an ask still in flight — and restores the pickers a decision had
+ * overwritten. Called on every keystroke in the composer: the ask was about
+ * a PROMPT, and this panel does not carry an answer for one prompt forward
+ * onto another it never asked about. The same function backs the decision
+ * card's own Dismiss control — "revert to the pickers' previous values" is
+ * exactly this restore, asked for explicitly rather than by editing.
+ *
+ * Deliberately not called from toggling Jev off: an existing card is about a
+ * DECISION, not about whether Jev is enabled, and stays on screen until the
+ * prompt or the panel actually changes — toggling off only stops the NEXT
+ * submit from asking again.
+ */
+export function clearJevDecision(state: LaunchState): LaunchState {
+  if (state.jev.routing.phase === 'idle') return state
+  const restore = state.jev.previousChoice
+  const restored: LaunchState =
+    restore === null
+      ? state
+      : { ...state, choice: restore.choice, model: restore.model, effort: restore.effort }
+  return { ...restored, jev: { ...restored.jev, routing: { phase: 'idle' }, previousChoice: null } }
+}
+
+/** Whether `submit` should ask Jev first rather than launch straight off the pickers. */
+export function shouldAskJev(state: LaunchState): boolean {
+  return (
+    state.jev.availability === 'ready' && state.jev.enabled && state.jev.routing.phase === 'idle'
+  )
+}
+
+/* --- end of the #509 block ------------------------------------------------- */

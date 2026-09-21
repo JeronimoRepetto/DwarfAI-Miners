@@ -8,6 +8,7 @@ import {
   OTHER_CHOICE,
   type LaunchPhase
 } from '../../lib/launch/launchState'
+import type { JevState } from '../../lib/launch/launchState'
 import {
   MODEL_HISTORY_SOURCE,
   NO_MODEL_LIST,
@@ -20,6 +21,12 @@ import AddPanel from './AddPanel.vue'
 
 const HIDDEN_MODEL_PICKER: ModelPicker = { visible: false, models: [], disabled: true, note: null }
 const HIDDEN_EFFORT_PICKER: EffortPicker = { visible: false, efforts: [] }
+const HIDDEN_JEV: JevState = {
+  availability: 'hidden',
+  enabled: false,
+  routing: { phase: 'idle' },
+  previousChoice: null
+}
 
 const CLAUDE: AgentProviderOption = { provider: 'claude', installed: true, launchable: true }
 const CODEX: AgentProviderOption = {
@@ -43,7 +50,8 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       error: (overrides.error ?? null) as string | null,
       modelPicker: (overrides.modelPicker ?? HIDDEN_MODEL_PICKER) as ModelPicker,
       effortPicker: (overrides.effortPicker ?? HIDDEN_EFFORT_PICKER) as EffortPicker,
-      permissionsVisible: (overrides.permissionsVisible ?? false) as boolean
+      permissionsVisible: (overrides.permissionsVisible ?? false) as boolean,
+      jev: (overrides.jev ?? HIDDEN_JEV) as JevState
     }
   })
 }
@@ -485,5 +493,254 @@ describe('after a session the panel cannot watch has started', () => {
     await wrapper.get('.launch-close').trigger('click')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+})
+
+/*
+ * Jev (#509): the toggle beside the pickers, the decision it can apply
+ * before a launch happens, and the line that says a launch happened anyway.
+ * This component decides nothing about any of it — `jev` is main's verdict
+ * and `launchState`'s own reading of it, already resolved by the time it
+ * reaches here; this only draws what the prop says and reports gestures back.
+ */
+describe('the Jev option', () => {
+  const READY_JEV: JevState = {
+    availability: 'ready',
+    enabled: false,
+    routing: { phase: 'idle' },
+    previousChoice: null
+  }
+  const ASKING_JEV: JevState = { ...READY_JEV, enabled: true, routing: { phase: 'asking' } }
+  const DECISION: JevState['routing'] = {
+    phase: 'decided',
+    decision: {
+      kind: 'decision',
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+      confidence: 0.87,
+      truncated: false
+    }
+  }
+
+  it('is absent with no key configured — #509’s own first option', () => {
+    expect(panel({ jev: HIDDEN_JEV }).find('.jev-toggle').exists()).toBe(false)
+    expect(panel({ jev: HIDDEN_JEV }).find('.jev-unavailable-reason').exists()).toBe(false)
+  })
+
+  it('is shown disabled, with the reason, for anything else that keeps it off', () => {
+    const unavailable: JevState = {
+      availability: 'unavailable',
+      unavailableReason: 'encryption-unavailable',
+      enabled: false,
+      routing: { phase: 'idle' },
+      previousChoice: null
+    }
+    const wrapper = panel({ jev: unavailable })
+
+    expect(wrapper.get('.jev-toggle').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.jev-unavailable-reason').text()).toBeTruthy()
+  })
+
+  it('is a pressable toggle once ready, reporting the press and nothing else', async () => {
+    const wrapper = panel({ jev: READY_JEV })
+    const toggle = wrapper.get('.jev-toggle')
+
+    expect(toggle.attributes('disabled')).toBeUndefined()
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+
+    await toggle.trigger('click')
+
+    expect(wrapper.emitted('toggle-jev')).toHaveLength(1)
+  })
+
+  it('shows the toggle pressed once the person has turned it on', () => {
+    const wrapper = panel({ jev: { ...READY_JEV, enabled: true } })
+
+    expect(wrapper.get('.jev-toggle').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('says it is asking while the ask is in flight', () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'known-provider-ready',
+      jev: ASKING_JEV
+    })
+
+    expect(wrapper.get('.jev-status').text()).toBe('Asking Jev…')
+  })
+
+  it('refuses a second Enter while Jev is being asked', async () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'dig here',
+      jev: ASKING_JEV
+    })
+
+    await wrapper.get('.launch-input').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+
+  describe('the decision card', () => {
+    function withDecision(overrides: Record<string, unknown> = {}) {
+      return panel({
+        chosen: 'codex',
+        phase: 'known-provider-ready',
+        jev: { ...READY_JEV, enabled: true, routing: DECISION },
+        ...overrides
+      })
+    }
+
+    it('names the provider Jev chose off the same label source the chips use', () => {
+      const wrapper = withDecision()
+
+      expect(wrapper.get('.jev-decision-summary').text()).toContain('codex')
+    })
+
+    it('resolves the model label off the picker’s own catalogue, falling back to the raw id', () => {
+      const wrapper = withDecision({
+        modelPicker: {
+          visible: true,
+          models: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }],
+          disabled: false,
+          note: null
+        }
+      })
+
+      expect(wrapper.get('.jev-decision-summary').text()).toContain('GPT-5.6 Sol')
+    })
+
+    it('falls back to the raw model id when the catalogue names it no label', () => {
+      const wrapper = withDecision({
+        modelPicker: { visible: true, models: [], disabled: true, note: null }
+      })
+
+      expect(wrapper.get('.jev-decision-summary').text()).toContain('gpt-5.6-sol')
+    })
+
+    it('states the effort level and the confidence as a percentage', () => {
+      const wrapper = withDecision()
+
+      expect(wrapper.get('.jev-decision-summary').text()).toContain('high')
+      expect(wrapper.get('.jev-decision-summary').text()).toContain('87%')
+    })
+
+    it('notes a trimmed prompt only when the decision says it was truncated', () => {
+      const trimmed = withDecision({
+        jev: {
+          ...READY_JEV,
+          enabled: true,
+          routing: { ...DECISION, decision: { ...DECISION.decision, truncated: true } }
+        }
+      })
+      const untrimmed = withDecision()
+
+      expect(trimmed.get('.jev-decision-truncated').text()).toBeTruthy()
+      expect(untrimmed.find('.jev-decision-truncated').exists()).toBe(false)
+    })
+
+    it('says the pickers below now show the choice and can still be changed', () => {
+      expect(withDecision().get('.jev-decision-note').text()).toBeTruthy()
+    })
+
+    it('applies the decision to the pickers themselves — the chip and the model select', () => {
+      const wrapper = withDecision({
+        modelPicker: {
+          visible: true,
+          models: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }],
+          disabled: false,
+          note: null
+        }
+      })
+
+      expect(wrapper.get('select[aria-label="Model"]').element).toBeTruthy()
+      expect(
+        wrapper
+          .findAll('.provider-chip')
+          .find((chip) => chip.attributes('data-state') === 'selected')
+          ?.text()
+      ).toBe('codex')
+    })
+
+    it('dismisses on its own control, reporting the gesture and nothing else', async () => {
+      const wrapper = withDecision()
+
+      await wrapper.get('.jev-dismiss').trigger('click')
+
+      expect(wrapper.emitted('dismiss-jev')).toHaveLength(1)
+    })
+
+    it('is gone once the session has launched, alongside the chips and the composer', () => {
+      const wrapper = panel({
+        chosen: 'codex',
+        phase: 'submitted-spawning',
+        enabled: true,
+        prompt: 'dig the east gallery',
+        jev: { ...READY_JEV, enabled: true, routing: DECISION }
+      })
+
+      expect(wrapper.find('.jev-decision').exists()).toBe(false)
+    })
+  })
+
+  describe('the fallback line', () => {
+    function fellBackWith(reason: string, confidence?: number) {
+      return panel({
+        chosen: 'claude',
+        phase: 'prompt-ready',
+        enabled: true,
+        prompt: 'dig the east gallery',
+        jev: {
+          ...READY_JEV,
+          enabled: true,
+          routing: { phase: 'fellBack', reason, confidence }
+        }
+      })
+    }
+
+    it.each([
+      ['no-key', 'No TypeSafe key is set'],
+      ['no-launchable-provider', 'No launchable provider to choose from'],
+      ['unreachable', 'Jev could not be reached'],
+      ['timeout', 'Jev took too long'],
+      ['rate-limited', 'Jev is rate-limited right now'],
+      ['unauthorized', 'TypeSafe rejected the API key'],
+      ['invalid-response', "Jev's answer could not be used"],
+      ['budget-exceeded', "The prompt and catalogue do not fit Jev's request budget"]
+    ])(
+      'names %s in the panel’s own words, and says the launch happened anyway',
+      (reason, sentence) => {
+        const text = fellBackWith(reason).get('.jev-fallback').text()
+
+        expect(text).toContain(sentence)
+        expect(text).toContain("Launched with your pickers' values.")
+      }
+    )
+
+    it('names the confidence percentage for a low-confidence fallback', () => {
+      const text = fellBackWith('low-confidence', 0.42).get('.jev-fallback').text()
+
+      expect(text).toContain('42%')
+      expect(text).toContain('not confident enough')
+    })
+
+    it('stays visible once the launch it explains has started', () => {
+      const wrapper = panel({
+        chosen: 'claude',
+        phase: 'submitted-spawning',
+        enabled: true,
+        prompt: 'dig the east gallery',
+        jev: {
+          ...READY_JEV,
+          enabled: true,
+          routing: { phase: 'fellBack', reason: 'timeout' }
+        }
+      })
+
+      expect(wrapper.get('.jev-fallback').text()).toContain('Jev took too long')
+    })
   })
 })

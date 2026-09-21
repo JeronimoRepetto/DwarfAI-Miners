@@ -130,6 +130,7 @@ const {
   modelPicker: launchModelPicker,
   effortPicker: launchEffortPicker,
   permissionsVisible: launchPermissionsVisible,
+  jev: launchJev,
   open: openLaunchPanel,
   close: closeLaunchPanel,
   choose: chooseProvider,
@@ -139,6 +140,8 @@ const {
   setModel: setLaunchModel,
   setEffort: setLaunchEffort,
   setPermissionMode: setLaunchPermissionMode,
+  toggleJevEnabled: toggleLaunchJev,
+  dismissJevDecision: dismissLaunchJevDecision,
   submit: submitLaunch,
   observe: observeLaunch,
   listenFailures: listenLaunchFailures
@@ -1327,6 +1330,7 @@ onBeforeUnmount(() => {
         :model-picker="launchModelPicker"
         :effort-picker="launchEffortPicker"
         :permissions-visible="launchPermissionsVisible"
+        :jev="launchJev"
         @choose="chooseProvider"
         @command="setLaunchCommand"
         @commit="commitLaunchCommand"
@@ -1334,6 +1338,8 @@ onBeforeUnmount(() => {
         @model="setLaunchModel"
         @effort="setLaunchEffort"
         @permission-mode="setLaunchPermissionMode"
+        @toggle-jev="toggleLaunchJev"
+        @dismiss-jev="dismissLaunchJevDecision"
         @submit="submitLaunch"
         @close="close"
       />

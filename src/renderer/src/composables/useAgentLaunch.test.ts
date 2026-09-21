@@ -54,6 +54,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     // function to call, and a bare `undefined` would throw before any test
     // that exercises it got the chance to say why.
     onLaunchFailed: vi.fn().mockReturnValue(() => {}),
+    // Jev (#509). Same reason listAgentProviders is named here: an awaited
+    // member resolving undefined becomes an unhandled rejection only the
+    // full suite catches. `configured: false` is the honest default before
+    // any test asks for `ready` — a test that never touches Jev exercises
+    // the ordinary launch path exactly as it did before this option existed.
+    getJevSettings: vi.fn().mockResolvedValue({ configured: false }),
+    routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'no-key' }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -576,6 +583,256 @@ describe('routing a launch to the channel its provider can actually use', () => 
 
     expect(launch.phase.value).toBe('prompt-ready')
     expect(launch.state.value.error).toBeTruthy()
+  })
+})
+
+/*
+ * Jev (#509): the composable's own two jobs — reading main's settings
+ * verdict on open, and, on submit, asking before an enabled/ready launch
+ * goes out. Everything about what a decision or a fallback actually DOES to
+ * the pickers is `launchState`'s, tested there; this describes only the IPC
+ * orchestration around it.
+ */
+describe('Jev launch routing (#509)', () => {
+  const DECISION = {
+    kind: 'decision' as const,
+    provider: 'codex' as const,
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+    confidence: 0.87,
+    truncated: false
+  }
+  const FALLBACK = { kind: 'fallback' as const, reason: 'timeout' as const }
+
+  describe('opening the panel', () => {
+    it('reads the Jev settings verdict alongside providers and models', async () => {
+      const api = stubApi({ getJevSettings: vi.fn().mockResolvedValue({ configured: true }) })
+      const { open, jev } = useAgentLaunch()
+
+      await open(MINE)
+
+      expect(api.getJevSettings).toHaveBeenCalledOnce()
+      expect(jev.value.availability).toBe('ready')
+    })
+
+    it('treats a bridge that cannot answer as hidden, rather than failing to open', async () => {
+      stubApi({ getJevSettings: vi.fn().mockRejectedValue(new Error('bridge down')) })
+      const { open, jev, phase } = useAgentLaunch()
+
+      await open(MINE)
+
+      expect(jev.value.availability).toBe('hidden')
+      expect(phase.value).toBe('provider-selection')
+    })
+
+    it('is off by default even once ready', async () => {
+      stubApi({ getJevSettings: vi.fn().mockResolvedValue({ configured: true }) })
+      const { open, jev } = useAgentLaunch()
+
+      await open(MINE)
+
+      expect(jev.value.enabled).toBe(false)
+    })
+  })
+
+  describe('the toggle and dismiss', () => {
+    it('flips the toggle only once ready', async () => {
+      stubApi({ getJevSettings: vi.fn().mockResolvedValue({ configured: true }) })
+      const { open, jev, toggleJevEnabled } = useAgentLaunch()
+      await open(MINE)
+
+      toggleJevEnabled()
+
+      expect(jev.value.enabled).toBe(true)
+    })
+
+    it('dismiss puts the pickers back to what they were before a decision', async () => {
+      const api = stubApi({
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+        routeJevLaunch: vi.fn().mockResolvedValue(DECISION)
+      })
+      const { open, choose, setPrompt, toggleJevEnabled, submit, dismissJevDecision, state } =
+        useAgentLaunch()
+      await open(MINE)
+      choose('claude')
+      toggleJevEnabled()
+      setPrompt('dig the east gallery')
+
+      await submit()
+      expect(state.value.choice).toBe('codex')
+
+      dismissJevDecision()
+
+      expect(state.value.choice).toBe('claude')
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('submitting with Jev enabled and ready', () => {
+    async function readyWithJev(overrides: Record<string, unknown> = {}) {
+      const api = stubApi({
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+        routeJevLaunch: vi.fn().mockResolvedValue(DECISION),
+        ...overrides
+      })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      launch.choose('claude')
+      launch.toggleJevEnabled()
+      launch.setPrompt('dig the east gallery')
+      return { api, launch }
+    }
+
+    it('asks Jev instead of launching straight off the pickers', async () => {
+      const { api, launch } = await readyWithJev()
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+    })
+
+    it('shows the decision and applies it to the pickers, without launching', async () => {
+      const { launch } = await readyWithJev()
+
+      await launch.submit()
+
+      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
+      expect(launch.state.value.choice).toBe('codex')
+      expect(launch.state.value.model).toBe('gpt-5.6-sol')
+      expect(launch.state.value.effort).toBe('high')
+      expect(launch.phase.value).toBe('prompt-ready')
+    })
+
+    it('launches on a second submit, down the channel the applied provider actually uses', async () => {
+      const { api, launch } = await readyWithJev()
+      await launch.submit()
+
+      await launch.submit()
+
+      // Codex has no held-session engine (#168) — the whole point of applying
+      // the decision through chooseProvider is that submit reads it exactly
+      // as it would a person's own click.
+      expect(api.launchAgent).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'codex',
+        prompt: 'dig the east gallery',
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+    })
+
+    it('never asks Jev again for a decision already held', async () => {
+      const { api, launch } = await readyWithJev()
+      await launch.submit()
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+    })
+
+    it('ignores a second submit while Jev is still being asked, in state and not only in the view', async () => {
+      // The view already refuses a second Enter during `asking`, but the
+      // model has to hold the same line: a second submit that slipped past
+      // the view would find `shouldAskJev` false (the ask is in flight) and
+      // launch on the UNAPPLIED pickers, and the late decision would then
+      // rewrite them behind a launch already started. Same shape as the
+      // ordinary "one launch in flight" guard above it.
+      const { api, launch } = await readyWithJev()
+
+      await Promise.all([launch.submit(), launch.submit()])
+
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
+    })
+
+    it('launches immediately on a fallback, and keeps it visible', async () => {
+      const { api, launch } = await readyWithJev({
+        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK)
+      })
+
+      await launch.submit()
+
+      expect(api.launchHeldSession).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'claude',
+        prompt: 'dig the east gallery'
+      })
+      expect(launch.jev.value.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'timeout',
+        confidence: undefined
+      })
+    })
+
+    it('falls back with invalid-response when the bridge itself rejects', async () => {
+      const { api, launch } = await readyWithJev({
+        routeJevLaunch: vi.fn().mockRejectedValue(new Error('bridge down'))
+      })
+
+      await launch.submit()
+
+      expect(launch.jev.value.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'invalid-response',
+        confidence: undefined
+      })
+      expect(api.launchHeldSession).toHaveBeenCalledOnce()
+    })
+
+    it('drops a stale decision and re-asks once the prompt is edited', async () => {
+      const { api, launch } = await readyWithJev()
+      await launch.submit()
+      expect(launch.jev.value.routing.phase).toBe('decided')
+
+      launch.setPrompt('shore the north wall instead')
+      expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).toHaveBeenLastCalledWith({
+        prompt: 'shore the north wall instead'
+      })
+    })
+  })
+
+  describe('submitting with Jev off, unavailable, or hidden', () => {
+    it('never asks when the toggle is off', async () => {
+      const api = stubApi({
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+        routeJevLaunch: vi.fn().mockResolvedValue(DECISION)
+      })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      launch.choose('claude')
+      launch.setPrompt('dig the east gallery')
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).not.toHaveBeenCalled()
+      expect(api.launchHeldSession).toHaveBeenCalledOnce()
+    })
+
+    it('never asks with no key configured', async () => {
+      const api = stubApi({
+        getJevSettings: vi.fn().mockResolvedValue({ configured: false }),
+        routeJevLaunch: vi.fn().mockResolvedValue(DECISION)
+      })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      launch.choose('claude')
+      launch.setPrompt('dig the east gallery')
+
+      await launch.submit()
+
+      expect(api.routeJevLaunch).not.toHaveBeenCalled()
+      expect(api.launchHeldSession).toHaveBeenCalledOnce()
+    })
   })
 })
 
