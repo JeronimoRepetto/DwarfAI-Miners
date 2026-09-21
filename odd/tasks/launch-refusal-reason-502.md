@@ -75,7 +75,7 @@ and its test, `src/main/textDelivery/codexQueue.ts` and `codexResume.ts` and the
       `notInstalledReason` precedent suggests). Tests in `launchRunner.test.ts` on `darwin` and
       `linux` with a spawn that rejects `EACCES`/`ENOENT`, and on `win32` with a refused shim,
       asserting the path and cause appear. Rewrite the `launchRunner.ts:31` comment.
-- [ ] **T3 — The two text-delivery callers stop saying `NOT_STARTED` blindly.** Route: delegated
+- [x] **T3 — The two text-delivery callers stop saying `NOT_STARTED` blindly.** Route: delegated
       (same writer). `codexQueue.ts` and `codexResume.ts` surface the same reason. Tests amended in
       their files; docs page updated to describe what a refusal now says.
 
@@ -169,4 +169,67 @@ started when the shim names nothing it can run` → `names the shim path and tha
 not understood` (also drops the old comment's claim "never a path on the wire", which #502 asked
 to stop being true). New: `names the path tried and the spawn error on macOS`.
 
-Commit: `fix(launch): name the path tried and the cause in a launch refusal (#502)`.
+Commit: `fix(launch): name the path tried and the cause in a launch refusal (#502)` (c5736bb).
+
+### T3 — done
+
+`codexQueue.ts` and `codexResume.ts` each replace their fixed `NOT_STARTED` constant with a
+`notStarted(binaryPath, cause)` function (`` `The codex {queue,resume} command could not be
+started: ${binaryPath} — ${cause}.` ``), used both where `resolveProgram` returns a `ShimRefusal`
+(via `describeShimRefusal`) and in the `catch` for a spawn/read failure (via
+`describeProgramFailure`). `docs/guide.md`'s `CODEX_CLI_PATH` paragraph (the one that already
+documented the shim-resolution mechanism these two tiers share, #413) gained a paragraph stating
+that a refusal now names the path tried and why, on all three platforms.
+
+RED (against unmodified `codexQueue.ts`/`codexResume.ts`, tests amended first):
+`pnpm vitest run src/main/textDelivery/codexQueue.test.ts src/main/textDelivery/codexResume.test.ts`
+→ `2 failed (2) / 5 failed | 32 passed (37)` — all 5 on `expected 'The codex {queue,resume}
+command could not be started.' to contain '<path>'`.
+
+GREEN: same command → `2 passed (2) / 37 passed (37)`.
+
+Census: `codexQueue.test.ts` 15 → 15 (0), `codexResume.test.ts` 22 → 22 (0) — every amendment was
+in place, no test added or removed.
+
+Amended assertions (both files, same pattern): the spawn-failure test now also asserts the binary
+path and `ENOENT` appear in the error; the "shim names no JS entry" test (`codexQueue.test.ts`
+only — `codexResume.test.ts`'s own comment says that case is covered exhaustively in
+`codexQueue.test.ts`) now also asserts the shim path and "dialect was not understood" appear; the
+"shim cannot be read at all" test in both files now also asserts the shim path appears.
+
+Commit: `fix(codex): name the path tried when a queue or resume send refuses (#502)`.
+
+### Verification
+
+Run in the worktree, in `CONTRIBUTING.md`'s order:
+
+- `pnpm typecheck` → clean (`typecheck:node` and `typecheck:web` both pass with no errors).
+- `pnpm lint` → clean (`eslint .`, no errors or warnings).
+- `pnpm format:check` → `All matched files use Prettier code style!`.
+- `node skills/skill-sync/assets/sync.mjs --check` → `AGENTS.md already up to date (10 skill(s))`.
+- `pnpm test` → `Test Files 278 passed | 2 skipped (280)`, `Tests 7654 passed | 5 skipped (7659)`.
+  **`src/main/runtime/runtime.test.ts` did NOT show the predicted #477 environmental failure** —
+  run in isolation it is `414 passed (414)`, 0 failed. The feature document's "known environmental
+  failure" note was written before this worktree's branch name was known to be clean of whatever
+  #477's 77 cases match on; nothing was excused, because nothing failed.
+- `pnpm build` → both `out/preload` and `out/renderer` build clean, no errors.
+- Per-file test census (`node skills/test-safety/assets/test-census.mjs --all`): `cliDetection.test.ts`
+  38/38, `launchRunner.test.ts` 59/59, `codexQueue.test.ts` 15/15, `codexResume.test.ts` 22/22 — all
+  `0` delta against their own now-committed state; net `0` across all 282 tracked test files. No
+  test lost anywhere in the repository.
+
+The privacy guard itself was not run (`PRIVACY_GUARD_PATTERN` is a CI secret, not available here);
+checked by hand instead against the placeholders table in `skills/privacy-guard/SKILL.md` — every
+fixture added or touched uses `C:\Users\j\...`, `/home/j/...`, `C:\tools\...` or `C:\npm\...`, never
+this machine's real account name, and `git diff -- docs/guide.md | grep -i jeron` confirms the doc
+change added no name.
+
+Status: **done**. All three tasks implemented, tested (RED observed before each GREEN), and
+committed. Full verification suite green, including the environmental-failure test the document
+flagged as possibly excusable — it was not needed.
+
+Out of scope noticed but not done (matches the document's own list, restated for the record): the
+Windows console-hosting hop for an unrecognised `.cmd` wrapper still refuses without a path
+(`launchRunner.ts:465-470`, needs its own measurement); no new per-platform convention rows were
+added to `conventionalCliPaths`; `FsLike.exists` is still a bare `stat` with no executability
+check.

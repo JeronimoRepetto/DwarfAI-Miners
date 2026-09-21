@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process'
 import type { FsLike } from '../adapters/fsLike'
-import { resolveProgram } from '../platform/cliDetection'
+import {
+  describeProgramFailure,
+  describeShimRefusal,
+  resolveProgram
+} from '../platform/cliDetection'
 import type { TextDeliveryOutcome } from './port'
 
 /**
@@ -112,7 +116,11 @@ const NOT_FOUND =
   'The codex binary could not be found, so there is nowhere to queue the message. ' +
   'Set CODEX_CLI_PATH to it.'
 const UNKNOWN_THREAD = 'Codex no longer knows that session, so the message was not queued.'
-const NOT_STARTED = 'The codex queue command could not be started.'
+
+/** Names the path tried and why, rather than a fixed sentence (#502). */
+function notStarted(binaryPath: string, cause: string): string {
+  return `The codex queue command could not be started: ${binaryPath} — ${cause}.`
+}
 
 /**
  * Queue one message on a thread, mapping every failure mode to a reason the
@@ -133,7 +141,7 @@ const NOT_STARTED = 'The codex queue command could not be started.'
  * THAT program with no shell, so the message stays its own argv element —
  * exactly the property the old refusal existed to protect, just reached a
  * different way. A shim that cannot be read or names nothing runnable still
- * fails closed, with this same NOT_STARTED sentence, never a guess.
+ * fails closed, naming the shim's own path and why (#502), never a guess.
  */
 export async function deliverViaCodexQueue(
   options: CodexQueueDeliveryOptions
@@ -147,7 +155,9 @@ export async function deliverViaCodexQueue(
     // a spawn can, and it fails the same way for the user here too (#413):
     // nothing queued, never a guess at what the shim would have run.
     const program = await resolveProgram(binaryPath, options.fs)
-    if (program === undefined) return { delivered: false, error: NOT_STARTED }
+    if ('kind' in program) {
+      return { delivered: false, error: notStarted(program.shimPath, describeShimRefusal(program)) }
+    }
     const result = await options.run({
       command: program.command,
       args: [...program.args, ...buildCodexQueueArgs(options.threadId, options.text)],
@@ -167,7 +177,7 @@ export async function deliverViaCodexQueue(
       }
     }
     return { delivered: true }
-  } catch {
-    return { delivered: false, error: NOT_STARTED }
+  } catch (error) {
+    return { delivered: false, error: notStarted(binaryPath, describeProgramFailure(error)) }
   }
 }
