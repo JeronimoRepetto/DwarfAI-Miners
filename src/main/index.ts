@@ -66,8 +66,11 @@ import {
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   parseDwarfAttachments,
-  parseDwarfText
+  parseDwarfText,
   /* --- end of the #408 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  parseJevApiKeyInput
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
 import type { AttachmentReader } from './textDelivery/attachmentDelivery'
@@ -112,6 +115,7 @@ import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessio
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
+import { createJevApiKeyStore } from './shell/jevApiKey'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -230,6 +234,11 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setNotificationsEnabled)
   ipcMain.removeAllListeners(IPC_CHANNELS.setOpenMine)
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  ipcMain.removeHandler(IPC_CHANNELS.getJevSettings)
+  ipcMain.removeHandler(IPC_CHANNELS.setJevApiKey)
+  ipcMain.removeHandler(IPC_CHANNELS.clearJevApiKey)
+  /* --- end of the #509 block ------------------------------------------------ */
 }
 
 /**
@@ -659,6 +668,16 @@ async function init(): Promise<void> {
   const audioStore = createAudioPreferenceStore({
     filePath: join(app.getPath('userData'), 'audio-preferences-v1.json')
   })
+
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  // Read like the audio settings — after the window exists — but PRIMED here
+  // rather than only inside its own IPC handler: the launch router (#509) reads the
+  // decrypted key synchronously off this same store instance through
+  // readKey(), and may run before Settings is ever opened this session, so
+  // the cache it reads has to be warm before that can happen.
+  const jevApiKeyStore = createJevApiKeyStore({ userDataDir: app.getPath('userData') })
+  await jevApiKeyStore.load()
+  /* --- end of the #509 block ------------------------------------------------ */
 
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // The eighth userData preference, read like the audio settings: after the
@@ -1110,6 +1129,47 @@ async function init(): Promise<void> {
     openMineId = typeof payload === 'string' && payload !== '' ? payload : null
   })
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /*
+   * Settings' Jev API-key control (#509).
+   *
+   * None of the three ever answers with the key: `get` re-reads the store,
+   * which is the same "answer with what was STORED" discipline every
+   * preference channel here holds, and `set`/`clear` derive their own answer
+   * from `readKey()` rather than the request, so a refusal this store made
+   * cannot be echoed back as success.
+   */
+  ipcMain.handle(IPC_CHANNELS.getJevSettings, () => jevApiKeyStore.load())
+  ipcMain.handle(IPC_CHANNELS.setJevApiKey, async (_event, payload: unknown) => {
+    try {
+      const key = parseJevApiKeyInput(payload)
+      const result = await jevApiKeyStore.save(key)
+      if (!result.saved) {
+        console.warn(`[jev] API key not saved: ${result.reason}`)
+        if (result.reason === 'encryption-unavailable') {
+          return { configured: false, unavailableReason: 'encryption-unavailable' }
+        }
+      }
+    } catch (error) {
+      // A shape the shared parser refuses (not a string, empty once trimmed,
+      // too long, or carrying a character no key uses) never reaches the
+      // store at all — the boundary trusted-but-typed discipline every
+      // request here holds.
+      console.warn('[jev] Refused to save an API key:', error)
+    }
+    return { configured: jevApiKeyStore.readKey() !== undefined }
+  })
+  ipcMain.handle(IPC_CHANNELS.clearJevApiKey, async () => {
+    try {
+      await jevApiKeyStore.clear()
+    } catch (error) {
+      // The key is already gone from memory; a persistence hiccup only means
+      // the next launch falls back to whatever the file still says.
+      console.warn('[jev] Failed to clear the stored API key:', error)
+    }
+    return { configured: jevApiKeyStore.readKey() !== undefined }
+  })
+  /* --- end of the #509 block ------------------------------------------------ */
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle
   // from the display, so a screen that could not hold the whole composition has

@@ -210,15 +210,39 @@ describe('launchClaudeSession', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('maps a spawn failure to a stated reason rather than a silent no-op', async () => {
+  // AMENDED for #502 (was: 'maps a spawn failure to a stated reason rather
+  // than a silent no-op', asserting the fixed sentence
+  // 'Claude Code could not be started.' with no path or cause). Explicit
+  // platform: a spawn failure is not a Windows-only shape.
+  it('names the path tried and the spawn error on Linux, rather than a fixed sentence', async () => {
     const { result } = launch({
+      platform: 'linux',
       run: vi.fn().mockRejectedValue(new Error('ENOENT'))
     })
 
     await expect(result).resolves.toEqual({
       launched: false,
       provider: 'claude',
-      error: 'Claude Code could not be started.'
+      error: `Claude Code could not be started: ${CLAUDE_PATH} — ENOENT.`
+    })
+  })
+
+  // NEW for #502: the same refusal shape on macOS, with the OS's own errno
+  // code as the cause — a real spawn error carries `code`, unlike the plain
+  // `Error('ENOENT')` the Linux test above uses to pin the message text.
+  it('names the path tried and the spawn error on macOS', async () => {
+    const spawnError = Object.assign(new Error('spawn /home/j/.local/bin/claude EACCES'), {
+      code: 'EACCES'
+    })
+    const { result } = launch({
+      platform: 'darwin',
+      run: vi.fn().mockRejectedValue(spawnError)
+    })
+
+    await expect(result).resolves.toEqual({
+      launched: false,
+      provider: 'claude',
+      error: `Claude Code could not be started: ${CLAUDE_PATH} — EACCES.`
     })
   })
 
@@ -393,9 +417,13 @@ describe('launching Codex', () => {
     expect(invocation.stdin).toBe(secret)
   })
 
-  it('says Codex could not be started when the shim names nothing it can run', async () => {
-    // A third shim dialect, or a hand-written wrapper: an honest generic
-    // failure, never a guess at an entry and never a path on the wire.
+  // AMENDED for #502 (was: 'says Codex could not be started when the shim
+  // names nothing it can run', asserting the fixed sentence
+  // 'Codex CLI could not be started.' and a comment claiming "never a path on
+  // the wire" — that claim is exactly what #502 asked to stop being true).
+  it('names the shim path and that its dialect was not understood', async () => {
+    // A third shim dialect, or a hand-written wrapper: an honest failure that
+    // names the path it tried and why, never a guess at an entry.
     const fs = new FakeFs()
     fs.addFile(NPM_SHIM, '@echo off\r\nrem nothing to run here\r\n')
     const { run, result } = launch({
@@ -408,7 +436,7 @@ describe('launching Codex', () => {
     await expect(result).resolves.toEqual({
       launched: false,
       provider: 'codex',
-      error: 'Codex CLI could not be started.'
+      error: `Codex CLI could not be started: ${NPM_SHIM} — the shim was found but its dialect was not understood.`
     })
     expect(run).not.toHaveBeenCalled()
   })

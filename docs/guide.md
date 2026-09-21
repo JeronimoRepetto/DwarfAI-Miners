@@ -742,6 +742,17 @@ message reaches the thread without a shell ever seeing it (and without `%VAR%` e
 or a quote ending the argument early). Set this only for an install detection cannot find on its
 own.
 
+**A refusal now names the path it tried and why, on all three platforms (#502).** It used to
+collapse to one fixed sentence — `<Product> could not be started.` — with nothing a person could
+act on. If a Windows shim's text is not this pattern at all (no quoted `.js` entry — a hand-written
+wrapper, or a third package manager's own dialect) or still carries a `%` variable only `cmd.exe`
+could expand, the panel now says which of the two it found and shows the shim's own path. On macOS
+and Linux, where there is no shim to read, a spawn that fails outright (a binary with its
+executable bit missing, an interpreter line naming nothing installed) is reported the same way:
+the path this app tried, and the operating system's own reason. This applies everywhere
+`resolveProgram` resolves a binary before running it — launching a session from the Add panel, and
+both Codex text-delivery tiers above.
+
 </details>
 
 ### Diagnostic switches

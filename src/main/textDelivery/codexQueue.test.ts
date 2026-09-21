@@ -95,13 +95,18 @@ describe('deliverViaCodexQueue', () => {
     expect(outcome.error).toContain('20s')
   })
 
-  it('reports a spawn failure rather than rejecting', async () => {
+  // AMENDED for #502: now also asserts the path tried, not just the fixed
+  // lead sentence — a spawn failure is one of the two refusals this issue
+  // gave a path and a cause.
+  it('reports a spawn failure rather than rejecting, naming the path and cause', async () => {
     const run = vi.fn(async () => {
       throw new Error('ENOENT')
     })
     const outcome = await deliverViaCodexQueue(options({ run }))
     expect(outcome.delivered).toBe(false)
     expect(outcome.error).toContain('could not be started')
+    expect(outcome.error).toContain(BINARY)
+    expect(outcome.error).toContain('ENOENT')
   })
 
   it('refuses before spawning when codex was not detected at all', async () => {
@@ -243,6 +248,9 @@ describe('deliverViaCodexQueue resolving a shim (#413)', () => {
     })
   })
 
+  // AMENDED for #502: also asserts the shim's own path and dialect cause,
+  // not just the fixed lead sentence — this used to be indistinguishable
+  // from every other "could not be started" refusal.
   it('fails closed and never spawns when the shim can be read but names no JS entry', async () => {
     const fs = new FakeFs()
     fs.addFile(NPM_SHIM, '@echo off\r\nrem nothing to run here\r\n')
@@ -252,9 +260,12 @@ describe('deliverViaCodexQueue resolving a shim (#413)', () => {
 
     expect(outcome.delivered).toBe(false)
     expect(outcome.error).toContain('could not be started')
+    expect(outcome.error).toContain(NPM_SHIM)
+    expect(outcome.error).toContain('dialect was not understood')
     expect(run).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #502: also asserts the shim's own path and the read error.
   it('fails closed and never spawns when the shim cannot be read at all', async () => {
     // NPM_SHIM is never registered on this fake, so the read itself rejects.
     const fs = new FakeFs()
@@ -264,6 +275,7 @@ describe('deliverViaCodexQueue resolving a shim (#413)', () => {
 
     expect(outcome.delivered).toBe(false)
     expect(outcome.error).toContain('could not be started')
+    expect(outcome.error).toContain(NPM_SHIM)
     expect(run).not.toHaveBeenCalled()
   })
 

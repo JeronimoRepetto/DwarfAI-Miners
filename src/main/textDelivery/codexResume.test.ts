@@ -130,13 +130,16 @@ describe('deliverViaCodexResume', () => {
     expect(outcome.error).not.toContain('undefined')
   })
 
-  it('reports a spawn failure rather than rejecting', async () => {
+  // AMENDED for #502: also asserts the path tried and the cause.
+  it('reports a spawn failure rather than rejecting, naming the path and cause', async () => {
     const run = vi.fn(async () => {
       throw new Error('ENOENT')
     })
     const outcome = await deliverViaCodexResume(options({ run }))
     expect(outcome.delivered).toBe(false)
     expect(outcome.error).toContain('could not be started')
+    expect(outcome.error).toContain(BINARY)
+    expect(outcome.error).toContain('ENOENT')
   })
 
   it('refuses before spawning when codex was not detected at all', async () => {
@@ -237,6 +240,7 @@ describe('deliverViaCodexResume resolving a shim (#413)', () => {
     })
   })
 
+  // AMENDED for #502: also asserts the shim's own path is named.
   it('fails closed and never spawns when the shim cannot be read at all', async () => {
     // NPM_SHIM is never registered on this fake, so the read itself rejects.
     const fs = new FakeFs()
@@ -246,6 +250,7 @@ describe('deliverViaCodexResume resolving a shim (#413)', () => {
 
     expect(outcome.delivered).toBe(false)
     expect(outcome.error).toContain('could not be started')
+    expect(outcome.error).toContain(NPM_SHIM)
     expect(run).not.toHaveBeenCalled()
   })
 })
