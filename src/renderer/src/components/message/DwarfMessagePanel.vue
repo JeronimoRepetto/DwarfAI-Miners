@@ -36,6 +36,7 @@ import {
 } from '../../lib/message/conversation'
 import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
 import { isOpenablePath } from '../../lib/message/openablePath'
+import { turnOutcomeLine } from '../../lib/message/turnOutcome'
 import { dwarfWorkplaceLabel } from '../../lib/worktree'
 import {
   STICK_TO_BOTTOM_TOLERANCE_PX,
@@ -246,6 +247,16 @@ const collapsedHeight = ref(height.value)
  * folder, which is most of them; see lib/worktree for branch versus folder.
  */
 const workplaceLabel = computed(() => dwarfWorkplaceLabel(props.dwarf.workplace))
+
+/**
+ * How the dwarf's last turn ended (#510), directly off the prop already on
+ * this panel — no new IPC and no composable, because `Dwarf.lastTurn` rides
+ * every snapshot this component already receives. `turnOutcomeLine` is the
+ * pure read of what it may say; this component only draws it. Absent for a
+ * dwarf that has not finished a turn yet, which is the honest silence rather
+ * than a placeholder sentence.
+ */
+const turnOutcome = computed(() => turnOutcomeLine(props.dwarf.lastTurn))
 
 const transient = computed(() => ({ kicking: isKicking.value }))
 const actions = computed(() => buildActionBar(props.dwarf, transient.value))
@@ -855,6 +866,27 @@ function onKick(): void {
     </header>
 
     <!--
+      How the last turn ended (#510) — directly under the header, and its own
+      row rather than a rewrite of the note below the composer: what a turn
+      concluded and whether a message was delivered or reacted to are two
+      different facts (AGENTS.md), and this one never borrows the other's
+      words. Absent for a dwarf with no `lastTurn` yet, same as every other
+      conditional row in this panel.
+    -->
+    <template v-if="turnOutcome">
+      <p
+        class="panel-turn-outcome"
+        :class="`is-${turnOutcome.kind}`"
+        role="status"
+        :title="turnOutcome.text"
+      >
+        {{ turnOutcome.headline
+        }}<template v-if="turnOutcome.text">: {{ turnOutcome.text }}</template>
+      </p>
+      <p v-if="turnOutcome.trimmed" class="panel-turn-outcome-trimmed">(trimmed)</p>
+    </template>
+
+    <!--
       Independently scrollable, which is a rule and not a convenience: the
       source says history can be inspected here without expanding the tab.
     -->
@@ -1382,6 +1414,54 @@ function onKick(): void {
 .panel-agent:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+/*
+ * How the last turn ended (#510), directly under the header. The design
+ * source (`docs/dwarfai-miners-design/`) is not on this machine, so this
+ * introduces no per-kind palette: same muted ink and meta size as the
+ * header's own `.panel-workplace`, the header's typography rather than a
+ * fourth invented one. `flex: none` for the reason every other row here is:
+ * the fixed panel height gives up pixels from the flexible conversation list
+ * above the composer, never from the composer itself.
+ *
+ * Clamped to a few lines with the SAME idiom `.activity-line` already uses —
+ * overflow hidden, an ellipsis, the full text left in `title` for a hover —
+ * carried to several lines with `-webkit-line-clamp` because a turn's own
+ * words run far longer than one tool-call summary ever does.
+ */
+.panel-turn-outcome {
+  display: -webkit-box;
+  flex: none;
+  overflow: hidden;
+  margin: 0;
+  padding: 2px 8px 0;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-meta);
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  text-overflow: ellipsis;
+}
+/*
+ * A failed turn is the one kind this row treats as a problem rather than as
+ * plain narration — the same danger ink `.panel-alert` already carries for a
+ * send or a kick failure, not a colour invented for this row alone.
+ */
+.panel-turn-outcome.is-errored {
+  color: var(--danger-ink);
+}
+/*
+ * Whether the WIRE cut the text at its own bound (`boundTurnText`), never the
+ * panel's visual clamp above — the two truncations are independent, so this
+ * stays outside the clamped paragraph and is never itself cut off by it.
+ */
+.panel-turn-outcome-trimmed {
+  flex: none;
+  margin: 0;
+  padding: 0 8px 0;
+  color: var(--color-tooltip-text);
+  font-size: var(--text-meta);
+  opacity: 0.75;
 }
 /*
  * The messages, with their own scroll — a stated rule, so that history can be
