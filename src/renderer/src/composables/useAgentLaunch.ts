@@ -300,6 +300,12 @@ export function useAgentLaunch(): AgentLaunch {
    */
   async function submit(): Promise<void> {
     if (!canSubmit(state.value) || mineId.value === null) return
+    // An ask in flight is this panel's one launch in flight, held by the model
+    // and not only by the view's Enter guard: a second submit here would find
+    // `shouldAskJev` false (the ask already left) and launch on the pickers
+    // the decision has not reached yet, and the late answer would then
+    // rewrite them behind a session already started.
+    if (state.value.jev.routing.phase === 'asking') return
 
     if (shouldAskJev(state.value)) {
       state.value = jevAsked(state.value)

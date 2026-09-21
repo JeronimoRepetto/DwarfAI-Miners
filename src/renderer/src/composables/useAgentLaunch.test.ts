@@ -734,6 +734,23 @@ describe('Jev launch routing (#509)', () => {
       expect(api.routeJevLaunch).toHaveBeenCalledOnce()
     })
 
+    it('ignores a second submit while Jev is still being asked, in state and not only in the view', async () => {
+      // The view already refuses a second Enter during `asking`, but the
+      // model has to hold the same line: a second submit that slipped past
+      // the view would find `shouldAskJev` false (the ask is in flight) and
+      // launch on the UNAPPLIED pickers, and the late decision would then
+      // rewrite them behind a launch already started. Same shape as the
+      // ordinary "one launch in flight" guard above it.
+      const { api, launch } = await readyWithJev()
+
+      await Promise.all([launch.submit(), launch.submit()])
+
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(launch.jev.value.routing).toEqual({ phase: 'decided', decision: DECISION })
+    })
+
     it('launches immediately on a fallback, and keeps it visible', async () => {
       const { api, launch } = await readyWithJev({
         routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK)
