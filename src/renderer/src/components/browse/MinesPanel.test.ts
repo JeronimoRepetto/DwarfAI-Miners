@@ -297,8 +297,7 @@ describe('MinesPanel add control', () => {
     const controls = wrapper.findAll('.panel-header button').map((button) => button.classes())
     expect(controls).toEqual([
       expect.arrayContaining(['sort-control']),
-      expect.arrayContaining(['add-control']),
-      expect.arrayContaining(['mines-info'])
+      expect.arrayContaining(['add-control'])
     ])
   })
 
@@ -527,13 +526,19 @@ describe('MinesPanel worktree question', () => {
 })
 
 /**
- * The tier-info popup (#538): a small info button in the panel's header that
- * opens a read-only modal with the tier threshold table.
+ * The tier-info popup (#538): a small info button in the panel's bottom-right
+ * corner that opens a read-only modal with the tier threshold table. It started
+ * in the header row beside Add; the maintainer ruled it has to read as the same
+ * control the map draws, which means the corner of the panel and not the
+ * controls row (the `sits in the controls row` case above was amended to two
+ * buttons for the same reason).
  */
 describe('MinesPanel tier info', () => {
-  it('shows the info button in the header', () => {
+  it('sits in the panel corner rather than the header, the way the map draws it', () => {
     const wrapper = panel()
     expect(wrapper.find('.mines-info').exists()).toBe(true)
+    expect(wrapper.find('.panel-header .mines-info').exists()).toBe(false)
+    expect(wrapper.find('.mines-panel > .mines-info').exists()).toBe(true)
   })
 
   it('opens the modal when the info button is clicked', async () => {

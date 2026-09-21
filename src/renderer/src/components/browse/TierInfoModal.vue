@@ -10,6 +10,7 @@
  * Presentational: the only state it owns is its own presence, and the only
  * thing that leaves is the dismissal signal.
  */
+import { MOUND_SRC } from '../../lib/art'
 import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 
 const emit = defineEmits<{ close: [] }>()
@@ -40,7 +41,11 @@ function thresholdText(tier: string): string {
         </thead>
         <tbody>
           <tr v-for="tier in MINE_TIERS" :key="tier">
-            <td class="info-tier">{{ tier.charAt(0).toUpperCase() + tier.slice(1) }}</td>
+            <td class="info-tier">
+              <img class="info-mound" :src="MOUND_SRC[tier]" alt="" draggable="false" />{{
+                tier.charAt(0).toUpperCase() + tier.slice(1)
+              }}
+            </td>
             <td class="info-threshold">{{ thresholdText(tier) }}</td>
           </tr>
         </tbody>
@@ -125,5 +130,20 @@ function thresholdText(tier: string): string {
 .info-threshold {
   color: var(--color-accent);
   text-align: center;
+}
+/*
+ * The entrance painting the tier's name refers to, at the scale
+ * MaterialInfoModal draws its nuggets at — wider, because a mound is landscape
+ * where a nugget is square, and the name has to stay the row's subject.
+ * Decorative: `alt=""` because the tier text beside it already says which mine
+ * this is, and a second reading of the same word helps nobody.
+ */
+.info-mound {
+  display: inline-block;
+  width: 28px;
+  height: auto;
+  margin-right: 6px;
+  vertical-align: middle;
+  user-select: none;
 }
 </style>
