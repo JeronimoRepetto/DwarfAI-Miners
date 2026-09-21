@@ -1,70 +1,85 @@
-import type { DwarfProvider, JevFallbackReason } from '../domain/types'
+import type { JevFallbackReason, JevRoutingProfile } from '../domain/types'
 
 /**
- * The Jev routing port (issue #509): asking TypeSafe's System One model to
- * pick a provider, model and effort from a launch prompt, and the typed
- * outcome every launch path can act on without ever being blocked by it.
+ * The Jev routing port (issue #509; request v2, jev-routing-profiles T3):
+ * asking TypeSafe's System One model to answer FIVE questions about a launch
+ * prompt — is it trivial, does it need large context, which provider fits,
+ * how capable a model, and how hard is the task — and the typed outcome
+ * every launch path can act on without ever being blocked by it.
+ *
+ * The port hands back Jev's own RAW answers (`JevRouteAnswers`); mapping
+ * them onto a concrete provider, model and effort through the profile and
+ * the capability table is `routeDecision.ts`'s job, kept OUT of the port so
+ * that mapping can be tested with no network at all.
  *
  * T3 lifted `JevFallbackReason` into `shared/contracts.ts` — a launch result
  * now carries that same vocabulary across the wire (`JevRouteLaunchResult`),
  * so the renderer can say WHY a launch fell back to the pickers' own values.
- * `JevRouteDecision`, `JevRouteFallback` and `JevRouteOutcome` stay here,
- * next to the port that produces them: they carry `usage.inputTokens`, which
- * the wire result never may — see `JevRouteLaunchResult`'s own comment in
- * contracts.ts, which also carries the full reasoning for the fallback
- * vocabulary itself (why `route` can never throw).
+ * `JevRouteAnswers`, `JevRouteFallback` and `JevRouteOutcome` stay here, next
+ * to the port that produces them: `JevRouteAnswers` carries
+ * `usage.inputTokens`, which the wire result never may — see
+ * `JevRouteLaunchResult`'s own comment in contracts.ts, which also carries
+ * the full reasoning for the fallback vocabulary itself (why `route` can
+ * never throw).
  */
 
 /** Re-exported so every existing `import ... from './jevRouterPort'` keeps working unchanged. */
 export type { JevFallbackReason }
 
 /**
- * One option the model question may answer — see routeRequest.ts's
- * `buildJevRouteRequest`: a provider paired with one of its own models, or a
- * provider alone when it has none to offer.
- *
- * `key` is what travels to Jev and what its `choice` answer names back:
- * `<provider>:<model>`, with the model half left EMPTY rather than the key
- * being just the bare provider name — so every key has the same shape, and a
- * provider's own name can never collide with another provider's model value
- * happening to equal it.
+ * One Choice option's own description, in TypeSafe's OWN documented
+ * vocabulary (docs.typesafe.ai) — snake_case is THEIR spelling, kept
+ * verbatim rather than translated to camelCase, because this object is sent
+ * to Jev exactly as built and Jev is calibrated on that exact shape.
  */
-export interface JevModelChoice {
-  key: string
-  provider: DwarfProvider
-  /** Absent for the "let the CLI pick" option — see `key`'s own comment. */
-  model?: string
-  /** The one-line sentence Jev sees for this option. */
-  criteria: string
+export interface JevChoiceCriteria {
+  what: string
+  not_for?: string
+  examples: readonly [string, string]
 }
 
-/** One built System One request, ready for a port implementation to send. */
+/**
+ * One built System One request, ready for a port implementation to send —
+ * see routeRequest.ts's `buildJevRouteRequest`. Only the parts that vary per
+ * CALL live here; the four fixed questions (`is_trivial`,
+ * `needs_large_context`, `model_tier`, `effort`) are module-level constants
+ * in routeRequest.ts that every implementation reads directly, the same way
+ * `EFFORT_RUBRIC` already was before this request carried a `provider`
+ * question too.
+ */
 export interface JevRouteRequest {
   /** The launch prompt — verbatim, or head+tail trimmed; see `truncated`. */
-  state: string
+  prompt: string
+  /** The profile Settings holds today. Rides on `state`, never on a question, so one request serves every profile and Jev conditions on it itself. */
+  routingProfile: JevRoutingProfile
   /**
-   * Whether `state` was shortened to fit TypeSafe's own token budget (see
+   * Whether `prompt` was shortened to fit TypeSafe's own token budget (see
    * routeRequest.ts). A launch may still want to say so, since a trimmed
    * prompt is not quite the one that was typed.
    */
   truncated: boolean
-  /** Every option the model question may answer. */
-  modelChoices: readonly JevModelChoice[]
+  /** The `provider` question's own criteria: one entry per launchable provider plus `no_preference`. */
+  providerCriteria: Readonly<Record<string, JevChoiceCriteria>>
 }
 
 /**
- * Jev chose. `model` and `effort` are each absent on the same terms
- * `LaunchTuning` already reads absence as (see launchTuning.ts's own module
- * comment): the CLI keeps its own default for whichever half Jev did not, or
- * could not, name.
+ * Jev's own answer to all five questions — RAW, never yet resolved onto a
+ * concrete provider, model or effort (`routeDecision.ts`'s `decideLaunch`
+ * does that). `provider.choice`/`tier.choice` are exactly one of the keys
+ * this app sent (`providerCriteria`'s own keys for `provider`;
+ * `TIER_CHOICE_KEYS` in routeRequest.ts for `tier`) — never trusted further
+ * than that by anything downstream, the same discipline the old single
+ * model-choice answer held.
  */
-export interface JevRouteDecision {
-  kind: 'decision'
-  provider: DwarfProvider
-  model?: string
-  effort?: string
-  /** The model question's own reported confidence — see JEV_MIN_CONFIDENCE. */
-  confidence: number
+export interface JevRouteAnswers {
+  kind: 'answers'
+  provider: { choice: string; confidence: number }
+  tier: { choice: string; confidence: number }
+  /** The `is_trivial` Noul's own probability of "yes" — never a confidence, see NoulResponse. */
+  trivial: { probability: number }
+  /** The `needs_large_context` Noul's own probability of "yes". */
+  largeContext: { probability: number }
+  effort: { score: number }
   usage: { inputTokens: number }
 }
 
@@ -77,15 +92,18 @@ export interface JevRouteFallback {
   kind: 'fallback'
   reason: JevFallbackReason
   /**
-   * The decision's own confidence, kept only for `'low-confidence'` so a
-   * launch can show what Jev actually reported alongside why it was not
-   * acted on. Absent for every other reason, which never got far enough to
-   * have one.
+   * Kept only for `'low-confidence'`, so a launch can show what Jev actually
+   * reported alongside why it was not acted on. No path in this pipeline
+   * produces `'low-confidence'` today: every per-question floor now resolves
+   * to a safe default instead of a full fallback (jev-routing-profiles,
+   * orchestrator decision 2026-09-21) — the member stays in the closed union
+   * for the day a distinguishable low-confidence failure is worth naming
+   * again, and so the renderer's existing exhaustive copy keeps compiling.
    */
   confidence?: number
 }
 
-export type JevRouteOutcome = JevRouteDecision | JevRouteFallback
+export type JevRouteOutcome = JevRouteAnswers | JevRouteFallback
 
 /**
  * What a launch asks of Jev. One implementation talks to TypeSafe's SDK

@@ -527,7 +527,17 @@ describe('the Jev option', () => {
       model: 'gpt-5.6-sol',
       effort: 'high',
       confidence: 0.87,
-      truncated: false
+      truncated: false,
+      // request v2 (jev-routing-profiles T3): JevRouteLaunchResult's decision
+      // arm gained these two fields — mechanical fixture update, T4 owns
+      // actually rendering them.
+      tier: 'frontier',
+      parts: {
+        provider: { value: 'codex', confidence: 0.87, applied: 'answered' },
+        tier: { value: 'frontier', confidence: 0.9, applied: 'answered' },
+        trivial: { value: false, probability: 0.05 },
+        largeContext: { value: false, probability: 0.05 }
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 // #168 additions are asserted in their own describe at the foot of this file.
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
 import type { JevRouteLaunchResult, JevSettings, LaunchFailedPush } from '../../types'
+import { DEFAULT_JEV_PREFERENCES } from '../../types'
 import {
   COMPOSER_DISABLED_PLACEHOLDER,
   COMPOSER_ENABLED_PLACEHOLDER,
@@ -477,17 +478,37 @@ describe('a detached launch that failed after it started (#263)', () => {
  * about what the pickers show and what the person is told, both pure.
  */
 describe('the Jev option (#509)', () => {
-  const READY: JevSettings = { configured: true }
-  const HIDDEN: JevSettings = { configured: false }
+  // AMENDED for the #509 follow-up: `preferences` is now a required part of
+  // JevSettings, so these fixtures carry the documented default. No
+  // assertion below changed.
+  const READY: JevSettings = { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+  const HIDDEN: JevSettings = { configured: false, preferences: DEFAULT_JEV_PREFERENCES }
   const UNAVAILABLE: JevSettings = {
     configured: false,
-    unavailableReason: 'encryption-unavailable'
+    unavailableReason: 'encryption-unavailable',
+    preferences: DEFAULT_JEV_PREFERENCES
   }
 
+  // request v2 (jev-routing-profiles T3) adds `tier`/`parts` to the
+  // decision arm — mechanical fixture default, T4 owns actually rendering
+  // them; `overrides` can still replace either per test.
   function decision(
     overrides: Partial<Extract<JevRouteLaunchResult, { kind: 'decision' }>> = {}
   ): JevRouteLaunchResult {
-    return { kind: 'decision', provider: 'codex', confidence: 0.9, truncated: false, ...overrides }
+    return {
+      kind: 'decision',
+      provider: 'codex',
+      confidence: 0.9,
+      truncated: false,
+      tier: 'balanced',
+      parts: {
+        provider: { value: 'codex', confidence: 0.9, applied: 'answered' },
+        tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
+        trivial: { value: false, probability: 0.05 },
+        largeContext: { value: false, probability: 0.05 }
+      },
+      ...overrides
+    }
   }
 
   function fallback(
@@ -701,11 +722,15 @@ describe('the Jev option (#509)', () => {
  * composable's own detour, tested beside it.
  */
 describe('the Jev entry path (#523)', () => {
-  const READY: JevSettings = { configured: true }
-  const HIDDEN: JevSettings = { configured: false }
+  // AMENDED for the #509 follow-up: `preferences` is now a required part of
+  // JevSettings, so these fixtures carry the documented default. No
+  // assertion below changed.
+  const READY: JevSettings = { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+  const HIDDEN: JevSettings = { configured: false, preferences: DEFAULT_JEV_PREFERENCES }
   const UNAVAILABLE: JevSettings = {
     configured: false,
-    unavailableReason: 'encryption-unavailable'
+    unavailableReason: 'encryption-unavailable',
+    preferences: DEFAULT_JEV_PREFERENCES
   }
 
   const jevOn = () => toggleJev(setJevSettings(opened(), READY))
@@ -758,11 +783,21 @@ describe('the Jev entry path (#523)', () => {
   })
 
   describe('the auto-accept checkbox', () => {
+    // request v2 (jev-routing-profiles T3): mechanical fixture update, same
+    // as `decision()` above — this block only exercises the toggle, not the
+    // decision's own content.
     const DECISION: JevRouteLaunchResult = {
       kind: 'decision',
       provider: 'codex',
       confidence: 0.9,
-      truncated: false
+      truncated: false,
+      tier: 'balanced',
+      parts: {
+        provider: { value: 'codex', confidence: 0.9, applied: 'answered' },
+        tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
+        trivial: { value: false, probability: 0.05 },
+        largeContext: { value: false, probability: 0.05 }
+      }
     }
 
     it('starts off — the person’s own choice for this session, never assumed, like enabled', () => {

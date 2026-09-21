@@ -7,10 +7,13 @@ import {
   RateLimitError,
   TypeSafeClient,
   choice,
+  noul,
   score,
-  type Logger
+  type ChoiceCriteria,
+  type EntryType,
+  type Logger,
+  type NoulQuestion
 } from '@typesafe-ai/sdk'
-import { PROVIDER_EFFORT_LEVELS } from '../domain/launchTuning'
 import type {
   JevFallbackReason,
   JevRouteOutcome,
@@ -20,25 +23,31 @@ import type {
 import {
   EFFORT_QUESTION_INSTRUCTIONS,
   EFFORT_RUBRIC,
-  MODEL_QUESTION_INSTRUCTIONS,
-  mapEffortScore
+  IS_TRIVIAL_CRITERIA,
+  IS_TRIVIAL_INSTRUCTIONS,
+  MODEL_TIER_CRITERIA,
+  MODEL_TIER_QUESTION_INSTRUCTIONS,
+  NEEDS_LARGE_CONTEXT_CRITERIA,
+  NEEDS_LARGE_CONTEXT_INSTRUCTIONS,
+  PROVIDER_QUESTION_INSTRUCTIONS,
+  TIER_CHOICE_KEYS
 } from './routeRequest'
 
 /**
- * The SDK adapter for JevRouterPort (issue #509), over `@typesafe-ai/sdk`
- * 0.6.0. Verified against docs.typesafe.ai and, ultimately, this repo's own
+ * The SDK adapter for JevRouterPort (issue #509; request v2,
+ * jev-routing-profiles T3), over `@typesafe-ai/sdk` 0.6.0. Verified against
+ * docs.typesafe.ai and, ultimately, this repo's own
  * `node_modules/.pnpm/@typesafe-ai+sdk@0.6.0/.../dist/index.d.mts` — the
  * type declarations are the ground truth this module was written against.
+ *
+ * Sends the five fixed questions and returns Jev's RAW answers
+ * (`JevRouteAnswers`) — no confidence gate here any more. The v1 adapter
+ * refused a whole decision below one overall confidence floor
+ * (`JEV_MIN_CONFIDENCE`, removed); request v2 asks per-question floors
+ * instead, and resolving a low-confidence PART to a safe default rather than
+ * refusing the whole call is `routeDecision.ts`'s job — see its own module
+ * comment and `PROVIDER_CONFIDENCE_FLOOR`/`TIER_CONFIDENCE_FLOOR`.
  */
-
-/**
- * Below this, a `model` decision degrades to the manual pickers instead of
- * being acted on — issue #509's own acceptance criterion ("When Jev ...
- * returns low confidence, the launch still happens using the pickers'
- * current values"). A product default to tune from observed runs, not a
- * measured constant: nothing published states where real answers cluster.
- */
-export const JEV_MIN_CONFIDENCE = 0.5
 
 /** The name of the dev-only routing-trace switch (issue #525). */
 const JEV_DEBUG_ENV_VAR = 'JEV_DEBUG'
@@ -90,6 +99,26 @@ const SILENT_LOGGER: Logger = {
   info: () => {},
   warn: () => {},
   error: () => {}
+}
+
+/**
+ * `EntryType`/`ChoiceCriteria`/`NoulQuestion['criteria']` are the SDK's own
+ * recursive JSON-value shapes — plain objects WITH an index signature. This
+ * app's own named shapes for the same JSON (`JevQuestionInstructions`,
+ * `JevChoiceCriteria`, `JevNoulSideCriteria` in routeRequest.ts) are not
+ * STRUCTURALLY assignable to them for that reason alone, even though every
+ * value each one ever holds is plain JSON `noul()`/`choice()` already
+ * accept. A double cast, never a reshape: the object crosses unchanged,
+ * only its TYPE is widened to the one those SDK helpers take.
+ */
+function asEntryType(value: unknown): EntryType {
+  return value as EntryType
+}
+function asChoiceCriteria(value: unknown): ChoiceCriteria {
+  return value as ChoiceCriteria
+}
+function asNoulCriteria(value: unknown): NoulQuestion['criteria'] {
+  return value as NoulQuestion['criteria']
 }
 
 export interface CreateTypesafeJevRouterOptions {
@@ -144,65 +173,78 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
         retry: { maxRetries: DEFAULT_MAX_RETRIES }
       })
 
-      const modelCriteria = Object.fromEntries(
-        request.modelChoices.map((entry) => [entry.key, entry.criteria])
-      )
-
       emit('request', {
-        state: request.state,
+        state: { prompt: request.prompt, routing_profile: request.routingProfile },
         truncated: request.truncated,
-        choices: modelCriteria
+        questions: {
+          is_trivial: { instructions: IS_TRIVIAL_INSTRUCTIONS, criteria: IS_TRIVIAL_CRITERIA },
+          needs_large_context: {
+            instructions: NEEDS_LARGE_CONTEXT_INSTRUCTIONS,
+            criteria: NEEDS_LARGE_CONTEXT_CRITERIA
+          },
+          provider: {
+            instructions: PROVIDER_QUESTION_INSTRUCTIONS,
+            criteria: request.providerCriteria
+          },
+          model_tier: {
+            instructions: MODEL_TIER_QUESTION_INSTRUCTIONS,
+            criteria: MODEL_TIER_CRITERIA
+          },
+          effort: { instructions: EFFORT_QUESTION_INSTRUCTIONS, criteria: EFFORT_RUBRIC }
+        }
       })
 
       try {
         const result = await client.systemOne(
           {
-            state: request.state,
+            state: { prompt: request.prompt, routing_profile: request.routingProfile },
             model: 'jev-latest',
             questions: {
-              model: choice(MODEL_QUESTION_INSTRUCTIONS, modelCriteria),
+              is_trivial: noul(
+                asEntryType(IS_TRIVIAL_INSTRUCTIONS),
+                asNoulCriteria(IS_TRIVIAL_CRITERIA)
+              ),
+              needs_large_context: noul(
+                asEntryType(NEEDS_LARGE_CONTEXT_INSTRUCTIONS),
+                asNoulCriteria(NEEDS_LARGE_CONTEXT_CRITERIA)
+              ),
+              provider: choice(
+                asEntryType(PROVIDER_QUESTION_INSTRUCTIONS),
+                asChoiceCriteria(request.providerCriteria)
+              ),
+              model_tier: choice(
+                asEntryType(MODEL_TIER_QUESTION_INSTRUCTIONS),
+                asChoiceCriteria(MODEL_TIER_CRITERIA)
+              ),
               effort: score(EFFORT_QUESTION_INSTRUCTIONS, EFFORT_RUBRIC)
             }
           },
           { signal, timeout: timeoutMs }
         )
 
-        const modelAnswer = result.answers.model
-        const chosen = request.modelChoices.find((entry) => entry.key === modelAnswer.choice)
+        const providerAnswer = result.answers.provider
+        const tierAnswer = result.answers.model_tier
         // The SDK types `choice` as one of the keys sent, but the wire is
         // never trusted on its own word: an id that fails to match one of
-        // OUR OWN choices is an answer this launch cannot act on, however it
-        // happened.
-        if (chosen === undefined) {
+        // OUR OWN choices — for either Choice question — is an answer this
+        // launch cannot act on, however it happened.
+        if (
+          !Object.keys(request.providerCriteria).includes(providerAnswer.choice) ||
+          !(TIER_CHOICE_KEYS as readonly string[]).includes(tierAnswer.choice)
+        ) {
           emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
           return { kind: 'fallback', reason: 'invalid-response' }
         }
 
-        if (modelAnswer.confidence < JEV_MIN_CONFIDENCE) {
-          emit('fallback', {
-            reason: 'low-confidence',
-            confidence: modelAnswer.confidence,
-            elapsedMs: elapsedMs()
-          })
-          return { kind: 'fallback', reason: 'low-confidence', confidence: modelAnswer.confidence }
-        }
-
-        const effortAnswer = result.answers.effort
-        const effort = mapEffortScore(chosen.provider, effortAnswer.score, PROVIDER_EFFORT_LEVELS)
-
-        emit('answer', {
-          choice: chosen.key,
-          confidence: modelAnswer.confidence,
-          effortScore: effortAnswer.score,
-          inputTokens: result.usage.input_tokens
-        })
+        emit('answer', { ...result.answers, inputTokens: result.usage.input_tokens })
 
         return {
-          kind: 'decision',
-          provider: chosen.provider,
-          ...(chosen.model === undefined ? {} : { model: chosen.model }),
-          ...(effort === undefined ? {} : { effort }),
-          confidence: modelAnswer.confidence,
+          kind: 'answers',
+          provider: { choice: providerAnswer.choice, confidence: providerAnswer.confidence },
+          tier: { choice: tierAnswer.choice, confidence: tierAnswer.confidence },
+          trivial: { probability: result.answers.is_trivial.noul },
+          largeContext: { probability: result.answers.needs_large_context.noul },
+          effort: { score: result.answers.effort.score },
           usage: { inputTokens: result.usage.input_tokens }
         }
       } catch (error) {

@@ -61,8 +61,15 @@ import {
   parseJevApiKeyInput,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  parseJevRouteLaunchRequest
+  parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  JEV_ROUTING_PROFILES,
+  DEFAULT_JEV_ROUTING_PROFILE,
+  DEFAULT_JEV_PREFERENCES,
+  isJevRoutingProfile,
+  parseJevPreferences
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from './contracts'
 
 /*
@@ -1129,7 +1136,13 @@ describe('parseJevApiKeyInput', () => {
 
 describe('DEFAULT_JEV_SETTINGS', () => {
   it('starts unconfigured, with no reason claimed until main has actually checked', () => {
-    expect(DEFAULT_JEV_SETTINGS).toEqual({ configured: false })
+    // AMENDED for the #509 follow-up (was: `{ configured: false }`).
+    // JevSettings now always carries `preferences`, so the honest starting
+    // value carries the documented default rather than omitting the field.
+    expect(DEFAULT_JEV_SETTINGS).toEqual({
+      configured: false,
+      preferences: DEFAULT_JEV_PREFERENCES
+    })
   })
 })
 /* --- end of the #509 block ------------------------------------------------- */
@@ -1177,3 +1190,108 @@ describe('parseJevRouteLaunchRequest', () => {
     ).toThrow()
   })
 })
+/* --- end of the #509 block ------------------------------------------------- */
+
+/*
+ * Jev routing profiles: profile and defaults (#509 follow-up) — APPENDED,
+ * nothing above changed.
+ *
+ * The routing profile and the default launch behind Settings' Jev section.
+ * `parseJevPreferences` reads a whole STORED document, so it degrades field
+ * by field on a bad shape (the `config-layering` asymmetry
+ * `parseAudioPreferences` already holds) rather than throwing the way
+ * `parseJevApiKeyInput` does for one typed key. A default whose provider or
+ * model/effort pairing could not actually be launched is refused one layer
+ * down, in `jevPreferences.ts`'s own `save` — this parser only checks shape.
+ */
+describe('JEV_ROUTING_PROFILES and isJevRoutingProfile', () => {
+  it('offers exactly the three profiles the user decided on, in that order', () => {
+    expect(JEV_ROUTING_PROFILES).toEqual(['economy', 'balanced', 'premium'])
+  })
+
+  it.each([...JEV_ROUTING_PROFILES])('reads %s as a real profile', (profile) => {
+    expect(isJevRoutingProfile(profile)).toBe(true)
+  })
+
+  it.each([undefined, null, '', 'Balanced', 'cheap', 42, {}, []])(
+    'reads %j as no profile at all',
+    (value) => {
+      expect(isJevRoutingProfile(value)).toBe(false)
+    }
+  )
+})
+
+describe('DEFAULT_JEV_ROUTING_PROFILE and DEFAULT_JEV_PREFERENCES', () => {
+  it('starts on balanced — cost and capability weighed per prompt (user decision, 2026-09-21)', () => {
+    expect(DEFAULT_JEV_ROUTING_PROFILE).toBe('balanced')
+  })
+
+  it('starts with no default launch at all, which is today’s behaviour before this preference', () => {
+    expect(DEFAULT_JEV_PREFERENCES).toEqual({ profile: 'balanced', default: {} })
+  })
+})
+
+describe('parseJevPreferences', () => {
+  it('reads a document it wrote itself', () => {
+    expect(
+      parseJevPreferences({
+        profile: 'premium',
+        default: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' }
+      })
+    ).toEqual({
+      profile: 'premium',
+      default: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' }
+    })
+  })
+
+  it('keeps a default that only pins a provider, leaving model and effort absent', () => {
+    expect(parseJevPreferences({ profile: 'economy', default: { provider: 'claude' } })).toEqual({
+      profile: 'economy',
+      default: { provider: 'claude' }
+    })
+  })
+
+  it('falls back to balanced on a profile this build does not know', () => {
+    expect(parseJevPreferences({ profile: 'cheap', default: {} })).toEqual({
+      profile: 'balanced',
+      default: {}
+    })
+  })
+
+  it('drops a provider this build has never heard of, rather than passing it through', () => {
+    expect(parseJevPreferences({ profile: 'balanced', default: { provider: 'chatgpt' } })).toEqual({
+      profile: 'balanced',
+      default: {}
+    })
+  })
+
+  it('trims model and effort, and drops either once it is blank', () => {
+    expect(
+      parseJevPreferences({
+        profile: 'balanced',
+        default: { provider: 'claude', model: '  sonnet  ', effort: '   ' }
+      })
+    ).toEqual({ profile: 'balanced', default: { provider: 'claude', model: 'sonnet' } })
+  })
+
+  it('falls back field by field, so one bad value cannot take the others with it', () => {
+    expect(parseJevPreferences({ profile: 42, default: { provider: 'claude', model: 7 } })).toEqual(
+      { profile: 'balanced', default: { provider: 'claude' } }
+    )
+  })
+
+  it('reads a default that is not an object as no default at all', () => {
+    expect(parseJevPreferences({ profile: 'premium', default: 'claude' })).toEqual({
+      profile: 'premium',
+      default: {}
+    })
+  })
+
+  it.each([null, undefined, [], 'jev', 42])(
+    'reads %j — a document that is not an object — as the defaults',
+    (document) => {
+      expect(parseJevPreferences(document)).toEqual(DEFAULT_JEV_PREFERENCES)
+    }
+  )
+})
+/* --- end of the #509 follow-up block ---------------------------------------- */
