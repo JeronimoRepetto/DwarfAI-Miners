@@ -496,6 +496,40 @@ DwarfAI-Miners remembers that so an agent whose notification later scrolls out o
 tail can never come back as a ghost. Codex promotion still comes from a verified
 `thread_spawn` parent link, and OpenCode's own promotion comes from `session.parent_id` the same way.
 
+## Jev
+
+An optional launch assist, off until you enter your own TypeSafe key in the Jev section of
+Settings — see [Settings](#settings). With a key set, a **Let Jev choose** toggle appears beside the
+Add Panel's own pickers, hidden outright without a key and shown disabled with the reason when this
+machine has no encrypted place to keep one. Turn it on and press Enter on the composer to ask Jev
+for a provider, model and effort for what you typed; **Auto-accept Jev's choice** beside it collapses
+that into a single Enter once the toggle is on.
+
+While Jev is deciding, the composer says **Asking Jev…**. Once it answers, a card states what it
+chose — provider, model and effort together with its confidence — and then says, part by part,
+what Jev answered and what fell to a safe value: "Jev chose the balanced tier (85% sure) and Claude
+Code (88% sure)", or "Jev was unsure about the provider (37%); the safe value Claude Code was used".
+The card also notes when the prompt was treated as trivial, when a large-context model was
+preferred, and when the prompt was trimmed to fit Jev's own request budget. The pickers above are
+already set to that choice; change them, or press Launch again to start the session as shown.
+**Dismiss** puts the pickers back without undoing anything already launched.
+
+Jev can fail to decide in several distinct, named ways — unreachable, rate-limited, unauthorized,
+timed out, an unusable answer, no launchable provider, or a request too large for its own budget.
+What happens next depends on Settings' Jev section. With a **default launch** configured there (a
+provider, model and effort meant for exactly this case), the panel sets the pickers to that default
+exactly as it would to a decision and says so — "Jev could not decide (Jev took too long). Your
+default, Codex CLI · gpt-5.6-terra · high, is set below — press Launch again or change it" — with
+its own **Dismiss** to put the pickers back; **Auto-accept** launches it at once. Without a
+default, a chosen provider still launches on the pickers' current values, saying so in a line under
+the composer; with no provider chosen either, nothing launches and your prompt is kept.
+
+Settings' Jev section, visible only once a key is configured, also holds the **routing profile** —
+economy, balanced or premium; see [Configuration](../README.md#configuration) for what each one
+means, and the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for how a model earns
+a place in the table the profile routes through. `JEV_DEBUG=1` traces every routing call to the
+terminal — see [Diagnostic switches](#diagnostic-switches).
+
 ## Sound
 
 Three independent channels, all off one engine:
@@ -581,7 +615,7 @@ it may look slightly different from one platform to the next.
 
 ## Settings
 
-Reached from the top button of the navigation column. Six sections and a small group of
+Reached from the top button of the navigation column. Seven sections and a small group of
 application controls:
 
 | Section            | What it holds                                                                                                                                                                                                                                                            |
@@ -591,6 +625,7 @@ application controls:
 | **Typography**     | **Interface** and **Messaging** fonts, chosen independently — Tiny5, Pixelify Sans, Roboto or Arial for the interface, and the same list without Tiny5 for messages. See [Typography](#typography).                                                                      |
 | **Audio**          | **Music at startup** (on by default), plus a volume slider each for **Music**, **Ambience** and **Effects**. They start at 10%, 100% and 70%. See [Sound](#sound).                                                                                                       |
 | **Notifications**  | **System notifications** (on by default) — one switch, for the whole feature. See [Notifications](#notifications).                                                                                                                                                       |
+| **Jev**            | The TypeSafe API key, and — once a key is configured — the routing profile and the default launch. See [Jev](#jev).                                                                                                                                                      |
 | **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
 | _Application_      | **Always on top**, **Hide panel**, and the running version.                                                                                                                                                                                                              |
 
