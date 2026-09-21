@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
+import { DWARF_PROVIDERS, MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
+  ONE_SHOT_STDOUT_IS_TURN_TEXT,
   buildAntigravityLaunchArgs,
   buildClaudeLaunchArgs,
   buildCodexLaunchArgs,
@@ -529,5 +530,33 @@ describe('isShellShim', () => {
   it('passes a real executable and a bare POSIX binary through', () => {
     expect(isShellShim('C:\\Users\\x\\.local\\bin\\codex.exe')).toBe(false)
     expect(isShellShim('/usr/local/bin/codex')).toBe(false)
+  })
+})
+
+/*
+ * #510 correction. `oneShotTurnOutcome` (oneShotTurnOutcome.ts) needs one bit
+ * per provider before it may read a one-shot launch's captured stdout as its
+ * turn's own answer: is that stdout prose at all, or an opaque machine
+ * envelope this app has never measured the shape of. Decided here, once,
+ * beside the argv builders that already decide each provider's own output
+ * format — never re-derived at the point that reads it.
+ */
+describe('ONE_SHOT_STDOUT_IS_TURN_TEXT (#510 correction)', () => {
+  it('pins the measured verdict for every provider — text-bearing unless proven otherwise', () => {
+    expect(ONE_SHOT_STDOUT_IS_TURN_TEXT).toEqual({
+      claude: true,
+      codex: true,
+      antigravity: true,
+      // The one false: `buildOpenCodeLaunchArgs` above launches with
+      // `--format json`, a stream of raw JSON events per `opencode run
+      // --help` — never proven as prose anywhere this app's evidence rule
+      // accepts (`docs/opencode-format.md` covers the `opencode.db` store,
+      // not this stream).
+      opencode: false
+    })
+  })
+
+  it('carries exactly one entry per known provider, never more and never fewer', () => {
+    expect(Object.keys(ONE_SHOT_STDOUT_IS_TURN_TEXT).sort()).toEqual([...DWARF_PROVIDERS].sort())
   })
 })

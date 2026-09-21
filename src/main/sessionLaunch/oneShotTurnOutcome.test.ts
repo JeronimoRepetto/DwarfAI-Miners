@@ -16,6 +16,7 @@ function result(overrides: {
   signal?: NodeJS.Signals | null
   stdoutTail?: string
   stderrTail?: string
+  stdoutIsTurnText?: boolean
 }) {
   return {
     // `?? 0` would wrongly turn an explicit `exitCode: null` back into 0 —
@@ -25,6 +26,13 @@ function result(overrides: {
     signal: overrides.signal === undefined ? null : overrides.signal,
     stdoutTail: overrides.stdoutTail ?? '',
     stderrTail: overrides.stderrTail ?? '',
+    // AMENDED for #510 correction: `OneShotTurnResult` now carries
+    // `stdoutIsTurnText`. Every case above this point was written against a
+    // text-bearing provider (Codex, via `launchRunner.test.ts`'s own
+    // fixture), so defaulting to `true` here keeps every existing assertion
+    // exactly what it was — the new, non-text-provider behaviour is proven
+    // by the dedicated describe block below instead.
+    stdoutIsTurnText: overrides.stdoutIsTurnText ?? true,
     now: NOW
   }
 }
@@ -112,5 +120,64 @@ describe('oneShotTurnOutcome (#510)', () => {
       oneShotTurnOutcome(result({ signal: 'SIGINT' }))
     ]
     for (const outcome of outcomes) expect(outcome.kind).not.toBe('capped')
+  })
+})
+
+/*
+ * #510 correction. `buildLaunchSpawn`'s stdout capture is provider-agnostic —
+ * every launched CLI's stdout is captured to a file the same way — but
+ * OpenCode is launched with `--format json` (`buildOpenCodeLaunchArgs`,
+ * launch.ts), and that flag documents a stream of raw JSON EVENTS, not the
+ * turn's own final answer printed as prose. Before this correction,
+ * `oneShotTurnOutcome` read every provider's captured stdout as if it were
+ * that answer, so a clean-exit OpenCode launch would have recorded its raw
+ * event stream verbatim as `Dwarf.lastTurn.text` — contradicting #510's own
+ * acceptance criterion that the captured text match what a person reads as
+ * the final answer.
+ *
+ * `stdoutIsTurnText` is the caller's own verdict (decided once, per provider,
+ * by `ONE_SHOT_STDOUT_IS_TURN_TEXT` in launch.ts) about whether THIS launch's
+ * stdout is prose at all. This function stays pure and never guesses at a
+ * shape it was not told to trust.
+ */
+describe('oneShotTurnOutcome — stdoutIsTurnText (#510 correction)', () => {
+  it('never reads a clean exit´s stdout as an answer when the provider´s stdout is not turn text', () => {
+    const jsonEventStream = '{"type":"message.part.updated","part":{"type":"text","text":"hi"}}\n'
+    expect(
+      oneShotTurnOutcome(
+        result({ exitCode: 0, stdoutTail: jsonEventStream, stdoutIsTurnText: false })
+      )
+    ).toEqual({ kind: 'concluded', endedAt: NOW })
+  })
+
+  it('still reports the ending, never an absent outcome, when stdout carries no trusted text', () => {
+    // Absence of text is not a fact; the ending is. A machine-readable
+    // stream this app has not parsed is not "what a person reads" — so the
+    // turn is still `concluded`, just with no `text` field at all.
+    const outcome = oneShotTurnOutcome(
+      result({ exitCode: 0, stdoutTail: 'anything at all', stdoutIsTurnText: false })
+    )
+    expect(outcome.kind).toBe('concluded')
+    expect(outcome).not.toHaveProperty('text')
+  })
+
+  it('still reads a non-zero exit as errored from stderr, whether or not the provider´s stdout is turn text', () => {
+    expect(
+      oneShotTurnOutcome(
+        result({
+          exitCode: 1,
+          stderrTail: 'auth token expired',
+          stdoutIsTurnText: false
+        })
+      )
+    ).toEqual({ kind: 'errored', detail: 'exit 1: auth token expired', endedAt: NOW })
+  })
+
+  it('still reads a signal-terminated exit as interrupted, whether or not the provider´s stdout is turn text', () => {
+    expect(
+      oneShotTurnOutcome(
+        result({ signal: 'SIGTERM', stdoutTail: 'partial work', stdoutIsTurnText: false })
+      )
+    ).toEqual({ kind: 'interrupted', detail: 'SIGTERM', endedAt: NOW })
   })
 })

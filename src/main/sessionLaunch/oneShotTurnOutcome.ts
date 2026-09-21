@@ -31,6 +31,25 @@ export interface OneShotTurnResult {
   signal: NodeJS.Signals | null
   stdoutTail: string
   stderrTail: string
+  /**
+   * Whether `stdoutTail` is this provider's own turn TEXT, or an opaque
+   * machine envelope this function must not read as prose (#510 correction).
+   *
+   * `buildLaunchSpawn` captures every provider's stdout to a file the same
+   * way — the capture is deliberately provider-agnostic — but OpenCode is
+   * launched with `--format json` (`buildOpenCodeLaunchArgs`, launch.ts),
+   * documented only as "raw JSON events" (`opencode run --help`; nothing in
+   * `docs/opencode-format.md` covers this stream, only the `opencode.db`
+   * store). Before this field existed, a clean-exit OpenCode launch's raw
+   * event stream would have been recorded verbatim as the turn's own answer
+   * — exactly the silent misreading #510's acceptance criterion (captured
+   * text matches what a person reads) rules out. The caller decides this
+   * once per provider, from `ONE_SHOT_STDOUT_IS_TURN_TEXT` (launch.ts, beside
+   * the argv builders that already decide each provider's own output
+   * format) — never guessed here, so the function stays pure and provable
+   * with plain strings.
+   */
+  stdoutIsTurnText: boolean
   now: number
 }
 
@@ -63,12 +82,21 @@ export interface OneShotTurnResult {
  * it, and this function reads it as `errored` rather than defaulting to a
  * silent `concluded` — an exit this app cannot explain is never mistaken for
  * a quiet success.
+ *
+ * A clean exit whose provider is not text-bearing (`stdoutIsTurnText`
+ * false, #510 correction) is still `concluded` — process exit is still the
+ * completion signal — but carries no `text` at all, never an empty string
+ * standing in for one. Absence of text is not a fact here; the ending is.
+ * That check comes BEFORE the trim/empty check below on purpose: an opaque
+ * envelope that happens to be non-empty must not fall through to
+ * `boundTurnText` and be recorded as prose it never was.
  */
 export function oneShotTurnOutcome(result: OneShotTurnResult): TurnOutcome {
   if (result.signal !== null) {
     return { kind: 'interrupted', detail: result.signal, endedAt: result.now }
   }
   if (result.exitCode === 0) {
+    if (!result.stdoutIsTurnText) return { kind: 'concluded', endedAt: result.now }
     const trimmed = result.stdoutTail.trim()
     if (trimmed === '') return { kind: 'concluded', endedAt: result.now }
     const { text, truncated } = boundTurnText(trimmed)

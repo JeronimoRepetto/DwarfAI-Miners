@@ -20,7 +20,7 @@ import {
 } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
-import { buildLaunchArgs, prepareLaunchPrompt } from './launch'
+import { ONE_SHOT_STDOUT_IS_TURN_TEXT, buildLaunchArgs, prepareLaunchPrompt } from './launch'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 import { oneShotTurnOutcome } from './oneShotTurnOutcome'
 
@@ -317,6 +317,7 @@ class TurnOutcomeWatch {
     private readonly stderrPath: string,
     private readonly stderrFile: StderrFile,
     private readonly outputFile: string | undefined,
+    private readonly stdoutIsTurnText: boolean,
     private readonly now: () => number
   ) {
     child.once('exit', (code, signal) => {
@@ -332,7 +333,18 @@ class TurnOutcomeWatch {
       this.stdoutFile.remove(this.stdoutPath)
       if (this.outputFile !== undefined) this.stdoutFile.remove(this.outputFile)
       this.latch(
-        oneShotTurnOutcome({ exitCode: code, signal, stdoutTail, stderrTail, now: this.now() })
+        oneShotTurnOutcome({
+          exitCode: code,
+          signal,
+          stdoutTail,
+          stderrTail,
+          // #510 correction. The file is still read back the same mechanical
+          // way regardless — removing an unread capture is still this
+          // watch's job — but whether that capture may become `text` is
+          // decided by the pure function below, never here.
+          stdoutIsTurnText: this.stdoutIsTurnText,
+          now: this.now()
+        })
       )
     })
   }
@@ -384,6 +396,22 @@ export interface LaunchInvocation {
    * platform/cliDetection.ts, which is what read the shim.
    */
   viaNodeEntry: boolean
+  /**
+   * Whether THIS launch's stdout capture is its provider's own turn TEXT, or
+   * an opaque machine envelope `oneShotTurnOutcome` must not read as one
+   * (#510 correction) — `ONE_SHOT_STDOUT_IS_TURN_TEXT` (launch.ts)'s verdict
+   * for `options.provider`, read once by `launchClaudeSession` and carried
+   * here unchanged.
+   *
+   * A required field rather than an optional one defaulting to `true`, on
+   * the same reasoning `viaNodeEntry` above already is: this app does not
+   * invent an answer it has not measured for a provider a future caller
+   * forgets to name, the same discipline `buildLaunchArgs`'s own exhaustive
+   * switch (launch.ts) already holds for argv. `buildLaunchSpawn` itself
+   * never reads this field — the CAPTURE stays provider-agnostic, on
+   * purpose — only `TurnOutcomeWatch`'s exit handler does.
+   */
+  stdoutIsTurnText: boolean
   /**
    * A path some CLIs write their own final message to directly (#510) — set
    * today only for Codex, whose `-o, --output-last-message <FILE>` this
@@ -692,6 +720,7 @@ export function runLaunchProcess(
           stderrPath,
           stderrFile,
           invocation.outputFile,
+          invocation.stdoutIsTurnText,
           now
         )
       )
@@ -719,6 +748,7 @@ function retainedProcess(
   stderrPath: string,
   stderrFile: StderrFile,
   outputFile: string | undefined,
+  stdoutIsTurnText: boolean,
   now: () => number
 ): LaunchedProcess | undefined {
   const pid = child.pid
@@ -744,6 +774,7 @@ function retainedProcess(
     stderrPath,
     stderrFile,
     outputFile,
+    stdoutIsTurnText,
     now
   )
   const earlyFailure = new EarlyFailureWatch(child, stderrPath, stderrFile)
@@ -895,6 +926,10 @@ export async function launchClaudeSession(
       cwd: options.minePath,
       stdin: prompt,
       viaNodeEntry: program.viaNodeEntry,
+      // #510 correction. Read once here, from the table that decides it
+      // beside each provider's own argv (`ONE_SHOT_STDOUT_IS_TURN_TEXT`,
+      // launch.ts) — never re-derived at the point that reads the capture.
+      stdoutIsTurnText: ONE_SHOT_STDOUT_IS_TURN_TEXT[options.provider],
       ...(codexOutputPath === undefined ? {} : { outputFile: codexOutputPath })
     })
     // Reported rather than kept: whoever asked for the launch decides whether

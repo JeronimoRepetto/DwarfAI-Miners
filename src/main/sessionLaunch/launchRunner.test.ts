@@ -648,6 +648,28 @@ describe('launching OpenCode (#534)', () => {
       provider: 'opencode'
     })
   })
+
+  /*
+   * #510 correction. `oneShotTurnOutcome` needs to know, per launch, whether
+   * ITS provider's stdout is turn text at all — see `ONE_SHOT_STDOUT_IS_TURN_TEXT`
+   * (launch.ts). This is the one place that table is actually consulted: a
+   * table nobody reads is not a fix, only documentation of one.
+   */
+  it("carries OpenCode's own stdoutIsTurnText verdict (false) onto the invocation", async () => {
+    const { run, result } = launch({ provider: 'opencode', cli: installedOpenCode() })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.stdoutIsTurnText).toBe(false)
+  })
+
+  it("carries Codex's own stdoutIsTurnText verdict (true) onto the invocation", async () => {
+    const { run, result } = launch({ provider: 'codex', cli: installedCodex() })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.stdoutIsTurnText).toBe(true)
+  })
 })
 
 /*
@@ -873,6 +895,12 @@ describe('runLaunchProcess', () => {
       cwd: MINE_PATH,
       stdin: 'dig',
       viaNodeEntry: false,
+      // AMENDED for #510 correction: `LaunchInvocation` now carries
+      // `stdoutIsTurnText`. This fixture is Codex's own shape (CODEX_PATH),
+      // and Codex is `true` in `ONE_SHOT_STDOUT_IS_TURN_TEXT` (launch.ts), so
+      // this default keeps every test built on this fixture exactly what it
+      // asserted before.
+      stdoutIsTurnText: true,
       ...overrides
     }
   }
@@ -1160,6 +1188,12 @@ describe('the early-failure window (#263)', () => {
       cwd: MINE_PATH,
       stdin: 'dig',
       viaNodeEntry: false,
+      // AMENDED for #510 correction: `LaunchInvocation` now carries
+      // `stdoutIsTurnText`. This fixture is Codex's own shape (CODEX_PATH),
+      // and Codex is `true` in `ONE_SHOT_STDOUT_IS_TURN_TEXT` (launch.ts), so
+      // this default keeps every test built on this fixture exactly what it
+      // asserted before.
+      stdoutIsTurnText: true,
       ...overrides
     }
   }
@@ -1334,6 +1368,12 @@ describe('onTurnOutcome (#510)', () => {
       cwd: MINE_PATH,
       stdin: 'dig',
       viaNodeEntry: false,
+      // AMENDED for #510 correction: `LaunchInvocation` now carries
+      // `stdoutIsTurnText`. This fixture is Codex's own shape (CODEX_PATH),
+      // and Codex is `true` in `ONE_SHOT_STDOUT_IS_TURN_TEXT` (launch.ts), so
+      // this default keeps every test built on this fixture exactly what it
+      // asserted before.
+      stdoutIsTurnText: true,
       ...overrides
     }
   }
@@ -1532,6 +1572,62 @@ describe('onTurnOutcome (#510)', () => {
     expect(outcome.kind).toBe('concluded')
     expect(outcome.text.length).toBeLessThan(flood.length)
     expect(flood.endsWith(outcome.text)).toBe(true)
+  })
+
+  /*
+   * #510 correction. `buildLaunchSpawn`'s capture is provider-agnostic on
+   * purpose (every launch's stdout goes to a file the same way), but reading
+   * that capture back as an ANSWER is not — an OpenCode invocation's own
+   * stdout is `--format json`'s raw event stream, never proven as prose, so
+   * its `LaunchInvocation.stdoutIsTurnText` is `false`
+   * (`ONE_SHOT_STDOUT_IS_TURN_TEXT.opencode`, launch.ts) and this is the
+   * proof that `TurnOutcomeWatch` → `oneShotTurnOutcome` actually honours it
+   * end to end, not only in the pure function's own unit tests.
+   */
+  it('carries no text for an OpenCode invocation, whose stdout is not turn text', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const retained = await runLaunchProcess(
+      invocation({ stdoutIsTurnText: false }),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    // A representative slice of OpenCode's own `--format json` event stream
+    // (docs/opencode-format.md's own M1 says only that a session's `.text`
+    // eventually appears inside events shaped like this) — never proven
+    // prose, and this must never be read as if it were.
+    outFiles.writeStdout('{"type":"message.part.updated","part":{"type":"text","text":"hi"}}\n')
+    spawn.exit(0)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({ kind: 'concluded', endedAt: NOW })
+  })
+
+  it('still carries text for a Codex invocation, whose stdout IS turn text, on the same terms as before', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const retained = await runLaunchProcess(
+      invocation({ stdoutIsTurnText: true }),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    outFiles.writeStdout('the build is green\n')
+    spawn.exit(0)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({
+      kind: 'concluded',
+      text: 'the build is green',
+      endedAt: NOW
+    })
   })
 })
 
