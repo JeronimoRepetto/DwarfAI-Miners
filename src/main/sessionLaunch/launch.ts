@@ -160,13 +160,29 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * Both go BEFORE the `-` positional, because the usage line is
  * `codex exec [OPTIONS] [PROMPT]`: a flag written after the prompt would be
  * read as an argument to it rather than as an option.
+ *
+ * ## The output path, and why it is a third parameter rather than tuning (#510)
+ *
+ * `-o, --output-last-message <FILE>` (codex-cli 0.153.4's own
+ * `codex exec --help`) writes ONLY the turn's final message to that file —
+ * cleaner than the stdout tail `launchRunner.ts` reads for every provider,
+ * since Codex's stdout also carries whatever the run printed along the way.
+ * It is not `LaunchTuning` (model/effort are what a PERSON chose; this is a
+ * temp path `launchClaudeSession` mints per launch, unrelated to tuning) and
+ * it goes before the trailing `-` for the same reason the two tuning flags
+ * do — a flag after the prompt positional would be read as its argument.
  */
-export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  // The two flags above come from `codexTuningArgs` (#462), the one builder
-  // this and `buildCodexResumeArgs` both delegate to, so the
+export function buildCodexLaunchArgs(tuning: LaunchTuning = {}, outputPath?: string): string[] {
+  // The two tuning flags above come from `codexTuningArgs` (#462), the one
+  // builder this and `buildCodexResumeArgs` both delegate to, so the
   // `model_reasoning_effort` key is spelled in exactly one place rather than
   // twice and at risk of drifting apart.
-  return ['exec', ...codexTuningArgs(tuning), '-']
+  return [
+    'exec',
+    ...codexTuningArgs(tuning),
+    ...(outputPath === undefined ? [] : ['-o', outputPath]),
+    '-'
+  ]
 }
 
 /**
@@ -293,13 +309,22 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * and Codex's is `-c model_reasoning_effort=<level>`, which is not a variant
  * spelling of the same flag but a different mechanism. One shared tail here
  * would hand each CLI the other's.
+ *
+ * `codexOutputPath` (#510) is dispatched the same conservative way: it is
+ * Codex's own `-o` file and nothing else, so every other provider's builder
+ * simply never sees the parameter — never a shared "output path" concept
+ * applied to a CLI that has no such flag.
  */
-export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = {}): string[] {
+export function buildLaunchArgs(
+  provider: DwarfProvider,
+  tuning: LaunchTuning = {},
+  codexOutputPath?: string
+): string[] {
   switch (provider) {
     case 'claude':
       return buildClaudeLaunchArgs(tuning)
     case 'codex':
-      return buildCodexLaunchArgs(tuning)
+      return buildCodexLaunchArgs(tuning, codexOutputPath)
     case 'antigravity':
       // AMENDED for #282 (was: called buildAntigravityLaunchArgs() with no
       // argument, dropping `tuning` on the floor — #237, step 4 gave

@@ -14,20 +14,31 @@ import {
   CONSOLE_HOSTING_PROGRAM,
   EARLY_FAILURE_WINDOW_MS,
   STDERR_TAIL_BYTES,
+  STDOUT_TAIL_BYTES,
   createNodeStderrFile,
+  createNodeStdoutFile,
   launchClaudeSession,
   runLaunchProcess,
   type LaunchChild,
   type LaunchInvocation,
   type LaunchRunner,
   type SpawnLaunch,
-  type StderrFile
+  type StderrFile,
+  type StdoutFile
 } from './launchRunner'
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
 const CODEX_PATH = '/home/j/.local/bin/codex'
 const OPENCODE_PATH = '/home/j/.local/bin/opencode'
 const MINE_PATH = '/home/j/work/project'
+
+/**
+ * A fixed stand-in for Codex's own `-o` path (#510), injected through the
+ * `launch()` helper below so every existing exact-argv assertion in this
+ * file stays deterministic rather than matching a fresh `randomUUID()` path
+ * on every run.
+ */
+const CODEX_OUTPUT_PATH = '/tmp/dwarfai-launch-codex-output-test.log'
 
 /** npm's cmd-shim for opencode, the same shape the Codex fixture above is. */
 const OPENCODE_SHIM_DIR = 'C:\\Users\\x\\AppData\\Roaming\\npm'
@@ -113,6 +124,12 @@ function launch(options: {
    * untuned path exactly as it did.
    */
   tuning?: LaunchTuning
+  /**
+   * Codex's own `-o` path generator (#510). Defaults to the fixed
+   * `CODEX_OUTPUT_PATH` above so every test gets a deterministic value; a
+   * test proving the generator itself overrides it.
+   */
+  codexOutputPath?: () => string
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -126,6 +143,7 @@ function launch(options: {
       platform: options.platform ?? 'linux',
       fs: options.fs ?? new FakeFs(),
       run,
+      codexOutputPath: options.codexOutputPath ?? (() => CODEX_OUTPUT_PATH),
       ...(options.tuning === undefined ? {} : options.tuning)
     })
   }
@@ -331,8 +349,30 @@ describe('launching Codex', () => {
     // cwd is the whole trick here too: the Codex provider reads a thread's own
     // `cwd` column, so this is what files the new session under the right mine.
     expect(invocation.cwd).toBe(MINE_PATH)
-    expect(invocation.args).toEqual(['exec', '-'])
+    // AMENDED for #510 (was: `['exec', '-']`) — Codex's own `-o` flag now
+    // rides along so the runner can read the clean final message back; see
+    // 'wires the -o output path into both argv and the invocation' below.
+    expect(invocation.args).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
     expect(invocation.stdin).toBe('dig')
+  })
+
+  it('wires the -o output path into both argv and the invocation, for Codex only (#510)', async () => {
+    const { run: codexRun, result: codexResult } = launch({
+      provider: 'codex',
+      cli: installedCodex()
+    })
+    await codexResult
+    const codexInvocation = (codexRun as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as LaunchInvocation
+    expect(codexInvocation.outputFile).toBe(CODEX_OUTPUT_PATH)
+
+    const { run: claudeRun, result: claudeResult } = launch({ provider: 'claude' })
+    await claudeResult
+    const claudeInvocation = (claudeRun as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as LaunchInvocation
+    // Every other provider ignores it — no -o flag exists for them.
+    expect(claudeInvocation.outputFile).toBeUndefined()
+    expect(claudeInvocation.args).not.toContain('-o')
   })
 
   it('never puts the prompt in argv for Codex either', async () => {
@@ -392,7 +432,9 @@ describe('launching Codex', () => {
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     // No node.exe beside this shim, so `node` from PATH — the shim's own ELSE arm.
     expect(invocation.command).toBe('node')
-    expect(invocation.args).toEqual([NPM_ENTRY, 'exec', '-'])
+    // AMENDED for #510 (was: `[NPM_ENTRY, 'exec', '-']`) — see the dedicated
+    // -o wiring test above.
+    expect(invocation.args).toEqual([NPM_ENTRY, 'exec', '-o', CODEX_OUTPUT_PATH, '-'])
     expect(invocation.stdin).toBe('dig')
     expect(invocation.cwd).toBe(MINE_PATH)
     // PATH is still led by the shim's directory: a re-exec of `codex` inside
@@ -483,7 +525,9 @@ describe('launching Codex', () => {
 
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     expect(invocation.command).toBe(CODEX_PATH)
-    expect(invocation.args).toEqual(['exec', '-'])
+    // AMENDED for #510 (was: `['exec', '-']`) — see the dedicated -o wiring
+    // test above.
+    expect(invocation.args).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
   })
 
   it('claims only that the process started, and never a dwarf', async () => {
@@ -763,6 +807,63 @@ function fakeStderrFile(): StderrFile & {
   }
 }
 
+/**
+ * `StdoutFile`'s own twin (#510), same shape and same reason: the great
+ * majority of this suite stays off real disk, and `writeStdout` stands in
+ * for the child's own writes to the fd `buildLaunchSpawn` handed it. A
+ * SEPARATE fake, not a shared instance with `fakeStderrFile`, because a real
+ * launch opens two distinct files and a test proving the runner reads the
+ * RIGHT one from the right descriptor would not catch a swap if both fakes
+ * shared one map of paths to contents.
+ */
+const FAKE_STDOUT_FD = 901
+
+/**
+ * One shared `contents` map serves two roles a real launch keeps separate
+ * files for: the piped stdout capture this fake OPENS itself
+ * (`openForWrite`/`writeStdout`, exactly like `fakeStderrFile`), and Codex's
+ * own `-o` file, which Codex writes directly and this app only ever reads
+ * and removes — `write(path, text)` stands in for Codex's own write, at
+ * whatever path `invocation.outputFile` names, never through `openForWrite`.
+ * One fake rather than two, because both roles read and remove by PATH, and
+ * a real `runLaunchProcess` is handed exactly one `StdoutFile` port for both.
+ */
+function fakeStdoutFile(): StdoutFile & {
+  writeStdout: (chunk: string) => void
+  write: (path: string, text: string) => void
+  removedPaths: () => string[]
+} {
+  const contents = new Map<string, string>()
+  const removed: string[] = []
+  let currentPath: string | null = null
+  let nextFd = FAKE_STDOUT_FD
+  return {
+    path: () => `fake-launch-stdout-${nextFd}.log`,
+    openForWrite: (path) => {
+      currentPath = path
+      contents.set(path, '')
+      return nextFd++
+    },
+    close: () => {},
+    readTail: (path, maxBytes) => {
+      const text = contents.get(path) ?? ''
+      return text.length > maxBytes ? text.slice(text.length - maxBytes) : text
+    },
+    remove: (path) => {
+      contents.delete(path)
+      removed.push(path)
+    },
+    writeStdout: (chunk) => {
+      if (currentPath === null) return
+      contents.set(currentPath, (contents.get(currentPath) ?? '') + chunk)
+    },
+    write: (path, text) => {
+      contents.set(path, text)
+    },
+    removedPaths: () => removed
+  }
+}
+
 describe('runLaunchProcess', () => {
   function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
     return {
@@ -794,7 +895,8 @@ describe('runLaunchProcess', () => {
       runLaunchProcess(
         invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'] }),
         spawn.spawnProcess,
-        files
+        files,
+        fakeStdoutFile()
       )
     ).resolves.toMatchObject({ pid: 4242 })
 
@@ -808,11 +910,14 @@ describe('runLaunchProcess', () => {
     // unref'd launch must survive (#231) — so stderr is now a real file
     // descriptor, never 'pipe' and never 'ignore'. See the dedicated test
     // below and the early-failure window describe block for the rest.
+    // AMENDED again for #510 (was: stdio: ['pipe', 'ignore', FAKE_STDERR_FD])
+    // — stdout is now captured through a real fd too, for the same reason
+    // and the same way stderr already was.
     expect(call.options).toEqual({
       cwd: MINE_PATH,
       env: { PATH: '/usr/bin' },
       detached: true,
-      stdio: ['pipe', 'ignore', FAKE_STDERR_FD],
+      stdio: ['pipe', FAKE_STDOUT_FD, FAKE_STDERR_FD],
       windowsHide: true
     })
     expect(spawn.written).toEqual(['dig'])
@@ -827,7 +932,7 @@ describe('runLaunchProcess', () => {
   it('captures stderr through a real file descriptor, never a pipe', async () => {
     const spawn = fakeSpawn()
 
-    await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
+    await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile(), fakeStdoutFile())
 
     const stderrEntry = spawn.calls[0]!.options.stdio?.[2]
     expect(typeof stderrEntry).toBe('number')
@@ -835,16 +940,34 @@ describe('runLaunchProcess', () => {
     expect(stderrEntry).not.toBe('ignore')
   })
 
+  /*
+   * #510's own half of the same fix: stdout was `'ignore'` before this
+   * issue, which is exactly why nothing could ever say what a one-shot
+   * launch concluded. Now a real fd, on the same terms stderr already is.
+   */
+  it('captures stdout through a real file descriptor too, never ignored', async () => {
+    const spawn = fakeSpawn()
+
+    await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile(), fakeStdoutFile())
+
+    const stdoutEntry = spawn.calls[0]!.options.stdio?.[1]
+    expect(typeof stdoutEntry).toBe('number')
+    expect(stdoutEntry).not.toBe('pipe')
+    expect(stdoutEntry).not.toBe('ignore')
+  })
+
   it('rejects when the child reports it could not start, writing nothing', async () => {
     const spawn = fakeSpawn('error')
     const files = fakeStderrFile()
+    const outFiles = fakeStdoutFile()
 
-    await expect(runLaunchProcess(invocation(), spawn.spawnProcess, files)).rejects.toThrow(
-      'EINVAL'
-    )
+    await expect(
+      runLaunchProcess(invocation(), spawn.spawnProcess, files, outFiles)
+    ).rejects.toThrow('EINVAL')
     expect(spawn.written).toEqual([])
-    // Nothing will ever be spawned to write into it now.
+    // Nothing will ever be spawned to write into either of them now.
     expect(files.removedPaths()).toHaveLength(1)
+    expect(outFiles.removedPaths()).toHaveLength(1)
   })
 
   /*
@@ -862,7 +985,8 @@ describe('runLaunchProcess', () => {
     await runLaunchProcess(
       invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'], viaNodeEntry: true }),
       spawn.spawnProcess,
-      fakeStderrFile()
+      fakeStderrFile(),
+      fakeStdoutFile()
     )
 
     const call = spawn.calls[0]!
@@ -873,11 +997,12 @@ describe('runLaunchProcess', () => {
     // The outer spawn is unchanged: detached is still what makes the session
     // outlive the panel, and no shell is involved in either hop.
     // AMENDED for #263, for the same reason the test above was.
+    // AMENDED again for #510 (was: stdio: ['pipe', 'ignore', FAKE_STDERR_FD]).
     expect(call.options).toEqual({
       cwd: MINE_PATH,
       env: { PATH: '/usr/bin' },
       detached: true,
-      stdio: ['pipe', 'ignore', FAKE_STDERR_FD],
+      stdio: ['pipe', FAKE_STDOUT_FD, FAKE_STDERR_FD],
       windowsHide: true
     })
     expect(spawn.written).toEqual(['dig'])
@@ -889,7 +1014,8 @@ describe('runLaunchProcess', () => {
     await runLaunchProcess(
       invocation({ command: CODEX_PATH, args: ['exec', '-'], viaNodeEntry: false }),
       spawn.spawnProcess,
-      fakeStderrFile()
+      fakeStderrFile(),
+      fakeStdoutFile()
     )
 
     const call = spawn.calls[0]!
@@ -912,7 +1038,8 @@ describe('runLaunchProcess', () => {
     const retained = await runLaunchProcess(
       invocation({ command: 'node', args: [NPM_ENTRY, 'exec', '-'], viaNodeEntry: true }),
       spawn.spawnProcess,
-      fakeStderrFile()
+      fakeStderrFile(),
+      fakeStdoutFile()
     )
 
     expect(retained?.pid).toBe(4242)
@@ -929,7 +1056,12 @@ describe('runLaunchProcess', () => {
    */
   it('reports the process ending, through the handle it handed back', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      fakeStdoutFile()
+    )
 
     let gone = false
     retained?.onExit(() => {
@@ -948,21 +1080,39 @@ describe('runLaunchProcess', () => {
   it('removes the stderr file once the child has exited, whatever the reason', async () => {
     const spawn = fakeSpawn()
     const files = fakeStderrFile()
-    await runLaunchProcess(invocation(), spawn.spawnProcess, files)
+    await runLaunchProcess(invocation(), spawn.spawnProcess, files, fakeStdoutFile())
 
     expect(files.removedPaths()).toHaveLength(0)
     spawn.exit(0)
     expect(files.removedPaths()).toHaveLength(1)
   })
 
+  // #510's own twin of the test above: the stdout capture file is now a
+  // second temp file with the same lifetime, and the same reason to remove
+  // it unconditionally on exit.
+  it('removes the stdout file once the child has exited, whatever the reason', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile(), outFiles)
+
+    expect(outFiles.removedPaths()).toHaveLength(0)
+    spawn.exit(0)
+    expect(outFiles.removedPaths()).toHaveLength(1)
+  })
+
   it('retains nothing when the child reports no pid at all', async () => {
     const spawn = fakeSpawn('spawn', null)
     const files = fakeStderrFile()
+    const outFiles = fakeStdoutFile()
 
-    await expect(runLaunchProcess(invocation(), spawn.spawnProcess, files)).resolves.toBeUndefined()
+    await expect(
+      runLaunchProcess(invocation(), spawn.spawnProcess, files, outFiles)
+    ).resolves.toBeUndefined()
     // Nothing to hold means nothing to watch either — there is no exit this
-    // process will ever see to clean it up on, so it is removed right away.
+    // process will ever see to clean it up on, so both files are removed
+    // right away.
     expect(files.removedPaths()).toHaveLength(1)
+    expect(outFiles.removedPaths()).toHaveLength(1)
   })
 
   it('keeps the prompt off argv with the intermediary in the chain too', async () => {
@@ -977,7 +1127,8 @@ describe('runLaunchProcess', () => {
         viaNodeEntry: true
       }),
       spawn.spawnProcess,
-      fakeStderrFile()
+      fakeStderrFile(),
+      fakeStdoutFile()
     )
 
     const call = spawn.calls[0]!
@@ -1024,7 +1175,12 @@ describe('the early-failure window (#263)', () => {
   it('reports the exit code and reads the stderr the child wrote to its file, for an exit inside the window', async () => {
     const spawn = fakeSpawn()
     const files = fakeStderrFile()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, files)
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      files,
+      fakeStdoutFile()
+    )
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -1042,7 +1198,12 @@ describe('the early-failure window (#263)', () => {
 
   it('never reports a clean exit inside the window as a failure', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      fakeStdoutFile()
+    )
     const onEarlyFailure = vi.fn()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -1057,7 +1218,12 @@ describe('the early-failure window (#263)', () => {
    */
   it('never reports an exit once the window has passed — that is an ordinary end of session', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      fakeStdoutFile()
+    )
     const onEarlyFailure = vi.fn()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -1069,7 +1235,12 @@ describe('the early-failure window (#263)', () => {
 
   it('reports a signal-only exit too, with no code', async () => {
     const spawn = fakeSpawn()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile())
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      fakeStdoutFile()
+    )
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -1085,7 +1256,12 @@ describe('the early-failure window (#263)', () => {
   it('tells a listener that subscribes AFTER the failure already latched', async () => {
     const spawn = fakeSpawn()
     const files = fakeStderrFile()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, files)
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      files,
+      fakeStdoutFile()
+    )
 
     files.writeStderr('auth expired\n')
     spawn.exit(1)
@@ -1102,7 +1278,12 @@ describe('the early-failure window (#263)', () => {
   it('keeps only the tail of a flood of stderr, bounded rather than unbounded', async () => {
     const spawn = fakeSpawn()
     const files = fakeStderrFile()
-    const retained = await runLaunchProcess(invocation(), spawn.spawnProcess, files)
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      files,
+      fakeStdoutFile()
+    )
     const onEarlyFailure = vi.fn<(failure: LaunchFailure) => void>()
     retained?.onEarlyFailure?.(onEarlyFailure)
 
@@ -1124,11 +1305,233 @@ describe('the early-failure window (#263)', () => {
     const spawn = fakeSpawn('spawn', null)
     const files = fakeStderrFile()
 
-    await expect(runLaunchProcess(invocation(), spawn.spawnProcess, files)).resolves.toBeUndefined()
+    await expect(
+      runLaunchProcess(invocation(), spawn.spawnProcess, files, fakeStdoutFile())
+    ).resolves.toBeUndefined()
     // Nothing to assert an onEarlyFailure against — there is no handle at all,
     // which is the existing 'retains nothing' rule this respects rather than
     // reopens. The file this launch never got to use is still cleaned up.
     expect(files.removedPaths()).toHaveLength(1)
+  })
+})
+
+/*
+ * #510. What a detached launch's own exit concluded — read off the stdout
+ * and stderr temp files this launch captured, mapped through the pure
+ * `oneShotTurnOutcome` (proven on its own in `oneShotTurnOutcome.test.ts`),
+ * and handed to whichever caller subscribes to `onTurnOutcome`. Registered
+ * before `EarlyFailureWatch` inside `retainedProcess`, so its read of the
+ * stderr tail happens before that watch's own unconditional removal of the
+ * same file on every exit — see `retainedProcess`'s own comment in
+ * `launchRunner.ts`.
+ */
+describe('onTurnOutcome (#510)', () => {
+  function invocation(overrides: Partial<LaunchInvocation> = {}): LaunchInvocation {
+    return {
+      command: CODEX_PATH,
+      args: ['exec', '-'],
+      env: { PATH: '/usr/bin' },
+      cwd: MINE_PATH,
+      stdin: 'dig',
+      viaNodeEntry: false,
+      ...overrides
+    }
+  }
+
+  const NOW = 1_726_000_000_000
+
+  it('reports a concluded turn, its text read off the stdout capture file', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    outFiles.writeStdout('the build is green\n')
+    spawn.exit(0)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({
+      kind: 'concluded',
+      text: 'the build is green',
+      endedAt: NOW
+    })
+  })
+
+  it('reports a concluded turn with no text when stdout was empty', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      fakeStdoutFile(),
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    spawn.exit(0)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({ kind: 'concluded', endedAt: NOW })
+  })
+
+  it('reports an errored turn for a non-zero exit, the stderr tail as its detail', async () => {
+    const spawn = fakeSpawn()
+    const stderrFiles = fakeStderrFile()
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      stderrFiles,
+      fakeStdoutFile(),
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    stderrFiles.writeStderr('auth token expired')
+    spawn.exit(1)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({
+      kind: 'errored',
+      detail: 'exit 1: auth token expired',
+      endedAt: NOW
+    })
+  })
+
+  it('reports an interrupted turn for a signal-terminated exit', async () => {
+    const spawn = fakeSpawn()
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      fakeStdoutFile(),
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    spawn.exit(null, 'SIGTERM')
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({
+      kind: 'interrupted',
+      detail: 'SIGTERM',
+      endedAt: NOW
+    })
+  })
+
+  /*
+   * Codex's own `-o` file (#510) carries the clean final message alone;
+   * stdout also carries whatever the run printed along the way, so the
+   * output file wins whenever it actually has something in it.
+   */
+  it('prefers the Codex output file over the piped stdout tail when both are present', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const outputPath = 'fake-codex-output-1.log'
+    const retained = await runLaunchProcess(
+      invocation({ outputFile: outputPath }),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    // The piped stdout capture (opened by the runner itself) carries the
+    // whole run's chatter; Codex's own -o file (never opened by this app —
+    // written directly, at its own named path) carries only the clean
+    // final message.
+    outFiles.writeStdout('progress: step 1\nprogress: step 2\n')
+    outFiles.write(outputPath, 'the clean final message\n')
+    spawn.exit(0)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({
+      kind: 'concluded',
+      text: 'the clean final message',
+      endedAt: NOW
+    })
+  })
+
+  it('falls back to the piped stdout tail when an output file was named but never written', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const outputPath = 'fake-codex-output-unwritten.log'
+    const retained = await runLaunchProcess(
+      invocation({ outputFile: outputPath }),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    outFiles.writeStdout('the stdout tail answer\n')
+    spawn.exit(0)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({
+      kind: 'concluded',
+      text: 'the stdout tail answer',
+      endedAt: NOW
+    })
+  })
+
+  it('removes the stdout capture file on exit, same as stderr already does', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    await runLaunchProcess(invocation(), spawn.spawnProcess, fakeStderrFile(), outFiles, () => NOW)
+
+    expect(outFiles.removedPaths()).toHaveLength(0)
+    spawn.exit(0)
+    expect(outFiles.removedPaths()).toHaveLength(1)
+  })
+
+  it('tells a listener that subscribes AFTER the outcome already latched', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+
+    outFiles.writeStdout('done\n')
+    spawn.exit(0)
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    expect(onTurnOutcome).toHaveBeenCalledWith({ kind: 'concluded', text: 'done', endedAt: NOW })
+  })
+
+  it('keeps only the bounded tail of a flood of stdout, never the whole thing', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const retained = await runLaunchProcess(
+      invocation(),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+    const onTurnOutcome = vi.fn()
+    retained?.onTurnOutcome?.(onTurnOutcome)
+
+    const flood = 'y'.repeat(STDOUT_TAIL_BYTES * 2)
+    outFiles.writeStdout(flood)
+    spawn.exit(0)
+
+    const outcome = onTurnOutcome.mock.calls[0]![0]
+    expect(outcome.kind).toBe('concluded')
+    expect(outcome.text.length).toBeLessThan(flood.length)
+    expect(flood.endsWith(outcome.text)).toBe(true)
   })
 })
 
@@ -1186,6 +1589,65 @@ describe('createNodeStderrFile (#263)', () => {
   it('generates a fresh path on every call, never reusing one launch’s file for another', () => {
     const files = createNodeStderrFile()
     expect(files.path()).not.toBe(files.path())
+  })
+})
+
+/*
+ * `createNodeStdoutFile`'s own proof (#510), the same real-adapter exception
+ * `createNodeStderrFile` above states, and the same reason: this one thing
+ * needs proving against the machine's own temp directory, and nothing else
+ * in this suite should.
+ */
+describe('createNodeStdoutFile (#510)', () => {
+  it('opens a real file under the OS temp directory, and a caller can write the fd it hands back', () => {
+    const files = createNodeStdoutFile()
+    const path = files.path()
+    expect(path.startsWith(tmpdir())).toBe(true)
+
+    const fd = files.openForWrite(path)
+    writeSync(fd, 'the build is green\n')
+    files.close(fd)
+
+    expect(files.readTail(path, STDOUT_TAIL_BYTES)).toBe('the build is green\n')
+
+    files.remove(path)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('keeps only the real tail of a file larger than the cap', () => {
+    const files = createNodeStdoutFile()
+    const path = files.path()
+    const fd = files.openForWrite(path)
+    writeSync(fd, 'x'.repeat(STDOUT_TAIL_BYTES * 2))
+    files.close(fd)
+
+    const tail = files.readTail(path, STDOUT_TAIL_BYTES)
+
+    expect(tail).toHaveLength(STDOUT_TAIL_BYTES)
+    files.remove(path)
+  })
+
+  it('reads as empty rather than throwing for a path that was never created', () => {
+    const files = createNodeStdoutFile()
+    expect(files.readTail(join(tmpdir(), 'dwarfai-launch-stdout-never-existed.log'), 1024)).toBe('')
+  })
+
+  it('removing a path that is already gone is a no-op, not a throw', () => {
+    const files = createNodeStdoutFile()
+    expect(() =>
+      files.remove(join(tmpdir(), 'dwarfai-launch-stdout-never-existed.log'))
+    ).not.toThrow()
+  })
+
+  it('generates a fresh path on every call, never reusing one launch’s file for another', () => {
+    const files = createNodeStdoutFile()
+    expect(files.path()).not.toBe(files.path())
+  })
+
+  it('never reuses a stderr path for a stdout file, or vice versa', () => {
+    // The two ports are separate files with the same lifetime, never one
+    // file wearing two hats — a real launch opens both at once.
+    expect(createNodeStdoutFile().path()).not.toBe(createNodeStderrFile().path())
   })
 })
 
@@ -1336,12 +1798,16 @@ describe('a detached launch that names a model and an effort (#239)', () => {
     })
     await result
 
+    // AMENDED for #510 (was: no trailing `-o` pair) — see the dedicated -o
+    // wiring test in 'launching Codex' above.
     expect(argvOf(run)).toEqual([
       'exec',
       '-m',
       'gpt-5.6-sol',
       '-c',
       'model_reasoning_effort=medium',
+      '-o',
+      CODEX_OUTPUT_PATH,
       '-'
     ])
   })
@@ -1361,7 +1827,16 @@ describe('a detached launch that names a model and an effort (#239)', () => {
     })
     await result
 
-    expect(argvOf(run)).toEqual([NPM_ENTRY, 'exec', '-m', 'gpt-5.6-luna', '-'])
+    // AMENDED for #510 (was: no trailing `-o` pair).
+    expect(argvOf(run)).toEqual([
+      NPM_ENTRY,
+      'exec',
+      '-m',
+      'gpt-5.6-luna',
+      '-o',
+      CODEX_OUTPUT_PATH,
+      '-'
+    ])
   })
 
   it('refuses an empty prompt before it looks at the tuning at all', async () => {

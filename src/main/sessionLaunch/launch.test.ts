@@ -323,6 +323,59 @@ describe('buildCodexLaunchArgs', () => {
   })
 })
 
+/*
+ * #510. `-o, --output-last-message <FILE>` (codex-cli 0.153.4's own
+ * `codex exec --help`) writes ONLY the final message, which is a cleaner
+ * source for a concluded turn's text than the piped stdout tail
+ * `launchRunner.ts` reads for every provider — Codex's stdout also carries
+ * whatever the run printed along the way, not just the answer.
+ */
+describe('buildCodexLaunchArgs with an output-last-message path (#510)', () => {
+  it('adds no -o flag when no output path is given, unchanged from before #510', () => {
+    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
+    expect(buildCodexLaunchArgs({}, undefined)).toEqual(['exec', '-'])
+  })
+
+  it('adds -o before the trailing "-", never after it', () => {
+    // `codex exec [OPTIONS] [PROMPT]` — a flag written after the prompt
+    // positional would be read as an argument to it (the same rule the two
+    // tuning flags above already follow).
+    expect(buildCodexLaunchArgs({}, '/tmp/dwarfai-launch-codex-output-1.log')).toEqual([
+      'exec',
+      '-o',
+      '/tmp/dwarfai-launch-codex-output-1.log',
+      '-'
+    ])
+  })
+
+  it('combines with tuning, output path last among the options', () => {
+    expect(buildCodexLaunchArgs({ model: 'gpt-5.6-sol', effort: 'high' }, '/tmp/out.log')).toEqual([
+      'exec',
+      '-m',
+      'gpt-5.6-sol',
+      '-c',
+      'model_reasoning_effort=high',
+      '-o',
+      '/tmp/out.log',
+      '-'
+    ])
+  })
+})
+
+describe('buildLaunchArgs dispatches the Codex output path (#510)', () => {
+  it('passes an output path through to Codex only', () => {
+    expect(buildLaunchArgs('codex', {}, '/tmp/out.log')).toEqual(
+      buildCodexLaunchArgs({}, '/tmp/out.log')
+    )
+  })
+
+  it('ignores an output path for every other provider, unchanged from before #510', () => {
+    expect(buildLaunchArgs('claude', {}, '/tmp/out.log')).toEqual(buildClaudeLaunchArgs())
+    expect(buildLaunchArgs('antigravity', {}, '/tmp/out.log')).toEqual(buildAntigravityLaunchArgs())
+    expect(buildLaunchArgs('opencode', {}, '/tmp/out.log')).toEqual(buildOpenCodeLaunchArgs())
+  })
+})
+
 describe('launch argv with a model and an effort (#239)', () => {
   /*
    * Both flags are read out of the installed CLIs' own help, on 2026-09-07:
