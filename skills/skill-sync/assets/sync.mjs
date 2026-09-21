@@ -278,6 +278,7 @@ const MAIN_TREE_GLOSSES = {
   // Glossed in src/README.md instead.
   history: null,
   hooks: 'the opt-in Claude push channel',
+  jev: 'asking the TypeSafe Jev model which provider, model and effort to launch with',
   ledger: 'mined, persisted',
   notifications: 'the OS notification centre, behind a port',
   platform: 'composed once in `platformAdapters.ts`',

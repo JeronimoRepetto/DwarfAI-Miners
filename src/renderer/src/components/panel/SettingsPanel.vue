@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { AudioPreferences, PanelEdge, ShortcutState, TypographyPreferences } from '../../types'
+import type {
+  AudioPreferences,
+  JevSettings as JevSettingsType,
+  PanelEdge,
+  ShortcutState,
+  TypographyPreferences
+} from '../../types'
 import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
+import JevSettings from './JevSettings.vue'
 import NotificationSettings from './NotificationSettings.vue'
 import PositionSettings from './PositionSettings.vue'
 import ResetMetricsModal from './ResetMetricsModal.vue'
@@ -32,6 +39,8 @@ import PanelTransition from '../shell/PanelTransition.vue'
  * lands in the same gap, immediately after Audio — the design source itself
  * names it as joining there. TYPOGRAPHY (#370) is the third, and the only one
  * whose place the source states outright: after Position and before Audio.
+ * JEV (#509) is the fourth, and lands right after Notifications — the same
+ * gap, one section further in.
  *
  * The "Application" section (pin, hide panel, version) is an UNSPECIFIED
  * placement decision (#138): the design draws no home for any of the three,
@@ -68,6 +77,12 @@ defineProps<{
   /** True while a face change is in flight; locks the segments. */
   typographyApplying: boolean
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /** Whether a TypeSafe key is configured, and why it might never be — main's verdict. */
+  jevSettings: JevSettingsType
+  /** True while a save or a clear this section asked for is in flight. */
+  jevSaving: boolean
+  /* --- end of the #509 block ------------------------------------------------ */
 }>()
 
 const emit = defineEmits<{
@@ -90,6 +105,12 @@ const emit = defineEmits<{
   /** One typography role should take a face (#370) — a patch, never the pair. */
   'typography-change': [patch: Partial<TypographyPreferences>]
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /** Enter or replace the TypeSafe key with this one. */
+  'jev-save': [key: string]
+  /** Forget the stored key. */
+  'jev-clear': []
+  /* --- end of the #509 block ------------------------------------------------ */
 }>()
 
 const resetModalOpen = ref(false)
@@ -127,6 +148,13 @@ const resetModalOpen = ref(false)
     <NotificationSettings
       :enabled="notificationsEnabled"
       @change="emit('notifications-change', $event)"
+    />
+
+    <JevSettings
+      :settings="jevSettings"
+      :saving="jevSaving"
+      @save="emit('jev-save', $event)"
+      @clear="emit('jev-clear')"
     />
 
     <DataBaseSection @open-reset="resetModalOpen = true" />

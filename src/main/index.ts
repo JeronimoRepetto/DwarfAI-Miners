@@ -10,6 +10,7 @@ import {
   type WebContents
 } from 'electron'
 import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
@@ -65,8 +66,11 @@ import {
   DWARF_IMAGE_EXTENSIONS,
   MAX_DWARF_ATTACHMENTS,
   parseDwarfAttachments,
-  parseDwarfText
+  parseDwarfText,
   /* --- end of the #408 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  parseJevApiKeyInput
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
 import type { AttachmentReader } from './textDelivery/attachmentDelivery'
@@ -75,7 +79,12 @@ import {
   ensureDefaultAutostart,
   migrateLegacyAutostart
 } from './shell/autostart'
-import { darwinConsoleInputOverride, linuxConsoleInputOverride, loadConfig } from './config/config'
+import {
+  cliOverridesFrom,
+  darwinConsoleInputOverride,
+  linuxConsoleInputOverride,
+  loadConfig
+} from './config/config'
 import {
   CONFIG_FILE_NAME,
   createConfigFileStore,
@@ -86,6 +95,7 @@ import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
+import { createPlatformAdapters } from './platform/platformAdapters'
 import {
   MINE_PATH_OUTSIDE_REASON,
   MINE_PATH_UNOPENABLE_REASON,
@@ -105,6 +115,7 @@ import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessio
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
+import { createJevApiKeyStore } from './shell/jevApiKey'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
@@ -223,6 +234,11 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setNotificationsEnabled)
   ipcMain.removeAllListeners(IPC_CHANNELS.setOpenMine)
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  ipcMain.removeHandler(IPC_CHANNELS.getJevSettings)
+  ipcMain.removeHandler(IPC_CHANNELS.setJevApiKey)
+  ipcMain.removeHandler(IPC_CHANNELS.clearJevApiKey)
+  /* --- end of the #509 block ------------------------------------------------ */
 }
 
 /**
@@ -653,6 +669,16 @@ async function init(): Promise<void> {
     filePath: join(app.getPath('userData'), 'audio-preferences-v1.json')
   })
 
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  // Read like the audio settings — after the window exists — but PRIMED here
+  // rather than only inside its own IPC handler: the launch router (#509) reads the
+  // decrypted key synchronously off this same store instance through
+  // readKey(), and may run before Settings is ever opened this session, so
+  // the cache it reads has to be warm before that can happen.
+  const jevApiKeyStore = createJevApiKeyStore({ userDataDir: app.getPath('userData') })
+  await jevApiKeyStore.load()
+  /* --- end of the #509 block ------------------------------------------------ */
+
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // The eighth userData preference, read like the audio settings: after the
   // window exists, because the renderer paints the documented defaults on its
@@ -801,24 +827,49 @@ async function init(): Promise<void> {
   // operator turning their path off must not take Linux's tmux tier with it.
   const linuxConsoleInputSetting = linuxConsoleInputOverride()
 
-  runtime = new AgentRuntime({
-    config,
-    ledger,
-    projects,
-    launchedSessionStore,
-    appPaths: {
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      appPath: app.getAppPath()
-    },
-    chooseDirectory: () => chooseProjectDirectory(mainWindow),
-    readAttachment,
+  // `fs`, `home` and `appPaths` compose the real platform adapters below AND
+  // reach the runtime as its own options — the same three values, read once.
+  const home = homedir()
+  const fs = new NodeFs()
+  const appPaths = {
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath()
+  }
+  // `AgentRuntime` composed this itself until #477: a `platformAdapters`
+  // default meant a test that omitted the option got the REAL host's
+  // adapters, which is how a fold walk in a linked worktree ended up reading
+  // this checkout's own `.git`. `platformAdapters` has no default any more,
+  // so the one production composition root builds it explicitly, on exactly
+  // the terms the removed default used to.
+  const platformAdapters = createPlatformAdapters({
+    home,
+    appPaths,
+    relayModel: config.sendTextRelayModel,
+    relayTimeoutMs: config.sendTextTimeoutS * 1_000,
+    // CLI detection (#91) reads the same fs the providers do, and honours an
+    // explicit override path per CLI; blank means "detect it".
+    fs,
+    cliOverrides: cliOverridesFrom(config),
     ...(darwinConsoleInputSetting !== undefined
       ? { darwinConsoleInput: darwinConsoleInputSetting }
       : {}),
     ...(linuxConsoleInputSetting !== undefined
       ? { linuxConsoleInput: linuxConsoleInputSetting }
-      : {}),
+      : {})
+  })
+
+  runtime = new AgentRuntime({
+    config,
+    ledger,
+    projects,
+    launchedSessionStore,
+    home,
+    fs,
+    appPaths,
+    platformAdapters,
+    chooseDirectory: () => chooseProjectDirectory(mainWindow),
+    readAttachment,
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the
@@ -1078,6 +1129,47 @@ async function init(): Promise<void> {
     openMineId = typeof payload === 'string' && payload !== '' ? payload : null
   })
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /*
+   * Settings' Jev API-key control (#509).
+   *
+   * None of the three ever answers with the key: `get` re-reads the store,
+   * which is the same "answer with what was STORED" discipline every
+   * preference channel here holds, and `set`/`clear` derive their own answer
+   * from `readKey()` rather than the request, so a refusal this store made
+   * cannot be echoed back as success.
+   */
+  ipcMain.handle(IPC_CHANNELS.getJevSettings, () => jevApiKeyStore.load())
+  ipcMain.handle(IPC_CHANNELS.setJevApiKey, async (_event, payload: unknown) => {
+    try {
+      const key = parseJevApiKeyInput(payload)
+      const result = await jevApiKeyStore.save(key)
+      if (!result.saved) {
+        console.warn(`[jev] API key not saved: ${result.reason}`)
+        if (result.reason === 'encryption-unavailable') {
+          return { configured: false, unavailableReason: 'encryption-unavailable' }
+        }
+      }
+    } catch (error) {
+      // A shape the shared parser refuses (not a string, empty once trimmed,
+      // too long, or carrying a character no key uses) never reaches the
+      // store at all — the boundary trusted-but-typed discipline every
+      // request here holds.
+      console.warn('[jev] Refused to save an API key:', error)
+    }
+    return { configured: jevApiKeyStore.readKey() !== undefined }
+  })
+  ipcMain.handle(IPC_CHANNELS.clearJevApiKey, async () => {
+    try {
+      await jevApiKeyStore.clear()
+    } catch (error) {
+      // The key is already gone from memory; a persistence hiccup only means
+      // the next launch falls back to whatever the file still says.
+      console.warn('[jev] Failed to clear the stored API key:', error)
+    }
+    return { configured: jevApiKeyStore.readKey() !== undefined }
+  })
+  /* --- end of the #509 block ------------------------------------------------ */
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle
   // from the display, so a screen that could not hold the whole composition has
