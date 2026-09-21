@@ -5,6 +5,13 @@ import type { PanelEdge } from '../domain/types'
 import type { Platform } from '../platform/platform'
 import type { ScreenRect } from '../platform/screenArea'
 import { minWindowWidth } from '../platform/windowMetrics'
+/*
+ * Crosses the main -> renderer boundary only to PIN two copies equal (see
+ * AGENTS.md's boundaries section): the interior column main derives below,
+ * against the renderer's own `interiorColumnWidth`, `DESIGN_INTERIOR_WIDTH`
+ * and `SHELL_CONTENT_INSET` — asserted in "the derived columns" below.
+ * Production code never imports across this boundary either way.
+ */
 import {
   DESIGN_INTERIOR_WIDTH,
   SHELL_CONTENT_INSET,

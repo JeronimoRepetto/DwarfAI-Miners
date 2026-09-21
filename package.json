@@ -75,6 +75,7 @@
     }
   },
   "scripts": {
+    "prepare": "git config core.hooksPath scripts/git-hooks",
     "art:build": "node scripts/build-art.mjs",
     "icons": "node scripts/build-icons.mjs",
     "interior:map": "node scripts/build-interior-map.mjs",
