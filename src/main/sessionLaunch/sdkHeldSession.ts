@@ -105,12 +105,24 @@ const ASK_NOT_SHOWN = 'The panel could not put that question to the user.'
  * finished, and reading it as one would be the false departure #28 exists to
  * prevent.
  */
-const TERMINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
+const TERMINAL_TASK_STATUSES: ReadonlySet<HeldTaskEndStatus> = new Set<HeldTaskEndStatus>([
   'completed',
   'failed',
   'killed',
   'stopped'
 ])
+
+/**
+ * Typed as `ReadonlySet<HeldTaskEndStatus>` and read only through this guard
+ * (#510): the set and the union used to list the same four words and be tied
+ * by nothing but a comment, and a `status as HeldTaskEndStatus` cast at each
+ * call site would have kept compiling after either drifted. Now a status the
+ * set accepts IS a `HeldTaskEndStatus` by construction, and adding a value to
+ * one without the other fails `pnpm typecheck`.
+ */
+function isTerminalTaskStatus(status: string): status is HeldTaskEndStatus {
+  return (TERMINAL_TASK_STATUSES as ReadonlySet<string>).has(status)
+}
 
 /**
  * Every signal one stream message carries about this session's crew (#157).
@@ -200,14 +212,14 @@ function subagentSignals(message: SDKMessage): HeldSessionSubagentSignal[] {
   }
   if (message.subtype === 'task_updated') {
     const status = message.patch.status
-    return status !== undefined && TERMINAL_TASK_STATUSES.has(status)
-      ? [{ kind: 'task-ended', taskId: message.task_id, status: status as HeldTaskEndStatus }]
+    return status !== undefined && isTerminalTaskStatus(status)
+      ? [{ kind: 'task-ended', taskId: message.task_id, status }]
       : []
   }
   if (message.subtype === 'task_notification') {
     const status = message.status
-    return TERMINAL_TASK_STATUSES.has(status)
-      ? [{ kind: 'task-ended', taskId: message.task_id, status: status as HeldTaskEndStatus }]
+    return isTerminalTaskStatus(status)
+      ? [{ kind: 'task-ended', taskId: message.task_id, status }]
       : []
   }
   return []
