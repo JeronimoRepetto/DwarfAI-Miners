@@ -121,6 +121,32 @@ describe('opencodeTier — the written-once rule', () => {
     ).toBe('fast-cheap')
   })
 
+  it('gives a medium-cost NON-reasoning model with an ordinary window balanced', () => {
+    // Pin (AMENDED for #547 review): the combination the verifier found
+    // untested — neither cheap enough for fast-cheap nor reasoning at the top
+    // band nor large enough for long-context, so the rule's last branch.
+    expect(
+      opencodeTier({
+        cost: { input: 0.5, output: 1 },
+        limit: { context: 200_000, output: 1000 },
+        capabilities: { reasoning: false }
+      })
+    ).toBe('balanced')
+  })
+
+  it('gives a high-cost NON-reasoning model with a 1M window long-context, not frontier', () => {
+    // Pin (AMENDED for #547 review): frontier needs reasoning at the TOP band;
+    // a high-band non-reasoning model with a large window falls through to the
+    // context branch instead.
+    expect(
+      opencodeTier({
+        cost: { input: 1, output: 3 },
+        limit: { context: 1_048_576, output: 1000 },
+        capabilities: { reasoning: false }
+      })
+    ).toBe('long-context')
+  })
+
   it('gives a very-high-cost reasoning model frontier', () => {
     expect(
       opencodeTier({
