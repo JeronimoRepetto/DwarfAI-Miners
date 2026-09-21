@@ -11,7 +11,12 @@ import {
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { HELD_PERMISSION_MODES, type HeldPermissionMode, type JevFallbackReason } from '../../types'
+import {
+  HELD_PERMISSION_MODES,
+  type HeldPermissionMode,
+  type JevFallbackReason,
+  type ModelTier
+} from '../../types'
 
 /**
  * The design's Add Panel (#86): the surface the mine's Add action opens, where
@@ -174,6 +179,69 @@ const jevDecisionSummary = computed(() => {
 })
 
 /**
+ * The tier in words (jev-routing-profiles T4) — `ModelTier`'s own kebab-case
+ * wire values are never shown as-is. `'special-purpose'` is exhaustive
+ * against the type only: a routing decision never lands on it (see
+ * `ModelTier`'s own comment in contracts.ts), so this card never renders it.
+ */
+const TIER_LABELS: Record<ModelTier, string> = {
+  'fast-cheap': 'fast & cheap',
+  balanced: 'balanced',
+  frontier: 'frontier',
+  'long-context': 'long context',
+  'special-purpose': 'special purpose'
+}
+
+/**
+ * Which parts Jev itself answered confidently, and which fell to a safe
+ * value instead (jev-routing-profiles T4) — `JevRouteParts`' own two
+ * confidence-bearing parts, `provider` and `tier`. Confidence is always
+ * Jev's OWN raw reported number even for a part that fell back — see
+ * `JevRouteAnsweredPart`'s own comment in contracts.ts — so this line can
+ * say how close it was, not just that a floor bit. Whether the safe value
+ * came from the person's own configured default or the cheapest launchable
+ * provider is not on the wire (`applied` only ever says 'safe-default'), so
+ * this deliberately says "the safe value" rather than guessing "your
+ * default" for a part that might not be.
+ */
+const jevPartsSummary = computed(() => {
+  const decision = jevDecision.value
+  if (decision === null) return ''
+  const tierPct = Math.round(decision.parts.tier.confidence * 100)
+  const providerPct = Math.round(decision.parts.provider.confidence * 100)
+  const tierLabel = TIER_LABELS[decision.tier]
+
+  const chosen: string[] = []
+  if (decision.parts.tier.applied === 'answered') {
+    chosen.push(`the ${tierLabel} tier (${tierPct}% sure)`)
+  }
+  if (decision.parts.provider.applied === 'answered') {
+    chosen.push(`${jevProviderLabel.value} (${providerPct}% sure)`)
+  }
+
+  const unsureNames: string[] = []
+  const unsureValues: string[] = []
+  if (decision.parts.tier.applied === 'safe-default') {
+    unsureNames.push(`the tier (${tierPct}%)`)
+    unsureValues.push(tierLabel)
+  }
+  if (decision.parts.provider.applied === 'safe-default') {
+    unsureNames.push(`the provider (${providerPct}%)`)
+    unsureValues.push(jevProviderLabel.value)
+  }
+
+  let sentence = chosen.length === 0 ? '' : `Jev chose ${chosen.join(' and ')}.`
+  if (unsureNames.length > 0) {
+    const plural = unsureValues.length > 1
+    const unsureSentence = `Jev was unsure about ${unsureNames.join(' and ')}; the safe value${
+      plural ? 's' : ''
+    } ${unsureValues.join(' and ')} ${plural ? 'were' : 'was'} used.`
+    sentence = sentence === '' ? unsureSentence : `${sentence} ${unsureSentence}`
+  }
+  return sentence
+})
+
+/**
  * Fixed English sentences per fallback reason (#509's own acceptance
  * criterion: every way Jev can fail still launches and says that it did).
  * Kept here, display text only — the wire only ever carries the reason, on
@@ -205,6 +273,28 @@ const jevFallbackMessage = computed(() => {
     routing.reason === 'low-confidence' && routing.confidence !== undefined
       ? `${reason} (${Math.round(routing.confidence * 100)}%)`
       : reason
+
+  // jev-routing-profiles T4: a configured default was just applied to the
+  // pickers below (launchState.jevAnswered's own detour), so this line says
+  // so and asks for the confirming Enter, rather than the #509/#523 ending
+  // below — which only ever describes the CURRENT chips and would be wrong
+  // here, since those chips are exactly what this default just set.
+  if (routing.appliedDefault !== undefined) {
+    const appliedDefault = routing.appliedDefault
+    const providerLabel =
+      props.chips.find((chip) => chip.choice === appliedDefault.provider)?.label ??
+      appliedDefault.provider
+    const modelLabel =
+      appliedDefault.model === undefined
+        ? null
+        : (props.modelPicker.models.find((option) => option.value === appliedDefault.model)
+            ?.label ?? appliedDefault.model)
+    const pieces = [providerLabel]
+    if (modelLabel !== null) pieces.push(modelLabel)
+    if (appliedDefault.effort !== undefined) pieces.push(appliedDefault.effort)
+    return `Jev could not decide (${withConfidence}). Your default, ${pieces.join(' · ')}, is set below — press Launch again or change it.`
+  }
+
   // The ending is `launchState`'s fact — `launchedOnFallback`, recorded at
   // the moment the answer landed — never a reading of the current chips: a
   // chip clicked afterwards must not rewrite whether this fallback launched.
@@ -405,6 +495,13 @@ function onCommandKeydown(event: KeyboardEvent): void {
       -->
       <div v-else-if="jevDecision !== null" class="jev-decision">
         <p class="jev-decision-summary">{{ jevDecisionSummary }}</p>
+        <p class="jev-decision-parts">{{ jevPartsSummary }}</p>
+        <p v-if="jevDecision.parts.trivial.value" class="jev-decision-trivial">
+          Treated as a trivial prompt.
+        </p>
+        <p v-if="jevDecision.parts.largeContext.value" class="jev-decision-large-context">
+          Large-context model preferred.
+        </p>
         <p v-if="jevDecision.truncated" class="jev-decision-truncated">
           The prompt sent to Jev was trimmed to fit its request budget.
         </p>
@@ -451,6 +548,21 @@ function onCommandKeydown(event: KeyboardEvent): void {
     <p v-if="jev.routing.phase === 'fellBack'" class="launch-note jev-fallback" role="status">
       {{ jevFallbackMessage }}
     </p>
+    <!--
+      Only when a default was APPLIED: the pickers below were just overwritten
+      exactly as a decision would overwrite them, and clearJevDecision already
+      restores what stood before — so the same Dismiss the decided card offers
+      belongs here too, or the one way back is retyping the prompt. A plain
+      fallback applied nothing, so there is nothing to put back.
+    -->
+    <button
+      v-if="jev.routing.phase === 'fellBack' && jev.routing.appliedDefault !== undefined"
+      class="jev-dismiss jev-fallback-dismiss"
+      type="button"
+      @click="emit('dismiss-jev')"
+    >
+      Dismiss
+    </button>
   </section>
 </template>
 
@@ -829,12 +941,15 @@ function onCommandKeydown(event: KeyboardEvent): void {
   border-radius: var(--radius-default);
   background: var(--color-panel-deep);
 }
-.jev-decision-summary {
+.jev-decision-summary,
+.jev-decision-parts {
   margin: 0;
   color: var(--color-cream);
   font-size: var(--text-meta);
 }
 .jev-decision-truncated,
+.jev-decision-trivial,
+.jev-decision-large-context,
 .jev-decision-note {
   margin: 0;
   color: var(--color-tooltip-text);

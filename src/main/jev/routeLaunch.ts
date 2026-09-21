@@ -54,6 +54,21 @@ export interface CreateJevLaunchRouterOptions {
   totalBudgetMs?: number
   /** Injected clock, so a failure log can note how long the call ran without a real timer. */
   now?: () => number
+  /**
+   * Dev-console trace sink for the LOCAL decision (#525/jev-routing-profiles
+   * T4): one header line, `[jev:debug] decision =`, then `decideLaunch`'s own
+   * result pretty-printed (`JSON.stringify(value, null, 2)`) with `elapsedMs`
+   * appended — this service's own wall-clock, read through `now` above.
+   * Fires only once Jev actually answered (`outcome.kind === 'answers'`):
+   * a request `buildJevRouteRequest` skipped, or a fallback Jev's OWN call
+   * returned, never reaches `decideLaunch`, so there is no local decision to
+   * show for either. Wired to the identical sink the SDK adapter takes
+   * (main/index.ts) — see `typesafeJevRouter.ts`'s own
+   * `CreateTypesafeJevRouterOptions.debugLog` comment for why printing this
+   * is safe: opt-in, dev-only, and `decideLaunch`'s result never carries the
+   * prompt or the key.
+   */
+  debugLog?: (line: string) => void
 }
 
 export interface JevLaunchRouter {
@@ -143,6 +158,10 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
         capabilities: MODEL_CAPABILITIES,
         userDefault
       })
+      if (options.debugLog !== undefined) {
+        options.debugLog('[jev:debug] decision =')
+        options.debugLog(JSON.stringify({ ...decided, elapsedMs: now() - startedAt }, null, 2))
+      }
       if (decided.kind === 'fallback') {
         return fallback(decided.reason)
       }

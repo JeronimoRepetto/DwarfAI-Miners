@@ -1167,6 +1167,73 @@ describe('the Jev entry path (#523)', () => {
     })
   })
 
+  /*
+   * jev-routing-profiles T4. A fallback that carries the person's own
+   * configured default (Settings' Jev section) applies it to the pickers
+   * exactly like a decision — `launchState.jevAnswered`'s own detour — so
+   * this Enter shares that phase's own "stop unless autoAccept" guard rather
+   * than the #509/#523 fall-straight-through ending a plain fallback (no
+   * default) still gets, pinned above.
+   */
+  describe('a fallback with a configured default (jev-routing-profiles T4)', () => {
+    const FALLBACK_WITH_DEFAULT = {
+      kind: 'fallback' as const,
+      reason: 'timeout' as const,
+      fallbackTo: { provider: 'codex' as const, model: 'gpt-5.6-sol', effort: 'high' }
+    }
+
+    it('applies the default and stops for the second Enter, same as a decision', async () => {
+      const { api, launch } = await readyOnJev({
+        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK_WITH_DEFAULT)
+      })
+
+      await launch.submit()
+
+      expect(api.launchAgent).not.toHaveBeenCalled()
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(launch.state.value.choice).toBe('codex')
+      expect(launch.state.value.model).toBe('gpt-5.6-sol')
+      expect(launch.state.value.effort).toBe('high')
+      expect(launch.jev.value.routing).toEqual({
+        phase: 'fellBack',
+        reason: 'timeout',
+        confidence: undefined,
+        appliedDefault: FALLBACK_WITH_DEFAULT.fallbackTo
+      })
+
+      await launch.submit()
+
+      // The applied default routes exactly as a clicked chip would — the
+      // same rule the plain-decision two-Enter flow above already pins.
+      expect(api.launchAgent).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'codex',
+        prompt: 'dig the east gallery',
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+    })
+
+    it('launches at once with auto-accept on, instead of waiting for a second Enter', async () => {
+      const { api, launch } = await readyOnJev({
+        routeJevLaunch: vi.fn().mockResolvedValue(FALLBACK_WITH_DEFAULT)
+      })
+      launch.toggleJevAutoAccept()
+
+      await launch.submit()
+
+      expect(api.launchAgent).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'codex',
+        prompt: 'dig the east gallery',
+        model: 'gpt-5.6-sol',
+        effort: 'high'
+      })
+      expect(api.routeJevLaunch).toHaveBeenCalledOnce()
+    })
+  })
+
   describe('an Enter with nothing behind it', () => {
     it('refuses out loud when a late answer reaches a no-chip panel, and keeps the prompt', async () => {
       let resolveAsk: (result: unknown) => void = () => {}

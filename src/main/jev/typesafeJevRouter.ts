@@ -155,14 +155,23 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
       // and nowhere else, so an absent sink means zero output AND zero clock
       // reads — the same no-op-when-off shape perf.ts holds to. The key is
       // read above and names no payload below: it must never be logged.
+      //
+      // AMENDED for jev-routing-profiles T4: one HEADER line (still single-
+      // line and greppable — `grep '\[jev:debug\]'` finds one per event)
+      // names what follows, then the payload is PRETTY-PRINTED
+      // (`JSON.stringify(value, null, 2)`) as its own debugLog call — two
+      // calls per event rather than one packed line, because a request or an
+      // answer is meant to be READ on the dev console now, not only grepped.
+      // The prompt is safe to print at either verbosity: this trace is
+      // opt-in and dev-only (JEV_DEBUG), and the sink never receives the key
+      // or the Authorization header — read above, named in no payload below.
       const debugLog = options.debugLog
       const startedAt = debugLog === undefined ? undefined : Date.now()
       const elapsedMs = (): number => (startedAt === undefined ? 0 : Date.now() - startedAt)
-      const emit = (event: string, payload: Record<string, unknown>): void => {
+      const emit = (header: string, payload: Record<string, unknown>): void => {
         if (debugLog === undefined) return
-        // JSON.stringify escapes newlines inside `state`, so one emit is
-        // one physical line no matter what the person typed.
-        debugLog(`[jev:debug] ${event} ${JSON.stringify(payload)}`)
+        debugLog(`[jev:debug] ${header}`)
+        debugLog(JSON.stringify(payload, null, 2))
       }
 
       const client = new TypeSafeClient({
@@ -173,7 +182,7 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
         retry: { maxRetries: DEFAULT_MAX_RETRIES }
       })
 
-      emit('request', {
+      emit('request →', {
         state: { prompt: request.prompt, routing_profile: request.routingProfile },
         truncated: request.truncated,
         questions: {
@@ -236,7 +245,7 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
           return { kind: 'fallback', reason: 'invalid-response' }
         }
 
-        emit('answer', { ...result.answers, inputTokens: result.usage.input_tokens })
+        emit('answers ←', { ...result.answers, inputTokens: result.usage.input_tokens })
 
         return {
           kind: 'answers',

@@ -2,6 +2,7 @@ import {
   type DwarfProvider,
   type HeldPermissionMode,
   type JevFallbackReason,
+  type JevLaunchDefault,
   type JevRouteLaunchResult,
   type JevSettings,
   type JevUnavailableReason,
@@ -517,7 +518,21 @@ export type JevRoutingPhase =
   | { phase: 'idle' }
   | { phase: 'asking' }
   | { phase: 'decided'; decision: JevDecision }
-  | { phase: 'fellBack'; reason: JevFallbackReason; confidence?: number }
+  | {
+      phase: 'fellBack'
+      reason: JevFallbackReason
+      confidence?: number
+      /**
+       * The person's own configured default (jev-routing-profiles T4),
+       * carried here only when `jevAnswered` actually applied it to the
+       * pickers — see that function's own comment. Its presence is what
+       * tells `useAgentLaunch.submit` to stop for a confirming Enter (or
+       * fall straight through with `autoAccept`) exactly as a `decided`
+       * phase does, and what tells `AddPanel` to word the fallback line as
+       * "your default is set below" rather than today's #509/#523 ending.
+       */
+      appliedDefault?: JevLaunchDefault
+    }
 
 /**
  * The pickers' values a decision is about to overwrite, kept so
@@ -635,6 +650,46 @@ export function jevAsked(state: LaunchState): LaunchState {
 export function jevAnswered(state: LaunchState, result: JevRouteLaunchResult): LaunchState {
   if (state.jev.routing.phase !== 'asking') return state
   if (result.kind === 'fallback') {
+    // jev-routing-profiles T4: a configured default (Settings' Jev section)
+    // is applied to the pickers exactly like a decision — the same
+    // chooseProvider/chooseModel/chooseEffort paths, previousChoice kept so
+    // Dismiss can put things back — rather than leaving the composer on
+    // whatever it already showed. `useAgentLaunch.submit` reads
+    // `appliedDefault` to stop for the confirming Enter this needs, the same
+    // guard a `decided` phase already uses.
+    if (result.fallbackTo?.provider !== undefined) {
+      const previousChoice: JevPreviousChoice = {
+        choice: state.choice,
+        model: state.model,
+        effort: state.effort
+      }
+      let applied = chooseProvider(state, result.fallbackTo.provider)
+      if (result.fallbackTo.model !== undefined) {
+        applied = chooseModel(applied, result.fallbackTo.model)
+      }
+      if (result.fallbackTo.effort !== undefined) {
+        applied = chooseEffort(applied, result.fallbackTo.effort)
+      }
+      return {
+        ...applied,
+        jev: {
+          ...applied.jev,
+          routing: {
+            phase: 'fellBack',
+            reason: result.reason,
+            confidence: result.confidence,
+            appliedDefault: result.fallbackTo
+          },
+          previousChoice,
+          // Whether THIS submit falls straight through to a launch is
+          // autoAccept's own call, exactly as it is for a decision — see
+          // useAgentLaunch.submit's matching guard. Read here, at answer
+          // time, for the same reason #523 already reads it for the plain
+          // fallback below: the sentence this feeds says what DID (or will).
+          launchedOnFallback: state.jev.autoAccept
+        }
+      }
+    }
     return {
       ...state,
       jev: {
