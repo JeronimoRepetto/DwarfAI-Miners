@@ -313,6 +313,93 @@ describe('design-tokens.css against the design foundations', () => {
     expect(family).toContain('Arial')
     expect(family).toContain('sans-serif')
   })
+
+  /*
+   * APPENDED for #548 (maintainer ruling 2026-09-21). `foundations.md` gives
+   * `--color-control` three roles at once — "Enabled button/control background
+   * and unselected chip border/text" — and the third is unusable: `#272015`
+   * text on the `#14100b` it sits on measures 1.18:1, where 1.00:1 is the same
+   * colour. The unselected half of every segmented control was therefore
+   * invisible, which is why a routing profile that really had changed looked
+   * like a control that never responded.
+   *
+   * This is not a palette taste correction. `foundations.md`'s own gap table
+   * marks accessibility — "no focus, keyboard traversal, contrast rationale" —
+   * as "Requires design/product definition", so the contrast floor was never
+   * specified and asking was the documented route (`ui-rebuild`). The ruling
+   * fills that gap, the way #198's did for the type scale.
+   *
+   * `--color-control` KEEPS its value: 18 surfaces are painted with it and it
+   * is correct as a background. What is new is a FOREGROUND token for the
+   * idle role, named after `--color-nav-idle`, which already holds exactly
+   * this "unselected, still legible" job for the shell rail.
+   */
+  function contrastRatio(foreground: string, background: string): number {
+    const luminance = (hex: string): number => {
+      const channels = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
+      const linear = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+      return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!
+    }
+    const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a)
+    return (lighter! + 0.05) / (darker! + 0.05)
+  }
+
+  it('measures the contrast of a known pair the way WCAG does', () => {
+    // The helper above is the whole enforcement below, so it is pinned against
+    // a pair computed by hand first: black on white is WCAG's own 21:1.
+    expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 1)
+    // And the defect this issue exists for, so the number is on the record.
+    expect(contrastRatio('#272015', '#14100b')).toBeLessThan(1.2)
+  })
+
+  it.each([['--color-panel-deep'], ['--color-panel']])(
+    'keeps the idle control foreground readable on %s',
+    (background) => {
+      const idle = valueOf('--color-control-idle')
+      expect(idle).toBeTruthy()
+      // WCAG AA for normal text. An unselected option is one the person is
+      // about to choose, so it has to be READ, not merely sensed — this is the
+      // floor the ruling set, and the reason a fresh token exists at all.
+      expect(contrastRatio(idle!, valueOf(background)!)).toBeGreaterThanOrEqual(4.5)
+    }
+  )
+
+  /*
+   * The role splits in two, which is why there are two tokens and not one.
+   *
+   * An UNSELECTED option is one the person is about to choose: it has to be
+   * read, so it takes the AA floor above. A DISABLED control cannot be chosen
+   * at all, and WCAG exempts it — but 1.18:1 does not render it "switched
+   * off", it renders it GONE, and a confirm button whose word has vanished
+   * reads as broken rather than as unavailable. So disabled is dimmer than
+   * idle and still present, which is the distinction the old single token
+   * could not express.
+   */
+  it('keeps a disabled control legible enough to still read as a control', () => {
+    const disabled = valueOf('--color-control-disabled')
+    expect(disabled).toBeTruthy()
+    // The 3:1 WCAG gives non-text UI, applied here to a word nobody may click:
+    // enough to see WHAT is unavailable, never enough to look available.
+    expect(contrastRatio(disabled!, valueOf('--color-panel-deep')!)).toBeGreaterThanOrEqual(3)
+  })
+
+  it('keeps disabled visibly quieter than merely unselected', () => {
+    const ground = valueOf('--color-panel-deep')!
+    const disabled = contrastRatio(valueOf('--color-control-disabled')!, ground)
+    const idle = contrastRatio(valueOf('--color-control-idle')!, ground)
+    // The whole point of two tokens: cannot-be-chosen must not look the same
+    // as could-be-chosen-but-is-not.
+    expect(disabled).toBeLessThan(idle)
+  })
+
+  it('keeps the idle foreground quieter than the selected one, so the states still differ', () => {
+    const idle = contrastRatio(valueOf('--color-control-idle')!, valueOf('--color-panel-deep')!)
+    const selected = contrastRatio(valueOf('--color-cream')!, valueOf('--color-panel-deep')!)
+    // Legible is not the same as loud: if idle ever reached the selected
+    // state's own contrast, the control would read as having every option
+    // chosen — the mirror of the bug being fixed.
+    expect(idle).toBeLessThan(selected)
+  })
 })
 
 /*
@@ -342,6 +429,57 @@ describe('renderer components against the type scale tokens', () => {
     for (const file of vueFiles(RENDERER_SRC)) {
       const matches = readFileSync(file, 'utf8').match(/font-size\s*:\s*\d+(\.\d+)?px/g)
       if (matches !== null) offenders.push(`${file}: ${matches.join(', ')}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /*
+   * #548, and the same reasoning #198's check above is built on: raising the
+   * idle role in the token file is only real if no component still paints a
+   * foreground with the SURFACE token. `color: var(--color-control)` renders
+   * at 1.18:1 on the ground these controls sit on and compiles exactly like
+   * the legible one, so no other check would catch a fresh one landing.
+   *
+   * The background role is untouched and deliberately not matched here:
+   * `--color-control` is the correct fill for 18 enabled surfaces.
+   */
+  /*
+   * The same defect wearing a `background:` (#548). An icon here is a CSS
+   * mask, so its own colour is painted as the fill BEHIND the mask — the
+   * property says background, the pixels are foreground, and the check above
+   * cannot tell the two apart. `.add-control:disabled .control-glyph` carried
+   * a comment promising it "reads as switched off rather than as missing",
+   * and at 1.18:1 it read as missing, which is the gap this measures shut.
+   *
+   * Keyed on the repo's own `-glyph` naming for a masked icon, because that
+   * convention is the only thing in the text that distinguishes a mask fill
+   * from a real surface.
+   */
+  it('never fills a masked icon with the control SURFACE colour', () => {
+    const offenders: string[] = []
+    for (const file of vueFiles(RENDERER_SRC)) {
+      let selector = ''
+      for (const raw of readFileSync(file, 'utf8').split('\n')) {
+        const line = raw.trim()
+        if (line.endsWith('{')) selector = line.slice(0, -1).trim()
+        else if (
+          /^background\s*:\s*var\(--color-control\)\s*;$/.test(line) &&
+          /glyph/.test(selector)
+        ) {
+          offenders.push(`${file}: ${selector}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('never paints a foreground with the control SURFACE colour', () => {
+    const offenders: string[] = []
+    for (const file of vueFiles(RENDERER_SRC)) {
+      const matches = readFileSync(file, 'utf8').match(
+        /(?:^|\n)\s*color\s*:\s*var\(--color-control\)/g
+      )
+      if (matches !== null) offenders.push(`${file}: ${matches.length} occurrence(s)`)
     }
     expect(offenders).toEqual([])
   })
