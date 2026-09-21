@@ -667,6 +667,93 @@ describe('the Jev option', () => {
       expect(withDecision().get('.jev-decision-note').text()).toBeTruthy()
     })
 
+    /*
+     * jev-routing-profiles T4. The card gains the tier in words and a
+     * per-part line naming which parts Jev itself answered confidently —
+     * `DECISION`'s own fixture above has both `provider` and `tier`
+     * `applied: 'answered'`, tier `'frontier'`, confidences 87%/90%.
+     */
+    describe('the tier and per-part line (T4)', () => {
+      it('shows the tier in words, and names both parts Jev chose with their own confidence', () => {
+        const text = withDecision().get('.jev-decision-parts').text()
+
+        expect(text).toContain('frontier')
+        expect(text).toContain('90%')
+        expect(text).toContain('codex')
+        expect(text).toContain('87%')
+      })
+
+      it('names a part that fell to a safe value instead of Jev’s own answer', () => {
+        const wrapper = withDecision({
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'decided',
+              decision: {
+                ...DECISION.decision,
+                parts: {
+                  ...DECISION.decision.parts,
+                  provider: { value: 'codex', confidence: 0.54, applied: 'safe-default' }
+                }
+              }
+            }
+          }
+        })
+
+        const text = wrapper.get('.jev-decision-parts').text()
+
+        expect(text).toContain('unsure about the provider')
+        expect(text).toContain('54%')
+      })
+
+      it('shows the trivial flag only when the local decision treated the prompt as trivial', () => {
+        const trivial = withDecision({
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'decided',
+              decision: {
+                ...DECISION.decision,
+                parts: {
+                  ...DECISION.decision.parts,
+                  trivial: { value: true, probability: 0.9 }
+                }
+              }
+            }
+          }
+        })
+        const untrivial = withDecision()
+
+        expect(trivial.get('.jev-decision-trivial').text()).toBeTruthy()
+        expect(untrivial.find('.jev-decision-trivial').exists()).toBe(false)
+      })
+
+      it('shows the large-context flag only when the local decision preferred one', () => {
+        const large = withDecision({
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'decided',
+              decision: {
+                ...DECISION.decision,
+                parts: {
+                  ...DECISION.decision.parts,
+                  largeContext: { value: true, probability: 0.9 }
+                }
+              }
+            }
+          }
+        })
+        const notLarge = withDecision()
+
+        expect(large.get('.jev-decision-large-context').text()).toBeTruthy()
+        expect(notLarge.find('.jev-decision-large-context').exists()).toBe(false)
+      })
+    })
+
     it('applies the decision to the pickers themselves — the chip and the model select', () => {
       const wrapper = withDecision({
         modelPicker: {
@@ -692,6 +779,23 @@ describe('the Jev option', () => {
       await wrapper.get('.jev-dismiss').trigger('click')
 
       expect(wrapper.emitted('dismiss-jev')).toHaveLength(1)
+    })
+
+    /*
+     * Coverage gap named by the #509/#523 T4 verifier (Engram
+     * odd/jev-launch-routing/progress, obs #881): "close-with-live-decision
+     * untested directly." The close control has to keep working while the
+     * card is on screen — nothing about a live decision should intercept or
+     * swallow the gesture.
+     */
+    it('can still be closed while the decision card is showing', async () => {
+      const wrapper = withDecision()
+      expect(wrapper.find('.jev-decision').exists()).toBe(true)
+
+      await wrapper.get('.launch-close').trigger('click')
+
+      expect(wrapper.emitted('close')).toHaveLength(1)
+      expect(wrapper.emitted('dismiss-jev')).toBeUndefined()
     })
 
     it('is gone once the session has launched, alongside the chips and the composer', () => {
@@ -771,6 +875,32 @@ describe('the Jev option', () => {
     })
 
     /*
+     * Coverage gap named by the #509/#523 T4 verifier (Engram
+     * odd/jev-launch-routing/progress, obs #881): "fallback visibility pinned
+     * only for submitted-spawning." The line's own template comment says it
+     * has to survive past `launched` becoming true either way `launched` can
+     * become true — the test above only ever pinned the held/detached-holding
+     * `submitted-spawning` phase; this pins the OTHER one, a launch main is
+     * not holding (`started-detached`, #168/#191).
+     */
+    it('stays visible for a detached launch too, not only a held one', () => {
+      const wrapper = panel({
+        chosen: 'codex',
+        phase: 'started-detached',
+        enabled: true,
+        prompt: 'dig the east gallery',
+        jev: {
+          ...READY_JEV,
+          enabled: true,
+          launchedOnFallback: true,
+          routing: { phase: 'fellBack', reason: 'timeout' }
+        }
+      })
+
+      expect(wrapper.get('.jev-fallback').text()).toContain('Jev took too long')
+    })
+
+    /*
      * Issue #523. With the toggle now a full entry path, a fallback can arrive
      * with no chip behind it — and then nothing launched, so the line must say
      * what stands instead: the prompt was kept, and a provider is what the
@@ -819,6 +949,84 @@ describe('the Jev option', () => {
         expect(text).toContain('42%')
         expect(text).toContain('not confident enough')
         expect(text).toContain('Your prompt was kept')
+      })
+    })
+
+    /*
+     * jev-routing-profiles T4. `fallbackTo` is APPLIED to the pickers
+     * (launchState.jevAnswered's own detour), so this line says so and asks
+     * for the confirming Enter, instead of the #509/#523 endings above,
+     * which only ever describe the CURRENT chips.
+     */
+    describe('the fallback with a configured default (T4)', () => {
+      function fellBackWithDefault(overrides: Record<string, unknown> = {}) {
+        return panel({
+          chosen: 'codex',
+          phase: 'known-provider-ready',
+          modelPicker: {
+            visible: true,
+            models: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }],
+            disabled: false,
+            note: null
+          },
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'fellBack',
+              reason: 'timeout',
+              appliedDefault: { provider: 'codex', model: 'gpt-5.6-sol', effort: 'high' }
+            }
+          },
+          ...overrides
+        })
+      }
+
+      it('says Jev could not decide, names the reason, and sets the default below', () => {
+        const text = fellBackWithDefault().get('.jev-fallback').text()
+
+        expect(text).toContain('Jev could not decide')
+        expect(text).toContain('Jev took too long')
+        expect(text).toContain('Your default')
+        expect(text).toContain('codex')
+        expect(text).toContain('GPT-5.6 Sol')
+        expect(text).toContain('high')
+        expect(text).toContain('press Launch again')
+      })
+
+      it('never claims a launch already happened, unlike the plain #509 ending', () => {
+        const text = fellBackWithDefault().get('.jev-fallback').text()
+
+        expect(text).not.toContain("Launched with your pickers' values.")
+      })
+
+      it('resolves the model off the picker’s own catalogue, falling back to the raw id', () => {
+        const text = fellBackWithDefault({
+          modelPicker: { visible: true, models: [], disabled: true, note: null }
+        })
+          .get('.jev-fallback')
+          .text()
+
+        expect(text).toContain('gpt-5.6-sol')
+      })
+
+      it('omits the model and effort pieces the default never named', () => {
+        const text = fellBackWithDefault({
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'fellBack',
+              reason: 'timeout',
+              appliedDefault: { provider: 'codex' }
+            }
+          }
+        })
+          .get('.jev-fallback')
+          .text()
+
+        expect(text).toContain('Your default')
+        expect(text).toContain('codex')
       })
     })
   })
