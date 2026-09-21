@@ -56,6 +56,7 @@ src/
 │   ├── domain/      this process's type barrel, and the pure domain rules (materials, ledger, lifecycle)
 │   ├── history/     what a mine's transcripts on disk remember: every dwarf that spoke there, read on request
 │   ├── hooks/       the opt-in Claude hooks push channel
+│   ├── jev/         asking TypeSafe's Jev model which provider, model and effort to launch with, behind a port (#509)
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill and its migration
 │   ├── notifications/ whether a mine owes the person a system notification, the port that raises one, and the switch that stops them
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
