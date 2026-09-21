@@ -229,3 +229,33 @@ task — see T1's census). `pnpm test` is green with no diff mentioning this bra
 in the suite (confirmed by both full-suite runs above; nothing in either failure list, when there
 was one, ever again after T2). The main checkout was never touched — every command above ran only
 inside `DwarfAI-Miners-worktrees/fix-477`.
+
+### Verification of record, 2026-09-21
+
+**Parent spot check.** `git log main..HEAD`: two Conventional Commits, no attribution trailers, clean
+tree. Re-ran `pnpm vitest run` on `runtime.test.ts`, `worktree.test.ts`, `registry.test.ts`: 440
+passed, 0 failed. Read the `index.ts` and `runtime.ts` diffs: the adapter composition moved
+verbatim; the two forwarding-only runtime options went with the default they forwarded to.
+
+**Native review (RDD): not started.** `gentle-ai review assess` rated the candidate `high`
+(`process_boundary` in `runtime.test.ts`). Before a consent could be relayed for this candidate the
+global RDD switch was turned off outside this session, and the same provider-side refusal that
+blocked two lenses on the sibling candidates (#502, #454) made a native closure unreachable anyway.
+No receipt exists; delivery follows ordinary repository policy.
+
+**Independent verifier (Sonnet, read-only), the RDD-off path for a `high` candidate:** `pass`.
+Field-by-field equivalence of the moved composition confirmed, including that `index.ts` on `main`
+passed neither `fs` nor `platformAdapters` and relied on the deleted defaults. The defect was
+reproduced independently with a standalone script: a POSIX `dirname` over `C:\work\project`
+degenerates to `.` after the first failed stat, and the new guard stops the walk before the fs is
+asked about it; `/` and `C:\` still terminate through the pre-existing `parent === folder` branch.
+The amended tier test isolates the throttle window it is named for rather than being taught new
+behaviour. `fakePlatformAdapters.ts` is imported by tests only and is absent from the production
+bundle. Census `--base main`: 415 → 415, 6 → 6, 19 → 20. All checks re-run green (typecheck, lint,
+format:check, sync --check, test 7648 passed, build).
+
+Follow-up, cosmetic: the 97 `// AMENDED for #470: see worktreePlatformAdapters above` comments in
+`runtime.test.ts` now point at an import line; the reasoning lives one hop away in
+`fakePlatformAdapters.ts`.
+
+Next step: the pull request.
