@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ADD_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
+import { ADD_ICON_SRC, INFO_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { browseRows } from '../../lib/browse/boardRows'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type {
@@ -12,6 +12,7 @@ import type {
 } from '../../types'
 import MineCard from './MineCard.vue'
 import RemoveMineModal from './RemoveMineModal.vue'
+import TierInfoModal from './TierInfoModal.vue'
 import WorktreeFoldModal from './WorktreeFoldModal.vue'
 
 const props = defineProps<{
@@ -79,6 +80,7 @@ const empty = computed(() => !props.loading && props.error === null && rows.valu
  * below — which is what closes the modal by itself once the card is gone.
  */
 const removingId = ref<string | null>(null)
+const showTierInfoModal = ref(false)
 
 /**
  * The row the confirmation is about, or undefined when there is none to ask
@@ -201,6 +203,21 @@ onBeforeUnmount(stopWatching)
           aria-hidden="true"
         ></span>
       </button>
+      <!--
+        Tier threshold reference (#538): a small info trigger beside the add
+        control, showing the weight boundaries that decide each mine's tier.
+      -->
+      <button
+        class="mines-info"
+        type="button"
+        aria-label="Tier thresholds"
+        title="Tier thresholds"
+        :style="{ '--info-icon': maskImageValue(INFO_ICON_SRC) }"
+        @click="showTierInfoModal = true"
+      >
+        <span class="mines-info-glyph" aria-hidden="true"></span>
+      </button>
+      <TierInfoModal v-if="showTierInfoModal" @close="showTierInfoModal = false" />
     </header>
     <!-- The accent rule the mock draws under the header, above the chips. -->
     <div class="header-divider" aria-hidden="true"></div>
@@ -349,7 +366,8 @@ onBeforeUnmount(stopWatching)
  * the one the source gives every SVG in `docs/assets/icons`.
  */
 .sort-control,
-.add-control {
+.add-control,
+.mines-info {
   display: flex;
   flex: none;
   align-items: center;
@@ -366,6 +384,13 @@ onBeforeUnmount(stopWatching)
   background: var(--color-accent);
   mask: var(--control-icon) center / contain no-repeat;
 }
+.mines-info-glyph {
+  display: block;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  background: var(--color-accent);
+  mask: var(--info-icon) center / contain no-repeat;
+}
 /*
  * The disabled model the source gives every other control: the glyph drops to
  * the control colour, which on this ground reads as switched off rather than
@@ -378,7 +403,8 @@ onBeforeUnmount(stopWatching)
   background: var(--color-control);
 }
 .sort-control:focus-visible,
-.add-control:focus-visible {
+.add-control:focus-visible,
+.mines-info:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }
