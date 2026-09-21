@@ -148,32 +148,6 @@ export function oneShotNoExitReason(provider: DwarfProvider): string {
 }
 
 /**
- * Why an OBSERVED OpenCode session takes no messages, and where one can still
- * be sent — the specific fact behind NO_CHANNEL_REASON's placeholder, which
- * this file's own comment on the launched refusal already calls a bug when
- * something knowable stands behind it (#507).
- *
- * Every OpenCode dwarf today was opened in a terminal, outside this app:
- * OpenCode is in neither `LAUNCHABLE_PROVIDERS` nor `HELDABLE_PROVIDERS`, and
- * `opencodeProvider.textDelivery` returns `null` unconditionally (#444). That
- * session publishes no pid, port or registry this app could address it by —
- * measured on a live install, not assumed (docs/opencode-format.md, Row 5b) —
- * so there is nothing here to guess a channel from, and this project refuses
- * to guess (#231). #445 is the change that gives a PANEL-LAUNCHED OpenCode
- * session a real channel; it has not landed, so the sentence below promises
- * nothing about one — the terminal the session is already running in is the
- * one place that can answer it today.
- */
-export function observedOpenCodeNoChannelReason(): string {
-  return (
-    'This OpenCode session was opened in a terminal, not from this panel, and OpenCode ' +
-    'publishes no pid, port or registry for it — there is nothing here that can reach it ' +
-    'to send a message. A session started from this panel will be reachable once this panel ' +
-    'can hold OpenCode; until then, the terminal it is running in is where to answer it.'
-  )
-}
-
-/**
  * What each channel means, in the sender's terms.
  *
  * Read off `capabilities.sendText`, which can name a different channel from
@@ -395,15 +369,6 @@ function noOneShotExitReason(dwarf: Dwarf): string | null {
 }
 
 /**
- * The last resort once every more specific refusal above has passed (#507) —
- * OpenCode's own reason for a dwarf this panel only observes, the generic
- * placeholder for every provider that has not (yet) grown one of its own.
- */
-function noChannelFallback(dwarf: Dwarf): string {
-  return dwarf.provider === 'opencode' ? observedOpenCodeNoChannelReason() : NO_CHANNEL_REASON
-}
-
-/**
  * Kick: one click, and two different acts behind it (#293).
  *
  * The capability matrix decides which. A dwarf whose session HAS an interrupt
@@ -479,7 +444,7 @@ function chatAction(dwarf: Dwarf): ActionBarEntry {
         ? launchedNoInboxReason(provider)
         : // And the same shape with no exit at all (#231), which the launch
           // above must win over: a session this panel can end says so.
-          (noOneShotExitReason(dwarf) ?? noChannelFallback(dwarf))
+          (noOneShotExitReason(dwarf) ?? NO_CHANNEL_REASON)
     return { id: 'chat', name: 'Chat', enabled: false, hint }
   }
   return { id: 'chat', name: 'Chat', enabled: true, hint: CHANNEL_HINT[channel] }
