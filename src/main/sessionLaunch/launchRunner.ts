@@ -12,7 +12,12 @@ import {
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
-import { resolveProgram, type CliDetector } from '../platform/cliDetection'
+import {
+  describeProgramFailure,
+  describeShimRefusal,
+  resolveProgram,
+  type CliDetector
+} from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
 import { buildLaunchArgs, prepareLaunchPrompt } from './launch'
@@ -28,7 +33,14 @@ import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
  * a Platform parameter.
  */
 
-/** Refusals and failures, phrased for the panel. Fixed copy, and never a path. */
+/**
+ * Refusals and failures, phrased for the panel. A path-less refusal
+ * (`EMPTY_PROMPT`, `NOT_LAUNCHABLE`) stays fixed copy — there is nothing to
+ * name. `couldNotStart` below is not fixed copy any more (#502): it names the
+ * path this app tried and why, because a refusal that names nothing the
+ * person can act on is a dead end, and the maintainer asked in #502 for the
+ * path rather than the dead end.
+ */
 const EMPTY_PROMPT = 'Type a prompt first.'
 
 /**
@@ -221,8 +233,14 @@ class EarlyFailureWatch {
  * two copies is how the same missing CLI comes to be named two ways.
  */
 
-function couldNotStart(provider: DwarfProvider): string {
-  return `${PRODUCT_NAME[provider]} could not be started.`
+/**
+ * Names the product, the path this app tried and why (#502) — the shape
+ * `notInstalledReason` already set for "not installed", carried to the two
+ * remaining ways a launch can go nowhere: a `resolveProgram` refusal and a
+ * spawn error, whichever this launch's `catch` below caught.
+ */
+function couldNotStart(provider: DwarfProvider, path: string, cause: string): string {
+  return `${PRODUCT_NAME[provider]} could not be started: ${path} — ${cause}.`
 }
 
 export interface LaunchInvocation {
@@ -637,8 +655,12 @@ export async function launchClaudeSession(
     // Inside the try because reading a shim is a disk read that can fail like
     // a spawn can, and it fails the same way for the user: nothing started.
     const program = await resolveProgram(detection.path, options.fs)
-    if (program === undefined) {
-      return { launched: false, provider: options.provider, error: couldNotStart(options.provider) }
+    if ('kind' in program) {
+      return {
+        launched: false,
+        provider: options.provider,
+        error: couldNotStart(options.provider, program.shimPath, describeShimRefusal(program))
+      }
     }
     const started = await options.run({
       command: program.command,
@@ -669,7 +691,11 @@ export async function launchClaudeSession(
       provider: options.provider,
       ...(started === undefined ? {} : { retained: started })
     }
-  } catch {
-    return { launched: false, provider: options.provider, error: couldNotStart(options.provider) }
+  } catch (error) {
+    return {
+      launched: false,
+      provider: options.provider,
+      error: couldNotStart(options.provider, detection.path, describeProgramFailure(error))
+    }
   }
 }

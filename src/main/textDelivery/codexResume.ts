@@ -2,7 +2,11 @@ import { spawn } from 'node:child_process'
 import type { FsLike } from '../adapters/fsLike'
 import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
 import { redactSecrets } from '../domain/redactSecrets'
-import { resolveProgram } from '../platform/cliDetection'
+import {
+  describeProgramFailure,
+  describeShimRefusal,
+  resolveProgram
+} from '../platform/cliDetection'
 import { truncate } from '../../shared/truncate'
 import type { TextDeliveryOutcome } from './port'
 
@@ -257,7 +261,12 @@ export interface CodexResumeDeliveryOptions {
 const NOT_FOUND =
   'The codex binary could not be found, so the session could not be resumed. ' +
   'Set CODEX_CLI_PATH to it.'
-const NOT_STARTED = 'The codex resume command could not be started.'
+
+/** Names the path tried and why, rather than a fixed sentence (#502). */
+function notStarted(binaryPath: string, cause: string): string {
+  return `The codex resume command could not be started: ${binaryPath} — ${cause}.`
+}
+
 const STOPPED_BY_SIGNAL =
   'Codex stopped straight away, so the turn never started and nothing was delivered.'
 
@@ -322,7 +331,9 @@ export async function deliverViaCodexResume(
     // spawn can, and it fails the same way for the user here too (#413):
     // nothing resumed, never a guess at what the shim would have run.
     const program = await resolveProgram(binaryPath, options.fs)
-    if (program === undefined) return { delivered: false, error: NOT_STARTED }
+    if ('kind' in program) {
+      return { delivered: false, error: notStarted(program.shimPath, describeShimRefusal(program)) }
+    }
     const result = await options.run({
       command: program.command,
       args: [
@@ -345,7 +356,7 @@ export async function deliverViaCodexResume(
     if (result.exitCode === 0) return { delivered: true }
     if (result.exitCode === undefined) return { delivered: false, error: STOPPED_BY_SIGNAL }
     return { delivered: false, error: refusalReason(result.exitCode, result.stderrTail) }
-  } catch {
-    return { delivered: false, error: NOT_STARTED }
+  } catch (error) {
+    return { delivered: false, error: notStarted(binaryPath, describeProgramFailure(error)) }
   }
 }

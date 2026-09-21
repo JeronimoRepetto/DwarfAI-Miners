@@ -154,6 +154,37 @@ export interface ShimTarget {
 }
 
 /**
+ * Why `resolveShimTarget` found nothing to spawn (#502) — carrying the shim's
+ * own path, so a caller can name what it tried without threading a second
+ * copy of it alongside the refusal.
+ *
+ * The two used to collapse into one `undefined`, and a refusal that cannot
+ * say which of two facts it is cannot be acted on: `dialect-not-understood`
+ * means try a different install of the CLI, `needs-cmd-exe` means the
+ * install is fine but this app cannot run it directly. Different fixes, so
+ * they need different words.
+ */
+export type ShimRefusal =
+  | {
+      /** The shim's text names no quoted `.js` entry at all — not a dialect this app reads. */
+      kind: 'dialect-not-understood'
+      shimPath: string
+    }
+  | {
+      /** The entry survived expansion still carrying a `%` variable only cmd.exe could resolve. */
+      kind: 'needs-cmd-exe'
+      shimPath: string
+      entry: string
+    }
+
+/** `ShimRefusal`, in the words a refusal sentence can show beside the path it names. */
+export function describeShimRefusal(refusal: ShimRefusal): string {
+  return refusal.kind === 'dialect-not-understood'
+    ? 'the shim was found but its dialect was not understood'
+    : `its entry still names a variable only cmd.exe can expand: ${refusal.entry}`
+}
+
+/**
  * Read a `.cmd`/`.bat` shim for what it would run, so the launcher can run
  * that directly instead of the shim (#193).
  *
@@ -173,18 +204,18 @@ export interface ShimTarget {
  * entry is the first double-quoted `.js` token, and `%~dp0`/`%dp0%` — the
  * shim's own directory — is the one variable cmd.exe would have expanded that
  * this can expand too. Anything else still wrapped in `%` needs cmd.exe, and
- * the answer is undefined rather than a guess: the caller reports "could not
- * be started" and no path crosses the wire.
+ * the answer names which of the two happened, with the shim's own path,
+ * rather than a guess (#502).
  *
  * Windows path rules unconditionally, because a batch shim is a Windows
  * artefact whichever host the suite runs on.
  */
-export function resolveShimTarget(shimPath: string, shimText: string): ShimTarget | undefined {
+export function resolveShimTarget(shimPath: string, shimText: string): ShimTarget | ShimRefusal {
   const quoted = /"([^"]+\.js)"/i.exec(shimText)
-  if (quoted === null) return undefined
+  if (quoted === null) return { kind: 'dialect-not-understood', shimPath }
   const shimDir = win32.dirname(shimPath)
   const expanded = quoted[1]!.replace(/%~dp0|%dp0%/gi, `${shimDir}\\`)
-  if (expanded.includes('%')) return undefined
+  if (expanded.includes('%')) return { kind: 'needs-cmd-exe', shimPath, entry: expanded }
   return { entry: win32.normalize(expanded), bundledNode: win32.join(shimDir, 'node.exe') }
 }
 
@@ -201,26 +232,43 @@ const SHIM_READ_BYTES = 8 * 1024
  *
  * A real executable is itself. A batch shim is read for the node entry it
  * names, then run the way the shim would have run it — the `node.exe` beside
- * the shim if one exists, else `node` from PATH (the shim's own IF/ELSE).
- * Undefined means the shim named nothing this can run; the caller says
- * "could not be started" rather than guessing.
+ * the shim if one exists, else `node` from PATH (the shim's own IF/ELSE). A
+ * `ShimRefusal` means the shim named nothing this can run; the caller names
+ * the path tried and why (`describeShimRefusal`) rather than guessing (#502).
  *
- * Lifted out of sessionLaunch/launchRunner.ts for #413. Two callers need the
+ * Lifted out of sessionLaunch/launchRunner.ts for #413. Three callers need the
  * exact same resolution now: the launcher, because Node refuses to spawn a
- * `.cmd`/`.bat` without a shell, and the Codex queue tier
- * (textDelivery/codexQueue.ts), because a shell would re-parse the message.
- * One function shared between them is what keeps the two from drifting the
- * way `isShellShim`/`isShellShimPath` already had before this issue.
+ * `.cmd`/`.bat` without a shell, and the two Codex text-delivery tiers
+ * (textDelivery/codexQueue.ts, codexResume.ts), because a shell would
+ * re-parse the message. One function shared between them is what keeps them
+ * from drifting the way `isShellShim`/`isShellShimPath` already had before
+ * #413, and one refusal shape is what keeps their refusal copy from drifting
+ * the way plain `undefined` already let it (#502).
  */
 export async function resolveProgram(
   binaryPath: string,
   fs: FsLike
-): Promise<{ command: string; args: string[]; viaNodeEntry: boolean } | undefined> {
+): Promise<{ command: string; args: string[]; viaNodeEntry: boolean } | ShimRefusal> {
   if (!isShellShim(binaryPath)) return { command: binaryPath, args: [], viaNodeEntry: false }
   const target = resolveShimTarget(binaryPath, await fs.readTextHead(binaryPath, SHIM_READ_BYTES))
-  if (target === undefined) return undefined
+  if ('kind' in target) return target
   const command = (await fs.exists(target.bundledNode)) ? target.bundledNode : 'node'
   return { command, args: [target.entry], viaNodeEntry: true }
+}
+
+/**
+ * Node's own name for why a program failed to start or a shim failed to
+ * read, never a guess (#502): the errno code when the platform set one
+ * (`ENOENT`, `EACCES`, …), else the exception's own message. Shared by every
+ * caller of `resolveProgram` so a spawn failure and a shim-read failure are
+ * described in the same words wherever either is caught.
+ */
+export function describeProgramFailure(error: unknown): string {
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code === undefined ? error.message : code
+  }
+  return String(error)
 }
 
 /** Every `<PATH entry>/<executable name>` candidate, in PATH order then name order. */
