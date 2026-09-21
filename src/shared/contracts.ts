@@ -4110,6 +4110,96 @@ export function parseTypographyPreferences(document: unknown): TypographyPrefere
 
 /* --- end of the #370 block ------------------------------------------------- */
 
+/* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+
+/**
+ * Why the Jev routing option cannot be configured right now.
+ *
+ * ONE member today: the OS this machine runs offers no encryption to store a
+ * key behind. The constraint that produced this feature is absolute — no
+ * plaintext fallback, ever (see jevApiKey.ts) — so the option must say why
+ * rather than simply vanish, which is what this reason is for. A second
+ * member is additive whenever a second cause is actually observed; nothing
+ * here assumes there will never be one, and nothing invents one ahead of
+ * evidence.
+ */
+export type JevUnavailableReason = 'encryption-unavailable'
+
+/**
+ * What Settings' Jev section reads, and all it may EVER read (#509).
+ *
+ * Deliberately never the key. The renderer is told whether one is configured
+ * and, when it cannot be, why — the key itself never crosses this boundary in
+ * either direction. The launch router (#509) reads the real value through
+ * `jevApiKey.ts`'s `readKey()`, which is main-only and never wired to an IPC
+ * channel; this is the one shape that may.
+ */
+export interface JevSettings {
+  configured: boolean
+  unavailableReason?: JevUnavailableReason
+}
+
+/**
+ * What Settings' Jev section reads before main has ever answered.
+ *
+ * Unconfigured, and no reason claimed — the honest middle before the store has
+ * actually checked `safeStorage.isEncryptionAvailable()`. Claiming a reason
+ * here would be a guess about this machine dressed as a fact from main, the
+ * same trap `DEFAULT_AUDIO_PREFERENCES` exists to avoid: the renderer paints
+ * before main has answered, so both processes need the same starting value.
+ */
+export const DEFAULT_JEV_SETTINGS: JevSettings = { configured: false }
+
+/**
+ * Far past any real TypeSafe key, and the point of it: not a length that key
+ * ever needs, but a length nothing pasted BY ACCIDENT (a whole file, a
+ * README) can slip under.
+ */
+export const MAX_JEV_API_KEY_CHARS = 512
+
+/**
+ * Boundary parser for the key the person types into Settings (#509).
+ *
+ * Read by both processes that ever see the plaintext key — the preload,
+ * before it lets a keystroke leave the renderer, and the store, before it
+ * hands anything to `safeStorage` — so this is declared once rather than
+ * risking two answers to "is this a key". THROWS rather than degrading,
+ * unlike every preference parser above: those read a stored DOCUMENT, where
+ * corruption must never block startup, and this reads a VALUE somebody just
+ * typed, which is the other half of the `config-layering` asymmetry — a
+ * legible instruction that cannot be carried out, refused with a message
+ * naming what was wrong, never silently swapped for a default nobody chose.
+ *
+ * Trims the ends (a paste routinely carries surrounding whitespace), then
+ * refuses:
+ * - empty, once trimmed — nothing was typed;
+ * - longer than `MAX_JEV_API_KEY_CHARS` — a paste of something that is not a
+ *   key;
+ * - anything outside printable ASCII, INCLUDING an embedded space — a real
+ *   key is one unbroken token, and a control character, a line break or a
+ *   smart quote a text field can introduce would silently corrupt the bytes
+ *   TypeSafe expects back, while a space in the middle is reliably a paste
+ *   that also grabbed a label or a line-wrapped display, not a key.
+ */
+export function parseJevApiKeyInput(payload: unknown): string {
+  if (typeof payload !== 'string') {
+    throw new Error(`Jev API key must be a string, received ${typeof payload}`)
+  }
+  const trimmed = payload.trim()
+  if (trimmed === '') {
+    throw new Error('Jev API key must not be empty')
+  }
+  if (trimmed.length > MAX_JEV_API_KEY_CHARS) {
+    throw new Error(`Jev API key must be at most ${MAX_JEV_API_KEY_CHARS} characters`)
+  }
+  if (!/^[\x21-\x7E]+$/.test(trimmed)) {
+    throw new Error('Jev API key must contain only printable, non-whitespace ASCII characters')
+  }
+  return trimmed
+}
+
+/* --- end of the #509 block ------------------------------------------------- */
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -4567,6 +4657,20 @@ export const IPC_CHANNELS = {
    */
   getTypographyPreferences: 'typography:preferences:get',
   setTypographyPreferences: 'typography:preferences:set',
-  typographyPreferencesChanged: 'typography:preferences:changed'
+  typographyPreferencesChanged: 'typography:preferences:changed',
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /**
+   * Settings' Jev API-key control (#509).
+   *
+   * `set` and `clear` both answer with the STORED verdict, the discipline
+   * every preference channel here holds — projected onto a value this wire
+   * may never carry in either direction: the key itself stays in main (see
+   * `jevApiKey.ts`'s `readKey()`), and only `configured`/`unavailableReason`
+   * ever cross.
+   */
+  getJevSettings: 'jev:settings:get',
+  setJevApiKey: 'jev:apiKey:set',
+  clearJevApiKey: 'jev:apiKey:clear'
+  /* --- end of the #509 block ------------------------------------------------ */
 } as const
