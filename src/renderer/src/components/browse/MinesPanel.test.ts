@@ -297,7 +297,8 @@ describe('MinesPanel add control', () => {
     const controls = wrapper.findAll('.panel-header button').map((button) => button.classes())
     expect(controls).toEqual([
       expect.arrayContaining(['sort-control']),
-      expect.arrayContaining(['add-control'])
+      expect.arrayContaining(['add-control']),
+      expect.arrayContaining(['mines-info'])
     ])
   })
 
@@ -522,5 +523,31 @@ describe('MinesPanel worktree question', () => {
     await wrapper.get('.modal-cancel').trigger('click')
     expect(wrapper.emitted('dismiss-worktree')).toHaveLength(1)
     expect(wrapper.emitted('open-main-project')).toBeUndefined()
+  })
+})
+
+/**
+ * The tier-info popup (#538): a small info button in the panel's header that
+ * opens a read-only modal with the tier threshold table.
+ */
+describe('MinesPanel tier info', () => {
+  it('shows the info button in the header', () => {
+    const wrapper = panel()
+    expect(wrapper.find('.mines-info').exists()).toBe(true)
+  })
+
+  it('opens the modal when the info button is clicked', async () => {
+    const wrapper = panel()
+    expect(wrapper.find('.info-modal').exists()).toBe(false)
+    await wrapper.get('.mines-info').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(true)
+  })
+
+  it('closes the modal when the modal emits close', async () => {
+    const wrapper = panel()
+    await wrapper.get('.mines-info').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(true)
+    await wrapper.get('.info-modal .modal-close').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(false)
   })
 })

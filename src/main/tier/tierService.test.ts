@@ -12,19 +12,24 @@ import {
 } from './tierService'
 
 const KB = 1024
-const THRESHOLDS: TierThresholds = { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 }
+const THRESHOLDS: TierThresholds = {
+  copperKb: 350,
+  silverKb: 1500,
+  goldKb: 12000,
+  uraniumKb: 100000
+}
 
 describe('tierForBytes', () => {
   it('maps byte totals to tiers at the documented KB boundaries', () => {
     expect(tierForBytes(0, THRESHOLDS)).toBe('bronze')
-    expect(tierForBytes(100 * KB - 1, THRESHOLDS)).toBe('bronze')
-    expect(tierForBytes(100 * KB, THRESHOLDS)).toBe('copper')
-    expect(tierForBytes(500 * KB - 1, THRESHOLDS)).toBe('copper')
-    expect(tierForBytes(500 * KB, THRESHOLDS)).toBe('silver')
-    expect(tierForBytes(2048 * KB - 1, THRESHOLDS)).toBe('silver')
-    expect(tierForBytes(2048 * KB, THRESHOLDS)).toBe('gold')
-    expect(tierForBytes(8192 * KB - 1, THRESHOLDS)).toBe('gold')
-    expect(tierForBytes(8192 * KB, THRESHOLDS)).toBe('uranium')
+    expect(tierForBytes(350 * KB - 1, THRESHOLDS)).toBe('bronze')
+    expect(tierForBytes(350 * KB, THRESHOLDS)).toBe('copper')
+    expect(tierForBytes(1500 * KB - 1, THRESHOLDS)).toBe('copper')
+    expect(tierForBytes(1500 * KB, THRESHOLDS)).toBe('silver')
+    expect(tierForBytes(12000 * KB - 1, THRESHOLDS)).toBe('silver')
+    expect(tierForBytes(12000 * KB, THRESHOLDS)).toBe('gold')
+    expect(tierForBytes(100000 * KB - 1, THRESHOLDS)).toBe('gold')
+    expect(tierForBytes(100000 * KB, THRESHOLDS)).toBe('uranium')
   })
 })
 

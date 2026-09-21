@@ -20,7 +20,7 @@ describe('defaultConfig', () => {
       livenessWindowS: 90,
       dwarfLeaveGraceS: 20,
       tierCacheTtlS: 600,
-      tierThresholds: { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 },
+      tierThresholds: { copperKb: 350, silverKb: 1500, goldKb: 12000, uraniumKb: 100000 },
       sendTextRelayModel: 'haiku',
       sendTextTimeoutS: 60,
       hooksPort: 47821,
@@ -260,8 +260,8 @@ describe('loadConfig', () => {
     const config = loadConfig({ TIER_COPPER_KB: '50', TIER_URANIUM_KB: '16384' })
     expect(config.tierThresholds).toEqual({
       copperKb: 50,
-      silverKb: 500,
-      goldKb: 2048,
+      silverKb: 1500,
+      goldKb: 12000,
       uraniumKb: 16384
     })
   })
