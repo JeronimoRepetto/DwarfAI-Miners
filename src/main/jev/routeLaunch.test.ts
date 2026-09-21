@@ -5,6 +5,7 @@ import type {
   DwarfProvider,
   JevPreferences
 } from '../domain/types'
+import type { OpenCodeCatalogueModel } from '../providers/opencode/models'
 import { FakeJevRouter } from './fakeJevRouter'
 import type { JevRouteAnswers, JevRouteOutcome, JevRouterPort } from './jevRouterPort'
 import { createJevLaunchRouter } from './routeLaunch'
@@ -68,6 +69,10 @@ const CLAUDE_PROVIDERS = [provider({ provider: 'claude' })]
 const CLAUDE_CATALOGS = [catalog({ provider: 'claude', models: [{ value: 'sonnet' }] })]
 const DEFAULT_PREFERENCES: JevPreferences = { profile: 'balanced', default: {} }
 
+// AMENDED for #547 (added): `readOpenCodeCatalogue`, optional — every
+// existing call below that omits it keeps reading `[]` (routeLaunch.ts's own
+// default), the same "nothing derived, nothing offered" answer an
+// unavailable catalogue already produces, so no other test here changes.
 function serviceWith(options: {
   router: JevRouterPort
   providers?: AgentProviderOption[]
@@ -76,6 +81,7 @@ function serviceWith(options: {
   totalBudgetMs?: number
   now?: () => number
   debugLog?: (line: string) => void
+  readOpenCodeCatalogue?: () => Promise<readonly OpenCodeCatalogueModel[]>
 }) {
   return createJevLaunchRouter({
     router: options.router,
@@ -84,7 +90,10 @@ function serviceWith(options: {
     readPreferences: async () => options.preferences ?? DEFAULT_PREFERENCES,
     ...(options.totalBudgetMs === undefined ? {} : { totalBudgetMs: options.totalBudgetMs }),
     ...(options.now === undefined ? {} : { now: options.now }),
-    ...(options.debugLog === undefined ? {} : { debugLog: options.debugLog })
+    ...(options.debugLog === undefined ? {} : { debugLog: options.debugLog }),
+    ...(options.readOpenCodeCatalogue === undefined
+      ? {}
+      : { readOpenCodeCatalogue: options.readOpenCodeCatalogue })
   })
 }
 
@@ -272,6 +281,148 @@ describe('createJevLaunchRouter', () => {
     const result = await service.route({ prompt: 'THE-SECRET-PROMPT-TEXT' })
 
     expect(JSON.stringify(result)).not.toContain('THE-SECRET-PROMPT-TEXT')
+  })
+})
+
+/*
+ * New for #547: OpenCode's own live catalogue is read fresh, derived into a
+ * capability table, and injected into both the request builder and the
+ * local decision — never a throw, never `MODEL_CAPABILITIES.opencode`
+ * (the curated overlay only) alone. Two real, currently-catalogued ids
+ * (see docs/opencode-format.md Row 6, #547's own issue text) stand in for
+ * "the live catalogue this machine actually has" — a free reasoning model
+ * (`opencode/big-pickle`, cost 0 → 'fast-cheap') and a paid one at the top
+ * cost band (`opencode-go/kimi-k3`, $3 in / $15 out, 1,048,576-token context
+ * → 'frontier').
+ */
+describe('createJevLaunchRouter — OpenCode capability derivation (#547)', () => {
+  const FREE_FAST_CHEAP: OpenCodeCatalogueModel = {
+    value: 'opencode/big-pickle',
+    displayName: 'Big Pickle',
+    effortLevels: [],
+    status: 'active',
+    releaseDate: '2025-10-17',
+    cost: { input: 0, output: 0, cacheRead: 0 },
+    limit: { context: 200_000, output: 32_000 },
+    capabilities: { reasoning: true }
+  }
+  const PAID_FRONTIER: OpenCodeCatalogueModel = {
+    value: 'opencode-go/kimi-k3',
+    displayName: 'Kimi K3',
+    effortLevels: ['max'],
+    status: 'active',
+    releaseDate: '2026-07-16',
+    cost: { input: 3, output: 15, cacheRead: 0.3 },
+    limit: { context: 1_048_576, output: 131_072 },
+    capabilities: { reasoning: true }
+  }
+
+  it("omits OpenCode's own provider option, without failing the call, when its catalogue read rejects", async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    const service = serviceWith({
+      router: fake,
+      providers: [provider({ provider: 'claude' }), provider({ provider: 'opencode' })],
+      models: [
+        catalog({ provider: 'claude', models: [{ value: 'sonnet' }] }),
+        catalog({ provider: 'opencode' })
+      ],
+      readOpenCodeCatalogue: () => Promise.reject(new Error('opencode not installed'))
+    })
+
+    const result = await service.route({ prompt: 'anything' })
+
+    expect(Object.keys(fake.requestsSeen()[0]!.providerCriteria).sort()).toEqual(
+      ['claude', 'no_preference'].sort()
+    )
+    expect(result.kind).toBe('decision')
+  })
+
+  it("omits OpenCode's own provider option when its catalogue read resolves empty (not installed)", async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    const service = serviceWith({
+      router: fake,
+      providers: [provider({ provider: 'claude' }), provider({ provider: 'opencode' })],
+      models: [
+        catalog({ provider: 'claude', models: [{ value: 'sonnet' }] }),
+        catalog({ provider: 'opencode' })
+      ],
+      readOpenCodeCatalogue: async () => []
+    })
+
+    await service.route({ prompt: 'anything' })
+
+    expect(Object.keys(fake.requestsSeen()[0]!.providerCriteria)).not.toContain('opencode')
+  })
+
+  it("names OpenCode's own real, derived tiers in the request sent to Jev", async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers({ provider: { choice: 'opencode', confidence: 0.95 } }))
+    const service = serviceWith({
+      router: fake,
+      providers: [provider({ provider: 'opencode' })],
+      models: [catalog({ provider: 'opencode', models: [{ value: FREE_FAST_CHEAP.value }] })],
+      readOpenCodeCatalogue: async () => [FREE_FAST_CHEAP, PAID_FRONTIER]
+    })
+
+    await service.route({ prompt: 'anything' })
+
+    const criteria = fake.requestsSeen()[0]!.providerCriteria.opencode!
+    expect(criteria.what).toContain('fast-cheap')
+    expect(criteria.what).toContain('frontier')
+  })
+
+  it('lands on a free OpenCode model at the fast-cheap tier when Jev names OpenCode and the prompt is trivial', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(
+      answers({
+        provider: { choice: 'opencode', confidence: 0.95 },
+        trivial: { probability: 0.95 }
+      })
+    )
+    const service = serviceWith({
+      router: fake,
+      providers: [provider({ provider: 'opencode' })],
+      models: [catalog({ provider: 'opencode', models: [{ value: FREE_FAST_CHEAP.value }] })],
+      readOpenCodeCatalogue: async () => [FREE_FAST_CHEAP, PAID_FRONTIER]
+    })
+
+    const result = await service.route({ prompt: 'thanks!' })
+
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.provider).toBe('opencode')
+    expect(result.model).toBe(FREE_FAST_CHEAP.value)
+    expect(result.tier).toBe('fast-cheap')
+  })
+
+  it('lands on a 1M-context OpenCode frontier model under premium when Jev answers frontier', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(
+      answers({
+        provider: { choice: 'opencode', confidence: 0.95 },
+        tier: { choice: 'frontier', confidence: 0.95 }
+      })
+    )
+    const service = serviceWith({
+      router: fake,
+      providers: [provider({ provider: 'opencode' })],
+      models: [
+        catalog({
+          provider: 'opencode',
+          models: [{ value: FREE_FAST_CHEAP.value }, { value: PAID_FRONTIER.value }]
+        })
+      ],
+      preferences: { profile: 'premium', default: {} },
+      readOpenCodeCatalogue: async () => [FREE_FAST_CHEAP, PAID_FRONTIER]
+    })
+
+    const result = await service.route({ prompt: 'design the whole new subsystem' })
+
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.provider).toBe('opencode')
+    expect(result.model).toBe(PAID_FRONTIER.value)
+    expect(result.tier).toBe('frontier')
   })
 })
 

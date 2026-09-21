@@ -5,7 +5,9 @@ import {
   codexModelCatalog
 } from '../../domain/agentModelCatalog'
 import type { AgentModelCatalog, DwarfProvider } from '../../domain/types'
+import type { OpenCodeCatalogueModel } from '../../providers/opencode/models'
 import { lookupModelCapability, MODEL_CAPABILITIES } from './modelCapability'
+import { deriveOpenCodeCapabilities } from './opencodeDerived'
 
 /**
  * The exhaustiveness suite (#509 follow-up, jev-routing-profiles T1): every id
@@ -110,6 +112,78 @@ describe('lookupModelCapability exhaustiveness', () => {
         expect(entry.examples[0]).not.toBe('')
         expect(entry.examples[1]).not.toBe('')
       }
+    }
+  })
+})
+
+/*
+ * AMENDED for #547 (was: no OpenCode section at all — MODEL_CAPABILITIES.
+ * opencode was `{}`, so `lookupModelCapability('opencode', ...)` could never
+ * resolve anything and there was nothing to exercise). OpenCode's real table
+ * is DERIVED at route time (opencodeDerived.ts), not looked up through
+ * `MODEL_CAPABILITIES`/`lookupModelCapability` the way the other three
+ * providers' STATIC tables are — so this suite's generic loop above
+ * deliberately does not cover it. This section is the OpenCode-shaped
+ * equivalent: every id a real catalogue read can hand back must resolve to a
+ * DERIVED entry, or T3's model_tier mapping would route an option this table
+ * knows nothing about, exactly the failure the generic loop above exists to
+ * catch for the other three.
+ */
+const OPENCODE_FIXTURE_MODELS: readonly OpenCodeCatalogueModel[] = [
+  {
+    value: 'opencode/big-pickle',
+    displayName: 'Big Pickle',
+    effortLevels: [],
+    status: 'active',
+    releaseDate: '2025-10-17',
+    cost: { input: 0, output: 0, cacheRead: 0 },
+    limit: { context: 200_000, output: 32_000 },
+    capabilities: { reasoning: true }
+  },
+  {
+    value: 'opencode-go/kimi-k3',
+    displayName: 'Kimi K3',
+    effortLevels: ['max'],
+    status: 'active',
+    releaseDate: '2026-07-16',
+    cost: { input: 3, output: 15, cacheRead: 0.3 },
+    limit: { context: 1_048_576, output: 131_072 },
+    capabilities: { reasoning: true }
+  },
+  {
+    value: 'opencode/retired-model',
+    displayName: 'Retired Model',
+    effortLevels: [],
+    status: 'inactive',
+    releaseDate: '2025-01-01',
+    cost: { input: 1, output: 2 },
+    limit: { context: 100_000, output: 8_000 },
+    capabilities: { reasoning: false }
+  }
+]
+
+describe('OpenCode — the DERIVED table built from a fixture catalogue read', () => {
+  const derived = deriveOpenCodeCapabilities(OPENCODE_FIXTURE_MODELS, '2026-09-21')
+
+  it("covers every id OpenCode's own catalogue read hands back for an ACTIVE model", () => {
+    for (const model of OPENCODE_FIXTURE_MODELS.filter((m) => m.status === 'active')) {
+      expect(
+        derived[model.value],
+        `opencode:${model.value} has no derived entry — add or fix a case in opencodeDerived.ts`
+      ).toBeDefined()
+    }
+  })
+
+  it('gives an inactive id no entry — never launchable by its own provider, so never a lookup target', () => {
+    expect(derived['opencode/retired-model']).toBeUndefined()
+  })
+
+  it('gives every derived entry at least one source and both criteria examples, same rule as the other three providers', () => {
+    for (const [modelId, entry] of Object.entries(derived)) {
+      expect(entry.sources.length, `opencode:${modelId} has no source`).toBeGreaterThan(0)
+      expect(entry.examples, `opencode:${modelId} needs two examples`).toHaveLength(2)
+      expect(entry.examples[0]).not.toBe('')
+      expect(entry.examples[1]).not.toBe('')
     }
   })
 })

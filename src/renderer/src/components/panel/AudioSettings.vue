@@ -154,8 +154,8 @@ function ask(field: keyof AudioPreferences, event: Event): void {
   cursor: pointer;
 }
 .music-at-startup[aria-pressed='false'] {
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
+  border: 2px solid var(--color-control-idle);
+  color: var(--color-control-idle);
   background: var(--color-panel-deep);
 }
 .music-at-startup:focus-visible,

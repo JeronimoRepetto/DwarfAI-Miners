@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { FeedActivity, FeedMessage } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type FeedActivity, type FeedMessage } from '../domain/types'
 import {
   AntigravityStreamReader,
   antigravityHeldArgs,
@@ -34,10 +34,13 @@ const heldStreamEdges = readFileSync(join(FIXTURES, 'held-stream-edges.jsonl'), 
 const CONVERSATION = '44444444-4444-4444-8444-444444444444'
 const MINE = 'C:\\Users\\j\\Desktop\\Sample-Project'
 const AGY = 'C:\\Users\\j\\AppData\\Local\\agy\\bin\\agy.exe'
+// A fixed clock (#510), so a turn outcome's own `endedAt` is deterministic
+// across every test here rather than reading the real one.
+const NOW = 1_700_000_000_000
 
 /** Every signal one whole fixture carries, read in one pass. */
-function signalsOf(text: string): AntigravityHeldSignal[] {
-  return new AntigravityStreamReader().receive(text)
+function signalsOf(text: string, now: () => number = () => NOW): AntigravityHeldSignal[] {
+  return new AntigravityStreamReader(now).receive(text)
 }
 
 describe('antigravityHeldArgs', () => {
@@ -186,6 +189,12 @@ describe('AntigravityStreamReader', () => {
    * alone. The registry MERGES a telemetry update, replacing what came before,
    * so reporting a step's usage would make the session's totals go backwards.
    */
+  /*
+   * AMENDED for #510 (was: an `updates` array with no `lastTurn` field at
+   * all). Both result events in this fixture are `status: "SUCCESS"`, so
+   * each now also carries the turn's own outcome — the same event, read a
+   * second way, never a second signal.
+   */
   it('reports token usage only off result, where the CLI states it cumulatively', () => {
     const updates = signalsOf(heldStream)
       .filter((signal) => signal.kind === 'telemetry')
@@ -199,6 +208,7 @@ describe('AntigravityStreamReader', () => {
           cacheReadInputTokens: 12199,
           thinkingTokens: 354
         },
+        lastTurn: { kind: 'concluded', text: 'pong', endedAt: NOW },
         turn: 'ended'
       },
       {
@@ -208,9 +218,67 @@ describe('AntigravityStreamReader', () => {
           cacheReadInputTokens: 24394,
           thinkingTokens: 384
         },
+        lastTurn: { kind: 'concluded', text: 'ping', endedAt: NOW },
         turn: 'ended'
       }
     ])
+  })
+
+  /*
+   * Issue #510. `result.response` used to be read but never published (see
+   * the module comment on AntigravityStreamReader.result, amended below) —
+   * these pin what changed: the SAME `result` event now also reports the
+   * turn's own outcome, trimmed of the CLI's own trailing newline the way
+   * `said()` already trims an `agent_response` step.
+   */
+  it('reports a SUCCESS result as a concluded turn, carrying its own response as text', () => {
+    const lastTurns = signalsOf(heldStream)
+      .filter((signal) => signal.kind === 'telemetry')
+      .map((signal) => (signal.kind === 'telemetry' ? signal.update.lastTurn : undefined))
+      .filter((lastTurn) => lastTurn !== undefined)
+    expect(lastTurns).toEqual([
+      { kind: 'concluded', text: 'pong', endedAt: NOW },
+      { kind: 'concluded', text: 'ping', endedAt: NOW }
+    ])
+  })
+
+  it('reports Antigravity’s own ERROR status as an errored turn, with the status as detail', () => {
+    const lastTurns = signalsOf(heldStreamEdges)
+      .filter((signal) => signal.kind === 'telemetry')
+      .map((signal) => (signal.kind === 'telemetry' ? signal.update.lastTurn : undefined))
+      .filter((lastTurn) => lastTurn !== undefined)
+    expect(lastTurns).toEqual([{ kind: 'errored', detail: 'ERROR', endedAt: NOW }])
+  })
+
+  it('reports CANCELED and INTERRUPTED as an interrupted turn, never as a failure', () => {
+    for (const status of ['CANCELED', 'INTERRUPTED']) {
+      const line = `${JSON.stringify({ event: 'result', result: { status } })}\n`
+      const telemetry = signalsOf(line).find((signal) => signal.kind === 'telemetry')
+      expect(telemetry?.kind === 'telemetry' ? telemetry.update.lastTurn : undefined).toEqual({
+        kind: 'interrupted',
+        detail: status,
+        endedAt: NOW
+      })
+    }
+  })
+
+  it('reports no turn outcome for WAITING or RUNNING, because neither is a finished turn', () => {
+    for (const status of ['WAITING', 'RUNNING']) {
+      const line = `${JSON.stringify({ event: 'result', result: { status } })}\n`
+      const telemetry = signalsOf(line).find((signal) => signal.kind === 'telemetry')
+      expect(
+        telemetry?.kind === 'telemetry' ? telemetry.update.lastTurn : undefined
+      ).toBeUndefined()
+    }
+  })
+
+  it('bounds a turn’s own text to the wire’s ordinary ceiling, and marks it truncated', () => {
+    const long = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 10)
+    const line = `${JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: long } })}\n`
+    const telemetry = signalsOf(line).find((signal) => signal.kind === 'telemetry')
+    const lastTurn = telemetry?.kind === 'telemetry' ? telemetry.update.lastTurn : undefined
+    expect(lastTurn?.text).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    expect(lastTurn?.truncated).toBe(true)
   })
 
   /*
@@ -280,7 +348,7 @@ describe('AntigravityStreamReader', () => {
 
   /** Chunk boundaries are the pipe's business, not the protocol's. */
   it('holds a line split across two chunks until the newline arrives', () => {
-    const reader = new AntigravityStreamReader()
+    const reader = new AntigravityStreamReader(() => NOW)
     const half = heldStream.indexOf('\n', heldStream.indexOf('"event":"result"'))
     const cut = Math.floor(half / 2)
     const first = reader.receive(heldStream.slice(0, cut))
@@ -363,6 +431,7 @@ function recorder() {
     executablePath: AGY,
     cwd: MINE,
     prompt: 'dig here',
+    now: () => NOW,
     onSessionId: (sessionId) => sessionIds.push(sessionId),
     onTelemetry: (update) => telemetry.push(update),
     onMessage: (role, text, activity) =>
@@ -396,6 +465,11 @@ describe('createAntigravityHeldSession', () => {
     expect(session.messages).toEqual([])
   })
 
+  /*
+   * AMENDED for #510 (was: a `telemetry.at(-1)` with no `lastTurn` field).
+   * The fixture's last turn is a SUCCESS carrying `response: "ping\n"`, so
+   * the port's own last telemetry update now also reports it concluded.
+   */
   it('ingests the CLI’s own events into the session’s id, feed and telemetry', async () => {
     const child = new FakeChild()
     const session = await startOver(child)
@@ -414,6 +488,7 @@ describe('createAntigravityHeldSession', () => {
         cacheReadInputTokens: 24394,
         thinkingTokens: 384
       },
+      lastTurn: { kind: 'concluded', text: 'ping', endedAt: NOW },
       turn: 'ended'
     })
   })

@@ -107,6 +107,7 @@ import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
+import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
 import {
   MINE_PATH_OUTSIDE_REASON,
@@ -754,6 +755,13 @@ async function init(): Promise<void> {
     // Settings' Jev section (profile, default launch) can change between
     // one launch and the next (jev-routing-profiles T3).
     readPreferences: jevPreferenceStore.load,
+    // OpenCode's own RAW live catalogue (#547) — routeLaunch.ts's own
+    // capability derivation needs the cost/limit/capabilities/status facts
+    // listAgentModels' folded AgentModelCatalog already drops; `runtime` is
+    // still null this early exactly as the two closures above already
+    // account for, and readOpenCodeCatalogue never throws on its own (see
+    // runtime.ts's own comment), so `?? []` only ever covers a null runtime.
+    readOpenCodeCatalogue: async () => (await runtime?.readOpenCodeCatalogue()) ?? [],
     ...(jevDebugLog === undefined ? {} : { debugLog: jevDebugLog })
   })
   /* --- end of the #509 block ------------------------------------------------ */
@@ -1007,10 +1015,15 @@ async function init(): Promise<void> {
   // next one, and its credits reach the panel through the next ordinary poll.
   void runCoalBackfill({
     fs: new NodeFs(),
+    // A fresh port, exactly as the live OpenCode provider opens its own
+    // (registry.ts): SqliteLike carries no state worth sharing across a
+    // one-time scan and a running poll loop.
+    sqlite: new NodeSqlite(),
     markerFs: { readFile, writeFile, rename },
     markerPath: join(app.getPath('userData'), 'coal-backfill-v1.json'),
     claudeRoots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
     codexSessionsRoot: expandHomePath(config.providers.codex.sessionsRoot),
+    opencodeStoreRoot: expandHomePath(config.providers.opencode.storeRoot),
     credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
     now: Date.now,
     warn: warnWithOptionalCause

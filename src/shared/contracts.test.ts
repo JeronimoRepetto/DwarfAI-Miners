@@ -68,8 +68,11 @@ import {
   DEFAULT_JEV_ROUTING_PROFILE,
   DEFAULT_JEV_PREFERENCES,
   isJevRoutingProfile,
-  parseJevPreferences
+  parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- Turn outcome (#510) — one block, appended ---------------------------- */
+  boundTurnText
+  /* --- end of the #510 block ------------------------------------------------- */
 } from './contracts'
 
 /*
@@ -962,6 +965,37 @@ describe('parseDwarfText', () => {
 
   it.each([42, null, undefined, {}, ['hi']])('refuses %j, which is not a message', (value) => {
     expect(parseDwarfText(value)).toBeNull()
+  })
+})
+
+/*
+ * Issue #510. A turn's own text leaves the app rather than arriving in one
+ * (the direction `parseDwarfText` guards), so the wire's ordinary ceiling is
+ * enforced by CUTTING it rather than refusing the whole outcome — a capped
+ * or errored turn must still be recorded, just without a text nobody has
+ * proven fits.
+ */
+describe('boundTurnText', () => {
+  it('takes a text inside the wire ceiling unchanged, and reports no truncation', () => {
+    expect(boundTurnText('the turn is done')).toEqual({
+      text: 'the turn is done',
+      truncated: false
+    })
+    expect(boundTurnText('x'.repeat(MAX_DWARF_TEXT_CHARS))).toEqual({
+      text: 'x'.repeat(MAX_DWARF_TEXT_CHARS),
+      truncated: false
+    })
+  })
+
+  it('cuts a text past the ceiling to exactly the ceiling, and marks it truncated', () => {
+    const long = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 10)
+    const bounded = boundTurnText(long)
+    expect(bounded.text).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    expect(bounded.truncated).toBe(true)
+  })
+
+  it('takes an empty text unchanged, which is an honest concluded turn with nothing said', () => {
+    expect(boundTurnText('')).toEqual({ text: '', truncated: false })
   })
 })
 

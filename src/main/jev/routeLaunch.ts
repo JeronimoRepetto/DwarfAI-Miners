@@ -6,9 +6,12 @@ import type {
   JevRouteLaunchRequest,
   JevRouteLaunchResult
 } from '../domain/types'
+import type { OpenCodeCatalogueModel } from '../providers/opencode/models'
 import { MODEL_CAPABILITIES } from './capabilities/modelCapability'
+import { mergeOpenCodeCapabilityTable } from './capabilities/opencode'
+import { deriveOpenCodeCapabilities } from './capabilities/opencodeDerived'
 import type { JevRouteOutcome, JevRouterPort } from './jevRouterPort'
-import { decideLaunch } from './routeDecision'
+import { decideLaunch, type JevCapabilityTable } from './routeDecision'
 import { buildJevRouteRequest } from './routeRequest'
 
 /**
@@ -50,6 +53,18 @@ export interface CreateJevLaunchRouterOptions {
   listModels: () => Promise<AgentModelCatalog[]>
   /** The routing profile and default launch Settings holds, asked fresh — same reason as `listProviders`. */
   readPreferences: () => Promise<JevPreferences>
+  /**
+   * OpenCode's own RAW live catalogue (#547) — a sibling of `listModels`,
+   * not a replacement: `listModels`' `AgentModelCatalog` shape only carries
+   * what the Add Panel needs (`ModelOption`), which drops the cost/limit/
+   * capabilities/status facts `deriveOpenCodeCapabilities` below needs to
+   * build OpenCode's own Jev capability table at route time. Asked fresh, on
+   * the same terms as `listProviders`/`listModels`. Optional so every
+   * existing test and caller that has nothing to say about OpenCode keeps
+   * working unchanged; defaults to `[]`, the same "nothing derived, nothing
+   * offered" answer an unavailable catalogue already produces.
+   */
+  readOpenCodeCatalogue?: () => Promise<readonly OpenCodeCatalogueModel[]>
   /** Overridable for tests; see `DEFAULT_TOTAL_BUDGET_MS` for why 15000. */
   totalBudgetMs?: number
   /** Injected clock, so a failure log can note how long the call ran without a real timer. */
@@ -93,20 +108,59 @@ function timeoutOutcome(signal: AbortSignal): Promise<JevRouteOutcome> {
   })
 }
 
+/** `YYYY-MM-DD` off an epoch-ms clock reading — the same date shape every curated capability entry's own `verifiedOn` already uses. */
+function isoDate(epochMs: number): string {
+  return new Date(epochMs).toISOString().slice(0, 10)
+}
+
+/**
+ * The per-install capability table (#547): the three curated static tables
+ * unchanged, plus OpenCode's own — derived fresh from `openCodeCatalogue`
+ * (the live read this call just made) and merged with its curated overlay,
+ * the overlay winning per id. Built fresh on every `route()` call, same
+ * reason `providers`/`models`/`preferences` are: OpenCode's install-specific
+ * catalogue can only be trusted as of THIS read.
+ */
+function assembleCapabilities(
+  openCodeCatalogue: readonly OpenCodeCatalogueModel[],
+  readAtIso: string
+): JevCapabilityTable {
+  return {
+    claude: MODEL_CAPABILITIES.claude,
+    codex: MODEL_CAPABILITIES.codex,
+    antigravity: MODEL_CAPABILITIES.antigravity,
+    opencode: mergeOpenCodeCapabilityTable(deriveOpenCodeCapabilities(openCodeCatalogue, readAtIso))
+  }
+}
+
 /** The main-side service — see this module's own comment. */
 export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): JevLaunchRouter {
   const totalBudgetMs = options.totalBudgetMs ?? DEFAULT_TOTAL_BUDGET_MS
   const now = options.now ?? Date.now
+  const readOpenCodeCatalogue = options.readOpenCodeCatalogue ?? (async () => [])
 
   async function route(request: JevRouteLaunchRequest): Promise<JevRouteLaunchResult> {
     const startedAt = now()
     try {
-      const [providers, models, preferences] = await Promise.all([
+      const [providers, models, preferences, openCodeCatalogue] = await Promise.all([
         options.listProviders(),
         options.listModels(),
-        options.readPreferences()
+        options.readPreferences(),
+        // Unavailable stays honest (#547): a rejecting/throwing seam never
+        // fails the whole route call — it degrades to the same `[]` a
+        // healthy-but-empty catalogue already produces, so OpenCode's own
+        // provider option is simply omitted rather than the launch falling
+        // back on account of a catalogue read nothing else here needed.
+        readOpenCodeCatalogue().catch((error: unknown) => {
+          console.warn(
+            "[jev] Could not read OpenCode's own live catalogue, routing without it",
+            error
+          )
+          return []
+        })
       ])
       const userDefault = preferences.default
+      const capabilities = assembleCapabilities(openCodeCatalogue, isoDate(now()))
 
       // Every fallback this call ever returns goes through here, so the
       // user's own configured default is attached uniformly — whether Jev
@@ -125,7 +179,8 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
       const built = buildJevRouteRequest({
         prompt: request.prompt,
         routingProfile: preferences.profile,
-        providers
+        providers,
+        capabilities
       })
       if (built.kind === 'skip') {
         // Both of buildJevRouteRequest's own skip reasons ('no-launchable-provider',
@@ -155,7 +210,7 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
         profile: preferences.profile,
         providers,
         catalogs: models,
-        capabilities: MODEL_CAPABILITIES,
+        capabilities,
         userDefault
       })
       if (options.debugLog !== undefined) {

@@ -6,8 +6,9 @@ import type {
   JevRoutingProfile,
   ModelTier
 } from '../domain/types'
-import { MODEL_CAPABILITIES } from './capabilities/modelCapability'
+import type { ModelCapabilityEntry } from './capabilities/modelCapability'
 import type { JevChoiceCriteria, JevRouteRequest } from './jevRouterPort'
+import type { JevCapabilityTable } from './routeDecision'
 
 /**
  * Turning what the launch already knows — which providers this app can
@@ -172,8 +173,15 @@ const HELD_TOOLING_NOTE: Readonly<Record<DwarfProvider, string>> = {
     'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live.',
   antigravity:
     'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live.',
-  // Never launchable (LAUNCHABLE_PROVIDERS) — never reached, kept only so this is a total Record.
-  opencode: ''
+  // #547 (was: '', "Never launchable — never reached" — #537 joined OpenCode
+  // to LAUNCHABLE_PROVIDERS, so this note is now read on every request that
+  // offers it). Detached through `opencode run` (#534) — the same register as
+  // Codex's and Antigravity's own notes — and the panel can continue the
+  // SAME session afterward with `opencode run --session <id>` (#546,
+  // opencodeContinue.ts's `buildOpenCodeContinueArgs`), a capability neither
+  // of those two has.
+  opencode:
+    'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live; the panel can continue the same session afterward.'
 }
 
 /** Two examples per provider that lean on the held/detached difference above — the same product-default caveat. */
@@ -190,7 +198,14 @@ const PROVIDER_EXAMPLES: Readonly<Record<DwarfProvider, readonly [string, string
     'Take care of this in the background — I will check back later.',
     'Run this migration and report back once it is done.'
   ],
-  opencode: ['', '']
+  // #547 (was: ['', ''], "Never launchable — never reached"). Two examples in
+  // the same detached register Codex's own pair already uses above — #534
+  // put OpenCode on identical tooling terms to Codex (started, let go of),
+  // so the same two prompts fit it for the same reason they fit Codex.
+  opencode: [
+    'Take care of this in the background — I will check back later.',
+    'Run this migration and report back once it is done.'
+  ]
 }
 
 /** Tiers a routing decision may actually land on — `'special-purpose'` (an image model, an internal reviewer) is never offered here. */
@@ -203,11 +218,28 @@ function describeTierList(tiers: readonly ModelTier[]): string {
   return `${tiers.slice(0, -1).join(', ')} and ${tiers[tiers.length - 1]} models`
 }
 
+/**
+ * Whether `capabilities[provider]` has at least one entry a launch may
+ * actually be offered on (#547) — the same test `providerChoiceCriteria`
+ * already filters its own tier list by. A provider with none (OpenCode's
+ * derived table when its catalogue could not be read) has nothing this
+ * question could truthfully describe, so `buildJevRouteRequest` omits it
+ * entirely rather than sending an option built from zero tiers — the same
+ * "degrade rather than send something empty" rule a non-launchable provider
+ * already gets from `AgentProviderOption.launchable`.
+ */
+function hasAnyLaunchTarget(entries: Readonly<Record<string, ModelCapabilityEntry>>): boolean {
+  return Object.values(entries).some((entry) => entry.launchTarget)
+}
+
 /** One provider's own `provider` Choice option, built from PRODUCT_NAME and its capability table's own offered tiers — never from a model name (see this module's own top comment). */
-function providerChoiceCriteria(provider: DwarfProvider): JevChoiceCriteria {
+function providerChoiceCriteria(
+  provider: DwarfProvider,
+  capabilities: JevCapabilityTable
+): JevChoiceCriteria {
   const offeredTiers = Array.from(
     new Set(
-      Object.values(MODEL_CAPABILITIES[provider])
+      Object.values(capabilities[provider])
         .filter(
           (entry) => entry.launchTarget && (ROUTING_TIERS as readonly string[]).includes(entry.tier)
         )
@@ -334,6 +366,15 @@ export interface BuildJevRouteRequestInput {
   prompt: string
   routingProfile: JevRoutingProfile
   providers: readonly AgentProviderOption[]
+  /**
+   * The per-install capability table, injected rather than imported (#547) —
+   * the same `JevCapabilityTable` shape `decideLaunch` already takes, so the
+   * two never disagree about which providers have entries. `routeLaunch.ts`
+   * assembles the real one at route time (curated tables plus OpenCode's own
+   * live-derived one); tests pass a small synthetic table instead, the same
+   * way `routeDecision.test.ts` already does.
+   */
+  capabilities: JevCapabilityTable
 }
 
 export type BuildJevRouteRequestResult =
@@ -346,14 +387,25 @@ export type BuildJevRouteRequestResult =
  * option's own `launchable` verdict (agentProviderList), and reading it
  * straight off the input is what keeps this module decoupled from that
  * table rather than duplicating its rule.
+ *
+ * A launchable provider whose `capabilities` entry has ZERO `launchTarget:
+ * true` models is OMITTED from the `provider` question too (#547) — the
+ * same "degrade rather than offer something empty" rule `launchable` above
+ * already applies, extended to cover a provider that CAN be started but has
+ * nothing this table could truthfully describe (OpenCode when its own live
+ * catalogue could not be read). This is the only place that check happens:
+ * a provider passing it always has at least one tier `providerChoiceCriteria`
+ * can name.
  */
 export function buildJevRouteRequest(input: BuildJevRouteRequestInput): BuildJevRouteRequestResult {
-  const launchable = input.providers.filter((provider) => provider.launchable)
+  const launchable = input.providers.filter(
+    (provider) => provider.launchable && hasAnyLaunchTarget(input.capabilities[provider.provider])
+  )
   if (launchable.length === 0) return { kind: 'skip', reason: 'no-launchable-provider' }
 
   const providerCriteria: Record<string, JevChoiceCriteria> = {}
   for (const option of launchable) {
-    providerCriteria[option.provider] = providerChoiceCriteria(option.provider)
+    providerCriteria[option.provider] = providerChoiceCriteria(option.provider, input.capabilities)
   }
   providerCriteria.no_preference = NO_PREFERENCE_PROVIDER_CRITERIA
 
