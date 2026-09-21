@@ -250,7 +250,13 @@ async function nearestGitEntry(
     const stat = await fs.stat(path)
     if (stat !== null) return { folder, path, isDirectory: stat.isDirectory }
     const parent = p.dirname(folder)
-    if (parent === folder) return null
+    // A walk that has left the path it was given has already failed (#477):
+    // `dirname(p) === p` is a real filesystem root, and `dirname` returning
+    // '.' means it stopped recognising THIS path's own separators — a POSIX
+    // `dirname` over a Windows-shaped cwd, most often. Either way, '.' is the
+    // process's real cwd, never a folder the caller named, so the walk stops
+    // here rather than asking the fs about it.
+    if (parent === folder || parent === '.') return null
     folder = parent
   }
   return null
