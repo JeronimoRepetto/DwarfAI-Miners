@@ -126,6 +126,12 @@ negative — no pid/process/port column in the schema — is unaffected and stil
 process probe reads the store; it is `LAUNCHABLE_PROVIDERS` that no longer depends on it. Only a
 live process check could ever add a schema-level join here, and none is attempted.
 
+AMENDED again for #534's T3 (was: "`textDelivery` still returns `null` for every OpenCode dwarf").
+No longer true of a ROOT session: `opencode-run-continue` joins by the session id `opencode.db`
+itself carries (Row 11), never a pid — this row's own negative (no pid/process/port column) is
+exactly why the join had to be the session id and nothing else, and it still holds. `HELDABLE_PROVIDERS`
+is unaffected either way: a continuation is a new process per turn, never a held stream.
+
 ## Row 5b — no port join for a TUI-started server — NEGATIVE `[V]`
 
 Measured 2026-09-21, OpenCode 1.18.31, Windows 11, read-only (`Get-CimInstance Win32_Process`,
@@ -143,11 +149,12 @@ the outside without guessing, and this project refuses to guess (#231): `chatAct
 dwarf (`observedOpenCodeNoChannelReason`) instead of the generic no-channel placeholder (#507),
 and it stays a refusal — not a "not yet" — until a channel this row's port-absence does not apply
 to exists. AMENDED for #534 (was: "until #445 gives a **panel-launched** OpenCode session a
-channel" — the plan at Row 5b's own measurement time). #534's T3 is what is now planned to give
-one instead, joined by the session id `opencode.db` itself already carries (never a pid or a
-port), which is exactly the join this row's negative says does not exist any other way; #445
-remains the route for questions, permissions and interruption over a held session, unaffected by
-this row.
+channel" — the plan at Row 5b's own measurement time). AMENDED again now that T3 has shipped:
+`opencode-run-continue` is that channel, joined by the session id `opencode.db` itself already
+carries (never a pid or a port), which is exactly the join this row's negative says does not exist
+any other way — offered for a launched OR an observed root session alike, wider than the
+panel-launched-only plan this row originally recorded. #445 remains the route for questions,
+permissions and interruption over a held session, unaffected by this row.
 
 ## Row 6 — `opencode models --verbose`, the live catalogue `[V]`
 
@@ -236,20 +243,82 @@ is the broken one, and a row pointing at it would report a CLI that cannot run. 
 is the documented way to name a known-working binary; the observer itself performs no detection at
 all, since it reads the store directly.
 
+## Row 11 — `opencode run --session`, the continuation channel `[V]`
+
+Measured 2026-09-21, same machine, scratch directories, read-only against the store otherwise
+(every session used was one this run created; pre-existing sessions were only read, never
+continued).
+
+- `opencode run --session <id> --format json`, message on stdin, run from the session's **own**
+  directory: exit 0 in about 5 s, matching DB state. Same session id in every event; `message`
+  count advances by one user+assistant pair; `event.seq` advances; `session.directory` never
+  changes.
+- Run from a **different** directory (same session id, whose home directory is elsewhere): exit
+  **124** (killed by an external 120 s timeout) — zero stdout, zero stderr. But the DB shows the
+  turn **did complete**, in about 2.5 s server-side: the message pair landed, the assistant row got
+  its `time.completed`, and `session.directory` **stayed** the session's own — it never changed to
+  the wrong folder. The turn this pair recorded also had its user text saved as a literal,
+  quote-wrapped copy of the shell argument (`"\"...\""`), unlike every same-directory run, which
+  stores the plain string — a symptom of the same cross-directory confusion, not a separate defect.
+  **Conclusion: a "process alive past N ms" definition of delivered would misreport this case as
+  failed, even though the message was handed over and answered.** `opencode run --help` documents a
+  `--dir <path>` flag; not tested, and not relied on — the app runs every continuation in the
+  session's own directory instead, which is the one folder this measurement covers.
+
+**Consequence:** `opencodeContinue.ts`'s `deliverViaOpenCodeContinue` spawns with `cwd` = the
+target's own `directory`, carried on the `opencode-run-continue` `TextDeliveryTarget` rather than
+read from this process's own working directory — mirroring `codex-exec-resume`'s identical rule for
+the identical reason.
+
+## Row 12 — continuing with a different model `[V]`
+
+`opencode run --session <id> -m <provider/model> "..."`, run from the session's own directory: exit
+0, replied normally. `session.model` updated to the new model; the new assistant message's own
+`providerID`/`modelID` reflect it too — **the CLI accepts a model swap mid-session, and both the
+session-level and message-level fields update.**
+
+**Consequence: not used.** #534's `buildOpenCodeContinueArgs` passes no `-m`/`--variant` at all —
+omitting either flag keeps the session on the model it already has, which is what every continuation
+this slice sends does. This row is recorded because it was measured, not because anything reads it;
+carrying an explicit model/effort into a continuation (mirroring `codex-exec-resume`'s own #462) is
+unstarted follow-up work, worth its own issue if it is ever wanted.
+
+## Row 13 — two continuations of the same session race rather than refuse `[V]`
+
+Two `opencode run --session <id>` calls against the SAME session, 1 s apart, from the session's own
+directory: **neither was refused** — both exited 0. But they were not cleanly serialized either:
+process A's stdout carried event blocks for both turns, process B's single event block answered
+BOTH prompts in one reply. The DB ended up with 2 new user rows but **3** new assistant rows — one
+answering only the first prompt, one answering both combined, one answering only the second — with
+the second reply's `created` timestamp landing before the first reply's own `completed`.
+
+This is the one place OpenCode's behaviour is measured to be **worse** than Codex's own
+`codex-exec-resume`: a concurrent `codex exec resume` on a busy thread exits 1 at once (refused,
+cleanly); a concurrent `opencode run --session` is accepted and races.
+
+**Consequence:** runtime.ts's hold-while-busy machinery (mirroring #457's Codex design) is
+load-bearing here in a way it is only a safety margin for Codex — nothing in this app may ever
+spawn a second `opencode run --session` for one session while a first is still in flight, because
+OpenCode's own CLI will not stop it from happening. See `opencodeHold.ts` and
+`holdForBusyOpenCodeSession` in `runtime.ts`. `opencodeContinue.ts`'s own refusal-reading function
+is written narrower than Codex's twin for the same reason: it never claims "a turn may already be
+running" as the cause of a silent non-zero exit, because this measurement rules that cause out for
+OpenCode specifically — a busy session is accepted, not refused.
+
 ## What this settles for the design
 
-| Question              | Answer                                                                                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source of truth       | `opencode.db` only (Row 1). No JSON-tree fixture, no dual-shape merge.                                                                                |
-| Liveness              | `event.seq` advance, or the newest assistant message lacking `time.completed`; never the database file's own mtime (Row 3).                           |
-| `waiting`             | Never reported — no pending-permission evidence exists on disk (Row 3 residue).                                                                       |
-| Topology              | `session.parent_id` only; positive (Row 4) — a worker is drawn beside its foreman.                                                                    |
-| Launch                | **Yes, via `opencode run`** (Row 7, #534) — a DETACHED, one-shot launch, the same terms Codex's and Antigravity's own launches already run on.        |
-| Model catalogue       | **Live** (Row 6, #534) — `opencode models --verbose`, `source: 'provider'`, with a per-model effort picker where `variants` is non-empty.             |
-| Delivery channel      | None yet — `textDelivery` returns `null` (Row 5). Launch and the catalogue no longer wait on this (#534); the continuation channel is slice 2 (T3).   |
-| `transcriptPath`      | Always `undefined` — there is no per-session file to tail (Row 2).                                                                                    |
-| `tokensObserved`      | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                                                     |
-| `transcriptUpdatedAt` | The newest of `session.time_updated`, the newest assistant row's time and the scan that last saw its `event.seq` advance; never the WAL mtime (#459). |
+| Question              | Answer                                                                                                                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source of truth       | `opencode.db` only (Row 1). No JSON-tree fixture, no dual-shape merge.                                                                                                                       |
+| Liveness              | `event.seq` advance, or the newest assistant message lacking `time.completed`; never the database file's own mtime (Row 3).                                                                  |
+| `waiting`             | Never reported — no pending-permission evidence exists on disk (Row 3 residue).                                                                                                              |
+| Topology              | `session.parent_id` only; positive (Row 4) — a worker is drawn beside its foreman.                                                                                                           |
+| Launch                | **Yes, via `opencode run`** (Row 7, #534) — a DETACHED, one-shot launch, the same terms Codex's and Antigravity's own launches already run on.                                               |
+| Model catalogue       | **Live** (Row 6, #534) — `opencode models --verbose`, `source: 'provider'`, with a per-model effort picker where `variants` is non-empty.                                                    |
+| Delivery channel      | **`opencode-run-continue`** (Row 11–13, #534) — offered for every ROOT session, launched or observed. A worker still gets none: the foreman hop for OpenCode is unmeasured and out of scope. |
+| `transcriptPath`      | Always `undefined` — there is no per-session file to tail (Row 2).                                                                                                                           |
+| `tokensObserved`      | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                                                                                            |
+| `transcriptUpdatedAt` | The newest of `session.time_updated`, the newest assistant row's time and the scan that last saw its `event.seq` advance; never the WAL mtime (#459).                                        |
 
 ## Poll cost
 
