@@ -69,83 +69,17 @@ what CI runs; activating the hook in this shared `.git` during the session (see 
 
 ## Tasks
 
-- [x] **T1 — A committed pre-commit hook refuses an unformatted staged file.** Route: direct inline
-      (single mechanical script plus two small documentation edits; no unresolved design decision).
-      POSIX `sh` script: collect staged files (`git diff --cached --name-only --diff-filter=ACMR
-      -z`), filter to what prettier handles (`--ignore-unknown`), run `pnpm exec prettier --check`
-      on them, exit non-zero with a message naming the exact command to fix and re-stage. `prepare`
-      script in `package.json` sets `core.hooksPath` (added, never run — see Constraints).
-      `CONTRIBUTING.md` documents why and the `--no-verify` opt-out.
+- [x] **T1 — A committed pre-commit hook refuses an unformatted staged file.** Route: direct inline (single mechanical script plus two small documentation edits; no unresolved design decision). POSIX `sh` script: collect staged files (`git diff --cached --name-only --diff-filter=ACMR -z`), filter to what prettier handles (`--ignore-unknown`), run `pnpm exec prettier --check` on them, exit non-zero with a message naming the exact command to fix and re-stage. `prepare` script in `package.json` sets `core.hooksPath` (added, never run — see Constraints). `CONTRIBUTING.md` documents why and the `--no-verify` opt-out.
 
-      Evidence (direct invocation, never through `git commit`; `core.hooksPath` never set):
-      - (a) before the script existed: `git config --get core.hooksPath` → exit 1 (unset);
-        `.git/hooks/pre-commit` inactive; staged a deliberately unformatted `scratch-hook-test.ts`
-        — nothing refused it.
-      - (b) with the script staged (mode 100755 via `git update-index --chmod=+x`) and the same
-        unformatted file still staged: `sh scripts/git-hooks/pre-commit` → exit 1, printed
-        `pnpm exec prettier --write scratch-hook-test.ts scripts/git-hooks/pre-commit` /
-        `git add scratch-hook-test.ts scripts/git-hooks/pre-commit`.
-      - (c) after `pnpm exec prettier --write scratch-hook-test.ts` and re-staging:
-        `sh scripts/git-hooks/pre-commit` → exit 0 ("All matched files use Prettier code style!").
-      - Cleanup: `git restore --staged scratch-hook-test.ts` then deleted the file; tree clean.
+      Evidence, all by direct invocation, never through `git commit`, `core.hooksPath` never set. Before the script existed: `git config --get core.hooksPath` exited 1 (unset), `.git/hooks/pre-commit` was inactive, and staging a deliberately unformatted `scratch-hook-test.ts` was not refused. With the script staged (mode 100755 via `git update-index --chmod=+x`) and that same file still staged, `sh scripts/git-hooks/pre-commit` exited 1 and printed `pnpm exec prettier --write scratch-hook-test.ts scripts/git-hooks/pre-commit` and `git add scratch-hook-test.ts scripts/git-hooks/pre-commit`. After `pnpm exec prettier --write scratch-hook-test.ts` and re-staging, the same invocation exited 0 ("All matched files use Prettier code style!"). Cleanup: `git restore --staged scratch-hook-test.ts`, then the file was deleted; tree left clean. Commit: `665bc98` — `chore(hooks): refuse a commit with an unformatted staged file, locally (#454)`.
 
-      Commit: `665bc98` — `chore(hooks): refuse a commit with an unformatted staged file, locally (#454)`.
-- [x] **T2 — Delete `currentMaterialRow` and its four tests.** Route: direct inline (deletion plus
-      one import fix in two already-understood files; TDD inapplicable per Constraints).
-      Removed the function, its doc comment, and the now-unused `MineTier` import from `vault.ts`;
-      removed the `currentMaterialRow` import and the `describe('currentMaterialRow', …)` block from
-      `vault.test.ts`, replaced with a test-safety removal note (matching the `oreCount`/
-      `TOKENS_PER_ORE` precedent in `economy.test.ts`) naming why and where the surviving coverage
-      (`vaultRows`) lives. `rg currentMaterialRow src` still matches that one prose comment — no
-      functional/import reference remains, which is the same shape as the existing `oreCount`/
-      `TOKENS_PER_ORE` mentions the census tool's own skill treats as correct.
+- [x] **T2 — Delete `currentMaterialRow` and its four tests.** Route: direct inline (deletion plus one import fix in two already-understood files; TDD inapplicable per Constraints). Removed the function, its doc comment, and the now-unused `MineTier` import from `vault.ts`; removed the `currentMaterialRow` import and the `describe('currentMaterialRow', …)` block from `vault.test.ts`, replaced with a test-safety removal note (matching the `oreCount`/`TOKENS_PER_ORE` precedent in `economy.test.ts`) naming why and where the surviving coverage (`vaultRows`) lives. `rg currentMaterialRow src` still matches that one prose comment — no functional or import reference remains, the same shape as the existing `oreCount`/`TOKENS_PER_ORE` mentions the test-safety skill itself treats as correct.
 
-      Census (`node skills/test-safety/assets/test-census.mjs`, working tree vs HEAD):
-      `src/renderer/src/lib/vault/vault.test.ts` 17 → 13, delta −4. The four removed tests:
-      1. "returns the row for the mine's current tier once it has reached a whole unit"
-      2. "returns undefined once the current tier has not reached a whole unit yet, even with
-         older materials in the ledger"
-      3. "treats an absent breakdown as nothing mined"
-      4. "returns only the current tier's own row, never a total across materials"
+      Census (`node skills/test-safety/assets/test-census.mjs`, working tree vs HEAD): `src/renderer/src/lib/vault/vault.test.ts` 17 → 13, delta −4. The four removed tests: "returns the row for the mine's current tier once it has reached a whole unit"; "returns undefined once the current tier has not reached a whole unit yet, even with older materials in the ledger"; "treats an absent breakdown as nothing mined"; "returns only the current tier's own row, never a total across materials". `pnpm vitest run src/renderer/src/lib/vault/vault.test.ts` → 13 passed, 0 failed. `pnpm typecheck:web` → clean. `pnpm exec eslint vault.ts vault.test.ts` → no issues. Commit: `a67c68f` — `fix(vault): delete currentMaterialRow, its four tests are gone with it (#454)`.
 
-      `pnpm vitest run src/renderer/src/lib/vault/vault.test.ts` → 13 passed, 0 failed.
-      `pnpm typecheck:web` → clean. `pnpm exec eslint vault.ts vault.test.ts` → no issues.
+- [x] **T3 — One rule for tests that cross the process boundary, and three tests that follow it.** Route: direct inline (four already-understood files, no unresolved design decision — the rule was already decided by the issue text). Added the paragraph to `AGENTS.md`'s "Boundaries that must survive", right after the `contracts.ts` paragraph it extends (#77): a test file may cross main ↔ renderer only to pin a deliberate copy equal, with a comment beside the import naming the copy; production code never does.
 
-      Commit: `a67c68f` — `fix(vault): delete currentMaterialRow, its four tests are gone with it (#454)`.
-- [x] **T3 — One rule for tests that cross the process boundary, and three tests that follow it.**
-      Route: direct inline (four already-understood files, no unresolved design decision — the
-      rule was already decided by the issue text). Added the paragraph to `AGENTS.md`'s "Boundaries
-      that must survive", right after the `contracts.ts` paragraph it extends (#77): a test file may
-      cross main ↔ renderer only to pin a deliberate copy equal, with a comment beside the import
-      naming the copy; production code never does.
-
-      Amendments, one per file:
-      - `panelBounds.test.ts` — its existing `interiorColumnWidth`/`DESIGN_INTERIOR_WIDTH`/
-        `SHELL_CONTENT_INSET` import from the renderer's `sceneSizing` had no comment; added one
-        naming what it pins ("the derived columns" below) and citing the new rule. No test changed.
-      - `window.test.ts` — its comment explaining the removed import was itself stale: written
-        2026-09-03 10:29 for #90, it says the guarantee "moved to panelBounds.test.ts, which holds
-        the MINE COLUMN to `MIN_PANEL_SIZE.width` and the copied scene chrome to
-        `PANEL_CHROME.width`" — but both constants were deleted from `sceneSizing.ts` by #137
-        (13:55 the same day) and #153 (14:49) replaced the fixed pairing with the derived one
-        `panelBounds.test.ts` now pins. Verified via `git blame` and `git log -S"MIN_PANEL_SIZE"`
-        before touching it (AGENTS.md's "Verified versus assumed"). Corrected the comment to name
-        the current destination and constants, and to say explicitly why this file holds no
-        cross-process import today (nothing left to pin). No test changed.
-      - `world.test.ts` — already agrees with the rule (`VEIN_ANCHORS`/`REST_ANCHORS`/
-        `POST_ANCHORS` are hard-coded from the renderer's `sceneLayout.ts` with a comment saying
-        why: the main process must not reach into renderer art, and a change there should fail this
-        test loudly). No amendment needed or made; stated here rather than silently skipped.
-
-      `node skills/skill-sync/assets/sync.mjs --check` → `AGENTS.md already up to date (10 skill(s))`,
-      exit 0. `AGENTS.md` is 216 lines (budget 300).
-
-      Census (working tree vs HEAD): `panelBounds.test.ts` 68 → 68 (0), `window.test.ts` 68 → 68
-      (0) — comment-only amendments, no test statement lost or added; `world.test.ts` untouched.
-      `pnpm vitest run panelBounds.test.ts window.test.ts world.test.ts` → 157 passed, 0 failed.
-      `pnpm exec eslint panelBounds.test.ts window.test.ts` → no issues.
-
-      Commit: `TBD`.
+      Amendments, one per file. `panelBounds.test.ts`: its existing `interiorColumnWidth`/`DESIGN_INTERIOR_WIDTH`/`SHELL_CONTENT_INSET` import from the renderer's `sceneSizing` had no comment; added one naming what it pins ("the derived columns" below) and citing the new rule — no test changed. `window.test.ts`: its comment explaining the removed import was itself stale — written 2026-09-03 10:29 for #90, it says the guarantee "moved to panelBounds.test.ts, which holds the MINE COLUMN to `MIN_PANEL_SIZE.width` and the copied scene chrome to `PANEL_CHROME.width`", but both constants were deleted from `sceneSizing.ts` by #137 (13:55 the same day) and #153 (14:49) replaced the fixed pairing with the derived one `panelBounds.test.ts` now pins. Verified with `git blame` and `git log -S"MIN_PANEL_SIZE"` before touching it (AGENTS.md's "Verified versus assumed"). Corrected the comment to name the current destination and constants and to say explicitly why this file holds no cross-process import today — no test changed. `world.test.ts`: already agrees with the rule (`VEIN_ANCHORS`/`REST_ANCHORS`/`POST_ANCHORS` are hard-coded from the renderer's `sceneLayout.ts` with a comment saying why: the main process must not reach into renderer art, and a change there should fail this test loudly) — no amendment needed or made, stated here rather than silently skipped. `node skills/skill-sync/assets/sync.mjs --check` → `AGENTS.md already up to date (10 skill(s))`, exit 0. `AGENTS.md` is 216 lines (budget 300). Census (working tree vs HEAD): `panelBounds.test.ts` 68 → 68 (0), `window.test.ts` 68 → 68 (0) — comment-only amendments, no test statement lost or added; `world.test.ts` untouched. `pnpm vitest run panelBounds.test.ts window.test.ts world.test.ts` → 157 passed, 0 failed. `pnpm exec eslint panelBounds.test.ts window.test.ts` → no issues. Commit: `01b59e4` — `docs(agents): write the rule for a test that crosses process boundaries (#454)`.
 
 ## Acceptance
 
@@ -159,9 +93,11 @@ lines. All seven checks green.
 The seven checks `CONTRIBUTING.md` lists, in CI's order, plus the per-file test census from
 `skills/test-safety/SKILL.md` on every test file touched.
 
-**Known environmental failure on this branch:** this is a linked git worktree, so
-`src/main/runtime/runtime.test.ts` fails 77 cases whose diffs contain this checkout's branch name
-(#477, being fixed on a sibling branch). Those, and only those, are not this change's.
+**Known environmental failure on this branch:** documented as `src/main/runtime/runtime.test.ts`
+failing ~77 cases whose diffs carry this checkout's branch name (#477, fixed on a sibling branch).
+Checked explicitly and not observed here: `pnpm vitest run src/main/runtime/runtime.test.ts` → 414
+passed, 0 failed, and the full `pnpm test` run showed 0 failures across all 280 files. Whatever
+fixed #477 is already on `main` at this branch's base (`1be0e19`).
 
 ## Delivery
 
@@ -172,3 +108,5 @@ review (RDD, on) runs per work-unit commit against `--base-ref main --committed-
 
 Created 2026-09-21. Worktree `DwarfAI-Miners-worktrees/fix-454`, branch `chore/repo-hygiene-454`
 off `main` 1be0e19.
+
+All three tasks done, one work-unit commit each: T1 `665bc98`, T2 `a67c68f`, T3 `01b59e4`. Full verification run after T3, in CI order: `pnpm typecheck` clean; `pnpm lint` no issues; `pnpm format:check` all files formatted correctly (after fixing this document's own formatting — a genuine Prettier markdown non-idempotency: `prettier --write` followed by `prettier --check` on the same file kept disagreeing with itself whenever a list item held 3+ blank-line-separated paragraphs, confirmed with a minimal repro outside the repo; fixed by merging each task's evidence and commit line into a single second paragraph per item, verified stable across two write/check cycles); `node skills/skill-sync/assets/sync.mjs --check` up to date; `pnpm test` 278 passed, 2 skipped (280 files), 7643 passed, 5 skipped (7648 tests), 0 failed — including `runtime.test.ts` (414/414), so the documented #477 environmental failure was not observed on this base; `pnpm build` succeeded. Privacy guard: the `PRIVACY_GUARD_PATTERN` secret is unavailable locally, so this was a manual review instead of the CI command — grepped every touched file for the maintainer's account name and for absolute host paths; the only matches are the project's existing public identity (GitHub handle, Ko-fi link, bundle id, author block), unchanged by this branch, and no host-specific path leaked into any tracked file.
