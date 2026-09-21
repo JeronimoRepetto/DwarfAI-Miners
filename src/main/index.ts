@@ -10,6 +10,7 @@ import {
   type WebContents
 } from 'electron'
 import { readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
@@ -78,7 +79,12 @@ import {
   ensureDefaultAutostart,
   migrateLegacyAutostart
 } from './shell/autostart'
-import { darwinConsoleInputOverride, linuxConsoleInputOverride, loadConfig } from './config/config'
+import {
+  cliOverridesFrom,
+  darwinConsoleInputOverride,
+  linuxConsoleInputOverride,
+  loadConfig
+} from './config/config'
 import {
   CONFIG_FILE_NAME,
   createConfigFileStore,
@@ -89,6 +95,7 @@ import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { NodeFs } from './adapters/fsLike'
+import { createPlatformAdapters } from './platform/platformAdapters'
 import {
   MINE_PATH_OUTSIDE_REASON,
   MINE_PATH_UNOPENABLE_REASON,
@@ -820,24 +827,49 @@ async function init(): Promise<void> {
   // operator turning their path off must not take Linux's tmux tier with it.
   const linuxConsoleInputSetting = linuxConsoleInputOverride()
 
-  runtime = new AgentRuntime({
-    config,
-    ledger,
-    projects,
-    launchedSessionStore,
-    appPaths: {
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      appPath: app.getAppPath()
-    },
-    chooseDirectory: () => chooseProjectDirectory(mainWindow),
-    readAttachment,
+  // `fs`, `home` and `appPaths` compose the real platform adapters below AND
+  // reach the runtime as its own options — the same three values, read once.
+  const home = homedir()
+  const fs = new NodeFs()
+  const appPaths = {
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath()
+  }
+  // `AgentRuntime` composed this itself until #477: a `platformAdapters`
+  // default meant a test that omitted the option got the REAL host's
+  // adapters, which is how a fold walk in a linked worktree ended up reading
+  // this checkout's own `.git`. `platformAdapters` has no default any more,
+  // so the one production composition root builds it explicitly, on exactly
+  // the terms the removed default used to.
+  const platformAdapters = createPlatformAdapters({
+    home,
+    appPaths,
+    relayModel: config.sendTextRelayModel,
+    relayTimeoutMs: config.sendTextTimeoutS * 1_000,
+    // CLI detection (#91) reads the same fs the providers do, and honours an
+    // explicit override path per CLI; blank means "detect it".
+    fs,
+    cliOverrides: cliOverridesFrom(config),
     ...(darwinConsoleInputSetting !== undefined
       ? { darwinConsoleInput: darwinConsoleInputSetting }
       : {}),
     ...(linuxConsoleInputSetting !== undefined
       ? { linuxConsoleInput: linuxConsoleInputSetting }
-      : {}),
+      : {})
+  })
+
+  runtime = new AgentRuntime({
+    config,
+    ledger,
+    projects,
+    launchedSessionStore,
+    home,
+    fs,
+    appPaths,
+    platformAdapters,
+    chooseDirectory: () => chooseProjectDirectory(mainWindow),
+    readAttachment,
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the
