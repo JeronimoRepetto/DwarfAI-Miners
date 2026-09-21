@@ -506,7 +506,10 @@ button.card-body:focus-visible {
   display: block;
   width: var(--size-sleep-icon);
   height: var(--size-sleep-icon);
-  background: var(--color-control);
+  /* The mask's FILL, so this is the glyph's own colour rather than a surface
+     (#548). It was the control token, which on this card measured 1.18:1 —
+     the "quieter until hovered" above was reading as absent. */
+  background: var(--color-control-idle);
   mask: var(--remove-icon) center / contain no-repeat;
 }
 .card-remove:hover .remove-glyph,

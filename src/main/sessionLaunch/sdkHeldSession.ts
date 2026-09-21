@@ -8,6 +8,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
+import { resultTurnOutcome } from './claudeTurnOutcome'
 import type { HeldSessionSubagentSignal } from './heldCrew'
 import {
   heldMessageEntries,
@@ -396,6 +397,10 @@ export function createSdkHeldSession(): HeldSessionPort {
                 cacheCreationInputTokens: message.usage.cache_creation_input_tokens,
                 cacheReadInputTokens: message.usage.cache_read_input_tokens
               },
+              // What this turn actually concluded, capped or failed with
+              // (#510) — the same message, read a second way. See
+              // resultTurnOutcome for what each subtype means.
+              lastTurn: resultTurnOutcome(message, request.now()),
               // `result` arrives exactly once, at the END of the turn it
               // closes (issue #245) — the other half of the signal `init`
               // above starts.

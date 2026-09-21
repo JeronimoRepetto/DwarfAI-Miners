@@ -71,9 +71,63 @@ describe('readOpenCodeSessions', () => {
         modelId: 'qwen3.6-plus',
         parentSessionId: 'ses_parent',
         createdMs: 1_000,
-        updatedMs: 2_000
+        updatedMs: 2_000,
+        tokensUsed: 0
       }
     ])
+  })
+
+  // AMENDED for #540: readOpenCodeSessions now sums session.tokens_* into one
+  // tokensUsed number under the shared cross-provider definition (see
+  // opencodeUsageTokens's own comment) — the SELECT #444 left off the columns
+  // it measured populated, on the pending "maintainer question 3" the answer
+  // to which is yes.
+  it('sums the five token columns into tokensUsed, mirroring what Claude and Codex count', async () => {
+    const { sqlite, db } = await realDb()
+    sqlite.exec(REAL_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p' }))
+    sqlite.exec(
+      REAL_PATH,
+      `UPDATE session SET tokens_input = 100, tokens_output = 200, tokens_reasoning = 5, ` +
+        `tokens_cache_read = 3, tokens_cache_write = 2 WHERE id = 'ses_a'`
+    )
+    expect(readOpenCodeSessions(db, 0)[0]?.tokensUsed).toBe(310)
+  })
+
+  it('reads an all-zero session as tokensUsed: 0, not undefined', async () => {
+    const { sqlite, db } = await realDb()
+    sqlite.exec(REAL_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p' }))
+    const session = readOpenCodeSessions(db, 0)[0]
+    expect(session).toHaveProperty('tokensUsed')
+    expect(session?.tokensUsed).toBe(0)
+  })
+
+  it('treats a NULL token column as 0, never a throw or a dropped row (#540)', async () => {
+    // The real 1.18.31 schema declares these columns NOT NULL DEFAULT 0
+    // (opencode-schema.sql), so this is defensive rather than observed — the
+    // same posture asNumber() already takes for every other optional column,
+    // proven here against a schema that allows the value the real one cannot.
+    const path = '/store/opencode-nullable-tokens.db'
+    const sqlite = new MemorySqlite()
+    sqlite.define(
+      path,
+      `CREATE TABLE session (
+        id text PRIMARY KEY, project_id text, workspace_id text, parent_id text,
+        slug text, directory text NOT NULL, path text, title text, version text,
+        cost real, tokens_input integer, tokens_output integer, tokens_reasoning integer,
+        tokens_cache_read integer, tokens_cache_write integer,
+        agent text, model text, time_created integer NOT NULL, time_updated integer NOT NULL,
+        time_archived integer
+      )`
+    )
+    sqlite.exec(
+      path,
+      `INSERT INTO session (id, directory, time_created, time_updated, tokens_input, ` +
+        `tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write) VALUES ` +
+        `('ses_a', '/home/j/p', 1000, 2000, NULL, NULL, NULL, NULL, NULL)`
+    )
+    const db = await sqlite.openReadOnly(path)
+    if (db === null) throw new Error('expected a database')
+    expect(readOpenCodeSessions(db, 0)[0]?.tokensUsed).toBe(0)
   })
 
   it('excludes an archived session', async () => {

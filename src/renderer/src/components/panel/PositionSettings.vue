@@ -75,9 +75,9 @@ const emit = defineEmits<{
 .segments button {
   flex: 1;
   padding: 6px var(--space-settings);
-  border: 2px solid var(--color-control);
+  border: 2px solid var(--color-control-idle);
   border-radius: var(--radius-default);
-  color: var(--color-control);
+  color: var(--color-control-idle);
   cursor: pointer;
   background: var(--color-panel-deep);
   font: inherit;
