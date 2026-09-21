@@ -431,6 +431,7 @@ export class HeldSessionRegistry {
         ...(request.effort === undefined ? {} : { effort: request.effort }),
         ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
+        now: this.now,
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),
         onMessage: (role, text, activity) => this.recordMessage(key, role, text, activity),

@@ -575,6 +575,27 @@ describe('HeldSessionRegistry telemetry (#96)', () => {
     })
   })
 
+  it("keeps the session's most recent turn outcome, replacing an earlier one whole (#510)", async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    port.reportTelemetry(0, {
+      lastTurn: { kind: 'concluded', text: 'first turn', endedAt: 1_700_000_000_000 }
+    })
+    expect(registry.telemetryState('sess-1')).toMatchObject({
+      lastTurn: { kind: 'concluded', text: 'first turn', endedAt: 1_700_000_000_000 }
+    })
+
+    port.reportTelemetry(0, {
+      lastTurn: { kind: 'capped', detail: 'error_max_turns', endedAt: 1_700_000_001_000 }
+    })
+    expect(registry.telemetryState('sess-1')).toMatchObject({
+      lastTurn: { kind: 'capped', detail: 'error_max_turns', endedAt: 1_700_000_001_000 }
+    })
+  })
+
   it('discards telemetry once the session ends, exactly as it discards open asks', async () => {
     const port = new FakePort()
     const registry = registryOver(port)

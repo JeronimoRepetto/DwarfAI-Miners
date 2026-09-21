@@ -1,6 +1,11 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { toolActivityLine } from '../domain/permissionSummary'
-import type { FeedActivity, FeedMessage } from '../domain/types'
+import {
+  boundTurnText,
+  type FeedActivity,
+  type FeedMessage,
+  type TurnOutcome
+} from '../domain/types'
 import { antigravityToolSubject } from '../providers/antigravity/parse'
 import type {
   HeldSessionHandle,
@@ -284,6 +289,36 @@ function usageOf(usage: unknown): HeldSessionTelemetryUpdate['usage'] | undefine
 }
 
 /**
+ * What kind of ending a `result`'s own `status` reported (#510), and the
+ * text it handed over when it reported one — never a guess, and never
+ * derived from silence.
+ *
+ * `SUCCESS` concludes with the turn's own `response`, bounded like every
+ * other message this app draws (see `boundTurnText`) and trimmed the same
+ * way `said()` above trims an `agent_response` step's own text, since the
+ * CLI's `response` carries its own trailing newline (measured against the
+ * captured fixture). `ERROR` and `INVALID` read as `errored`; `CANCELED` and
+ * `INTERRUPTED` read as `interrupted`, since either is a turn cut short
+ * rather than one that ran to a failure. `WAITING` and `RUNNING` are not a
+ * finished turn at all — a `result` naming either is not the turn's end, so
+ * this reports none, and neither does a `status` this build does not
+ * recognise: a MISS here, never a guessed outcome.
+ */
+function turnOutcomeOf(status: unknown, response: unknown, now: number): TurnOutcome | undefined {
+  if (status === 'SUCCESS') {
+    const { text, truncated } = boundTurnText(typeof response === 'string' ? response.trim() : '')
+    return { kind: 'concluded', text, ...(truncated ? { truncated: true } : {}), endedAt: now }
+  }
+  if (status === 'ERROR' || status === 'INVALID') {
+    return { kind: 'errored', detail: status, endedAt: now }
+  }
+  if (status === 'CANCELED' || status === 'INTERRUPTED') {
+    return { kind: 'interrupted', detail: status, endedAt: now }
+  }
+  return undefined
+}
+
+/**
  * Reads one held Antigravity session's stdout.
  *
  * Stateful for two reasons, both of them the pipe's and the protocol's rather
@@ -303,6 +338,15 @@ export class AntigravityStreamReader {
   private readonly saying = new Map<number, string>()
   /** Tool step indexes already given a feed line — one line per call, not per report. */
   private readonly toolsDrawn = new Set<number>()
+
+  /**
+   * This host's own clock (#510), the same one `HeldSessionStartRequest.now`
+   * supplies — defaulted to `Date.now` so every existing caller that builds
+   * one with no argument (this file's own tests among them) keeps working
+   * unchanged, and a caller that wants a deterministic `TurnOutcome.endedAt`
+   * passes its own.
+   */
+  constructor(private readonly now: () => number = Date.now) {}
 
   /** Feed one chunk of stdout; returns every signal its COMPLETE lines carried. */
   receive(chunk: string): AntigravityHeldSignal[] {
@@ -411,25 +455,37 @@ export class AntigravityStreamReader {
   }
 
   /**
-   * One `result`: the turn's end, and the session's cumulative counters.
+   * One `result`: the turn's end, its own outcome, and the session's
+   * cumulative counters.
    *
-   * `response` is deliberately NOT published. It repeats what the turn's last
-   * `agent_response` step already said, and publishing both would write the
-   * reply into the panel twice.
+   * `response` is never published as a MESSAGE — it repeats what the turn's
+   * last `agent_response` step already said, and publishing both would write
+   * the reply into the panel twice. AMENDED for #510 (was: "`response` is
+   * deliberately NOT published" — full stop): it is retained now, but as the
+   * turn's own `lastTurn.text`, a structured fact about how the turn ended
+   * rather than a second spoken bubble, through `turnOutcomeOf`.
    *
-   * An `ERROR` status is reported as a turn that ENDED and nothing more. The
-   * `error` string is the CLI's own explanation of a failure, not something the
-   * agent said, and putting it in an assistant bubble would be this app
-   * speaking in the agent's voice. A fatal one takes the process with it and
-   * arrives as `onEnd`, which is where a failure belongs.
+   * An `ERROR` status is reported as a turn that ENDED and nothing more IN
+   * THE FEED. The `error` string is the CLI's own explanation of a failure,
+   * not something the agent said, and putting it in an assistant bubble
+   * would be this app speaking in the agent's voice — but `turnOutcomeOf`
+   * still records the `status` itself as the outcome's own `detail`, since
+   * that is a fact about the turn, not a fabricated line of dialogue. A
+   * fatal one takes the process with it and arrives as `onEnd`, which is
+   * where a failure belongs.
    */
   private result(result: unknown): AntigravityHeldSignal[] {
     if (!isRecord(result)) return []
     const usage = usageOf(result.usage)
+    const lastTurn = turnOutcomeOf(result.status, result.response, this.now())
     return [
       {
         kind: 'telemetry',
-        update: { ...(usage === undefined ? {} : { usage }), turn: 'ended' }
+        update: {
+          ...(usage === undefined ? {} : { usage }),
+          ...(lastTurn === undefined ? {} : { lastTurn }),
+          turn: 'ended'
+        }
       }
     ]
   }
@@ -527,7 +583,7 @@ export function createAntigravityHeldSession(
         // down with it, and a child that exits before reading breaks the pipe.
         child.stdin?.on('error', () => {})
 
-        const reader = new AntigravityStreamReader()
+        const reader = new AntigravityStreamReader(request.now)
         child.stdout?.on('data', (chunk) => {
           const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
           for (const signal of reader.receive(text)) {

@@ -1170,6 +1170,49 @@ export interface DwarfWorkplace {
   branch?: string
 }
 
+/**
+ * What kind of ending a held session's most recent turn had (#510) — never a
+ * guess: each variant is read straight off the provider's own end-of-turn
+ * message, never inferred from silence or a timeout this app measured.
+ *
+ * `concluded` is a genuine success. `capped` is a turn the provider stopped
+ * on its OWN limit — max turns, max budget — rather than finishing it.
+ * `errored` is an execution failure the provider reported as one. `interrupted`
+ * is a turn cut short: a cancellation, or an exit this app read no text from.
+ * A capped or errored turn is not a turn that concluded something, and
+ * reading one as `concluded` would be an empty success nobody observed —
+ * the same discipline "delivered is not reacted" holds for a marker that
+ * could claim more than the provider actually said.
+ */
+export type TurnOutcomeKind = 'concluded' | 'capped' | 'errored' | 'interrupted'
+
+/**
+ * The most recent turn a held session finished (#510), read straight off the
+ * provider's own end-of-turn protocol message — never a heuristic this app
+ * invented, and never derived from a silence window.
+ *
+ * `text` is present only when the provider actually handed one over: a
+ * Claude `result` message's own `result` string on `subtype: 'success'`, or
+ * an Antigravity turn's own `response` on `status: 'SUCCESS'`. A capped,
+ * errored or interrupted turn carries none unless its provider supplied
+ * one — when in doubt, this records less, never more, so a failed turn can
+ * never be mistaken for a quiet success. Bound to MAX_DWARF_TEXT_CHARS like
+ * every other message this app draws (see `boundTurnText`), with
+ * `truncated: true` present only when the bound actually cut something.
+ *
+ * `detail` is the provider's OWN word for what happened — a Claude subtype
+ * such as `error_max_turns`, or an Antigravity `status` such as `ERROR` —
+ * carried verbatim rather than reworded into this app's own taxonomy, so a
+ * reader can always trace a reading back to what the provider actually said.
+ */
+export interface TurnOutcome {
+  kind: TurnOutcomeKind
+  text?: string
+  truncated?: boolean
+  detail?: string
+  endedAt: number
+}
+
 export interface Dwarf {
   id: string
   /**
@@ -1541,6 +1584,15 @@ export interface Dwarf {
    * wrong.
    */
   oneShot?: boolean
+  /**
+   * The most recent turn this held session finished (#510) — absent until
+   * one has, and absent for every session type but a held one, the same
+   * asymmetry `mcpServers`' own doc comment draws for its absence: this is
+   * either not a held session, or one whose stream has not finished a turn
+   * yet. See TurnOutcome for what each kind means and where its text comes
+   * from.
+   */
+  lastTurn?: TurnOutcome
 }
 
 /**
@@ -2559,6 +2611,26 @@ export function parseDwarfAttachments(value: unknown): readonly DwarfAttachment[
     accepted.push(candidate)
   }
   return accepted
+}
+
+/**
+ * Bound a finished turn's own text to the wire's ordinary ceiling (#510) —
+ * the same MAX_DWARF_TEXT_CHARS every other message on this wire is measured
+ * against, because a turn's final word carries no looser a promise than any
+ * other string this panel draws.
+ *
+ * Cuts rather than refuses, deliberately the OPPOSITE of `parseDwarfText`
+ * just below: that guards a message coming IN, where refusing the whole
+ * thing is the honest answer to something too big to be a mistake-free send.
+ * This is a fact LEAVING the app about a turn that already happened, so
+ * dropping the whole outcome over its length would be the app hiding that a
+ * turn concluded at all — the limit is enforced by shortening the text
+ * instead.
+ */
+export function boundTurnText(text: string): { text: string; truncated: boolean } {
+  return text.length > MAX_DWARF_TEXT_CHARS
+    ? { text: text.slice(0, MAX_DWARF_TEXT_CHARS), truncated: true }
+    : { text, truncated: false }
 }
 
 /**
