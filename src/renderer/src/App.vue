@@ -30,6 +30,7 @@ import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
+import { useJevSettings } from './composables/useJevSettings'
 import { useTypography } from './composables/useTypography'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { shellComposition } from './lib/shell/composition'
@@ -87,6 +88,26 @@ const {
   set: setNotificationsEnabled
 } = useNotificationSettings()
 /* --- end of the #316 block ------------------------------------------------- */
+
+/* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+/**
+ * Settings' Jev API-key control (#509).
+ *
+ * A reading and never an authority, the same rule `useNotificationSettings`
+ * holds for its switch: main is the only process that ever sees the
+ * plaintext key, so this only draws what it answered with. The key itself
+ * never lives here — `setJevApiKey` hands the preload the typed value and
+ * this composable only ever keeps what main STORED, `configured`/
+ * `unavailableReason`.
+ */
+const {
+  settings: jevSettings,
+  saving: jevSaving,
+  sync: syncJevSettings,
+  save: saveJevApiKey,
+  clear: clearJevApiKey
+} = useJevSettings()
+/* --- end of the #509 block ------------------------------------------------- */
 
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 /**
@@ -820,6 +841,12 @@ onMounted(() => {
   void syncTypography()
   unlistenTypography = listenTypography()
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  // Adopts the stored verdict. No subscription: unlike typography, nothing
+  // outside this window ever changes it — the message panel never draws this
+  // section — so there is no push to hear and nothing to release on unmount.
+  void syncJevSettings()
+  /* --- end of the #509 block ------------------------------------------------ */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -941,6 +968,8 @@ onBeforeUnmount(() => {
               :notifications-enabled="notificationsEnabled"
               :typography="typography"
               :typography-applying="typographyApplying"
+              :jev-settings="jevSettings"
+              :jev-saving="jevSaving"
               @start-recording="startShortcutRecording"
               @stop-recording="stopShortcutRecording"
               @record="recordShortcut"
@@ -953,6 +982,8 @@ onBeforeUnmount(() => {
               @audio-change="setAudioSettings"
               @notifications-change="setNotificationsEnabled"
               @typography-change="setTypography"
+              @jev-save="saveJevApiKey"
+              @jev-clear="clearJevApiKey"
             />
           </PanelFrame>
 

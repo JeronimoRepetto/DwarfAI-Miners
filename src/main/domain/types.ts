@@ -111,8 +111,12 @@ export type {
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   InterfaceFont,
   MessagingFont,
-  TypographyPreferences
+  TypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  JevSettings,
+  JevUnavailableReason
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../../shared/contracts'
 
 /**
@@ -196,8 +200,13 @@ export {
   refuseAttachment,
   /* --- end of the #408 block ----------------------------------------------- */
   /* --- The relay's prompt on stdin (#437) — one block, appended ------------- */
-  MAX_CODEX_QUEUE_TEXT_CHARS
+  MAX_CODEX_QUEUE_TEXT_CHARS,
   /* --- end of the #437 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  DEFAULT_JEV_SETTINGS,
+  MAX_JEV_API_KEY_CHARS,
+  parseJevApiKeyInput
+  /* --- end of the #509 block ------------------------------------------------ */
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'

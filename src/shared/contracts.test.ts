@@ -53,8 +53,13 @@ import {
   /* --- end of the #437 block ----------------------------------------------- */
   /* --- The picker's Other row (#481) — one block, appended ------------------ */
   MAX_PICKER_NUMBERED_ROWS,
-  askHasAReachableOtherRow
+  askHasAReachableOtherRow,
   /* --- end of the #481 block ----------------------------------------------- */
+  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  MAX_JEV_API_KEY_CHARS,
+  DEFAULT_JEV_SETTINGS,
+  parseJevApiKeyInput
+  /* --- end of the #509 block ------------------------------------------------ */
 } from './contracts'
 
 /*
@@ -1064,3 +1069,64 @@ describe('askHasAReachableOtherRow (#481)', () => {
   })
 })
 /* --- end of the #481 block ------------------------------------------------- */
+
+/*
+ * Jev launch routing: the API key setting (#509) — APPENDED, nothing above
+ * changed.
+ *
+ * `parseJevApiKeyInput` is the one place the shape of a usable key is decided,
+ * because both the preload (before the key ever leaves the renderer) and the
+ * store (before it is ever encrypted) read the same rule — two copies of it
+ * could disagree about what "a real key" means. It THROWS rather than
+ * degrading: a key with a stray line break or nothing typed at all is a
+ * legible instruction that cannot be carried out, the bad-VALUE half of the
+ * `config-layering` asymmetry, never corruption to paper over.
+ */
+describe('parseJevApiKeyInput', () => {
+  it('trims the surrounding whitespace a paste routinely carries', () => {
+    expect(parseJevApiKeyInput('  sk-typesafe-abc123  ')).toBe('sk-typesafe-abc123')
+  })
+
+  it('accepts a realistic key: letters, digits, and the punctuation a token uses', () => {
+    const key = 'sk-typesafe-ABC123_def.456~789'
+    expect(parseJevApiKeyInput(key)).toBe(key)
+  })
+
+  it('refuses anything that is not a string', () => {
+    for (const value of [undefined, null, 42, {}, []]) {
+      expect(() => parseJevApiKeyInput(value)).toThrow()
+    }
+  })
+
+  it('refuses an empty key, including one that is only whitespace', () => {
+    expect(() => parseJevApiKeyInput('')).toThrow()
+    expect(() => parseJevApiKeyInput('   ')).toThrow()
+  })
+
+  it('refuses a key past the documented length, a whole file pasted by accident', () => {
+    expect(() => parseJevApiKeyInput('a'.repeat(MAX_JEV_API_KEY_CHARS))).not.toThrow()
+    expect(() => parseJevApiKeyInput('a'.repeat(MAX_JEV_API_KEY_CHARS + 1))).toThrow()
+  })
+
+  it('refuses a line break or a tab, which would silently corrupt the stored bytes', () => {
+    expect(() => parseJevApiKeyInput('sk-abc\ndef')).toThrow()
+    expect(() => parseJevApiKeyInput('sk-abc\tdef')).toThrow()
+  })
+
+  it('refuses an embedded space: a real key is one unbroken token', () => {
+    // Trimming only removes the ENDS. A space in the middle is reliably a
+    // paste that also grabbed a label or a line-wrapped display, not a key.
+    expect(() => parseJevApiKeyInput('sk abc')).toThrow()
+  })
+
+  it('refuses anything outside printable ASCII, such as a smart quote a paste can carry', () => {
+    expect(() => parseJevApiKeyInput('sk-“abc”')).toThrow()
+  })
+})
+
+describe('DEFAULT_JEV_SETTINGS', () => {
+  it('starts unconfigured, with no reason claimed until main has actually checked', () => {
+    expect(DEFAULT_JEV_SETTINGS).toEqual({ configured: false })
+  })
+})
+/* --- end of the #509 block ------------------------------------------------- */

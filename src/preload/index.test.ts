@@ -1253,3 +1253,46 @@ describe('preload typography contract (#370)', () => {
     })
   })
 })
+
+/**
+ * Jev launch routing: the API key setting (#509) — APPENDED, nothing above
+ * changed.
+ *
+ * Three members, and none of them ever answers with the key. `set` parses
+ * the key through the SAME shared parser main's own store reads before it
+ * ever crosses — the discipline `setAudioPreferences` holds for its document
+ * — so a key the store would refuse anyway never reaches the bridge at all.
+ */
+describe('preload Jev API-key contract (#509)', () => {
+  it('asks for the stored settings on jev:settings:get with no payload', async () => {
+    invoke.mockResolvedValueOnce({ configured: true })
+    await expect(api.getJevSettings()).resolves.toEqual({ configured: true })
+    expect(invoke).toHaveBeenLastCalledWith('jev:settings:get')
+  })
+
+  it('parses the key through the shared parser before it crosses, trimming what it carries', async () => {
+    invoke.mockResolvedValueOnce({ configured: true })
+    await api.setJevApiKey('  sk-typesafe-abc123  ')
+    expect(invoke).toHaveBeenLastCalledWith('jev:apiKey:set', 'sk-typesafe-abc123')
+  })
+
+  it('refuses locally, before the bridge, a key the shared parser would refuse anyway', async () => {
+    // `invoke` accumulates calls across this whole suite (nothing resets it),
+    // so the only reliable check here is that THIS action added none.
+    const callsBefore = invoke.mock.calls.length
+    await expect(api.setJevApiKey('   ')).rejects.toThrow()
+    expect(invoke.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('hands back what main STORED, including a refusal and its reason', async () => {
+    const refused = { configured: false, unavailableReason: 'encryption-unavailable' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.setJevApiKey('sk-typesafe-abc123')).resolves.toEqual(refused)
+  })
+
+  it('clears on jev:apiKey:clear with no payload at all', async () => {
+    invoke.mockResolvedValueOnce({ configured: false })
+    await expect(api.clearJevApiKey()).resolves.toEqual({ configured: false })
+    expect(invoke).toHaveBeenLastCalledWith('jev:apiKey:clear')
+  })
+})

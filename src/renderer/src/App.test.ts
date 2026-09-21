@@ -12,7 +12,11 @@ import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useView } from './composables/useView'
-import { DEFAULT_AUDIO_PREFERENCES, DEFAULT_TYPOGRAPHY_PREFERENCES } from './types'
+import {
+  DEFAULT_AUDIO_PREFERENCES,
+  DEFAULT_JEV_SETTINGS,
+  DEFAULT_TYPOGRAPHY_PREFERENCES
+} from './types'
 
 const DEFAULT_SHORTCUT = {
   accelerator: 'Control+Alt+Shift+P',
@@ -245,6 +249,16 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockImplementation((preferences: unknown) => Promise.resolve(preferences)),
     onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
+    /*
+     * AMENDED for #509 (was: absent). The shell adopts the stored Jev
+     * verdict on mount, so all three members have to exist even in tests
+     * that never open Settings. `setJevApiKey` and `clearJevApiKey` both
+     * answer with the stored verdict, which is what main does when the
+     * request is one it can act on. No existing assertion changed.
+     */
+    getJevSettings: vi.fn().mockResolvedValue({ ...DEFAULT_JEV_SETTINGS }),
+    setJevApiKey: vi.fn().mockResolvedValue({ configured: true }),
+    clearJevApiKey: vi.fn().mockResolvedValue({ configured: false }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2482,6 +2496,65 @@ describe('typography preferences (#370)', () => {
     expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
       'var(--font-family-roboto)'
     )
+  })
+})
+
+/**
+ * Jev API-key setting (#509) — APPENDED, nothing above changed.
+ *
+ * The shell is the only window that holds Settings, so what these pin is the
+ * round trip a user actually walks there: the stored verdict is adopted on
+ * mount, a save or a clear asks main for one, and what main answered with —
+ * never the key, on either side — is what the section draws.
+ */
+describe('Jev API-key setting (#509)', () => {
+  it('adopts the stored settings on mount and draws them in Settings', async () => {
+    const { wrapper } = await mountOpenApp({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    expect(wrapper.find('.jev-configured').exists()).toBe(true)
+  })
+
+  it('asks main to save the typed key, and renders the verdict', async () => {
+    const setJevApiKey = vi.fn().mockResolvedValue({ configured: true })
+    const { wrapper, api } = await mountOpenApp({ setJevApiKey })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    const input = wrapper.find('.jev-key-input')
+    ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
+    await input.trigger('input')
+    await wrapper.find('.jev-save').trigger('click')
+    await flushPromises()
+    expect(api.setJevApiKey).toHaveBeenCalledWith('sk-typesafe-abc123')
+    expect(wrapper.find('.jev-configured').exists()).toBe(true)
+  })
+
+  it('renders what main STORED, never the press, when a save does not take', async () => {
+    const { wrapper } = await mountOpenApp({
+      setJevApiKey: vi
+        .fn()
+        .mockResolvedValue({ configured: false, unavailableReason: 'encryption-unavailable' })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    const input = wrapper.find('.jev-key-input')
+    ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
+    await input.trigger('input')
+    await wrapper.find('.jev-save').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.jev-unavailable').exists()).toBe(true)
+  })
+
+  it('asks main to clear the key, and renders the verdict', async () => {
+    const clearJevApiKey = vi.fn().mockResolvedValue({ configured: false })
+    const { wrapper, api } = await mountOpenApp({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      clearJevApiKey
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.jev-clear').trigger('click')
+    await flushPromises()
+    expect(api.clearJevApiKey).toHaveBeenCalled()
+    expect(wrapper.find('.jev-configured').exists()).toBe(false)
   })
 })
 
