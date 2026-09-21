@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
-import { NodeFs, type FsLike } from '../adapters/fsLike'
+import { type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
-import { cliOverridesFrom, type AppConfig, type ConfigEnv } from '../config/config'
+import { type AppConfig, type ConfigEnv } from '../config/config'
 import { agentProviderList } from '../domain/launchProviders'
 import { resumeTuning, type LaunchTuning } from '../domain/launchTuning'
 import {
@@ -95,7 +95,7 @@ import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
 import type { CliDetector } from '../platform/cliDetection'
-import { createPlatformAdapters, type PlatformAdapters } from '../platform/platformAdapters'
+import type { PlatformAdapters } from '../platform/platformAdapters'
 import { currentPlatform, normalizePathKey, pathFor, type Platform } from '../platform/platform'
 import { ProjectObserver } from '../projects/projectObserver'
 import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
@@ -645,7 +645,16 @@ export interface RuntimeOptions {
    */
   onSendSettled?: (push: DwarfSendSettledPush) => void
   home?: string
-  fs?: FsLike
+  /**
+   * Required rather than defaulted (#477): the default used to be `new
+   * NodeFs()`, and a test that omitted this reached the real filesystem —
+   * harmless from a plain clone, but a linked worktree's `.git` FILE and the
+   * checkout it points at ARE real things on disk, so the omission quietly
+   * read them. Production's one composition root passes this explicitly now
+   * too; the type stops the omission at every future construction site
+   * instead of a default papering over it again.
+   */
+  fs: FsLike
   /** Read-only SQLite access for the Codex registry; injected for tests. */
   sqlite?: SqliteLike
   providers?: Provider[]
@@ -666,20 +675,6 @@ export interface RuntimeOptions {
   launchTerminal?: (dwarfName: string, transcriptPath: string) => Promise<boolean>
   /** Writes a typed message into a live session; injected for tests. */
   textDelivery?: TextDeliveryPort
-  /**
-   * The macOS console-input opt-in (#367), read off the REAL environment at
-   * the composition root and forwarded to the platform adapters this
-   * constructor builds. Absent — every test, and every run with the variable
-   * unset — leaves `DARWIN_CONSOLE_INPUT_ENABLED` in charge, so the shipped
-   * default moves only when that constant does.
-   */
-  darwinConsoleInput?: boolean
-  /**
-   * The Linux console-input override (#471), the same round trip as the macOS
-   * one beside it and read off its own variable. Absent leaves
-   * `LINUX_CONSOLE_INPUT_ENABLED` in charge.
-   */
-  linuxConsoleInput?: boolean
   /**
    * What to type into an observed session's console to answer its permission
    * dialog, or null while nothing this build accepts has been measured (#203).
@@ -752,8 +747,15 @@ export interface RuntimeOptions {
    * for tests, which must never spawn a process; the default holds real ones.
    */
   hostedProcesses?: HostedProcessRegistry
-  /** Every per-OS adapter, already selected; injected for tests. */
-  platformAdapters?: PlatformAdapters
+  /**
+   * Every per-OS adapter, already selected. Required rather than defaulted
+   * (#477) for the same reason `fs` above is: the default composed the REAL
+   * host's adapters (`createPlatformAdapters` reading `process.platform`),
+   * which is exactly what let a test's fold walk pick a real dirname
+   * implementation for a fixture cwd nobody meant to touch a real repository
+   * with. Production's one composition root composes this explicitly now.
+   */
+  platformAdapters: PlatformAdapters
   /** Injected for deterministic lifecycle-grace tests; defaults to Date.now. */
   now?: () => number
   /**
@@ -1068,34 +1070,19 @@ export class AgentRuntime {
 
   constructor(options: RuntimeOptions) {
     const home = options.home ?? homedir()
-    const fs = options.fs ?? new NodeFs()
+    const fs = options.fs
     const appPaths: ViewerPathOptions = options.appPaths ?? {
       isPackaged: false,
       resourcesPath: process.resourcesPath ?? '',
       appPath: process.cwd()
     }
-    // The one place the running operating system is consulted: everything
-    // below depends on ports, never on process.platform.
-    const platform =
-      options.platformAdapters ??
-      createPlatformAdapters({
-        home,
-        appPaths,
-        relayModel: options.config.sendTextRelayModel,
-        relayTimeoutMs: options.config.sendTextTimeoutS * 1_000,
-        // CLI detection (#91) reads the same fs the providers do, and honours an
-        // explicit override path per CLI; blank means "detect it". Derived from
-        // the provider blocks (#78), so a backend added to the table has its
-        // override honoured here without a line of its own.
-        fs,
-        cliOverrides: cliOverridesFrom(options.config),
-        ...(options.darwinConsoleInput === undefined
-          ? {}
-          : { darwinConsoleInput: options.darwinConsoleInput }),
-        ...(options.linuxConsoleInput === undefined
-          ? {}
-          : { linuxConsoleInput: options.linuxConsoleInput })
-      })
+    // The one place the running operating system is consulted used to be
+    // here (#477): composing the real adapters as a default meant a test that
+    // omitted this option got the REAL host's dirname and CLI detection too.
+    // Every caller — the one production composition root and every test —
+    // now hands in an already-selected `PlatformAdapters`, so nothing below
+    // this line depends on process.platform either.
+    const platform = options.platformAdapters
 
     this.now = options.now ?? Date.now
     this.permissionPrompts = new PermissionPromptRegistry({ now: this.now })

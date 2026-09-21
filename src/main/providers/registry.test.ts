@@ -4,6 +4,10 @@ import { MemorySqlite } from '../adapters/memorySqlite'
 import { defaultConfig } from '../config/config'
 import { DWARF_PROVIDERS, type Mine } from '../domain/types'
 import { AgentRuntime } from '../runtime/runtime'
+// #477: platformAdapters has no default any more, so every construction below
+// borrows the same named fake `runtime.test.ts` uses, rather than this file
+// growing a second one.
+import { worktreePlatformAdapters } from '../platform/fakePlatformAdapters'
 import type { Provider } from './provider'
 import { PROVIDER_REGISTRY, createProviders, type ProviderContext } from './registry'
 
@@ -114,6 +118,7 @@ describe('registering a provider', () => {
     // finding nothing, so the mine that arrives can only be the new row's.
     const published: Mine[][] = []
     const runtime = new AgentRuntime({
+      platformAdapters: worktreePlatformAdapters(),
       config: defaultConfig(),
       home: 'C:\\Users\\j',
       fs: new FakeFs(),
@@ -130,6 +135,7 @@ describe('registering a provider', () => {
     // anything against a FakeFs, the assertion above would prove nothing.
     const published: Mine[][] = []
     const runtime = new AgentRuntime({
+      platformAdapters: worktreePlatformAdapters(),
       config: defaultConfig(),
       home: 'C:\\Users\\j',
       fs: new FakeFs(),
