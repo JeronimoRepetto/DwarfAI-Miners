@@ -4,6 +4,8 @@ import {
   conventionalCliPaths,
   cliExecutableNames,
   createCliDetector,
+  describeProgramFailure,
+  describeShimRefusal,
   pathLookupCandidates,
   resolveProgram,
   resolveShimTarget
@@ -349,15 +351,28 @@ describe('resolveShimTarget', () => {
     ).toEqual({ entry: 'C:\\opt\\codex\\bin\\codex.js', bundledNode: 'C:\\tools\\node.exe' })
   })
 
-  it('answers undefined for a shim that names no JS entry, rather than guessing one', () => {
-    expect(resolveShimTarget('C:\\tools\\codex.cmd', '@echo off\r\nrem nothing to run\r\n')).toBe(
-      undefined
-    )
+  // AMENDED for #502 (was: 'answers undefined for a shim that names no JS
+  // entry, rather than guessing one', asserting a bare `toBe(undefined)`).
+  // Plain `undefined` could not say which of two refusals this was; the
+  // shape now names the fact and carries the shim's own path.
+  it('names the shim path and "dialect not understood" for a shim that names no JS entry', () => {
+    const shimPath = 'C:\\tools\\codex.cmd'
+    expect(resolveShimTarget(shimPath, '@echo off\r\nrem nothing to run\r\n')).toEqual({
+      kind: 'dialect-not-understood',
+      shimPath
+    })
   })
 
-  it('answers undefined when the entry hangs on a variable only cmd.exe could expand', () => {
+  // AMENDED for #502 (was: 'answers undefined when the entry hangs on a
+  // variable only cmd.exe could expand', asserting a bare `toBe(undefined)`).
+  it('names the shim path and the unexpanded entry when a variable still needs cmd.exe', () => {
+    const shimPath = `${NPM_DIR}\\codex.cmd`
     const text = 'node "%APPDATA%\\npm\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
-    expect(resolveShimTarget(`${NPM_DIR}\\codex.cmd`, text)).toBe(undefined)
+    expect(resolveShimTarget(shimPath, text)).toEqual({
+      kind: 'needs-cmd-exe',
+      shimPath,
+      entry: '%APPDATA%\\npm\\node_modules\\@openai\\codex\\bin\\codex.js'
+    })
   })
 })
 
@@ -407,11 +422,33 @@ describe('resolveProgram', () => {
     })
   })
 
-  it('answers undefined, never a guess, when the shim names no JS entry', async () => {
+  // AMENDED for #502 (was: 'answers undefined, never a guess, when the shim
+  // names no JS entry', asserting `toBeUndefined()`). The refusal now names
+  // the fact and the shim's own path, which `launchRunner.ts` and the two
+  // text-delivery tiers turn into the sentence the panel shows.
+  it('names the shim path and "dialect not understood" when the shim names no JS entry', async () => {
     const fs = new FakeFs()
     fs.addFile(SHIM, '@echo off\r\nrem nothing to run\r\n')
 
-    expect(await resolveProgram(SHIM, fs)).toBeUndefined()
+    expect(await resolveProgram(SHIM, fs)).toEqual({
+      kind: 'dialect-not-understood',
+      shimPath: SHIM
+    })
+  })
+
+  // NEW for #502: resolveShimTarget's own test above pins this fact in
+  // isolation; this pins that resolveProgram (what every caller actually
+  // calls) carries it through unchanged.
+  it('names the shim path and the unexpanded entry when a variable still needs cmd.exe', async () => {
+    const fs = new FakeFs()
+    const text = 'node "%APPDATA%\\node_modules\\@openai\\codex\\bin\\codex.js" %*'
+    fs.addFile(SHIM, text)
+
+    expect(await resolveProgram(SHIM, fs)).toEqual({
+      kind: 'needs-cmd-exe',
+      shimPath: SHIM,
+      entry: '%APPDATA%\\node_modules\\@openai\\codex\\bin\\codex.js'
+    })
   })
 
   // FsLike's own contract: readTextHead REJECTS for a missing file rather than
@@ -421,5 +458,50 @@ describe('resolveProgram', () => {
   it('propagates rather than swallows a shim that cannot be read at all', async () => {
     const fs = new FakeFs()
     await expect(resolveProgram(SHIM, fs)).rejects.toThrow()
+  })
+})
+
+/*
+ * #502. Every resolveProgram caller turns a ShimRefusal into the panel's
+ * sentence through this, so the wording lives in one place rather than once
+ * per caller.
+ */
+describe('describeShimRefusal', () => {
+  it('names the dialect fact for a shim whose text has no JS entry', () => {
+    expect(
+      describeShimRefusal({ kind: 'dialect-not-understood', shimPath: 'C:\\tools\\codex.cmd' })
+    ).toBe('the shim was found but its dialect was not understood')
+  })
+
+  it('names the unexpanded entry for a shim still needing cmd.exe', () => {
+    expect(
+      describeShimRefusal({
+        kind: 'needs-cmd-exe',
+        shimPath: 'C:\\tools\\codex.cmd',
+        entry: '%APPDATA%\\codex.js'
+      })
+    ).toBe('its entry still names a variable only cmd.exe can expand: %APPDATA%\\codex.js')
+  })
+})
+
+/*
+ * #502. The other half of a launch or delivery refusal's cause: what a
+ * spawn or a shim read failed with, read the same way wherever either is
+ * caught.
+ */
+describe('describeProgramFailure', () => {
+  it("names the platform's own errno code when the exception carries one", () => {
+    const error = Object.assign(new Error('spawn claude EACCES'), { code: 'EACCES' })
+    expect(describeProgramFailure(error)).toBe('EACCES')
+  })
+
+  it('falls back to the exception message when there is no errno code', () => {
+    expect(describeProgramFailure(new Error('FakeFs: no such file C:\\tools\\codex.cmd'))).toBe(
+      'FakeFs: no such file C:\\tools\\codex.cmd'
+    )
+  })
+
+  it('falls back to String() for a thrown value that is not an Error', () => {
+    expect(describeProgramFailure('disk unplugged')).toBe('disk unplugged')
   })
 })
