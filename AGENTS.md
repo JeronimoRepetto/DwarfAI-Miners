@@ -115,6 +115,18 @@ types; one the barrel omits sends the whole import statement past it, not just i
 `main/index.ts` and `preload/index.ts` read it directly because they _are_ the endpoints. Do not
 let a renderer-only type into contracts, and never copy a shape across the boundary.
 
+**A test file may cross the main ↔ renderer boundary, but only to pin two copies equal.**
+Production code never imports main ↔ renderer either way, as above; no exception. A test may,
+only to assert that its own process's copy of a value equals the other side's, with a comment
+beside the import naming the copy it pins — `panelBounds.test.ts` imports `interiorColumnWidth`,
+`DESIGN_INTERIOR_WIDTH` and `SHELL_CONTENT_INSET` from the renderer's `sceneSizing` to pin the
+column main reserves to the one the renderer actually draws (#77). A test that hard-codes the
+value instead of importing it carries the same rule the other way: say why it copied rather than
+imported, beside the copy — `world.test.ts`'s simulated cave anchors do this, because the main
+process reaching into renderer art for a simulation is the overreach this rule forbids. A test
+whose guarantee moved elsewhere says where, in place of the import it removed — `window.test.ts`
+is the model (#153).
+
 ## Domain invariants that are easy to break by accident
 
 Each is documented at its definition. Read the comment there before changing it — they explain the

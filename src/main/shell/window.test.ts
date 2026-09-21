@@ -254,10 +254,14 @@ describe('buildMainWindowOptions', () => {
  * holding `minWidth`/`minHeight` to `MIN_PANEL_SIZE` and `width`/`height` to
  * `AUTHORED_PANEL_SIZE`, and this file's import of both from
  * `renderer/src/lib/scene/sceneSizing`. The guarantee they enforced — the cave
- * is never drawn below the box it was authored in — did not go with them: it
- * moved to `panelBounds.test.ts`, which holds the MINE COLUMN to
- * `MIN_PANEL_SIZE.width` and the copied scene chrome to `PANEL_CHROME.width`,
- * because that column is where the cave now lives.
+ * is never drawn below the box it was authored in — did not go with them, but
+ * it did move twice more the same day: `MIN_PANEL_SIZE` and `PANEL_CHROME`
+ * themselves went with the cave (#137), and #153 replaced the fixed pairing
+ * with a derived one. It lives today in `panelBounds.test.ts`'s "the derived
+ * columns", which pins the MINE COLUMN main derives against the renderer's
+ * own `interiorColumnWidth`/`DESIGN_INTERIOR_WIDTH`/`SHELL_CONTENT_INSET` —
+ * this file holds no cross-process import because it has nothing left to pin
+ * (see AGENTS.md's boundaries section).
  */
 describe('buildMainWindowOptions docked bounds', () => {
   const input = {

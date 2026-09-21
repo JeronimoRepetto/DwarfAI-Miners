@@ -111,14 +111,41 @@ what CI runs; activating the hook in this shared `.git` during the session (see 
       `pnpm vitest run src/renderer/src/lib/vault/vault.test.ts` → 13 passed, 0 failed.
       `pnpm typecheck:web` → clean. `pnpm exec eslint vault.ts vault.test.ts` → no issues.
 
+      Commit: `a67c68f` — `fix(vault): delete currentMaterialRow, its four tests are gone with it (#454)`.
+- [x] **T3 — One rule for tests that cross the process boundary, and three tests that follow it.**
+      Route: direct inline (four already-understood files, no unresolved design decision — the
+      rule was already decided by the issue text). Added the paragraph to `AGENTS.md`'s "Boundaries
+      that must survive", right after the `contracts.ts` paragraph it extends (#77): a test file may
+      cross main ↔ renderer only to pin a deliberate copy equal, with a comment beside the import
+      naming the copy; production code never does.
+
+      Amendments, one per file:
+      - `panelBounds.test.ts` — its existing `interiorColumnWidth`/`DESIGN_INTERIOR_WIDTH`/
+        `SHELL_CONTENT_INSET` import from the renderer's `sceneSizing` had no comment; added one
+        naming what it pins ("the derived columns" below) and citing the new rule. No test changed.
+      - `window.test.ts` — its comment explaining the removed import was itself stale: written
+        2026-09-03 10:29 for #90, it says the guarantee "moved to panelBounds.test.ts, which holds
+        the MINE COLUMN to `MIN_PANEL_SIZE.width` and the copied scene chrome to
+        `PANEL_CHROME.width`" — but both constants were deleted from `sceneSizing.ts` by #137
+        (13:55 the same day) and #153 (14:49) replaced the fixed pairing with the derived one
+        `panelBounds.test.ts` now pins. Verified via `git blame` and `git log -S"MIN_PANEL_SIZE"`
+        before touching it (AGENTS.md's "Verified versus assumed"). Corrected the comment to name
+        the current destination and constants, and to say explicitly why this file holds no
+        cross-process import today (nothing left to pin). No test changed.
+      - `world.test.ts` — already agrees with the rule (`VEIN_ANCHORS`/`REST_ANCHORS`/
+        `POST_ANCHORS` are hard-coded from the renderer's `sceneLayout.ts` with a comment saying
+        why: the main process must not reach into renderer art, and a change there should fail this
+        test loudly). No amendment needed or made; stated here rather than silently skipped.
+
+      `node skills/skill-sync/assets/sync.mjs --check` → `AGENTS.md already up to date (10 skill(s))`,
+      exit 0. `AGENTS.md` is 216 lines (budget 300).
+
+      Census (working tree vs HEAD): `panelBounds.test.ts` 68 → 68 (0), `window.test.ts` 68 → 68
+      (0) — comment-only amendments, no test statement lost or added; `world.test.ts` untouched.
+      `pnpm vitest run panelBounds.test.ts window.test.ts world.test.ts` → 157 passed, 0 failed.
+      `pnpm exec eslint panelBounds.test.ts window.test.ts` → no issues.
+
       Commit: `TBD`.
-- [ ] **T3 — One rule for tests that cross the process boundary, and three tests that follow it.**
-      Route: delegated (same writer). In `AGENTS.md`'s "Boundaries that must survive": a test file
-      may import across main ↔ renderer only to pin a deliberate copy equal, with a comment naming
-      the copy it pins; production code never does. Make `panelBounds.test.ts`, `window.test.ts`
-      and `world.test.ts` agree with that rule (the pinning import stays, with the naming comment;
-      a hard-coded copy without a pin either gains the pin or the comment says why not). Run
-      `sync.mjs --check`.
 
 ## Acceptance
 
