@@ -87,13 +87,27 @@ const SHIM_TEXT = [
   'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\opencode-ai\\bin\\opencode.js" %*'
 ].join('\r\n')
 
+/*
+ * AMENDED for #547 (was: `{value, displayName, effortLevels}` only — the
+ * three fields `ModelOption` needs). The parser now keeps the richer
+ * `OpenCodeCatalogueModel` shape a Jev capability entry needs too
+ * (`opencodeDerived.ts`): `status`, `releaseDate`, `cost`, `limit`,
+ * `capabilities.reasoning`, read straight off the same fixture block above,
+ * which already carried them (the fixture's own comment already advertised
+ * this key set — #547 is the first thing that reads past the first three).
+ */
 describe('parseOpenCodeModelsOutput', () => {
   it('reads a model with a non-empty variants map, keyed by its own effort levels (M1)', () => {
     const models = parseOpenCodeModelsOutput(MODELS_VERBOSE)
     expect(models[0]).toEqual({
       value: 'opencode-go/glm-5.3',
       displayName: 'GLM 5.3',
-      effortLevels: ['low', 'high', 'max']
+      effortLevels: ['low', 'high', 'max'],
+      status: 'active',
+      releaseDate: '2026-01-01',
+      cost: { input: 0, output: 0, cacheRead: 0 },
+      limit: { context: 200000, output: 8192 },
+      capabilities: { reasoning: true }
     })
   })
 
@@ -102,8 +116,43 @@ describe('parseOpenCodeModelsOutput', () => {
     expect(models[1]).toEqual({
       value: 'opencode/big-pickle',
       displayName: 'Big Pickle',
-      effortLevels: []
+      effortLevels: [],
+      status: 'active',
+      releaseDate: '2026-02-01',
+      cost: { input: 0, output: 0, cacheRead: 0 },
+      limit: { context: 128000, output: 4096 },
+      capabilities: { reasoning: true }
     })
+  })
+
+  it('reads cost.output above zero and no cache figure as an omitted cacheRead (#547)', () => {
+    const paid = [
+      'opencode-go/paid-model',
+      '{',
+      '  "id": "paid-model",',
+      '  "providerID": "opencode-go",',
+      '  "name": "Paid Model",',
+      '  "status": "active",',
+      '  "cost": { "input": 3, "output": 15 },',
+      '  "limit": { "context": 1048576, "output": 131072 },',
+      '  "capabilities": { "reasoning": true },',
+      '  "release_date": "2026-07-16",',
+      '  "variants": { "max": { "reasoningEffort": "max" } }',
+      '}',
+      ''
+    ].join('\n')
+    const [model] = parseOpenCodeModelsOutput(paid)
+    expect(model).toEqual({
+      value: 'opencode-go/paid-model',
+      displayName: 'Paid Model',
+      effortLevels: ['max'],
+      status: 'active',
+      releaseDate: '2026-07-16',
+      cost: { input: 3, output: 15 },
+      limit: { context: 1048576, output: 131072 },
+      capabilities: { reasoning: true }
+    })
+    expect(model).not.toHaveProperty('cost.cacheRead')
   })
 
   it('reads every model line off the output', () => {
@@ -170,10 +219,17 @@ describe('createOpenCodeModelCatalog (#534)', () => {
       args: ['models', '--verbose']
     })
     expect(models).toHaveLength(2)
+    // AMENDED for #547 (was: {value, displayName, effortLevels} only) — see
+    // parseOpenCodeModelsOutput's own AMENDED note above for why.
     expect(models[0]).toEqual({
       value: 'opencode-go/glm-5.3',
       displayName: 'GLM 5.3',
-      effortLevels: ['low', 'high', 'max']
+      effortLevels: ['low', 'high', 'max'],
+      status: 'active',
+      releaseDate: '2026-01-01',
+      cost: { input: 0, output: 0, cacheRead: 0 },
+      limit: { context: 200000, output: 8192 },
+      capabilities: { reasoning: true }
     })
   })
 

@@ -162,6 +162,39 @@ export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
 }
 
 /**
+ * Whether a provider's own on-disk record ever carries token usage (#540) —
+ * the one pin issue #540 exists for. `'mines'` says a session with usage
+ * yields `tokensObserved`, live and in the historical backfill, through the
+ * exact ledger path `observationsFrom`/`accrue` already credit (see
+ * `domain/ledger.ts`). The token-less shape says the opposite, in the
+ * provider's own words, pinned to the CLI build that reading was last
+ * verified against — so a LATER build that starts writing usage is a visible
+ * change against this pin, never a silent one.
+ *
+ * `Record<DwarfProvider, ...>`, exactly like `PROVIDER_REGISTRY` above:
+ * a member added to `DWARF_PROVIDERS` stops this file compiling until its
+ * row here exists, so the next provider cannot join neither side by
+ * omission.
+ */
+export type ProviderTokenDeclaration =
+  | 'mines'
+  | {
+      tokenless: true
+      /** The CLI build this provider's "no tokens" reading was verified against. */
+      verifiedOn: string
+    }
+
+export const PROVIDER_TOKEN_DECLARATION: Record<DwarfProvider, ProviderTokenDeclaration> = {
+  claude: 'mines',
+  codex: 'mines',
+  opencode: 'mines',
+  // See antigravityProvider.ts's own "No tokens" note for the evidence this
+  // pins: the private transcript records no usage figure anywhere on this
+  // build.
+  antigravity: { tokenless: true, verifiedOn: '1.1.26' }
+}
+
+/**
  * Build every registered provider, in registration order.
  *
  * Order is the order the table is written in, which is the order snapshots

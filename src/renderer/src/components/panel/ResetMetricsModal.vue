@@ -158,8 +158,8 @@ onMounted(() => inputRef.value?.focus())
 }
 .modal-confirm:disabled {
   cursor: default;
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
+  border: 2px solid var(--color-control-disabled);
+  color: var(--color-control-disabled);
   background: var(--color-panel-deep);
 }
 </style>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { claudeCoalFromTail, codexCoalFromRollout } from './coalScan'
+import { MemorySqlite } from '../adapters/memorySqlite'
+import { OPENCODE_SCHEMA, sessionInsert } from '../providers/opencode/stateSeed'
+import { claudeCoalFromTail, codexCoalFromRollout, opencodeCoalFromStore } from './coalScan'
 
 /** One assistant line as Claude writes it, trimmed to the fields we read. */
 function assistantLine(
@@ -206,5 +208,74 @@ describe('codexCoalFromRollout', () => {
       '2026-01-01T10:01:00.000Z'
     )
     expect(codexCoalFromRollout(head, tail)).toBeNull()
+  })
+})
+
+const DB_PATH = '/store/opencode.db'
+
+/** A MemorySqlite database seeded with the real 1.18.31 schema, ready for INSERTs. */
+async function openCodeDb() {
+  const sqlite = new MemorySqlite()
+  sqlite.define(DB_PATH, OPENCODE_SCHEMA)
+  const db = await sqlite.openReadOnly(DB_PATH)
+  if (db === null) throw new Error('expected a database')
+  return { sqlite, db }
+}
+
+describe('opencodeCoalFromStore', () => {
+  it("reads one session's cwd, summed tokens and last-write time", async () => {
+    const { sqlite, db } = await openCodeDb()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_a', directory: '/home/j/proj', timeUpdatedMs: 5_000 })
+    )
+    sqlite.exec(
+      DB_PATH,
+      `UPDATE session SET tokens_input = 100, tokens_output = 200, tokens_reasoning = 5, ` +
+        `tokens_cache_read = 3, tokens_cache_write = 2 WHERE id = 'ses_a'`
+    )
+    expect(opencodeCoalFromStore(db)).toEqual([
+      { cwd: '/home/j/proj', tokens: 310, lastRecordAt: 5_000 }
+    ])
+  })
+
+  it('sums the same five columns state.ts reads, the shared cross-provider definition', async () => {
+    const { sqlite, db } = await openCodeDb()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/proj' }))
+    sqlite.exec(
+      DB_PATH,
+      `UPDATE session SET tokens_input = 1, tokens_output = 1 WHERE id = 'ses_a'`
+    )
+    expect(opencodeCoalFromStore(db)[0]?.tokens).toBe(2)
+  })
+
+  it('reports one record per session, never merged across sessions', async () => {
+    const { sqlite, db } = await openCodeDb()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/proj' }))
+    sqlite.exec(DB_PATH, `UPDATE session SET tokens_input = 100 WHERE id = 'ses_a'`)
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_b', directory: '/home/j/proj' }))
+    sqlite.exec(DB_PATH, `UPDATE session SET tokens_input = 50 WHERE id = 'ses_b'`)
+    expect(
+      opencodeCoalFromStore(db)
+        .map((record) => record.tokens)
+        .sort((a, b) => a - b)
+    ).toEqual([50, 100])
+  })
+
+  it('omits a session that never burned a token', async () => {
+    const { sqlite, db } = await openCodeDb()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/proj' }))
+    expect(opencodeCoalFromStore(db)).toEqual([])
+  })
+
+  it('answers an unknown schema with no records and no throw', async () => {
+    const sqlite = new MemorySqlite()
+    sqlite.define(
+      DB_PATH,
+      'CREATE TABLE session (id text PRIMARY KEY, something_else text NOT NULL)'
+    )
+    const db = await sqlite.openReadOnly(DB_PATH)
+    if (db === null) throw new Error('expected a database')
+    expect(opencodeCoalFromStore(db)).toEqual([])
   })
 })

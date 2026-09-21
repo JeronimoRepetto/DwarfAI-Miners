@@ -1,3 +1,6 @@
+import type { SqliteDb } from '../adapters/sqliteLike'
+import { readOpenCodeSessions } from '../providers/opencode/state'
+
 /**
  * Pure readers that turn bounded slices of a historical transcript into the
  * one fact the coal backfill needs: how many tokens this session burned, for
@@ -167,4 +170,33 @@ export function codexCoalFromRollout(head: string, tail: string): CoalRecord | n
 
   if (tokens === null || lastRecordAt === null) return null
   return { cwd, tokens, lastRecordAt }
+}
+
+/**
+ * Every OpenCode session's contribution, straight from `session` — read
+ * through the exact same query `readOpenCodeSessions` uses live (#540), so
+ * there is no second SQL shape to keep in sync with the store's real columns.
+ *
+ * Unlike a Claude transcript or a Codex rollout, one `session` row already IS
+ * that session's whole account of itself: `tokensUsed` (summed by
+ * `opencodeUsageTokens`, state.ts) is the same cumulative total the live path
+ * reads, and `session.time_updated` is both this session's "mtime" and its
+ * newest-record time in one column — there is no separate file-write time to
+ * cross-check it against the way a JSONL transcript's own timestamps are
+ * checked against the file's mtime. The install-moment boundary is applied by
+ * the caller (coalBackfill.ts), exactly as it is for `claudeCoalFromTail` and
+ * `codexCoalFromRollout` — this reader stays ignorant of "when", the same way
+ * those two do.
+ *
+ * A session that has burned nothing yields no record: there is nothing here
+ * for the backfill to credit, and a zero-token entry would only cost the
+ * caller a no-op credit for every idle or newly-created session in the store.
+ */
+export function opencodeCoalFromStore(db: SqliteDb): CoalRecord[] {
+  const records: CoalRecord[] = []
+  for (const session of readOpenCodeSessions(db, 0)) {
+    if (session.tokensUsed <= 0) continue
+    records.push({ cwd: session.cwd, tokens: session.tokensUsed, lastRecordAt: session.updatedMs })
+  }
+  return records
 }

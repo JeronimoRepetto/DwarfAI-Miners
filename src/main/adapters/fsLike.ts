@@ -1,4 +1,5 @@
 import { open, readFile, readdir, stat as fsStat } from 'node:fs/promises'
+import { parseJsonText } from './jsonText'
 
 /** One entry of a directory listing. */
 export interface DirEntry {
@@ -62,7 +63,10 @@ export class NodeFs implements FsLike {
   }
 
   async readJson(path: string): Promise<unknown> {
-    return JSON.parse(await readFile(path, 'utf8'))
+    // Through parseJsonText, not JSON.parse: a document a Windows editor saved
+    // opens with an invisible BOM the grammar does not admit (#555). FakeFs
+    // does the same, or a green suite would say nothing about this adapter.
+    return parseJsonText(await readFile(path, 'utf8'))
   }
 
   async listDir(path: string): Promise<DirEntry[]> {

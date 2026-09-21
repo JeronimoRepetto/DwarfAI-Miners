@@ -235,6 +235,82 @@ describe('containsOurHooks', () => {
   })
 })
 
+/*
+ * #555. A Claude settings.json saved by a Windows editor opens with the
+ * invisible EF BB BF, `JSON.parse` refuses it, and the installer skipped that
+ * whole configuration directory — so sessions there silently never got the
+ * instant-update hooks.
+ *
+ * The BOM ROUND-TRIPS rather than being dropped. This module's own header is
+ * the reason: it is "the one place in the app that edits a file the user did
+ * not create and cannot easily reconstruct", and it "preserves every key it
+ * does not own". An encoding mark is part of that shape; silently re-encoding
+ * somebody else's settings file is exactly the overreach the header forbids.
+ */
+describe('a settings.json a Windows editor marked (#555)', () => {
+  const MARKED = '\uFEFF{\n  "model": "x"\n}\n'
+
+  it('parses through the mark instead of refusing the file', () => {
+    expect(parseSettingsObject(MARKED)).toEqual({ model: 'x' })
+  })
+
+  it('notices the mark as part of the file shape', () => {
+    expect(detectJsonFormat(MARKED).byteOrderMark).toBe(true)
+    expect(detectJsonFormat('{\n  "model": "x"\n}\n').byteOrderMark).toBe(false)
+  })
+
+  it('writes the mark back, so a marked file round-trips byte for byte', () => {
+    expect(stringifySettings(parseSettingsObject(MARKED), detectJsonFormat(MARKED))).toBe(MARKED)
+  })
+
+  it('never adds a mark to a file that had none', () => {
+    // The mirror of the rule above, and the half that would corrupt a file on
+    // every machine rather than only on Windows.
+    const plain = '{\n  "model": "x"\n}\n'
+    expect(stringifySettings(parseSettingsObject(plain), detectJsonFormat(plain))).toBe(plain)
+  })
+
+  it('reads the rest of the format past the mark, not through it', () => {
+    // The indent probe looks for the first indented line; a mark at position
+    // zero must not shift what it finds, and CRLF detection must survive too.
+    const marked = '\uFEFF{\r\n    "model": "x"\r\n}'
+    expect(detectJsonFormat(marked)).toEqual({
+      indent: '    ',
+      eol: '\r\n',
+      trailingNewline: false,
+      byteOrderMark: true
+    })
+  })
+
+  /*
+   * The honest, general form of the round-trip above.
+   *
+   * `stringifySettings` reproduces the indent, the EOL and the trailing
+   * newline — not every idiosyncrasy a writer may have had. A real
+   * settings.json on the maintainer's machine puts TWO spaces after its
+   * colons, which `JSON.stringify` does not reproduce, so it does not come
+   * back byte-identical and never did. That is older than #555 and not what
+   * this issue changes.
+   *
+   * What #555 must guarantee is narrower and exactly checkable: the mark adds
+   * NO drift of its own. Whatever a file would have become without it, it
+   * becomes with it, plus the mark — so tolerating a BOM can never be the
+   * reason a file came back different.
+   */
+  it('adds no drift of its own beyond the mark, whatever the file’s quirks', () => {
+    const quirky = '{\r\n    \"a\":  {\r\n        \"b\": 1\r\n    }\r\n}\r\n'
+    const plain = stringifySettings(parseSettingsObject(quirky), detectJsonFormat(quirky))
+    const marked = `﻿${quirky}`
+    const throughMark = stringifySettings(parseSettingsObject(marked), detectJsonFormat(marked))
+    expect(throughMark).toBe(`﻿${plain}`)
+  })
+
+  it('still refuses a marked file that is genuinely not a JSON object', () => {
+    expect(() => parseSettingsObject('\uFEFF[1,2]')).toThrow()
+    expect(() => parseSettingsObject('\uFEFFnot json')).toThrow()
+  })
+})
+
 describe('parseSettingsObject', () => {
   it('parses a normal settings file', () => {
     expect(parseSettingsObject('{"model":"x"}')).toEqual({ model: 'x' })
@@ -285,7 +361,15 @@ describe('detectJsonFormat / stringifySettings', () => {
   })
 
   it('falls back to two spaces and a trailing newline for a brand new file', () => {
-    expect(detectJsonFormat('')).toEqual({ indent: '  ', eol: '\n', trailingNewline: true })
+    // AMENDED for #555: JsonFormat gained `byteOrderMark`, because a BOM is
+    // part of the shape of a file this app does not own and must round-trip
+    // with the rest of it. The three original fields are unchanged.
+    expect(detectJsonFormat('')).toEqual({
+      indent: '  ',
+      eol: '\n',
+      trailingNewline: true,
+      byteOrderMark: false
+    })
     expect(stringifySettings({ model: 'x' }, detectJsonFormat(''))).toBe('{\n  "model": "x"\n}\n')
   })
 
