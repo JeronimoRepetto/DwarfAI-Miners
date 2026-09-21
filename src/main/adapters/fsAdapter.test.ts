@@ -59,6 +59,27 @@ describe('FakeFs', () => {
     })
   })
 
+  /*
+   * #555. A Claude session entry or a ledger document saved by a Windows
+   * editor opens with EF BB BF, and `JSON.parse` throws on it. Asserted on the
+   * FAKE here because the fake is what every other test reads through: if the
+   * two disagree about the same bytes, a green suite says nothing about the
+   * real adapter. See adapters/jsonText.ts.
+   */
+  it('readJson() parses a file a Windows editor marked with a BOM', async () => {
+    const fake = new FakeFs()
+    fake.addFile('C:\\Users\\j\\.claude\\sessions\\100.json', '\uFEFF{"pid":100}')
+    await expect(fake.readJson('C:\\Users\\j\\.claude\\sessions\\100.json')).resolves.toEqual({
+      pid: 100
+    })
+  })
+
+  it('readJson() still rejects text that is not JSON at all', async () => {
+    const fake = new FakeFs()
+    fake.addFile('C:\\broken.json', '\uFEFFnot json')
+    await expect(fake.readJson('C:\\broken.json')).rejects.toThrow()
+  })
+
   it('readJson() rejects for a missing file', async () => {
     await expect(makeFake().readJson('C:\\nope.json')).rejects.toThrow()
   })

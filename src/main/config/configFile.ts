@@ -1,5 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { loadConfig, type ConfigEnv } from './config'
+import { parseJsonText } from '../adapters/jsonText'
 
 /**
  * The configuration file an installed app actually owns, see #38.
@@ -81,7 +82,12 @@ const realFs: ConfigFileFsLike = { readFile, writeFile, rename }
 export function parseConfigFileEntries(raw: string): ParsedConfigFile {
   let parsed: unknown
   try {
-    parsed = JSON.parse(raw)
+    // parseJsonText rather than JSON.parse (#555). A bad shape degrades to no
+    // entries by design, which meant the invisible BOM a Windows editor writes
+    // made this ignore the WHOLE file in silence — on the one document this
+    // file's own comment says is meant to be edited by hand. Corruption still
+    // degrades; an encoding mark no longer counts as corruption.
+    parsed = parseJsonText(raw)
   } catch {
     return { entries: {}, ignoredKeys: [] }
   }

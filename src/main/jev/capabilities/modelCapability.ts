@@ -2,6 +2,7 @@ import type { DwarfProvider, ModelTier } from '../../domain/types'
 import { ANTIGRAVITY_MODEL_CAPABILITIES } from './antigravity'
 import { CLAUDE_MODEL_CAPABILITIES } from './claude'
 import { CODEX_MODEL_CAPABILITIES } from './codex'
+import { OPENCODE_CAPABILITY_OVERLAY } from './opencode'
 
 /** Re-exported so every existing `import type { ModelTier } from './modelCapability'` keeps working unchanged — the canonical declaration now lives in `shared/contracts.ts` (jev-routing-profiles T3), since a routing decision carries it across the wire. */
 export type { ModelTier }
@@ -67,9 +68,19 @@ export type ModelCapabilityLookup = ModelCapabilityEntry | { kind: 'unknown' }
  * files so each one stays independently reviewable and independently wrong
  * (a mistake in `codex.ts` cannot silently affect `claude.ts`'s entries).
  *
- * `opencode` is empty on purpose: it carries no model catalogue and no
- * launch path (#444), so nothing could ever be looked up for it — an empty
- * table is the honest answer, not a gap waiting to be filled.
+ * `opencode` here is the CURATED OVERLAY ONLY (#547) — `OPENCODE_CAPABILITY_
+ * OVERLAY` from `opencode.ts`, empty today. Unlike the other three providers,
+ * OpenCode's REAL per-install table is DERIVED at route time from its own
+ * live catalogue (`opencodeDerived.ts`'s `deriveOpenCodeCapabilities`,
+ * merged with this overlay by `mergeOpenCodeCapabilityTable`) — a static
+ * table for a catalogue that differs per install and moves with models.dev
+ * would be stale on arrival. `routeLaunch.ts` assembles the real table and
+ * injects it into `buildJevRouteRequest`/`decideLaunch`; this module's own
+ * `MODEL_CAPABILITIES` constant is read directly only for claude/codex/
+ * antigravity, and only for the overlay's own shape where OpenCode is
+ * concerned (`lookupModelCapability`/`capabilities.test.ts`'s generic
+ * exhaustiveness loop do not — and were never meant to — resolve a DERIVED
+ * OpenCode id; see `capabilities.test.ts`'s own OpenCode section for that).
  */
 export const MODEL_CAPABILITIES: Readonly<
   Record<DwarfProvider, Readonly<Record<string, ModelCapabilityEntry>>>
@@ -77,7 +88,7 @@ export const MODEL_CAPABILITIES: Readonly<
   claude: CLAUDE_MODEL_CAPABILITIES,
   codex: CODEX_MODEL_CAPABILITIES,
   antigravity: ANTIGRAVITY_MODEL_CAPABILITIES,
-  opencode: {}
+  opencode: OPENCODE_CAPABILITY_OVERLAY
 }
 
 /**

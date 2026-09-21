@@ -14,9 +14,9 @@ import {
   unavailableOpenCodeModelCatalog,
   type AntigravityModelInfo,
   type ClaudeModelInfo,
-  type CodexThreadModel,
-  type OpenCodeModelInfo
+  type CodexThreadModel
 } from '../domain/agentModelCatalog'
+import type { OpenCodeCatalogueModel } from '../providers/opencode/models'
 import { MineHistoryReader, type MineHistorySource } from '../history/mineHistory'
 import { DwarfLifecycleTracker } from '../domain/lifecycle'
 import { attributeIssuedMessages, launchingAgentOf } from '../domain/messageIssuer'
@@ -4127,6 +4127,35 @@ export class AgentRuntime {
    * against whatever port is injected — a fake included, which is how the
    * bound itself is unit tested.
    */
+  /**
+   * OpenCode's own live catalogue, RAW (#547) — the same read `listAgentModels`
+   * below folds into an `AgentModelCatalog` for the Add Panel, kept in its
+   * own right for `routeLaunch.ts`'s Jev capability derivation
+   * (`deriveOpenCodeCapabilities`), which needs the cost/limit/capabilities/
+   * status facts `ModelOption` already drops on the way to the Add Panel.
+   *
+   * `[]` on every failure this class already degrades `listAgentModels`'s own
+   * OpenCode leg to — not installed, the spawn itself failing, or output that
+   * could not be read as a model list — never a throw: an empty catalogue is
+   * exactly what tells `deriveOpenCodeCapabilities` to produce nothing, and
+   * `buildJevRouteRequest` to omit the provider option rather than send one
+   * built from zero tiers (#547's own "unavailable stays honest" rule).
+   */
+  async readOpenCodeCatalogue(): Promise<OpenCodeCatalogueModel[]> {
+    const detection = await this.cliDetector.detect('opencode')
+    if (!detection.installed || detection.path === undefined) return []
+    try {
+      return await withTimeout(
+        this.openCodeModelCatalog({ executablePath: detection.path }),
+        MODEL_CATALOG_TIMEOUT_MS,
+        `The model catalogue ask took longer than ${MODEL_CATALOG_TIMEOUT_MS}ms`
+      )
+    } catch (error) {
+      console.warn("[runtime] Could not ask OpenCode's own CLI for its model list", error)
+      return []
+    }
+  }
+
   async listAgentModels(): Promise<AgentModelCatalogList> {
     const claudeDetection = await this.cliDetector.detect('claude')
     const claude =
@@ -4173,25 +4202,17 @@ export class AgentRuntime {
           )
         : unavailableAntigravityModelCatalog()
 
-    // AMENDED for #534 (was: `unavailableOpenCodeModelCatalog()` with no
-    // detection at all — #444 left OpenCode observed only, so nothing was
-    // ever asked). On the same terms as Claude and Antigravity above: bounded
-    // by the same timeout, and a failed OR unparseable ask both fall back to
-    // `unavailableOpenCodeModelCatalog()` behind one warn line.
-    const openCodeDetection = await this.cliDetector.detect('opencode')
+    // AMENDED for #547 (was: its own detect+timeout+port dance inlined here).
+    // Factored into readOpenCodeCatalogue above, which routeLaunch.ts's Jev
+    // capability derivation also needs RAW, so the two never diverge on what
+    // "OpenCode's catalogue could not be read" means. Same fallback either
+    // way: an empty raw catalogue is indistinguishable from every failure
+    // mode readOpenCodeCatalogue already degrades to `[]`, so `unavailable-
+    // OpenCodeModelCatalog()` is still the right answer for it here.
+    const openCodeModels = await this.readOpenCodeCatalogue()
     const opencode =
-      openCodeDetection.installed && openCodeDetection.path !== undefined
-        ? await withTimeout(
-            this.openCodeModelCatalog({ executablePath: openCodeDetection.path }),
-            MODEL_CATALOG_TIMEOUT_MS,
-            `The model catalogue ask took longer than ${MODEL_CATALOG_TIMEOUT_MS}ms`
-          ).then(
-            (models: OpenCodeModelInfo[]) => openCodeModelCatalog(models),
-            (error: unknown) => {
-              console.warn("[runtime] Could not ask OpenCode's own CLI for its model list", error)
-              return unavailableOpenCodeModelCatalog()
-            }
-          )
+      openCodeModels.length > 0
+        ? openCodeModelCatalog(openCodeModels)
         : unavailableOpenCodeModelCatalog()
 
     return { catalogs: [claude, codexModelCatalog(codexThreads), antigravity, opencode] }

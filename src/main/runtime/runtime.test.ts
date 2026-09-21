@@ -8593,7 +8593,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       // The observed sessions' own rule: a session is the foreman whether or
       // not it currently has agents out, so promotion does not reverse when the
       // last one finishes. Both paths say the same thing about the same dwarf.
-      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1' })
+      // AMENDED for #510: status is now required on this signal's type.
+      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1', status: 'completed' })
       await runtime.refresh()
       runtime.stop()
       // The rank alone: the finished subagent is still on the board, walking
@@ -8611,7 +8612,8 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
       port.reportSubagent(0, launched('a1'))
       await runtime.refresh()
-      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1' })
+      // AMENDED for #510: status is now required on this signal's type.
+      port.reportSubagent(0, { kind: 'task-ended', taskId: 'a1', status: 'completed' })
       await runtime.refresh()
       runtime.stop()
 
@@ -9562,11 +9564,22 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
   })
 
   it("asks the CLI for OpenCode's own live models when installed", async () => {
+    // AMENDED for #547 (was: {value, displayName, effortLevels} only — the
+    // three fields listAgentModels/openCodeModelCatalog read). The port's
+    // own return type grew the richer OpenCodeCatalogueModel shape
+    // (providers/opencode/models.ts); this fixture only needs the three
+    // fields the AgentModelCatalog mapping below still reads, so the rest
+    // are filled with inert-but-typed values.
     const openCodeModelCatalog = vi.fn<OpenCodeModelCatalogPort>().mockResolvedValue([
       {
         value: 'opencode-go/glm-5.3',
         displayName: 'GLM 5.3',
-        effortLevels: ['low', 'high', 'max']
+        effortLevels: ['low', 'high', 'max'],
+        status: 'active',
+        releaseDate: '2026-01-01',
+        cost: { input: 0, output: 0 },
+        limit: { context: 200_000, output: 8_192 },
+        capabilities: { reasoning: true }
       }
     ])
     const list = await runtimeWith({
@@ -9654,6 +9667,102 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  /*
+   * New for #547. `readOpenCodeCatalogue` is the RAW sibling of
+   * `listAgentModels`'s own OpenCode leg (same describe block's own fixtures
+   * above already cover listAgentModels' folded AgentModelCatalog answer) —
+   * `routeLaunch.ts`'s Jev capability derivation reads this one directly, for
+   * the cost/limit/capabilities/status facts the folded ModelOption shape
+   * drops. Same four cases as above (not installed, live success, throw,
+   * timeout), on the same terms, because both methods now share one detect+
+   * timeout+port implementation.
+   */
+  describe('readOpenCodeCatalogue (#547)', () => {
+    it('answers [] when the CLI is not installed', async () => {
+      const models = await runtimeWith({
+        claudeInstalled: false,
+        openCodeInstalled: false
+      }).readOpenCodeCatalogue()
+
+      expect(models).toEqual([])
+    })
+
+    it("returns the CLI's own raw catalogue when installed, untouched by the ModelOption mapping", async () => {
+      const openCodeModelCatalog = vi.fn<OpenCodeModelCatalogPort>().mockResolvedValue([
+        {
+          value: 'opencode-go/kimi-k3',
+          displayName: 'Kimi K3',
+          effortLevels: ['max'],
+          status: 'active',
+          releaseDate: '2026-07-16',
+          cost: { input: 3, output: 15, cacheRead: 0.3 },
+          limit: { context: 1_048_576, output: 131_072 },
+          capabilities: { reasoning: true }
+        }
+      ])
+
+      const models = await runtimeWith({
+        claudeInstalled: false,
+        openCodeInstalled: true,
+        openCodeModelCatalog
+      }).readOpenCodeCatalogue()
+
+      expect(models).toEqual([
+        {
+          value: 'opencode-go/kimi-k3',
+          displayName: 'Kimi K3',
+          effortLevels: ['max'],
+          status: 'active',
+          releaseDate: '2026-07-16',
+          cost: { input: 3, output: 15, cacheRead: 0.3 },
+          limit: { context: 1_048_576, output: 131_072 },
+          capabilities: { reasoning: true }
+        }
+      ])
+    })
+
+    it('answers [], never a rejection, when the spawn or the parse itself throws', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const openCodeModelCatalog = vi
+        .fn<OpenCodeModelCatalogPort>()
+        .mockRejectedValue(new Error('opencode models produced no readable model list'))
+
+      const models = await runtimeWith({
+        claudeInstalled: false,
+        openCodeInstalled: true,
+        openCodeModelCatalog
+      }).readOpenCodeCatalogue()
+
+      expect(models).toEqual([])
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+    })
+
+    it('answers [] once the catalogue ask outruns its bound, rather than hanging', async () => {
+      vi.useFakeTimers()
+      try {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const openCodeModelCatalog = vi
+          .fn<OpenCodeModelCatalogPort>()
+          .mockReturnValue(new Promise(() => {}))
+
+        const pending = runtimeWith({
+          claudeInstalled: false,
+          openCodeInstalled: true,
+          openCodeModelCatalog
+        }).readOpenCodeCatalogue()
+        await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS)
+        const models = await pending
+
+        expect(models).toEqual([])
+        expect(warn).toHaveBeenCalledOnce()
+        warn.mockRestore()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })
 

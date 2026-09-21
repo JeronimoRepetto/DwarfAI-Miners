@@ -490,6 +490,22 @@ describe('heldTelemetryToWire', () => {
     }
   })
 
+  /*
+   * Issue #510. A turn's outcome is one more field this loop reports off a
+   * provider's own end-of-turn message, folded onto the wire by the same
+   * plain narrowing every other telemetry field already gets.
+   */
+  it('carries a turn outcome straight through when the telemetry reports one', () => {
+    const telemetry: HeldSessionTelemetryUpdate = {
+      lastTurn: { kind: 'concluded', text: 'All done.', endedAt: 1_700_000_000_000 }
+    }
+    expect(heldTelemetryToWire(telemetry).lastTurn).toEqual({
+      kind: 'concluded',
+      text: 'All done.',
+      endedAt: 1_700_000_000_000
+    })
+  })
+
   it('reports a reading past its own ceiling as it arrived, without clamping it', () => {
     // Clamping is the panel's job for the BAR it draws; clamping here would
     // hide a session the CLI itself says is over its window, which is exactly
@@ -738,7 +754,8 @@ describe('stampHeldRank', () => {
     // has agents out. Deriving the rank from the headcount is what made the
     // same dwarf swap identity mid-session (claudeProvider).
     const crew = crewThatCoordinated()
-    crew.apply({ kind: 'task-ended', taskId: 'a1' })
+    // AMENDED for #510: status is now required on this signal's type.
+    crew.apply({ kind: 'task-ended', taskId: 'a1', status: 'completed' })
     const stamped = stampHeldRank(board(), () => ({ held: true, crew }))
     expect(stamped[0]!.dwarfs[0]!.role).toBe('foreman')
   })
@@ -830,6 +847,20 @@ describe('stampHeldTelemetry', () => {
       maxTokens: 200_000
     })
     expect(stamped[0]!.dwarfs[1]!.contextUsage).toBeUndefined()
+  })
+
+  it("stamps the held session's own last turn outcome on the foreman, and never on a worker (#510)", () => {
+    const withTurn: HeldTelemetryState = {
+      held: true,
+      lastTurn: { kind: 'capped', detail: 'error_max_turns', endedAt: 1_700_000_000_000 }
+    }
+    const stamped = stampHeldTelemetry(board(), () => withTurn)
+    expect(stamped[0]!.dwarfs[0]!.lastTurn).toEqual({
+      kind: 'capped',
+      detail: 'error_max_turns',
+      endedAt: 1_700_000_000_000
+    })
+    expect(stamped[0]!.dwarfs[1]!.lastTurn).toBeUndefined()
   })
 })
 

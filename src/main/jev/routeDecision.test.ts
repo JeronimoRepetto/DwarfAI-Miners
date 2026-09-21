@@ -255,6 +255,73 @@ describe('decideLaunch — the provider part', () => {
     if (result.kind !== 'decision') throw new Error('expected a decision')
     expect(result.provider).toBe('codex')
   })
+
+  it('breaks a cost-band tie by contract provider order, so a free OpenCode model does not beat a low-band Claude one (AMENDED for #547 review: known limitation, pinned)', () => {
+    // A derived OpenCode entry for a FREE model and a curated Claude entry both
+    // band as 'low' — the table carries bands, not prices (#335 keeps cost off
+    // the wire), so `cheapestLaunchableProviderFor` cannot see that $0 beats
+    // $1 and falls to DWARF_PROVIDERS order, where claude comes first. A free
+    // OpenCode model therefore lands only when Jev names OpenCode, or it is
+    // the person's own default provider. Pinned so the day the tie-break
+    // learns exact cost, this test is the one that has to change on purpose.
+    const table: JevCapabilityTable = {
+      ...CAPABILITIES,
+      claude: { 'c-cheap': entry({ tier: 'fast-cheap', relativeCost: 'low' }) },
+      opencode: { 'opencode/free': entry({ tier: 'fast-cheap', relativeCost: 'low' }) }
+    }
+    const result = decideLaunch({
+      answers: answers({
+        provider: { choice: 'no_preference', confidence: 0.99 },
+        trivial: { probability: 0.99 }
+      }),
+      profile: 'balanced',
+      providers: providers('claude', 'opencode'),
+      catalogs: [
+        { provider: 'claude', models: [{ value: 'c-cheap' }], efforts: [], source: 'provider' },
+        {
+          provider: 'opencode',
+          models: [{ value: 'opencode/free' }],
+          efforts: [],
+          source: 'provider'
+        }
+      ],
+      capabilities: table,
+      userDefault: {}
+    })
+    if (result.kind !== 'decision') throw new Error('expected a decision')
+    expect(result.provider).toBe('claude')
+    expect(result.model).toBe('c-cheap')
+  })
+
+  it('lands on the free OpenCode model when OpenCode is the configured default provider and Jev has no preference', () => {
+    const table: JevCapabilityTable = {
+      ...CAPABILITIES,
+      claude: { 'c-cheap': entry({ tier: 'fast-cheap', relativeCost: 'low' }) },
+      opencode: { 'opencode/free': entry({ tier: 'fast-cheap', relativeCost: 'low' }) }
+    }
+    const result = decideLaunch({
+      answers: answers({
+        provider: { choice: 'no_preference', confidence: 0.99 },
+        trivial: { probability: 0.99 }
+      }),
+      profile: 'balanced',
+      providers: providers('claude', 'opencode'),
+      catalogs: [
+        { provider: 'claude', models: [{ value: 'c-cheap' }], efforts: [], source: 'provider' },
+        {
+          provider: 'opencode',
+          models: [{ value: 'opencode/free' }],
+          efforts: [],
+          source: 'provider'
+        }
+      ],
+      capabilities: table,
+      userDefault: { provider: 'opencode' }
+    })
+    if (result.kind !== 'decision') throw new Error('expected a decision')
+    expect(result.provider).toBe('opencode')
+    expect(result.model).toBe('opencode/free')
+  })
 })
 
 describe('decideLaunch — concrete model selection', () => {

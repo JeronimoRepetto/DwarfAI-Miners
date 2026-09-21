@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { Dwarf } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type Dwarf } from '../domain/types'
 import {
   HeldCrew,
   heldCrewDwarfs,
   heldCrewTargets,
   heldRootRole,
+  MAX_ENDED_CONCLUSIONS,
   rankForSpawnDepth,
-  type HeldSessionSubagentSignal
+  type HeldSessionSubagentSignal,
+  type HeldTaskEndStatus
 } from './heldCrew'
 
 /*
@@ -65,6 +67,11 @@ describe('rankForSpawnDepth', () => {
 })
 
 describe('HeldCrew', () => {
+  // AMENDED for #510: `task-ended` now carries the ending's own terminal
+  // `status` (see HeldTaskEndStatus) — required on the signal's type, so
+  // every fixture below that builds one now names it. None of these tests is
+  // about the status itself; `'completed'` is the ordinary case and changes
+  // nothing about what any of them already proved.
   it('has nobody until the session actually launches something', () => {
     expect(crewOf().members()).toEqual([])
     expect(crewOf().hasCoordinated()).toBe(false)
@@ -90,15 +97,19 @@ describe('HeldCrew', () => {
   })
 
   it('drops a subagent the moment its task reaches a terminal status', () => {
-    const crew = crewOf(started('a1'), started('a2'), { kind: 'task-ended', taskId: 'a1' })
+    const crew = crewOf(started('a1'), started('a2'), {
+      kind: 'task-ended',
+      taskId: 'a1',
+      status: 'completed'
+    })
     expect(crew.members().map((member) => member.taskId)).toEqual(['a2'])
   })
 
   it('takes the second report of the same ending without complaint', () => {
     // The stream says it twice — `task_updated` with a terminal patch, then
     // `task_notification` — and both are the same fact.
-    const crew = crewOf(started('a1'), { kind: 'task-ended', taskId: 'a1' })
-    crew.apply({ kind: 'task-ended', taskId: 'a1' })
+    const crew = crewOf(started('a1'), { kind: 'task-ended', taskId: 'a1', status: 'completed' })
+    crew.apply({ kind: 'task-ended', taskId: 'a1', status: 'completed' })
     expect(crew.members()).toEqual([])
   })
 
@@ -107,13 +118,13 @@ describe('HeldCrew', () => {
     // launch memory everywhere, exactly as terminalAgents does for a transcript
     // (#28). A resumed task announcing itself again would otherwise mine
     // forever beside the crew that replaced it.
-    const crew = crewOf(started('a1'), { kind: 'task-ended', taskId: 'a1' })
+    const crew = crewOf(started('a1'), { kind: 'task-ended', taskId: 'a1', status: 'completed' })
     crew.apply(started('a1'))
     expect(crew.members()).toEqual([])
   })
 
   it('ends a task that ended before this panel ever heard it start', () => {
-    const crew = crewOf({ kind: 'task-ended', taskId: 'a1' }, started('a1'))
+    const crew = crewOf({ kind: 'task-ended', taskId: 'a1', status: 'completed' }, started('a1'))
     expect(crew.members()).toEqual([])
   })
 
@@ -251,6 +262,186 @@ describe('HeldCrew', () => {
   })
 })
 
+describe('HeldCrew — subagent conclusion (#510)', () => {
+  // AMENDED for #510, then CORRECTED: a task's own last text, and the status
+  // its ending reported, are sealed as a TurnOutcome the crew keeps BY
+  // TASK ID — never on the member itself. A subagent still leaves
+  // `live`/`members()` the instant its task ends, exactly as the
+  // pre-existing tests above already prove — a concluded dwarf that lingered
+  // there, still reading `status: 'working'` forever, is the false presence
+  // AGENTS.md's crew invariants exist to prevent, and it would have changed
+  // `heldCrewDwarfs()`'s own output, which is out of this issue's scope
+  // (#511 reads conclusions off the crew directly; see conclusionOf below).
+  //
+  // A clock is injected here, the same "pass a mutable object, advance it by
+  // hand" idiom the rest of this codebase holds, rather than the ambient
+  // `Date.now()` `crewOf` above still uses for every test with nothing to
+  // time-stamp.
+  const NOW = 1_700_000_000_000
+
+  function crewWithClock(now: () => number, ...signals: HeldSessionSubagentSignal[]): HeldCrew {
+    const crew = new HeldCrew(now)
+    for (const signal of signals) crew.apply(signal)
+    return crew
+  }
+
+  function textSignal(insideToolUseId: string, text: string): HeldSessionSubagentSignal {
+    return { kind: 'task-text', insideToolUseId, text }
+  }
+
+  function ended(taskId: string, status: HeldTaskEndStatus): HeldSessionSubagentSignal {
+    return { kind: 'task-ended', taskId, status }
+  }
+
+  it('still drops the member from members() the instant its task ends, even when text was retained', () => {
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      textSignal('toolu-1', 'Found three call sites.'),
+      ended('a1', 'completed')
+    )
+    expect(crew.members()).toEqual([])
+  })
+
+  it("keeps a task's own conclusion readable by taskId after it has left the crew", () => {
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      textSignal('toolu-1', 'Found three call sites.'),
+      ended('a1', 'completed')
+    )
+    expect(crew.conclusionOf('a1')).toEqual({
+      kind: 'concluded',
+      text: 'Found three call sites.',
+      detail: 'completed',
+      endedAt: NOW
+    })
+  })
+
+  it('lets the last text a task wrote win over an earlier one', () => {
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      textSignal('toolu-1', 'Still looking.'),
+      textSignal('toolu-1', 'Found three call sites.'),
+      ended('a1', 'completed')
+    )
+    expect(crew.conclusionOf('a1')?.text).toBe('Found three call sites.')
+  })
+
+  it('records a conclusion even when a task ends with no text ever attributed to it', () => {
+    // Absence of a captured text is not itself a fact, so nothing here
+    // invents one — but the ENDING is a fact regardless of whether the task
+    // ever wrote anything of its own, so a completed task still seals a
+    // conclusion, simply with no text field on it.
+    const crew = crewWithClock(() => NOW, started('a1'), ended('a1', 'completed'))
+    expect(crew.conclusionOf('a1')).toEqual({
+      kind: 'concluded',
+      detail: 'completed',
+      endedAt: NOW
+    })
+  })
+
+  it('maps a failed task to errored', () => {
+    const crew = crewWithClock(() => NOW, started('a1'), ended('a1', 'failed'))
+    expect(crew.conclusionOf('a1')).toEqual({ kind: 'errored', detail: 'failed', endedAt: NOW })
+  })
+
+  it('maps a killed or a stopped task to interrupted', () => {
+    const killed = crewWithClock(() => NOW, started('a1'), ended('a1', 'killed'))
+    const stopped = crewWithClock(() => NOW, started('a2'), ended('a2', 'stopped'))
+    expect(killed.conclusionOf('a1')).toEqual({
+      kind: 'interrupted',
+      detail: 'killed',
+      endedAt: NOW
+    })
+    expect(stopped.conclusionOf('a2')).toEqual({
+      kind: 'interrupted',
+      detail: 'stopped',
+      endedAt: NOW
+    })
+  })
+
+  it('still carries whatever text was retained even on a non-completed ending', () => {
+    // A subagent that wrote something before being killed said something
+    // real. TurnOutcome's own rule is "text only when the provider actually
+    // handed one over", never "only on a success" — see its module comment.
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      textSignal('toolu-1', 'Partial output before it was killed.'),
+      ended('a1', 'killed')
+    )
+    expect(crew.conclusionOf('a1')).toEqual({
+      kind: 'interrupted',
+      text: 'Partial output before it was killed.',
+      detail: 'killed',
+      endedAt: NOW
+    })
+  })
+
+  it("never leaks one task's text onto another", () => {
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      started('a2', { toolUseId: 'toolu-2' }),
+      textSignal('toolu-1', 'a1 says this.'),
+      textSignal('toolu-2', 'a2 says that.'),
+      ended('a1', 'completed')
+    )
+    expect(crew.conclusionOf('a1')?.text).toBe('a1 says this.')
+    // a2 has not ended yet, so it has sealed nothing at all — not even a
+    // conclusion with the wrong text.
+    expect(crew.conclusionOf('a2')).toBeUndefined()
+  })
+
+  it('takes the second report of the same ending without disturbing the conclusion the first one already sealed', () => {
+    // task_updated and task_notification both report one ending — the same
+    // hazard the pre-existing "second report" test above already covers for
+    // membership. Re-sealing on the second would re-run the text lookup
+    // below and find nothing left (textByCall was already drained by the
+    // first), silently overwriting a real conclusion with a textless one.
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      textSignal('toolu-1', 'Done.'),
+      ended('a1', 'completed')
+    )
+    crew.apply(ended('a1', 'completed'))
+    expect(crew.conclusionOf('a1')).toEqual({
+      kind: 'concluded',
+      text: 'Done.',
+      detail: 'completed',
+      endedAt: NOW
+    })
+  })
+
+  it('bounds a long conclusion to the wire’s ordinary ceiling, and marks it truncated', () => {
+    const long = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 10)
+    const crew = crewWithClock(
+      () => NOW,
+      started('a1', { toolUseId: 'toolu-1' }),
+      textSignal('toolu-1', long),
+      ended('a1', 'completed')
+    )
+    const conclusion = crew.conclusionOf('a1')
+    expect(conclusion?.text).toHaveLength(MAX_DWARF_TEXT_CHARS)
+    expect(conclusion?.truncated).toBe(true)
+  })
+
+  it('evicts the oldest sealed conclusion once the crew has ended more tasks than it keeps', () => {
+    const crew = new HeldCrew(() => NOW)
+    for (let i = 0; i <= MAX_ENDED_CONCLUSIONS; i++) {
+      const taskId = `a${i}`
+      crew.apply({ kind: 'task-started', taskId, taskType: 'local_agent', spawnDepth: 1 })
+      crew.apply({ kind: 'task-ended', taskId, status: 'completed' })
+    }
+    expect(crew.conclusionOf('a0')).toBeUndefined()
+    expect(crew.conclusionOf(`a${MAX_ENDED_CONCLUSIONS}`)).toBeDefined()
+    expect(crew.conclusions().size).toBe(MAX_ENDED_CONCLUSIONS)
+  })
+})
+
 describe('heldRootRole', () => {
   /*
    * The promotion rule, and the one decision this issue left open.
@@ -273,7 +464,7 @@ describe('heldRootRole', () => {
   })
 
   it('keeps the rank after the last subagent has gone', () => {
-    const crew = crewOf(started('a1'), { kind: 'task-ended', taskId: 'a1' })
+    const crew = crewOf(started('a1'), { kind: 'task-ended', taskId: 'a1', status: 'completed' })
     expect(crew.members()).toEqual([])
     expect(heldRootRole(crew)).toBe('foreman')
   })
@@ -426,7 +617,7 @@ describe('heldCrewTargets', () => {
       started('a1', { toolUseId: 'toolu-1' }),
       { kind: 'tool-call', toolUseId: 'toolu-2', insideToolUseId: 'toolu-1' },
       started('a2', { toolUseId: 'toolu-2', spawnDepth: 2, description: 'Scout' }),
-      { kind: 'task-ended', taskId: 'a1' }
+      { kind: 'task-ended', taskId: 'a1', status: 'completed' }
     )
     expect(crew.members().map((member) => member.taskId)).toEqual(['a2'])
     expect(heldCrewTargets(root(), crew).get('claude:session-1:a2')).toEqual({

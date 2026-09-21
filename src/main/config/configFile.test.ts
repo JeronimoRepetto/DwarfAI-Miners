@@ -64,6 +64,24 @@ describe('parseConfigFileEntries', () => {
 
   it('yields no entries when the document is not an object', () => {
     expect(parseConfigFileEntries('[]').entries).toEqual({})
+  })
+
+  /*
+   * #555, and the worst of that issue's three call sites. A bad SHAPE degrades
+   * to no entries here by design (`config-layering`), which means a BOM — the
+   * invisible EF BB BF a Windows editor writes — made the app ignore the whole
+   * configuration file in silence. On the ONE document whose own comment says
+   * it is "meant to be opened and edited by hand", so the likeliest file on
+   * the machine to be saved by an editor that adds one.
+   */
+  it('reads a file a Windows editor saved with a BOM, rather than ignoring all of it', () => {
+    const parsed = parseConfigFileEntries('\uFEFF{"CLAUDE_CONFIG_DIRS":"~/.claude;~/.claude2"}')
+    expect(parsed.entries).toEqual({ CLAUDE_CONFIG_DIRS: '~/.claude;~/.claude2' })
+  })
+
+  it('still degrades to no entries for a file that is genuinely corrupt', () => {
+    // Tolerating an encoding mark must not become tolerating corruption.
+    expect(parseConfigFileEntries('\uFEFFnot json at all').entries).toEqual({})
     expect(parseConfigFileEntries('null').entries).toEqual({})
     expect(parseConfigFileEntries('"POLL_INTERVAL_MS=5000"').entries).toEqual({})
     expect(parseConfigFileEntries('42').entries).toEqual({})
