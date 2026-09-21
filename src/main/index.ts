@@ -52,8 +52,11 @@ import type {
   ProjectSortKey,
   WatchedFeedPush,
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  JevRouteLaunchResult
+  JevRouteLaunchResult,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  JevSettings
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -75,8 +78,11 @@ import {
   parseJevApiKeyInput,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  parseJevRouteLaunchRequest
+  parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  parseJevPreferences
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
 import type { AttachmentReader } from './textDelivery/attachmentDelivery'
@@ -121,7 +127,8 @@ import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessio
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
-import { createJevApiKeyStore } from './shell/jevApiKey'
+import { createJevApiKeyStore, type JevKeyVerdict } from './shell/jevApiKey'
+import { createJevPreferenceStore } from './shell/jevPreferences'
 import { createJevLaunchRouter } from './jev/routeLaunch'
 import { createTypesafeJevRouter, jevDebugEnabled } from './jev/typesafeJevRouter'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
@@ -250,6 +257,9 @@ function removeIpcHandlers(): void {
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
   ipcMain.removeHandler(IPC_CHANNELS.routeJevLaunch)
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  ipcMain.removeHandler(IPC_CHANNELS.setJevPreferences)
+  /* --- end of the #509 follow-up block --------------------------------------- */
 }
 
 /**
@@ -690,6 +700,14 @@ async function init(): Promise<void> {
   await jevApiKeyStore.load()
   /* --- end of the #509 block ------------------------------------------------ */
 
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  // Composed beside the key store rather than merged into it: two different
+  // files on disk (a secret and a preference, `config-layering`'s own split),
+  // one shape on the wire — `getJevSettings`/`setJevApiKey`/`clearJevApiKey`/
+  // `setJevPreferences` below all merge the two verdicts themselves.
+  const jevPreferenceStore = createJevPreferenceStore({ userDataDir: app.getPath('userData') })
+  /* --- end of the #509 follow-up block --------------------------------------- */
+
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
   // The SDK adapter reads the key through readKey() above — never a channel,
   // never the renderer. listProviders/listModels close over the module-level
@@ -711,7 +729,11 @@ async function init(): Promise<void> {
   const jevLaunchRouter = createJevLaunchRouter({
     router: jevRouterPort,
     listProviders: async () => (await runtime?.listAgentProviders())?.providers ?? [],
-    listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? []
+    listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? [],
+    // Read fresh on every call, same reason listProviders/listModels are:
+    // Settings' Jev section (profile, default launch) can change between
+    // one launch and the next (jev-routing-profiles T3).
+    readPreferences: jevPreferenceStore.load
   })
   /* --- end of the #509 block ------------------------------------------------ */
 
@@ -1174,8 +1196,18 @@ async function init(): Promise<void> {
    * preference channel here holds, and `set`/`clear` derive their own answer
    * from `readKey()` rather than the request, so a refusal this store made
    * cannot be echoed back as success.
+   *
+   * AMENDED for the #509 follow-up: all three now answer the MERGED shape —
+   * this store's own verdict plus `jevPreferenceStore.load()` — through
+   * `withJevPreferences` below, because `preferences` rides on every
+   * `JevSettings` the wire ever carries, not only on `getJevSettings`.
    */
-  ipcMain.handle(IPC_CHANNELS.getJevSettings, () => jevApiKeyStore.load())
+  async function withJevPreferences(verdict: JevKeyVerdict): Promise<JevSettings> {
+    return { ...verdict, preferences: await jevPreferenceStore.load() }
+  }
+  ipcMain.handle(IPC_CHANNELS.getJevSettings, async () =>
+    withJevPreferences(await jevApiKeyStore.load())
+  )
   ipcMain.handle(IPC_CHANNELS.setJevApiKey, async (_event, payload: unknown) => {
     try {
       const key = parseJevApiKeyInput(payload)
@@ -1183,7 +1215,10 @@ async function init(): Promise<void> {
       if (!result.saved) {
         console.warn(`[jev] API key not saved: ${result.reason}`)
         if (result.reason === 'encryption-unavailable') {
-          return { configured: false, unavailableReason: 'encryption-unavailable' }
+          return withJevPreferences({
+            configured: false,
+            unavailableReason: 'encryption-unavailable'
+          })
         }
       }
     } catch (error) {
@@ -1193,7 +1228,7 @@ async function init(): Promise<void> {
       // request here holds.
       console.warn('[jev] Refused to save an API key:', error)
     }
-    return { configured: jevApiKeyStore.readKey() !== undefined }
+    return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
   })
   ipcMain.handle(IPC_CHANNELS.clearJevApiKey, async () => {
     try {
@@ -1203,7 +1238,7 @@ async function init(): Promise<void> {
       // the next launch falls back to whatever the file still says.
       console.warn('[jev] Failed to clear the stored API key:', error)
     }
-    return { configured: jevApiKeyStore.readKey() !== undefined }
+    return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
   })
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
@@ -1225,6 +1260,22 @@ async function init(): Promise<void> {
     }
   )
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  // Parsed through the SHARED parser first — the shape half, degrading a bad
+  // document rather than throwing — then re-validated by the store's own
+  // `save`, which refuses a default the launch gate would reject. Either way
+  // this answers the MERGED shape actually STORED, never the request: a
+  // refused write re-reads whatever preference is really in force, exactly
+  // like `setJevApiKey` does for the key.
+  ipcMain.handle(IPC_CHANNELS.setJevPreferences, async (_event, payload: unknown) => {
+    const preferences = parseJevPreferences(payload)
+    const result = await jevPreferenceStore.save(preferences)
+    if (!result.saved) {
+      console.warn(`[jev] Preferences not saved: ${result.reason}`)
+    }
+    return withJevPreferences(await jevApiKeyStore.load())
+  })
+  /* --- end of the #509 follow-up block --------------------------------------- */
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle
   // from the display, so a screen that could not hold the whole composition has

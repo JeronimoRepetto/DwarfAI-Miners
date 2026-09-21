@@ -120,8 +120,19 @@ export type {
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
   JevFallbackReason,
   JevRouteLaunchRequest,
-  JevRouteLaunchResult
+  JevRouteLaunchResult,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  JevRoutingProfile,
+  JevLaunchDefault,
+  JevPreferences,
+  /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- Jev routing v2: the request and decision vocabulary (jev-routing-profiles T3) — one block, appended --- */
+  ModelTier,
+  JevRouteAnsweredPart,
+  JevRouteNoulPart,
+  JevRouteParts
+  /* --- end of the jev-routing-profiles T3 block ------------------------------ */
 } from '../../shared/contracts'
 
 /**
@@ -213,8 +224,15 @@ export {
   parseJevApiKeyInput,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev launch routing: routing a launch (#509) — one block, appended --- */
-  parseJevRouteLaunchRequest
+  parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
+  JEV_ROUTING_PROFILES,
+  DEFAULT_JEV_ROUTING_PROFILE,
+  DEFAULT_JEV_PREFERENCES,
+  isJevRoutingProfile,
+  parseJevPreferences
+  /* --- end of the #509 follow-up block --------------------------------------- */
 } from '../../shared/contracts'
 
 import type { Dwarf, FeedMessage, Mine, ProviderSnapshot } from '../../shared/contracts'
