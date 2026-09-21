@@ -729,7 +729,11 @@ async function init(): Promise<void> {
   const jevLaunchRouter = createJevLaunchRouter({
     router: jevRouterPort,
     listProviders: async () => (await runtime?.listAgentProviders())?.providers ?? [],
-    listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? []
+    listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? [],
+    // Read fresh on every call, same reason listProviders/listModels are:
+    // Settings' Jev section (profile, default launch) can change between
+    // one launch and the next (jev-routing-profiles T3).
+    readPreferences: jevPreferenceStore.load
   })
   /* --- end of the #509 block ------------------------------------------------ */
 

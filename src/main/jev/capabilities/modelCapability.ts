@@ -1,7 +1,10 @@
-import type { DwarfProvider } from '../../domain/types'
+import type { DwarfProvider, ModelTier } from '../../domain/types'
 import { ANTIGRAVITY_MODEL_CAPABILITIES } from './antigravity'
 import { CLAUDE_MODEL_CAPABILITIES } from './claude'
 import { CODEX_MODEL_CAPABILITIES } from './codex'
+
+/** Re-exported so every existing `import type { ModelTier } from './modelCapability'` keeps working unchanged — the canonical declaration now lives in `shared/contracts.ts` (jev-routing-profiles T3), since a routing decision carries it across the wire. */
+export type { ModelTier }
 
 /**
  * What Jev is allowed to know about a model (#509 follow-up, jev-routing-profiles
@@ -18,9 +21,6 @@ import { CODEX_MODEL_CAPABILITIES } from './codex'
  * still needs an answer for every option) or left off entirely when the
  * field itself is optional (`contextWindowTokens`, `alias`).
  */
-
-/** How a model earns a place in a routing profile, independent of its name. */
-export type ModelTier = 'fast-cheap' | 'balanced' | 'frontier' | 'long-context' | 'special-purpose'
 
 /**
  * One model's whole answer to "what is it for". `what`/`notFor`/`examples`
