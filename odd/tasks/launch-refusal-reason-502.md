@@ -69,7 +69,7 @@ and its test, `src/main/textDelivery/codexQueue.ts` and `codexResume.ts` and the
       `cliDetection.test.ts` on `win32` with a fake fs: a `.cmd` whose text names no `.js` entry,
       and one whose entry survives expansion with a `%` still in it. A recognised `cmd-shim` and a
       POSIX bare name keep their current behaviour, asserted.
-- [ ] **T2 — The launcher's refusal carries path and cause, on every platform.** Route: delegated
+- [x] **T2 — The launcher's refusal carries path and cause, on every platform.** Route: delegated
       (same writer). `launchClaudeSession` turns a `resolveProgram` refusal and a spawn error into
       `<Product> could not be started: <path> — <cause>.` (or the closest shape the existing
       `notInstalledReason` precedent suggests). Tests in `launchRunner.test.ts` on `darwin` and
@@ -136,4 +136,37 @@ undefined, never a guess, when the shim names no JS entry` → `names the shim p
 understood" when the shim names no JS entry`. All three kept their original scenario; only the
 expected shape changed from `undefined` to the new refusal object.
 
-Commit: `fix(cli): distinguish an unread shim's dialect from one needing cmd.exe (#502)`.
+Commit: `fix(cli): distinguish an unread shim's dialect from one needing cmd.exe (#502)` (49f7b0e).
+
+### T2 — done
+
+`launchRunner.ts`'s `couldNotStart` now takes `(provider, path, cause)` and returns
+`` `${PRODUCT_NAME[provider]} could not be started: ${path} — ${cause}.` ``. `launchClaudeSession`
+branches on `'kind' in program` for a `resolveProgram` refusal (path + `describeShimRefusal`), and
+its `catch` now binds `(error)` and uses `detection.path` + `describeProgramFailure(error)` for a
+spawn or shim-read failure. Rewrote the `launchRunner.ts:31` comment: it now states that a
+path-less refusal (`EMPTY_PROMPT`, `NOT_LAUNCHABLE`) stays fixed copy, while `couldNotStart` names
+the path and why, because a refusal naming nothing actionable is a dead end (#502).
+
+RED (against unmodified `launchRunner.ts`, tests amended first — `cliDetection.ts`'s T1 change was
+already in place, so `resolveProgram` already returned refusal objects the old `launchRunner.ts`
+did not understand):
+`pnpm vitest run src/main/sessionLaunch/launchRunner.test.ts` → `PASS (55) FAIL (3)` — the amended
+Linux spawn-failure test, the new macOS spawn-failure test, and the amended Windows shim-refusal
+test all failed on `toEqual` mismatches (old code still produced the fixed sentence, or called
+`run` with a garbage invocation).
+
+GREEN: `pnpm vitest run src/main/sessionLaunch/launchRunner.test.ts` → `PASS (58) FAIL (0)`.
+
+Census: `launchRunner.test.ts` 58 → 59 (+1): the ENOENT/Linux test was amended in place and a new
+EACCES/darwin test was added beside it (net +1); the Windows shim-refusal test was renamed and its
+expectation amended in place (net 0).
+
+Amended assertions: `launchClaudeSession > maps a spawn failure to a stated reason rather than a
+silent no-op` → `names the path tried and the spawn error on Linux, rather than a fixed sentence`
+(now asserts `${CLAUDE_PATH} — ENOENT.` appears); `launching Codex > says Codex could not be
+started when the shim names nothing it can run` → `names the shim path and that its dialect was
+not understood` (also drops the old comment's claim "never a path on the wire", which #502 asked
+to stop being true). New: `names the path tried and the spawn error on macOS`.
+
+Commit: `fix(launch): name the path tried and the cause in a launch refusal (#502)`.
