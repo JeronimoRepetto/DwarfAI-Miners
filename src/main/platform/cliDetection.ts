@@ -102,6 +102,15 @@ export function cliExecutableNames(cli: AgentCli, platform: Platform): string[] 
  * These are conventions, not guarantees; the PATH fallback and the explicit
  * override are what make an unconventional install reachable.
  *
+ * codex's two Windows rows are no longer load-bearing for correctness (#544):
+ * the walk now reads each candidate for whether it can be spawned and keeps
+ * going past one it cannot, so a pnpm-installed codex is reached through PATH
+ * like any other CLI. They stay as a PATH-INDEPENDENT backstop — a GUI app is
+ * not always born with the PATH its owner has (#528), and a row here is found
+ * whether or not pnpm's bin made it into the environment. Do not answer the
+ * next provider's detection gap by adding a row: the general rule is the one
+ * that scales, and this table is the shape #544 exists to stop growing.
+ *
  * antigravity is the one whose Windows location the generic native bin does not
  * reach (#237). Its own installer writes `%LOCALAPPDATA%\agy\bin\agy.exe` —
  * documented by the vendor, and verified on this machine against CLI 1.1.26 —
@@ -154,6 +163,20 @@ export interface ShimTarget {
 }
 
 /**
+ * A shim whose target is a program in its own right (#544), not a script to
+ * hand to an interpreter: the shim exists only because Windows wants something
+ * on PATH, and the answer is to spawn that program with nothing in between.
+ *
+ * `opencode-ai` is the case that forced it — a compiled binary published
+ * through npm, so pnpm writes it a shim naming `opencode.exe` and no `.js`
+ * anywhere, which the reader used to refuse as a dialect it did not know
+ * although it is the simplest shape there is.
+ */
+export interface ShimExecutable {
+  program: string
+}
+
+/**
  * Why `resolveShimTarget` found nothing to spawn (#502) — carrying the shim's
  * own path, so a caller can name what it tried without threading a second
  * copy of it alongside the refusal.
@@ -198,7 +221,7 @@ export function describeShimRefusal(refusal: ShimRefusal): string {
  * the moment the panel quits. Spawning the program the shim points at,
  * detached, is the one shape that both runs and lets go.
  *
- * Two dialects exist and one reading covers both. npm's cmd-shim writes
+ * Two node dialects exist and one reading covers both. npm's cmd-shim writes
  * `"%dp0%\node_modules\@openai\codex\bin\codex.js"`; pnpm's writes
  * `"%~dp0\..\global\<store>\node_modules\@openai\codex\bin\codex.js"`. The
  * entry is the first double-quoted `.js` token, and `%~dp0`/`%dp0%` — the
@@ -207,16 +230,46 @@ export function describeShimRefusal(refusal: ShimRefusal): string {
  * the answer names which of the two happened, with the shim's own path,
  * rather than a guess (#502).
  *
+ * A third dialect names a program rather than a script (#544): a CLI
+ * published through npm as a compiled binary gets a shim whose only quoted
+ * token is an `.exe`. It resolves to `ShimExecutable`, spawned with nothing
+ * in between.
+ *
+ * The ORDER between the two is load-bearing and not a preference. Every npm
+ * shim quotes `node.exe` as the program it runs the `.js` WITH, so a native
+ * read that went first would answer `node.exe` for every Node CLI on the
+ * machine. The JS entry wins wherever there is one; the native read only ever
+ * sees a shim that names no script at all.
+ *
+ * Nothing chases a shim that quotes another shim. A wrapper forwarding to a
+ * `.cmd` stays `dialect-not-understood`, because following that chain is how
+ * this would end up running the wrapper it was trying to see past.
+ *
  * Windows path rules unconditionally, because a batch shim is a Windows
  * artefact whichever host the suite runs on.
  */
-export function resolveShimTarget(shimPath: string, shimText: string): ShimTarget | ShimRefusal {
-  const quoted = /"([^"]+\.js)"/i.exec(shimText)
-  if (quoted === null) return { kind: 'dialect-not-understood', shimPath }
+export function resolveShimTarget(
+  shimPath: string,
+  shimText: string
+): ShimTarget | ShimExecutable | ShimRefusal {
   const shimDir = win32.dirname(shimPath)
-  const expanded = quoted[1]!.replace(/%~dp0|%dp0%/gi, `${shimDir}\\`)
-  if (expanded.includes('%')) return { kind: 'needs-cmd-exe', shimPath, entry: expanded }
-  return { entry: win32.normalize(expanded), bundledNode: win32.join(shimDir, 'node.exe') }
+  const expand = (quoted: string): string => quoted.replace(/%~dp0|%dp0%/gi, `${shimDir}\\`)
+
+  const script = /"([^"]+\.js)"/i.exec(shimText)
+  if (script !== null) {
+    const expanded = expand(script[1]!)
+    if (expanded.includes('%')) return { kind: 'needs-cmd-exe', shimPath, entry: expanded }
+    return { entry: win32.normalize(expanded), bundledNode: win32.join(shimDir, 'node.exe') }
+  }
+
+  const native = /"([^"]+\.(?:exe|com))"/i.exec(shimText)
+  if (native !== null) {
+    const expanded = expand(native[1]!)
+    if (expanded.includes('%')) return { kind: 'needs-cmd-exe', shimPath, entry: expanded }
+    return { program: win32.normalize(expanded) }
+  }
+
+  return { kind: 'dialect-not-understood', shimPath }
 }
 
 /**
@@ -252,6 +305,9 @@ export async function resolveProgram(
   if (!isShellShim(binaryPath)) return { command: binaryPath, args: [], viaNodeEntry: false }
   const target = resolveShimTarget(binaryPath, await fs.readTextHead(binaryPath, SHIM_READ_BYTES))
   if ('kind' in target) return target
+  // A shim naming a program gets the same answer a real executable on PATH
+  // already gets (#544): itself, with nothing ahead of the caller's own argv.
+  if ('program' in target) return { command: target.program, args: [], viaNodeEntry: false }
   const command = (await fs.exists(target.bundledNode)) ? target.bundledNode : 'node'
   return { command, args: [target.entry], viaNodeEntry: true }
 }
@@ -329,11 +385,37 @@ export function createCliDetector(options: CliDetectorOptions): CliDetector {
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
   const cache = new Map<AgentCli, CacheEntry>()
 
-  async function firstExisting(paths: string[]): Promise<string | undefined> {
+  /**
+   * The first candidate that exists AND this app can actually spawn (#544).
+   *
+   * Existence used to be the whole question, and runnability was decided far
+   * downstream by `resolveProgram` — by which point its four call sites could
+   * only fail closed. A wrapper `.cmd` earlier on PATH therefore SHADOWED a
+   * readable install behind it: the walk had already stopped, and nothing
+   * ever looked at the second one.
+   *
+   * So a candidate whose shim this build cannot read is skipped and the walk
+   * goes on. The last refusal is carried out with the miss, because "found
+   * something I cannot run" and "found nothing" are different facts and only
+   * the first one can name a file the person can act on.
+   *
+   * A candidate whose bytes cannot be read AT ALL is unrunnable too, never an
+   * exception: a throw inside a poll tick is exactly what the fail-safe
+   * convention at the top of this file exists to prevent.
+   */
+  async function firstRunnable(paths: string[]): Promise<{ path?: string; refusal?: ShimRefusal }> {
+    let refusal: ShimRefusal | undefined
     for (const candidate of paths) {
-      if (await options.fs.exists(candidate)) return candidate
+      if (!(await options.fs.exists(candidate))) continue
+      try {
+        const program = await resolveProgram(candidate, options.fs)
+        if (!('kind' in program)) return { path: candidate }
+        refusal = program
+      } catch {
+        continue
+      }
     }
-    return undefined
+    return { refusal }
   }
 
   async function probe(cli: AgentCli): Promise<CliDetection> {
@@ -350,15 +432,28 @@ export function createCliDetector(options: CliDetectorOptions): CliDetector {
       }
     }
 
-    const conventional = await firstExisting(conventionalCliPaths(cli, options.home, platform))
-    if (conventional !== undefined) {
-      return { cli, installed: true, path: conventional, source: 'convention' }
+    const conventional = await firstRunnable(conventionalCliPaths(cli, options.home, platform))
+    if (conventional.path !== undefined) {
+      return { cli, installed: true, path: conventional.path, source: 'convention' }
     }
 
     const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
-    const onPath = await firstExisting(pathLookupCandidates(cli, env[pathKey], platform))
-    if (onPath !== undefined) {
-      return { cli, installed: true, path: onPath, source: 'path' }
+    const onPath = await firstRunnable(pathLookupCandidates(cli, env[pathKey], platform))
+    if (onPath.path !== undefined) {
+      return { cli, installed: true, path: onPath.path, source: 'path' }
+    }
+
+    // Present but unrunnable is not absent, and telling someone who HAS the
+    // CLI that it was not found leaves them nothing to act on. PATH's refusal
+    // is preferred over the convention list's: it is the one a person reaches
+    // by typing the name.
+    const refusal = onPath.refusal ?? conventional.refusal
+    if (refusal !== undefined) {
+      return {
+        cli,
+        installed: false,
+        reason: `${cli} was found at ${refusal.shimPath} but cannot be started from here: ${describeShimRefusal(refusal)}`
+      }
     }
 
     return {

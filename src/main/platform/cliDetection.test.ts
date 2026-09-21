@@ -288,6 +288,132 @@ describe('createCliDetector', () => {
     expect(verdict.installed).toBe(false)
     expect(verdict.path).toBeUndefined()
   })
+
+  /*
+   * #544. A candidate this app cannot run used to END the walk: the probe
+   * asked `exists` and nothing else, so a wrapper `.cmd` earlier on PATH
+   * shadowed a readable install behind it, and the launcher only found out
+   * far too late to look anywhere else. The guard fixture is the shape that
+   * produced the bug — a launcher that forwards through another interpreter
+   * and names no program this can spawn.
+   */
+  const GUARD_SHIM = '@echo off\r\npy "%~dp0..\\tools\\launch_guard.py" opencode %*\r\n'
+
+  it('walks past a PATH shim it cannot read and finds the install behind it', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\opencode.cmd', GUARD_SHIM)
+    fs.addFile(
+      'C:\\pnpm\\bin\\opencode.cmd',
+      '@SETLOCAL\r\n@"C:\\store\\opencode-ai\\bin\\opencode.exe"   %*'
+    )
+    const detector = createCliDetector({
+      home: 'C:\\Users\\x',
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin;C:\\pnpm\\bin' }
+    })
+
+    expect(await detector.detect('opencode')).toEqual({
+      cli: 'opencode',
+      installed: true,
+      path: 'C:\\pnpm\\bin\\opencode.cmd',
+      source: 'path'
+    })
+  })
+
+  it('walks past an unreadable conventional shim on its way to PATH', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\Users\\x\\AppData\\Roaming\\npm\\codex.cmd', '@echo off\r\nrem nothing\r\n')
+    fs.addFile('C:\\real\\bin\\codex.exe', 'binary')
+    const detector = createCliDetector({
+      home: 'C:\\Users\\x',
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\real\\bin' }
+    })
+
+    expect(await detector.detect('codex')).toEqual({
+      cli: 'codex',
+      installed: true,
+      path: 'C:\\real\\bin\\codex.exe',
+      source: 'path'
+    })
+  })
+
+  /*
+   * Absent and present-but-unrunnable are different facts, and the second one
+   * has to say which file it gave up on — "not found in ~/.local/bin, a known
+   * install location, or PATH" would be a lie about a machine that has the
+   * CLI, and leaves the person nothing to act on.
+   */
+  it('names the refusal when every candidate is a shim it cannot read', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\opencode.cmd', GUARD_SHIM)
+    const detector = createCliDetector({
+      home: 'C:\\Users\\x',
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin' }
+    })
+
+    const verdict = await detector.detect('opencode')
+    expect(verdict.installed).toBe(false)
+    expect(verdict.path).toBeUndefined()
+    expect(verdict.reason).toContain('C:\\guard\\bin\\opencode.cmd')
+    expect(verdict.reason).toContain('dialect was not understood')
+  })
+
+  /*
+   * The fail-safe convention at the top of cliDetection.ts: a probe never
+   * throws. A candidate whose bytes cannot be read at all is unrunnable, not
+   * an exception that takes the poll tick down with it.
+   */
+  it('treats a candidate it cannot even read as unrunnable rather than throwing', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\opencode.cmd', GUARD_SHIM)
+    fs.addFile('C:\\pnpm\\bin\\opencode.cmd', '@"C:\\store\\opencode.exe" %*')
+    fs.onBeforeRead = async (path) => {
+      if (path.includes('guard')) throw new Error('EACCES')
+    }
+    const detector = createCliDetector({
+      home: 'C:\\Users\\x',
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin;C:\\pnpm\\bin' }
+    })
+
+    expect(await detector.detect('opencode')).toEqual({
+      cli: 'opencode',
+      installed: true,
+      path: 'C:\\pnpm\\bin\\opencode.cmd',
+      source: 'path'
+    })
+  })
+
+  /*
+   * An override is a stated instruction, and the probe's own rule is that it
+   * does not second-guess the user. A path they named is theirs even when
+   * this app cannot read it; the refusal then reaches them at the launch,
+   * naming the file they chose, rather than being swallowed here.
+   */
+  it('still honours an override that points at a shim it cannot read', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\custom\\opencode.cmd', GUARD_SHIM)
+    const detector = createCliDetector({
+      home: 'C:\\Users\\x',
+      platform: 'win32',
+      fs,
+      env: {},
+      overrides: { opencode: 'C:\\custom\\opencode.cmd' }
+    })
+
+    expect(await detector.detect('opencode')).toEqual({
+      cli: 'opencode',
+      installed: true,
+      path: 'C:\\custom\\opencode.cmd',
+      source: 'override'
+    })
+  })
 })
 
 /*
@@ -374,6 +500,59 @@ describe('resolveShimTarget', () => {
       entry: '%APPDATA%\\npm\\node_modules\\@openai\\codex\\bin\\codex.js'
     })
   })
+
+  /*
+   * #544. `opencode-ai` ships a compiled binary, so pnpm writes it a shim that
+   * names `opencode.exe` and no `.js` at all — refused as an unknown dialect
+   * although it is the easiest case there is: one program, spawn it, nothing
+   * in between.
+   */
+  const OPENCODE_PNPM_TEXT = [
+    '@SETLOCAL',
+    '@"%~dp0\\..\\global\\v11\\abcd-0123456789abc\\node_modules\\opencode-ai\\bin\\opencode.exe"   %*'
+  ].join('\r\n')
+
+  it('resolves a shim that names a native executable to that program, with no node entry', () => {
+    expect(resolveShimTarget(`${PNPM_DIR}\\opencode.CMD`, OPENCODE_PNPM_TEXT)).toEqual({
+      program:
+        'C:\\Users\\x\\AppData\\Local\\pnpm\\global\\v11\\abcd-0123456789abc\\node_modules\\opencode-ai\\bin\\opencode.exe'
+    })
+  })
+
+  /*
+   * The load-bearing ordering. Every npm shim quotes `node.exe` as the program
+   * it runs the `.js` WITH, so an executable read that went first would answer
+   * `node.exe` for every Node CLI on the machine. The JS entry wins wherever
+   * there is one, and this is the case that fails if that order is ever
+   * flipped.
+   */
+  it('still answers the JS entry for a shim that also quotes node.exe', () => {
+    expect(resolveShimTarget(`${NPM_DIR}\\codex.cmd`, NPM_SHIM_TEXT)).toEqual({
+      entry: `${NPM_DIR}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+      bundledNode: `${NPM_DIR}\\node.exe`
+    })
+  })
+
+  it('needs cmd.exe when an executable entry still hangs on a variable', () => {
+    const shimPath = `${PNPM_DIR}\\opencode.cmd`
+    expect(resolveShimTarget(shimPath, '@"%LOCALAPPDATA%\\opencode\\opencode.exe" %*')).toEqual({
+      kind: 'needs-cmd-exe',
+      shimPath,
+      entry: '%LOCALAPPDATA%\\opencode\\opencode.exe'
+    })
+  })
+
+  /*
+   * A wrapper that forwards to another `.cmd` stays refused, on purpose:
+   * chasing a chain of shims is how this app would end up running the very
+   * wrapper it was trying to see past.
+   */
+  it('refuses a shim that only forwards to another shim', () => {
+    const shimPath = 'C:\\Users\\x\\.wrapper\\bin\\opencode.cmd'
+    expect(
+      resolveShimTarget(shimPath, '@echo off\r\n"C:\\other\\bin\\opencode.cmd" %*\r\n')
+    ).toEqual({ kind: 'dialect-not-understood', shimPath })
+  })
 })
 
 /*
@@ -458,6 +637,24 @@ describe('resolveProgram', () => {
   it('propagates rather than swallows a shim that cannot be read at all', async () => {
     const fs = new FakeFs()
     await expect(resolveProgram(SHIM, fs)).rejects.toThrow()
+  })
+
+  /*
+   * #544. The executable dialect resolves to the program itself: no node, no
+   * argv preceding the caller's own, and `viaNodeEntry: false` because there
+   * is no node entry to speak of — the same answer a real `.exe` on PATH
+   * already gets, reached through a shim.
+   */
+  it('spawns the executable a shim names directly, with no node in the command', async () => {
+    const fs = new FakeFs()
+    const exe = 'C:\\tools\\opencode\\opencode.exe'
+    fs.addFile(SHIM, `@"${exe}" %*`)
+
+    expect(await resolveProgram(SHIM, fs)).toEqual({
+      command: exe,
+      args: [],
+      viaNodeEntry: false
+    })
   })
 })
 
