@@ -307,3 +307,35 @@ needed.
 
 Commit: T2 (+ docs) committed as
 `feat(agents): launch OpenCode from the Add Panel via \`run\` (#534)`.
+
+### Slice 1 verification of record, 2026-09-21
+
+**Parent spot check.** Two Conventional Commits (`c480060`, `0e2a2d7`), no attribution trailers,
+clean tree; 19 files, 1613 insertions and 135 deletions against the merge base `ee21d9c`
+(`origin/main` had moved on with unrelated work; two-dot diffs against it are misleading here).
+Privacy scan of the merge-base diff clean. Re-ran `models.test.ts`, `launch.test.ts`,
+`launchProviders.test.ts`, `agentModelCatalog.test.ts`: 94 passed, 0 failed.
+`gentle-ai review assess --base-ref ee21d9c`: `high` (process boundary in `agentModelCatalog.ts`);
+RDD is off, so the off path applies: writer self-verification plus an independent verifier.
+
+**Independent verifier (Sonnet, read-only): `pass-with-follow-ups`.** Parser fixtures confirmed
+representative against a fresh live capture (same keys, nested `api` object, `variants` shape);
+malformed and empty output throw. Spawn path confirmed: `resolveProgram`, no `shell`, prompt on
+stdin written and closed in one call (`launchRunner.ts:534`), `cwd` = the mine. Registry
+correlation confirmed with no OpenCode-specific gap: `observe` compares this app's own mine paths,
+and the provider already normalises the store's forward slashes before aggregation. The
+`runtime.test.ts` hazard fix is a legitimate behaviour migration (the detector is now reached and
+the launch refuses on `installed: false`), with the installed path covered in `launchRunner.test.ts`.
+Census against `ee21d9c`: net +38 across 8 files, no file lost a test.
+
+**Live measurement by the verifier (free model, scratch directory):** `opencode run --variant high`
+on a model with `variants: {}` and `--variant xhigh` on a model whose list lacks it both exit 0,
+reply normally, and record the variant in `session.model.variant`. The CLI never refuses an
+unrecognised variant, so the union ladder cannot fail a launch.
+
+**Follow-up, not blocking:** a person can pick an effort the chosen model ignores, with no
+feedback. Narrowing the effort picker per selected model needs the renderer to read
+`ModelOption.effortLevels`, which no provider does today. Worth its own issue.
+
+**Acceptance run pending (parent/maintainer):** launch OpenCode from the Add Panel of the running
+app, confirm one dwarf appears in the mine with `launchId` stamped and the live model list shown.
