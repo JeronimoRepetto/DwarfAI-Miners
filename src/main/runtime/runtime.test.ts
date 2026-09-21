@@ -50,6 +50,7 @@ import {
   type ClaudeModelCatalogPort
 } from '../sessionLaunch/sdkHeldSession'
 import type { AntigravityModelCatalogPort } from '../providers/antigravity/models'
+import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector } from '../platform/cliDetection'
@@ -8893,6 +8894,9 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
   // AMENDED for #282 (added): the stem cliExecutableStem gives Antigravity —
   // its convention path is '.local/bin/agy', never the provider name itself.
   const ANTIGRAVITY_BIN = '/home/j/.local/bin/agy'
+  // AMENDED for #534 (added): the convention path for OpenCode's own stem —
+  // cliExecutableStem has no override for it, so this is `.local/bin/opencode`.
+  const OPENCODE_BIN = '/home/j/.local/bin/opencode'
 
   function runtimeWith(options: {
     claudeInstalled: boolean
@@ -8902,10 +8906,15 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
     // exactly as Claude asks the SDK — see the fakes below.
     antigravityInstalled?: boolean
     antigravityModelCatalog?: AntigravityModelCatalogPort
+    // AMENDED for #534 (added): OpenCode now asks its own CLI live too, on
+    // the same terms as Antigravity above.
+    openCodeInstalled?: boolean
+    openCodeModelCatalog?: OpenCodeModelCatalogPort
   }) {
     const fs = new FakeFs()
     if (options.claudeInstalled) fs.addFile(CLAUDE_BIN, '#!/bin/sh\n')
     if (options.antigravityInstalled) fs.addFile(ANTIGRAVITY_BIN, '#!/bin/sh\n')
+    if (options.openCodeInstalled) fs.addFile(OPENCODE_BIN, '#!/bin/sh\n')
     const adapters: PlatformAdapters = {
       platform: 'linux',
       focusPid: async () => false,
@@ -8937,7 +8946,8 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
       onMinesUpdated: vi.fn(),
       claudeModelCatalog: options.claudeModelCatalog ?? (async () => []),
       codexModelHistory: options.codexModelHistory ?? (async () => []),
-      antigravityModelCatalog: options.antigravityModelCatalog ?? (async () => [])
+      antigravityModelCatalog: options.antigravityModelCatalog ?? (async () => []),
+      openCodeModelCatalog: options.openCodeModelCatalog ?? (async () => [])
     })
   }
 
@@ -9197,6 +9207,120 @@ describe('AgentRuntime.listAgentModels (#239)', () => {
       })
       // AMENDED for #444: OpenCode's own unasked, source:'none' entry joined
       // the answer, so the count these cases pin grew from 3 to 4.
+      expect(list.catalogs).toHaveLength(4)
+      expect(warn).toHaveBeenCalledOnce()
+      warn.mockRestore()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /*
+   * Issue #534. `opencode models --verbose` measured live: this mirrors the
+   * Antigravity block above exactly, including the same four cases (not
+   * installed, live success, throw, timeout) on the same terms.
+   */
+  it('answers OpenCode as none when the CLI is not installed', async () => {
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: false
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'none'
+    })
+  })
+
+  it("asks the CLI for OpenCode's own live models when installed", async () => {
+    const openCodeModelCatalog = vi.fn<OpenCodeModelCatalogPort>().mockResolvedValue([
+      {
+        value: 'opencode-go/glm-5.3',
+        displayName: 'GLM 5.3',
+        effortLevels: ['low', 'high', 'max']
+      }
+    ])
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: true,
+      openCodeModelCatalog
+    }).listAgentModels()
+
+    expect(openCodeModelCatalog).toHaveBeenCalledWith({ executablePath: OPENCODE_BIN })
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [
+        { value: 'opencode-go/glm-5.3', label: 'GLM 5.3', effortLevels: ['low', 'high', 'max'] }
+      ],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'provider'
+    })
+  })
+
+  it('never spawns anything when OpenCode is not installed', async () => {
+    const openCodeModelCatalog = vi.fn<OpenCodeModelCatalogPort>().mockResolvedValue([])
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: false,
+      openCodeModelCatalog
+    }).listAgentModels()
+
+    expect(openCodeModelCatalog).not.toHaveBeenCalled()
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'none'
+    })
+  })
+
+  it('answers OpenCode as source: none, never a rejection, when the spawn or the parse itself throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const openCodeModelCatalog = vi
+      .fn<OpenCodeModelCatalogPort>()
+      .mockRejectedValue(new Error('opencode models produced no readable model list'))
+
+    const list = await runtimeWith({
+      claudeInstalled: false,
+      openCodeInstalled: true,
+      openCodeModelCatalog
+    }).listAgentModels()
+
+    expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+      provider: 'opencode',
+      models: [],
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+      source: 'none'
+    })
+    expect(list.catalogs).toHaveLength(4)
+    warn.mockRestore()
+  })
+
+  it('answers OpenCode as source: none once the catalogue ask outruns its bound, rather than hanging', async () => {
+    vi.useFakeTimers()
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // Never resolves and never rejects — exactly a stuck CLI's own promise.
+      const openCodeModelCatalog = vi
+        .fn<OpenCodeModelCatalogPort>()
+        .mockReturnValue(new Promise(() => {}))
+
+      const pending = runtimeWith({
+        claudeInstalled: false,
+        openCodeInstalled: true,
+        openCodeModelCatalog
+      }).listAgentModels()
+      await vi.advanceTimersByTimeAsync(MODEL_CATALOG_TIMEOUT_MS)
+      const list = await pending
+
+      expect(list.catalogs.find((entry) => entry.provider === 'opencode')).toEqual({
+        provider: 'opencode',
+        models: [],
+        efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'thinking'],
+        source: 'none'
+      })
       expect(list.catalogs).toHaveLength(4)
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()

@@ -46,12 +46,27 @@ describe('PROVIDER_EFFORT_LEVELS', () => {
   })
 
   /*
-   * Issue #444. OpenCode is not in LAUNCHABLE_PROVIDERS, so no launch can ever
-   * reach it — the same reasoning that gave Antigravity `[]` before #282, and
-   * the same empty answer for the same reason.
+   * AMENDED for #534 (was: 'gives OpenCode no effort levels, because no
+   * launch can reach it', asserting `[]` — OpenCode was absent from
+   * LAUNCHABLE_PROVIDERS at #444's time, the same reasoning that gave
+   * Antigravity `[]` before #282). M1 measured `opencode models --verbose`
+   * live and found 19 of 34 models carrying a non-empty `variants` map, keyed
+   * `none/minimal/low/medium/high/xhigh/max/thinking` across all of them —
+   * the union below, since the Add Panel's effort picker reads only this
+   * provider-wide boundary, never a chosen model's own effort levels (see
+   * PROVIDER_EFFORT_LEVELS.opencode's own comment).
    */
-  it('gives OpenCode no effort levels, because no launch can reach it', () => {
-    expect(PROVIDER_EFFORT_LEVELS.opencode).toEqual([])
+  it("carries the union of every effort key M1 observed across OpenCode's own models", () => {
+    expect(PROVIDER_EFFORT_LEVELS.opencode).toEqual([
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'thinking'
+    ])
   })
 })
 
