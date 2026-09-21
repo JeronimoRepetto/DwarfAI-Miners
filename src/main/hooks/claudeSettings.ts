@@ -1,3 +1,9 @@
+import {
+  BYTE_ORDER_MARK,
+  hasByteOrderMark,
+  parseJsonText,
+  stripByteOrderMark
+} from '../adapters/jsonText'
 import { isOurHookCommand } from './hookCommand'
 
 /**
@@ -27,9 +33,21 @@ export interface JsonFormat {
   indent: string
   eol: '\n' | '\r\n'
   trailingNewline: boolean
+  /**
+   * Whether the file opened with a UTF-8 BOM (#555). Part of the shape for the
+   * same reason the indent is: this module merges into a file it does not own,
+   * and re-encoding somebody else's settings on the way past is precisely the
+   * overreach the header above forbids.
+   */
+  byteOrderMark: boolean
 }
 
-const DEFAULT_FORMAT: JsonFormat = { indent: '  ', eol: '\n', trailingNewline: true }
+const DEFAULT_FORMAT: JsonFormat = {
+  indent: '  ',
+  eol: '\n',
+  trailingNewline: true,
+  byteOrderMark: false
+}
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -193,7 +211,11 @@ export function containsOurHooks(settings: JsonObject): boolean {
  */
 export function parseSettingsObject(text: string): JsonObject {
   if (text.trim() === '') return {}
-  const parsed: unknown = JSON.parse(text)
+  // Through parseJsonText (#555): a settings.json a Windows editor saved opens
+  // with an invisible BOM, and refusing it skipped that whole configuration
+  // directory, so its sessions silently never got the instant-update hooks.
+  // Everything else that is not a JSON object still throws, as above.
+  const parsed: unknown = parseJsonText(text)
   if (!isJsonObject(parsed)) {
     throw new Error('[hooks] settings.json does not contain a JSON object')
   }
@@ -207,12 +229,17 @@ export function parseSettingsObject(text: string): JsonObject {
  */
 export function detectJsonFormat(text: string): JsonFormat {
   if (text.trim() === '') return { ...DEFAULT_FORMAT }
-  const eol: '\n' | '\r\n' = text.includes('\r\n') ? '\r\n' : '\n'
-  const indentMatch = /\n([ \t]+)\S/.exec(text.replace(/\r\n/g, '\n'))
+  // The mark is read off the head and then taken OUT of the way, so every
+  // probe below sees the document rather than the encoding (#555).
+  const byteOrderMark = hasByteOrderMark(text)
+  const body = stripByteOrderMark(text)
+  const eol: '\n' | '\r\n' = body.includes('\r\n') ? '\r\n' : '\n'
+  const indentMatch = /\n([ \t]+)\S/.exec(body.replace(/\r\n/g, '\n'))
   return {
     indent: indentMatch?.[1] ?? DEFAULT_FORMAT.indent,
     eol,
-    trailingNewline: text.endsWith('\n')
+    trailingNewline: body.endsWith('\n'),
+    byteOrderMark
   }
 }
 
@@ -220,5 +247,8 @@ export function detectJsonFormat(text: string): JsonFormat {
 export function stringifySettings(settings: JsonObject, format: JsonFormat): string {
   const body = JSON.stringify(settings, null, format.indent)
   const withEol = format.eol === '\r\n' ? body.replace(/\n/g, '\r\n') : body
-  return format.trailingNewline ? `${withEol}${format.eol}` : withEol
+  const text = format.trailingNewline ? `${withEol}${format.eol}` : withEol
+  // Given back only to a file that arrived with one (#555). Adding a mark to a
+  // file that had none would corrupt it on every machine, not just Windows.
+  return format.byteOrderMark ? `${BYTE_ORDER_MARK}${text}` : text
 }
