@@ -115,9 +115,16 @@ was the last one waiting on a real subagent spawn, and it is closed positive.
 ## Row 5 — no pid or process join — NEGATIVE `[V]`
 
 `session` carries no pid, process id or socket/port column anywhere in the schema (Row 2). No
-process probe is added in this slice: `textDelivery` returns `null` for every OpenCode dwarf, as
-`SimulatedProvider` does, and `LAUNCHABLE_PROVIDERS`/`HELDABLE_PROVIDERS` do not gain `'opencode'`.
-Only a live process check could ever add a join here, and none is attempted.
+process probe is added in this slice: `textDelivery` still returns `null` for every OpenCode
+dwarf, as `SimulatedProvider` does, and `HELDABLE_PROVIDERS` does not gain `'opencode'`.
+
+AMENDED for #534 (was: "`LAUNCHABLE_PROVIDERS`/`HELDABLE_PROVIDERS` do not gain `'opencode'`" —
+true when this row was measured, before Row 7 found `opencode run` needs no pid or process join
+at all: a launch is correlated by `LaunchedSessionRegistry`'s own pid, captured live off the
+process THIS app just spawned, never off a column read back from `opencode.db`). This row's
+negative — no pid/process/port column in the schema — is unaffected and still governs why no
+process probe reads the store; it is `LAUNCHABLE_PROVIDERS` that no longer depends on it. Only a
+live process check could ever add a schema-level join here, and none is attempted.
 
 ## Row 5b — no port join for a TUI-started server — NEGATIVE `[V]`
 
@@ -134,8 +141,90 @@ to consult by any route this app has. A session opened outside this panel cannot
 the outside without guessing, and this project refuses to guess (#231): `chatAction`
 (`src/renderer/src/lib/delivery/actionBar.ts`) now names this explicitly for an observed OpenCode
 dwarf (`observedOpenCodeNoChannelReason`) instead of the generic no-channel placeholder (#507),
-and it stays a refusal — not a "not yet" — until #445 gives a **panel-launched** OpenCode session a
-channel this row's absence does not apply to.
+and it stays a refusal — not a "not yet" — until a channel this row's port-absence does not apply
+to exists. AMENDED for #534 (was: "until #445 gives a **panel-launched** OpenCode session a
+channel" — the plan at Row 5b's own measurement time). #534's T3 is what is now planned to give
+one instead, joined by the session id `opencode.db` itself already carries (never a pid or a
+port), which is exactly the join this row's negative says does not exist any other way; #445
+remains the route for questions, permissions and interruption over a held session, unaffected by
+this row.
+
+## Row 6 — `opencode models --verbose`, the live catalogue `[V]`
+
+Measured 2026-09-21, OpenCode 1.18.31, Windows 11, read-only (`opencode models --verbose`, no
+conversation started). Numbered 6 of the routes rows the exploration reserved (6–9); `run` fills
+row 7 below.
+
+- `opencode models --verbose` prints one bare `provider/model` id line, then a `{ ... }` JSON
+  object, repeated per model — 34/34 blocks parsed off the real captured output by splitting on
+  id lines and brace-counting the object that follows.
+- Same key set on every block: `id, providerID, name, family, api, status, headers, options,
+cost, limit, capabilities, release_date, variants`. `cost`/`limit` are present and non-null even
+  on free models (`cost.input/output/cache.read/write` are `0`, not absent).
+- `variants` is a real effort picker, and it is not paid-only: 19 of the 34 measured models carry
+  a non-empty `variants` map, keyed from `none/minimal/low/medium/high/xhigh/max/thinking`
+  (vendor-specific per model), including several free ones. `Object.keys(variants).length > 0` is
+  the correct presence check. `opencode run --help` documents `--variant <string>` as a real flag
+  consuming one of these keys, and `session.model.variant` echoes the chosen one back.
+
+**Consequence:** `src/main/providers/opencode/models.ts` parses this shape into `ModelOption[]`
+with `effortLevels = Object.keys(variants)` when non-empty, and `agentModelCatalog.ts`'s
+`openCodeModelCatalog` answers `source: 'provider'` — the Add Panel's model and effort pickers
+read this live, exactly as Claude's and Antigravity's own live catalogues already do.
+
+## Row 7 — `opencode run`, the message on stdin `[V]`
+
+Measured 2026-09-21, same machine, scratch directories outside any real project, read-only
+against the store otherwise (every session used was one this run created).
+
+- `opencode run -m <provider/model> --format json` with the message on **stdin** and no
+  positional argument: exit 0 in roughly 5–8 s across several samples. The session row appears in
+  `opencode.db` about 1.3 s after spawn — well before the process finishes — with the directory
+  the process ran in; the assistant message's `time.completed` lands at process exit, not
+  meaningfully earlier. Polling the database buys early detection of session creation, never of
+  turn completion.
+- The prompt travels on stdin whenever argv carries no positional message, on both a POSIX shell
+  and PowerShell, for a fresh `run` and for `run --session <id>` continuation alike, with the
+  piped content passed through completely unmodified (no trimming — a trailing newline from
+  whatever produced it is recorded verbatim). Positional and stdin **concatenate** when both are
+  given (positional first, then the full stdin content) — neither is dropped, so a launcher must
+  never place anything in argv it does not want appended to.
+- `opencode run --help` documents only a positional `message [array]`; no `--stdin` flag exists,
+  and none is needed.
+
+**Consequence:** `buildOpenCodeLaunchArgs` (`src/main/sessionLaunch/launch.ts`) carries no prompt
+in argv at all — the first prompt goes on `LaunchInvocation.stdin`, written and then closed by
+`runLaunchProcess`, on the same terms every other launched provider already uses.
+
+## Row 8 — the shell-hop directory trap `[V]`
+
+Spawning `opencode run` through `child_process.spawn(cmd, args, { shell: true, cwd })` on Windows
+(i.e. through `cmd.exe`) recorded the resulting session's `session.directory` /
+`message.data.path.cwd` as the **parent** of the actual working directory — reproduced twice (2 of
+2). Spawning directly, with no shell hop, recorded the correct directory on every attempt (4 of
+4). Not root-caused further inside OpenCode's own source; reported as a reproduced, external
+black-box observation.
+
+**Consequence:** `resolveProgram` (`src/main/platform/cliDetection.ts`), which every launch and
+the live model-catalogue spawn already go through, never sets `shell: true` — `buildLaunchSpawn`
+(`launchRunner.ts`) spawns the resolved command directly, and `providers/opencode/models.ts`'s
+catalogue spawn goes through the same `resolveProgram` seam rather than a bare `execFile` for
+exactly this reason. Pinned by a test asserting no shell hop for both the launch and the
+catalogue spawn.
+
+## Row 9 — the open-stdin hang `[V]`
+
+Leaving a spawned `opencode run` child's stdin open as an un-EOF'd pipe (Node's default `stdio:
+'pipe'`, no explicit close) made the process hang indefinitely **after it had already produced its
+full JSON output** — killed only by an external timeout, even though the same command finished in
+under a second when stdin was explicitly closed (`stdio: ['ignore', 'pipe', 'pipe']`, or written
+then ended).
+
+**Consequence:** every launch already closes the child's stdin — `runLaunchProcess`
+(`launchRunner.ts`) calls `child.stdin?.end(invocation.stdin)` immediately after spawn, which both
+writes the prompt and signals EOF in one call — so this trap was already avoided by the existing
+launch path; this row exists so a future continuation channel (`opencode run --session`, T3)
+inherits the same discipline rather than reinventing stdio handling and rediscovering the hang.
 
 ## Row 10 — native binary and detection `[V]`
 
@@ -155,7 +244,9 @@ all, since it reads the store directly.
 | Liveness              | `event.seq` advance, or the newest assistant message lacking `time.completed`; never the database file's own mtime (Row 3).                           |
 | `waiting`             | Never reported — no pending-permission evidence exists on disk (Row 3 residue).                                                                       |
 | Topology              | `session.parent_id` only; positive (Row 4) — a worker is drawn beside its foreman.                                                                    |
-| Delivery channel      | None — `textDelivery` returns `null` (Row 5).                                                                                                         |
+| Launch                | **Yes, via `opencode run`** (Row 7, #534) — a DETACHED, one-shot launch, the same terms Codex's and Antigravity's own launches already run on.        |
+| Model catalogue       | **Live** (Row 6, #534) — `opencode models --verbose`, `source: 'provider'`, with a per-model effort picker where `variants` is non-empty.             |
+| Delivery channel      | None yet — `textDelivery` returns `null` (Row 5). Launch and the catalogue no longer wait on this (#534); the continuation channel is slice 2 (T3).   |
 | `transcriptPath`      | Always `undefined` — there is no per-session file to tail (Row 2).                                                                                    |
 | `tokensObserved`      | Omitted in this change regardless of the columns being populated (maintainer question 3 pending).                                                     |
 | `transcriptUpdatedAt` | The newest of `session.time_updated`, the newest assistant row's time and the scan that last saw its `event.seq` advance; never the WAL mtime (#459). |

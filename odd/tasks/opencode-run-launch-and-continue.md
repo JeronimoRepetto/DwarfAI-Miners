@@ -99,7 +99,8 @@ on the new channel (`run -f`; measure later); a channel for worker dwarfs; chang
       which). `runtime.ts` `listAgentModels` gains the arm. Tests: parser fixtures with a
       variants model, a variant-less model, malformed output; catalogue shape; runtime arm with a
       fake runner and a timeout.
-- [ ] **T2 — Launch from the Add Panel.** Route: delegated (same writer).
+- [x] **T2 — Launch from the Add Panel.** Route: delegated (same writer). Code and unit tests
+      done; the parent's own acceptance run (real app, real launch) is still pending — see below.
       `'opencode'` joins `LAUNCHABLE_PROVIDERS`; `buildOpenCodeLaunchArgs(tuning)` →
       `['run', '-m', model, ...(effort ? ['--variant', effort] : []), '--format', 'json']`, prompt
       on `stdin`; `buildLaunchArgs` arm replaces the refusal. Tests: argv with and without effort;
@@ -212,3 +213,97 @@ fixed below); `node skills/skill-sync/assets/sync.mjs --check` — AGENTS.md alr
 full `pnpm test` green.
 
 Commit: T1 committed as `feat(agents): ask OpenCode's own CLI live for its model catalogue (#534)`.
+
+### T2 — code and unit tests done, 2026-09-21; acceptance pending
+
+RED (observed): `launch.test.ts`'s new `buildOpenCodeLaunchArgs` cases failed with
+`TypeError: buildOpenCodeLaunchArgs is not a function` before `launch.ts` carried it;
+`launchProviders.test.ts`'s two amended cases failed on the old `['claude', 'codex',
+'antigravity']` / refused-with-`NOT_LAUNCHABLE` shapes. `launchRunner.test.ts`'s 8 new/amended
+"launching OpenCode" cases were proven RED by temporarily `git stash`-ing `launch.ts` and
+`launchProviders.ts` and restoring afterward — all 8 failed for the expected reasons (`TypeError:
+buildOpenCodeLaunchArgs is not a function`, `error: 'That agent cannot be started from the panel
+yet.'`, `Cannot read properties of undefined (reading '0')` for a `run` that was never called).
+GREEN: all touched suites pass after implementation.
+
+Two further ripples found only by running the **full** suite (not visible from the touched files
+alone), both mechanical consequences of `'opencode'` joining `LAUNCHABLE_PROVIDERS`, both fixed:
+
+1. `src/main/jev/routeRequest.test.ts` — already fixed under T1 (`PROVIDER_EFFORT_LEVELS.opencode`
+   going non-empty), no further change needed here.
+2. `src/main/runtime/runtime.test.ts > AgentRuntime.launchAgent > refuses to launch OpenCode
+before ever probing its own detector` — a real hazard, not just a stale assertion. This test
+   built `AgentRuntime` with **no injected `launchSession`**, deliberately exercising the real
+   default composition (`launchClaudeSession` + the real `runLaunchProcess`) to prove
+   `launchRunner.ts`'s old gate refused OpenCode before `cliDetector.detect` was ever called. Once
+   the gate stopped refusing, this same test — unchanged — actually attempted a **real
+   `child_process.spawn`** for the path `/opt/opencode` it invents, observed live as `error:
+"OpenCode could not be started: /opt/opencode — ENOENT."` (a real ENOENT from the OS, not a
+   mock). Fixed by changing the injected detection verdict to `installed: false` instead of a
+   fabricated installed path: this keeps the test on the REAL default composition (still proving
+   `cliDetector.detect('opencode')` is now reached, which is the fact that changed) while
+   returning from `launchClaudeSession`'s "not installed" branch before `resolveProgram`/`run` are
+   ever reached — no real spawn, on the same safety terms every other "not installed" case in that
+   file already relies on. Renamed to `reaches its own detector for OpenCode now, refusing only
+because it is not installed`.
+
+`LaunchedSessionRegistry.observe` correlation — confirmed needs no change. `observe()` matches a
+launch record to a mine by plain string equality (`mine.path === record.minePath`), not by any
+provider-derived path; both sides are this app's own already-known mine path (the mine the user
+picked before launching), never a raw value from a provider's own cwd column. The provider's own
+cwd only participates in `aggregate.ts`'s EARLIER step — grouping `ProviderSnapshot`s into mines
+by `normalizePathKey(trimTrailingSlashes(snapshot.cwd), platform)` — which already runs
+identically for every provider, including OpenCode (`opencodeProvider.ts`'s existing,
+unchanged-by-this-slice `cwd: normalize(session.cwd)`, itself already folded again by
+`normalizePathKey` in `aggregate.ts`, which handles the forward-slash-on-Windows case the
+measurement report flags). So a launched OpenCode session aggregates into the same `Mine` object a
+declared project already has, on the same terms Codex's and Antigravity's launched dwarfs already
+do, with no provider-specific fix needed. No code change; no new test added (the acceptance run
+below is the live proof).
+
+`runLaunchProcess`/`buildLaunchSpawn` — confirmed needs no change. Neither branches on provider;
+`stdio: ['pipe', 'ignore', stderrFd]` and no `shell: true` are already unconditional, which is
+exactly what Row 8 (`docs/opencode-format.md`) needed proven — no shell hop, ever — so OpenCode
+inherits it for free.
+
+Files touched: `src/main/sessionLaunch/launch.ts`, `launch.test.ts`,
+`src/main/domain/launchProviders.ts`, `launchProviders.test.ts`,
+`src/main/sessionLaunch/launchRunner.test.ts`, `src/main/runtime/runtime.test.ts` (the
+`launchAgent` ripple fix), `src/renderer/src/lib/delivery/actionBar.ts` (comment only, no test
+change — `LAUNCH_COMMAND.opencode`'s own comment said OpenCode's launch was unreachable, which
+`'opencode'` joining `LAUNCHABLE_PROVIDERS` made false). Docs (T4 partial, riding with this
+commit): `docs/opencode-format.md` (Rows 6–9, "What this settles" table, two accuracy amendments
+to Rows 5/5b whose stated consequences the new rows changed), `README.md` (provider support
+matrix), `docs/guide.md` (launchable-providers summary, the effort-levels enumeration, the
+OpenCode paragraph rewritten for its new launch capability).
+
+Census (working tree vs HEAD, taken before commit): `launchProviders.test.ts` 13→13 (0, one pin
+replaced in place), `runtime.test.ts` 420→420 (0, one case renamed/restructured in place),
+`launch.test.ts` 36→44 (+8), `launchRunner.test.ts` 59→66 (+7). Net +15 across 4 files; exit 0, no
+file lost test statements.
+
+Amended assertions (test-safety, `AMENDED for #534` in each): `launch.test.ts`'s
+`buildLaunchArgs('opencode')` refusal pin (was a throw); `launchProviders.test.ts`'s "detected
+OpenCode is marked installed but not launchable" pin (now the opposite) and its
+`LAUNCHABLE_PROVIDERS` contents pin; `launchRunner.test.ts`'s "refuses OpenCode before ever
+probing the disk for it" pin (now proves a successful launch instead); `runtime.test.ts`'s
+`launchAgent` OpenCode case (restructured as above, for safety, not just to flip an assertion).
+
+Checks run for T2 + docs: `pnpm typecheck` clean; `pnpm lint` clean; `pnpm exec prettier --write`
+on every touched file; `pnpm format:check` clean; `node skills/skill-sync/assets/sync.mjs --check`
+— AGENTS.md already up to date; full `pnpm test` green (7913 passed, 5 skipped); `pnpm build`
+green (main, preload and renderer all built).
+
+**Pending for the parent (acceptance, per the task contract):** run the real app on Windows with
+OpenCode 1.18.31 installed, launch an OpenCode session from a mine, and confirm (a) the Add Panel
+offers OpenCode with a live model list and an effort picker for a model with variants, and (b) the
+launch produces exactly one dwarf, found by the observer in the mine with `launchId` stamped. Not
+run by this writer — no live OpenCode CLI round trip is authorized inside a unit test, and the
+task assigns this specific check to the parent.
+
+Decision on `runLaunchProcess`/`buildLaunchSpawn` and the provider's `cwd` derivation: neither
+needed a change (see above) — both were already provider-agnostic in exactly the shape OpenCode
+needed.
+
+Commit: T2 (+ docs) committed as
+`feat(agents): launch OpenCode from the Add Panel via \`run\` (#534)`.

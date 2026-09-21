@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import { MAX_DWARF_TEXT_CHARS } from '../domain/types'
 import {
   buildAntigravityLaunchArgs,
   buildClaudeLaunchArgs,
   buildCodexLaunchArgs,
   buildLaunchArgs,
+  buildOpenCodeLaunchArgs,
   isShellShim,
   prepareLaunchPrompt
 } from './launch'
@@ -71,14 +71,97 @@ describe('buildLaunchArgs', () => {
   })
 
   /*
-   * Issue #444. OpenCode is observed only — LAUNCHABLE_PROVIDERS does not
-   * grow (launchProviders.test.ts:84) — so the switch's fourth arm refuses
-   * rather than invents an argv nothing has measured. Unreachable once the
-   * launchRunner.ts gate lands (#444, launchRunner.test.ts), and documents
-   * the invariant at the type level regardless.
+   * AMENDED for #534 (was: asserted `buildLaunchArgs('opencode')` THREW
+   * NOT_LAUNCHABLE — #444 left OpenCode observed only, with no launch
+   * invocation this app had measured). #534 measured `run`
+   * (docs/opencode-format.md), so this dispatch now answers instead of
+   * refusing — see buildOpenCodeLaunchArgs for the argv.
    */
-  it('refuses OpenCode: observed only, never launched, and invents no argv', () => {
-    expect(() => buildLaunchArgs('opencode')).toThrow(NOT_LAUNCHABLE)
+  it("answers OpenCode with OpenCode's own run argv, now that it is launchable", () => {
+    expect(buildLaunchArgs('opencode')).toEqual(buildOpenCodeLaunchArgs())
+  })
+})
+
+/*
+ * #534. A one-shot, DETACHED launch only, on the same terms as Antigravity's
+ * (#237, step 4): no held-session engine for OpenCode in this app, so
+ * HELDABLE_PROVIDERS does not grow — see shared/contracts.ts.
+ */
+describe('buildOpenCodeLaunchArgs', () => {
+  it('asks for one run, reading its prompt from stdin, with structured output', () => {
+    // `--format json` is what every measurement in the report ran with
+    // (M3/M4/M5/M9); `run`'s own stdout is never read by this app
+    // (launchRunner.ts's stdio is `['pipe', 'ignore', stderrFd]`), so there is
+    // nothing here for a different output format to serve.
+    expect(buildOpenCodeLaunchArgs()).toEqual(['run', '--format', 'json'])
+  })
+
+  it('carries no positional prompt, whatever the prompt says', () => {
+    // M9: `run` reads the prompt from stdin whenever argv carries no
+    // positional one, for a fresh run and for `--session` continuation alike
+    // — so this argv never carries one at all. 'run' and 'json' are the fixed
+    // subcommand and its output-format value, never a prompt.
+    const fixed = new Set(['run', 'json'])
+    expect(buildOpenCodeLaunchArgs().some((arg) => !arg.startsWith('-') && !fixed.has(arg))).toBe(
+      false
+    )
+  })
+})
+
+/*
+ * M1: `opencode run --help` documents `-m <string>` for the model and
+ * `--variant <string>` for the reasoning-effort key — not `--model`/`--effort`
+ * the way Claude and Antigravity spell theirs, and not Codex's `-c
+ * model_reasoning_effort=`. `session.model.variant` echoes the chosen key back
+ * (M1), confirming `--variant` is the flag that actually took.
+ */
+describe('launch argv with a model and an effort, OpenCode (#534)', () => {
+  it('leaves the argv exactly as it was when nothing is tuned', () => {
+    expect(buildOpenCodeLaunchArgs({})).toEqual(['run', '--format', 'json'])
+    expect(buildLaunchArgs('opencode', {})).toEqual(['run', '--format', 'json'])
+  })
+
+  it('names the model with -m, verified against M3’s own invocation', () => {
+    expect(buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle' })).toEqual([
+      'run',
+      '-m',
+      'opencode/big-pickle',
+      '--format',
+      'json'
+    ])
+  })
+
+  it('names the effort with --variant, not --effort', () => {
+    expect(buildOpenCodeLaunchArgs({ effort: 'high' })).toEqual([
+      'run',
+      '--variant',
+      'high',
+      '--format',
+      'json'
+    ])
+  })
+
+  it('carries both, model before effort, before the trailing --format json', () => {
+    expect(buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'high' })).toEqual([
+      'run',
+      '-m',
+      'opencode/big-pickle',
+      '--variant',
+      'high',
+      '--format',
+      'json'
+    ])
+  })
+
+  it('dispatches through buildLaunchArgs like the other three providers', () => {
+    expect(buildLaunchArgs('opencode', { model: 'opencode/big-pickle', effort: 'low' })).toEqual(
+      buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'low' })
+    )
+  })
+
+  it('still carries no positional prompt, whatever is tuned', () => {
+    const tuned = buildOpenCodeLaunchArgs({ model: 'opencode/big-pickle', effort: 'high' })
+    expect(tuned).not.toContain('dig the east gallery')
   })
 })
 
