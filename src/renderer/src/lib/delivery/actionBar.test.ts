@@ -12,7 +12,6 @@ import {
   launchedNoInboxReason,
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
-  observedOpenCodeNoChannelReason,
   oneShotNoExitReason,
   OPEN_TURN_NO_INTERRUPT_HINT,
   refusalLine,
@@ -570,18 +569,10 @@ describe('buildActionBar', () => {
       })
     }
 
-    /*
-     * AMENDED for #507 (was: 'disables Send with NO_CHANNEL_REASON', expecting
-     * the generic placeholder). The file's own comment on NO_CHANNEL_REASON's
-     * neighbours already called that reading "a bug" for a session this panel
-     * knows more about than "not yet" — an observed OpenCode session is exactly
-     * that case, and now says why in its own terms instead.
-     */
-    it('disables Send with the OpenCode-specific reason, not the generic placeholder', () => {
+    it('disables Send with NO_CHANNEL_REASON', () => {
       const entry = entryFor('chat', opencodeDwarf())
       expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(observedOpenCodeNoChannelReason())
-      expect(entry.hint).not.toBe(NO_CHANNEL_REASON)
+      expect(entry.hint).toBe(NO_CHANNEL_REASON)
     })
 
     /*
@@ -602,36 +593,6 @@ describe('buildActionBar', () => {
       expect(entry.enabled).toBe(false)
       expect(entry.hint).toBe(OPEN_TURN_NO_INTERRUPT_HINT)
       expect(entry.hint).not.toBe(NO_CHANNEL_REASON)
-    })
-  })
-
-  /*
-   * #507: the specific reason above is OpenCode's alone. Every other provider
-   * with no channel, not launched, not one-shot — a shape nothing currently
-   * produces, but the fallback still has to be provider-safe — keeps the
-   * generic placeholder rather than inheriting OpenCode's sentence.
-   */
-  describe('no-channel fallback stays generic for every other provider (#507)', () => {
-    it('still shows NO_CHANNEL_REASON for a Claude dwarf with no channel', () => {
-      const entry = entryFor('chat', capableDwarf({ provider: 'claude', textDelivery: undefined }))
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(NO_CHANNEL_REASON)
-      expect(entry.hint).not.toBe(observedOpenCodeNoChannelReason())
-    })
-
-    it('still shows NO_CHANNEL_REASON for a Codex dwarf with no channel', () => {
-      const entry = entryFor('chat', capableDwarf({ provider: 'codex', textDelivery: undefined }))
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(NO_CHANNEL_REASON)
-    })
-
-    it('still shows NO_CHANNEL_REASON for an Antigravity dwarf with no channel', () => {
-      const entry = entryFor(
-        'chat',
-        capableDwarf({ provider: 'antigravity', textDelivery: undefined })
-      )
-      expect(entry.enabled).toBe(false)
-      expect(entry.hint).toBe(NO_CHANNEL_REASON)
     })
   })
 
