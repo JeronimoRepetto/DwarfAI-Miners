@@ -71,8 +71,45 @@
   --color-panel-deep: #14100b;
   /* Mine cards, mine tooltip, message panel. */
   --color-panel: #2b2119;
-  /* Enabled control background, and the border and text of an unselected chip. */
+  /*
+   * Enabled control background. `foundations.md` gives this one token a second
+   * and third job too — "and unselected chip border/text" — and those two are
+   * withdrawn by the maintainer's 2026-09-21 ruling (#548): as a FOREGROUND on
+   * the `--color-panel-deep` these controls sit on it measures 1.18:1, where
+   * 1.00:1 is the same colour, so the unselected half of every segmented
+   * control was invisible. The value is unchanged, because 18 surfaces are
+   * painted with it and as a background it is right. See --color-control-idle.
+   */
   --color-control: #272015;
+  /*
+   * The foreground of a control that is not chosen but could be: an unselected
+   * chip's label and outline, a profile option the person is about to pick.
+   *
+   * Named after --color-nav-idle, which already holds exactly this "unselected,
+   * still legible" role for the shell rail. Ours rather than transcribed:
+   * `foundations.md`'s gap table marks contrast "Requires design/product
+   * definition", so the ruling above fills a hole the source declares, the way
+   * #198's ruling did for the type scale.
+   *
+   * The value clears WCAG AA for normal text on both grounds a control sits on
+   * (6.06:1 on --color-panel-deep, 5.04:1 on --color-panel) while staying well
+   * under the selected state's own 14.99:1 cream — legible is not the same as
+   * loud, and an idle option as loud as the chosen one would read as every
+   * option being chosen. designTokens.test.ts measures both halves.
+   */
+  --color-control-idle: #a09071;
+  /*
+   * The foreground of a control that cannot be chosen at all.
+   *
+   * A separate token from --color-control-idle because the two states are
+   * different facts. WCAG exempts a disabled control from the text floor, so
+   * this sits at 3.61:1 rather than 4.5:1 — but it is nowhere near the 1.18:1
+   * it replaced, because that did not render a button "switched off", it
+   * rendered its word GONE, and a confirm button with no word on it reads as
+   * broken rather than as unavailable. Dim enough to say do-not-click, present
+   * enough to say what it is.
+   */
+  --color-control-disabled: #7a6a50;
   /* Titles, dividers, active borders, selected question background. */
   --color-accent: #d19831;
   /* Mine tooltip copy. */

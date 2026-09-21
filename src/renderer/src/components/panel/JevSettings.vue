@@ -380,8 +380,8 @@ function selectDefaultEffort(value: string): void {
   cursor: pointer;
 }
 .jev-save:disabled {
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
+  border: 2px solid var(--color-control-disabled);
+  color: var(--color-control-disabled);
   background: var(--color-panel-deep);
   cursor: default;
 }
@@ -425,9 +425,9 @@ function selectDefaultEffort(value: string): void {
   flex-direction: column;
   gap: 2px;
   padding: 6px var(--space-settings);
-  border: 2px solid var(--color-control);
+  border: 2px solid var(--color-control-idle);
   border-radius: var(--radius-default);
-  color: var(--color-control);
+  color: var(--color-control-idle);
   cursor: pointer;
   background: var(--color-panel-deep);
   font: inherit;
@@ -473,8 +473,8 @@ function selectDefaultEffort(value: string): void {
   font-size: var(--text-meta);
 }
 .tuning-select:disabled {
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
+  border: 2px solid var(--color-control-disabled);
+  color: var(--color-control-disabled);
   cursor: default;
 }
 .tuning-select:focus-visible {

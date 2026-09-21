@@ -91,8 +91,8 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 .notifications-enabled[aria-pressed='false'] {
-  border: 2px solid var(--color-control);
-  color: var(--color-control);
+  border: 2px solid var(--color-control-idle);
+  color: var(--color-control-idle);
   background: var(--color-panel-deep);
 }
 .notifications-enabled:focus-visible {

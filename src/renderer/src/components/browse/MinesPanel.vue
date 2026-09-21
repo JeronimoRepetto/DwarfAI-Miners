@@ -417,14 +417,19 @@ onBeforeUnmount(stopWatching)
 }
 /*
  * The disabled model the source gives every other control: the glyph drops to
- * the control colour, which on this ground reads as switched off rather than
- * as missing.
+ * a quieter colour, which on this ground reads as switched off rather than as
+ * missing.
+ *
+ * It dropped to `--color-control` until #548, and that is the one thing this
+ * comment promised it would not do: the control token on this panel's own
+ * ground measures 1.18:1, so the glyph did not read switched off, it read
+ * missing. `--color-control-disabled` is the value that keeps the promise.
  */
 .add-control:disabled {
   cursor: default;
 }
 .add-control:disabled .control-glyph {
-  background: var(--color-control);
+  background: var(--color-control-disabled);
 }
 .sort-control:focus-visible,
 .add-control:focus-visible,
@@ -450,9 +455,9 @@ onBeforeUnmount(stopWatching)
 .tier-chip {
   height: var(--size-chip-height);
   padding: 0 12px;
-  border: 2px solid var(--color-control);
+  border: 2px solid var(--color-control-idle);
   border-radius: var(--radius-default);
-  color: var(--color-control);
+  color: var(--color-control-idle);
   cursor: pointer;
   background: none;
   font: inherit;
