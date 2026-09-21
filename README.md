@@ -301,6 +301,18 @@ or clear it from the Jev section of Settings only, on either setup. It is stored
 machine rather than as plain configuration; [`docs/privacy.md`](docs/privacy.md#what-it-transmits)
 says what it is used for and what leaves the machine once it is set.
 
+**Once a key is set**, the Jev section of Settings also shows a routing profile and a default
+launch — both plain preferences, both set from Settings only, and both hidden along with the rest
+of the section until a key is configured. The profile is one of **economy** (cheapest model that
+can do the job), **balanced** (cost and capability weighed per prompt), or **premium** (most
+capable model when the task warrants it — trivial prompts still go cheap on every profile). The
+default launch is the provider, model and effort a session falls back to when Jev cannot decide;
+leaving any of the three unset keeps that part of a launch on the CLI's own default, exactly like
+an ordinary untuned launch. Neither is ever a guess this app makes for you — see
+[`docs/privacy.md`](docs/privacy.md#what-it-transmits) for what changed on the wire, and the
+[`jev-capabilities`](skills/jev-capabilities/SKILL.md) skill for how a model earns a place in the
+table the profile routes through.
+
 ## Reporting a problem
 
 - **Bugs, features and roadmap** → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues).
