@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 // #168 additions are asserted in their own describe at the foot of this file.
 import { MAX_DWARF_TEXT_CHARS } from '../../types'
 import type { JevRouteLaunchResult, JevSettings, LaunchFailedPush } from '../../types'
+import { DEFAULT_JEV_PREFERENCES } from '../../types'
 import {
   COMPOSER_DISABLED_PLACEHOLDER,
   COMPOSER_ENABLED_PLACEHOLDER,
@@ -477,11 +478,15 @@ describe('a detached launch that failed after it started (#263)', () => {
  * about what the pickers show and what the person is told, both pure.
  */
 describe('the Jev option (#509)', () => {
-  const READY: JevSettings = { configured: true }
-  const HIDDEN: JevSettings = { configured: false }
+  // AMENDED for the #509 follow-up: `preferences` is now a required part of
+  // JevSettings, so these fixtures carry the documented default. No
+  // assertion below changed.
+  const READY: JevSettings = { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+  const HIDDEN: JevSettings = { configured: false, preferences: DEFAULT_JEV_PREFERENCES }
   const UNAVAILABLE: JevSettings = {
     configured: false,
-    unavailableReason: 'encryption-unavailable'
+    unavailableReason: 'encryption-unavailable',
+    preferences: DEFAULT_JEV_PREFERENCES
   }
 
   function decision(
@@ -701,11 +706,15 @@ describe('the Jev option (#509)', () => {
  * composable's own detour, tested beside it.
  */
 describe('the Jev entry path (#523)', () => {
-  const READY: JevSettings = { configured: true }
-  const HIDDEN: JevSettings = { configured: false }
+  // AMENDED for the #509 follow-up: `preferences` is now a required part of
+  // JevSettings, so these fixtures carry the documented default. No
+  // assertion below changed.
+  const READY: JevSettings = { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+  const HIDDEN: JevSettings = { configured: false, preferences: DEFAULT_JEV_PREFERENCES }
   const UNAVAILABLE: JevSettings = {
     configured: false,
-    unavailableReason: 'encryption-unavailable'
+    unavailableReason: 'encryption-unavailable',
+    preferences: DEFAULT_JEV_PREFERENCES
   }
 
   const jevOn = () => toggleJev(setJevSettings(opened(), READY))
