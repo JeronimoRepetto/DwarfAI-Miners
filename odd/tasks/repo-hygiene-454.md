@@ -89,10 +89,29 @@ what CI runs; activating the hook in this shared `.git` during the session (see 
         `sh scripts/git-hooks/pre-commit` → exit 0 ("All matched files use Prettier code style!").
       - Cleanup: `git restore --staged scratch-hook-test.ts` then deleted the file; tree clean.
 
-      Commit: TBD (recorded after commit below).
-- [ ] **T2 — Delete `currentMaterialRow` and its four tests.** Route: delegated (same writer).
-      Remove the function and its comment from `vault.ts`, the import and the `describe` block from
-      `vault.test.ts`. Census before → after (exactly −4). Commit body names the four tests.
+      Commit: `665bc98` — `chore(hooks): refuse a commit with an unformatted staged file, locally (#454)`.
+- [x] **T2 — Delete `currentMaterialRow` and its four tests.** Route: direct inline (deletion plus
+      one import fix in two already-understood files; TDD inapplicable per Constraints).
+      Removed the function, its doc comment, and the now-unused `MineTier` import from `vault.ts`;
+      removed the `currentMaterialRow` import and the `describe('currentMaterialRow', …)` block from
+      `vault.test.ts`, replaced with a test-safety removal note (matching the `oreCount`/
+      `TOKENS_PER_ORE` precedent in `economy.test.ts`) naming why and where the surviving coverage
+      (`vaultRows`) lives. `rg currentMaterialRow src` still matches that one prose comment — no
+      functional/import reference remains, which is the same shape as the existing `oreCount`/
+      `TOKENS_PER_ORE` mentions the census tool's own skill treats as correct.
+
+      Census (`node skills/test-safety/assets/test-census.mjs`, working tree vs HEAD):
+      `src/renderer/src/lib/vault/vault.test.ts` 17 → 13, delta −4. The four removed tests:
+      1. "returns the row for the mine's current tier once it has reached a whole unit"
+      2. "returns undefined once the current tier has not reached a whole unit yet, even with
+         older materials in the ledger"
+      3. "treats an absent breakdown as nothing mined"
+      4. "returns only the current tier's own row, never a total across materials"
+
+      `pnpm vitest run src/renderer/src/lib/vault/vault.test.ts` → 13 passed, 0 failed.
+      `pnpm typecheck:web` → clean. `pnpm exec eslint vault.ts vault.test.ts` → no issues.
+
+      Commit: `TBD`.
 - [ ] **T3 — One rule for tests that cross the process boundary, and three tests that follow it.**
       Route: delegated (same writer). In `AGENTS.md`'s "Boundaries that must survive": a test file
       may import across main ↔ renderer only to pin a deliberate copy equal, with a comment naming
