@@ -27,10 +27,29 @@
  *   open composition — the end of the shell the fold clips away — so a strip of
  *   exactly the right width cut the rail out and reached a padding and a gap
  *   past the panel that was leaving. The rail therefore travels with the fold,
- *   to the place the row is about to put it, and `foldedRailOffset` is where
+ *   to the place the row is about to put it, and `foldedColumnOffset` is where
  *   that is. Which is also the one thing the window may not do for it: a resize
  *   removes pixels from an EDGE, and the rail is painted inside the band about
  *   to go, so it has to be out of that band before main shrinks.
+ *
+ * A fourth rule, added for #566 T5b: the rail is not the only column that can
+ * stand on the free side of one that leaves or enters. It is the only one
+ * that ALWAYS does — every open composition draws it there — but the mine
+ * column dock on the FAR side of the secondary panel and the navigation
+ * stack, so when the mine is what leaves or enters, THEY stand free of it
+ * too. The comment this replaces claimed the rail was the only column ever
+ * on that side; it was true only for a secondary-panel leave, the one case
+ * #464 had evidence for, and it read the mine column closing as the
+ * secondary panel animating instead — the ground clipped a band under
+ * columns nothing was carrying, the mine stayed painted over it, and only
+ * the resize that followed a whole IPC round trip later corrected the
+ * picture, which is the blink. `foldedColumnOffset`, below, answers "where
+ * does THIS column come to rest" for any of them, not only the rail — and
+ * the leaving or entering column itself gets a clip of its own
+ * (`columnFoldClip`, `columnSlideKeyframes`) for the same reason the ground
+ * does: it is not free of the box it is vacating or about to fill, so its
+ * own travel has to stay inside that box rather than paint over whatever the
+ * row has drawn beside it.
  */
 import type { DOMKeyframesDefinition } from 'motion-v'
 import type { ShellComposition } from './composition'
@@ -91,64 +110,127 @@ export function foldedShellWidth(shell: {
 }
 
 /**
- * Where the rail comes to rest, measured from the DOCKED edge (#464).
+ * Where a carried column comes to rest, measured from the DOCKED edge (#464,
+ * generalized #566 T5b).
  *
  * The docked edge is the one main never moves, so it is the only thing a
  * position may be stated against — the free edge is by definition the one that
- * is about to be somewhere else. Everything on the free side of a leaving
- * column slides over when it goes, and the rail is the only column that is ever
- * on that side, which makes this the whole of the row's rearrangement.
+ * is about to be somewhere else. Everything on the free side of a leaving or
+ * entering column slides over when it goes or arrives; `before` is every OTHER
+ * surviving column standing between THIS one and the free edge, in free-to-
+ * docked order, so the rail's own call (`before: []`, the whole of #464's
+ * answer) and a secondary panel's or the navigation stack's own call (one or
+ * two widths ahead of it) share one formula rather than two that happen to
+ * agree when there is nothing ahead.
  *
  * `padding` goes with the open compositions exactly as it does above: the bare
  * rail is docked by `.shell.is-rail { justify-content: flex-end }` with no
  * ground and no padding around it, so it ends flush against the edge itself.
  */
-export function foldedRailOffset(shell: {
+export function foldedColumnOffset(shell: {
   /** The strip the fold ends on, from `foldedShellWidth`. */
   kept: number
-  /** The rail's own width. */
-  rail: number
+  /** Every surviving column standing between this one and the free edge. */
+  before: readonly number[]
+  /** `--space-nav-gap`, spent between every pair of surviving columns. */
+  gap: number
+  /** This column's own width. */
+  own: number
   /** The shell's own padding, which only the open compositions reserve. */
   padding: number
   /** The composition that will stand once the fold has finished. */
   remaining: ShellComposition
 }): number {
   const padding = shell.remaining === 'rail' ? 0 : shell.padding
-  return Math.max(0, shell.kept - padding - shell.rail)
+  const clearedFree = shell.before.reduce(
+    (width, column) => width - column - shell.gap,
+    shell.kept - padding
+  )
+  return Math.max(0, clearedFree - shell.own)
 }
 
 /**
- * The rail's travel, mirrored on `edge` — travelling toward the docked side is
- * travelling the other way on a left-docked shell. Shared by `railFoldTransform`
- * (the inline style `place` writes) and `railFoldKeyframes` (the motion-v `x`
- * shortcut this file hands the runner), so the two can never mirror the sign
- * differently from each other.
+ * A carried column's travel, mirrored on `edge` — travelling toward the docked
+ * side is travelling the other way on a left-docked shell (#464, generalized
+ * #566 T5b: was named for the rail alone, which is one carried column among
+ * now several). Shared by `columnFoldTransform` (the inline style `place`
+ * writes) and `columnFoldKeyframes` (the motion-v `x` shortcut this file
+ * hands the runner), so the two can never mirror the sign differently from
+ * each other.
  */
-export function railFoldOffset(travel: number, edge: PanelEdge): number {
+export function mirrorTravel(travel: number, edge: PanelEdge): number {
   return edge === 'right' ? travel : -travel
 }
 
 /**
- * The rail's travel, as the transform it is left holding.
+ * A carried column's travel, as the transform it is left holding.
  *
  * A transform because it is a compositor property, which is the same rule the
  * clip is chosen under: the mine interior re-measures its anchors from the box
  * it is given, and the fold exists to leave that box alone until main resizes
  * the window around it.
  */
-export function railFoldTransform(travel: number, edge: PanelEdge): string {
-  return `translateX(${railFoldOffset(travel, edge)}px)`
+export function columnFoldTransform(travel: number, edge: PanelEdge): string {
+  return `translateX(${mirrorTravel(travel, edge)}px)`
 }
 
 /**
- * The rail's travel from where it is now to where the change leaves it, in
- * motion-v's own shape: `x` is its transform shortcut, driven as a plain
- * number rather than the CSS string `railFoldTransform` writes inline.
+ * A carried column's travel from where it is now to where the change leaves
+ * it, in motion-v's own shape: `x` is its transform shortcut, driven as a
+ * plain number rather than the CSS string `columnFoldTransform` writes
+ * inline.
  */
-export function railFoldKeyframes(
+export function columnFoldKeyframes(
   from: number,
   to: number,
   edge: PanelEdge
 ): DOMKeyframesDefinition {
-  return { x: [railFoldOffset(from, edge), railFoldOffset(to, edge)] }
+  return { x: [mirrorTravel(from, edge), mirrorTravel(to, edge)] }
+}
+
+/**
+ * The clip that keeps a leaving or entering column's own vanishing point
+ * pinned at its DOCKED-side edge while it travels (#566 T5b: the maintainer's
+ * own drawing — a drawer sliding into a wall, not a panel fading beside one).
+ *
+ * A carried column (the rail, or a secondary panel and navigation stack
+ * carried by a mine closing beside them) is free of the box it stood in: it
+ * has nowhere of its own to be clipped against, and `columnFoldTransform`
+ * alone is the whole of its motion. The column that is actually leaving or
+ * entering is not free of that box — it is still laid out inside it, un-
+ * shrunk, until main answers — so sliding it with nothing else changed would
+ * paint it over whatever the row has drawn beside it, or past the window's
+ * own edge, for as long as the run takes.
+ *
+ * `travel` is read in the element's OWN local coordinates, insetting exactly
+ * that many pixels off the DOCKED-side edge of its box — never a percentage:
+ * `shellFoldClip`'s `calc(100% - …)` is stated against the SHELL's box
+ * because the window resizes under that animation, and a column's own box
+ * never does (`transform` is a paint-time operation; it cannot re-layout the
+ * flex item it is applied to). Composed with the transform of the same
+ * distance, the visible sliver stays pinned at the column's own original
+ * docked-side edge and narrows away from the free-side edge as `travel`
+ * grows — the "wall" in the drawing is that docked-side edge, fixed, and the
+ * content slides toward and behind it rather than being clipped uniformly.
+ */
+export function columnFoldClip(travel: number, edge: PanelEdge): string {
+  const inset = `${Math.max(0, travel)}px`
+  return edge === 'right' ? `inset(0px ${inset} 0px 0px)` : `inset(0px 0px 0px ${inset})`
+}
+
+/**
+ * The leaving or entering column's OWN motion: `columnFoldKeyframes`'s travel,
+ * carrying `columnFoldClip` along on the SAME two keyframes, so one
+ * `animate()` call drives both compositor properties in lockstep and neither
+ * can finish or watchdog-end ahead of the other (#566 T5b).
+ */
+export function columnSlideKeyframes(
+  from: number,
+  to: number,
+  edge: PanelEdge
+): DOMKeyframesDefinition {
+  return {
+    ...columnFoldKeyframes(from, to, edge),
+    clipPath: [columnFoldClip(from, edge), columnFoldClip(to, edge)]
+  }
 }

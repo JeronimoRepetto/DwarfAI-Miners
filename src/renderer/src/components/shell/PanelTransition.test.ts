@@ -40,11 +40,18 @@ function occlude(hidden: boolean): void {
  * column — main resizing the window is a whole IPC round trip after the fold
  * ends, and the row may not repack inside the old rectangle in between.
  */
+/*
+ * AMENDED for #566 T5b with `holdEnter`, optional and last for the same
+ * reason `watchable` is: the mirror of `hold` for a column ENTERING, so a
+ * test can prove it is asked and prove `done` never waits on it — every case
+ * above this one is untouched.
+ */
 function harness(
   reduced = false,
   axis?: 'horizontal' | 'vertical',
   hold?: (column: HTMLElement) => ShellFoldHold | null,
-  watchable = true
+  watchable = true,
+  holdEnter?: (column: HTMLElement) => void
 ) {
   const media = new EventTarget() as MediaQueryList
   Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
@@ -92,6 +99,7 @@ function harness(
             {
               axis,
               hold,
+              holdEnter,
               engine: animate as unknown as MotionAnimate,
               onLeave: (leave: Promise<void>) => leaves.push(leave)
             },
@@ -401,5 +409,41 @@ describe('PanelTransition', () => {
     test.wrapper.unmount()
     await test.leaves[0]
     expect(test.animations[1]!.cancel).toHaveBeenCalledOnce()
+  })
+
+  /*
+   * ADDED for #566 T5b. The mirror of "lets the shell’s own fold be the
+   * motion of a column that has none": an entering held column has no motion
+   * of ITS OWN either, but unlike a leaving one it is not held past `done` —
+   * there is nothing to unmount and nothing a shrink needs to wait on, so
+   * `holdEnter` is asked and `done` fires at once regardless of what it does.
+   */
+  it('hands an entering held column to the shell’s own fold, without waiting on it', async () => {
+    const entered: HTMLElement[] = []
+    const test = harness(
+      false,
+      undefined,
+      () => null,
+      true,
+      (column) => {
+        entered.push(column)
+      }
+    )
+    test.shown.value = true
+    await nextTick()
+    expect(entered).toHaveLength(1)
+    expect(entered[0]).toBe(test.wrapper.find('div').element)
+    expect(test.animate).not.toHaveBeenCalled()
+    expect(test.wrapper.find('div').exists()).toBe(true)
+    test.wrapper.unmount()
+  })
+
+  it('mounts a held column at once when no holdEnter is given for it', async () => {
+    const test = harness(false, undefined, () => null)
+    test.shown.value = true
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(true)
+    expect(test.animate).not.toHaveBeenCalled()
+    test.wrapper.unmount()
   })
 })
