@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { motion } from 'motion-v'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import {
   COMMAND_PLACEHOLDER,
   COMPOSER_DISABLED_PLACEHOLDER,
@@ -1094,5 +1096,53 @@ describe('the Jev option', () => {
       expect(wrapper.emitted('toggle-jev-auto')).toHaveLength(1)
       expect(wrapper.emitted('toggle-jev')).toBeUndefined()
     })
+  })
+})
+
+/*
+ * ADDED for #566 T4: the launch panel's chips and its close answer a pointer
+ * through the shared vocabulary. The chips are the "profile chips" the task
+ * names - one per launchable provider, plus Other - and they are the first
+ * thing anyone opening this panel aims at.
+ *
+ * Spelled out rather than counted, so a control added later without feedback
+ * fails here.
+ */
+describe('AddPanel press and hover feedback', () => {
+  it('routes the close and every provider chip through motion.button with the shared variants', () => {
+    const wrapper = panel()
+    const controls = wrapper.findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual([
+      'launch-close',
+      ...wrapper.findAll('.provider-chip').map(() => 'provider-chip')
+    ])
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  it('leaves the chips and the close with the tag, state and press they had', async () => {
+    const wrapper = panel({ chosen: 'claude' })
+
+    const close = wrapper.get('.launch-close')
+    expect(close.element.tagName).toBe('BUTTON')
+    expect(close.attributes('type')).toBe('button')
+    expect(close.attributes('aria-label')).toBe('Close the launch panel')
+    await close.trigger('click')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+
+    const chips = wrapper.findAll('.provider-chip')
+    expect(chips.length).toBeGreaterThan(0)
+    for (const chip of chips) {
+      expect(chip.element.tagName).toBe('BUTTON')
+      expect(chip.attributes('aria-pressed')).toBeDefined()
+      expect(chip.attributes('data-state')).toBeDefined()
+    }
+    expect(chips.filter((chip) => chip.attributes('aria-pressed') === 'true')).toHaveLength(1)
+
+    await chips[0]!.trigger('click')
+    expect(wrapper.emitted('choose')).toHaveLength(1)
   })
 })

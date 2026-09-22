@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { motion } from 'motion-v'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 import WorktreeFoldModal from './WorktreeFoldModal.vue'
 
 const WORKTREE_OF = {
@@ -96,5 +96,56 @@ describe('WorktreeFoldModal', () => {
     expect(root.props('initial')).toEqual(popVariants.initial)
     expect(root.props('animate')).toEqual(popVariants.animate)
     expect(root.props('exit')).toEqual(popVariants.exit)
+  })
+})
+
+/*
+ * ADDED for #566 T4: all three buttons answer a pointer through the shared
+ * vocabulary. Named rather than counted, so a fourth added later without
+ * feedback fails here.
+ */
+describe('WorktreeFoldModal press and hover feedback', () => {
+  it('routes all three buttons through motion.button carrying the shared variants', () => {
+    const controls = modal().findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual([
+      'modal-close',
+      'modal-open',
+      'modal-cancel'
+    ])
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  it('leaves all three as they were - tag, name, and the refusal while adding', () => {
+    const wrapper = modal({ adding: true })
+
+    const close = wrapper.get('.modal-close')
+    expect(close.element.tagName).toBe('BUTTON')
+    expect(close.attributes('aria-label')).toBe('Close')
+
+    expect(wrapper.get('.modal-open').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.modal-cancel').element.tagName).toBe('BUTTON')
+  })
+})
+
+/*
+ * ADDED for the #566 T4 follow-up: Open is disabled while the add is in flight,
+ * and a control that refuses a press must not answer a hover either.
+ */
+describe('WorktreeFoldModal withholds the gesture from a disabled control', () => {
+  it('gives Open no press or hover while the add is in flight', () => {
+    const wrapper = modal({ adding: true })
+    const open = wrapper
+      .findAllComponents(motion.button)
+      .find((control) => control.classes().includes('modal-open'))!
+
+    expect(open.attributes('disabled')).toBeDefined()
+    expect(open.props('whileHover')).toBeUndefined()
+    expect(open.props('whilePress')).toBeUndefined()
+    // Cancel stays live: it is how the dialog is left while the work runs.
+    expect(wrapper.get('.modal-cancel').attributes('disabled')).toBeUndefined()
   })
 })

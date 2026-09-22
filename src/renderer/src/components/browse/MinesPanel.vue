@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { AnimatePresence } from 'motion-v'
+import { AnimatePresence, motion } from 'motion-v'
 import { ADD_ICON_SRC, INFO_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { browseRows } from '../../lib/browse/boardRows'
+import { pressHoverUnless, pressHoverVariants } from '../../lib/shell/presence'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type {
   Mine,
@@ -167,11 +168,12 @@ onBeforeUnmount(stopWatching)
         to stay stable for anyone navigating by it, and the title is what says
         which way the list currently runs (the same split the pin button uses).
       -->
-      <button
+      <motion.button
         class="sort-control"
         type="button"
         aria-label="Order by last activity"
         :title="sortLabel"
+        v-bind="pressHoverVariants"
         @click="emit('toggle-direction')"
       >
         <span
@@ -179,18 +181,19 @@ onBeforeUnmount(stopWatching)
           :style="{ '--control-icon': maskImageValue(SORT_ICON_SRC) }"
           aria-hidden="true"
         ></span>
-      </button>
+      </motion.button>
       <!--
         Adopt a folder as a mine (#85). Main opens the OS picker itself, so
         this asks and names no path; it is disabled while that picker is up,
         because it is modal there and a queued second one would reopen it.
       -->
-      <button
+      <motion.button
         class="add-control"
         type="button"
         aria-label="Add a project"
         title="Add a project folder"
         :disabled="adding"
+        v-bind="pressHoverUnless(adding)"
         @click="emit('add')"
       >
         <!--
@@ -203,22 +206,23 @@ onBeforeUnmount(stopWatching)
           :style="{ '--control-icon': maskImageValue(ADD_ICON_SRC) }"
           aria-hidden="true"
         ></span>
-      </button>
+      </motion.button>
     </header>
     <!-- The accent rule the mock draws under the header, above the chips. -->
     <div class="header-divider" aria-hidden="true"></div>
     <div class="tier-chips" role="group" aria-label="Filter by mine type">
-      <button
+      <motion.button
         v-for="chip in TIER_CHIPS"
         :key="chip.label"
         class="tier-chip"
         :class="{ 'is-selected': chip.tier === tier }"
         type="button"
         :aria-pressed="chip.tier === tier ? 'true' : 'false'"
+        v-bind="pressHoverVariants"
         @click="emit('tier', chip.tier)"
       >
         {{ chip.label }}
-      </button>
+      </motion.button>
     </div>
     <div class="panel-list">
       <!--
@@ -296,16 +300,17 @@ onBeforeUnmount(stopWatching)
       The two popups answer the same kind of question, so they are one control
       drawn twice — see `.mines-info` below, which carries MapView's geometry.
     -->
-    <button
+    <motion.button
       class="mines-info"
       type="button"
       aria-label="Tier thresholds"
       title="Tier thresholds"
       :style="{ '--info-icon': maskImageValue(INFO_ICON_SRC) }"
+      v-bind="pressHoverVariants"
       @click="showTierInfoModal = true"
     >
       <span class="mines-info-glyph" aria-hidden="true"></span>
-    </button>
+    </motion.button>
     <AnimatePresence>
       <TierInfoModal v-if="showTierInfoModal" @close="showTierInfoModal = false" />
     </AnimatePresence>

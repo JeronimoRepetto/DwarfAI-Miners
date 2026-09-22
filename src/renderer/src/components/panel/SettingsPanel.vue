@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { motion } from 'motion-v'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
@@ -10,6 +11,7 @@ import type {
   ShortcutState,
   TypographyPreferences
 } from '../../types'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
 import JevSettings from './JevSettings.vue'
@@ -206,24 +208,26 @@ const resetModalOpen = ref(false)
     <section class="application-settings">
       <span class="field-label">Application</span>
       <div class="application-controls">
-        <button
+        <motion.button
           class="pin"
           type="button"
           aria-label="Keep panel on top"
           :aria-pressed="pinned ? 'true' : 'false'"
           :title="pinTooltip"
+          v-bind="pressHoverVariants"
           @click="emit('toggle-pin')"
         >
           Always on top
-        </button>
-        <button
+        </motion.button>
+        <motion.button
           class="hide-panel"
           type="button"
           title="Hide the panel; the shortcut or the tray brings it back"
+          v-bind="pressHoverVariants"
           @click="emit('hide-panel')"
         >
           Hide panel
-        </button>
+        </motion.button>
         <span v-if="versionText" class="version" :title="versionHint">{{ versionText }}</span>
       </div>
     </section>
