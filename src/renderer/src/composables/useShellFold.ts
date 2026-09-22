@@ -131,6 +131,28 @@ export interface ShellFoldOptions {
    */
   carried?: () => (HTMLElement | null)[]
   /**
+   * Whether main is still answering a layout request (#585 round 2).
+   *
+   * The renderer cannot be told when the native window is resized, and the
+   * two things it CAN observe of a grow arrive in either order: the browser's
+   * own `resize`, and Vue mounting the columns the same request brings. A
+   * mechanism trace of the merged fix measured the resize first every time
+   * the shell opens from the bare rail — 3.4ms against 24.4ms cold, 1.6
+   * against 7.6 warm — so the unfold ran with nothing to reveal, while a mine
+   * opening beside an open page measured the other order (30.6 against 35.7)
+   * and worked. Nothing queued anywhere can bridge that: the columns are not
+   * in any queue yet.
+   *
+   * This is the half that says "not yet". While it answers true the unfold is
+   * refused, and a settle consumes nothing on its way past, so the footprint
+   * the unfold has to start from survives. `usePanelLayout.send` holds it for
+   * exactly one request, in a `finally`, so a request that breaks mid-flight
+   * still clears it and the `sync()` that follows settles the fold again.
+   * Optional and defaulted to open, so a caller with no layout queue of its
+   * own — a test harness among them — is untouched.
+   */
+  applying?: () => boolean
+  /**
    * The engine `createBoundedMotion` runs, for a test to hand in a
    * hand-written fake — production never sets this, and gets the real
    * motion-v import (#566).
@@ -799,18 +821,21 @@ export function useShellFold(options: ShellFoldOptions) {
    * leave in a patch, for the same reason with the sign reversed. Vue puts
    * App.vue's `flush: 'post'` watch and a `<Transition>`'s own enter hook in
    * the SAME post-flush queue and sorts it by id — the watch carries its
-   * component's, an enter hook is an anonymous callback with none — so
-   * `settle` is always asked first and `enter` always registers afterwards.
-   * Unfolding where it was asked therefore revealed the ground with `entering`
-   * still empty, every later settle bounced off `motion.running(shell)` for
-   * the 300ms that took, and the content only arrived on the drain at the end
-   * of it: two sequential runs, and 936px of bare amber in between, measured
-   * live.
+   * component's, an enter hook is an anonymous callback with none — so within
+   * one flush `settle` is always asked first and `enter` always registers
+   * afterwards, and this microtask is what lets the unfold see both. Vue's
+   * flush — patch, refs, watches and enter hooks alike — is one synchronous
+   * job, so this lands after all of it and before the browser has painted
+   * anything. Idempotent, because both `settle` and `enter` ask and either
+   * may be first.
    *
-   * A microtask and not a frame or a timer: Vue's flush — patch, refs, watches
-   * and enter hooks alike — is one synchronous job, so this lands after all of
-   * it and before the browser has painted anything. Idempotent, because both
-   * `settle` and `enter` ask and either may be first.
+   * That ordering is real, and it is NOT what beat the shell opening from the
+   * bare rail (#585 round 2): there the first settle comes from the native
+   * `resize`, a whole tick before Vue is told anything at all, and no
+   * microtask can wait behind columns that are not in any queue yet. The
+   * unfold is refused outright while the request that brings them is in
+   * flight — see `applying` on `ShellFoldOptions`, and `unfold` below, which
+   * is where the two halves finally meet.
    */
   function armUnfold(): void {
     if (unfoldQueued) return
@@ -844,6 +869,13 @@ export function useShellFold(options: ShellFoldOptions) {
   function unfold(): void {
     const shell = options.shell()
     if (shell === null || motion.running(shell)) return
+    // Main has not finished answering, so the columns this change brings are
+    // not mounted yet and the ground would be revealed with nothing on it
+    // (#585 round 2). Refused rather than rescheduled: the settle that armed
+    // this consumed nothing, so the footprint is intact, and the same request
+    // reassigns `visibleLayout` on every path it can end on — which settles
+    // the fold again, after the patch that mounts them.
+    if (options.applying?.() === true) return
     const width = shell.getBoundingClientRect().width
     const pending = unfoldable(shell, width)
     if (pending === null) return

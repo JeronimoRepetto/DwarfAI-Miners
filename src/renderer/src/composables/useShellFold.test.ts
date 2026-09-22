@@ -127,7 +127,15 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
      * stack too sets these to real elements first.
      */
     secondary: null as HTMLElement | null,
-    nav: null as HTMLElement | null
+    nav: null as HTMLElement | null,
+    /*
+     * ADDED for #585 round 2, `false` by default so every case above is
+     * untouched: whether main is still answering a layout request. The
+     * renderer's own `resize` can land a whole tick before Vue mounts the
+     * columns that same request brings, and an unfold measured there reveals
+     * the ground with nothing on it.
+     */
+    applying: false
   }
   let fold!: ReturnType<typeof useShellFold>
   const wrapper = mount(
@@ -139,6 +147,7 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
           remaining: () => state.remaining,
           rail: () => state.rail,
           carried: () => [state.secondary, state.nav],
+          applying: () => state.applying,
           engine: engine.animate
         })
         return () => h('div')
@@ -1261,6 +1270,54 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
       clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2, from the mechanism trace of the merged fix. A is
+   * still two runs, and the microtask cannot help it: the native `resize`
+   * lands BEFORE Vue mounts the entering columns (3.4ms against 24.4ms cold,
+   * 1.6 against 7.6 warm), so `caughtUp` unfolds with `entering` empty and
+   * there is nothing queued anywhere for a microtask to wait behind. B and E
+   * only work because there the mount happens to land first (30.6 against
+   * 35.7).
+   *
+   * So the unfold waits on BOTH, whichever arrives last: main having finished
+   * answering, and the columns of that answer having registered. While the
+   * request is in flight nothing is unfolded AND nothing is consumed — the
+   * footprint the unfold must start from is the one from before the grow, and
+   * a settle that wrote the new width over it would leave the ground with
+   * nothing left to reveal.
+   */
+  it('waits for main to finish answering before unfolding, even when the resize lands first', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.state.secondary = carriedColumn(36, 555)
+    test.state.nav = carriedColumn(599, 38)
+    test.fold.settle(false)
+    // The request goes out, and main resizes the native window synchronously
+    // inside its own handler: the renderer sees the resize long before Vue
+    // has been told anything.
+    test.state.applying = true
+    test.state.shell = sized(test.shell, 1001)
+    window.dispatchEvent(new Event('resize'))
+    await settled()
+    expect(test.animations).toHaveLength(0)
+    // Main answers; Vue mounts the arriving column and settles in the same
+    // flush, and the unfold is measured on the microtask after it.
+    test.state.applying = false
+    const mine = placed(test.column(348), 645, 348)
+    test.fold.enter(mine)
+    test.fold.settle(false)
+    await settled()
+    expect(test.animations).toHaveLength(1)
+    // From the footprint the shell had BEFORE the grow — proof that the
+    // gated settle consumed nothing on its way past.
+    expect(clipFrames(test.animations[0]!.keyframes)[0]).toBe(
+      'inset(0px 0px 0px calc(100% - 645px) round 12px)'
+    )
+    expect(test.animationsFor(mine)).toHaveLength(1)
+    expect(test.railAnimations).toHaveLength(1)
     test.wrapper.unmount()
   })
 
