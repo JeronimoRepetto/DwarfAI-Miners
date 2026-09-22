@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { AnimatePresence, motion } from 'motion-v'
 import {
   ATTACH_ICON_SRC,
   BOOST_ICON_SRC,
@@ -35,6 +36,7 @@ import {
   latestText
 } from '../../lib/message/conversation'
 import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
+import { tailArrivals } from '../../lib/message/entryArrival'
 import { isOpenablePath } from '../../lib/message/openablePath'
 import { turnOutcomeLine } from '../../lib/message/turnOutcome'
 import { dwarfWorkplaceLabel } from '../../lib/worktree'
@@ -52,6 +54,7 @@ import {
   clampPanelHeight,
   initialPanelHeight
 } from '../../lib/message/panelHeight'
+import { fadeVariants } from '../../lib/shell/presence'
 import {
   maxTextCharsFor,
   messageTooLongReason,
@@ -526,6 +529,53 @@ const entries = computed(() =>
 )
 
 /*
+ * Which message rows get the shared entrance on THIS render (#566 T4b) — a
+ * genuine arrival at the tail, never the rows the reader was already looking
+ * at. Seeded from the entries this instance already holds at setup, so an
+ * ordinary mount (the shape a dwarf switch's own `:key` remount takes) reads
+ * as "nothing new" from the very first render, the same cut `entryArrival.ts`
+ * documents for AnimatePresence's own pre-mount `initial="false"` — this is
+ * the belt to that suspenders, load-bearing for every render after mount,
+ * where AnimatePresence's context no longer applies.
+ *
+ * `rowsWerePrepended` guards `tailArrivals` here rather than being folded
+ * into it: `panelMessagesOf` bakes each row's own ARRAY INDEX into its key
+ * (`${from}-${index}-${timestamp}`, `conversation.ts`), so a page paged in
+ * ahead of the reader (#430) reindexes — and so renames — every key that
+ * follows it. Read as plain strings, that looks exactly like "every row is a
+ * stranger", which is indistinguishable from a wholesale swap by key
+ * comparison alone (the same blind spot `entryArrival.ts`'s own header names).
+ * `rowsWerePrepended` already exists to tell the two apart correctly (it
+ * drives the scroll-preserving watch below), so a prepend is read off THAT
+ * rather than re-guessed from `entry.key`.
+ *
+ * Two plain outer `let`s rather than a second `ref` each, the same idiom
+ * `pendingStickToBottom`/`scrollHeightBeforePatch` below already use: nothing
+ * here is read by the template, so only `arrivedKeys` itself needs to be
+ * reactive.
+ */
+let previousRowsForArrival = rows.value
+let previousEntryKeys = entries.value.map((entry) => entry.key)
+const arrivedKeys = ref<ReadonlySet<string>>(new Set())
+
+watch(
+  entries,
+  (next) => {
+    const nextKeys = next.map((entry) => entry.key)
+    const paged = rowsWerePrepended(previousRowsForArrival, rows.value)
+    arrivedKeys.value = paged ? new Set() : tailArrivals(previousEntryKeys, nextKeys)
+    previousRowsForArrival = rows.value
+    previousEntryKeys = nextKeys
+  },
+  { flush: 'pre' }
+)
+
+/** `false` skips a motion row's own mount transition; see `arrivedKeys` above. */
+function rowInitial(key: string): typeof fadeVariants.initial | false {
+  return arrivedKeys.value.has(key) ? fadeVariants.initial : false
+}
+
+/*
  * Which runs this reader has unfolded, by group key — per group, and per MOUNT
  * for the reason the opening height is taken once: closing the panel and
  * opening it again is a fresh mount and therefore a fresh reading, and a run
@@ -914,8 +964,25 @@ function onKick(): void {
         />
         <p class="panel-empty">{{ conversation.note }}</p>
       </article>
-      <template v-for="entry in entries" :key="entry.key">
-        <!--
+      <!--
+        The shared entrance (#566 T4b): a message row arriving after this
+        panel mounted gets `presence.ts`'s own `fadeVariants` (opacity only —
+        a `y` offset would shift `scrollHeight` mid-animation, and the
+        scroll-to-bottom rule below has to land on the newest row once the
+        entrance settles). `initial="false"` here is belt-and-suspenders
+        beside `rowInitial`: it stops the WHOLE conversation animating in on
+        the very first render (a dwarf switch's own `:key` remount takes
+        this shape), while `rowInitial` — seeded the same way, and load-
+        bearing for every render after — is what also keeps a page paged in
+        ahead of the reader (#430) from stagger-animating in. Activity rows
+        are untouched: they are not `motion.*`, so `AnimatePresence` wrapping
+        them here is a harmless no-op for their own open/collapse toggle
+        (`use-presence-container.mjs`'s `enter`/`exit` resolve at once for an
+        element carrying no motion state).
+      -->
+      <AnimatePresence :initial="false">
+        <template v-for="entry in entries" :key="entry.key">
+          <!--
           AMENDED for #294 (was: one line per tool call, always drawn). A run of
           consecutive tool calls is now ONE disclosure row under the bubble it
           follows, closed on arrival — an agent acts far more often than it
@@ -927,66 +994,69 @@ function onKick(): void {
           design's own history-tab affordance reused rather than an icon
           invented for it (`screens/mine.md`'s #294 amendment).
         -->
-        <template v-if="entry.kind === 'activity'">
-          <button
-            type="button"
-            class="activity-disclosure"
-            :class="{ 'is-open': isRunOpen(entry.key) }"
-            :aria-expanded="isRunOpen(entry.key)"
-            :title="entry.label"
-            @click="toggleRun(entry.key)"
-          >
-            <span class="disclosure-arrow" aria-hidden="true"></span>
-            <span class="disclosure-label">{{ entry.label }}</span>
-          </button>
-          <!--
+          <template v-if="entry.kind === 'activity'">
+            <button
+              type="button"
+              class="activity-disclosure"
+              :class="{ 'is-open': isRunOpen(entry.key) }"
+              :aria-expanded="isRunOpen(entry.key)"
+              :title="entry.label"
+              @click="toggleRun(entry.key)"
+            >
+              <span class="disclosure-arrow" aria-hidden="true"></span>
+              <span class="disclosure-label">{{ entry.label }}</span>
+            </button>
+            <!--
             One tool call, drawn as a line rather than a turn (#240): the
             design's own summary rule spoken in the past tense, in the panel's
             muted meta ink, with no icon, no bubble surface and no portrait.
           -->
-          <!--
+            <!--
             AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
             FILE, so it draws as a button styled as text rather than an anchor
             (`screens/mine.md`'s own amendment: keyboard reachable, same ink,
             underline only on hover/focus) — `run` and `search` stay the plain
             paragraph #240 drew.
           -->
-          <template v-if="isRunOpen(entry.key)">
-            <template v-for="line in entry.rows" :key="line.key">
-              <button
-                v-if="line.activity && isOpenablePath(line.activity)"
-                type="button"
-                class="activity-line is-openable"
-                :title="line.text"
-                @click="emit('open-path', line.activity.target)"
-              >
-                {{ line.text }}
-              </button>
-              <p v-else class="activity-line" :title="line.text">{{ line.text }}</p>
+            <template v-if="isRunOpen(entry.key)">
+              <template v-for="line in entry.rows" :key="line.key">
+                <button
+                  v-if="line.activity && isOpenablePath(line.activity)"
+                  type="button"
+                  class="activity-line is-openable"
+                  :title="line.text"
+                  @click="emit('open-path', line.activity.target)"
+                >
+                  {{ line.text }}
+                </button>
+                <p v-else class="activity-line" :title="line.text">{{ line.text }}</p>
+              </template>
             </template>
           </template>
-        </template>
-        <article
-          v-else
-          class="message"
-          :class="entry.message.from === 'agent' ? 'is-agent' : 'is-user'"
-        >
-          <!--
+          <motion.article
+            v-else
+            class="message"
+            :class="entry.message.from === 'agent' ? 'is-agent' : 'is-user'"
+            :initial="rowInitial(entry.key)"
+            :animate="fadeVariants.animate"
+            :exit="fadeVariants.exit"
+          >
+            <!--
             Whose face this is, from lib/message/conversation (#175). A prompt an
             agent issued is drawn as that agent — its rank picks the portrait and
             its name is the alt text and the tooltip, because the design draws no
             per-message label and inventing chrome the source does not specify is
             the one thing `ui-rebuild` refuses.
           -->
-          <img
-            v-if="entry.message.from === 'agent'"
-            class="portrait"
-            :src="PORTRAIT_SRC[entry.message.author.role]"
-            :alt="`${entry.message.author.name}, ${entry.message.author.role}`"
-            :title="`${entry.message.author.name}, ${entry.message.author.role}`"
-            draggable="false"
-          />
-          <!--
+            <img
+              v-if="entry.message.from === 'agent'"
+              class="portrait"
+              :src="PORTRAIT_SRC[entry.message.author.role]"
+              :alt="`${entry.message.author.name}, ${entry.message.author.role}`"
+              :title="`${entry.message.author.name}, ${entry.message.author.role}`"
+              draggable="false"
+            />
+            <!--
             The bubble is the one surface here that is PROSE (#347): an agent
             writes Markdown, and showing the delimiters was showing the ink
             rather than the writing. The component builds vnodes from a tree
@@ -998,12 +1068,12 @@ function onKick(): void {
             that renders half its conversation would make the same words look
             like two different kinds of message.
           -->
-          <MarkdownBubble
-            class="bubble"
-            :text="entry.message.text"
-            @open-link="emit('open-link', $event)"
-          />
-          <!--
+            <MarkdownBubble
+              class="bubble"
+              :text="entry.message.text"
+              @open-link="emit('open-link', $event)"
+            />
+            <!--
             The verdict of a message this panel sent, beside the words it is
             about (#309). Drawn only on an echo: a row read off a transcript is
             a message the session HAS, and a tick on it would be an unfounded
@@ -1015,53 +1085,54 @@ function onKick(): void {
             keeps its bubble and offers the one control that sends the words
             again, and only where the session can still be written to at all.
           -->
-          <!--
+            <!--
             What the message was sent WITH, under its words (#408): the same
             chips, without their remove control — a message already handed over
             is not something an edit can be taken out of. So the person can see
             what was submitted, and `Send again` resends exactly it.
           -->
-          <ul
-            v-if="entry.message.echo && attachmentsOfEcho(entry.message.echo.id).length > 0"
-            class="bubble-attachments"
-          >
-            <li
-              v-for="item in attachmentsOfEcho(entry.message.echo.id)"
-              :key="item.path"
-              class="composer-chip bubble-attachment"
-              :title="item.name"
+            <ul
+              v-if="entry.message.echo && attachmentsOfEcho(entry.message.echo.id).length > 0"
+              class="bubble-attachments"
             >
-              <span class="chip-glyph" aria-hidden="true"></span>
-              <span class="chip-name">{{ item.name }}</span>
-            </li>
-          </ul>
-          <span v-if="entry.message.echo" class="bubble-verdict">
-            <span
-              v-if="entry.message.marker"
-              class="bubble-marker"
-              :class="entry.message.marker.cls"
-              :title="entry.message.marker.title"
-              >{{ entry.message.marker.glyph }}</span
-            >
-            <button
-              v-if="entry.message.echo.state.phase === 'failed' && canReceive"
-              class="bubble-retry"
-              type="button"
-              :title="SEND_AGAIN_TITLE"
-              @click="emit('send-again', entry.message.echo.id)"
-            >
-              {{ SEND_AGAIN_LABEL }}
-            </button>
-          </span>
-          <img
-            v-if="entry.message.from === 'user'"
-            class="portrait"
-            :src="USER_PORTRAIT_SRC"
-            alt="You"
-            draggable="false"
-          />
-        </article>
-      </template>
+              <li
+                v-for="item in attachmentsOfEcho(entry.message.echo.id)"
+                :key="item.path"
+                class="composer-chip bubble-attachment"
+                :title="item.name"
+              >
+                <span class="chip-glyph" aria-hidden="true"></span>
+                <span class="chip-name">{{ item.name }}</span>
+              </li>
+            </ul>
+            <span v-if="entry.message.echo" class="bubble-verdict">
+              <span
+                v-if="entry.message.marker"
+                class="bubble-marker"
+                :class="entry.message.marker.cls"
+                :title="entry.message.marker.title"
+                >{{ entry.message.marker.glyph }}</span
+              >
+              <button
+                v-if="entry.message.echo.state.phase === 'failed' && canReceive"
+                class="bubble-retry"
+                type="button"
+                :title="SEND_AGAIN_TITLE"
+                @click="emit('send-again', entry.message.echo.id)"
+              >
+                {{ SEND_AGAIN_LABEL }}
+              </button>
+            </span>
+            <img
+              v-if="entry.message.from === 'user'"
+              class="portrait"
+              :src="USER_PORTRAIT_SRC"
+              alt="You"
+              draggable="false"
+            />
+          </motion.article>
+        </template>
+      </AnimatePresence>
     </div>
 
     <!--

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { AnimatePresence, motion } from 'motion-v'
 import { CLOSE_ICON_SRC, PORTRAIT_SRC, USER_PORTRAIT_SRC, maskImageValue } from '../../lib/art'
-import { groupActivity } from '../../lib/message/activityGroup'
+import { groupActivity, type PanelEntry } from '../../lib/message/activityGroup'
 import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   HISTORY_SCOPE_NOTE,
@@ -10,8 +11,10 @@ import {
   orderSpeakers,
   selectedSpeakerId,
   speakerHistoryNotice,
-  speakerRows
+  speakerRows,
+  type HistoryRow
 } from '../../lib/history/mineHistory'
+import { fadeVariants } from '../../lib/shell/presence'
 import type { Mine, MineHistoryResult } from '../../types'
 
 /**
@@ -113,6 +116,62 @@ function choose(id: string): void {
 const entries = computed(() => groupActivity(rows.value, { ended: true }))
 
 /*
+ * Which message rows get the shared entrance on THIS render (#566 T4b) — a
+ * genuine arrival in the tab this reader has open, never a row the reader
+ * already saw. Tracked by CONTENT identity (`from` + `text`) rather than by
+ * `entry.key`: `speakerRows` re-slices `latestMessages`' own 50-message
+ * window from scratch on every read (`mineHistory.ts`), and `panelMessagesOf`
+ * bakes each row's own ARRAY INDEX into its key (`conversation.ts`) — so once
+ * a speaker has passed the cap, every key in the visible window renames
+ * itself on every further message, and a key comparison alone cannot tell
+ * "reindexed" apart from "brand new" (the same blind spot
+ * `lib/message/entryArrival.ts`'s header names, there worked around instead
+ * by `DwarfMessagePanel`'s own `rowsWerePrepended` guard — no equivalent
+ * signal exists for a window SLIDING rather than being paged INTO). A `Set`
+ * of ids seen so far survives the reslice untouched, so the SAME content is
+ * simply already in it. Never cleared for the general case — only fed IDs a
+ * reader is currently looking at, so the memory it costs is at most this
+ * session's own conversation, an amount already held in `props.history`
+ * itself — except on a genuine tab switch, where it is reseeded so a
+ * newly-chosen speaker's own fifty entries read as "already seen" and stay a
+ * cut, exactly like an ordinary mount.
+ */
+function messageIdOf(row: HistoryRow): string {
+  return `${row.from}-${row.text}`
+}
+
+function messageIdsOf(list: readonly PanelEntry<HistoryRow>[]): string[] {
+  return list.filter((entry) => entry.kind === 'message').map((entry) => messageIdOf(entry.message))
+}
+
+const seenMessageIds = new Set<string>(messageIdsOf(entries.value))
+let previousSelectedId = selectedId.value
+const arrivedKeys = ref<ReadonlySet<string>>(new Set())
+
+watch(
+  entries,
+  (next) => {
+    const sameTab = selectedId.value === previousSelectedId
+    if (!sameTab) seenMessageIds.clear()
+    const arrived = new Set<string>()
+    for (const entry of next) {
+      if (entry.kind !== 'message') continue
+      const id = messageIdOf(entry.message)
+      if (sameTab && !seenMessageIds.has(id)) arrived.add(entry.key)
+      seenMessageIds.add(id)
+    }
+    arrivedKeys.value = arrived
+    previousSelectedId = selectedId.value
+  },
+  { flush: 'pre' }
+)
+
+/** `false` skips a motion row's own mount transition; see `arrivedKeys` above. */
+function rowInitial(key: string): typeof fadeVariants.initial | false {
+  return arrivedKeys.value.has(key) ? fadeVariants.initial : false
+}
+
+/*
  * Which runs this reader has unfolded, by group key — per run and per MOUNT,
  * like the message panel's. Not per TAB on purpose: a key belongs to one
  * speaker's row, so switching tabs and coming back finds the same run open,
@@ -194,32 +253,43 @@ function toggleRun(key: string): void {
       :aria-label="HISTORY_SCOPE_NOTE"
     >
       <p v-if="note !== null" class="history-empty">{{ note }}</p>
-      <template v-for="entry in entries" :key="entry.key">
-        <!--
+      <!--
+        The shared entrance (#566 T4b): an entry landing in the tab this
+        reader has open gets `presence.ts`'s own `fadeVariants` (opacity
+        only, for the same reason `DwarfMessagePanel`'s own block gives).
+        `initial="false"` here plus `rowInitial`'s own seeding both read an
+        ordinary mount — and a fresh tab switch, which never remounts this
+        component — as "nothing new". Activity rows are untouched: not
+        `motion.*`, so `AnimatePresence` wrapping them is a harmless no-op
+        for their own open/collapse toggle.
+      -->
+      <AnimatePresence :initial="false">
+        <template v-for="entry in entries" :key="entry.key">
+          <!--
           AMENDED for #294 (was: one line per tool call, always drawn). A run of
           consecutive tool calls is one closed disclosure row, exactly as the
           interactive MessagePanel draws it — the same wire rows, so the same
           shape. A tab's label is always the counted one: nothing in a record
           is still working.
         -->
-        <template v-if="entry.kind === 'activity'">
-          <button
-            type="button"
-            class="activity-disclosure"
-            :class="{ 'is-open': isRunOpen(entry.key) }"
-            :aria-expanded="isRunOpen(entry.key)"
-            :title="entry.label"
-            @click="toggleRun(entry.key)"
-          >
-            <span class="disclosure-arrow" aria-hidden="true"></span>
-            <span class="disclosure-label">{{ entry.label }}</span>
-          </button>
-          <!--
+          <template v-if="entry.kind === 'activity'">
+            <button
+              type="button"
+              class="activity-disclosure"
+              :class="{ 'is-open': isRunOpen(entry.key) }"
+              :aria-expanded="isRunOpen(entry.key)"
+              :title="entry.label"
+              @click="toggleRun(entry.key)"
+            >
+              <span class="disclosure-arrow" aria-hidden="true"></span>
+              <span class="disclosure-label">{{ entry.label }}</span>
+            </button>
+            <!--
             One tool call, same rule as the interactive MessagePanel (#240): a
             muted meta line with no icon, no bubble and no portrait, still one
             row of the tab's own message count.
           -->
-          <!--
+            <!--
             AMENDED for #279 (was: always a `<p>`). An `edit`/`read` target is a
             FILE, so it draws as a button styled as text rather than an anchor
             — `run` and `search` stay the plain paragraph #240 drew. A refusal
@@ -227,50 +297,54 @@ function toggleRun(key: string): void {
             than the display text, since this panel has no status line of its
             own to show it on.
           -->
-          <template v-if="isRunOpen(entry.key)">
-            <template v-for="line in entry.rows" :key="line.key">
-              <button
-                v-if="line.activity && isOpenablePath(line.activity)"
-                type="button"
-                class="activity-line is-openable"
-                :data-row-key="line.key"
-                :title="pathRefusal?.key === line.key ? pathRefusal.reason : line.text"
-                @click="emit('open-path', { key: line.key, target: line.activity.target })"
-              >
-                {{ line.text }}
-              </button>
-              <p v-else class="activity-line" :title="line.text">{{ line.text }}</p>
+            <template v-if="isRunOpen(entry.key)">
+              <template v-for="line in entry.rows" :key="line.key">
+                <button
+                  v-if="line.activity && isOpenablePath(line.activity)"
+                  type="button"
+                  class="activity-line is-openable"
+                  :data-row-key="line.key"
+                  :title="pathRefusal?.key === line.key ? pathRefusal.reason : line.text"
+                  @click="emit('open-path', { key: line.key, target: line.activity.target })"
+                >
+                  {{ line.text }}
+                </button>
+                <p v-else class="activity-line" :title="line.text">{{ line.text }}</p>
+              </template>
             </template>
           </template>
-        </template>
-        <article
-          v-else
-          class="message"
-          :class="entry.message.from === 'agent' ? 'is-agent' : 'is-user'"
-        >
-          <!--
+          <motion.article
+            v-else
+            class="message"
+            :class="entry.message.from === 'agent' ? 'is-agent' : 'is-user'"
+            :initial="rowInitial(entry.key)"
+            :animate="fadeVariants.animate"
+            :exit="fadeVariants.exit"
+          >
+            <!--
             The message panel's own portrait treatment (#159), and its own
             reading of whose face this is (#175): a prompt another agent issued
             wears that agent's face, everything else the speaker's own.
           -->
-          <img
-            v-if="entry.message.from === 'agent'"
-            class="portrait"
-            :src="PORTRAIT_SRC[entry.message.author.role]"
-            :alt="`${entry.message.author.name}, ${entry.message.author.role}`"
-            :title="`${entry.message.author.name}, ${entry.message.author.role}`"
-            draggable="false"
-          />
-          <p class="bubble">{{ entry.message.text }}</p>
-          <img
-            v-if="entry.message.from === 'user'"
-            class="portrait"
-            :src="USER_PORTRAIT_SRC"
-            alt="You"
-            draggable="false"
-          />
-        </article>
-      </template>
+            <img
+              v-if="entry.message.from === 'agent'"
+              class="portrait"
+              :src="PORTRAIT_SRC[entry.message.author.role]"
+              :alt="`${entry.message.author.name}, ${entry.message.author.role}`"
+              :title="`${entry.message.author.name}, ${entry.message.author.role}`"
+              draggable="false"
+            />
+            <p class="bubble">{{ entry.message.text }}</p>
+            <img
+              v-if="entry.message.from === 'user'"
+              class="portrait"
+              :src="USER_PORTRAIT_SRC"
+              alt="You"
+              draggable="false"
+            />
+          </motion.article>
+        </template>
+      </AnimatePresence>
     </div>
 
     <!-- The selected dwarf's last-message time, lower right, in the design's format. -->
