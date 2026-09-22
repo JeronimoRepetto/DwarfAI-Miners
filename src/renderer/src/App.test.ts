@@ -4,12 +4,14 @@ import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DOMKeyframesDefinition } from 'motion-v'
+import { MotionConfig } from 'motion-v'
 import App from './App.vue'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
+import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -2683,5 +2685,41 @@ describe('App shell packing (#488)', () => {
   it('keeps no separate rule for the frames a fold is held over', () => {
     const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
     expect(source).not.toContain('is-holding')
+  })
+})
+
+/**
+ * APPENDED for #566 T3. `<MotionConfig>` at this root is what governs every
+ * `AnimatePresence`/`motion.*` popup and modal T3 adds — `PanelTransition`,
+ * `useShellFold` and the message surface read `sceneMotion` on their own and
+ * never consult it (`App.vue`'s own `reduced` ref comment explains the split).
+ * Stubbed the way `PanelTransition.test.ts` stubs `matchMedia` for the same
+ * query, so this is a second reader of one answer rather than a second query.
+ */
+describe('App MotionConfig root (#566 T3)', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  function stubReducedMotion(matches: boolean): void {
+    const media = new EventTarget() as MediaQueryList
+    Object.defineProperty(media, 'matches', { configurable: true, value: matches })
+    vi.stubGlobal('matchMedia', () => media)
+  }
+
+  it('hands MotionConfig "never" and no transition override when the viewer asked for no such thing', async () => {
+    stubReducedMotion(false)
+    const { wrapper } = await mountApp()
+    const config = wrapper.findComponent(MotionConfig)
+    expect(config.props('reducedMotion')).toBe('never')
+    expect(config.props('transition')).toBeUndefined()
+  })
+
+  it('hands MotionConfig "always" and REDUCED_MOTION_TRANSITION once sceneMotion reports reduced motion', async () => {
+    stubReducedMotion(true)
+    const { wrapper } = await mountApp()
+    const config = wrapper.findComponent(MotionConfig)
+    expect(config.props('reducedMotion')).toBe('always')
+    expect(config.props('transition')).toEqual(REDUCED_MOTION_TRANSITION)
   })
 })

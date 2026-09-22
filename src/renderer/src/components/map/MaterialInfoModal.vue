@@ -9,15 +9,23 @@
  *
  * Presentational: the only state it owns is its own presence, and the only
  * thing that leaves is the dismissal signal.
+ *
+ * The root is `motion.div` rather than a plain `div` (#566 T3): the caller
+ * (`MapView.vue`) wraps its `v-if` in `<AnimatePresence>`, which drives the
+ * enter/exit — this component only carries `popVariants`. A hang while this
+ * popup's window is hidden is harmless (it does not gate geometry), the
+ * design decision after T0 that permits `AnimatePresence` here.
  */
+import { motion } from 'motion-v'
 import { NUGGET_SRC } from '../../lib/art'
+import { popVariants } from '../../lib/shell/presence'
 import { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../../types'
 
 const emit = defineEmits<{ close: [] }>()
 </script>
 
 <template>
-  <div class="info-modal" role="dialog" @keydown.escape="emit('close')">
+  <motion.div class="info-modal" role="dialog" v-bind="popVariants" @keydown.escape="emit('close')">
     <header class="modal-head">
       <h2 class="modal-title">Material values</h2>
       <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
@@ -44,7 +52,7 @@ const emit = defineEmits<{ close: [] }>()
         </tbody>
       </table>
     </div>
-  </div>
+  </motion.div>
 </template>
 
 <style scoped>

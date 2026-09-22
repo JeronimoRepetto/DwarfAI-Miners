@@ -17,6 +17,7 @@
  * it. See lib/map/mapPopulation.ts.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { AnimatePresence, motion } from 'motion-v'
 import { INFO_ICON_SRC, MAP_ART_SIZE, MAP_BG_SRC, maskImageValue } from '../../lib/art'
 import { clampToMapBox, projectToMapBox } from '../../lib/map/mapProjection'
 import { MAP_TIME_REFRESH_MS, mapVariantAt } from '../../lib/map/mapTime'
@@ -30,10 +31,24 @@ import type { MapSpawnPoint } from '../../lib/map/spawnPoints.generated'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
 import { mapMines } from '../../lib/map/mapPopulation'
 import { assignSlots } from '../../lib/placement'
+import { fadeVariants } from '../../lib/shell/presence'
 import type { MaterialTotals, Mine, ProjectSummary } from '../../types'
 import MineMarker from './MineMarker.vue'
 import VaultChip from '../vault/VaultChip.vue'
 import MaterialInfoModal from './MaterialInfoModal.vue'
+
+/**
+ * The map tooltip's own rest opacity (#566 T3): the design's 90%
+ * (`components.md`'s "Mine marker and tooltip", also quoted in this file's
+ * `.mine-tooltip` comment) used to be a CSS `opacity: 0.9`, which motion-v's
+ * inline `style.opacity` now overrides outright once it owns this element's
+ * enter/exit. `fadeVariants` (`presence.ts`) is the SHARED 0/1 vocabulary
+ * every other fading surface uses; this tooltip is the one exception the
+ * design itself carries a number for, so its own `animate` target says 0.9
+ * rather than either restating `fadeVariants` wrong for every other surface
+ * or silently letting this one go fully opaque.
+ */
+const MINE_TOOLTIP_ANIMATE = { opacity: 0.9 }
 
 const props = withDefaults(
   defineProps<{
@@ -317,11 +332,21 @@ const tooltipStyle = computed<Record<string, string>>(() => {
           @focusout="leaveMarker"
         />
       </div>
-      <div v-if="tooltipCopy" class="mine-tooltip" role="tooltip" :style="tooltipStyle">
-        <span class="tooltip-tier">{{ tooltipCopy.tier }}</span>
-        <span class="tooltip-name">{{ tooltipCopy.name }}</span>
-        <span class="tooltip-agents">{{ tooltipCopy.agents }}</span>
-      </div>
+      <AnimatePresence>
+        <motion.div
+          v-if="tooltipCopy"
+          class="mine-tooltip"
+          role="tooltip"
+          :style="tooltipStyle"
+          :initial="fadeVariants.initial"
+          :animate="MINE_TOOLTIP_ANIMATE"
+          :exit="fadeVariants.exit"
+        >
+          <span class="tooltip-tier">{{ tooltipCopy.tier }}</span>
+          <span class="tooltip-name">{{ tooltipCopy.name }}</span>
+          <span class="tooltip-agents">{{ tooltipCopy.agents }}</span>
+        </motion.div>
+      </AnimatePresence>
       <!--
         Material-to-tokens reference (#506): a small info trigger in the map's
         bottom-right corner, the counterpart to the vault chip in the upper-right.
@@ -338,7 +363,9 @@ const tooltipStyle = computed<Record<string, string>>(() => {
       >
         <span class="map-info-glyph" aria-hidden="true"></span>
       </button>
-      <MaterialInfoModal v-if="showInfoModal" @close="showInfoModal = false" />
+      <AnimatePresence>
+        <MaterialInfoModal v-if="showInfoModal" @close="showInfoModal = false" />
+      </AnimatePresence>
     </div>
   </div>
 </template>
@@ -428,7 +455,10 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   The design's tooltip, to the pixel: 170x60, #2b2119 at 90%, 12px radius, a 2px
   cream border, elevation 5, and 10px #f7dcaf copy aligned to the start. Its
   z-index clears every marker, whose own z-indices are spawn-point depths
-  running to 99.
+  running to 99. The 90% is set in script now (#566 T3, `MINE_TOOLTIP_ANIMATE`)
+  — motion-v owns this element's `opacity` for its enter/exit fade, and an
+  inline style always wins over this rule, so a CSS `opacity` here would be
+  dead weight rather than the rest value it looks like.
 */
 .mine-tooltip {
   position: absolute;
@@ -448,7 +478,6 @@ const tooltipStyle = computed<Record<string, string>>(() => {
   font-size: var(--text-meta);
   line-height: 1.25;
   text-align: left;
-  opacity: 0.9;
   /* Never a click target: it appears under the pointer that summoned it. */
   pointer-events: none;
 }

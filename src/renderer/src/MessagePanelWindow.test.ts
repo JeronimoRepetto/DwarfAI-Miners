@@ -2,6 +2,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DOMKeyframesDefinition } from 'motion-v'
+import { MotionConfig } from 'motion-v'
 import MessagePanelWindow from './MessagePanelWindow.vue'
 import type { MotionAnimate, ScheduleAfterRender } from './lib/shell/boundedMotion'
 import { useAgentLaunch } from './composables/useAgentLaunch'
@@ -17,6 +18,8 @@ import {
 } from './lib/message/feedPages'
 // ADDED for #389 — the deadline the window's own leave is bounded by.
 import { motionBoundMs } from './lib/shell/motionTiming'
+// ADDED for #566 T3 — the root's own MotionConfig transition override.
+import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 // ADDED for #370 — the faces this window paints with before main answers.
 import { DEFAULT_TYPOGRAPHY_PREFERENCES } from './types'
 
@@ -2897,5 +2900,38 @@ describe('typography preferences (#370)', () => {
     // declaration itself).
     const { wrapper } = await mountPanel({ surface: 'launch', mineId: MINE.id, dwarfId: '' })
     expect(wrapper.find('.add-panel').exists()).toBe(true)
+  })
+})
+
+/**
+ * APPENDED for #566 T3. This window's own `<MotionConfig>` — see `reduced`,
+ * `MessagePanelWindow.vue`'s own comment. Stubbed the way `App.test.ts`'s
+ * matching root test does, for the one query `sceneMotion` owns.
+ */
+describe('MessagePanelWindow MotionConfig root (#566 T3)', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  function stubReducedMotion(matches: boolean): void {
+    const media = new EventTarget() as MediaQueryList
+    Object.defineProperty(media, 'matches', { configurable: true, value: matches })
+    vi.stubGlobal('matchMedia', () => media)
+  }
+
+  it('hands MotionConfig "never" and no transition override when the viewer asked for no such thing', async () => {
+    stubReducedMotion(false)
+    const { wrapper } = await mountPanel(CLOSED)
+    const config = wrapper.findComponent(MotionConfig)
+    expect(config.props('reducedMotion')).toBe('never')
+    expect(config.props('transition')).toBeUndefined()
+  })
+
+  it('hands MotionConfig "always" and REDUCED_MOTION_TRANSITION once sceneMotion reports reduced motion', async () => {
+    stubReducedMotion(true)
+    const { wrapper } = await mountPanel(CLOSED)
+    const config = wrapper.findComponent(MotionConfig)
+    expect(config.props('reducedMotion')).toBe('always')
+    expect(config.props('transition')).toEqual(REDUCED_MOTION_TRANSITION)
   })
 })

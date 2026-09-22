@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
+import { motion } from 'motion-v'
+import { popVariants } from '../../lib/shell/presence'
 import { worktreeQuestionBody } from '../../lib/worktree'
 import type { MineWorktreeOf } from '../../types'
 
@@ -26,6 +28,12 @@ import type { MineWorktreeOf } from '../../types'
  * Presentational, like the modal beside it: `adding` is main's own state,
  * arriving through MinesPanel from useProjectBrowse, and the only things that
  * leave here are the two answers.
+ *
+ * The root is `motion.div` rather than a plain `div` (#566 T3): `MinesPanel`
+ * wraps its `v-if` in `<AnimatePresence>`, which drives the enter/exit —
+ * this component only carries `popVariants`. A hang while this popup's
+ * window is hidden is harmless (it does not gate geometry), the design
+ * decision after T0 that permits `AnimatePresence` here.
  */
 const props = defineProps<{
   /** The picked worktree and the project behind it, as main resolved them. */
@@ -53,10 +61,11 @@ function onOpen(): void {
 </script>
 
 <template>
-  <div
+  <motion.div
     class="worktree-modal"
     role="dialog"
     :aria-labelledby="titleId"
+    v-bind="popVariants"
     @keydown.escape="emit('close')"
   >
     <header class="modal-head">
@@ -72,7 +81,7 @@ function onOpen(): void {
       </button>
       <button class="modal-cancel" type="button" @click="emit('close')">Cancel</button>
     </div>
-  </div>
+  </motion.div>
 </template>
 
 <style scoped>

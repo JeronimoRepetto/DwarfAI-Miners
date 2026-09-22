@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { motion } from 'motion-v'
 import { MOUND_SRC } from '../../lib/art'
+import { popVariants } from '../../lib/shell/presence'
 import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 import TierInfoModal from './TierInfoModal.vue'
 
@@ -50,6 +52,17 @@ describe('TierInfoModal', () => {
     expect(title.text()).toBe('Tier thresholds')
     // The colour is applied by the scoped style; asserting the class is enough.
     expect(title.classes()).toContain('modal-title')
+  })
+
+  // ADDED for #566 T3: the root is `motion.div` carrying the shared
+  // `popVariants`, never a restated literal — `MinesPanel.vue`'s own
+  // `<AnimatePresence>` is what actually drives the enter/exit.
+  it('carries the shared popVariants on its motion.div root, not a literal of its own', () => {
+    const wrapper = mount(TierInfoModal)
+    const root = wrapper.findComponent(motion.div)
+    expect(root.props('initial')).toEqual(popVariants.initial)
+    expect(root.props('animate')).toEqual(popVariants.animate)
+    expect(root.props('exit')).toEqual(popVariants.exit)
   })
 })
 

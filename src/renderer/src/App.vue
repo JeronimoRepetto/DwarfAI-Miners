@@ -8,6 +8,7 @@ import {
   watch,
   type ComponentPublicInstance
 } from 'vue'
+import { MotionConfig } from 'motion-v'
 import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapView from './components/map/MapView.vue'
@@ -34,6 +35,8 @@ import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
 import { useTypography } from './composables/useTypography'
 import { INTERIOR_ART_SIZE } from './lib/art'
+import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
+import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { shellComposition } from './lib/shell/composition'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
@@ -50,6 +53,24 @@ const props = defineProps<{
    */
   engine?: MotionAnimate
 }>()
+
+/**
+ * Whether this viewer asked their operating system for less movement (#71),
+ * read and watched the same way `DwarfSprite` already does — the one query
+ * lives in `sceneMotion`, and this is a second place that asks it rather
+ * than a second query, the same relationship `boundedMotion.ts`'s own
+ * `still()` and `PanelTransition`'s watch already have with it.
+ *
+ * Fed to `<MotionConfig>` below (#566 T3): it governs every `AnimatePresence`
+ * / `motion.*` surface under this root (the modals and popups T3 adds), and
+ * nothing the bounded runner drives — `PanelTransition`, `useShellFold` and
+ * the message surface read `sceneMotion` on their own, unchanged by this.
+ */
+const reduced = ref(prefersReducedMotion())
+const stopWatchingReducedMotion = watchReducedMotion((asked) => {
+  reduced.value = asked
+})
+onBeforeUnmount(stopWatchingReducedMotion)
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -882,26 +903,37 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    ref="shellEl"
-    class="shell"
-    :class="[`edge-${layout.edge}`, `is-${composition}`]"
-    :style="{ '--interior-column-aspect': interiorColumnAspect }"
-    @pointerdown.capture="raisePanel"
+  <!--
+    #566 T3: the one `<MotionConfig>` this root hands every popup/modal/
+    tooltip surface under it. `boundedMotion.ts`'s own runner
+    (`PanelTransition`, `useShellFold`, the message surface) reads
+    `sceneMotion` directly and never consults this context — see `reduced`,
+    above.
+  -->
+  <MotionConfig
+    :reduced-motion="reduced ? 'always' : 'never'"
+    :transition="reduced ? REDUCED_MOTION_TRANSITION : undefined"
   >
-    <!--
+    <div
+      ref="shellEl"
+      class="shell"
+      :class="[`edge-${layout.edge}`, `is-${composition}`]"
+      :style="{ '--interior-column-aspect': interiorColumnAspect }"
+      @pointerdown.capture="raisePanel"
+    >
+      <!--
       The rail and the collapse arrow are one control in one component, because
       they are one surface in the design: the same #f6b644, with the arrow
       turned round.
     -->
-    <EdgeRail
-      ref="railEl"
-      :edge="layout.edge"
-      :composition="composition"
-      @toggle="toggleSecondary"
-    />
+      <EdgeRail
+        ref="railEl"
+        :edge="layout.edge"
+        :composition="composition"
+        @toggle="toggleSecondary"
+      />
 
-    <!--
+      <!--
       The three columns of the book hand their motion to the ground they stand
       on (#388): `hold` is the shell's own fold, and each column is only
       RETAINED here until it ends — unmounting one before main has shrunk the
@@ -909,104 +941,104 @@ onBeforeUnmount(() => {
       The area switch inside the page and the history dock below still animate
       themselves: both already move within bounds nothing is resizing.
     -->
-    <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
-      <div v-if="visibleLayout.expanded" class="shell-secondary">
-        <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
-          <!--
+      <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
+        <div v-if="visibleLayout.expanded" class="shell-secondary">
+          <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
+            <!--
           The map container from the design: 21px padding on every side, a 2px
           #fae2b6 border and elevation 5, with the collected-materials totals
           overlaid in its upper-right corner (VaultChip, inside MapView).
         -->
-          <PanelFrame v-if="viewState.area === 'map'" variant="map">
-            <div v-if="loading" class="loading" role="status">
-              <span class="spinner" aria-hidden="true"></span>
-              <p>Scanning the hills for active agents...</p>
-            </div>
-            <MapView
-              v-else
-              :mines="state.mines"
-              :projects="projects"
-              :tokens-observed="state.tokensObserved"
-              :materials="state.materials"
-              @open="enterMine"
-            />
-          </PanelFrame>
+            <PanelFrame v-if="viewState.area === 'map'" variant="map">
+              <div v-if="loading" class="loading" role="status">
+                <span class="spinner" aria-hidden="true"></span>
+                <p>Scanning the hills for active agents...</p>
+              </div>
+              <MapView
+                v-else
+                :mines="state.mines"
+                :projects="projects"
+                :tokens-observed="state.tokensObserved"
+                :materials="state.materials"
+                @open="enterMine"
+              />
+            </PanelFrame>
 
-          <PanelFrame v-else-if="viewState.area === 'mines'">
-            <MinesPanel
-              :projects="projects"
-              :mines="state.mines"
-              :search="browseFilters.search"
-              :tier="browseFilters.tier"
-              :direction="browseFilters.direction"
-              :loading="browseLoading"
-              :error="browseError"
-              :exhausted="browseExhausted"
-              :adding="addingProject"
-              :add-error="addProjectError"
-              :removing="removingMine"
-              :remove-error="removeMineError"
-              :worktree-question="worktreeQuestion"
-              @search="setProjectSearch"
-              @tier="setProjectTier"
-              @toggle-direction="toggleProjectOrder"
-              @load-more="loadMoreProjects"
-              @add="addProject"
-              @open="openFromBrowse"
-              @remove="removeFromBrowse"
-              @open-main-project="openMainProject"
-              @dismiss-worktree="dismissWorktreeQuestion"
-            />
-          </PanelFrame>
+            <PanelFrame v-else-if="viewState.area === 'mines'">
+              <MinesPanel
+                :projects="projects"
+                :mines="state.mines"
+                :search="browseFilters.search"
+                :tier="browseFilters.tier"
+                :direction="browseFilters.direction"
+                :loading="browseLoading"
+                :error="browseError"
+                :exhausted="browseExhausted"
+                :adding="addingProject"
+                :add-error="addProjectError"
+                :removing="removingMine"
+                :remove-error="removeMineError"
+                :worktree-question="worktreeQuestion"
+                @search="setProjectSearch"
+                @tier="setProjectTier"
+                @toggle-direction="toggleProjectOrder"
+                @load-more="loadMoreProjects"
+                @add="addProject"
+                @open="openFromBrowse"
+                @remove="removeFromBrowse"
+                @open-main-project="openMainProject"
+                @dismiss-worktree="dismissWorktreeQuestion"
+              />
+            </PanelFrame>
 
-          <!--
+            <!--
           Settings, rebuilt to the design's own screen (#138): the heavy 4px
           frame is PanelFrame's 'settings' variant, and SettingsPanel draws
           everything specific to the screen — its title/divider, the
           shortcut/position/Data-Base sections, and the Application section
           #142 had nowhere else to put pin/hide/version.
         -->
-          <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
-            <SettingsPanel
-              :shortcut-state="shortcutState"
-              :shortcut-error="shortcutError"
-              :shortcut-recording="shortcutRecording"
-              :shortcut-applying="shortcutApplying"
-              :edge="layout.edge"
-              :edge-applying="layoutApplying"
-              :pinned="pinned"
-              :pin-tooltip="pinTooltip"
-              :version-text="versionText"
-              :version-hint="versionHint"
-              :resetting="metricsResetting"
-              :reset-error="metricsResetError"
-              :audio-settings="audioSettings"
-              :notifications-enabled="notificationsEnabled"
-              :typography="typography"
-              :typography-applying="typographyApplying"
-              :jev-settings="jevSettings"
-              :jev-saving="jevSaving"
-              :jev-providers="jevProviders"
-              :jev-catalogs="jevCatalogs"
-              @start-recording="startShortcutRecording"
-              @stop-recording="stopShortcutRecording"
-              @record="recordShortcut"
-              @reset-shortcut="resetShortcut"
-              @close="showMap"
-              @select-edge="setEdge"
-              @toggle-pin="togglePinned"
-              @hide-panel="hidePanel"
-              @reset-confirm="resetMetrics"
-              @audio-change="setAudioSettings"
-              @notifications-change="setNotificationsEnabled"
-              @typography-change="setTypography"
-              @jev-save="saveJevApiKey"
-              @jev-clear="clearJevApiKey"
-              @jev-preferences-change="setJevPreferences"
-            />
-          </PanelFrame>
+            <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
+              <SettingsPanel
+                :shortcut-state="shortcutState"
+                :shortcut-error="shortcutError"
+                :shortcut-recording="shortcutRecording"
+                :shortcut-applying="shortcutApplying"
+                :edge="layout.edge"
+                :edge-applying="layoutApplying"
+                :pinned="pinned"
+                :pin-tooltip="pinTooltip"
+                :version-text="versionText"
+                :version-hint="versionHint"
+                :resetting="metricsResetting"
+                :reset-error="metricsResetError"
+                :audio-settings="audioSettings"
+                :notifications-enabled="notificationsEnabled"
+                :typography="typography"
+                :typography-applying="typographyApplying"
+                :jev-settings="jevSettings"
+                :jev-saving="jevSaving"
+                :jev-providers="jevProviders"
+                :jev-catalogs="jevCatalogs"
+                @start-recording="startShortcutRecording"
+                @stop-recording="stopShortcutRecording"
+                @record="recordShortcut"
+                @reset-shortcut="resetShortcut"
+                @close="showMap"
+                @select-edge="setEdge"
+                @toggle-pin="togglePinned"
+                @hide-panel="hidePanel"
+                @reset-confirm="resetMetrics"
+                @audio-change="setAudioSettings"
+                @notifications-change="setNotificationsEnabled"
+                @typography-change="setTypography"
+                @jev-save="saveJevApiKey"
+                @jev-clear="clearJevApiKey"
+                @jev-preferences-change="setJevPreferences"
+              />
+            </PanelFrame>
 
-          <!--
+            <!--
             The Lab, the Market and the Laboral Union (#335): one overlay for the
             three areas the design ships as unavailable, keyed so switching
             between them re-enters the transition rather than swapping the
@@ -1014,34 +1046,34 @@ onBeforeUnmount(() => {
             because an area with no screen and no unavailable painting should
             draw nothing instead of borrowing another hall's sentence.
           -->
-          <PanelFrame v-else-if="unavailableArea" :key="viewState.area" variant="settings">
-            <UnavailablePanel :feature="unavailableArea" />
-          </PanelFrame>
-        </PanelTransition>
+            <PanelFrame v-else-if="unavailableArea" :key="viewState.area" variant="settings">
+              <UnavailablePanel :feature="unavailableArea" />
+            </PanelFrame>
+          </PanelTransition>
 
-        <p v-if="error" class="notice" role="alert">{{ error }}</p>
-      </div>
-    </PanelTransition>
+          <p v-if="error" class="notice" role="alert">{{ error }}</p>
+        </div>
+      </PanelTransition>
 
-    <!--
+      <!--
         The app mark hides the WINDOW (#156), which is the same hidePanel the
         global shortcut and Settings' own hide control already ask for. The
         layout is deliberately untouched: the panel that comes back is the one
         that went away, mine and page and all.
       -->
-    <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
-      <ShellNav
-        v-if="visibleLayout.expanded || visibleLayout.mineOpen"
-        :area="viewState.area"
-        :broken="shortcutBroken"
-        :music-playing="musicPlaying"
-        @select="selectArea"
-        @hide="hidePanel"
-        @toggle-music="toggleMusic"
-      />
-    </PanelTransition>
+      <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
+        <ShellNav
+          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
+          :area="viewState.area"
+          :broken="shortcutBroken"
+          :music-playing="musicPlaying"
+          @select="selectArea"
+          @hide="hidePanel"
+          @toggle-music="toggleMusic"
+        />
+      </PanelTransition>
 
-    <!--
+      <!--
         One mine beside AT MOST one secondary panel: the concurrent model the
         design's exports prove, and no more than that — the source warns in as
         many words against assuming arbitrary multi-panel stacking. The column
@@ -1049,36 +1081,36 @@ onBeforeUnmount(() => {
         `mineOpen` decides is whether this whole block is drawn, so the app mark
         can collapse the shell without the view forgetting its mine (#153).
       -->
-    <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
-      <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
-        <PanelFrame>
-          <!--
+      <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
+        <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
+          <PanelFrame>
+            <!--
             Keyed by the mine, so switching from one to another is a fresh
             scene rather than the same one handed different dwarfs (#153). The
             walk board tells an arrival from the opening crew by which snapshot
             it first saw them, and a reused board would parade a whole new
             crew across the interior every time the user changed mine.
           -->
-          <MineScene
-            :key="currentMine.id"
-            :mine="currentMine"
-            :arrived="state.arrived"
-            :send-states="dwarfDelivery.send"
-            :kick-states="dwarfDelivery.kick"
-            :selected-id="openDwarfId"
-            :ambience-muted="ambienceMuted"
-            @back="leaveMine"
-            @select="selectDwarf"
-            @add="openLaunch(currentMine.id)"
-            @history="openHistory"
-            @toggle-ambience-mute="toggleAmbienceMute"
-            @crew-sound="playCrew"
-          />
-        </PanelFrame>
-      </div>
-    </PanelTransition>
+            <MineScene
+              :key="currentMine.id"
+              :mine="currentMine"
+              :arrived="state.arrived"
+              :send-states="dwarfDelivery.send"
+              :kick-states="dwarfDelivery.kick"
+              :selected-id="openDwarfId"
+              :ambience-muted="ambienceMuted"
+              @back="leaveMine"
+              @select="selectDwarf"
+              @add="openLaunch(currentMine.id)"
+              @history="openHistory"
+              @toggle-ambience-mute="toggleAmbienceMute"
+              @crew-sound="playCrew"
+            />
+          </PanelFrame>
+        </div>
+      </PanelTransition>
 
-    <!--
+      <!--
       The mine's History panel, and it is what is LEFT of the dock (#162).
 
       The MessagePanel and the Add Panel used to share this slot; they are a
@@ -1091,27 +1123,28 @@ onBeforeUnmount(() => {
       it, even though the two no longer overlap: one conversation surface at a
       time is a rule about attention, not about geometry.
     -->
-    <PanelTransition axis="vertical" :engine="props.engine" @leave="trackPanelLeave">
-      <!--
+      <PanelTransition axis="vertical" :engine="props.engine" @leave="trackPanelLeave">
+        <!--
         Keyed by mine, so opening it on another mine is a fresh panel and a fresh
         default tab rather than a selection carried over from another folder.
       -->
-      <div
-        v-if="historyOpen && currentMine"
-        :key="`history:${currentMine.id}`"
-        class="message-dock"
-      >
-        <MineHistoryPanel
-          :key="currentMine.id"
-          :mine="currentMine"
-          :history="mineHistory"
-          :path-refusal="historyPathRefusal"
-          @close="closeHistory"
-          @open-path="openHistoryPath"
-        />
-      </div>
-    </PanelTransition>
-  </div>
+        <div
+          v-if="historyOpen && currentMine"
+          :key="`history:${currentMine.id}`"
+          class="message-dock"
+        >
+          <MineHistoryPanel
+            :key="currentMine.id"
+            :mine="currentMine"
+            :history="mineHistory"
+            :path-refusal="historyPathRefusal"
+            @close="closeHistory"
+            @open-path="openHistoryPath"
+          />
+        </div>
+      </PanelTransition>
+    </div>
+  </MotionConfig>
 </template>
 
 <style scoped>

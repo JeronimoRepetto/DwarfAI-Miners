@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { AnimatePresence } from 'motion-v'
 import { ADD_ICON_SRC, INFO_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { browseRows } from '../../lib/browse/boardRows'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
@@ -259,30 +260,36 @@ onBeforeUnmount(stopWatching)
     <!--
       The removal confirmation (#169), over the panel it belongs to. Keyed by
       the mine, so asking about another one is a fresh dialog rather than the
-      same one with a different name in it.
+      same one with a different name in it. AnimatePresence (#566 T3) drives
+      RemoveMineModal's own enter/exit — a hang while hidden is harmless here,
+      unlike the bounded runner's surfaces.
     -->
-    <RemoveMineModal
-      v-if="pendingRemoval"
-      :key="pendingRemoval.id"
-      :name="pendingRemoval.name"
-      :removing="removing === true"
-      :error="removeError ?? null"
-      @confirm="confirmRemoval"
-      @close="removingId = null"
-    />
+    <AnimatePresence>
+      <RemoveMineModal
+        v-if="pendingRemoval"
+        :key="pendingRemoval.id"
+        :name="pendingRemoval.name"
+        :removing="removing === true"
+        :error="removeError ?? null"
+        @confirm="confirmRemoval"
+        @close="removingId = null"
+      />
+    </AnimatePresence>
     <!--
       The worktree question (#348), over the same panel and in the same shell.
       Keyed by the picked folder, so a second Add landing on another worktree
       is a fresh dialog rather than this one with a different sentence in it.
     -->
-    <WorktreeFoldModal
-      v-if="worktreeQuestion"
-      :key="worktreeQuestion.worktree"
-      :worktree-of="worktreeQuestion"
-      :adding="adding"
-      @open="emit('open-main-project')"
-      @close="emit('dismiss-worktree')"
-    />
+    <AnimatePresence>
+      <WorktreeFoldModal
+        v-if="worktreeQuestion"
+        :key="worktreeQuestion.worktree"
+        :worktree-of="worktreeQuestion"
+        :adding="adding"
+        @open="emit('open-main-project')"
+        @close="emit('dismiss-worktree')"
+      />
+    </AnimatePresence>
     <!--
       Tier threshold reference (#538): the map's own info trigger, in this
       panel's bottom-right corner rather than in the header row it started in.
@@ -299,7 +306,9 @@ onBeforeUnmount(stopWatching)
     >
       <span class="mines-info-glyph" aria-hidden="true"></span>
     </button>
-    <TierInfoModal v-if="showTierInfoModal" @close="showTierInfoModal = false" />
+    <AnimatePresence>
+      <TierInfoModal v-if="showTierInfoModal" @close="showTierInfoModal = false" />
+    </AnimatePresence>
   </section>
 </template>
 

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { motion } from 'motion-v'
+import { popVariants } from '../../lib/shell/presence'
 import WorktreeFoldModal from './WorktreeFoldModal.vue'
 
 const WORKTREE_OF = {
@@ -84,5 +86,15 @@ describe('WorktreeFoldModal', () => {
       worktreeOf: { worktree: '/home/j/anvil-wt/forge', root: '/home/j/anvil', commit: '3f2a1b9' }
     })
     expect(wrapper.get('.modal-message').text()).toContain('at commit 3f2a1b9')
+  })
+
+  // ADDED for #566 T3: the root is `motion.div` carrying the shared
+  // `popVariants`, never a restated literal — `MinesPanel.vue`'s own
+  // `<AnimatePresence>` is what actually drives the enter/exit.
+  it('carries the shared popVariants on its motion.div root, not a literal of its own', () => {
+    const root = modal().findComponent(motion.div)
+    expect(root.props('initial')).toEqual(popVariants.initial)
+    expect(root.props('animate')).toEqual(popVariants.animate)
+    expect(root.props('exit')).toEqual(popVariants.exit)
   })
 })

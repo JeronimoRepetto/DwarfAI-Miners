@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AnimatePresence, motion } from 'motion-v'
 import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
+import { fadeVariants } from '../../lib/shell/presence'
 import { MAP_TIME_REFRESH_MS } from '../../lib/map/mapTime'
 import { MAP_TOOLTIP_DELAY_MS } from '../../lib/map/mapTooltip'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
@@ -242,6 +244,26 @@ describe('MapView mine tooltip', () => {
   })
 
   /*
+   * ADDED for #566 T3. `fadeVariants.initial`/`.exit` (`presence.ts`) are the
+   * shared 0-opacity shape every fading surface uses; `animate` is the one
+   * deliberate exception (`MapView.vue`'s own `MINE_TOOLTIP_ANIMATE` comment)
+   * — the design's own 90% rest opacity, which used to be a CSS rule motion-v's
+   * inline `style.opacity` would otherwise silently override to 100%.
+   */
+  it('carries the shared fadeVariants shape, with its own 90% rest opacity', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(MapView, { props: { mines: [CREWED] } })
+    await wrapper.get('.mine-marker').trigger('mouseenter')
+    await vi.advanceTimersByTimeAsync(MAP_TOOLTIP_DELAY_MS)
+    await wrapper.vm.$nextTick()
+
+    const root = wrapper.findComponent(motion.div)
+    expect(root.props('initial')).toEqual(fadeVariants.initial)
+    expect(root.props('animate')).toEqual({ opacity: 0.9 })
+    expect(root.props('exit')).toEqual(fadeVariants.exit)
+  })
+
+  /*
     "Continuous" is the whole of the requirement: a pointer that crosses the
     marker on its way somewhere else must leave nothing behind it.
   */
@@ -413,5 +435,19 @@ describe('MapView material info', () => {
     expect(wrapper.find('.info-modal').exists()).toBe(true)
     await wrapper.get('.info-modal .modal-close').trigger('click')
     expect(wrapper.find('.info-modal').exists()).toBe(false)
+  })
+
+  /**
+   * APPENDED for #566 T3. `<AnimatePresence>` wraps both `MaterialInfoModal`
+   * and the tooltip above now; its real exit-hold cannot be pinned under
+   * jsdom (`presence.test.ts`'s own module header has the full trace — jsdom
+   * lays out nothing, `isHidden()` reads every element as already hidden,
+   * and motion-v's own exit feature latches at mount as a result). What
+   * stays verifiable, and is verified above without amendment, is that both
+   * surfaces still open and close on the same triggers they always did.
+   */
+  it('wraps the material popup in AnimatePresence', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    expect(wrapper.findComponent(AnimatePresence).exists()).toBe(true)
   })
 })

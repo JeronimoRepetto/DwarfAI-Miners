@@ -9,8 +9,18 @@
  *
  * Presentational: the only state it owns is its own presence, and the only
  * thing that leaves is the dismissal signal.
+ *
+ * The root is `motion.div` rather than a plain `div` (#566 T3): the caller
+ * (`MinesPanel.vue`) wraps its `v-if` in `<AnimatePresence>`, which is what
+ * actually drives the enter/exit — this component only has to hand it a
+ * `motion.*` element carrying `popVariants` and change no markup otherwise.
+ * A hang while this popup's window is hidden is harmless (it does not gate
+ * geometry), which is exactly the design decision after T0 that permits
+ * `AnimatePresence` here and forbids it on the bounded runner's own surfaces.
  */
+import { motion } from 'motion-v'
 import { MOUND_SRC } from '../../lib/art'
+import { popVariants } from '../../lib/shell/presence'
 import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 
 const emit = defineEmits<{ close: [] }>()
@@ -24,7 +34,7 @@ function thresholdText(tier: string): string {
 </script>
 
 <template>
-  <div class="info-modal" role="dialog" @keydown.escape="emit('close')">
+  <motion.div class="info-modal" role="dialog" v-bind="popVariants" @keydown.escape="emit('close')">
     <header class="modal-head">
       <h2 class="modal-title">Tier thresholds</h2>
       <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
@@ -51,7 +61,7 @@ function thresholdText(tier: string): string {
         </tbody>
       </table>
     </div>
-  </div>
+  </motion.div>
 </template>
 
 <style scoped>
