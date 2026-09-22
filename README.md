@@ -53,24 +53,36 @@ the mine answers **what each agent is doing**.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/assets/feature-tour/map.png" width="260" alt="World map with tiered mine markers and a project tooltip"></td>
-    <td align="center"><img src="docs/assets/feature-tour/mines.png" width="260" alt="Mines list with search, filters, sorting, and project cards"></td>
-    <td align="center"><img src="docs/assets/feature-tour/mine.png" width="260" alt="Mine interior with dwarfs working and the message panel open"></td>
+    <td align="center"><img src="docs/assets/feature-tour/map.png" width="260" alt="World map with mine markers scattered across the terrain and live resource counters at the top"></td>
+    <td align="center"><img src="docs/assets/feature-tour/mines.png" width="260" alt="Mines list with search, tier filters, and a progress bar to the next level for each project"></td>
   </tr>
   <tr>
     <td align="center"><strong>Map</strong><br>See every active project at once.</td>
-    <td align="center"><strong>Mines</strong><br>Search and open a project directly.</td>
+    <td align="center"><strong>Mines</strong><br>Search, filter by tier, and open a project directly.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/feature-tour/mine.png" width="260" alt="Mine interior across several levels, with dwarfs working, sleeping, and mid-turn"></td>
+    <td align="center"><img src="docs/assets/feature-tour/messages.png" width="260" alt="Message panel with a full conversation between the user and an agent, dwarf portraits beside each turn"></td>
+  </tr>
+  <tr>
     <td align="center"><strong>Mine interior</strong><br>Watch the crew and their status.</td>
+    <td align="center"><strong>Messages</strong><br>Read history, send, kick, and follow a session's own words.</td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/assets/feature-tour/messages.png" width="260" alt="Message history panel with agent and user messages"></td>
-    <td align="center"><img src="docs/assets/feature-tour/launch.png" width="260" alt="Launch panel choosing a supported AI provider"></td>
-    <td align="center"><img src="docs/assets/feature-tour/settings.png" width="260" alt="Settings panel with shortcut and application preferences"></td>
+    <td align="center"><img src="docs/assets/feature-tour/launch.png" width="260" alt="Launch panel choosing a provider, with Let Jev choose and Auto-accept toggles"></td>
+    <td align="center"><img src="docs/assets/feature-tour/settings.png" width="260" alt="Settings panel with the shortcut, panel position, typography, audio, and notification preferences"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Messages</strong><br>Read history, send, kick, and answer questions.</td>
-    <td align="center"><strong>Launch</strong><br>Start a session in a project mine, with a model and effort.</td>
+    <td align="center"><strong>Launch</strong><br>Start a session in a project mine, with a model and effort — or let Jev pick.</td>
     <td align="center"><strong>Settings</strong><br>Configure the shortcut, the panel's side, and sound.</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/feature-tour/jev.png" width="260" alt="Settings panel's Jev section, highlighted, with the routing profile and each provider's default launch"></td>
+    <td align="center"><img src="docs/assets/feature-tour/questions.png" width="260" alt="Map, mine interior, and message panel together, with a question card presenting delivery options"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Jev</strong><br>An optional routing assist that chooses the provider, model, and effort for you.</td>
+    <td align="center"><strong>Questions</strong><br>Answer a blocked agent's question straight from the panel.</td>
   </tr>
 </table>
 

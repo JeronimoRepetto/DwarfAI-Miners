@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
 import { motion } from 'motion-v'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverUnless, pressHoverVariants } from '../../lib/shell/presence'
 import { worktreeQuestionBody } from '../../lib/worktree'
 import type { MineWorktreeOf } from '../../types'
 
@@ -70,16 +70,35 @@ function onOpen(): void {
   >
     <header class="modal-head">
       <h2 :id="titleId" class="modal-title">This folder is a worktree</h2>
-      <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
+      <motion.button
+        class="modal-close"
+        type="button"
+        aria-label="Close"
+        v-bind="pressHoverVariants"
+        @click="emit('close')"
+      >
         &times;
-      </button>
+      </motion.button>
     </header>
     <p class="modal-message">{{ body }}</p>
     <div class="modal-actions">
-      <button class="modal-open" type="button" :disabled="adding" @click="onOpen">
+      <motion.button
+        class="modal-open"
+        type="button"
+        :disabled="adding"
+        v-bind="pressHoverUnless(adding)"
+        @click="onOpen"
+      >
         Open the main project
-      </button>
-      <button class="modal-cancel" type="button" @click="emit('close')">Cancel</button>
+      </motion.button>
+      <motion.button
+        class="modal-cancel"
+        type="button"
+        v-bind="pressHoverVariants"
+        @click="emit('close')"
+      >
+        Cancel
+      </motion.button>
     </div>
   </motion.div>
 </template>

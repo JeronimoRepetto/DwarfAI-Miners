@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { motion } from 'motion-v'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import { defaultMaterials, defaultProject } from '../../testing/factories'
 import MineCard from './MineCard.vue'
 import cardSource from './MineCard.vue?raw'
@@ -430,5 +432,38 @@ describe('MineCard removal', () => {
     // rows #169 exists to clear with no exit at all.
     const wrapper = mount(MineCard, { props: { project: defaultProject({ live: false }) } })
     expect(wrapper.find('.card-remove').exists()).toBe(true)
+  })
+})
+
+/*
+ * ADDED for #566 T4: the card's own action answers a pointer. Only the removal
+ * control — the card BODY is a `<button>` only when the mine can be entered
+ * (see `enterable`), and whether a whole card should grow under a hover is a
+ * visual decision the design source leaves Unspecified, so it is asked rather
+ * than answered here.
+ */
+describe('MineCard press and hover feedback', () => {
+  it('gives the removal control the shared press/hover variants', () => {
+    const wrapper = mount(MineCard, { props: { project: defaultProject() } })
+    const remove = wrapper.getComponent(motion.button)
+
+    expect(remove.classes()).toContain('card-remove')
+    expect(remove.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+    expect(remove.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+  })
+
+  it('leaves the removal control a button with the name, hint and press it had', async () => {
+    const wrapper = mount(MineCard, {
+      props: { project: defaultProject({ id: 'C:/dev/lalo', name: 'Lalo-Test' }) }
+    })
+    const remove = wrapper.get('.card-remove')
+
+    expect(remove.element.tagName).toBe('BUTTON')
+    expect(remove.attributes('type')).toBe('button')
+    expect(remove.attributes('aria-label')).toBe('Remove the mine Lalo-Test')
+    expect(remove.attributes('title')).toBe('Stop tracking this mine')
+
+    await remove.trigger('click')
+    expect(wrapper.emitted('remove')).toEqual([['C:/dev/lalo']])
   })
 })
