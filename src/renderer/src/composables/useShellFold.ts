@@ -316,12 +316,14 @@ export function useShellFold(options: ShellFoldOptions) {
      */
     rest: number
     /**
-     * `--space-nav-gap` as the row had it when this column registered (#585
-     * round 2): the mouth a drawer comes out of stands one of these beyond its
-     * own edge, and the unfold that carries it is not the place that reads the
-     * shell's style.
+     * How far the mouth this column comes out of stands from its own edge,
+     * read when it registered (#585 round 2): one `--space-nav-gap` where the
+     * strip beside it stays put, which is every arrival this shell has — the
+     * column docked of an arriving drawer is the one the row uncovers in
+     * place, and that one never moves. The unfold that carries it is not the
+     * place that reads the shell's style, so it is kept here.
      */
-    gap: number
+    mouth: number
   }
   /** Entering columns pre-placed since the last unfold consumed them. */
   let entering: Entering[] = []
@@ -514,9 +516,9 @@ export function useShellFold(options: ShellFoldOptions) {
    * leaves the place the row gave it, and `place(column, 0)` is what says so —
    * the empty transform, so the row's own answer is the only one on it.
    */
-  function placeSelf(column: HTMLElement, travel: number, fold: ColumnFold, gap: number): void {
+  function placeSelf(column: HTMLElement, travel: number, fold: ColumnFold, mouth: number): void {
     place(column, fold === 'uncovered' ? 0 : travel)
-    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge(), fold, gap)
+    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge(), fold, mouth)
   }
 
   /**
@@ -532,14 +534,14 @@ export function useShellFold(options: ShellFoldOptions) {
     to: number,
     transition: MotionTransition,
     fold: ColumnFold,
-    gap: number
+    mouth: number
   ): void {
     if (from === to) return
-    placeSelf(column, from, fold, gap)
+    placeSelf(column, from, fold, mouth)
     void motion.run(
       column,
-      columnSlideKeyframes(from, to, options.edge(), fold, gap),
-      () => placeSelf(column, to, fold, gap),
+      columnSlideKeyframes(from, to, options.edge(), fold, mouth),
+      () => placeSelf(column, to, fold, mouth),
       transition
     )
   }
@@ -702,9 +704,36 @@ export function useShellFold(options: ShellFoldOptions) {
     // column is never carried and a leaving column's own ref is nulled by Vue
     // while it is still in the DOM (#585).
     const row = [...mountedColumns(), ...pending.columns]
-    for (const column of pending.columns) {
+    const stands = pending.columns.map((column) => columnStand(shell, column))
+    for (const [index, column] of pending.columns.entries()) {
       const width = column.getBoundingClientRect().width
-      carrySelf(column, 0, width + gap, transition, columnFoldOf(shell, column, row), gap)
+      /*
+       * The room the OTHER columns leaving with it are vacating DOCKED of this
+       * one (#585 round 2). A leaving column is a surviving column that also
+       * disappears: it has to follow that room exactly as the rail does, and
+       * retreat into its own mouth on top of it. Closing a mine with the
+       * secondary panel shut is where the difference shows — the ground's free
+       * edge sweeps the whole width and the rail rides it, so a navigation
+       * strip that only travelled its own 46px was overtaken within two frames
+       * and left a 41px band of bare ground behind the rail.
+       *
+       * The mouth travels with that room, which is why the clip is measured to
+       * `gap + vacated`: what the column ends up clipping away is still
+       * exactly its own width, however far the row underneath it moved.
+       */
+      const vacated = stands.reduce(
+        (room, stand, other) =>
+          other === index || stand >= stands[index]! ? room : room + pending.widths[other]! + gap,
+        0
+      )
+      carrySelf(
+        column,
+        0,
+        vacated + width + gap,
+        transition,
+        columnFoldOf(shell, column, row),
+        gap + vacated
+      )
     }
 
     run(
@@ -803,8 +832,9 @@ export function useShellFold(options: ShellFoldOptions) {
     // (#585).
     const rest = columnStand(shell, column)
     const fold = columnFoldOf(shell, column, [...mountedColumns(), column])
-    placeSelf(column, travel, fold, gap)
-    entering.push({ column, travel, fold, rest, gap })
+    const mouth = gap
+    placeSelf(column, travel, fold, mouth)
+    entering.push({ column, travel, fold, rest, mouth })
     // The last column to register is what the unfold was waiting for (#585).
     // Asked for here as well as from `settle` because the two arrive in either
     // order and neither is guaranteed: `settle` is the one App.vue's watch
@@ -952,8 +982,8 @@ export function useShellFold(options: ShellFoldOptions) {
       enteringNow.map((one) => [one.column, restStand(shell, one.column)])
     )
     entering = []
-    for (const { column, travel, fold, gap } of enteringNow)
-      carrySelf(column, travel, 0, transition, fold, gap)
+    for (const { column, travel, fold, mouth } of enteringNow)
+      carrySelf(column, travel, 0, transition, fold, mouth)
     // Every OTHER carried column returns from the footprint it had when the
     // fold it is answering for last settled — outside the footprint this
     // unfolds FROM when it is entering room the row only just repacked into,
@@ -1087,7 +1117,7 @@ export function useShellFold(options: ShellFoldOptions) {
     // An entering column pre-placed by `enter` but never carried by an unfold
     // this instance saw — the component that owns the fold went away first —
     // is not this app's to leave invisible: nothing else will ever reveal it.
-    for (const { column, fold, gap } of entering) placeSelf(column, 0, fold, gap)
+    for (const { column, fold, mouth } of entering) placeSelf(column, 0, fold, mouth)
     entering = []
   })
 

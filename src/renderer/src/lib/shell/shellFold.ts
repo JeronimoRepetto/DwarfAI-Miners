@@ -247,16 +247,22 @@ export type ColumnFold = 'drawer' | 'uncovered'
  * grows — the "wall" in the drawing is that docked-side edge, fixed, and the
  * content slides toward and behind it rather than being clipped uniformly.
  *
- * The mouth is the STRIP's near edge and not the column's own, which is one
- * `gap` further on (#585 round 2). Measured from its own edge, the drawer's
- * visible side stayed exactly one gap short of the strip in every frame — a
- * real-window probe read the secondary panel's edge at 902.2 while the
- * navigation strip's stood at 910.2 — so the drawer came out of an invisible
- * line with a band of bare ground between it and the thing it is sliding out
- * of. Subtracting the gap puts the two edges together for the whole travel,
- * and the resting gap comes back on its own at the ends: a travel of 0 clips
- * nothing, and a travel of the column's own width plus the gap has retreated
- * by exactly that width, leaving the gap standing open behind it.
+ * `mouth` is how far the strip this column disappears into stands from the
+ * column's own edge by the END of the travel, and it is what the clip is
+ * measured to (#585 round 2). Measured from its own edge instead, the
+ * drawer's visible side stayed exactly one gap short of the strip in every
+ * frame — a real-window probe read the secondary panel's edge at 902.2 while
+ * the navigation strip's stood at 910.2 — so the drawer came out of an
+ * invisible line with a band of bare ground between it and the thing it is
+ * sliding out of. Subtracting the mouth puts the two edges together for the
+ * whole travel, and the resting gap comes back on its own at the ends: a
+ * travel of 0 clips nothing, and a full travel has retreated by exactly the
+ * column's own width, leaving the gap standing open behind it.
+ *
+ * One gap is the whole of that distance while the strip stays put; where the
+ * strip is leaving too, it is one gap plus the room the strip itself is
+ * vacating, because the mouth travels with it. `useShellFold` works that
+ * distance out from the row and hands it over.
  *
  * An `'uncovered'` column insets the FREE side instead, and has no transform
  * composed with it at all: `travel` there is how far the strip beside it still
@@ -268,11 +274,11 @@ export function columnFoldClip(
   travel: number,
   edge: PanelEdge,
   fold: ColumnFold,
-  gap: number
+  mouth: number
 ): string {
-  // The mouth a drawer disappears into stands one gap beyond its own edge; an
+  // The mouth a drawer disappears into stands that far beyond its own edge; an
   // uncovered column's own edge IS where its strip's travel is measured to.
-  const inset = `${Math.max(0, fold === 'drawer' ? travel - gap : travel)}px`
+  const inset = `${Math.max(0, fold === 'drawer' ? travel - mouth : travel)}px`
   // The docked side of a right-docked shell is its right, and the free side of
   // a left-docked one is the same edge — so the two folds are each other's
   // mirror, and one expression answers for both docks and both of them.
@@ -295,9 +301,9 @@ export function columnSlideKeyframes(
   to: number,
   edge: PanelEdge,
   fold: ColumnFold,
-  gap: number
+  mouth: number
 ): DOMKeyframesDefinition {
-  const clipPath = [columnFoldClip(from, edge, fold, gap), columnFoldClip(to, edge, fold, gap)]
+  const clipPath = [columnFoldClip(from, edge, fold, mouth), columnFoldClip(to, edge, fold, mouth)]
   // An uncovered column is the one that does NOT slide (#585): its box stays
   // exactly where the row put it and the strip beside it does the moving, so a
   // travel of its own would be the second opinion about where it is that this

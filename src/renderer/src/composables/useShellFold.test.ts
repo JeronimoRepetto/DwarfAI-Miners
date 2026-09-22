@@ -1396,8 +1396,11 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     expect(mineRuns[mineRuns.length - 1]!.keyframes).toEqual({
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
     })
+    // AMENDED for #585 round 2: the strip does not only disappear into its own
+    // mouth, it FOLLOWS the 356px the mine column vacates under it first — see
+    // the case below, which is what measured the difference.
     expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
-      ...carries(0, 46),
+      ...carries(0, 402),
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
     })
     const folds = test.animations
@@ -1405,6 +1408,64 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
       test.railAnimations[test.railAnimations.length - 1]!.transition
     )
     expect(folds[folds.length - 1]!.transition).toBeUndefined()
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2, from the probe of the coalesced fold. Closing a
+   * mine with the secondary panel shut left 55px of bare ground where the
+   * composition draws 32 at rest, and the frames say where: the ground's free
+   * edge sweeps the whole 417px and the rail rides it, while the navigation
+   * strip travelled only the 46 of its own width and gap — so the sweep
+   * overtook the strip within two frames and left a 41px band between the
+   * rail and the mine with nothing in it.
+   *
+   * A leaving column is a surviving column that also disappears: it follows
+   * the room the columns docked of it are vacating, exactly as the rail does,
+   * and retreats into its own mouth on top of that. Its clip is measured to
+   * that mouth, which is now moving too, so what it ends up clipping is still
+   * exactly its own width.
+   */
+  it('carries a leaving drawer over the room the columns docked of it vacate', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    void test.fold.hold(mine)
+    await settled()
+    void test.fold.hold(nav)
+    await settled()
+    // 356 vacated by the mine column, then 38 + 8 of its own.
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      ...carries(0, 402),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
+    })
+    // Which is the rail's own travel but for the padding the bare rail drops:
+    // the two cross the ground together instead of one outrunning the other.
+    expect(transformFrames(test.railAnimations[test.railAnimations.length - 1]!.keyframes)[1]).toBe(
+      'translateX(410px)'
+    )
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2. The mine column is the docked-most of the row, so
+   * nothing leaving stands docked of it and it has nothing to follow: the
+   * clip alone, exactly as before, and no travel of its own.
+   */
+  it('gives the docked-most leaving column no travel to follow', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    void test.fold.hold(mine)
+    await settled()
+    void test.fold.hold(nav)
+    await settled()
+    const runs = test.animationsFor(mine)
+    expect(runs[runs.length - 1]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+    })
     test.wrapper.unmount()
   })
 
