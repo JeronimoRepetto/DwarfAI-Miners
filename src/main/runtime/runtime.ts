@@ -100,7 +100,7 @@ import type { CliDetector } from '../platform/cliDetection'
 import type { PlatformAdapters } from '../platform/platformAdapters'
 import { currentPlatform, normalizePathKey, pathFor, type Platform } from '../platform/platform'
 import { ProjectObserver } from '../projects/projectObserver'
-import type { ProjectRecord, ProjectsStore } from '../projects/projectsStore'
+import type { ProjectRecord, ProjectsFailure, ProjectsStore } from '../projects/projectsStore'
 import {
   createProjectRootResolver,
   foldWorktreeSnapshots,
@@ -448,7 +448,23 @@ const LAUNCH_FAILED = 'The agent could not be started.'
  * them is a button the user just pressed, and a button that sometimes does
  * nothing at all reads as broken rather than as declined.
  */
-const NO_PROJECT_STORE = "The projects database didn't open, so mines can't be added right now."
+/**
+ * Phrases the refusal for a null `projects`, at all four sites below.
+ *
+ * 'newer-build' is the one kind worth its own sentence (#572): it means a
+ * build released after this one wrote the file, so "update the app" is an
+ * actual instruction rather than a shrug. Every other kind — locked, corrupt,
+ * an unstamped file this build never wrote, or the refusal simply not being
+ * known (the demo path, or a caller that never wired one in) — keeps the
+ * original wording verbatim, so this split cannot reword a refusal it was not
+ * meant to touch.
+ */
+function noProjectStoreReason(refusal: ProjectsFailure | null): string {
+  if (refusal === 'newer-build') {
+    return "This copy of DwarfAI-Miners is older than the mines it found, so it won't touch them. Update the app to open them."
+  }
+  return "The projects database didn't open, so mines can't be added right now."
+}
 const NO_PICKER = "This build can't open a folder picker."
 const PICKER_FAILED = 'The folder picker could not be opened.'
 const DECLARE_FAILED = 'That folder could not be saved as a mine.'
@@ -821,6 +837,14 @@ export interface RuntimeOptions {
    */
   projects?: ProjectsStore | null
   /**
+   * Why `projects` is null, from openProjectsStore's classification (#572) —
+   * or null when it opened, or a demo is running. Only 'newer-build' earns
+   * its own sentence at the four refusal sites below; every other kind, and
+   * every other place `projects` is null, keeps the wording this file always
+   * had. Omitted has the same effect as null.
+   */
+  projectsRefusal?: ProjectsFailure | null
+  /**
    * Opens the operating system's folder picker and resolves with the chosen
    * directory, or null when the user closed it (#85).
    *
@@ -980,6 +1004,12 @@ export class AgentRuntime {
   private readonly lifecycle: DwarfLifecycleTracker
   /** Null whenever the projects database will not open, or a demo is running. */
   private readonly projects: ProjectsStore | null
+  /**
+   * Why `projects` above is null; null when it opened, or a demo is running
+   * (#572). Read only by `noProjectStoreReason`, at the four sites that speak
+   * for a null `projects`.
+   */
+  private readonly projectsRefusal: ProjectsFailure | null
   /**
    * Complexity-tier authority, held onto past the constructor so queryProjects
    * can join a project's measured byte weight the same live way it joins
@@ -1401,6 +1431,9 @@ export class AgentRuntime {
      * whose whole point is that its valley is invented.
      */
     this.projects = simulation ? null : (options.projects ?? null)
+    // A demo carries no real refusal either: the null `projects` above is the
+    // simulated-valley rule, not a database that failed to open (#572).
+    this.projectsRefusal = simulation ? null : (options.projectsRefusal ?? null)
     this.chooseDirectory = options.chooseDirectory ?? null
     // Answering null is the honest default: a build with no reader cannot carry
     // a file, and `heldContentFor` turns that into a refusal rather than a
@@ -2056,7 +2089,8 @@ export class AgentRuntime {
     const store = this.projects
     // Asked before the picker on purpose: making the user choose a folder and
     // then dropping it is worse than refusing before they start.
-    if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
+    if (store === null)
+      return { outcome: 'failed', reason: noProjectStoreReason(this.projectsRefusal) }
     if (this.chooseDirectory === null) return { outcome: 'failed', reason: NO_PICKER }
 
     let path: string | null
@@ -2103,7 +2137,8 @@ export class AgentRuntime {
    */
   async declareMainProject(): Promise<MineDeclareResult> {
     const store = this.projects
-    if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
+    if (store === null)
+      return { outcome: 'failed', reason: noProjectStoreReason(this.projectsRefusal) }
     const root = this.pendingMainProject
     this.pendingMainProject = null
     if (root === null) return { outcome: 'failed', reason: NO_PENDING_PROJECT }
@@ -2194,7 +2229,8 @@ export class AgentRuntime {
    */
   async undeclareMine(mineId: string): Promise<MineUndeclareResult> {
     const store = this.projects
-    if (store === null) return { outcome: 'failed', reason: NO_PROJECT_STORE }
+    if (store === null)
+      return { outcome: 'failed', reason: noProjectStoreReason(this.projectsRefusal) }
 
     const result = await store.forget({ id: mineId, at: this.now() })
     if (!result.ok) {
@@ -2234,7 +2270,8 @@ export class AgentRuntime {
    */
   async queryProjects(query: ProjectQuery): Promise<ProjectQueryResult> {
     const store = this.projects
-    if (store === null) return { answered: false, projects: [], reason: NO_PROJECT_STORE }
+    if (store === null)
+      return { answered: false, projects: [], reason: noProjectStoreReason(this.projectsRefusal) }
 
     const result = await store.query(query)
     if (!result.ok) {

@@ -5,6 +5,7 @@ import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
 import {
   createProjectsStore,
   type ProjectRecord,
+  type ProjectsFailure,
   type ProjectsStore
 } from '../projects/projectsStore'
 import { SIMULATION_ENV_VAR, defaultConfig, defaultSimulationConfig } from '../config/config'
@@ -6981,6 +6982,7 @@ describe('AgentRuntime declared mines (#85)', () => {
 
   function declaredRuntime(options: {
     projects?: ProjectsStore | null
+    projectsRefusal?: ProjectsFailure | null
     providers?: Provider[]
     chooseDirectory?: () => Promise<string | null>
     ledger?: MaterialLedger
@@ -6996,6 +6998,7 @@ describe('AgentRuntime declared mines (#85)', () => {
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? projectsStoreFor() : options.projects,
+      projectsRefusal: options.projectsRefusal,
       chooseDirectory: options.chooseDirectory,
       ledger: options.ledger,
       onMinesUpdated: vi.fn(),
@@ -7291,6 +7294,40 @@ describe('AgentRuntime declared mines (#85)', () => {
     expect(undeclared.reason).toContain('projects database')
   })
 
+  // #572: a database a NEWER build wrote is a one-step fix ("update the app"),
+  // not the same undiagnosable "didn't open" every other refusal shares — so
+  // it is the one kind that earns its own sentence at every refusal site.
+  it('names the update as the fix when the refusal is a newer build', async () => {
+    const runtime = declaredRuntime({
+      projects: null,
+      projectsRefusal: 'newer-build',
+      chooseDirectory: async () => ADOPTED
+    })
+
+    const result = await runtime.declareMine()
+    const undeclared = await runtime.undeclareMine('mine:whatever')
+    runtime.stop()
+
+    expect(result.reason).toContain('Update the app')
+    expect(result.reason).not.toContain("didn't open")
+    expect(undeclared.reason).toContain('Update the app')
+    expect(undeclared.reason).not.toContain("didn't open")
+  })
+
+  it('keeps the ordinary wording for a refusal that is not a newer build', async () => {
+    const runtime = declaredRuntime({
+      projects: null,
+      projectsRefusal: 'locked',
+      chooseDirectory: async () => ADOPTED
+    })
+
+    const result = await runtime.declareMine()
+    runtime.stop()
+
+    expect(result.reason).toContain('projects database')
+    expect(result.reason).not.toContain('Update the app')
+  })
+
   it('never opens the picker when there is nowhere to record the answer', async () => {
     // Asking the user to choose a folder and then dropping it on the floor is
     // worse than refusing: they did the work and the app forgot.
@@ -7389,6 +7426,7 @@ describe('AgentRuntime project queries (#92)', () => {
 
   function queryRuntime(options: {
     projects?: ProjectsStore | null
+    projectsRefusal?: ProjectsFailure | null
     providers?: Provider[]
     ledger?: MaterialLedger
     tiers?: TierService
@@ -7404,6 +7442,7 @@ describe('AgentRuntime project queries (#92)', () => {
       config: { ...defaultConfig(), dwarfLeaveGraceS: 0 },
       providers: options.providers ?? [],
       projects: options.projects === undefined ? queryStore() : options.projects,
+      projectsRefusal: options.projectsRefusal,
       ledger: options.ledger,
       tiers: options.tiers,
       onMinesUpdated: vi.fn(),
@@ -7653,6 +7692,18 @@ describe('AgentRuntime project queries (#92)', () => {
     expect(result.answered).toBe(false)
     expect(result.projects).toEqual([])
     expect(result.reason).not.toBeUndefined()
+  })
+
+  // #572: queryProjects is the fourth refusal site sharing this wording; a
+  // newer build's stamp is the one reason worth naming its own fix here too.
+  it('names the update as the fix when the browse has no store because of a newer build', async () => {
+    const runtime = queryRuntime({ projects: null, projectsRefusal: 'newer-build' })
+
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+
+    expect(result.answered).toBe(false)
+    expect(result.reason).toContain('Update the app')
   })
 
   it('reports a refusing store as a refusal, never as a project list that is empty', async () => {
