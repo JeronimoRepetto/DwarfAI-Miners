@@ -89,6 +89,24 @@ function fakeEngine() {
   return { animate, runs }
 }
 
+/**
+ * A hand-written stand-in for the scheduler `run`'s ender uses to re-apply
+ * `settle` after the engine's own deferred render (ADDED for #566 T2b,
+ * `createBoundedMotion({ afterRender })` — production gets motion-v's real
+ * `frame.postRender`). A real `frame.postRender` is driven by jsdom's own
+ * `requestAnimationFrame`, which several cases here already race against
+ * `vi.useFakeTimers()` for the watchdog; a fake that only RECORDS what it was
+ * asked to schedule, rather than a timer of its own, is what lets a test
+ * decide exactly when that callback fires instead of racing either clock.
+ */
+function fakeAfterRender() {
+  const scheduled: (() => void)[] = []
+  const afterRender = (callback: () => void): void => {
+    scheduled.push(callback)
+  }
+  return { afterRender, scheduled }
+}
+
 function harness(options: { reduced?: boolean; hidden?: boolean; animates?: boolean } = {}) {
   const media = new EventTarget() as MediaQueryList
   Object.defineProperty(media, 'matches', { configurable: true, value: options.reduced ?? false })
@@ -104,8 +122,9 @@ function harness(options: { reduced?: boolean; hidden?: boolean; animates?: bool
     Object.defineProperty(element, 'animate', { configurable: true, value: () => undefined })
   }
   const engine = fakeEngine()
-  const motion = createBoundedMotion({ animate: engine.animate })
-  return { motion, element, runs: engine.runs, media }
+  const after = fakeAfterRender()
+  const motion = createBoundedMotion({ animate: engine.animate, afterRender: after.afterRender })
+  return { motion, element, runs: engine.runs, media, scheduled: after.scheduled }
 }
 
 const RISE: DOMKeyframesDefinition = { opacity: [0, 1] }
@@ -310,5 +329,79 @@ describe('createBoundedMotion', () => {
     occlude(true)
     document.dispatchEvent(new Event('visibilitychange'))
     expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
+  })
+
+  /*
+   * ADDED for #566 T2b. `cancel()` closes the late WAAPI `onfinish` write
+   * (the cases above), but not a RENDER the engine's own driver already had
+   * queued before `cancel()` ran — that flushes on its own, one frame later,
+   * regardless of `cancel()` (`motionEngine.test.ts` and the module header
+   * on `run` have the real-engine evidence and the citation). A real-window
+   * probe of the rail carry caught exactly this: a late `transform: none`
+   * landing a frame after `cancel()` + `settle`, in 3 of 7 experiments. These
+   * three cases pin the re-apply that closes it, entirely through the fake
+   * scheduler — none of them touches a real frame or a real timer.
+   */
+  describe('re-applies settle after the engine’s own late render (#566 T2b)', () => {
+    it('restores what settle wrote once the scheduled callback runs, undoing a simulated late engine write', async () => {
+      const test = harness()
+      const done = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '1')
+      )
+      test.runs[0]!.finish()
+      await done
+      expect(test.element.style.opacity).toBe('1')
+      expect(test.scheduled).toHaveLength(1)
+      // Standing in for the engine's own deferred render, one frame later —
+      // the fake engine's `cancel()` already ran and does not model this
+      // itself, so the test writes the late value the way `motionEngine.
+      // test.ts` observed it against the real one.
+      test.element.style.setProperty('opacity', '0.42')
+      test.scheduled[0]!()
+      expect(test.element.style.opacity).toBe('1')
+      test.motion.dispose()
+    })
+
+    it('does not re-apply a superseded run’s settle once a new run on the same element has started', async () => {
+      const test = harness()
+      const first = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '1')
+      )
+      test.runs[0]!.finish()
+      await first
+      expect(test.scheduled).toHaveLength(1)
+      const staleReapply = test.scheduled[0]!
+      // A second run starts before the first run's scheduled re-apply has
+      // fired — exactly the case the identity guard exists for: `run`
+      // cancels the stale schedule the moment a new one starts.
+      const second = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '0.5')
+      )
+      test.runs[1]!.finish()
+      await second
+      expect(test.element.style.opacity).toBe('0.5')
+      // The fake never removes what it recorded — running the stale callback
+      // anyway must still not stomp the second run's answer.
+      staleReapply()
+      expect(test.element.style.opacity).toBe('0.5')
+      test.motion.dispose()
+    })
+
+    it('cancels every pending re-apply on dispose, so nothing fires after teardown', async () => {
+      const test = harness()
+      const done = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '1')
+      )
+      test.runs[0]!.finish()
+      await done
+      expect(test.scheduled).toHaveLength(1)
+      const reapply = test.scheduled[0]!
+      test.motion.dispose()
+      test.element.style.setProperty('opacity', '0.9')
+      reapply()
+      // Dispose already released the component's claim on this element; the
+      // scheduled re-apply must not still be able to write to it.
+      expect(test.element.style.opacity).toBe('0.9')
+    })
   })
 })
