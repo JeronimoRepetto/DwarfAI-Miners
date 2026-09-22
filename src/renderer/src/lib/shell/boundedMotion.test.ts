@@ -30,15 +30,19 @@ const STYLE_PROPERTY: Record<string, string> = {
 /**
  * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
  * (was: stubbing `element.animate`, WAAPI's own entry point, which the runner
- * no longer calls). `createBoundedMotion({ animate })` is the seam: tests hand
- * it this fake, production hands it nothing and gets the real motion-v import
+ * no longer calls), and AMENDED again for the `cancel()`-first fix below (was:
+ * a `complete`/`stop` pair, mirroring a `MotionControls` shape the runner no
+ * longer has). `createBoundedMotion({ animate })` is the seam: tests hand it
+ * this fake, production hands it nothing and gets the real motion-v import
  * instead (`motionEngine.test.ts` pins the real one).
  *
- * `finish()` writes the FINAL keyframe value onto the element the way the real
- * engine does — motion-v writes its own final frame straight into inline
- * style rather than compositing a discardable WAAPI effect on top of it — so a
- * test can tell whether the runner handed a property back to the stylesheet
- * afterwards or left the engine's own value sitting there.
+ * `cancel()` writes the INITIAL keyframe by default — mirroring the stronger
+ * of the two real shapes read from motion-dom's own source (`JSAnimation`'s
+ * `cancel()` calls `tick(0)`): a WAAPI `cancel()` that writes nothing is a
+ * no-op the runner does not depend on either way, but one that DOES write has
+ * to run before `settle`, never after, or it would stomp the caller's answer.
+ * `finish()` writes the FINAL keyframe and settles the engine's own thenable,
+ * the way a run that completes on its own timeline does.
  */
 function fakeEngine() {
   const runs: {
@@ -46,46 +50,39 @@ function fakeEngine() {
     keyframes: DOMKeyframesDefinition
     options: { duration: number; ease: unknown }
     finish: () => void
-    complete: ReturnType<typeof vi.fn>
-    stop: ReturnType<typeof vi.fn>
+    cancel: ReturnType<typeof vi.fn>
   }[] = []
   const animate: MotionAnimate = (element, keyframes, options) => {
     let resolveFinished!: () => void
     const finished = new Promise<void>((resolve) => {
       resolveFinished = resolve
     })
-    const writeFinalFrame = (): void => {
+    const writeFrame = (which: 'initial' | 'final'): void => {
       const style = (element as HTMLElement).style
       for (const [key, value] of Object.entries(keyframes)) {
         const property = STYLE_PROPERTY[key]
         if (property === undefined || !Array.isArray(value)) continue
-        const last = value[value.length - 1]
+        const frame = which === 'final' ? value[value.length - 1] : value[0]
         const written =
           key === 'x' || key === 'y'
-            ? `translate${key.toUpperCase()}(${String(last)}px)`
-            : String(last)
+            ? `translate${key.toUpperCase()}(${String(frame)}px)`
+            : String(frame)
         style.setProperty(property, written)
       }
     }
-    const complete = vi.fn(() => {
-      writeFinalFrame()
-      resolveFinished()
-    })
-    const stop = vi.fn()
+    const cancel = vi.fn(() => writeFrame('initial'))
     runs.push({
       element,
       keyframes,
       options,
       finish: () => {
-        writeFinalFrame()
+        writeFrame('final')
         resolveFinished()
       },
-      complete,
-      stop
+      cancel
     })
     return {
-      complete,
-      stop,
+      cancel,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
     }
   }
@@ -126,32 +123,33 @@ describe('createBoundedMotion', () => {
     test.runs[0]!.finish()
     await done
     expect(settled).toBe(true)
-    // `stop()` is the only teardown method the bound calls on the controls —
-    // never `cancel()`, which the injected engine's own minimal type has no
-    // room for.
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    // `cancel()` is the only teardown method the bound calls on the
+    // controls — it discards the engine's own effect (and any still-pending
+    // keyframe resolver) before a `finish` event the engine fires later could
+    // ever land, which the old `complete()`/`stop()` pair never guaranteed.
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
-  it('tries the engine’s own complete() first, then settles the state, then lets the run go, in that order', async () => {
-    // Best-effort: the T0 probe found `complete()` can land a value late
-    // rather than never once the window is hidden, and costs nothing once the
-    // engine already finished on its own. `settle` is what actually
-    // guarantees the state either way, and still has to run before `stop()`
-    // for the reason it always did — cancelling first would have been one
-    // frame of exactly the repaint the motion exists to hide.
+  it('cancels the engine first, then settles the state, then lets the run go, in that order', async () => {
+    // `cancel()` runs FIRST, always: on the WAAPI path it discards the effect
+    // before a `finish` event a hidden window's frozen timeline delayed can
+    // ever land after the fact; on the JS driver it can leave the element at
+    // an arbitrary mid-animation frame (`motionEngine.test.ts` pins the real
+    // one). Either way `settle` has to run right after it, never before, or
+    // the caller's answer for this element would be overwritten by whatever
+    // `cancel()` itself just left there.
     const test = harness()
     const order: string[] = []
     const done = test.motion.run(test.element, RISE, () => order.push('settle'))
-    test.runs[0]!.complete.mockImplementation(() => order.push('complete'))
-    test.runs[0]!.stop.mockImplementation(() => order.push('stop'))
+    test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
     test.runs[0]!.finish()
     await done
     // `finish()` resolves the engine's OWN thenable directly (the way a real
-    // run finishing on its own does), so the bound's best-effort `complete()`
-    // call — made from inside the SAME closure that ran `settle` — is what
-    // shows up here, not the fake's `finish` helper.
-    expect(order).toEqual(['complete', 'settle', 'stop'])
+    // run finishing on its own does), so the bound's own `cancel()` call —
+    // made from inside the SAME closure that ran `settle` — is what shows up
+    // here, not the fake's `finish` helper.
+    expect(order).toEqual(['cancel', 'settle'])
     test.motion.dispose()
   })
 
@@ -160,47 +158,65 @@ describe('createBoundedMotion', () => {
     const done = test.motion.run(test.element, RISE)
     test.runs[0]!.finish()
     await done
+    // `finish()` writes RISE's final keyframe (`opacity: '1'`); `cancel()`
+    // then overwrites it with the INITIAL keyframe (`'0'`, this fake's
+    // default). `releaseWritten` clears the property outright regardless of
+    // which write left it there — proving it does not merely revert the
+    // engine's last value, it hands the property back to the stylesheet.
     expect(test.element.style.opacity).toBe('')
     test.motion.dispose()
   })
 
-  it('leaves the engine’s own written properties alone once the caller has a settle, whatever it wrote', async () => {
-    // Motion-v writes its final frame straight into inline style rather than
-    // compositing a WAAPI effect `cancel()` could drop for free — so a caller
-    // that owns `settle` has to own everything this run touched, the same
-    // contract `useShellFold` and `MessagePanelWindow` already keep.
+  it('leaves whatever cancel() left on the element alone once the caller has a settle, whatever that is', async () => {
+    // `finish()` writes RISE's final keyframe (`opacity: '1'`) and settles the
+    // engine's own thenable; `cancel()` then overwrites it with the INITIAL
+    // keyframe (`'0'`), mirroring motion-dom's own JS driver (`tick(0)`,
+    // `motionEngine.test.ts` pins the real engine doing something similar).
+    // The caller's own `settle` here is a no-op, so `cancel()`'s write is
+    // what stays — proving a caller that owns `settle` really does own
+    // EVERY property this run touches: the runner never calls
+    // `releaseWritten` once `settle` is defined, no matter what either write
+    // left behind.
     const test = harness()
     const done = test.motion.run(test.element, RISE, () => undefined)
     test.runs[0]!.finish()
     await done
-    expect(test.element.style.opacity).toBe('1')
+    expect(test.element.style.opacity).toBe('0')
     test.motion.dispose()
   })
 
-  it('releases a motion whose engine never reports finishing, once the watchdog elapses', async () => {
+  it('cancels then settles, in that order, once the watchdog elapses on an engine that never reports finishing', async () => {
     // Chromium freezes the document timeline for an occluded window: the last
-    // frame lands on the compositor and `finished` never settles (#266).
+    // frame lands on the compositor and `finished` never settles (#266). The
+    // watchdog ends the run anyway — `cancel()` first, so nothing the engine
+    // might still deliver later can land after `settle` decided the state.
     vi.useFakeTimers()
     const test = harness()
     let settled = false
-    void test.motion.run(test.element, RISE).then(() => {
-      settled = true
-    })
+    const order: string[] = []
+    void test.motion
+      .run(test.element, RISE, () => order.push('settle'))
+      .then(() => {
+        settled = true
+      })
+    test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
     await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
     expect(settled).toBe(true)
-    expect(test.runs[0]!.complete).toHaveBeenCalledOnce()
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(order).toEqual(['cancel', 'settle'])
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
-  it('releases a running motion the moment the window becomes hidden', async () => {
+  it('cancels then settles, in that order, the moment the window becomes hidden', async () => {
     const test = harness()
-    const done = test.motion.run(test.element, RISE)
+    const order: string[] = []
+    const done = test.motion.run(test.element, RISE, () => order.push('settle'))
+    test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
     occlude(true)
     document.dispatchEvent(new Event('visibilitychange'))
     await done
-    expect(test.runs[0]!.complete).toHaveBeenCalledOnce()
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(order).toEqual(['cancel', 'settle'])
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
@@ -210,7 +226,7 @@ describe('createBoundedMotion', () => {
     Object.defineProperty(test.media, 'matches', { configurable: true, value: true })
     test.media.dispatchEvent(new Event('change'))
     await done
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
@@ -258,8 +274,8 @@ describe('createBoundedMotion', () => {
     const second = test.motion.run(test.element, RISE)
     await Promise.resolve()
     expect(first).toBe(true)
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
-    expect(test.runs[1]!.stop).not.toHaveBeenCalled()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
+    expect(test.runs[1]!.cancel).not.toHaveBeenCalled()
     test.runs[1]!.finish()
     await second
     test.motion.dispose()
@@ -277,7 +293,7 @@ describe('createBoundedMotion', () => {
     await one
     expect(test.motion.running(test.element)).toBe(false)
     expect(test.motion.running(other)).toBe(true)
-    expect(test.runs[1]!.stop).not.toHaveBeenCalled()
+    expect(test.runs[1]!.cancel).not.toHaveBeenCalled()
     test.motion.release(other)
     await two
     test.motion.dispose()
@@ -288,11 +304,11 @@ describe('createBoundedMotion', () => {
     const done = test.motion.run(test.element, RISE)
     test.motion.dispose()
     await done
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     // The listeners go with it: a release after teardown would reach into a
     // component that is no longer there.
     occlude(true)
     document.dispatchEvent(new Event('visibilitychange'))
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
   })
 })
