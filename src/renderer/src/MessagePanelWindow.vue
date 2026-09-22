@@ -14,7 +14,11 @@ import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
 import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from './lib/message/feedPages'
 import { messageSurfaceMotion } from './lib/message/surfaceMotion'
-import { createBoundedMotion, type MotionAnimate } from './lib/shell/boundedMotion'
+import {
+  createBoundedMotion,
+  type MotionAnimate,
+  type ScheduleAfterRender
+} from './lib/shell/boundedMotion'
 import { PANEL_MOTION_Y, panelKeyframes } from './lib/shell/panelMotion'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
@@ -74,6 +78,13 @@ const props = defineProps<{
    * (#566).
    */
   engine?: MotionAnimate
+  /**
+   * The scheduler `createBoundedMotion` re-applies `settle` through, next to
+   * `engine` for the same reason and undefined in production the same way:
+   * a test hands in a recorder that decides exactly when the callback fires
+   * (#566 hotfix), rather than racing motion-v's real `frame.postRender`.
+   */
+  afterRender?: ScheduleAfterRender
 }>()
 
 const { state, setMines } = useMines()
@@ -1067,7 +1078,7 @@ function reportHeight(): void {
  * panels do — and the keyframes are the same builder its vertical dock uses:
  * one panel motion in this app, not one per window.
  */
-const motion = createBoundedMotion({ animate: props.engine })
+const motion = createBoundedMotion({ animate: props.engine, afterRender: props.afterRender })
 /**
  * Where an arriving surface waits and a leaving one stops, read off
  * `panelMotion.ts`'s own vertical offset rather than restated here — the
@@ -1119,12 +1130,24 @@ function releaseHidden(element: HTMLElement): void {
  * keyframe NOW — before anything is drawn into it — so the first frame the
  * window is shown with is the one the rise starts from rather than the panel
  * arriving and then animating.
+ *
+ * `claim`, not `release` (#566 hotfix follow-up): `armRise` only ever runs
+ * once the previous leave has fully settled (`drawn.value.surface` becomes
+ * `'none'` — the `move === 'enter'` condition below — only inside
+ * `settleAndLeave`'s own completion, so nothing on this element is still
+ * active by the time this is called), so what `release` alone would leave
+ * standing here is the leave's re-apply, scheduled the moment it ended and
+ * still pending because main had already hidden the window before that
+ * scheduled frame ever ran — exactly #566's own bug. `claim` withdraws it,
+ * so it cannot fire later and overwrite `holdHidden` here, or the instant
+ * rise `riseWhenRevealed` takes right after while the window is still
+ * hidden.
  */
 function armRise(): void {
   awaitingReveal = true
   const element = surfaceRef.value
   if (element === null) return
-  motion.release(element)
+  motion.claim(element)
   holdHidden(element)
 }
 
@@ -1196,9 +1219,15 @@ watch(
     // A cut: the window is not moving, so neither is the surface. Anything a
     // leave had started on it is undone here — a reopen inside that leave finds
     // the window still up, and its surface part-way to gone.
+    //
+    // `claim`, not `release` (#566 hotfix follow-up): this writes
+    // `releaseHidden` itself right after, even when the leave being cut is
+    // still ACTIVE (a dwarf switch landing mid-leave) — a re-apply that
+    // ending would otherwise leave standing would fire later and overwrite
+    // this write with the leave's own `holdHidden`.
     const element = surfaceRef.value
     if (element === null) return
-    motion.release(element)
+    motion.claim(element)
     releaseHidden(element)
   }
 )
