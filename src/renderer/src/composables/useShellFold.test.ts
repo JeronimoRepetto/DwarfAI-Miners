@@ -968,9 +968,14 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const secondary = placed(test.column(555), 36, 555)
     void test.fold.hold(secondary)
     await settled()
+    // AMENDED for #585 round 2: the drawer's mouth is the STRIP's near edge,
+    // one gap docked of the column's own, so the clip retreats by the
+    // column's width (555) and not by its whole travel (563) — the 8px
+    // difference is the band of bare ground the probe measured between the
+    // emerging panel and the strip it comes out of.
     expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
       ...carries(0, 563),
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -1098,13 +1103,15 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const secondary = placed(test.column(555), 36, 555)
     test.fold.enter(secondary)
     expect(secondary.style.transform).toBe('translateX(563px)')
-    expect(secondary.style.clipPath).toBe('inset(0px 563px 0px 0px)')
+    // AMENDED for #585 round 2: the mouth is the strip's near edge — see the
+    // leave case above.
+    expect(secondary.style.clipPath).toBe('inset(0px 555px 0px 0px)')
     test.state.shell = sized(test.shell, 1001)
     test.fold.settle(false)
     await settled()
     expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
       ...carries(563, 0),
-      clipPath: ['inset(0px 563px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 555px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
     test.wrapper.unmount()
   })

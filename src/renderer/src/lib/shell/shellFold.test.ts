@@ -362,10 +362,10 @@ describe('columnFoldKeyframes', () => {
  */
 describe('columnFoldClip', () => {
   it('clips nothing at zero travel, the column’s own resting frame', () => {
-    expect(columnFoldClip(0, 'right', 'drawer')).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(0, 'left', 'drawer')).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(0, 'right', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(0, 'left', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'right', 'drawer', 8)).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left', 'drawer', 8)).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'right', 'uncovered', 8)).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left', 'uncovered', 8)).toBe('inset(0px 0px 0px 0px)')
   })
 
   /*
@@ -378,12 +378,25 @@ describe('columnFoldClip', () => {
    * assumed. A drawer's wall is the strip docked of it, and this is that
    * case, unchanged.
    */
-  it('insets the docked-side edge of a right-docked drawer’s own box', () => {
-    expect(columnFoldClip(200, 'right', 'drawer')).toBe('inset(0px 200px 0px 0px)')
+  it('insets a right-docked drawer to the mouth the strip beside it stands at', () => {
+    expect(columnFoldClip(200, 'right', 'drawer', 8)).toBe('inset(0px 192px 0px 0px)')
   })
 
-  it('insets the docked-side edge of a left-docked drawer’s own box, the other side', () => {
-    expect(columnFoldClip(200, 'left', 'drawer')).toBe('inset(0px 0px 0px 200px)')
+  it('insets a left-docked drawer to the same mouth, on the other side', () => {
+    expect(columnFoldClip(200, 'left', 'drawer', 8)).toBe('inset(0px 0px 0px 192px)')
+  })
+
+  /*
+   * ADDED for #585 round 2. The two ends of a drawer's own travel, which is
+   * what makes the strip's near edge the right line to measure from: at rest
+   * it clips nothing (the gap beside it is ground, and ground is what a
+   * resting row draws there), and at the end of a travel of its own width plus
+   * that gap it has retreated by exactly its own width — fully inside the
+   * strip, with the gap standing open again behind it.
+   */
+  it('clips nothing at rest and exactly the column at the end of its travel', () => {
+    expect(columnFoldClip(4, 'right', 'drawer', 8)).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(555 + 8, 'right', 'drawer', 8)).toBe('inset(0px 555px 0px 0px)')
   })
 
   /*
@@ -394,16 +407,16 @@ describe('columnFoldClip', () => {
    * column itself never translates at all.
    */
   it('insets the free-side edge of a right-docked column the strip uncovers', () => {
-    expect(columnFoldClip(200, 'right', 'uncovered')).toBe('inset(0px 0px 0px 200px)')
+    expect(columnFoldClip(200, 'right', 'uncovered', 8)).toBe('inset(0px 0px 0px 200px)')
   })
 
   it('insets the free-side edge of a left-docked column the strip uncovers', () => {
-    expect(columnFoldClip(200, 'left', 'uncovered')).toBe('inset(0px 200px 0px 0px)')
+    expect(columnFoldClip(200, 'left', 'uncovered', 8)).toBe('inset(0px 200px 0px 0px)')
   })
 
   it('never insets past zero, whatever it is handed', () => {
-    expect(columnFoldClip(-5, 'right', 'drawer')).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(-5, 'right', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'drawer', 8)).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'uncovered', 8)).toBe('inset(0px 0px 0px 0px)')
   })
 })
 
@@ -414,16 +427,16 @@ describe('columnSlideKeyframes', () => {
    * "the SAME two keyframes" is finally the same CLOCK as well.
    */
   it('carries the transform and the clip on the SAME two keyframes', () => {
-    expect(columnSlideKeyframes(0, 563, 'right', 'drawer')).toEqual({
+    expect(columnSlideKeyframes(0, 563, 'right', 'drawer', 8)).toEqual({
       transform: ['translateX(0px)', 'translateX(563px)'],
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
     })
   })
 
   it('mirrors both halves onto a left-docked shell together', () => {
-    expect(columnSlideKeyframes(0, 200, 'left', 'drawer')).toEqual({
+    expect(columnSlideKeyframes(0, 200, 'left', 'drawer', 8)).toEqual({
       transform: ['translateX(0px)', 'translateX(-200px)'],
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 200px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 192px)']
     })
   })
 
@@ -434,13 +447,13 @@ describe('columnSlideKeyframes', () => {
    * moves so the interior inside it is never asked to re-measure.
    */
   it('gives an uncovered column the clip alone, with no travel of its own', () => {
-    expect(columnSlideKeyframes(0, 356, 'right', 'uncovered')).toEqual({
+    expect(columnSlideKeyframes(0, 356, 'right', 'uncovered', 8)).toEqual({
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
     })
   })
 
   it('mirrors an uncovered column’s clip onto a left-docked shell, still with no travel', () => {
-    expect(columnSlideKeyframes(356, 0, 'left', 'uncovered')).toEqual({
+    expect(columnSlideKeyframes(356, 0, 'left', 'uncovered', 8)).toEqual({
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
   })
