@@ -247,6 +247,13 @@ export function useShellFold(options: ShellFoldOptions) {
   }
   /** Entering columns pre-placed since the last unfold consumed them. */
   let entering: Entering[] = []
+  /**
+   * Whether an unfold has already been asked for and is waiting for the rest
+   * of this change to register (#585) — see `armUnfold`, which is the whole of
+   * what it guards: `settle` and `enter` both ask, in either order, and one
+   * unfold is what they are asking for between them.
+   */
+  let unfoldQueued = false
 
   function leaving(): Leaving {
     let resolve!: () => void
@@ -479,6 +486,12 @@ export function useShellFold(options: ShellFoldOptions) {
       // column left waiting for either stayed invisible for good, live in a
       // real window. This run just became the one thing that reliably knows
       // the ground is free again, so it asks on that column's behalf.
+      //
+      // A BACKSTOP since #585, where it used to be the ordinary path: a column
+      // of the same change registers before the unfold is measured now, so
+      // what is left here is a column that genuinely arrived after one — a
+      // second grow landing inside the first one's run — which is a second
+      // change and honestly a second run.
       if (pendingReveal()) settle(false)
     })
   }
@@ -623,6 +636,12 @@ export function useShellFold(options: ShellFoldOptions) {
     const travel = column.getBoundingClientRect().width + gap
     placeSelf(column, travel)
     entering.push({ column, travel })
+    // The last column to register is what the unfold was waiting for (#585).
+    // Asked for here as well as from `settle` because the two arrive in either
+    // order and neither is guaranteed: `settle` is the one App.vue's watch
+    // fires first, and a column whose own grow was already consumed by an
+    // earlier settle would otherwise have nothing left to ask at all.
+    armUnfold()
   }
 
   /**
@@ -635,6 +654,144 @@ export function useShellFold(options: ShellFoldOptions) {
    */
   function pendingReveal(): boolean {
     return entering.some((one) => one.travel > 0)
+  }
+
+  /**
+   * What an unfold would run from, or `null` where this settle has none to
+   * run — the ONE question `settle` and the deferred `unfold` below both ask,
+   * so the two can never disagree about whether there is anything to do.
+   *
+   * `pinned` excludes itself here rather than being tested afterwards, which
+   * is the order the three tails of `settle` used to carry on their own: the
+   * ground is still holding a fold the window had not caught up with, so
+   * `painted` is that fold's strip rather than a footprint anything may
+   * unfold FROM — including where the window it caught up with is wider than
+   * the box the fold started from, which a swap can do. A box that did not
+   * move is refused by `width > box` already.
+   *
+   * `pendingReveal()` is a second way in, added for #566 T5b from a
+   * real-window probe: two grows close enough together can both land before
+   * either settle runs (the mine column opening a tick after the secondary
+   * panel did, in one probed case) — the FIRST unfold's own completion
+   * catches the viewport up to whatever it has ALREADY reached by then, which
+   * can already be the SECOND grow's own width too, leaving `width > box`
+   * false for the column that arrived inside that same jump even though it is
+   * still sitting exactly where `enter` pre-placed it. Gated on an actual
+   * non-zero travel, not merely `entering` being non-empty: a test double
+   * that lays nothing out (jsdom answers every `getBoundingClientRect` with
+   * zeros) registers a column at a travel of exactly 0, and several existing
+   * cases pin that environment as one this branch must stay OUT of —
+   * `App.test.ts`'s own "jsdom lays out no box, so the shell never measures
+   * itself as grown" is the same fact stated from the width side of this OR.
+   * Nothing here is unsafe to run on a real box that has not moved further:
+   * the ground's own animation is then a zero-visual-delta run (`painted`
+   * already equals `width` in every pixel it draws), and every carried
+   * column's own `carry` is the SAME `from === to` no-op `hold`'s own leave
+   * path already relies on.
+   */
+  function unfoldable(shell: HTMLElement, width: number): { from: number } | null {
+    if (pinned !== null || box === null || painted === null) return null
+    if (width <= box && !pendingReveal()) return null
+    if (still(shell)) return null
+    return { from: painted }
+  }
+
+  /**
+   * Ask for the unfold on the microtask after the change that wants it (#585).
+   *
+   * The same device `hold` uses to make ONE fold out of however many columns
+   * leave in a patch, for the same reason with the sign reversed. Vue puts
+   * App.vue's `flush: 'post'` watch and a `<Transition>`'s own enter hook in
+   * the SAME post-flush queue and sorts it by id — the watch carries its
+   * component's, an enter hook is an anonymous callback with none — so
+   * `settle` is always asked first and `enter` always registers afterwards.
+   * Unfolding where it was asked therefore revealed the ground with `entering`
+   * still empty, every later settle bounced off `motion.running(shell)` for
+   * the 300ms that took, and the content only arrived on the drain at the end
+   * of it: two sequential runs, and 936px of bare amber in between, measured
+   * live.
+   *
+   * A microtask and not a frame or a timer: Vue's flush — patch, refs, watches
+   * and enter hooks alike — is one synchronous job, so this lands after all of
+   * it and before the browser has painted anything. Idempotent, because both
+   * `settle` and `enter` ask and either may be first.
+   */
+  function armUnfold(): void {
+    if (unfoldQueued) return
+    unfoldQueued = true
+    void Promise.resolve().then(() => {
+      // The flag is the token as well as the guard: teardown clears it to
+      // withdraw an unfold nothing is left to run — a microtask cannot be
+      // cancelled, and starting a run on a disposed runner would leave an
+      // animation on an element this instance has stopped owning.
+      if (!unfoldQueued) return
+      unfoldQueued = false
+      unfold()
+    })
+  }
+
+  /**
+   * Reveal the ground, and carry every column of this change with it.
+   *
+   * One transition, computed once and handed to every run (#464), and every
+   * run started here in the same turn: the ground's own clip, each entering
+   * column's slide out from behind the strip beside it, and each carried
+   * column's travel back to where the row now puts it. They end together
+   * because they are one motion; a column still travelling over a ground that
+   * had stopped is the frame this exists to remove.
+   *
+   * Everything is re-read rather than carried over from the settle that armed
+   * this: a microtask is long enough for the shell to have gone away, for a
+   * fold to have started in the other direction, or for the window to have
+   * moved again.
+   */
+  function unfold(): void {
+    const shell = options.shell()
+    if (shell === null || motion.running(shell)) return
+    const width = shell.getBoundingClientRect().width
+    const pending = unfoldable(shell, width)
+    if (pending === null) return
+    const from = pending.from
+    const radius = radiusOf(shell)
+    apply(shell, from, radius)
+    const transition = clipTransitionFor(from, 'whole', radius)
+    // Entering columns are carried on THIS unfold — the same event that
+    // reveals the ground — never their own: they were pre-placed by `enter`
+    // at exactly the travel `columnStand` would answer for them anyway
+    // (their row already repacked around them), so nothing here re-measures
+    // it.
+    const enteringNow = entering
+    entering = []
+    const enteringColumns = new Set(enteringNow.map((one) => one.column))
+    for (const { column, travel } of enteringNow) carrySelf(column, travel, 0, transition)
+    // Every OTHER carried column returns from the footprint it had when the
+    // fold it is answering for last settled — outside the footprint this
+    // unfolds FROM when it is entering room the row only just repacked into,
+    // which is exactly why it starts there and comes back with the ground.
+    const stands = new Map<HTMLElement, number>()
+    for (const column of mountedColumns()) {
+      if (enteringColumns.has(column)) continue
+      const stand = columnStand(shell, column)
+      stands.set(column, stand)
+      const offset = columnOffsets.get(column)
+      if (offset !== undefined) carry(column, stand - offset, 0, transition)
+    }
+    run(
+      shell,
+      from,
+      'whole',
+      radius,
+      () => {
+        painted = width
+        box = width
+        for (const [column, stand] of stands) {
+          columnOffsets.set(column, stand)
+          motion.release(column)
+        }
+        for (const column of enteringColumns) motion.release(column)
+      },
+      () => undefined
+    )
   }
 
   /**
@@ -654,86 +811,13 @@ export function useShellFold(options: ShellFoldOptions) {
       return
     }
     const width = shell.getBoundingClientRect().width
-    /*
-     * The one branch that folds, and so the one that has a radius to read.
-     *
-     * `pinned` excludes itself here rather than being tested first, which is
-     * the order the three tails below used to carry on their own: the ground
-     * is still holding a fold the window had not caught up with, so `painted`
-     * is that fold's strip rather than a footprint anything may unfold FROM —
-     * including where the window it caught up with is wider than the box the
-     * fold started from, which a swap can do. A box that did not move is
-     * refused by `width > box` already.
-     *
-     * `pendingReveal()` is a second way in, added for #566 T5b from a
-     * real-window probe: two grows close enough together can both land before
-     * either settle runs (the mine column opening a tick after the secondary
-     * panel did, in one probed case) — the FIRST unfold's own completion
-     * catches the viewport up to whatever it has ALREADY reached by then,
-     * which can already be the SECOND grow's own width too, leaving `width >
-     * box` false for the column that arrived inside that same jump even
-     * though it is still sitting exactly where `enter` pre-placed it. Gated
-     * on an actual non-zero travel, not merely `entering` being non-empty: a
-     * test double that lays nothing out (jsdom answers every
-     * `getBoundingClientRect` with zeros) registers a column at a travel of
-     * exactly 0, and several existing cases pin that environment as one this
-     * branch must stay OUT of — `App.test.ts`'s own "jsdom lays out no box,
-     * so the shell never measures itself as grown" is the same fact stated
-     * from the width side of this OR. Nothing here is unsafe to run on a real
-     * box that has not moved further: the ground's own animation is then a
-     * zero-visual-delta run (`painted` already equals `width` in every pixel
-     * it draws), and every carried column's own `carry` is the SAME `from
-     * === to` no-op `hold`'s own leave path already relies on.
-     */
-    if (
-      pinned === null &&
-      box !== null &&
-      painted !== null &&
-      (width > box || pendingReveal()) &&
-      !still(shell)
-    ) {
-      const radius = radiusOf(shell)
-      apply(shell, painted, radius)
-      // Computed ONCE and shared with `run`'s own clip run below (#464), the
-      // same way `begin` does for the fold's other direction.
-      const transition = clipTransitionFor(painted, 'whole', radius)
-      // Entering columns are carried on THIS unfold — the same event that
-      // reveals the ground — never their own: they were pre-placed by `enter`
-      // at exactly the travel `columnStand` would answer for them anyway
-      // (their row already repacked around them), so nothing here re-measures
-      // it.
-      const enteringNow = entering
-      entering = []
-      const enteringColumns = new Set(enteringNow.map((one) => one.column))
-      for (const { column, travel } of enteringNow) carrySelf(column, travel, 0, transition)
-      // Every OTHER carried column returns from the footprint it had when the
-      // fold it is answering for last settled — outside the footprint this
-      // unfolds FROM when it is entering room the row only just repacked into,
-      // which is exactly why it starts there and comes back with the ground.
-      const stands = new Map<HTMLElement, number>()
-      for (const column of mountedColumns()) {
-        if (enteringColumns.has(column)) continue
-        const stand = columnStand(shell, column)
-        stands.set(column, stand)
-        const offset = columnOffsets.get(column)
-        if (offset !== undefined) carry(column, stand - offset, 0, transition)
-      }
-      run(
-        shell,
-        painted,
-        'whole',
-        radius,
-        () => {
-          painted = width
-          box = width
-          for (const [column, stand] of stands) {
-            columnOffsets.set(column, stand)
-            motion.release(column)
-          }
-          for (const column of enteringColumns) motion.release(column)
-        },
-        () => undefined
-      )
+    // The unfold is the one branch that waits (#585): every column arriving in
+    // THIS change has to have registered before it is measured, or it reveals
+    // the ground alone and leaves the content for a second run. `armUnfold`
+    // below is where that wait lives; everything after this point is a settle
+    // with nothing to unfold and happens on the spot, as it always has.
+    if (unfoldable(shell, width) !== null) {
+      armUnfold()
       return
     }
     if (pinned !== null) {
@@ -800,6 +884,11 @@ export function useShellFold(options: ShellFoldOptions) {
   // held would strand the row inside a window nobody is going to resize now.
   onBeforeUnmount(() => {
     window.removeEventListener('resize', caughtUp)
+    // Withdraw an unfold still waiting for the rest of its change (#585): the
+    // columns it would have revealed are handed their settled state below
+    // instead, which is the honest thing to paint with nobody left to animate
+    // it.
+    unfoldQueued = false
     motion.dispose()
     batch?.resolve()
     batch?.release()

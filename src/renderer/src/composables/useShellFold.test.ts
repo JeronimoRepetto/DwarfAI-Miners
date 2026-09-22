@@ -393,6 +393,9 @@ describe('useShellFold', () => {
     test.fold.settle(false)
     test.state.shell = sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animations).toHaveLength(1)
     expect(test.animations[0]!.keyframes).toEqual({
       clipPath: [
@@ -429,6 +432,9 @@ describe('useShellFold', () => {
     expect(test.animations).toHaveLength(1)
     sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
       'inset(0px 0px 0px calc(100% - 20px) round 12px)'
     )
@@ -450,6 +456,9 @@ describe('useShellFold', () => {
     expect(test.shell.style.clipPath).toBe('')
     sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
       'inset(0px 0px 0px calc(100% - 20px) round 12px)'
     )
@@ -539,6 +548,9 @@ describe('useShellFold', () => {
     reads.forget()
     test.state.shell = sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animations).toHaveLength(1)
     expect(reads.count).toBe(1)
     reads.restore()
@@ -780,6 +792,9 @@ describe('useShellFold', () => {
     test.fold.settle(false)
     sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     // The rail rested against the docked edge; the row has just put it back at
     // the free one, 617px away from where the unfold has to start.
     expect(test.railAnimations[1]!.keyframes).toEqual(carries(617, 0))
@@ -788,6 +803,23 @@ describe('useShellFold', () => {
     await settled()
     expect(test.rail.style.transform).toBe('')
     test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585. The unfold waits a microtask for the rest of its change,
+   * and a microtask cannot be cancelled: the component can go away inside it.
+   * Starting the run anyway would animate an element this instance has just
+   * stopped owning, on a runner it has already disposed — and nothing would
+   * ever end it.
+   */
+  it('withdraws an unfold still waiting for its change when the shell goes away', async () => {
+    const test = harness({ width: 645 })
+    test.fold.settle(false)
+    test.state.shell = sized(test.shell, 1001)
+    test.fold.settle(false)
+    test.wrapper.unmount()
+    await settled()
+    expect(test.animations).toHaveLength(0)
   })
 
   it('releases a fold still running when the shell goes away', async () => {
@@ -962,6 +994,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     expect(test.animationsFor(mine)).toHaveLength(0)
     test.state.shell = sized(test.shell, 1001)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold is measured a microtask after the change
+    // asks for it, so that every column of the same change has registered
+    // first — see the case below, which is why.
+    await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
       ...carries(356, 0),
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
@@ -969,6 +1005,55 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(356, 0))
     expect(test.navAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585, from the same real-window probe. Opening was TWO
+   * sequential 300ms runs: the ground unfolded ALONE — 936px of bare amber at
+   * the peak, of a 956px window — and only once it had finished did the
+   * content slide in.
+   *
+   * The cause is an ORDER, not a race. App.vue's `flush: 'post'` watch and a
+   * `<Transition>`'s enter hook go into the same post-flush queue, and Vue
+   * sorts it by id: the watch carries its component's own, the enter hook is
+   * an anonymous callback with none, so the watch ALWAYS runs first. `settle`
+   * therefore unfolded with `entering` empty; every later settle bounced off
+   * `motion.running(shell)` for as long as that run lasted, and the only
+   * thing that ever revealed the column was the drain at the end of it.
+   *
+   * So the unfold is measured one microtask later — the same device `hold`
+   * already uses to make ONE fold out of however many columns leave in a
+   * patch, for the same reason: Vue's whole flush, enter hooks included, has
+   * run by then, and nothing has painted in between.
+   */
+  it('waits for the entering columns of this change before unfolding, so ground and content are ONE run', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.state.secondary = carriedColumn(36, 555)
+    test.state.nav = carriedColumn(599, 38)
+    test.fold.settle(false)
+    test.state.shell = sized(test.shell, 1001)
+    // The order App.vue actually produces: the watch settles first, and Vue
+    // mounts the entering column afterwards in the same flush.
+    test.fold.settle(false)
+    expect(test.animations).toHaveLength(0)
+    const mine = placed(test.column(348), 645, 348)
+    test.fold.enter(mine)
+    await settled()
+    // ONE ground run, and the column that arrived in the same change is on
+    // it rather than waiting for a second one.
+    expect(test.animations).toHaveLength(1)
+    expect(test.animationsFor(mine)).toHaveLength(1)
+    expect(test.railAnimations).toHaveLength(1)
+    // All of them on the one transition this fold computed, #464's rule
+    // reaching the entering column too.
+    expect(test.animationsFor(mine)[0]!.transition).toEqual(test.railAnimations[0]!.transition)
+    // And when the run ends there is nothing left to drain: the second phase
+    // is gone rather than merely shorter.
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.animations).toHaveLength(1)
     test.wrapper.unmount()
   })
 
@@ -994,7 +1079,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    *    ever going to ask `settle` again once the ground's own run, if any,
    *    had finished.
    */
-  it('unfolds a pending entering column on its own settle, even where the box did not move', () => {
+  it('unfolds a pending entering column on its own settle, even where the box did not move', async () => {
     const test = harness({ width: 645 })
     test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
@@ -1006,6 +1091,9 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // the real window, but nothing here says so — and the entering column is
     // still carried: `entering` being non-empty is answer enough on its own.
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
       ...carries(356, 0),
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
@@ -1013,7 +1101,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.wrapper.unmount()
   })
 
-  it('lets the window’s own resize carry a pre-placed entering column, with nothing else ever asking settle again', () => {
+  it('lets the window’s own resize carry a pre-placed entering column, with nothing else ever asking settle again', async () => {
     const test = harness({ width: 645 })
     test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
@@ -1027,6 +1115,9 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // calls `settle` directly — `caughtUp` is the only thing left standing.
     test.state.shell = sized(test.shell, 1001)
     window.dispatchEvent(new Event('resize'))
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
       ...carries(356, 0),
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
