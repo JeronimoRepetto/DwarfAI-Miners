@@ -228,11 +228,30 @@ const shellEl = ref<HTMLElement | null>(null)
  * travel, never the shrink.
  */
 const railEl = ref<ComponentPublicInstance | null>(null)
-const { hold: holdColumn, settle: settleShellFold } = useShellFold({
+/*
+ * The secondary panel and the navigation stack, which now travel with the
+ * fold too whenever the mine column is what closes or opens beside them
+ * (#566 T5b): both dock beyond the mine column's own free side, which #464
+ * had no evidence for and so never carried. `secondaryEl` is a plain
+ * element's own ref; `navEl` reads `ShellNav`'s root the same guarded way
+ * `railEl` reads `EdgeRail`'s, because a component ref answers an instance,
+ * not a node.
+ */
+const secondaryEl = ref<HTMLElement | null>(null)
+const navEl = ref<ComponentPublicInstance | null>(null)
+const {
+  hold: holdColumn,
+  enter: enterColumn,
+  settle: settleShellFold
+} = useShellFold({
   shell: () => shellEl.value,
   edge: () => layout.value.edge,
   remaining: () => shellComposition(visibleLayout.value),
   rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null),
+  carried: () => [
+    secondaryEl.value,
+    navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null
+  ],
   engine: props.engine
 })
 
@@ -941,8 +960,13 @@ onBeforeUnmount(() => {
       The area switch inside the page and the history dock below still animate
       themselves: both already move within bounds nothing is resizing.
     -->
-      <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
-        <div v-if="visibleLayout.expanded" class="shell-secondary">
+      <PanelTransition
+        :hold="holdColumn"
+        :hold-enter="enterColumn"
+        :engine="props.engine"
+        @leave="trackPanelLeave"
+      >
+        <div v-if="visibleLayout.expanded" ref="secondaryEl" class="shell-secondary">
           <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
             <!--
           The map container from the design: 21px padding on every side, a 2px
@@ -1061,9 +1085,15 @@ onBeforeUnmount(() => {
         layout is deliberately untouched: the panel that comes back is the one
         that went away, mine and page and all.
       -->
-      <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
+      <PanelTransition
+        :hold="holdColumn"
+        :hold-enter="enterColumn"
+        :engine="props.engine"
+        @leave="trackPanelLeave"
+      >
         <ShellNav
           v-if="visibleLayout.expanded || visibleLayout.mineOpen"
+          ref="navEl"
           :area="viewState.area"
           :broken="shortcutBroken"
           :music-playing="musicPlaying"
@@ -1081,7 +1111,12 @@ onBeforeUnmount(() => {
         `mineOpen` decides is whether this whole block is drawn, so the app mark
         can collapse the shell without the view forgetting its mine (#153).
       -->
-      <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
+      <PanelTransition
+        :hold="holdColumn"
+        :hold-enter="enterColumn"
+        :engine="props.engine"
+        @leave="trackPanelLeave"
+      >
         <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
           <PanelFrame>
             <!--

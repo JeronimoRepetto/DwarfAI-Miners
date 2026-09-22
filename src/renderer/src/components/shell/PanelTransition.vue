@@ -28,6 +28,16 @@ const props = defineProps<{
    */
   hold?: (column: HTMLElement) => ShellFoldHold | null
   /**
+   * The shell's own fold, for a column ENTERING (#566 T5b) — `hold`'s
+   * mirror. Main has already grown the window by the time Vue ever mounts an
+   * entering column, so `useShellFold.enter` pre-places it at the travel the
+   * row's own repack just gave it and carries it the rest of the way on the
+   * SAME unfold that reveals the ground and carries every other free column
+   * back. Nothing here is awaited: an entering column has nothing to unmount
+   * and nothing a shrink needs to wait on, unlike a leaving one.
+   */
+  holdEnter?: (column: HTMLElement) => void
+  /**
    * The engine `createBoundedMotion` runs, for a test to hand in a
    * hand-written fake — production never sets this, and gets the real
    * motion-v import (#566).
@@ -58,7 +68,16 @@ function releaseAll(): void {
 
 /** Retain a column until the shell has finished folding around it (#388). */
 function held(element: Element, panel: HTMLElement, done: () => void, leaving: boolean): void {
-  const fold = leaving ? props.hold!(panel) : null
+  if (!leaving) {
+    // The mirror of the leave path, below: nothing to retain and nothing to
+    // wait on (#566 T5b) — `holdEnter` pre-places the column and hands it to
+    // the fold's own unfold, and `done` may fire at once the way it always
+    // has for an entering column with no motion of its own.
+    props.holdEnter?.(panel)
+    done()
+    return
+  }
+  const fold = props.hold!(panel)
   if (fold === null) {
     done()
     return
