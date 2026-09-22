@@ -67,7 +67,7 @@ function answers(overrides: Partial<JevRouteAnswers> = {}): JevRouteAnswers {
 const CLAUDE_PROVIDERS = [provider({ provider: 'claude' })]
 // 'sonnet' is a real MODEL_CAPABILITIES.claude id (see capabilities/claude.ts) — balanced tier, medium cost.
 const CLAUDE_CATALOGS = [catalog({ provider: 'claude', models: [{ value: 'sonnet' }] })]
-const DEFAULT_PREFERENCES: JevPreferences = { profile: 'balanced', default: {} }
+const DEFAULT_PREFERENCES: JevPreferences = { profile: 'balanced', default: {}, delegation: false }
 
 // AMENDED for #547 (added): `readOpenCodeCatalogue`, optional — every
 // existing call below that omits it keeps reading `[]` (routeLaunch.ts's own
@@ -153,7 +153,7 @@ describe('createJevLaunchRouter', () => {
     fake.queueOutcome(answers())
     const service = serviceWith({
       router: fake,
-      preferences: { profile: 'premium', default: {} }
+      preferences: { profile: 'premium', default: {}, delegation: false }
     })
 
     await service.route({ prompt: 'anything' })
@@ -198,7 +198,11 @@ describe('createJevLaunchRouter', () => {
     fake.queueOutcome({ kind: 'fallback', reason: 'unreachable' })
     const service = serviceWith({
       router: fake,
-      preferences: { profile: 'balanced', default: { provider: 'codex', effort: 'high' } }
+      preferences: {
+        profile: 'balanced',
+        default: { provider: 'codex', effort: 'high' },
+        delegation: false
+      }
     })
 
     const result = await service.route({ prompt: 'anything' })
@@ -413,7 +417,7 @@ describe('createJevLaunchRouter — OpenCode capability derivation (#547)', () =
           models: [{ value: FREE_FAST_CHEAP.value }, { value: PAID_FRONTIER.value }]
         })
       ],
-      preferences: { profile: 'premium', default: {} },
+      preferences: { profile: 'premium', default: {}, delegation: false },
       readOpenCodeCatalogue: async () => [FREE_FAST_CHEAP, PAID_FRONTIER]
     })
 

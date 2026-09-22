@@ -127,6 +127,7 @@ import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import {
   LaunchedSessionRegistry,
+  stampLaunchedRoutedByJev,
   stampLaunchedTurnOutcome,
   type LaunchFailure
 } from '../sessionLaunch/launchedSessions'
@@ -1572,12 +1573,18 @@ export class AgentRuntime {
         const withLastTurn = stampLaunchedTurnOutcome(withReceipts, (dwarfId) =>
           this.launched.lastTurnOfDwarf(dwarfId)
         )
+        // The "chosen by Jev" marker (#511) — same launch-correlated family
+        // as the two stamps above, read off the same register once the board
+        // has proved which dwarf a routed launch became.
+        const withRoutedByJev = stampLaunchedRoutedByJev(withLastTurn, (dwarfId) =>
+          this.launched.routedByJevOfDwarf(dwarfId)
+        )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
         const delivered = pollProfiler.measureSync('stamp', () =>
           stampTextDelivery(
-            withLastTurn,
+            withRoutedByJev,
             (dwarfId) => this.deliveryTargetOf(dwarfId),
             // The machine's half of the send capability (#366): a console this
             // port cannot type into is not a send channel, and the kick half
@@ -4321,7 +4328,12 @@ export class AgentRuntime {
                   ...(request.model === undefined ? {} : { model: request.model }),
                   ...(request.effort === undefined ? {} : { effort: request.effort })
                 }
-              })
+              }),
+          // #511: whether a Jev decision routed THIS launch, so the dwarf it
+          // becomes can be stamped once the board proves which one that is —
+          // see LaunchedSessionRegistry.routedByJevOfDwarf. Same spread idiom
+          // as tuning above; absent stays absent.
+          ...(request.routedByJev === true ? { routedByJev: true } : {})
         })
         // #263. Subscribed here, never behind the launcher: the receipt this
         // failure is correlated by is the one just issued a few lines above,

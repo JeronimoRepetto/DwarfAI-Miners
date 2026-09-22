@@ -722,7 +722,8 @@ describe('Jev launch routing (#509)', () => {
         provider: 'codex',
         prompt: 'dig the east gallery',
         model: 'gpt-5.6-sol',
-        effort: 'high'
+        effort: 'high',
+        routedByJev: true
       })
       expect(api.launchHeldSession).not.toHaveBeenCalled()
     })
@@ -1075,13 +1076,15 @@ describe('the Jev entry path (#523)', () => {
 
       // The applied provider routes exactly as a clicked one would — Codex
       // detached, carrying the model and effort Jev named (#168's channel rule
-      // unchanged; this is #509's, re-pinned without a chip in front of it).
+      // unchanged; this is #509's, re-pinned without a chip in front of it) —
+      // plus routedByJev (#511): a decision really was applied to this launch.
       expect(api.launchAgent).toHaveBeenCalledWith({
         mineId: MINE,
         provider: 'codex',
         prompt: 'dig the east gallery',
         model: 'gpt-5.6-sol',
-        effort: 'high'
+        effort: 'high',
+        routedByJev: true
       })
       expect(api.routeJevLaunch).toHaveBeenCalledOnce()
     })
@@ -1111,7 +1114,8 @@ describe('the Jev entry path (#523)', () => {
         provider: 'codex',
         prompt: 'dig the east gallery',
         model: 'gpt-5.6-sol',
-        effort: 'high'
+        effort: 'high',
+        routedByJev: true
       })
       expect(launch.phase.value).toBe('started-detached')
     })
@@ -1164,8 +1168,44 @@ describe('the Jev entry path (#523)', () => {
         prompt: 'dig the east gallery'
       })
       expect(launch.jev.value.launchedOnFallback).toBe(true)
+      // #511's own honesty rule: a fallback launch, even one that started
+      // successfully, never carries routedByJev — the same reason
+      // launchedOnFallback exists as a SEPARATE fact from "launched".
+      expect(api.launchHeldSession).toHaveBeenCalledWith(
+        expect.not.objectContaining({ routedByJev: expect.anything() })
+      )
     })
   })
+
+  /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+  describe('routedByJev on the held channel', () => {
+    const HELD_DECISION = {
+      kind: 'decision' as const,
+      provider: 'claude' as const,
+      model: 'sonnet',
+      confidence: 0.9,
+      truncated: false
+    }
+
+    it('carries routedByJev once a decision routes to a heldable provider', async () => {
+      const { api, launch } = await readyOnJev({
+        routeJevLaunch: vi.fn().mockResolvedValue(HELD_DECISION)
+      })
+
+      await launch.submit()
+      await launch.submit()
+
+      expect(api.launchHeldSession).toHaveBeenCalledWith({
+        mineId: MINE,
+        provider: 'claude',
+        prompt: 'dig the east gallery',
+        model: 'sonnet',
+        routedByJev: true
+      })
+      expect(api.launchAgent).not.toHaveBeenCalled()
+    })
+  })
+  /* --- end of the #511 block ---------------------------------------------------- */
 
   /*
    * jev-routing-profiles T4. A fallback that carries the person's own

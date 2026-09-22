@@ -58,6 +58,7 @@ src/
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── jev/         asking TypeSafe's Jev model which provider, model and effort to launch with, behind a port (#509)
 │   ├── ledger/      what has been mined, persisted, plus the coal backfill and its migration
+│   ├── mcp/         the gate deciding whether a launch may register the subtask-delegation MCP server, and (T2+) the server itself (#511)
 │   ├── notifications/ whether a mine owes the person a system notification, the port that raises one, and the switch that stops them
 │   ├── platform/    everything that knows an operating system, and platformAdapters.ts that composes it
 │   ├── projects/    every project the app has been shown, persisted: name, dates, provenance

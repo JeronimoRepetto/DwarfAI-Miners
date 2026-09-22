@@ -704,6 +704,58 @@ describe('preload launch contract (#168)', () => {
     const sent = invoke.mock.calls.at(-1)![1] as object
     expect('permissionMode' in sent).toBe(false)
   })
+
+  /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+  it('carries routedByJev on the launch channel when a Jev decision was applied', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      routedByJev: true
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      routedByJev: true
+    })
+  })
+
+  it('crosses no routedByJev when the caller did not name it, rather than false', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'claude' })
+    await api.launchAgent({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('routedByJev' in sent).toBe(false)
+  })
+
+  it('carries routedByJev on the held channel too', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      routedByJev: true
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launchHeld', {
+      mineId: 'mine-1',
+      provider: 'claude',
+      prompt: 'dig',
+      routedByJev: true
+    })
+  })
+
+  it('crosses no routedByJev on the held channel when the caller did not name it', async () => {
+    invoke.mockResolvedValueOnce({ launched: true })
+    await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('routedByJev' in sent).toBe(false)
+  })
+  /* --- end of the #511 block ---------------------------------------------------- */
 })
 
 /**
@@ -1345,27 +1397,37 @@ describe('preload Jev preferences contract (#509 follow-up)', () => {
   it('parses the document through the shared parser before it crosses, trimming what it carries', async () => {
     const stored = {
       configured: true,
-      preferences: { profile: 'premium', default: { provider: 'claude', model: 'sonnet' } }
+      preferences: {
+        profile: 'premium',
+        default: { provider: 'claude', model: 'sonnet' },
+        delegation: false
+      }
     }
     invoke.mockResolvedValueOnce(stored)
     await api.setJevPreferences({
       profile: 'premium',
-      default: { provider: 'claude', model: '  sonnet  ' }
+      default: { provider: 'claude', model: '  sonnet  ' },
+      delegation: false
     })
     expect(invoke).toHaveBeenLastCalledWith('jev:preferences:set', {
       profile: 'premium',
-      default: { provider: 'claude', model: 'sonnet' }
+      default: { provider: 'claude', model: 'sonnet' },
+      delegation: false
     })
   })
 
   it('hands back what main STORED, the merged verdict, untouched', async () => {
     const stored = {
       configured: true,
-      preferences: { profile: 'economy', default: { provider: 'claude' } }
+      preferences: { profile: 'economy', default: { provider: 'claude' }, delegation: false }
     }
     invoke.mockResolvedValueOnce(stored)
     await expect(
-      api.setJevPreferences({ profile: 'economy', default: { provider: 'claude' } })
+      api.setJevPreferences({
+        profile: 'economy',
+        default: { provider: 'claude' },
+        delegation: false
+      })
     ).resolves.toEqual(stored)
   })
 })

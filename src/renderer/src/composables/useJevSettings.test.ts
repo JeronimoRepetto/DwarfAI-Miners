@@ -227,7 +227,11 @@ describe('useJevSettings — setPreferences', () => {
       }))
     })
     const { settings, setPreferences } = useJevSettings()
-    const preferences = { profile: 'premium' as const, default: { provider: 'claude' as const } }
+    const preferences = {
+      profile: 'premium' as const,
+      default: { provider: 'claude' as const },
+      delegation: false
+    }
     await setPreferences(preferences)
     expect(api.setJevPreferences).toHaveBeenCalledWith(preferences)
     expect(settings.value).toEqual({ configured: true, preferences })
@@ -244,8 +248,8 @@ describe('useJevSettings — setPreferences', () => {
       )
     })
     const { setPreferences } = useJevSettings()
-    const first = setPreferences({ profile: 'balanced', default: {} })
-    await setPreferences({ profile: 'premium', default: {} })
+    const first = setPreferences({ profile: 'balanced', default: {}, delegation: false })
+    await setPreferences({ profile: 'premium', default: {}, delegation: false })
     expect(api.setJevPreferences).toHaveBeenCalledTimes(1)
     release({ configured: true })
     await first
@@ -274,7 +278,7 @@ describe('useJevSettings — setPreferences', () => {
       getJevSettings: vi.fn().mockResolvedValue({ configured: true })
     })
     const { settings, setPreferences } = useJevSettings()
-    await setPreferences({ profile: 'balanced', default: {} })
+    await setPreferences({ profile: 'balanced', default: {}, delegation: false })
     expect(api.getJevSettings).not.toHaveBeenCalled()
     expect(settings.value.preferencesError).toContain('no bridge')
   })
@@ -291,7 +295,7 @@ describe('useJevSettings — setPreferences', () => {
     })
     const { saving, setPreferences } = useJevSettings()
     expect(saving.value).toBe(false)
-    const pending = setPreferences({ profile: 'balanced', default: {} })
+    const pending = setPreferences({ profile: 'balanced', default: {}, delegation: false })
     expect(saving.value).toBe(true)
     release({ configured: true })
     await pending
@@ -318,7 +322,7 @@ describe('useJevSettings reporting a preference write that did not happen', () =
     })
     const { settings, setPreferences } = useJevSettings()
 
-    await setPreferences({ profile: 'economy', default: {} })
+    await setPreferences({ profile: 'economy', default: {}, delegation: false })
 
     expect(settings.value.preferencesError).toContain('no handler registered')
   })
@@ -330,7 +334,7 @@ describe('useJevSettings reporting a preference write that did not happen', () =
     fakeApi({ setJevPreferences: vi.fn().mockRejectedValue(new Error('boom')) })
     const { saving, setPreferences } = useJevSettings()
 
-    await setPreferences({ profile: 'economy', default: {} })
+    await setPreferences({ profile: 'economy', default: {}, delegation: false })
 
     expect(saving.value).toBe(false)
   })
@@ -341,7 +345,7 @@ describe('useJevSettings reporting a preference write that did not happen', () =
     const api = fakeApi({ setJevPreferences: vi.fn().mockRejectedValue(new Error('boom')) })
     const { setPreferences } = useJevSettings()
 
-    await setPreferences({ profile: 'economy', default: {} })
+    await setPreferences({ profile: 'economy', default: {}, delegation: false })
 
     expect(api.listAgentModels).not.toHaveBeenCalled()
   })
@@ -352,13 +356,13 @@ describe('useJevSettings reporting a preference write that did not happen', () =
     fakeApi({
       setJevPreferences: vi.fn().mockResolvedValue({
         configured: true,
-        preferences: { profile: 'balanced', default: {} },
+        preferences: { profile: 'balanced', default: {}, delegation: false },
         preferencesError: 'That default names a provider this build cannot launch.'
       })
     })
     const { settings, setPreferences } = useJevSettings()
 
-    await setPreferences({ profile: 'economy', default: {} })
+    await setPreferences({ profile: 'economy', default: {}, delegation: false })
 
     expect(settings.value.preferences.profile).toBe('balanced')
     expect(settings.value.preferencesError).toContain('cannot launch')
@@ -371,16 +375,16 @@ describe('useJevSettings reporting a preference write that did not happen', () =
       setJevPreferences: vi
         .fn(async (): Promise<JevSettings> => ({
           configured: true,
-          preferences: { profile: 'economy', default: {} }
+          preferences: { profile: 'economy', default: {}, delegation: false }
         }))
         .mockRejectedValueOnce(new Error('boom'))
     })
     const { settings, setPreferences } = useJevSettings()
 
-    await setPreferences({ profile: 'economy', default: {} })
+    await setPreferences({ profile: 'economy', default: {}, delegation: false })
     expect(settings.value.preferencesError).toBeTruthy()
 
-    await setPreferences({ profile: 'economy', default: {} })
+    await setPreferences({ profile: 'economy', default: {}, delegation: false })
     expect(settings.value.preferencesError).toBeUndefined()
   })
 })
@@ -407,12 +411,13 @@ describe('useJevSettings crossing the context bridge', () => {
   it('hands the bridge a document structuredClone accepts, given a reactive one', async () => {
     const sent = vi.fn(async (_preferences: JevPreferences): Promise<JevSettings> => ({
       configured: true,
-      preferences: { profile: 'balanced', default: {} }
+      preferences: { profile: 'balanced', default: {}, delegation: false }
     }))
     fakeApi({ setJevPreferences: sent })
     const stored = reactive<JevPreferences>({
       profile: 'balanced',
-      default: { provider: 'opencode' }
+      default: { provider: 'opencode' },
+      delegation: false
     })
     const { setPreferences } = useJevSettings()
 
@@ -426,12 +431,13 @@ describe('useJevSettings crossing the context bridge', () => {
     // Plain-ing must not quietly drop a field on the way past.
     const sent = vi.fn(async (_preferences: JevPreferences): Promise<JevSettings> => ({
       configured: true,
-      preferences: { profile: 'balanced', default: {} }
+      preferences: { profile: 'balanced', default: {}, delegation: false }
     }))
     fakeApi({ setJevPreferences: sent })
     const stored = reactive<JevPreferences>({
       profile: 'balanced',
-      default: { provider: 'opencode', model: 'opencode/big-pickle', effort: 'high' }
+      default: { provider: 'opencode', model: 'opencode/big-pickle', effort: 'high' },
+      delegation: false
     })
     const { setPreferences } = useJevSettings()
 
@@ -439,7 +445,32 @@ describe('useJevSettings crossing the context bridge', () => {
 
     expect(sent.mock.calls[0]![0]).toEqual({
       profile: 'premium',
-      default: { provider: 'opencode', model: 'opencode/big-pickle', effort: 'high' }
+      default: { provider: 'opencode', model: 'opencode/big-pickle', effort: 'high' },
+      delegation: false
     })
   })
+
+  /* --- MCP subtask delegation: the gate preference (#511) — one block, appended --- */
+  it('carries the delegation checkbox across the bridge, plain rather than a Proxy', () => {
+    const sent = vi.fn(async (_preferences: JevPreferences): Promise<JevSettings> => ({
+      configured: true,
+      preferences: { profile: 'balanced', default: {}, delegation: true }
+    }))
+    fakeApi({ setJevPreferences: sent })
+    const stored = reactive<JevPreferences>({
+      profile: 'balanced',
+      default: {},
+      delegation: false
+    })
+    const { setPreferences } = useJevSettings()
+
+    void setPreferences({ ...stored, delegation: true })
+
+    expect(sent.mock.calls[0]![0]).toEqual({
+      profile: 'balanced',
+      default: {},
+      delegation: true
+    })
+  })
+  /* --- end of the #511 block ---------------------------------------------------- */
 })

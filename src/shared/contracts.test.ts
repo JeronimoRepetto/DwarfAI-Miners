@@ -1261,7 +1261,9 @@ describe('DEFAULT_JEV_ROUTING_PROFILE and DEFAULT_JEV_PREFERENCES', () => {
   })
 
   it('starts with no default launch at all, which is today’s behaviour before this preference', () => {
-    expect(DEFAULT_JEV_PREFERENCES).toEqual({ profile: 'balanced', default: {} })
+    // AMENDED for #511: `delegation` joined this document, default off — see
+    // the #511 block below for why the parser always answers with it now.
+    expect(DEFAULT_JEV_PREFERENCES).toEqual({ profile: 'balanced', default: {}, delegation: false })
   })
 })
 
@@ -1274,28 +1276,32 @@ describe('parseJevPreferences', () => {
       })
     ).toEqual({
       profile: 'premium',
-      default: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' }
+      default: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' },
+      delegation: false
     })
   })
 
   it('keeps a default that only pins a provider, leaving model and effort absent', () => {
     expect(parseJevPreferences({ profile: 'economy', default: { provider: 'claude' } })).toEqual({
       profile: 'economy',
-      default: { provider: 'claude' }
+      default: { provider: 'claude' },
+      delegation: false
     })
   })
 
   it('falls back to balanced on a profile this build does not know', () => {
     expect(parseJevPreferences({ profile: 'cheap', default: {} })).toEqual({
       profile: 'balanced',
-      default: {}
+      default: {},
+      delegation: false
     })
   })
 
   it('drops a provider this build has never heard of, rather than passing it through', () => {
     expect(parseJevPreferences({ profile: 'balanced', default: { provider: 'chatgpt' } })).toEqual({
       profile: 'balanced',
-      default: {}
+      default: {},
+      delegation: false
     })
   })
 
@@ -1305,19 +1311,24 @@ describe('parseJevPreferences', () => {
         profile: 'balanced',
         default: { provider: 'claude', model: '  sonnet  ', effort: '   ' }
       })
-    ).toEqual({ profile: 'balanced', default: { provider: 'claude', model: 'sonnet' } })
+    ).toEqual({
+      profile: 'balanced',
+      default: { provider: 'claude', model: 'sonnet' },
+      delegation: false
+    })
   })
 
   it('falls back field by field, so one bad value cannot take the others with it', () => {
     expect(parseJevPreferences({ profile: 42, default: { provider: 'claude', model: 7 } })).toEqual(
-      { profile: 'balanced', default: { provider: 'claude' } }
+      { profile: 'balanced', default: { provider: 'claude' }, delegation: false }
     )
   })
 
   it('reads a default that is not an object as no default at all', () => {
     expect(parseJevPreferences({ profile: 'premium', default: 'claude' })).toEqual({
       profile: 'premium',
-      default: {}
+      default: {},
+      delegation: false
     })
   })
 
@@ -1329,3 +1340,26 @@ describe('parseJevPreferences', () => {
   )
 })
 /* --- end of the #509 follow-up block ---------------------------------------- */
+
+/* --- MCP subtask delegation: the gate preference (#511) — one block, appended --- */
+describe('JevPreferences.delegation and parseJevPreferences', () => {
+  it('reads a stored true through unchanged', () => {
+    expect(parseJevPreferences({ profile: 'balanced', default: {}, delegation: true })).toEqual({
+      profile: 'balanced',
+      default: {},
+      delegation: true
+    })
+  })
+
+  it.each([undefined, null, 'yes', 1, {}, []])(
+    'falls back to off on %j — a bad shape, same tolerance as profile',
+    (value) => {
+      expect(parseJevPreferences({ profile: 'balanced', default: {}, delegation: value })).toEqual({
+        profile: 'balanced',
+        default: {},
+        delegation: false
+      })
+    }
+  )
+})
+/* --- end of the #511 block ---------------------------------------------------- */

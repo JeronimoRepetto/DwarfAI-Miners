@@ -1547,6 +1547,17 @@ export interface Dwarf {
    */
   launchId?: string
   /**
+   * Whether Jev's own decision chose this launch, once main has proved which
+   * session became it (#511) — the same evidence `launchId` above proves, and
+   * absent for exactly the same reasons: not yet proved, or genuinely not
+   * routed (a fallback launch never sets `AgentLaunchRequest.routedByJev`,
+   * whatever its own pickers ended up showing). ADDS ONLY, like every stamp
+   * derived from the launch register — a dwarf nobody here launched carries
+   * neither field. Drawing this as a marker in the panel is a follow-up, not
+   * something this field does itself.
+   */
+  routedByJev?: boolean
+  /**
    * True when this session's whole PROCESS is ONE prompt and one turn: it was
    * handed its instruction on stdin and exits when it finishes (#231).
    *
@@ -3075,6 +3086,15 @@ export interface AgentLaunchRequest {
    * level Claude has no name for.
    */
   effort?: string
+  /**
+   * Whether a Jev DECISION was actually applied to this launch (#511) — never
+   * set for a fallback, even one that applied a configured default: see
+   * `JevState.launchedOnFallback`, the renderer's own honesty rule for that
+   * same distinction. Absent means not routed, the same "say nothing" reading
+   * every optional field on this request holds. Read by `delegationGate.ts`'s
+   * gate level (2) at launch time; nothing here decides what it is FOR.
+   */
+  routedByJev?: boolean
 }
 
 /**
@@ -3245,6 +3265,8 @@ export interface HeldSessionLaunchRequest {
    * lives here and not on `AgentLaunchRequest`.
    */
   permissionMode?: HeldPermissionMode
+  /** Same fact, same honesty rule, as `AgentLaunchRequest.routedByJev` (#511). */
+  routedByJev?: boolean
 }
 
 /**
@@ -4276,16 +4298,28 @@ export interface JevLaunchDefault {
 export interface JevPreferences {
   profile: JevRoutingProfile
   default: JevLaunchDefault
+  /**
+   * Settings' own checkbox for the MCP subtask-delegation gate (#511) — the
+   * THIRD of the three levels a launch needs before its session is handed a
+   * server that can ask Jev to route a subtask: a TypeSafe key configured,
+   * this switch on, and (checked per launch, never stored) the launch itself
+   * actually routed by Jev. Off by default, like every gate that grants a
+   * running session a new capability rather than only a drawing preference —
+   * see `delegationGate.ts`'s own comment for why all three are required.
+   */
+  delegation: boolean
 }
 
 /**
  * What Settings' Jev section reads before main has ever answered, and what a
- * document too corrupt to read degrades to — balanced, and no default at
- * all, which is exactly today's behaviour before this preference existed.
+ * document too corrupt to read degrades to — balanced, no default at all,
+ * and delegation off, which is exactly today's behaviour before either
+ * preference existed.
  */
 export const DEFAULT_JEV_PREFERENCES: JevPreferences = {
   profile: DEFAULT_JEV_ROUTING_PROFILE,
-  default: {}
+  default: {},
+  delegation: false
 }
 
 /**
@@ -4301,7 +4335,7 @@ export const DEFAULT_JEV_PREFERENCES: JevPreferences = {
  */
 export function parseJevPreferences(document: unknown): JevPreferences {
   if (typeof document !== 'object' || document === null || Array.isArray(document)) {
-    return { profile: DEFAULT_JEV_PREFERENCES.profile, default: {} }
+    return { profile: DEFAULT_JEV_PREFERENCES.profile, default: {}, delegation: false }
   }
   const record = document as Record<string, unknown>
 
@@ -4324,7 +4358,12 @@ export function parseJevPreferences(document: unknown): JevPreferences {
     launchDefault.effort = defaultRecord.effort.trim()
   }
 
-  return { profile, default: launchDefault }
+  // Shape tolerance only, same as `profile` above: anything that is not
+  // literally `true` reads as off, which is also the documented default —
+  // there is no bad VALUE to fail fast on for a plain switch.
+  const delegation = record.delegation === true
+
+  return { profile, default: launchDefault, delegation }
 }
 
 /**

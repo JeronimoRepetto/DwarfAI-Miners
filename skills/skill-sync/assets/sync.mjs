@@ -280,6 +280,7 @@ const MAIN_TREE_GLOSSES = {
   hooks: 'the opt-in Claude push channel',
   jev: 'asking the TypeSafe Jev model which provider, model and effort to launch with',
   ledger: 'mined, persisted',
+  mcp: 'the subtask-delegation gate, and (T2+) the stdio MCP server itself',
   notifications: 'the OS notification centre, behind a port',
   platform: 'composed once in `platformAdapters.ts`',
   projects: null,

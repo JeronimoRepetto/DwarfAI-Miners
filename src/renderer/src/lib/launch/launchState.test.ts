@@ -31,6 +31,7 @@ import {
   launchPrompt,
   launchTuning,
   openLaunch,
+  routedByJev,
   setJevSettings,
   shouldAskJev,
   submitRefused,
@@ -788,6 +789,49 @@ describe('the Jev option (#509)', () => {
       expect(shouldAskJev(jevAsked(ready))).toBe(false)
     })
   })
+
+  /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+  describe('routedByJev', () => {
+    it('is false before anything has asked Jev', () => {
+      expect(routedByJev(opened())).toBe(false)
+    })
+
+    it('is false while an ask is still in flight', () => {
+      expect(routedByJev(jevAsked(opened()))).toBe(false)
+    })
+
+    it('is true once a decision has been applied', () => {
+      const decided = jevAnswered(jevAsked(opened()), decision())
+
+      expect(routedByJev(decided)).toBe(true)
+    })
+
+    // #511's own honesty rule, the same one `launchedOnFallback` already
+    // holds: a fallback is never "routed by Jev", even the one case that
+    // still applies a configured default to the pickers before falling
+    // through on autoAccept.
+    it('is false for a plain fallback', () => {
+      const fellBack = jevAnswered(jevAsked(opened()), fallback())
+
+      expect(routedByJev(fellBack)).toBe(false)
+    })
+
+    it('is false for a fallback that applied a configured default', () => {
+      const fellBack = jevAnswered(
+        jevAsked(opened()),
+        fallback({ fallbackTo: { provider: 'claude' } })
+      )
+
+      expect(routedByJev(fellBack)).toBe(false)
+    })
+
+    it('drops back to false once the decision is dismissed', () => {
+      const decided = jevAnswered(jevAsked(opened()), decision())
+
+      expect(routedByJev(clearJevDecision(decided))).toBe(false)
+    })
+  })
+  /* --- end of the #511 block ---------------------------------------------------- */
 })
 
 /*
