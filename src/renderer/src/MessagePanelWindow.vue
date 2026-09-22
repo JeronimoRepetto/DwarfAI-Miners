@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { MotionConfig } from 'motion-v'
 import AddPanel from './components/launch/AddPanel.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
@@ -14,8 +15,10 @@ import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
 import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from './lib/message/feedPages'
 import { messageSurfaceMotion } from './lib/message/surfaceMotion'
+import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import { createBoundedMotion, type MotionAnimate } from './lib/shell/boundedMotion'
 import { PANEL_MOTION_Y, panelKeyframes } from './lib/shell/panelMotion'
+import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
@@ -1068,6 +1071,20 @@ function reportHeight(): void {
  * one panel motion in this app, not one per window.
  */
 const motion = createBoundedMotion({ animate: props.engine })
+
+/**
+ * Whether this viewer asked their operating system for less movement (#71),
+ * read the same way `App.vue`'s own root does — the one query lives in
+ * `sceneMotion`, and this is a second window asking it rather than a second
+ * query. Fed to `<MotionConfig>` below (#566 T3): it governs the Add Panel
+ * and MessagePanel surfaces T3 folds in here, never `motion` above, which
+ * reads `sceneMotion` on its own for the bounded rise/settle (#389) this
+ * task does not touch.
+ */
+const reduced = ref(prefersReducedMotion())
+const stopWatchingReducedMotion = watchReducedMotion((asked) => {
+  reduced.value = asked
+})
 /**
  * Where an arriving surface waits and a leaving one stops, read off
  * `panelMotion.ts`'s own vertical offset rather than restated here — the
@@ -1319,79 +1336,92 @@ onBeforeUnmount(() => {
   /* --- end of the #370 block ----------------------------------------------- */
   surfaceObserver?.disconnect()
   motion.dispose()
+  stopWatchingReducedMotion()
 })
 </script>
 
 <template>
-  <div
-    class="message-window"
-    @pointerdown.capture="raiseWindow"
-    @pointerdown="startWindowDrag"
-    @pointerup="endWindowDrag"
-    @pointercancel="endWindowDrag"
-    @dblclick="dockWindow"
+  <!--
+    #566 T3: this window's own `<MotionConfig>` — see `reduced`, above. The
+    Add Panel / MessagePanel swap just below stays a CUT (design ruling,
+    `foundations.md`'s message-panel motion note): this provides context only
+    and renders no element of its own, so it cannot animate that swap by
+    being here.
+  -->
+  <MotionConfig
+    :reduced-motion="reduced ? 'always' : 'never'"
+    :transition="reduced ? REDUCED_MOTION_TRANSITION : undefined"
   >
-    <div ref="surfaceRef" class="message-surface">
-      <p v-if="error" class="notice" role="alert">{{ error }}</p>
+    <div
+      class="message-window"
+      @pointerdown.capture="raiseWindow"
+      @pointerdown="startWindowDrag"
+      @pointerup="endWindowDrag"
+      @pointercancel="endWindowDrag"
+      @dblclick="dockWindow"
+    >
+      <div ref="surfaceRef" class="message-surface">
+        <p v-if="error" class="notice" role="alert">{{ error }}</p>
 
-      <AddPanel
-        v-if="launchOpen"
-        :chips="launchChips"
-        :phase="launchPhase"
-        :enabled="launchEnabled"
-        :placeholder="launchPlaceholder"
-        :command="launchState.command"
-        :prompt="launchState.prompt"
-        :refusal="launchRefusal"
-        :error="launchState.error"
-        :model-picker="launchModelPicker"
-        :effort-picker="launchEffortPicker"
-        :permissions-visible="launchPermissionsVisible"
-        :jev="launchJev"
-        @choose="chooseProvider"
-        @command="setLaunchCommand"
-        @commit="commitLaunchCommand"
-        @prompt="setLaunchPrompt"
-        @model="setLaunchModel"
-        @effort="setLaunchEffort"
-        @permission-mode="setLaunchPermissionMode"
-        @toggle-jev="toggleLaunchJev"
-        @toggle-jev-auto="toggleLaunchJevAutoAccept"
-        @dismiss-jev="dismissLaunchJevDecision"
-        @submit="submitLaunch"
-        @close="close"
-      />
+        <AddPanel
+          v-if="launchOpen"
+          :chips="launchChips"
+          :phase="launchPhase"
+          :enabled="launchEnabled"
+          :placeholder="launchPlaceholder"
+          :command="launchState.command"
+          :prompt="launchState.prompt"
+          :refusal="launchRefusal"
+          :error="launchState.error"
+          :model-picker="launchModelPicker"
+          :effort-picker="launchEffortPicker"
+          :permissions-visible="launchPermissionsVisible"
+          :jev="launchJev"
+          @choose="chooseProvider"
+          @command="setLaunchCommand"
+          @commit="commitLaunchCommand"
+          @prompt="setLaunchPrompt"
+          @model="setLaunchModel"
+          @effort="setLaunchEffort"
+          @permission-mode="setLaunchPermissionMode"
+          @toggle-jev="toggleLaunchJev"
+          @toggle-jev-auto="toggleLaunchJevAutoAccept"
+          @dismiss-jev="dismissLaunchJevDecision"
+          @submit="submitLaunch"
+          @close="close"
+        />
 
-      <!--
+        <!--
         Keyed by dwarf, so opening it on another one is a fresh panel: its
         opening height derives from the latest message and is taken once per
         open, which only holds if reopening is a genuine remount.
       -->
-      <DwarfMessagePanel
-        v-else-if="selectedDwarf"
-        :key="selectedDwarf.id"
-        :dwarf="selectedDwarf"
-        :feed="drawnFeed"
-        :paging-note="pagingNote ?? undefined"
-        :send-state="messagingState.byDwarfId[selectedDwarf.id]"
-        :echoes="sentEchoes[selectedDwarf.id]"
-        :echo-attachments="sentEchoAttachments[selectedDwarf.id]"
-        :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
-        :answer-state="questionState.byDwarfId[selectedDwarf.id]"
-        @send="sendText(selectedDwarf, $event)"
-        @send-again="sendAgain(selectedDwarf, $event)"
-        @kick="kickDwarf(selectedDwarf)"
-        @answer="answerQuestion(selectedDwarf, $event)"
-        @answer-text="answerQuestionInWords(selectedDwarf, $event)"
-        @decide="decidePermission(selectedDwarf, $event)"
-        @open-console="activate(selectedDwarf)"
-        @open-path="openPath"
-        @open-link="openLink"
-        @page-back="pageBack"
-        @close="close"
-      />
+        <DwarfMessagePanel
+          v-else-if="selectedDwarf"
+          :key="selectedDwarf.id"
+          :dwarf="selectedDwarf"
+          :feed="drawnFeed"
+          :paging-note="pagingNote ?? undefined"
+          :send-state="messagingState.byDwarfId[selectedDwarf.id]"
+          :echoes="sentEchoes[selectedDwarf.id]"
+          :echo-attachments="sentEchoAttachments[selectedDwarf.id]"
+          :kick-state="kickingState.byDwarfId[selectedDwarf.id]"
+          :answer-state="questionState.byDwarfId[selectedDwarf.id]"
+          @send="sendText(selectedDwarf, $event)"
+          @send-again="sendAgain(selectedDwarf, $event)"
+          @kick="kickDwarf(selectedDwarf)"
+          @answer="answerQuestion(selectedDwarf, $event)"
+          @answer-text="answerQuestionInWords(selectedDwarf, $event)"
+          @decide="decidePermission(selectedDwarf, $event)"
+          @open-console="activate(selectedDwarf)"
+          @open-path="openPath"
+          @open-link="openLink"
+          @page-back="pageBack"
+          @close="close"
+        />
+      </div>
     </div>
-  </div>
+  </MotionConfig>
 </template>
 
 <style scoped>

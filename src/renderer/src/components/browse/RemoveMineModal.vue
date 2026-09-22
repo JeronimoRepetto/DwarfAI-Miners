@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useId } from 'vue'
+import { motion } from 'motion-v'
+import { popVariants } from '../../lib/shell/presence'
 
 /**
  * The confirmation for removing one mine (#169).
@@ -22,6 +24,12 @@ import { useId } from 'vue'
  * Presentational, like ResetMetricsModal: `removing` and `error` are main's
  * verdict, arriving through MinesPanel from useProjectBrowse, and the only
  * thing that leaves here is the confirmed intent.
+ *
+ * The root is `motion.div` rather than a plain `div` (#566 T3): `MinesPanel`
+ * wraps its `v-if` in `<AnimatePresence>`, which drives the enter/exit —
+ * this component only carries `popVariants`. A hang while this popup's
+ * window is hidden is harmless (it does not gate geometry), the design
+ * decision after T0 that permits `AnimatePresence` here.
  */
 const props = defineProps<{
   /** The mine's display name, so the confirmation names what it is about. */
@@ -49,10 +57,11 @@ function onConfirm(): void {
 </script>
 
 <template>
-  <div
+  <motion.div
     class="remove-modal"
     role="dialog"
     :aria-labelledby="titleId"
+    v-bind="popVariants"
     @keydown.escape="emit('close')"
   >
     <header class="modal-head">
@@ -69,7 +78,7 @@ function onConfirm(): void {
     <button class="modal-confirm" type="button" :disabled="removing" @click="onConfirm">
       Remove
     </button>
-  </div>
+  </motion.div>
 </template>
 
 <style scoped>

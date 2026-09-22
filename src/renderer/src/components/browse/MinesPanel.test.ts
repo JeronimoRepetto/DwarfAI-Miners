@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AnimatePresence } from 'motion-v'
 import { defaultDwarf, defaultMine, defaultProject } from '../../testing/factories'
 import MinesPanel from './MinesPanel.vue'
 
@@ -554,5 +555,36 @@ describe('MinesPanel tier info', () => {
     expect(wrapper.find('.info-modal').exists()).toBe(true)
     await wrapper.get('.info-modal .modal-close').trigger('click')
     expect(wrapper.find('.info-modal').exists()).toBe(false)
+  })
+})
+
+/**
+ * APPENDED for #566 T3. `<AnimatePresence>` now wraps this popup, but its
+ * actual exit-hold cannot be pinned here: motion-v's `AnimationFeature.mount`
+ * calls `isHidden(element)` (`utils/is-hidden.mjs`), which reads
+ * `offsetParent === null` as hidden — true for every element jsdom ever lays
+ * out, since jsdom performs no layout at all — so `setActive('exit', true)`
+ * latches at MOUNT and the real exit call later finds nothing changed and
+ * resolves on the spot (`presence.test.ts`'s own module header has the full
+ * trace, including the stubbed-`offsetParent` experiment that ruled out an
+ * easy jsdom workaround). What is verified here instead is what the design
+ * and the issues behind this modal actually depend on: the popup still opens
+ * and closes on the trigger it always did, with `<AnimatePresence>` wrapping
+ * that trigger rather than a bare `v-if`. Real Electron confirmation that the
+ * exit genuinely fades is `T5`'s job (parent task document, `shell-motion-
+ * library-566.md`).
+ */
+describe('MinesPanel popup exit (#566 T3, AnimatePresence)', () => {
+  const stored = defaultProject({ id: 'mine:lalo', name: 'Lalo-Test' })
+
+  it('still opens and closes RemoveMineModal on the same triggers, now under AnimatePresence', async () => {
+    const wrapper = panel({ projects: [stored] })
+    expect(wrapper.findComponent(AnimatePresence).exists()).toBe(true)
+
+    await wrapper.get('.card-remove').trigger('click')
+    expect(wrapper.find('.remove-modal').exists()).toBe(true)
+
+    await wrapper.get('.modal-close').trigger('click')
+    expect(wrapper.find('.remove-modal').exists()).toBe(false)
   })
 })

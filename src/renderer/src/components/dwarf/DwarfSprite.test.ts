@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { motion } from 'motion-v'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
+import { fadeVariants } from '../../lib/shell/presence'
 import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { dwarfClips } from '../../lib/sprite/dwarfSequence'
@@ -652,24 +654,33 @@ describe('DwarfSprite', () => {
     }
   })
 
+  /*
+   * AMENDED for #566 T3 (was: a `.is-visible` class the tooltip's own CSS
+   * transition read). The fade is `motion.div`'s now, bound to `animate`
+   * rather than a class — see `DwarfSprite.vue`'s `.tooltip-holder` comment
+   * for why the CSS transition it replaced is gone rather than left beside
+   * it. Same two cases, same trigger, read off the new mechanism.
+   */
   describe('tooltip visibility', () => {
     it('hides the tooltip until the sprite is hovered or focused', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-      expect(wrapper.find('.tooltip-holder').classes()).not.toContain('is-visible')
+      const tooltip = () => wrapper.findComponent(motion.div)
+      expect(tooltip().props('animate')).toEqual(fadeVariants.initial)
 
       await wrapper.find('.dwarf-hit').trigger('mouseenter')
-      expect(wrapper.find('.tooltip-holder').classes()).toContain('is-visible')
+      expect(tooltip().props('animate')).toEqual(fadeVariants.animate)
 
       await wrapper.find('.dwarf-hit').trigger('mouseleave')
-      expect(wrapper.find('.tooltip-holder').classes()).not.toContain('is-visible')
+      expect(tooltip().props('animate')).toEqual(fadeVariants.initial)
     })
 
     it('also shows the tooltip on keyboard focus', async () => {
       const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
+      const tooltip = () => wrapper.findComponent(motion.div)
       await wrapper.find('.dwarf-hit').trigger('focus')
-      expect(wrapper.find('.tooltip-holder').classes()).toContain('is-visible')
+      expect(tooltip().props('animate')).toEqual(fadeVariants.animate)
       await wrapper.find('.dwarf-hit').trigger('blur')
-      expect(wrapper.find('.tooltip-holder').classes()).not.toContain('is-visible')
+      expect(tooltip().props('animate')).toEqual(fadeVariants.initial)
     })
   })
 

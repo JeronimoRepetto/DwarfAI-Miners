@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { motion } from 'motion-v'
 import { preloadDwarfArt } from '../../lib/art'
 import { observerLabel } from '../../lib/dwarf/observerLabel'
 import { bubbleRowOffsetPx } from '../../lib/overlay/bubbleLayout'
@@ -26,6 +27,7 @@ import {
   type SpriteClip
 } from '../../lib/sprite/spriteSheet'
 import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
+import { fadeVariants } from '../../lib/shell/presence'
 import { computeTooltipPlacement } from '../../lib/overlay/tooltip'
 import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
 import DwarfStatusIcons from './DwarfStatusIcons.vue'
@@ -94,7 +96,11 @@ const emit = defineEmits<{
 }>()
 
 const hitRef = ref<HTMLButtonElement | null>(null)
-const tooltipRef = ref<InstanceType<typeof DwarfTooltip> | null>(null)
+// The ref sits on the `motion.div` wrapper now (#566 T3), not on
+// `DwarfTooltip` itself — `showTooltip` only ever wanted the rendered
+// element's box, which `.$el` gives from either, and the wrapper is what
+// `tooltipStyle`/the fade actually apply to.
+const tooltipRef = ref<InstanceType<typeof motion.div> | null>(null)
 const tooltipVisible = ref(false)
 const tooltipStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 
@@ -213,6 +219,12 @@ onBeforeUnmount(() => {
  * and flipped below the sprite when it would otherwise clip an edge (see
  * lib/tooltip.ts), which used to make the leftmost foreman's tooltip
  * unreadable.
+ *
+ * "Stays mounted at all times" is also why this fades with `motion.div`'s
+ * `animate` prop keyed off `tooltipVisible` rather than through
+ * `AnimatePresence` (#566 T3): nothing here ever unmounts, so there is no
+ * exit for `AnimatePresence` to hold — `motion.div` alone already re-runs
+ * the transition whenever `animate` changes, mounted or not.
  */
 function showTooltip(): void {
   const anchorEl = hitRef.value
@@ -654,13 +666,15 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
       >
     </button>
     <span class="dwarf-name">{{ dwarf.name }}</span>
-    <DwarfTooltip
+    <motion.div
       ref="tooltipRef"
       class="tooltip-holder"
-      :class="{ 'is-visible': tooltipVisible }"
       :style="tooltipStyle"
-      :dwarf="dwarf"
-    />
+      :initial="false"
+      :animate="tooltipVisible ? fadeVariants.animate : fadeVariants.initial"
+    >
+      <DwarfTooltip :dwarf="dwarf" />
+    </motion.div>
   </div>
 </template>
 
@@ -959,16 +973,16 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
  * computeTooltipPlacement() in viewport coordinates, so the tooltip can be
  * clamped/flipped inside the panel instead of always centering under the
  * sprite and clipping off-screen near an edge.
+ *
+ * Opacity and its fade are `motion.div`'s now (#566 T3, `fadeVariants`),
+ * bound to `tooltipVisible` in the template — this rule owns layout only, so
+ * there is one mechanism for the fade rather than this CSS transition and
+ * motion-v disagreeing about which of them is currently running it.
  */
 .tooltip-holder {
   position: fixed;
   z-index: 30;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s;
-}
-.tooltip-holder.is-visible {
-  opacity: 1;
 }
 /*
  * The expanded bubble: fixed and clamped like the tooltip/bar (the cave
