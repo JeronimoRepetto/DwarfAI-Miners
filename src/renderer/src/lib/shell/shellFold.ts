@@ -154,9 +154,8 @@ export function foldedColumnOffset(shell: {
  * side is travelling the other way on a left-docked shell (#464, generalized
  * #566 T5b: was named for the rail alone, which is one carried column among
  * now several). Shared by `columnFoldTransform` (the inline style `place`
- * writes) and `columnFoldKeyframes` (the motion-v `x` shortcut this file
- * hands the runner), so the two can never mirror the sign differently from
- * each other.
+ * writes) and `columnFoldKeyframes` (the keyframes this file hands the
+ * runner), so the two can never mirror the sign differently from each other.
  */
 export function mirrorTravel(travel: number, edge: PanelEdge): number {
   return edge === 'right' ? travel : -travel
@@ -176,16 +175,29 @@ export function columnFoldTransform(travel: number, edge: PanelEdge): string {
 
 /**
  * A carried column's travel from where it is now to where the change leaves
- * it, in motion-v's own shape: `x` is its transform shortcut, driven as a
- * plain number rather than the CSS string `columnFoldTransform` writes
- * inline.
+ * it — the SAME `transform` string `columnFoldTransform` writes inline, run
+ * as two keyframes.
+ *
+ * `transform`, and not motion-v's `x` shortcut this used to hand over (#585).
+ * Which key a value is named by decides which ENGINE drives it: motion-dom
+ * accelerates exactly `opacity`, `clipPath`, `filter`, `transform` and
+ * `backgroundColor` onto WAAPI (its own `acceleratedValues`, asserted against
+ * in `shellFold.test.ts`), and `x` is in none of them — it is a transform
+ * shortcut resolved by motion-dom's own JS driver, on its own rAF clock. So a
+ * column asked for `x` AND `clipPath` in one `animate()` call got two
+ * animations on two clocks: a real-window probe measured the transform 10%
+ * travelled while the clip of the same run was 50% through it, which paints
+ * the content 353px past its own rest edge and, closing, clips a column away
+ * entirely for a dozen frames. Named as the property WAAPI already drives and
+ * the two halves share one timeline, which is the whole of what
+ * `columnSlideKeyframes` below claims.
  */
 export function columnFoldKeyframes(
   from: number,
   to: number,
   edge: PanelEdge
 ): DOMKeyframesDefinition {
-  return { x: [mirrorTravel(from, edge), mirrorTravel(to, edge)] }
+  return { transform: [columnFoldTransform(from, edge), columnFoldTransform(to, edge)] }
 }
 
 /**
@@ -223,6 +235,10 @@ export function columnFoldClip(travel: number, edge: PanelEdge): string {
  * carrying `columnFoldClip` along on the SAME two keyframes, so one
  * `animate()` call drives both compositor properties in lockstep and neither
  * can finish or watchdog-end ahead of the other (#566 T5b).
+ *
+ * "In lockstep" only became true with #585: both keys are WAAPI-accelerated
+ * values now, so they are one timeline rather than two engines handed the
+ * same two keyframes — see `columnFoldKeyframes` above.
  */
 export function columnSlideKeyframes(
   from: number,

@@ -198,9 +198,25 @@ function clipFrames(keyframes: DOMKeyframesDefinition): [string, string] {
   return keyframes.clipPath as [string, string]
 }
 
-/** The two `x` offsets a rail carry's keyframes carry, cast once for the same reason. */
-function xFrames(keyframes: DOMKeyframesDefinition): [number, number] {
-  return keyframes.x as [number, number]
+/**
+ * The two transforms a rail carry's keyframes carry, cast once for the same
+ * reason — AMENDED for #585, was `xFrames` reading motion-v's `x` shortcut.
+ */
+function transformFrames(keyframes: DOMKeyframesDefinition): [string, string] {
+  return keyframes.transform as [string, string]
+}
+
+/**
+ * A carried column's travel as the keyframes it is actually handed — ADDED
+ * for #585, where the travel stopped being motion-v's `x` shortcut (a JS-
+ * driven value, on its own clock) and became the `transform` string WAAPI
+ * accelerates, so that a column's translate and its clip are one timeline.
+ * Written out here rather than imported from `shellFold.ts`, whose own test
+ * pins these exact strings: a composable asserted against its own builder
+ * would agree with it however wrong both were.
+ */
+function carries(from: number, to: number): DOMKeyframesDefinition {
+  return { transform: [`translateX(${from}px)`, `translateX(${to}px)`] }
 }
 
 /**
@@ -543,7 +559,7 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
     test.animations[0]!.finish()
     await settled()
     // Written rather than left to the engine: motion-v writes straight into
@@ -574,7 +590,7 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
     // The clip run's own transition is motion-dom's real answer for
     // `clipPath` — never asserted as a literal here, so a change to
     // motion-dom's own default would move both sides of this assertion
@@ -596,7 +612,7 @@ describe('useShellFold', () => {
     placed(test.rail, 973, 20)
     void test.fold.hold(test.column(555))
     await settled()
-    expect(xFrames(test.railAnimations[0]!.keyframes)[1]).toBe(-563)
+    expect(transformFrames(test.railAnimations[0]!.keyframes)[1]).toBe('translateX(-563px)')
     test.wrapper.unmount()
   })
 
@@ -766,7 +782,7 @@ describe('useShellFold', () => {
     test.fold.settle(false)
     // The rail rested against the docked edge; the row has just put it back at
     // the free one, 617px away from where the unfold has to start.
-    expect(test.railAnimations[1]!.keyframes).toEqual({ x: [617, 0] })
+    expect(test.railAnimations[1]!.keyframes).toEqual(carries(617, 0))
     expect(test.rail.style.transform).toBe('translateX(617px)')
     test.animations[1]!.finish()
     await settled()
@@ -808,7 +824,7 @@ describe('useShellFold', () => {
     // However far the rail travels — 563px here, hundreds more elsewhere —
     // its bound under the SAME transition is the clip's own, never a
     // function of the distance.
-    const railBound = motionBoundMs({ x: [0, 563] }, clipTransition)
+    const railBound = motionBoundMs(carries(0, 563), clipTransition)
     expect(railBound).toBe(clipBound)
     expect(panelLeaveBoundMs()).toBeGreaterThanOrEqual(Math.max(clipBound, railBound))
   })
@@ -851,9 +867,9 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // rail, secondary and the navigation stack alike — is carried by exactly
     // the SAME distance: its own width plus the gap beside it, the one thing
     // that changed.
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 356] })
-    expect(test.secondaryAnimations[0]!.keyframes).toEqual({ x: [0, 356] })
-    expect(test.navAnimations[0]!.keyframes).toEqual({ x: [0, 356] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 356))
+    expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(0, 356))
+    expect(test.navAnimations[0]!.keyframes).toEqual(carries(0, 356))
     test.wrapper.unmount()
   })
 
@@ -866,7 +882,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.state.nav = carriedColumn(599, 38)
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
     expect(test.navAnimations).toHaveLength(0)
     test.wrapper.unmount()
   })
@@ -889,7 +905,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const own = test.animationsFor(mine)
     expect(own).toHaveLength(1)
     expect(own[0]!.keyframes).toEqual({
-      x: [0, 356],
+      ...carries(0, 356),
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 356px 0px 0px)']
     })
     // The clip's own transition — never `x`'s underdamped spring default —
@@ -911,11 +927,11 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 8, 348)
     void test.fold.hold(mine)
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [-0, -356] })
-    expect(test.secondaryAnimations[0]!.keyframes).toEqual({ x: [-0, -356] })
-    expect(test.navAnimations[0]!.keyframes).toEqual({ x: [-0, -356] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(-0, -356))
+    expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(-0, -356))
+    expect(test.navAnimations[0]!.keyframes).toEqual(carries(-0, -356))
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [-0, -356],
+      ...carries(-0, -356),
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
     })
     test.wrapper.unmount()
@@ -947,12 +963,12 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.state.shell = sized(test.shell, 1001)
     test.fold.settle(false)
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [356, 0],
+      ...carries(356, 0),
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
-    expect(test.secondaryAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
-    expect(test.navAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    expect(test.navAnimations[0]!.keyframes).toEqual(carries(356, 0))
     test.wrapper.unmount()
   })
 
@@ -991,7 +1007,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // still carried: `entering` being non-empty is answer enough on its own.
     test.fold.settle(false)
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [356, 0],
+      ...carries(356, 0),
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
     test.wrapper.unmount()
@@ -1012,10 +1028,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.state.shell = sized(test.shell, 1001)
     window.dispatchEvent(new Event('resize'))
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [356, 0],
+      ...carries(356, 0),
       clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     test.wrapper.unmount()
   })
 
