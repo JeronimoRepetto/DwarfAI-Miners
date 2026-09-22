@@ -463,5 +463,95 @@ describe('createBoundedMotion', () => {
       // scheduled re-apply must not still be able to write to it.
       expect(test.element.style.opacity).toBe('0.9')
     })
+
+    /*
+     * ADDED for the #566 hotfix (the invisible reopened message panel).
+     * `release(element)` used to end only an ACTIVE run — a no-op once the
+     * run it would have ended had already finished — so a caller that took
+     * the element back over after that point (`MessagePanelWindow`'s
+     * `armRise`, reopening on a closed leave) had no way to withdraw the
+     * re-apply the finished run left pending. It fired later regardless,
+     * overwriting whatever the new caller had just written. `release` now
+     * withdraws it too: a caller saying "this element is mine now" must not
+     * be written to by the runner afterwards.
+     */
+    it('withdraws a pending re-apply once release() claims the element back, so a caller taking it over is never overwritten', async () => {
+      const test = harness()
+      let settleCalls = 0
+      const done = test.motion.run(test.element, RISE, () => {
+        settleCalls += 1
+      })
+      test.runs[0]!.finish()
+      await done
+      expect(settleCalls).toBe(1)
+      expect(test.scheduled).toHaveLength(1)
+      test.motion.release(test.element)
+      // Standing in for the frame the re-apply was waiting for, once frames
+      // resume — the exact moment the bug let a stale re-apply through.
+      test.scheduled[0]!()
+      expect(settleCalls).toBe(1)
+      test.motion.dispose()
+    })
+
+    /*
+     * Sibling to the case above, pinning the survival `releaseAll` is
+     * required to keep: it runs on `visibilitychange` -> hidden and on
+     * reduced motion turning on, where the re-apply IS the protection that
+     * lands `settle` after the engine's own deferred render once frames
+     * resume (T2b). Withdrawing it there would reopen the exact late-render
+     * race T2b closed, so only `release(element)`, a newer `run(element)`,
+     * or `dispose()` may withdraw one.
+     */
+    it('leaves a pending re-apply standing across releaseAll(), so it still fires once frames resume', async () => {
+      const test = harness()
+      let settleCalls = 0
+      const done = test.motion.run(test.element, RISE, () => {
+        settleCalls += 1
+      })
+      test.runs[0]!.finish()
+      await done
+      expect(settleCalls).toBe(1)
+      expect(test.scheduled).toHaveLength(1)
+      test.motion.releaseAll()
+      test.scheduled[0]!()
+      expect(settleCalls).toBe(2)
+      test.motion.dispose()
+    })
+
+    /*
+     * ADDED for the follow-up to the #566 hotfix. `release` (the two cases
+     * above and their own doc) is built for a caller that ends a run and
+     * touches the element no further — `useShellFold`'s rail carry,
+     * `PanelTransition`'s own finish — so the ending's own re-apply has to
+     * survive it. `MessagePanelWindow`'s `armRise` and its cut branch are the
+     * opposite caller: they write the element's OWN state right after ending
+     * whatever was running, even when that run was still ACTIVE (a fast
+     * reopen landing inside a still-running leave, or a dwarf switch cutting
+     * one) — and `release`'s own guarantee would leave that ending's
+     * re-apply standing to fire over what they just wrote. `claim` is for
+     * that caller: it withdraws every re-apply, including one its own ending
+     * just scheduled.
+     */
+    it('claim() on an active run ends it and withdraws even the re-apply that ending itself scheduled', async () => {
+      const test = harness()
+      let settleCalls = 0
+      const done = test.motion.run(test.element, RISE, () => {
+        settleCalls += 1
+      })
+      // The run stays ACTIVE — never finished by the engine — so `claim`
+      // itself is what ends it, exactly like a fast reopen landing inside a
+      // leave still in flight.
+      test.motion.claim(test.element)
+      await done
+      expect(settleCalls).toBe(1)
+      expect(test.scheduled).toHaveLength(1)
+      // Standing in for the frame the re-apply was waiting for. `release`
+      // would leave this one standing on purpose (T2b's own guarantee to
+      // that caller); `claim` withdrew it, because ITS caller is about to
+      // write the element itself.
+      test.scheduled[0]!()
+      expect(settleCalls).toBe(1)
+      test.motion.dispose()
+    })
   })
 })
