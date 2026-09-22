@@ -327,6 +327,84 @@ below): the answer is yes, `session.tokens_*` feeds `tokensObserved` — see `st
 `opencodeUsageTokens` for exactly which of the five columns count and why, and #540 for the change
 that acts on it.
 
+## Row 15 — a global plugin loads for an unrelated project, over HTTP `[V]`
+
+Measured 2026-09-22, OpenCode 1.18.31, Windows 11 (#588 T1). One live round trip was driven
+entirely over HTTP against `opencode serve --port 49735 --hostname 127.0.0.1`, started inside a
+throwaway scratch project (its own `git init`, its own `opencode.json` carrying
+`{"permission":{"bash":"ask"}}`) — no real project was ever the target session. Every plugin file
+used was a temporary probe under the user's global OpenCode config directory, removed before this
+run ended; the directory's listing was diffed against a pre-change snapshot to confirm the exact
+restore (the pre-existing files came back unchanged, nothing left over).
+
+- **The global plugin directory is `~/.config/opencode/plugins/` (plural), and it is not
+  documentation-only** — it already held several real `.ts` files in active use on this machine
+  before this measurement touched anything, none of them named in
+  `~/.config/opencode/opencode.json`'s `plugin` array (that key is absent from the file entirely).
+  Auto-discovery at the global config path, exactly like the project-scoped `.opencode/plugin/`
+  convention already on record for this app's own launch.
+- A freshly created **`~/.config/opencode/plugin/`** (singular — confirmed absent on this machine
+  before this measurement) was auto-discovered too: the singular/plural symmetry the CLI's own
+  plugin-authoring help text documents for the project-local convention (any `*.ts` or `*.js` file
+  in `.opencode/plugin/` or `.opencode/plugins/`) holds at global scope as well.
+- **Both `.js` and `.ts` load, at global scope, with no build step** — a `.ts` probe dropped
+  alongside the `.js` one in `~/.config/opencode/plugins/` loaded identically; the compiled binary
+  transpiles it itself.
+- **Loading is lazy, never at server boot.** `opencode serve --print-logs --log-level DEBUG` logged
+  three config-file load attempts (`config.json`, `opencode.json`, `opencode.jsonc`, all under
+  `~/.config/opencode/`) at startup and nothing about plugins. Every probe's own load-time log
+  line, and a burst of `plugin.added` events (one per discovered plugin — well over the three
+  probes, since the pre-existing plugins fired their own), landed only once the first session on
+  that server did anything; the server touched no plugin before that.
+- **`ctx.serverUrl` and `permission.asked` both reach a global plugin for a session in an unrelated
+  project.** `POST /session` against the scratch project returned a session whose `directory` and
+  `path.cwd` were the scratch project's own — nothing named or resembled a real project — and every
+  probe's load-time line carried `ctx.serverUrl` set to the server's own base URL (a `URL`
+  instance: `typeof ctx.serverUrl` is `"object"`, not `"string"`; `JSON.stringify` prints its
+  `.toJSON()` href) plus `ctx.directory`/`ctx.worktree` pointing at the scratch project. `ctx`'s key
+  set matched what was already on record: `client, project, worktree, directory,
+experimental_workspace, serverUrl, $`.
+- `POST /session/{id}/shell` turned out to be a dead end for provoking a permission: it bypasses
+  the permission system entirely — its `bash` tool part went straight to `completed`, the config's
+  `"permission":{"bash":"ask"}` notwithstanding. The real path is `POST /session/{id}/prompt_async`
+  with a text part telling the model to run a command: that produced a `bash` tool call the config
+  actually gated, `GET /permission` returned one pending row
+  (`{"id":"per_...","permission":"bash",...}`), every probe's `event` hook fired with
+  `type: "permission.asked"`, and `POST /session/{id}/permissions/{permissionID}` with
+  `{"response":"once"}` returned `200` and let the turn continue.
+
+**macOS and Linux global paths: read from the installed code, not run live on either OS — said
+loudly, because no Windows substitute makes that a real measurement.** OpenCode 1.18.31 ships as a
+single compiled Bun executable with no plain-JS source tree beside it, so its embedded bundle text
+was searched directly. The function that resolves the base directories — the same one that
+produces `~/.local/share/opencode` (Row 1) — reads `process.env.XDG_CONFIG_HOME`, falling back to
+`os.homedir()` joined with `.config`, then joins that with `"opencode"`; the call is
+`os.homedir()` unconditionally, with no `process.platform` branch anywhere in the function (unlike
+an unrelated, separately-vendored dependency elsewhere in the same binary that does branch on
+`win32` for its own `APPDATA` handling — traced by reading its own surrounding code, which
+references `gcloud` and `npm` caches and has nothing to do with OpenCode's own paths). Because the
+function OpenCode itself uses has no platform conditional, the same expression governs macOS and
+Linux as governs the Windows result measured live above: **global config path =
+`$XDG_CONFIG_HOME/opencode` if set, else `~/.config/opencode`, identically on all three
+platforms.** This is source-level evidence from the exact shipped build, not a live run — no
+machine running either OS was available to this measurement.
+
+**Consequence for #588:** a plugin dropped in `~/.config/opencode/plugin/` or
+`~/.config/opencode/plugins/` — either name, `.js` or `.ts`, no `opencode.json` entry — loads for
+every OpenCode session on the machine, launched or merely observed, whether or not the session's
+own project has anything to do with this app. `ctx.serverUrl` is already the address a global
+plugin needs to call back into with `POST /session/{sessionID}/permissions/{permissionID}`, and
+`permission.asked` is confirmed to reach it for a session this plugin's own install location has no
+relationship to.
+
+**Not yet measured, stated loudly:** whether the same plugin, loaded once and globally, also
+receives events from a session this investigation did not itself create over HTTP — i.e. one
+started by the user's own interactive `opencode` TUI, entirely outside any app driving it. Every
+session in this row's measurement was created by this same investigation's own HTTP calls. Row 5b
+already found no port to reach such a session from the outside; whether a globally-loaded plugin
+still gets pushed events for a sibling session it never touched is a related but distinct question
+this row does not close.
+
 ## What this settles for the design
 
 | Question              | Answer                                                                                                                                                                                       |
