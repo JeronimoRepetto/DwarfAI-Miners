@@ -26,6 +26,7 @@ import {
   stampHeldOpeningPrompt,
   stampHeldQuestions,
   stampHeldRank,
+  stampHeldRoutedByJev,
   stampHeldStatus,
   stampHeldTelemetry,
   stampHeldTuning,
@@ -1288,6 +1289,75 @@ describe('stampHeldOpeningPrompt', () => {
       openingPrompt: conversation[0]!
     }))
     expect(stamped[0]!.dwarfs[0]!.openingPrompt).toEqual(conversation[0])
+  })
+})
+
+/*
+ * MCP subtask delegation (#511). The held twin of `stampLaunchedRoutedByJev`
+ * (launchedSessions.ts) — same "chosen by Jev" marker, same ADD-ONLY shape,
+ * carried once at launch on the same terms `openingPrompt` above is: a fact
+ * about how the session STARTED, never re-derived from anything later on the
+ * stream. Held ONLY, never persisted: restart survival is not required — a
+ * held session dies with the app, like the rest of HeldCrew's in-memory
+ * state, so there is no store column to mirror appDatabase.ts's v6 one.
+ */
+describe('stampHeldRoutedByJev', () => {
+  function board(): Mine[] {
+    return [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'foreman-1', role: 'foreman', sessionId: 'sess-1' },
+          { ...defaultDwarf(), id: 'worker-1', role: 'worker', sessionId: 'sess-1' }
+        ]
+      }
+    ]
+  }
+
+  it("stamps the held session's own routing onto its foreman", () => {
+    const stamped = stampHeldRoutedByJev(board(), () => ({ held: true, routedByJev: true }))
+    expect(stamped[0]!.dwarfs[0]!.routedByJev).toBe(true)
+  })
+
+  it("never stamps a worker, which shares its foreman's session id", () => {
+    const stamped = stampHeldRoutedByJev(board(), () => ({ held: true, routedByJev: true }))
+    expect(stamped[0]!.dwarfs[1]!.routedByJev).toBeUndefined()
+  })
+
+  // ADDS ONLY, like stampLaunchedRoutedByJev: a launch that was not routed by
+  // Jev leaves the field absent, never writes `routedByJev: false`.
+  it('leaves the field absent for a held launch that was not routed by Jev', () => {
+    const stamped = stampHeldRoutedByJev(board(), () => ({ held: true, routedByJev: false }))
+    expect('routedByJev' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  it('leaves a session this panel does not hold exactly as it was', () => {
+    const stamped = stampHeldRoutedByJev(board(), () => ({ held: false }))
+    expect('routedByJev' in stamped[0]!.dwarfs[0]!).toBe(false)
+  })
+
+  // The coordinator's own pin: two held sessions in the same mine, one
+  // routed and one not, must never cross-contaminate — each foreman is
+  // looked up by its OWN sessionId, exactly as every other held stamp is.
+  it('does not leak from one held session to another in the same mine', () => {
+    const mines: Mine[] = [
+      {
+        ...defaultMine(),
+        id: 'mine-1',
+        dwarfs: [
+          { ...defaultDwarf(), id: 'foreman-routed', role: 'foreman', sessionId: 'sess-routed' },
+          { ...defaultDwarf(), id: 'foreman-plain', role: 'foreman', sessionId: 'sess-plain' }
+        ]
+      }
+    ]
+    const stamped = stampHeldRoutedByJev(mines, (sessionId) =>
+      sessionId === 'sess-routed'
+        ? { held: true, routedByJev: true }
+        : { held: true, routedByJev: false }
+    )
+    expect(stamped[0]!.dwarfs[0]!.routedByJev).toBe(true)
+    expect('routedByJev' in stamped[0]!.dwarfs[1]!).toBe(false)
   })
 })
 

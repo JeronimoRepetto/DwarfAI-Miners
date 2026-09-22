@@ -115,6 +115,7 @@ import {
   stampHeldOpeningPrompt,
   stampHeldQuestions,
   stampHeldRank,
+  stampHeldRoutedByJev,
   stampHeldStatus,
   stampHeldTelemetry,
   stampHeldTuning
@@ -1632,6 +1633,15 @@ export class AgentRuntime {
         const withOpeningPrompt = stampHeldOpeningPrompt(withTuning, (sessionId) =>
           this.heldSessions.conversationState(sessionId)
         )
+        // The "chosen by Jev" marker, held twin of the launched family's own
+        // stamp above (#511) — same launch-time-fact family as the opening
+        // prompt just stamped, and for the same reason it sits beside it: in
+        // memory only, kept on the record since `launch()`, never re-derived.
+        // Before stampHeldRank below, on the same terms every stamp above
+        // needing `dwarf.role === 'foreman'` already is.
+        const withRouting = stampHeldRoutedByJev(withOpeningPrompt, (sessionId) =>
+          this.heldSessions.routedByJevState(sessionId)
+        )
         // What a held session is actually DOING, live (#245). Superseding the
         // provider's idle reading exactly as stampHeldQuestions supersedes
         // the tail's ask — an SDK-hosted registry entry never carries a
@@ -1640,7 +1650,7 @@ export class AgentRuntime {
         // Before stampHeldRank, for the same reason as the three stamps
         // above: it finds the session's own dwarf by the rank its provider
         // gave it.
-        const withStatus = stampHeldStatus(withOpeningPrompt, (sessionId) =>
+        const withStatus = stampHeldStatus(withRouting, (sessionId) =>
           this.heldSessions.activityState(sessionId)
         )
         // What a held session's dwarf actually IS, last of all (#157). Role is
@@ -3314,7 +3324,11 @@ export class AgentRuntime {
       prompt: request.prompt,
       ...(request.model === undefined ? {} : { model: request.model }),
       ...(request.effort === undefined ? {} : { effort: request.effort }),
-      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode })
+      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
+      // #511: same rule as launchAgent's own retain() call — carried onto
+      // the held record so routedByJevState (and this session's own dwarf)
+      // can answer it later.
+      ...(request.routedByJev === true ? { routedByJev: true } : {})
     })
   }
 

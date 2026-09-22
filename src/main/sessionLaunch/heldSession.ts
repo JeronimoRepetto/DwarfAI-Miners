@@ -1390,6 +1390,39 @@ export function stampHeldOpeningPrompt(mines: Mine[], stateOf: HeldConversationL
 }
 
 /**
+ * Whether Jev's own decision routed this held session's launch (#511) — the
+ * held twin of `HeldConversationState`'s `openingPrompt`: a fact about how
+ * the session STARTED, carried on the record and never re-derived from the
+ * stream. In memory only — a held session dies with the app like the rest of
+ * this registry's state, so unlike the launched register (appDatabase.ts's
+ * v6 column) there is no store to survive a restart in.
+ */
+export type HeldRoutingState = { held: false } | { held: true; routedByJev: boolean }
+
+export type HeldRoutingLookup = (sessionId: string) => HeldRoutingState
+
+/**
+ * Copy `mines` with the "chosen by Jev" marker stamped onto the one held
+ * foreman that earned it (#511) — ADDS ONLY, the same shape
+ * `stampLaunchedRoutedByJev` (launchedSessions.ts) holds for the detached
+ * path: a session that was not routed by Jev is left exactly as it was,
+ * never stamped `routedByJev: false`. Only the foreman, for the same reason
+ * every other held stamp checks it: a worker carries its foreman's
+ * `sessionId`, and keying on the id alone would copy one session's marker
+ * onto every subagent in it.
+ */
+export function stampHeldRoutedByJev(mines: Mine[], stateOf: HeldRoutingLookup): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      if (dwarf.role !== 'foreman') return dwarf
+      const state = stateOf(dwarf.sessionId)
+      return state.held && state.routedByJev ? { ...dwarf, routedByJev: true } : dwarf
+    })
+  }))
+}
+
+/**
  * What the panel is told about a held session's own status, live (issue
  * #245) — the same `{held}`-discriminated shape the states above use, and for
  * the same reason: only a session this panel HOLDS has any of this to report.
