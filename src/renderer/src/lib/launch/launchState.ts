@@ -770,3 +770,22 @@ export function shouldAskJev(state: LaunchState): boolean {
 }
 
 /* --- end of the #509 block ------------------------------------------------- */
+
+/* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+/**
+ * Whether a Jev DECISION was actually applied to the launch this submit is
+ * about to send — gate level (2) of the three `delegationGate.ts` requires,
+ * and the one fact `AgentLaunchRequest.routedByJev` / `HeldSessionLaunchRequest
+ * .routedByJev` carry across the wire.
+ *
+ * `'decided'` only, never `'fellBack'` — the same honesty rule
+ * `JevState.launchedOnFallback` already holds for the same distinction: a
+ * launch on the fallback pickers, even one that applied a configured default,
+ * is a launch on what the PERSON'S OWN settings say, not one Jev routed.
+ * Reaching `'decided'` already implies `jev.enabled` (`jevAsked` only leaves
+ * idle through `shouldAskJev`'s own gate), so there is nothing else to check.
+ */
+export function routedByJev(state: LaunchState): boolean {
+  return state.jev.routing.phase === 'decided'
+}
+/* --- end of the #511 block ---------------------------------------------------- */

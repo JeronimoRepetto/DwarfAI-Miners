@@ -115,6 +115,7 @@ import {
   stampHeldOpeningPrompt,
   stampHeldQuestions,
   stampHeldRank,
+  stampHeldRoutedByJev,
   stampHeldStatus,
   stampHeldTelemetry,
   stampHeldTuning
@@ -127,6 +128,7 @@ import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
 import {
   LaunchedSessionRegistry,
+  stampLaunchedRoutedByJev,
   stampLaunchedTurnOutcome,
   type LaunchFailure
 } from '../sessionLaunch/launchedSessions'
@@ -1572,12 +1574,18 @@ export class AgentRuntime {
         const withLastTurn = stampLaunchedTurnOutcome(withReceipts, (dwarfId) =>
           this.launched.lastTurnOfDwarf(dwarfId)
         )
+        // The "chosen by Jev" marker (#511) — same launch-correlated family
+        // as the two stamps above, read off the same register once the board
+        // has proved which dwarf a routed launch became.
+        const withRoutedByJev = stampLaunchedRoutedByJev(withLastTurn, (dwarfId) =>
+          this.launched.routedByJevOfDwarf(dwarfId)
+        )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
         const delivered = pollProfiler.measureSync('stamp', () =>
           stampTextDelivery(
-            withLastTurn,
+            withRoutedByJev,
             (dwarfId) => this.deliveryTargetOf(dwarfId),
             // The machine's half of the send capability (#366): a console this
             // port cannot type into is not a send channel, and the kick half
@@ -1625,6 +1633,15 @@ export class AgentRuntime {
         const withOpeningPrompt = stampHeldOpeningPrompt(withTuning, (sessionId) =>
           this.heldSessions.conversationState(sessionId)
         )
+        // The "chosen by Jev" marker, held twin of the launched family's own
+        // stamp above (#511) — same launch-time-fact family as the opening
+        // prompt just stamped, and for the same reason it sits beside it: in
+        // memory only, kept on the record since `launch()`, never re-derived.
+        // Before stampHeldRank below, on the same terms every stamp above
+        // needing `dwarf.role === 'foreman'` already is.
+        const withRouting = stampHeldRoutedByJev(withOpeningPrompt, (sessionId) =>
+          this.heldSessions.routedByJevState(sessionId)
+        )
         // What a held session is actually DOING, live (#245). Superseding the
         // provider's idle reading exactly as stampHeldQuestions supersedes
         // the tail's ask — an SDK-hosted registry entry never carries a
@@ -1633,7 +1650,7 @@ export class AgentRuntime {
         // Before stampHeldRank, for the same reason as the three stamps
         // above: it finds the session's own dwarf by the rank its provider
         // gave it.
-        const withStatus = stampHeldStatus(withOpeningPrompt, (sessionId) =>
+        const withStatus = stampHeldStatus(withRouting, (sessionId) =>
           this.heldSessions.activityState(sessionId)
         )
         // What a held session's dwarf actually IS, last of all (#157). Role is
@@ -3307,7 +3324,11 @@ export class AgentRuntime {
       prompt: request.prompt,
       ...(request.model === undefined ? {} : { model: request.model }),
       ...(request.effort === undefined ? {} : { effort: request.effort }),
-      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode })
+      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
+      // #511: same rule as launchAgent's own retain() call — carried onto
+      // the held record so routedByJevState (and this session's own dwarf)
+      // can answer it later.
+      ...(request.routedByJev === true ? { routedByJev: true } : {})
     })
   }
 
@@ -4321,7 +4342,12 @@ export class AgentRuntime {
                   ...(request.model === undefined ? {} : { model: request.model }),
                   ...(request.effort === undefined ? {} : { effort: request.effort })
                 }
-              })
+              }),
+          // #511: whether a Jev decision routed THIS launch, so the dwarf it
+          // becomes can be stamped once the board proves which one that is —
+          // see LaunchedSessionRegistry.routedByJevOfDwarf. Same spread idiom
+          // as tuning above; absent stays absent.
+          ...(request.routedByJev === true ? { routedByJev: true } : {})
         })
         // #263. Subscribed here, never behind the launcher: the receipt this
         // failure is correlated by is the one just issued a few lines above,

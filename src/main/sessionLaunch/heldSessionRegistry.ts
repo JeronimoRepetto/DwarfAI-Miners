@@ -33,6 +33,7 @@ import {
   type HeldPermission,
   type HeldPermissionAnswer,
   type HeldQuestionState,
+  type HeldRoutingState,
   type HeldSessionHandle,
   type HeldSessionPorts,
   type HeldSessionTelemetryUpdate,
@@ -278,6 +279,15 @@ interface HeldRecord {
    * Absent for a launch that sent no words at all.
    */
   openingPrompt?: FeedMessage
+  /**
+   * Whether Jev's own decision routed this launch (#511), carried on the
+   * record on the same terms `openingPrompt` is: a fact about how the
+   * session STARTED, set once at `launch()` and never touched again. A
+   * definite boolean rather than optional, same reason
+   * `LaunchRecord.routedByJev` (launchedSessions.ts) is: every record has an
+   * honest answer, not just the routed ones.
+   */
+  routedByJev: boolean
 }
 
 /**
@@ -366,6 +376,14 @@ export class HeldSessionRegistry {
        * Absent leaves the SDK on its own `'default'`.
        */
       permissionMode?: string
+      /**
+       * Whether a Jev DECISION was applied to this launch (#511) — same
+       * honesty rule as `AgentLaunchRequest.routedByJev`'s own comment:
+       * never true for a fallback. Absent means not routed. Read only by
+       * `routedByJevState`; never forwarded to the engine, since the CLI has
+       * no use for it.
+       */
+      routedByJev?: boolean
     } & LaunchTuning
   ): Promise<HeldSessionLaunchResult> {
     // Refused before anything else, because nothing about this machine could
@@ -471,7 +489,8 @@ export class HeldSessionRegistry {
         // that necessary.
         conversation: seeded,
         revision: seeded.length,
-        ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] })
+        ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] }),
+        routedByJev: request.routedByJev === true
       })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
@@ -603,6 +622,20 @@ export class HeldSessionRegistry {
       revision: record.revision,
       ...(record.openingPrompt === undefined ? {} : { openingPrompt: record.openingPrompt })
     }
+  }
+
+  /**
+   * Whether Jev's own decision routed this held launch (#511) — `held: false`
+   * for a session this panel does not hold, the same reading every state
+   * above carries. Carried once at `launch()`, on the same terms
+   * `openingPrompt` is: a fact about how the session STARTED, never
+   * re-derived from anything the stream says later. See HeldRoutingState and
+   * stampHeldRoutedByJev.
+   */
+  routedByJevState(sessionId: string): HeldRoutingState {
+    const record = this.recordFor(sessionId)
+    if (record === undefined) return { held: false }
+    return { held: true, routedByJev: record.routedByJev }
   }
 
   /**

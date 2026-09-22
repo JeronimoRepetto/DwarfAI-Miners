@@ -2613,9 +2613,10 @@ describe('Jev routing profiles (#509 follow-up)', () => {
   })
 
   it('asks main to save a profile choice, and renders the verdict', async () => {
-    const setJevPreferences = vi
-      .fn()
-      .mockResolvedValue({ configured: true, preferences: { profile: 'premium', default: {} } })
+    const setJevPreferences = vi.fn().mockResolvedValue({
+      configured: true,
+      preferences: { profile: 'premium', default: {}, delegation: false }
+    })
     const { wrapper, api } = await mountOpenApp({
       getJevSettings: vi
         .fn()
@@ -2626,7 +2627,11 @@ describe('Jev routing profiles (#509 follow-up)', () => {
     const options = wrapper.findAll('.profile-option')
     await options[2]?.trigger('click')
     await flushPromises()
-    expect(api.setJevPreferences).toHaveBeenCalledWith({ profile: 'premium', default: {} })
+    expect(api.setJevPreferences).toHaveBeenCalledWith({
+      profile: 'premium',
+      default: {},
+      delegation: false
+    })
     const selected = wrapper
       .findAll('.profile-option')
       .filter((node) => node.classes('is-selected'))

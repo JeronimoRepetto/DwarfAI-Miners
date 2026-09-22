@@ -41,6 +41,15 @@ export interface PersistedLaunch {
    * which is precisely what must never be signalled.
    */
   processStartTimeMs: number
+  /**
+   * Whether Jev's own decision routed this launch (#511) — carried past the
+   * process's own exit and a restart, the SQLite twin of
+   * `LaunchRecord.routedByJev`. Always a definite boolean, never optional: a
+   * row this store never wrote (from before the column existed) reads as
+   * `false`, the same "could not have been Jev-routed, the feature did not
+   * exist yet" reading `appDatabase.ts`'s migration comment states.
+   */
+  routedByJev: boolean
 }
 
 export interface LaunchedSessionStore {
@@ -58,11 +67,13 @@ export interface SqliteLaunchedSessionStoreOptions {
 }
 
 const SELECT_ALL =
-  'SELECT launch_id, provider, session_id, mine_path, pid, proc_start_ms FROM launched_sessions'
+  'SELECT launch_id, provider, session_id, mine_path, pid, proc_start_ms, routed_by_jev ' +
+  'FROM launched_sessions'
 
 const UPSERT =
   'INSERT OR REPLACE INTO launched_sessions ' +
-  '(launch_id, provider, session_id, mine_path, pid, proc_start_ms) VALUES (?, ?, ?, ?, ?, ?)'
+  '(launch_id, provider, session_id, mine_path, pid, proc_start_ms, routed_by_jev) ' +
+  'VALUES (?, ?, ?, ?, ?, ?, ?)'
 
 export function createSqliteLaunchedSessionStore(
   options: SqliteLaunchedSessionStoreOptions
@@ -86,7 +97,10 @@ export function createSqliteLaunchedSessionStore(
         launch.sessionId,
         launch.minePath,
         launch.pid,
-        launch.processStartTimeMs
+        launch.processStartTimeMs,
+        // SQLite has no boolean type; stored as 0/1, same convention every
+        // other flag column in this database uses.
+        launch.routedByJev ? 1 : 0
       ])
     },
 
@@ -117,7 +131,13 @@ function toLaunch(row: Record<string, unknown>): PersistedLaunch | null {
   const processStartTimeMs = asPositive(row.proc_start_ms)
   if (launchId === null || provider === null || sessionId === null) return null
   if (minePath === null || pid === null || processStartTimeMs === null) return null
-  return { launchId, provider, sessionId, minePath, pid, processStartTimeMs }
+  // NULL or 0 both read as false — the same "no evidence, no claim" reading
+  // absent gets on the wire (Dwarf.routedByJev), and the honest answer for a
+  // row this column predates: it could not have been Jev-routed. Compared
+  // loosely against 1, the same reason asPositive coerces bigint above:
+  // node:sqlite's real driver can hand INTEGER columns back as either.
+  const routedByJev = row.routed_by_jev === 1 || row.routed_by_jev === 1n
+  return { launchId, provider, sessionId, minePath, pid, processStartTimeMs, routedByJev }
 }
 
 function asText(value: unknown): string | null {

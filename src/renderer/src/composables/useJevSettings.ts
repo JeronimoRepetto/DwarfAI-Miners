@@ -58,6 +58,10 @@ async function safelyAsk<T>(ask: () => Promise<T>, fallback: T): Promise<T> {
  * Rebuilt field by field rather than deep-cloned: `JevLaunchDefault` is flat
  * and every member is a primitive, so this is total, and a member added later
  * is a type error here rather than a value that silently stops crossing.
+ *
+ * `delegation` (#511) is a plain boolean straight off `preferences`, not off
+ * the Proxy `default` sits under, so it never needed the provider/model/
+ * effort dance above — copied by value the moment it is read.
  */
 function acrossTheBridge(preferences: JevPreferences): JevPreferences {
   const { provider, model, effort } = preferences.default
@@ -67,7 +71,8 @@ function acrossTheBridge(preferences: JevPreferences): JevPreferences {
       ...(provider === undefined ? {} : { provider }),
       ...(model === undefined ? {} : { model }),
       ...(effort === undefined ? {} : { effort })
-    }
+    },
+    delegation: preferences.delegation
   }
 }
 

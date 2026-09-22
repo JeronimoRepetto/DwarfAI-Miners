@@ -200,10 +200,11 @@ describe('JevSettings — storage unavailable, no plaintext fallback', () => {
  * above already are — Settings shows neither while no key is set.
  */
 describe('JevSettings — the routing profile, gated on configured', () => {
-  it('draws nothing about the profile or the default launch while unconfigured', () => {
+  it('draws nothing about the profile, the default launch or delegation while unconfigured', () => {
     const wrapper = render({ configured: false })
     expect(wrapper.find('.jev-profile').exists()).toBe(false)
     expect(wrapper.find('.jev-default-launch').exists()).toBe(false)
+    expect(wrapper.find('.jev-delegation').exists()).toBe(false)
   })
 
   it('offers exactly Economy, Balanced and Premium, in that order', () => {
@@ -215,7 +216,7 @@ describe('JevSettings — the routing profile, gated on configured', () => {
   it('marks the stored profile selected, and no other', () => {
     const wrapper = render({
       configured: true,
-      preferences: { profile: 'premium', default: {} }
+      preferences: { profile: 'premium', default: {}, delegation: false }
     })
     const options = wrapper.findAll('.profile-option')
     const selected = options.filter((node) => node.classes('is-selected'))
@@ -238,12 +239,12 @@ describe('JevSettings — the routing profile, gated on configured', () => {
   it('emits the whole preferences document with the new profile, default untouched', async () => {
     const wrapper = render({
       configured: true,
-      preferences: { profile: 'balanced', default: { provider: 'claude' } }
+      preferences: { profile: 'balanced', default: { provider: 'claude' }, delegation: false }
     })
     const options = wrapper.findAll('.profile-option')
     await options[2]?.trigger('click')
     expect(wrapper.emitted('preferences-change')).toEqual([
-      [{ profile: 'premium', default: { provider: 'claude' } }]
+      [{ profile: 'premium', default: { provider: 'claude' }, delegation: false }]
     ])
   })
 
@@ -288,7 +289,10 @@ describe('JevSettings — the default launch, gated on configured', () => {
 
   it('reflects the stored default provider', () => {
     const wrapper = render(
-      { configured: true, preferences: { profile: 'balanced', default: { provider: 'codex' } } },
+      {
+        configured: true,
+        preferences: { profile: 'balanced', default: { provider: 'codex' }, delegation: false }
+      },
       { providers: PROVIDERS }
     )
     const select = wrapper.find('[aria-label="Default provider"]')
@@ -303,7 +307,10 @@ describe('JevSettings — the default launch, gated on configured', () => {
 
   it("offers the chosen provider's own catalogue, plus CLI default", () => {
     const wrapper = render(
-      { configured: true, preferences: { profile: 'balanced', default: { provider: 'claude' } } },
+      {
+        configured: true,
+        preferences: { profile: 'balanced', default: { provider: 'claude' }, delegation: false }
+      },
       { providers: PROVIDERS, catalogs: CATALOGS }
     )
     const modelOptions = wrapper
@@ -324,7 +331,8 @@ describe('JevSettings — the default launch, gated on configured', () => {
         configured: true,
         preferences: {
           profile: 'balanced',
-          default: { provider: 'claude', model: 'claude-sonnet-5', effort: 'low' }
+          default: { provider: 'claude', model: 'claude-sonnet-5', effort: 'low' },
+          delegation: false
         }
       },
       { providers: PROVIDERS, catalogs: CATALOGS }
@@ -333,7 +341,7 @@ describe('JevSettings — the default launch, gated on configured', () => {
     ;(select.element as HTMLSelectElement).value = 'codex'
     await select.trigger('change')
     expect(wrapper.emitted('preferences-change')).toEqual([
-      [{ profile: 'balanced', default: { provider: 'codex' } }]
+      [{ profile: 'balanced', default: { provider: 'codex' }, delegation: false }]
     ])
   })
 
@@ -341,7 +349,11 @@ describe('JevSettings — the default launch, gated on configured', () => {
     const wrapper = render(
       {
         configured: true,
-        preferences: { profile: 'balanced', default: { provider: 'claude', effort: 'low' } }
+        preferences: {
+          profile: 'balanced',
+          default: { provider: 'claude', effort: 'low' },
+          delegation: false
+        }
       },
       { providers: PROVIDERS, catalogs: CATALOGS }
     )
@@ -352,7 +364,8 @@ describe('JevSettings — the default launch, gated on configured', () => {
       [
         {
           profile: 'balanced',
-          default: { provider: 'claude', model: 'claude-sonnet-5', effort: 'low' }
+          default: { provider: 'claude', model: 'claude-sonnet-5', effort: 'low' },
+          delegation: false
         }
       ]
     ])
@@ -364,7 +377,8 @@ describe('JevSettings — the default launch, gated on configured', () => {
         configured: true,
         preferences: {
           profile: 'balanced',
-          default: { provider: 'claude', model: 'claude-sonnet-5' }
+          default: { provider: 'claude', model: 'claude-sonnet-5' },
+          delegation: false
         }
       },
       { providers: PROVIDERS, catalogs: CATALOGS }
@@ -373,7 +387,7 @@ describe('JevSettings — the default launch, gated on configured', () => {
     ;(select.element as HTMLSelectElement).value = ''
     await select.trigger('change')
     expect(wrapper.emitted('preferences-change')).toEqual([
-      [{ profile: 'balanced', default: { provider: 'claude' } }]
+      [{ profile: 'balanced', default: { provider: 'claude' }, delegation: false }]
     ])
   })
 
@@ -383,7 +397,8 @@ describe('JevSettings — the default launch, gated on configured', () => {
         configured: true,
         preferences: {
           profile: 'balanced',
-          default: { provider: 'claude', model: 'claude-sonnet-5' }
+          default: { provider: 'claude', model: 'claude-sonnet-5' },
+          delegation: false
         }
       },
       { providers: PROVIDERS, catalogs: CATALOGS }
@@ -395,7 +410,8 @@ describe('JevSettings — the default launch, gated on configured', () => {
       [
         {
           profile: 'balanced',
-          default: { provider: 'claude', model: 'claude-sonnet-5', effort: 'high' }
+          default: { provider: 'claude', model: 'claude-sonnet-5', effort: 'high' },
+          delegation: false
         }
       ]
     ])
@@ -411,7 +427,10 @@ describe('JevSettings — the default launch, gated on configured', () => {
     // this component only EMITTED — main never confirmed it — leaves the
     // select showing what the prop still says once Vue reconciles it.
     const wrapper = render(
-      { configured: true, preferences: { profile: 'balanced', default: { provider: 'claude' } } },
+      {
+        configured: true,
+        preferences: { profile: 'balanced', default: { provider: 'claude' }, delegation: false }
+      },
       { providers: PROVIDERS, catalogs: CATALOGS }
     )
     const select = wrapper.find('[aria-label="Default provider"]')
@@ -422,7 +441,7 @@ describe('JevSettings — the default launch, gated on configured', () => {
     await wrapper.setProps({
       settings: {
         configured: true,
-        preferences: { profile: 'balanced', default: { provider: 'claude' } }
+        preferences: { profile: 'balanced', default: { provider: 'claude' }, delegation: false }
       }
     })
     expect((select.element as HTMLSelectElement).value).toBe('claude')
@@ -437,6 +456,48 @@ describe('JevSettings — the default launch, gated on configured', () => {
   })
 })
 
+/* --- MCP subtask delegation: the gate preference (#511) — one block, appended --- */
+describe('JevSettings — the delegation checkbox, gated on configured', () => {
+  it('is unchecked by default', () => {
+    const wrapper = render({ configured: true })
+    const checkbox = wrapper.find('.delegation-checkbox')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('reflects a stored delegation of true', () => {
+    const wrapper = render({
+      configured: true,
+      preferences: { profile: 'balanced', default: {}, delegation: true }
+    })
+    const checkbox = wrapper.find('.delegation-checkbox')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('names what the checkbox does', () => {
+    const wrapper = render({ configured: true })
+    expect(wrapper.find('.jev-delegation').text()).toContain(
+      'Let Jev choose subagents by subtask complexity'
+    )
+  })
+
+  it('emits the whole preferences document with delegation flipped, profile and default untouched', async () => {
+    const wrapper = render({
+      configured: true,
+      preferences: { profile: 'premium', default: { provider: 'claude' }, delegation: false }
+    })
+    await wrapper.find('.delegation-checkbox').setValue(true)
+    expect(wrapper.emitted('preferences-change')).toEqual([
+      [{ profile: 'premium', default: { provider: 'claude' }, delegation: true }]
+    ])
+  })
+
+  it('disables the checkbox while a preferences save is in flight', () => {
+    const wrapper = render({ configured: true }, { saving: true })
+    expect(wrapper.find('.delegation-checkbox').attributes('disabled')).toBeDefined()
+  })
+})
+/* --- end of the #511 block ---------------------------------------------------- */
+
 /*
  * Showing the person why a routing profile did not change (2026-09-21).
  *
@@ -450,7 +511,7 @@ describe('JevSettings reporting a preference write that did not happen', () => {
       props: {
         settings: {
           configured: true,
-          preferences: { profile: 'balanced', default: {} },
+          preferences: { profile: 'balanced', default: {}, delegation: false },
           preferencesError: message
         },
         saving: false,
@@ -475,7 +536,10 @@ describe('JevSettings reporting a preference write that did not happen', () => {
   it('says nothing at all when the last write went through', () => {
     const wrapper = mount(JevSettings, {
       props: {
-        settings: { configured: true, preferences: { profile: 'balanced', default: {} } },
+        settings: {
+          configured: true,
+          preferences: { profile: 'balanced', default: {}, delegation: false }
+        },
         saving: false,
         providers: [],
         catalogs: []
