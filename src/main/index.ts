@@ -149,6 +149,7 @@ import {
   dockMessagePanel,
   dragMessagePanel,
   hidePanel,
+  loadPanelPage,
   markQuitting,
   messagePanelState,
   messagePanelSurfaceSettled,
@@ -1779,6 +1780,19 @@ async function init(): Promise<void> {
     if (typeof dwarfId !== 'string' || dwarfId === '') return
     runtime?.retireDwarf(dwarfId)
   })
+
+  // Loaded LAST, after every ipcMain.handle/on above (#570): the window was
+  // built near the top of this function so the tray, the shortcut and the
+  // panel placement could all have it early, but starting the page load that
+  // early let a fast-mounting renderer invoke a channel before its handler
+  // existed. Nothing above this line pushes into the page rather than
+  // registering a listener for later — see window.ts's own comment on
+  // loadPanelPage for the two exceptions that are pushes (onMinesUpdated's
+  // first poll, and the panel-visibility relay), both of which are safe here
+  // for the same reason: the renderer re-asks for its own state on mount, so
+  // a push that arrives before the page exists is merely one this ordering
+  // does not depend on.
+  loadPanelPage()
 }
 
 // Single instance: a second launch just shows the existing panel.
