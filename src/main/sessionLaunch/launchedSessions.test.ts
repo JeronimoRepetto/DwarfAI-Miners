@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
 import { createAppDatabase } from '../appDatabase/appDatabase'
-import type { Dwarf, Mine } from '../domain/types'
+import type { Dwarf, Mine, TurnOutcome } from '../domain/types'
 import { createSqliteLaunchedSessionStore, type LaunchedSessionStore } from './launchedSessionStore'
-import { LaunchedSessionRegistry, type LaunchedProcess } from './launchedSessions'
+import {
+  LaunchedSessionRegistry,
+  stampLaunchedTurnOutcome,
+  type LaunchedProcess
+} from './launchedSessions'
 
 const MINE_PATH = 'C:\\work\\project'
 const OTHER_PATH = 'C:\\work\\other'
@@ -32,18 +36,35 @@ function mine(path: string, dwarfs: Dwarf[]): Mine {
   }
 }
 
-/** A retained handle whose exit can be fired by hand, as the real one is by libuv. */
-function handle(pid: number): { process: LaunchedProcess; exit: () => void } {
+/**
+ * A retained handle whose exit can be fired by hand, as the real one is by
+ * libuv. `concludeTurn` is #510's own addition — a second, independent
+ * channel a real `LaunchedProcess` also carries, fired separately from
+ * `exit` exactly as `launchRunner.ts`'s `TurnOutcomeWatch` and its own
+ * `onExit` are two different listeners on the same underlying child.
+ */
+function handle(pid: number): {
+  process: LaunchedProcess
+  exit: () => void
+  concludeTurn: (outcome: TurnOutcome) => void
+} {
   const listeners: Array<() => void> = []
+  const turnListeners: Array<(outcome: TurnOutcome) => void> = []
   return {
     process: {
       pid,
       onExit(listener) {
         listeners.push(listener)
+      },
+      onTurnOutcome(listener) {
+        turnListeners.push(listener)
       }
     },
     exit: () => {
       for (const listener of listeners) listener()
+    },
+    concludeTurn: (outcome) => {
+      for (const listener of turnListeners) listener(outcome)
     }
   }
 }
@@ -744,4 +765,110 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
     })
   })
   /* --- end of the #462 block ------------------------------------------------ */
+
+  /* --- What a one-shot launch's own turn concluded (#510) -------------------- */
+
+  describe('lastTurnOfDwarf', () => {
+    function boundHandle() {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: []
+      })
+      launched.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+      return { launched, exiting }
+    }
+
+    const CONCLUDED: TurnOutcome = { kind: 'concluded', text: 'the build is green', endedAt: 1 }
+
+    it('answers undefined before the launch’s own turn has concluded', () => {
+      const { launched } = boundHandle()
+      expect(launched.lastTurnOfDwarf('codex:thread-new')).toBeUndefined()
+    })
+
+    it('answers with what the launch concluded, once its process reports it', () => {
+      const { launched, exiting } = boundHandle()
+      exiting.concludeTurn(CONCLUDED)
+      expect(launched.lastTurnOfDwarf('codex:thread-new')).toEqual(CONCLUDED)
+    })
+
+    /*
+     * The load-bearing case this mirrors from `tuningOfDwarf`: `forget()`
+     * only drops the store row on exit, so the record — and the outcome
+     * latched onto it — stays reachable for the whole run after the launch
+     * process has already exited, which is exactly the order a real launch
+     * fires these two signals in (turn concludes, then the process exits).
+     */
+    it('still answers with the outcome once the launch process has exited', () => {
+      const { launched, exiting } = boundHandle()
+      exiting.concludeTurn(CONCLUDED)
+      exiting.exit()
+      expect(launched.lastTurnOfDwarf('codex:thread-new')).toEqual(CONCLUDED)
+    })
+
+    it('answers undefined for a dwarf this panel never launched', () => {
+      const { launched, exiting } = boundHandle()
+      exiting.concludeTurn(CONCLUDED)
+      expect(launched.lastTurnOfDwarf('codex:somebody-elses')).toBeUndefined()
+    })
+
+    /*
+     * D1b's own gate, restated for #510: a RESTORED record (`restore()`) is a
+     * fresh object built from a store row with no `lastTurn` column, and by
+     * the time a launch is restored there is no live process left to attach
+     * an outcome to — see `LaunchRecord.lastTurn`'s own comment.
+     */
+    it('answers undefined for a restored record, which never carried a turn outcome', async () => {
+      const { store: launchStore, sqlite } = store()
+      await runWithLaunch(launchStore)
+
+      const { store: reopened } = store(sqlite)
+      const nextRun = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(true),
+        processStartTimeMs: probe({ 4242: PROC_START }).processStartTimeMs,
+        store: reopened
+      })
+      await nextRun.restore()
+      nextRun.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+
+      expect(nextRun.lastTurnOfDwarf('codex:thread-new')).toBeUndefined()
+    })
+  })
+  /* --- end of the #510 lastTurnOfDwarf block --------------------------------- */
+})
+
+/**
+ * `stampLaunchedTurnOutcome` (#510) — the pure, dwarf-id-keyed board stamp,
+ * proven the same way `launchReceipts.test.ts` proves `stampLaunchReceipts`:
+ * no registry, no process, just the mapping.
+ */
+describe('stampLaunchedTurnOutcome (#510)', () => {
+  const OUTCOME: TurnOutcome = { kind: 'concluded', text: 'done digging', endedAt: 1 }
+
+  it('adds lastTurn to the one dwarf the lookup names', () => {
+    const mines = [mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' })])]
+    const stamped = stampLaunchedTurnOutcome(mines, (dwarfId) =>
+      dwarfId === 'codex:thread-1' ? OUTCOME : undefined
+    )
+    expect(stamped[0]!.dwarfs[0]!.lastTurn).toEqual(OUTCOME)
+  })
+
+  it('leaves every other dwarf exactly as it was, lastTurn absent', () => {
+    const mines = [
+      mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' }), dwarf({ sessionId: 'thread-2' })])
+    ]
+    const stamped = stampLaunchedTurnOutcome(mines, (dwarfId) =>
+      dwarfId === 'codex:thread-1' ? OUTCOME : undefined
+    )
+    expect(stamped[0]!.dwarfs[1]!.lastTurn).toBeUndefined()
+  })
+
+  it('changes nothing at all when the lookup names no dwarf on the board', () => {
+    const mines = [mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' })])]
+    const stamped = stampLaunchedTurnOutcome(mines, () => undefined)
+    expect(stamped).toEqual(mines)
+  })
 })
