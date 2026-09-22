@@ -169,6 +169,14 @@ reasoning, and this list is only the index. None of these is enforced by the typ
 - **Anchors: check which coordinate space the file uses.** The map and the cave use _opposite_
   conventions, on purpose. Getting this wrong slides things off their rock when the panel resizes.
   The path-scoped rule above covers it.
+- **`animation.finished` is not a promise of completion.** Web Animations run on the document
+  timeline, which Chromium freezes for any window it considers hidden — including one merely
+  occluded by another program, since `backgroundThrottling` is on by default — so a run that ends
+  while hidden can leave whoever awaited its promise waiting forever. Every panel motion goes
+  through one bounded runner that never trusts that promise alone: it reports itself three ways
+  (the animation finishing, a watchdog derived from its own keyframes, the window going hidden)
+  and resolves on the first, then makes `settle` — not `cancel()` — the last word on what the
+  element shows. See `boundedMotion.ts` (#266, #566).
 
 ## Comments
 
