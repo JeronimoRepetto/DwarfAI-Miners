@@ -54,8 +54,25 @@ export const APP_SCHEMA_VERSION = 6
  */
 export const LEDGER_TABLES_SINCE = 2
 
-/** Refusal to touch a database this build did not write and cannot upgrade. */
-export class UnsupportedSchemaError extends Error {}
+/**
+ * Refusal to touch a database this build did not write and cannot upgrade.
+ *
+ * `reason` splits two refusals that share a stack trace but not a fix (#572):
+ * 'newer' is a stamp ABOVE this build's own — a build released after this one
+ * wrote it, so updating the app is the actual remedy — and 'unstamped' is a
+ * `projects` table with no version at all, which this build never wrote and
+ * will not guess at. Callers two layers up (openProjectsStore, the runtime's
+ * refusal sites) need to tell these apart, because only one of them has
+ * something to tell the user to DO about it.
+ */
+export class UnsupportedSchemaError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'newer' | 'unstamped'
+  ) {
+    super(message)
+  }
+}
 
 /**
  * The projects list — slice 1's table, plus the columns v3 and v5 added.
@@ -347,7 +364,8 @@ export function prepareAppSchema(db: WritableSqliteDb): void {
   if (version === 0) {
     if (hasTable(db, 'projects')) {
       throw new UnsupportedSchemaError(
-        'app database carries a projects table with no version stamp; this build will not guess at it'
+        'app database carries a projects table with no version stamp; this build will not guess at it',
+        'unstamped'
       )
     }
     inTransaction(db, () => {
@@ -376,7 +394,8 @@ export function prepareAppSchema(db: WritableSqliteDb): void {
   }
 
   throw new UnsupportedSchemaError(
-    `app database is schema version ${version}, this build knows ${APP_SCHEMA_VERSION}`
+    `app database is schema version ${version}, this build knows ${APP_SCHEMA_VERSION}`,
+    'newer'
   )
 }
 

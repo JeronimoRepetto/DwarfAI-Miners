@@ -157,8 +157,15 @@ export interface ProjectForgetRequest {
   at: number
 }
 
-/** Every way this store can fail to answer. */
-export type ProjectsFailure = SqliteFailure | 'unsupported-schema'
+/**
+ * Every way this store can fail to answer.
+ *
+ * 'newer-build' is split out from 'unsupported-schema' (#572): both come from
+ * UnsupportedSchemaError, but only a stamp above what this build knows has an
+ * actual fix — updating the app — worth naming past this file, at the
+ * runtime's refusal sites.
+ */
+export type ProjectsFailure = SqliteFailure | 'unsupported-schema' | 'newer-build'
 
 /**
  * An answer or an explicit failure — never a silent default.
@@ -477,7 +484,14 @@ export function createProjectsStore(options: ProjectsStoreOptions): ProjectsStor
 
 function toFailure<T>(error: unknown): ProjectsResult<T> {
   if (error instanceof UnsupportedSchemaError) {
-    return { ok: false, failure: 'unsupported-schema', message: error.message }
+    // 'newer' is the one UnsupportedSchemaError reason with an actual fix —
+    // update the app — so it gets its own kind here instead of sharing
+    // 'unsupported-schema' with the unstamped case, which has none (#572).
+    return {
+      ok: false,
+      failure: error.reason === 'newer' ? 'newer-build' : 'unsupported-schema',
+      message: error.message
+    }
   }
   if (error instanceof SqliteWriteError) {
     return { ok: false, failure: error.failure, message: error.message }
