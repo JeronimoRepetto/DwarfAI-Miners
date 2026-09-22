@@ -10,7 +10,14 @@
  * Moved from the T0 spike (`lib/motion/motionV.spike.test.ts`, #566) once GO was
  * decided — TDD does not apply to a pin on a third-party engine's own contract
  * any more than it did to the spike itself: there is no production behaviour of
- * ours to watch fail first.
+ * ours to watch fail first. Two exceptions genuinely exercise our own code and
+ * were RED before they were GREEN: the `describe` named "a real spring settles
+ * inside its own derived bound" (#464/#566, `motionTiming.ts`'s `motionBoundMs`)
+ * and the LAST TWO cases in "the imperative controls contract the bound relies
+ * on" (#566 T2b) — the engine's deferred render is real (jsdom's
+ * `requestAnimationFrame` drives motion-dom's own frameloop, confirmed by
+ * running the first of those two RED before deciding its assertion) and
+ * `boundedMotion.ts`'s re-apply is what closes it.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { animate, MotionGlobalConfig } from 'motion-v'
@@ -189,6 +196,72 @@ describe('motion-v engine: the imperative controls contract the bound relies on'
     expect(midFlight).toBeLessThan(1)
     controls.cancel()
     expect(element.style.opacity).toBe(String(midFlight))
+    element.remove()
+  })
+
+  /*
+   * ADDED for #566 T2b. First written asserting the value survives two
+   * frames later — RED, for the reason expected (`skills/tdd`): jsdom's rAF
+   * DOES drive motion-dom's own frameloop, so the engine's own deferred
+   * render (queued from `cancel()`'s `tick(0)`, see `boundedMotion.ts`'s
+   * `MotionControls.cancel`) flushes on the very next frame and overwrites a
+   * value written right after `cancel()` with the MotionValue's own current
+   * one — `'none'`, because `tick(0)` reset it to the INITIAL keyframe
+   * (`x: 0`, which collapses to `none` rather than `translateX(0px)`, the
+   * same collapse the instant-animations pin above documents). That failure
+   * is the proof this file exists to pin, so the assertion below now pins
+   * the OBSERVED behaviour rather than the wished-for one; the case right
+   * after it is `boundedMotion.ts`'s own answer to it, against this same
+   * real engine.
+   */
+  it('a value written right after cancel() does NOT survive two frames later — the engine’s own deferred render wins (#566 T2b)', async () => {
+    const element = document.createElement('div')
+    document.body.append(element)
+    const controls = animate(element, { x: [0, 120] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    controls.cancel()
+    // Stands in for `settle` — the exact write `boundedMotion.ts`'s `run`
+    // makes right after `cancel()`.
+    element.style.transform = 'translateX(120px)'
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    expect(element.style.transform).toBe('none')
+    element.remove()
+  })
+
+  /*
+   * `boundedMotion.ts`'s own fix for the case above, run against this SAME
+   * real engine rather than the hand-written fake `boundedMotion.test.ts`
+   * uses for the runner's own logic (`skills/tdd`'s house idiom draws that
+   * line: the fake covers the runner's rules, this file covers the engine's
+   * contract those rules depend on). No `afterRender` override — this is
+   * motion-v's real `frame.postRender`, the same one the case above proved
+   * loses the race without it.
+   */
+  it('boundedMotion’s re-apply survives the engine’s own deferred render, restoring settle after it (#566 T2b)', async () => {
+    const element = document.createElement('div')
+    document.body.append(element)
+    // `still()` reads `element.animate`'s mere presence as its proxy for a
+    // real Chromium window (`boundedMotion.ts`'s own comment) — stubbed in
+    // exactly as `boundedMotion.test.ts`'s harness does, so this run takes
+    // the motion path rather than the instant one.
+    Object.defineProperty(element, 'animate', { configurable: true, value: () => undefined })
+    const motion = createBoundedMotion()
+    const done = motion.run(element, { x: [0, 120] }, () => {
+      element.style.transform = 'translateX(120px)'
+    })
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    // Ends the run the same way a hidden window or a superseding run would —
+    // `cancel()`, then `settle`, then (since #566 T2b) the scheduled re-apply.
+    motion.release(element)
+    await done
+    expect(element.style.transform).toBe('translateX(120px)')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    // Without the re-apply this would now read `'none'`, exactly like the
+    // case above — the engine's own deferred render still happens here too.
+    expect(element.style.transform).toBe('translateX(120px)')
+    motion.dispose()
     element.remove()
   })
 })
