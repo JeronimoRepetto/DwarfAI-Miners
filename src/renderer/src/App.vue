@@ -25,6 +25,7 @@ import { useMines } from './composables/useMines'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useShellFold } from './composables/useShellFold'
+import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
@@ -38,6 +39,17 @@ import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { versionLabel, versionTitle } from './lib/appBuild'
 import type { AppBuild, Dwarf, Mine, MineHistoryResult, MinesSnapshot, ShellArea } from './types'
+
+const props = defineProps<{
+  /**
+   * The engine `createBoundedMotion` runs, for a test to hand in a
+   * hand-written fake — production never sets this (`main.ts` mounts this
+   * component with no props at all), and gets the real motion-v import
+   * (#566). Threaded to `useShellFold` and every `PanelTransition` below,
+   * which is the whole of what this shell animates.
+   */
+  engine?: MotionAnimate
+}>()
 
 const { state, setMines } = useMines()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
@@ -199,7 +211,8 @@ const { hold: holdColumn, settle: settleShellFold } = useShellFold({
   shell: () => shellEl.value,
   edge: () => layout.value.edge,
   remaining: () => shellComposition(visibleLayout.value),
-  rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null)
+  rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null),
+  engine: props.engine
 })
 
 /*
@@ -896,9 +909,9 @@ onBeforeUnmount(() => {
       The area switch inside the page and the history dock below still animate
       themselves: both already move within bounds nothing is resizing.
     -->
-    <PanelTransition :hold="holdColumn" @leave="trackPanelLeave">
+    <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
       <div v-if="visibleLayout.expanded" class="shell-secondary">
-        <PanelTransition @leave="trackPanelLeave">
+        <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
           <!--
           The map container from the design: 21px padding on every side, a 2px
           #fae2b6 border and elevation 5, with the collected-materials totals
@@ -1016,7 +1029,7 @@ onBeforeUnmount(() => {
         layout is deliberately untouched: the panel that comes back is the one
         that went away, mine and page and all.
       -->
-    <PanelTransition :hold="holdColumn" @leave="trackPanelLeave">
+    <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
       <ShellNav
         v-if="visibleLayout.expanded || visibleLayout.mineOpen"
         :area="viewState.area"
@@ -1036,7 +1049,7 @@ onBeforeUnmount(() => {
         `mineOpen` decides is whether this whole block is drawn, so the app mark
         can collapse the shell without the view forgetting its mine (#153).
       -->
-    <PanelTransition :hold="holdColumn" @leave="trackPanelLeave">
+    <PanelTransition :hold="holdColumn" :engine="props.engine" @leave="trackPanelLeave">
       <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
         <PanelFrame>
           <!--
@@ -1078,7 +1091,7 @@ onBeforeUnmount(() => {
       it, even though the two no longer overlap: one conversation surface at a
       time is a rule about attention, not about geometry.
     -->
-    <PanelTransition axis="vertical" @leave="trackPanelLeave">
+    <PanelTransition axis="vertical" :engine="props.engine" @leave="trackPanelLeave">
       <!--
         Keyed by mine, so opening it on another mine is a fresh panel and a fresh
         default tab rather than a selection carried over from another folder.

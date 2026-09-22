@@ -2,8 +2,10 @@
 import { mount } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { DOMKeyframesDefinition } from 'motion-v'
 import PanelTransition from './PanelTransition.vue'
 import { PANEL_MOTION_WATCHDOG_MS } from '../../lib/shell/panelMotion'
+import type { MotionAnimate } from '../../lib/shell/boundedMotion'
 import type { ShellFoldHold } from '../../composables/useShellFold'
 
 // AMENDED for #266 (was: `afterEach(() => vi.unstubAllGlobals())`) — the
@@ -47,15 +49,37 @@ function harness(
   Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
   vi.stubGlobal('matchMedia', () => (watchable ? media : { matches: reduced }))
   const animations: { finish: () => void; cancel: ReturnType<typeof vi.fn> }[] = []
-  const animate = vi.fn(() => {
-    let finish!: () => void
-    const finished = new Promise<void>((resolve) => {
-      finish = resolve
-    })
-    const cancel = vi.fn()
-    animations.push({ finish, cancel })
-    return { finished, cancel }
-  })
+  // A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
+  // (was: stubbing `element.animate`, WAAPI's own entry point, which the
+  // runner no longer calls). `animate` stays a spy so the call-shape
+  // assertions below keep working; only what it is called WITH changed.
+  const animate = vi.fn(
+    (element: Element, _keyframes: DOMKeyframesDefinition, _options: unknown) => {
+      let resolve!: () => void
+      const finished = new Promise<void>((res) => {
+        resolve = res
+      })
+      const cancel = vi.fn()
+      // Writes a stray inline value the way the real engine would, so a test
+      // can prove the panel gets it handed back rather than keeping it —
+      // `PanelTransition` passes no `settle` of its own, unlike `useShellFold`
+      // and `MessagePanelWindow`.
+      const finish = (): void => {
+        ;(element as HTMLElement).style.opacity = '1'
+        resolve()
+      }
+      animations.push({ finish, cancel })
+      return {
+        complete: () => undefined,
+        stop: cancel,
+        then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+      }
+    }
+  ) as unknown as (
+    element: Element,
+    keyframes: DOMKeyframesDefinition,
+    options: unknown
+  ) => ReturnType<MotionAnimate>
   const shown = ref(false)
   const leaves: Promise<void>[] = []
   const wrapper = mount(
@@ -64,7 +88,12 @@ function harness(
         h('section', [
           h(
             PanelTransition,
-            { axis, hold, onLeave: (leave: Promise<void>) => leaves.push(leave) },
+            {
+              axis,
+              hold,
+              engine: animate as unknown as MotionAnimate,
+              onLeave: (leave: Promise<void>) => leaves.push(leave)
+            },
             {
               default: () =>
                 shown.value
@@ -72,11 +101,15 @@ function harness(
                       'div',
                       {
                         key: 'panel',
+                        // `still()` reads this only as the app's proxy for "a
+                        // real Chromium window" (motion-v needs no such
+                        // method to run) — jsdom has none, so the panel needs
+                        // one for the motion path to be taken at all.
                         ref: (el) => {
                           if (el)
                             Object.defineProperty(el, 'animate', {
                               configurable: true,
-                              value: animate
+                              value: () => undefined
                             })
                         }
                       },
@@ -97,11 +130,11 @@ describe('PanelTransition', () => {
     const test = harness()
     test.shown.value = true
     await nextTick()
-    expect(test.animate).toHaveBeenLastCalledWith(expect.any(Array), {
-      duration: 250,
-      easing: 'cubic-bezier(0.2, 0, 0, 1)',
-      fill: 'both'
-    })
+    expect(test.animate).toHaveBeenLastCalledWith(
+      expect.any(HTMLElement),
+      { opacity: [0, 1], x: [12, 0] },
+      { duration: 0.25, ease: [0.2, 0, 0, 1] }
+    )
     test.animations[0]!.finish()
     await nextTick()
     test.shown.value = false
@@ -113,6 +146,25 @@ describe('PanelTransition', () => {
     await test.leaves[0]
     await nextTick()
     expect(test.wrapper.find('div').exists()).toBe(false)
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #566. WAAPI's `fill: 'both'` composited on top of `element.style`
+   * and cost nothing to drop with `cancel()`; motion-v writes its final frame
+   * straight into `element.style` instead. This component passes no `settle`
+   * of its own, so the bound has to hand the property back on its behalf —
+   * otherwise a panel that finished entering would carry a stray inline
+   * `opacity: 1` forever, on an element the stylesheet already draws at full
+   * strength.
+   */
+  it('carries no stray inline style once an entering panel has settled', async () => {
+    const test = harness()
+    test.shown.value = true
+    await nextTick()
+    test.animations[0]!.finish()
+    await nextTick()
+    expect((test.wrapper.find('div').element as HTMLElement).style.opacity).toBe('')
     test.wrapper.unmount()
   })
 
@@ -334,11 +386,9 @@ describe('PanelTransition', () => {
     test.shown.value = true
     await nextTick()
     expect(test.animate).toHaveBeenCalledWith(
-      [
-        { opacity: 0, transform: 'translateY(12px)' },
-        { opacity: 1, transform: 'translate(0, 0)' }
-      ],
-      { duration: 250, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'both' }
+      expect.any(HTMLElement),
+      { opacity: [0, 1], y: [12, 0] },
+      { duration: 0.25, ease: [0.2, 0, 0, 1] }
     )
     test.shown.value = false
     await nextTick()

@@ -86,17 +86,21 @@ describe('shellFoldClip', () => {
 
 describe('shellFoldKeyframes', () => {
   it('folds from what is painted now to what survives the change', () => {
-    expect(shellFoldKeyframes('whole', 36, 'right', '12px')).toEqual([
-      { clipPath: 'inset(0px 0px 0px 0px round 12px)' },
-      { clipPath: 'inset(0px 0px 0px calc(100% - 36px) round 12px)' }
-    ])
+    expect(shellFoldKeyframes('whole', 36, 'right', '12px')).toEqual({
+      clipPath: [
+        'inset(0px 0px 0px 0px round 12px)',
+        'inset(0px 0px 0px calc(100% - 36px) round 12px)'
+      ]
+    })
   })
 
   it('unfolds from the previous footprint back to the whole ground', () => {
-    expect(shellFoldKeyframes(20, 'whole', 'left', '12px')).toEqual([
-      { clipPath: 'inset(0px calc(100% - 20px) 0px 0px round 12px)' },
-      { clipPath: 'inset(0px 0px 0px 0px round 12px)' }
-    ])
+    expect(shellFoldKeyframes(20, 'whole', 'left', '12px')).toEqual({
+      clipPath: [
+        'inset(0px calc(100% - 20px) 0px 0px round 12px)',
+        'inset(0px 0px 0px 0px round 12px)'
+      ]
+    })
   })
 })
 
@@ -252,24 +256,15 @@ describe('railFoldKeyframes', () => {
    * fold exists to leave that box alone until main resizes the window.
    */
   it('travels the rail toward the docked edge of a right-docked shell', () => {
-    expect(railFoldKeyframes(0, 563, 'right')).toEqual([
-      { transform: 'translateX(0px)' },
-      { transform: 'translateX(563px)' }
-    ])
+    expect(railFoldKeyframes(0, 563, 'right')).toEqual({ x: [0, 563] })
   })
 
   it('mirrors the travel onto a left-docked shell, whose docked edge is the other one', () => {
-    expect(railFoldKeyframes(0, 563, 'left')).toEqual([
-      { transform: 'translateX(0px)' },
-      { transform: 'translateX(-563px)' }
-    ])
+    expect(railFoldKeyframes(0, 563, 'left')).toEqual({ x: [-0, -563] })
   })
 
   it('returns the rail to where the row puts it when the shell unfolds', () => {
-    expect(railFoldKeyframes(563, 0, 'right')).toEqual([
-      { transform: 'translateX(563px)' },
-      { transform: 'translateX(0px)' }
-    ])
+    expect(railFoldKeyframes(563, 0, 'right')).toEqual({ x: [563, 0] })
   })
 
   it('states the settled travel as the transform the rail is left holding', () => {

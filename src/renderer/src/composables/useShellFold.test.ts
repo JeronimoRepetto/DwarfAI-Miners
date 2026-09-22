@@ -2,8 +2,10 @@
 import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { DOMKeyframesDefinition } from 'motion-v'
 import { useShellFold } from './useShellFold'
 import { PANEL_LEAVE_BOUND_MS, PANEL_MOTION_WATCHDOG_MS } from '../lib/shell/panelMotion'
+import type { MotionAnimate } from '../lib/shell/boundedMotion'
 import type { PanelEdge } from '../types'
 import type { ShellComposition } from '../lib/shell/composition'
 
@@ -41,6 +43,38 @@ function placed<T extends HTMLElement>(element: T, left: number, width: number):
   return element
 }
 
+/**
+ * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
+ * (was: stubbing `element.animate`, WAAPI's own entry point, which the runner
+ * no longer calls). One engine drives both the ground and the rail, so runs
+ * are recorded into one list and the harness filters by element — preserving
+ * the two per-element lists (`animations`, `railAnimations`) every case below
+ * already indexes into.
+ */
+function fakeEngine() {
+  const runs: {
+    element: Element
+    keyframes: DOMKeyframesDefinition
+    timing: { duration: number; ease: unknown }
+    finish: () => void
+    stop: ReturnType<typeof vi.fn>
+  }[] = []
+  const animate: MotionAnimate = (element, keyframes, timing) => {
+    let resolve!: () => void
+    const finished = new Promise<void>((done) => {
+      resolve = done
+    })
+    const stop = vi.fn()
+    runs.push({ element, keyframes, timing, finish: resolve, stop })
+    return {
+      complete: () => undefined,
+      stop,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
+  return { animate, runs }
+}
+
 function harness(options: { reduced?: boolean; hidden?: boolean; width?: number } = {}) {
   const media = new EventTarget() as MediaQueryList
   Object.defineProperty(media, 'matches', { configurable: true, value: options.reduced ?? false })
@@ -48,27 +82,14 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
   if (options.hidden !== undefined)
     Object.defineProperty(document, 'hidden', { configurable: true, value: options.hidden })
 
-  const animations: {
-    keyframes: Keyframe[]
-    timing: KeyframeAnimationOptions
-    finish: () => void
-    cancel: ReturnType<typeof vi.fn>
-  }[] = []
   const shell = sized(document.createElement('div'), options.width ?? 1001)
   shell.style.columnGap = '8px'
   shell.style.padding = '8px'
   shell.style.borderRadius = '12px'
-  const record =
-    (into: typeof animations) => (keyframes: Keyframe[], timing: KeyframeAnimationOptions) => {
-      let finish!: () => void
-      const finished = new Promise<void>((resolve) => {
-        finish = resolve
-      })
-      const cancel = vi.fn()
-      into.push({ keyframes, timing, finish, cancel })
-      return { finished, cancel }
-    }
-  Object.defineProperty(shell, 'animate', { configurable: true, value: record(animations) })
+  // `still()` reads this only as the app's proxy for "a real Chromium
+  // window" (motion-v needs no such method to run) — jsdom has none, so every
+  // case that wants the motion path stubs one in, exactly as before.
+  Object.defineProperty(shell, 'animate', { configurable: true, value: () => undefined })
   document.body.append(shell)
 
   /*
@@ -78,11 +99,11 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
    * so the composable has to be handed it, and its own animation is recorded
    * apart from the ground's rather than counted among them.
    */
-  const railAnimations: typeof animations = []
   const rail = placed(document.createElement('div'), 8, 20)
-  Object.defineProperty(rail, 'animate', { configurable: true, value: record(railAnimations) })
+  Object.defineProperty(rail, 'animate', { configurable: true, value: () => undefined })
   shell.append(rail)
 
+  const engine = fakeEngine()
   const state = {
     edge: 'right' as PanelEdge,
     remaining: 'pages' as ShellComposition,
@@ -97,7 +118,8 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
           shell: () => state.shell,
           edge: () => state.edge,
           remaining: () => state.remaining,
-          rail: () => state.rail
+          rail: () => state.rail,
+          engine: engine.animate
         })
         return () => h('div')
       }
@@ -105,8 +127,12 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
   )
   const column = (width: number): HTMLElement => sized(document.createElement('div'), width)
   return {
-    animations,
-    railAnimations,
+    get animations() {
+      return engine.runs.filter((run) => run.element === state.shell)
+    },
+    get railAnimations() {
+      return engine.runs.filter((run) => run.element === state.rail)
+    },
     shell,
     rail,
     state,
@@ -121,6 +147,16 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
 
 /** The microtask the batched fold is measured on, plus the promise plumbing. */
 const settled = (): Promise<void> => Promise.resolve().then(() => undefined)
+
+/** The two `clip-path` strings a fold's keyframes carry, cast once rather than at every call site. */
+function clipFrames(keyframes: DOMKeyframesDefinition): [string, string] {
+  return keyframes.clipPath as [string, string]
+}
+
+/** The two `x` offsets a rail carry's keyframes carry, cast once for the same reason. */
+function xFrames(keyframes: DOMKeyframesDefinition): [number, number] {
+  return keyframes.x as [number, number]
+}
 
 /**
  * How many times this shell's own computed style is resolved.
@@ -158,14 +194,15 @@ describe('useShellFold', () => {
     expect(test.fold.hold(test.column(555))!.folded).toBeInstanceOf(Promise)
     await settled()
     expect(test.animations).toHaveLength(1)
-    expect(test.animations[0]!.keyframes).toEqual([
-      { clipPath: 'inset(0px 0px 0px 0px round 12px)' },
-      { clipPath: 'inset(0px 0px 0px calc(100% - 438px) round 12px)' }
-    ])
+    expect(test.animations[0]!.keyframes).toEqual({
+      clipPath: [
+        'inset(0px 0px 0px 0px round 12px)',
+        'inset(0px 0px 0px calc(100% - 438px) round 12px)'
+      ]
+    })
     expect(test.animations[0]!.timing).toEqual({
-      duration: 250,
-      easing: 'cubic-bezier(0.2, 0, 0, 1)',
-      fill: 'both'
+      duration: 0.25,
+      ease: [0.2, 0, 0, 1]
     })
     test.wrapper.unmount()
   })
@@ -176,9 +213,9 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.animations[0]!.keyframes[1]).toEqual({
-      clipPath: 'inset(0px calc(100% - 438px) 0px 0px round 12px)'
-    })
+    expect(clipFrames(test.animations[0]!.keyframes)[1]).toBe(
+      'inset(0px calc(100% - 438px) 0px 0px round 12px)'
+    )
     test.wrapper.unmount()
   })
 
@@ -197,9 +234,9 @@ describe('useShellFold', () => {
     expect(third).toBe(first)
     await settled()
     expect(test.animations).toHaveLength(1)
-    expect(test.animations[0]!.keyframes[1]).toEqual({
-      clipPath: 'inset(0px 0px 0px calc(100% - 20px) round 12px)'
-    })
+    expect(clipFrames(test.animations[0]!.keyframes)[1]).toBe(
+      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+    )
     test.wrapper.unmount()
   })
 
@@ -214,7 +251,7 @@ describe('useShellFold', () => {
     test.animations[0]!.finish()
     await settled()
     expect(folded).toBe(true)
-    expect(test.animations[0]!.cancel).toHaveBeenCalledOnce()
+    expect(test.animations[0]!.stop).toHaveBeenCalledOnce()
     expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 438px) round 12px)')
     test.wrapper.unmount()
   })
@@ -235,7 +272,7 @@ describe('useShellFold', () => {
     expect(test.animations).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
     expect(folded).toBe(true)
-    expect(test.animations[0]!.cancel).toHaveBeenCalledOnce()
+    expect(test.animations[0]!.stop).toHaveBeenCalledOnce()
     test.wrapper.unmount()
   })
 
@@ -296,10 +333,12 @@ describe('useShellFold', () => {
     test.state.shell = sized(test.shell, 645)
     test.fold.settle(false)
     expect(test.animations).toHaveLength(1)
-    expect(test.animations[0]!.keyframes).toEqual([
-      { clipPath: 'inset(0px 0px 0px calc(100% - 32px) round 12px)' },
-      { clipPath: 'inset(0px 0px 0px 0px round 12px)' }
-    ])
+    expect(test.animations[0]!.keyframes).toEqual({
+      clipPath: [
+        'inset(0px 0px 0px calc(100% - 32px) round 12px)',
+        'inset(0px 0px 0px 0px round 12px)'
+      ]
+    })
     test.animations[0]!.finish()
     await settled()
     expect(test.shell.style.clipPath).toBe('')
@@ -329,9 +368,9 @@ describe('useShellFold', () => {
     expect(test.animations).toHaveLength(1)
     sized(test.shell, 645)
     test.fold.settle(false)
-    expect(test.animations[1]!.keyframes[0]).toEqual({
-      clipPath: 'inset(0px 0px 0px calc(100% - 20px) round 12px)'
-    })
+    expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
+      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+    )
     test.wrapper.unmount()
   })
 
@@ -350,9 +389,9 @@ describe('useShellFold', () => {
     expect(test.shell.style.clipPath).toBe('')
     sized(test.shell, 645)
     test.fold.settle(false)
-    expect(test.animations[1]!.keyframes[0]).toEqual({
-      clipPath: 'inset(0px 0px 0px calc(100% - 20px) round 12px)'
-    })
+    expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
+      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+    )
     test.wrapper.unmount()
   })
 
@@ -372,10 +411,12 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.animations[0]!.keyframes).toEqual([
-      { clipPath: 'inset(0px 0px 0px calc(100% - 645px) round 12px)' },
-      { clipPath: 'inset(0px 0px 0px calc(100% - 438px) round 12px)' }
-    ])
+    expect(test.animations[0]!.keyframes).toEqual({
+      clipPath: [
+        'inset(0px 0px 0px calc(100% - 645px) round 12px)',
+        'inset(0px 0px 0px calc(100% - 438px) round 12px)'
+      ]
+    })
     test.wrapper.unmount()
   })
 
@@ -457,20 +498,18 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual([
-      { transform: 'translateX(0px)' },
-      { transform: 'translateX(563px)' }
-    ])
+    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
     expect(test.railAnimations[0]!.timing).toEqual({
-      duration: 250,
-      easing: 'cubic-bezier(0.2, 0, 0, 1)',
-      fill: 'both'
+      duration: 0.25,
+      ease: [0.2, 0, 0, 1]
     })
     test.animations[0]!.finish()
     await settled()
-    // Written rather than left to the animation: cancelling drops `fill: both`,
-    // and the rail would snap back to the free edge for the frame between the
-    // fold ending and main resizing the window around it.
+    // Written rather than left to the engine: motion-v writes straight into
+    // `element.style` too, and `place` still has to own the property `stop()`
+    // would otherwise leave the engine's own last frame sitting on — the rail
+    // would snap back to the free edge for the frame between the fold ending
+    // and main resizing the window around it.
     expect(test.rail.style.transform).toBe('translateX(563px)')
     sized(test.shell, 438)
     test.fold.settle(false)
@@ -489,7 +528,7 @@ describe('useShellFold', () => {
     placed(test.rail, 973, 20)
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes[1]).toEqual({ transform: 'translateX(-563px)' })
+    expect(xFrames(test.railAnimations[0]!.keyframes)[1]).toBe(-563)
     test.wrapper.unmount()
   })
 
@@ -589,9 +628,9 @@ describe('useShellFold', () => {
     void test.fold.hold(test.column(555))
     await settled()
     expect(test.railAnimations).toHaveLength(0)
-    expect(test.animations[0]!.keyframes[1]).toEqual({
-      clipPath: 'inset(0px 0px 0px calc(100% - 438px) round 12px)'
-    })
+    expect(clipFrames(test.animations[0]!.keyframes)[1]).toBe(
+      'inset(0px 0px 0px calc(100% - 438px) round 12px)'
+    )
     test.wrapper.unmount()
   })
 
@@ -659,10 +698,7 @@ describe('useShellFold', () => {
     test.fold.settle(false)
     // The rail rested against the docked edge; the row has just put it back at
     // the free one, 617px away from where the unfold has to start.
-    expect(test.railAnimations[1]!.keyframes).toEqual([
-      { transform: 'translateX(617px)' },
-      { transform: 'translateX(0px)' }
-    ])
+    expect(test.railAnimations[1]!.keyframes).toEqual({ x: [617, 0] })
     expect(test.rail.style.transform).toBe('translateX(617px)')
     test.animations[1]!.finish()
     await settled()
