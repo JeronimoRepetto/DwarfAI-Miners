@@ -65,12 +65,16 @@ export type ScheduleAfterRender = (callback: () => void) => void
 /**
  * Which CSS property each motion-v keyframe key this app ever passes writes
  * onto the element: `x` and `y` are transform SHORTCUTS, and both land on the
- * one `transform` property rather than a property of their own.
+ * one `transform` property rather than a property of their own — as does
+ * `transform` itself, which the shell's carried columns are named by since
+ * #585 precisely so that WAAPI drives them (`shellFold.ts`'s
+ * `columnFoldKeyframes`).
  */
 const STYLE_PROPERTY: Partial<Record<string, string>> = {
   opacity: 'opacity',
   x: 'transform',
   y: 'transform',
+  transform: 'transform',
   clipPath: 'clip-path'
 }
 
