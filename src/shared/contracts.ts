@@ -853,29 +853,46 @@ export interface DwarfQuestion {
  *   or does not, locally and at once.
  * - `'terminal'`: the panel only WATCHES this session, so the answer belongs
  *   to the console the session runs in rather than to this panel.
+ * - `'opencode-permission'`: the panel only WATCHES this session, exactly as
+ *   `'terminal'` does, but the dialog belongs to OpenCode's own HTTP server
+ *   rather than to a console this app could ever type into (#588 T5). Stamped
+ *   only by OpenCodeProvider's own `pendingPermissionField`, and only for a
+ *   permission — no OpenCode session has ever raised a `DwarfQuestion`, so in
+ *   practice this value never reaches that sibling type even though the field
+ *   is shared. ADDED rather than folding this ask under `'terminal'`: that
+ *   value used to be OpenCode's own honest placeholder before an answer route
+ *   existed, but it drew the card's free-text box and its
+ *   `TYPED_HERE_REACHES_THE_PICKER` copy on the strength of a console and a
+ *   picker that do not exist for this provider (review finding F2) — a lie in
+ *   the OTHER direction from the one this field exists to prevent. See
+ *   `answerDwarfPermission` (runtime.ts) for the HTTP route this channel now
+ *   takes, and `OPENCODE_PERMISSION_ANSWERED_ABOVE` for what the card says in
+ *   the box's place.
  *
- * ONE type for BOTH prompts on purpose, because both cards have to make the
+ * ONE type for every prompt on purpose, because every card has to make the
  * same call and two readings of one fact is how they would come to disagree
- * (#354). What each card then DOES with `'terminal'` is the one thing that
- * differs, and the difference is evidence rather than taste:
+ * (#354). What each card then DOES with a WATCHED channel is the one thing
+ * that differs, and the difference is evidence rather than taste:
  *
- * - A permission's two answers are Claude Code's own fixed keystrokes, and
- *   they have been measured on this build, so the panel may type one into the
- *   console. That can fail where the held path cannot — a window that will not
- *   focus — and even when it succeeds it proves only that the key was typed,
- *   never that the session acted on it.
+ * - A permission's two answers are fixed for every prompt (never the agent's
+ *   own words), and each watched channel has a MEASURED way to deliver one:
+ *   `'terminal'` types Claude Code's own keystroke into the console, and
+ *   `'opencode-permission'` POSTs to OpenCode's own server. Both can fail
+ *   where the held path cannot — a window that will not focus, a server that
+ *   has gone — and even success proves only that the decision reached its
+ *   channel, never that the session acted on it.
  * - A question's answer is arbitrary text the agent enumerated, which no
- *   measured keystroke delivers, so the panel offers no answer at all: it
- *   draws the ask, leaves the options inert, and points at the terminal with
- *   ANSWER_ONLY_WHERE_IT_RUNS beside a jump.
+ *   measured route on EITHER watched channel delivers, so the panel offers no
+ *   answer at all: it draws the ask, leaves the options inert, and — on the
+ *   one channel a question can ever arrive on, `'terminal'` — points at the
+ *   terminal with ANSWER_ONLY_WHERE_IT_RUNS beside a jump.
  *
  * Derived in main, where the evidence is, and never re-derived in the renderer
  * from `provider` or `textDelivery` — neither answers the question. Closed
  * rather than optional: every prompt that reaches the panel arrived by one of
- * these two routes, and a missing value would be a third state nobody can act
- * on.
+ * these routes, and a missing value would be a state nobody can act on.
  */
-export type DwarfPromptChannel = 'held' | 'terminal'
+export type DwarfPromptChannel = 'held' | 'terminal' | 'opencode-permission'
 
 /**
  * What main returns, and what the panel prints, for the one ask that still
@@ -1030,6 +1047,30 @@ export const TYPED_HERE_REACHES_THE_PICKER =
   'This session is showing a picker at its terminal, and anything typed here would be read by ' +
   'that picker — the Enter behind it confirms whichever option is highlighted. Choose an option ' +
   'above, or answer in your own words at the terminal.'
+
+/**
+ * What the permission card shows in place of its free-text box, and what main
+ * returns for a message sent to a dwarf anyway, while an OpenCode permission
+ * dialog stands open on that session's own server (#588 T5).
+ *
+ * A SIBLING of TYPED_HERE_REACHES_THE_PICKER, not a reuse of it — the two
+ * channels fail for different reasons, and borrowing that sentence here would
+ * claim a console and a picker that do not exist for this provider (the exact
+ * lie review finding F2 named). What IS true, and measured
+ * (docs/opencode-format.md Row 13): a second `opencode run --session` on this
+ * session while the first is still in flight is not refused, it RACES three
+ * assistant rows out of two prompts — so a message sent while this dialog is
+ * open risks starting a second turn behind the person's back rather than
+ * answering the one that is actually waiting. The two decision buttons above
+ * are the only route while this stands.
+ *
+ * ONE string on the wire for the reason TYPED_HERE_REACHES_THE_PICKER is one:
+ * the card prints it up front so nobody types to find out, and `sendDwarfText`
+ * returns it to anything that sends anyway.
+ */
+export const OPENCODE_PERMISSION_ANSWERED_ABOVE =
+  'OpenCode is waiting on the decision above, not a message. Sending one now could start a new ' +
+  'turn on this session while this prompt is still open, so nothing else is offered here.'
 
 /**
  * The rows Claude Code's `AskUserQuestion` picker numbers, and therefore the

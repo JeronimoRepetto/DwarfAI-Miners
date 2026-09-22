@@ -254,21 +254,17 @@ function pendingPermissionField(
       toolUseId: ask.requestId,
       toolName: ask.permission,
       input,
-      // No answer route exists yet: #588 T5, which would reply to OpenCode's
-      // own HTTP server, is unstarted. 'terminal' is still the honest
-      // reading and not a claim of answerability this slice never built —
-      // the dialog genuinely lives in a console this app only watches,
-      // exactly what 'terminal' means (see DwarfPromptChannel), and
-      // answerDwarfPermission's existing routing (runtime.ts) already
-      // refuses it correctly today: OpenCodeProvider.textDelivery() never
-      // returns a 'terminal'-kind endpoint (it returns
-      // 'opencode-run-continue', or null for a worker), so
-      // resolveKickDelivery finds nothing to type into and the card's click
-      // answers CANNOT_REACH_TERMINAL rather than pretending to press a key.
-      // The same honest-refusal shape codexProvider.ts's own pendingQuestion
-      // comment already states for its own 'terminal' channel ("never
-      // offered as answerable").
-      channel: 'terminal',
+      // #588 T5: answered now, over OpenCode's own HTTP server rather than a
+      // console this app could ever type into. 'opencode-permission' rather
+      // than 'terminal' — 'terminal' would draw the card's free-text box and
+      // its Jump-to-console button over an address that was never a
+      // terminal, which is exactly review finding F2. runtime.ts's
+      // answerDwarfPermission reads the fresh serverUrl/sessionId/requestId
+      // back off OpenCodePermissionRegistry at decision time (see
+      // answerOpenCodePermissionDialog) rather than carrying serverUrl on
+      // this wire type — mirroring how a terminal prompt's own pid never
+      // rides the wire either.
+      channel: 'opencode-permission',
       // OpenCode's own event carries no timestamp for when the ask was
       // raised (unlike Claude's transcript line, or Codex's rollout row) —
       // the moment this scan learned of it is the only honest clock there

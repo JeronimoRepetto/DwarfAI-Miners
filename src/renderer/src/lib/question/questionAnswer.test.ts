@@ -7,6 +7,7 @@ import {
 } from '../../types'
 import {
   PERMISSION_OPTIONS,
+  PERMISSION_SENT_TO_OPENCODE_LINE,
   answerRequest,
   answerStateForAsk,
   answerStatusLine,
@@ -312,6 +313,32 @@ describe('permissionStatusLine', () => {
       'Typed at the terminal — waiting for the session to act on it.'
     )
   })
+
+  /*
+   * Issue #588 T5. OpenCode's own server accepted the decision over HTTP,
+   * which is weaker evidence than the held channel's release and different
+   * evidence from a typed keystroke — so it earns its own sentence rather
+   * than borrowing either. Unlike the terminal channel, a Deny here carries
+   * no second meaning: 'reject' is OpenCode's own vocabulary word for it,
+   * never an Esc that could double as an interrupt, so one line serves both
+   * decisions.
+   */
+  it('says only that OpenCode accepted the decision, for either Allow or Deny', () => {
+    const allow =
+      permissionStatusLine(
+        { phase: 'answered', toolUseId: 'toolu_09', decision: 'allow' },
+        'opencode-permission'
+      ) ?? ''
+    const deny =
+      permissionStatusLine(
+        { phase: 'answered', toolUseId: 'toolu_09', decision: 'deny' },
+        'opencode-permission'
+      ) ?? ''
+    expect(allow).toBe(PERMISSION_SENT_TO_OPENCODE_LINE)
+    expect(deny).toBe(PERMISSION_SENT_TO_OPENCODE_LINE)
+    expect(allow).not.toContain('released')
+    expect(allow).not.toMatch(/terminal|esc/i)
+  })
 })
 
 /*
@@ -479,6 +506,17 @@ describe('freeTextRoute', () => {
     // there is nothing for a box there to be typed into.
     expect(freeTextRoute('terminal', null)).toBe('picker')
     expect(freeTextRoute('held', null)).toBe('message')
+  })
+
+  /*
+   * Issue #588 T5. OpenCode's own dialog is never a picker — there is no
+   * console to read stray keys — so it must not fall into 'picker' and
+   * inherit TYPED_HERE_REACHES_THE_PICKER's console-shaped copy (review
+   * finding F2). 'closed' is its own route: refused for a different, real
+   * reason (docs/opencode-format.md Row 13's measured race), never a picker.
+   */
+  it('closes the box for an OpenCode permission rather than folding it into the picker refusal', () => {
+    expect(freeTextRoute('opencode-permission', null)).toBe('closed')
   })
 })
 

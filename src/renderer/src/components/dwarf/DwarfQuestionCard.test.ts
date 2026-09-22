@@ -643,6 +643,24 @@ describe('a multi-select question at the session’s own terminal', () => {
     expect(wrapper.find('.answer-send').exists()).toBe(false)
   })
 
+  /*
+   * F2 (review finding, #588 T5): `freeTextRoute` grew a fourth value,
+   * 'closed', for the OpenCode permission channel. The template used to
+   * gate the textarea on `freeText !== 'picker'` — a negative check that a
+   * NEW union member satisfies by default, so 'closed' would render the box
+   * anyway. Its Enter emits send-text, a channel runtime.ts refuses outright
+   * (questionAnswer.ts's own "the worse of the two failures available
+   * here" comment). Unreachable today ('opencode-permission' is stamped only
+   * on pendingPermission, never on a DwarfQuestion — see freeTextRoute's own
+   * doc comment), but DwarfPromptChannel admits the value on a DwarfQuestion
+   * too, so this pins it directly rather than relying on that never
+   * happening in practice.
+   */
+  it('never offers the free-text box for a route the union does not name as safe (F2)', () => {
+    const wrapper = card({ question: question({ channel: 'opencode-permission' }) })
+    expect(wrapper.find('.freeform-input').exists()).toBe(false)
+  })
+
   it('keeps a HELD multi-select ask on the single-choice gesture it always had', async () => {
     // Deliberately not toggles. The terminal gesture is measured — one digit
     // per option — where the agent's own picker's join for several labels is

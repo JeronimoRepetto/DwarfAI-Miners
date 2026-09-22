@@ -603,7 +603,11 @@ describe('OpenCodeProvider.scan — permission asks (#588 T4)', () => {
       toolUseId: 'per_1',
       toolName: 'bash',
       input: 'ls',
-      channel: 'terminal',
+      // AMENDED for #588 T5 (was 'terminal'): an answer route now exists —
+      // OpenCode's own HTTP server, never a console — so the channel must
+      // say that rather than draw the card's console-shaped copy and Jump
+      // button over an address that was never a terminal (review finding F2).
+      channel: 'opencode-permission',
       askedAt: new Date(NOW).toISOString()
     })
   })
@@ -645,7 +649,15 @@ describe('OpenCodeProvider.scan — permission asks (#588 T4)', () => {
     expect(snapshot?.status).toBe('waiting')
   })
 
-  it('carries the channel this slice can honestly claim: terminal, and unanswerable until #588 T5', async () => {
+  // AMENDED for #588 T5 (was 'carries the channel this slice can honestly
+  // claim: terminal, and unanswerable until #588 T5'): an answer route now
+  // exists, over OpenCode's own HTTP server rather than a console, so the
+  // channel this provider stamps has to say that instead — see
+  // 'opencode-permission' on DwarfPromptChannel (contracts.ts) for why
+  // 'terminal' was the wrong claim for T5 to leave standing (review finding
+  // F2: it drew the card's console-shaped copy over an address that was
+  // never a terminal).
+  it('carries the channel this slice can honestly claim: opencode-permission, answerable over OpenCode’s own server (#588 T5)', async () => {
     const { fake, sqlite } = seededSession({ id: 'ses_a' })
     const provider = makeProvider({
       fs: fake,
@@ -655,7 +667,7 @@ describe('OpenCodeProvider.scan — permission asks (#588 T4)', () => {
 
     const [snapshot] = await provider.scan()
     const wire = snapshot?.dwarfs[0]?.pendingPermission
-    expect(wire?.channel).toBe('terminal')
+    expect(wire?.channel).toBe('opencode-permission')
     // #588 review F4: this fixture's `pendingAsk()` carries neither `command`
     // nor `patterns`, so `input` must be the omitted empty string, never the
     // fabricated "{}".
