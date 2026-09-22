@@ -4348,6 +4348,24 @@ export interface JevSettings {
   configured: boolean
   unavailableReason?: JevUnavailableReason
   preferences: JevPreferences
+  /**
+   * Why the last preference write did not take, or absent when it did.
+   *
+   * `preferences` above is always what is actually STORED, so a refused write
+   * simply re-draws the value in force — which, on a control whose whole job
+   * is to show which option is chosen, is indistinguishable from a click that
+   * did nothing. Reported 2026-09-21 as exactly that: the routing profile
+   * "loads something and then nothing is selected".
+   *
+   * The reason existed the whole time and went to a `console.warn` in MAIN,
+   * which reaches a terminal rather than a person. This is the field that
+   * carries it to the one place the failure is visible. It rides on the
+   * settings rather than being thrown, because a refusal is main's ANSWER —
+   * the stored state plus why the request is not part of it — and the same
+   * honesty rule the rest of this shape holds: never draw what was asked for
+   * as though it were what is in force.
+   */
+  preferencesError?: string
 }
 
 /**

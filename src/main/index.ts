@@ -129,7 +129,10 @@ import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
 import { createJevApiKeyStore, type JevKeyVerdict } from './shell/jevApiKey'
-import { createJevPreferenceStore } from './shell/jevPreferences'
+import {
+  createJevPreferenceStore,
+  type JevPreferenceSaveRefusalReason
+} from './shell/jevPreferences'
 import { createJevLaunchRouter } from './jev/routeLaunch'
 import { createTypesafeJevRouter, jevDebugEnabled } from './jev/typesafeJevRouter'
 import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
@@ -203,6 +206,20 @@ function shortcutPlatform(): ShortcutPlatform {
  * observed as "...is not valid JSON undefined"). The caller is obeying the
  * contract; this is the side that was not.
  */
+/**
+ * A store refusal, in words the panel can show.
+ *
+ * The store answers with a CODE, because it is a rule rather than a sentence;
+ * the wording belongs on this side, the same split every other
+ * fact-here/prose-there pair in this app holds.
+ */
+const JEV_PREFERENCE_REFUSALS: Record<JevPreferenceSaveRefusalReason, string> = {
+  'default-provider-not-launchable':
+    'That default launch names a provider this build cannot start, so nothing was saved. Pick another provider under Default launch.',
+  'default-tuning-invalid':
+    'That default launch pairs a model or effort its provider would refuse, so nothing was saved. Clear it under Default launch and try again.'
+}
+
 function warnWithOptionalCause(message: string, error?: unknown): void {
   if (error === undefined) console.warn(message)
   else console.warn(message, error)
@@ -1303,11 +1320,24 @@ async function init(): Promise<void> {
   // like `setJevApiKey` does for the key.
   ipcMain.handle(IPC_CHANNELS.setJevPreferences, async (_event, payload: unknown) => {
     const preferences = parseJevPreferences(payload)
-    const result = await jevPreferenceStore.save(preferences)
-    if (!result.saved) {
-      console.warn(`[jev] Preferences not saved: ${result.reason}`)
+    let failure: string | undefined
+    try {
+      const result = await jevPreferenceStore.save(preferences)
+      if (!result.saved) failure = JEV_PREFERENCE_REFUSALS[result.reason]
+    } catch (error) {
+      // The write itself broke — a locked file, a full disk, a rename the OS
+      // refused. It used to escape the handler and reject the renderer's
+      // invoke, which showed up there as a silent revert.
+      failure = `The preference could not be written: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     }
-    return withJevPreferences(await jevApiKeyStore.load())
+    // Always the state actually in force, and the reason it is not the state
+    // that was asked for. The console line stays for the terminal; the field
+    // is what reaches the person.
+    if (failure !== undefined) console.warn(`[jev] Preferences not saved: ${failure}`)
+    const stored = await withJevPreferences(await jevApiKeyStore.load())
+    return failure === undefined ? stored : { ...stored, preferencesError: failure }
   })
   /* --- end of the #509 follow-up block --------------------------------------- */
   // The docked shell's own shape (#90). Both channels answer with what the
