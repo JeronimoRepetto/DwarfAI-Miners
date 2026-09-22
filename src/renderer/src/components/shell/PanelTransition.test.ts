@@ -70,8 +70,7 @@ function harness(
       }
       animations.push({ finish, cancel })
       return {
-        complete: () => undefined,
-        stop: cancel,
+        cancel,
         then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
       }
     }

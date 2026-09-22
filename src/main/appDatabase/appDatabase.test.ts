@@ -501,6 +501,36 @@ describe('app database — versions it refuses', () => {
     )
   })
 
+  /*
+   * #572: the two refusals above read the same in a stack trace but are
+   * opposite advice for the user — a version above this build's is a NEWER
+   * build's file (updating fixes it), while an unstamped projects table is a
+   * file this build never wrote at all (there is no version to walk up from).
+   * `reason` is what lets a caller two layers up tell them apart without
+   * re-parsing the message string.
+   */
+  it('marks a version above this build as newer, not merely unsupported', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION + 1}`)
+    seeded.close()
+
+    await expect(createAppDatabase({ filePath: DB, sqlite }).connect()).rejects.toMatchObject({
+      reason: 'newer'
+    })
+  })
+
+  it('marks an unstamped projects table as unstamped, not newer', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec('CREATE TABLE projects (id TEXT PRIMARY KEY)')
+    seeded.close()
+
+    await expect(createAppDatabase({ filePath: DB, sqlite }).connect()).rejects.toMatchObject({
+      reason: 'unstamped'
+    })
+  })
+
   it('leaves the refused file exactly as it found it', async () => {
     // Refusing is only better than discarding if nothing is written on the way
     // out — a downgraded app must be able to be downgraded back.

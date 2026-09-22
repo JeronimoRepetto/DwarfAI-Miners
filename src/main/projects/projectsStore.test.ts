@@ -355,6 +355,10 @@ describe('projects store — schema version', () => {
     db.close()
   })
 
+  // AMENDED for #572: a stamp above APP_SCHEMA_VERSION is a NEWER build's
+  // file — the fix is updating the app — which is a different answer from
+  // the unstamped case below and now carries its own failure kind so the
+  // runtime can say so instead of one sentence covering both.
   it('refuses a database from a version it does not know, instead of reporting no projects', async () => {
     const sqlite = new MemoryWritableSqlite()
     const seeded = await sqlite.open(APP_DB_FILENAME)
@@ -363,7 +367,7 @@ describe('projects store — schema version', () => {
 
     const { store } = newStore(sqlite)
     const result = await store.list()
-    expect(result).toMatchObject({ ok: false, failure: 'unsupported-schema' })
+    expect(result).toMatchObject({ ok: false, failure: 'newer-build' })
   })
 
   it('refuses a database that already holds a projects table with no version stamp', async () => {

@@ -5,7 +5,7 @@
  * covers that with a hand-written fake engine, the house idiom for the runner's
  * OWN logic). What belongs here is the contract the runner is built on: that the
  * shapes `panelMotion.ts` and `shellFold.ts` hand it land on the element, and
- * that `complete()`/`stop()` behave the way the bound assumes.
+ * that `cancel()` behaves the way the bound's fix assumes.
  *
  * Moved from the T0 spike (`lib/motion/motionV.spike.test.ts`, #566) once GO was
  * decided — TDD does not apply to a pin on a third-party engine's own contract
@@ -57,11 +57,26 @@ describe('motion-v engine: lands the final frame', () => {
   })
 })
 
+/**
+ * `cancel()` is the ONE teardown method the bound calls on the controls now
+ * (`boundedMotion.ts`) — never `complete()`/`stop()`, the pair an earlier
+ * version of this file (and the runner) called in sequence. These two pins
+ * replace `complete() settles the thenable` and `never settles the thenable
+ * through stop() alone`: the runner no longer calls either, so a pin on them
+ * documented nothing it still relies on. What it relies on now is read
+ * straight off the two real cases these pins cover.
+ */
 describe('motion-v engine: the imperative controls contract the bound relies on', () => {
-  it('complete() settles the thenable before real time passes', async () => {
+  it('cancel() called before the keyframe resolver ever runs leaves the element untouched and never settles the thenable', async () => {
+    // Confirmed against the real engine, not assumed from source: a `cancel()`
+    // called in the same synchronous tick as `animate()` — the watchdog and
+    // the hidden-window release both can do this, for a run that started an
+    // instant before either fired — removes the still-pending keyframe
+    // resolver from motion-dom's own queue before it ever reads a keyframe,
+    // so nothing is written and the run's own thenable never settles.
     const element = document.createElement('div')
     document.body.append(element)
-    const controls = animate(element, { opacity: [0, 1] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
+    const controls = animate(element, { opacity: [1, 0] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
     let settled: 'resolved' | 'rejected' | 'timeout' = 'timeout'
     const race = Promise.race([
       controls.then(
@@ -74,43 +89,40 @@ describe('motion-v engine: the imperative controls contract the bound relies on'
       ),
       new Promise<void>((resolve) => setTimeout(resolve, 200))
     ])
-    controls.complete()
+    controls.cancel()
     await race
-    expect(settled).toBe('resolved')
+    expect(element.style.opacity).toBe('')
+    expect(settled).toBe('timeout')
     element.remove()
   })
 
-  /**
-   * `stop()` is the ONLY teardown method the bound calls on the controls
-   * (never `cancel()` — the injected engine's own minimal type has no room for
-   * it), and it never settles the thenable on its own: the runner's own
-   * promise, resolved from `settle`, is what a caller actually waits on.
-   */
-  it('never settles the thenable through stop() alone', async () => {
+  it('cancel() called mid-flight leaves the element at whatever the JS driver last rendered, not the initial or final keyframe', async () => {
+    // jsdom has no `Element.prototype.animate` (`still()`'s own comment in
+    // `boundedMotion.ts` reads its mere PRESENCE as the proxy for a real
+    // Chromium window), so motion-v's WAAPI check fails here and every run in
+    // this environment goes through its JS driver — the one the bound's fix
+    // actually depends on.
+    //
+    // Reading motion-dom's `JSAnimation.cancel()` source alone suggests it
+    // writes the INITIAL keyframe (it calls `tick(0)`) — but that value is
+    // computed into an internal MotionValue, not flushed to `element.style`
+    // synchronously, and `cancel()`'s own `teardown()` stops the driver
+    // before any further render can flush it. Measured against the real
+    // engine below: the element stays at whatever its LAST rendered frame
+    // left it, an arbitrary mid-animation value neither the initial nor the
+    // final keyframe. That is exactly why `settle` — never `cancel()` — has
+    // to be what decides an element's resting state, and why a caller with
+    // no `settle` needs `releaseWritten` to clear whatever is there rather
+    // than trust `cancel()` left something clean.
     const element = document.createElement('div')
     document.body.append(element)
-    const controls = animate(element, { opacity: [0, 1] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
-    let settled: 'resolved' | 'rejected' | 'timeout' = 'timeout'
-    const race = Promise.race([
-      controls.then(
-        () => {
-          settled = 'resolved'
-        },
-        () => {
-          settled = 'rejected'
-        }
-      ),
-      new Promise<void>((resolve) => setTimeout(resolve, 200))
-    ])
-    let threw: unknown = null
-    try {
-      controls.stop()
-    } catch (error) {
-      threw = error
-    }
-    await race
-    expect(threw).toBeNull()
-    expect(settled).toBe('timeout')
+    const controls = animate(element, { opacity: [1, 0] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const midFlight = Number(element.style.opacity)
+    expect(midFlight).toBeGreaterThan(0)
+    expect(midFlight).toBeLessThan(1)
+    controls.cancel()
+    expect(element.style.opacity).toBe(String(midFlight))
     element.remove()
   })
 })

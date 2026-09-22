@@ -57,18 +57,17 @@ function fakeEngine() {
     keyframes: DOMKeyframesDefinition
     timing: { duration: number; ease: unknown }
     finish: () => void
-    stop: ReturnType<typeof vi.fn>
+    cancel: ReturnType<typeof vi.fn>
   }[] = []
   const animate: MotionAnimate = (element, keyframes, timing) => {
     let resolve!: () => void
     const finished = new Promise<void>((done) => {
       resolve = done
     })
-    const stop = vi.fn()
-    runs.push({ element, keyframes, timing, finish: resolve, stop })
+    const cancel = vi.fn()
+    runs.push({ element, keyframes, timing, finish: resolve, cancel })
     return {
-      complete: () => undefined,
-      stop,
+      cancel,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
     }
   }
@@ -251,7 +250,7 @@ describe('useShellFold', () => {
     test.animations[0]!.finish()
     await settled()
     expect(folded).toBe(true)
-    expect(test.animations[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.animations[0]!.cancel).toHaveBeenCalledOnce()
     expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 438px) round 12px)')
     test.wrapper.unmount()
   })
@@ -272,7 +271,7 @@ describe('useShellFold', () => {
     expect(test.animations).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
     expect(folded).toBe(true)
-    expect(test.animations[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.animations[0]!.cancel).toHaveBeenCalledOnce()
     test.wrapper.unmount()
   })
 

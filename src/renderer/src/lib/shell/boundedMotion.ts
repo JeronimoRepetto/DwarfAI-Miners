@@ -6,23 +6,39 @@ import { PANEL_MOTION_EASE, PANEL_MOTION_MS, PANEL_MOTION_WATCHDOG_MS } from './
 /**
  * What the runner actually calls on the controls motion-v's `animate()` hands
  * back — a small slice of the real `AnimationPlaybackControlsWithThen`, named
- * on its own so a fake engine only has to implement three methods rather than
+ * on its own so a fake engine only has to implement two methods rather than
  * the dozen the full interface carries (`time`, `speed`, `play`, `pause`,
  * `attachTimeline`… none of which the bound has ever needed).
  */
 export interface MotionControls {
-  /** Best-effort: jump to the final frame and settle the thenable. */
-  complete: () => void
   /**
-   * Halt wherever the run currently is, without settling the thenable — the
-   * ONLY teardown method the bound ever calls, in place of WAAPI's
-   * `cancel()`. `cancel()` composited on a WAAPI effect layer `element.style`
-   * never held; motion-v writes straight into `element.style`, so there is no
-   * separate layer for a `cancel`-shaped method to drop, and `stop()` is
-   * motion-v's own name for "halt in place" once `settle` has already decided
-   * what `element.style` should say.
+   * The ONE teardown method the runner ever calls now, in place of the
+   * `complete()`/`stop()` pair an earlier version of this file called in
+   * sequence. `complete()` is `animation.finish()`, and on motion-v's WAAPI
+   * path the browser writes the run's final frame and discards the effect
+   * from inside `onfinish` — a browser EVENT delivered off the document
+   * timeline, one Chromium freezes for a window it considers hidden
+   * (occluded by another program counts; `backgroundThrottling` is on by
+   * default). A run that ends while hidden leaves that event undelivered,
+   * and it fires LATE — after this window is visible again — writing
+   * whatever `settle` already decided over again. `stop()` made this worse,
+   * not better: it returns early once `state === 'finished'`, so calling it
+   * after `complete()` did nothing to stop the late write. `cancel()` is the
+   * one call that discards the WAAPI effect BEFORE the browser can ever
+   * dispatch that event, and it cancels a still-pending keyframe resolver too
+   * (confirmed against the real engine, `motionEngine.test.ts`), so a run
+   * that never actually started never writes anything either. On the JS
+   * driver — any value WAAPI cannot accelerate, `clipPath`'s `calc()` among
+   * them — `cancel()` can instead leave the element at an ARBITRARY
+   * mid-animation frame (also confirmed against the real engine, not merely
+   * read off its source: reading motion-dom's `JSAnimation.cancel()` alone
+   * suggests it writes the initial keyframe, but that computed value never
+   * gets flushed to `element.style` before `cancel()`'s own teardown stops
+   * the driver). Either way, `settle` in `run`, below, always runs right
+   * after `cancel()`, never before: whatever this element should show at
+   * rest is `settle`'s answer, never `cancel()`'s leftover.
    */
-  stop: () => void
+  cancel: () => void
   then: (onResolve: () => void, onReject?: () => void) => Promise<void>
 }
 
@@ -54,13 +70,16 @@ const STYLE_PROPERTY: Partial<Record<string, string>> = {
 /**
  * Hand a run's animated properties back to the stylesheet.
  *
- * WAAPI's `fill: 'both'` composited on TOP of `element.style` and cost
- * nothing to drop with `cancel()` — the element's own inline style, which
- * `settle` alone ever wrote, was always what showed through underneath.
- * Motion-v writes its final frame straight into `element.style` instead, so a
- * caller with no `settle` of its own would otherwise be left holding whatever
- * the engine wrote, forever, on an element the stylesheet was supposed to
- * govern again.
+ * `cancel()` can still leave a value sitting inline on the element, two
+ * different ways depending on which driver ran: on the JS path it may leave
+ * an arbitrary mid-animation frame (whatever the driver last rendered before
+ * `cancel()`'s own teardown stopped it — see `MotionControls`, above); on the
+ * WAAPI path, a run that finished naturally in a VISIBLE window already had
+ * its final frame written inline by `onfinish` before `cancel()` ever
+ * discarded the (already spent) effect. Either way, a caller with no
+ * `settle` of its own owns none of these properties, so they get handed back
+ * to the stylesheet rather than left sitting there forever on an element it
+ * was supposed to govern again.
  */
 function releaseWritten(element: Element, keyframes: DOMKeyframesDefinition): void {
   const style = (element as HTMLElement).style
@@ -99,19 +118,37 @@ function releaseWritten(element: Element, keyframes: DOMKeyframesDefinition): vo
  * the 250ms a focused window animates for (#164); they only bound what may
  * follow it.
  *
- * ## `settle` runs before the animation is let go
+ * ## `settle` runs right after `cancel`, never after a late `finish` event
  *
- * The engine holds the last frame until the run is let go — under WAAPI that
- * was `fill: 'both'`, composited on top of `element.style` and dropped for
- * free by `cancel()`; motion-v (#566) writes the last frame straight into
- * `element.style` instead, so `stop()` leaves it exactly where it was rather
- * than handing it back. Either way, an element whose settled state is not its
- * stylesheet's (a folded clip, a surface held at its hidden keyframe) would
- * snap to the wrong thing for one frame if the caller wrote it too late, which
- * is exactly the repaint the motion exists to hide. The callback is the place
- * to write that state, and it runs first however the run ended — a caller
- * with none of its own gets whatever motion-v wrote handed back to the
- * stylesheet instead (`releaseWritten`, below).
+ * Motion-v's WAAPI path commits the run's final frame into `element.style`
+ * and discards its own effect from inside `onfinish` — a browser EVENT fired
+ * off the document timeline, which Chromium freezes for a window it
+ * considers hidden (`backgroundThrottling` is on by default, and a window
+ * merely occluded by another program counts). A run that ends while hidden
+ * leaves that WAAPI effect finished-but-undelivered: `onfinish` fires LATE,
+ * once this window is visible again, and writes the final frame inline
+ * whether or not anything is still listening for it. `cancel()` is the one
+ * call that discards the effect before that can happen — which is why it
+ * runs FIRST below, before this run's own `settle` decides what
+ * `element.style` should say, and why nothing here calls `complete()` or
+ * `stop()` any more (`complete()`'s `animation.finish()` is exactly the WAAPI
+ * method the late `onfinish` fires from; `stop()` returns early once
+ * `finish()` already flipped the state, so calling it after did nothing to
+ * stop the late write). On the JS driver — any value WAAPI cannot
+ * accelerate, `clipPath`'s `calc()` among them — `cancel()` can instead leave
+ * the element at an arbitrary mid-animation frame rather than the value
+ * either keyframe names (`motionEngine.test.ts` measures this against the
+ * real engine; reading motion-dom's own source alone suggests otherwise). So
+ * `settle` still has to run right after `cancel()`, not before, either way:
+ * the caller's answer for what this element should show has to be the LAST
+ * write, never `cancel()`'s leftover. An element whose settled state is not
+ * its stylesheet's (a folded clip, a surface held at its hidden keyframe)
+ * would snap to the wrong thing for one frame if the caller wrote it too
+ * late, which is exactly the repaint the motion exists to hide. The callback
+ * is the place to write that state, and it runs right after `cancel` however
+ * the run ended — a caller with none of its own gets whatever `cancel` left
+ * sitting on the element handed back to the stylesheet instead
+ * (`releaseWritten`, below).
  *
  * ## Framework-agnostic on purpose
  *
@@ -202,19 +239,18 @@ export function createBoundedMotion(deps: { animate?: MotionAnimate } = {}): Bou
       if (active.get(element) !== complete) return
       active.delete(element)
       clearTimeout(watchdog)
-      // Best-effort: the T0 probe found `complete()` can land the value LATE
-      // rather than never even once the window is hidden, and does nothing
-      // harmful when the engine already finished on its own — `settle` below
-      // is what actually guarantees the state either way, so this never needs
-      // a try/catch around it.
-      controls.complete()
+      // `cancel()` FIRST, always: it discards the WAAPI effect (or a still-
+      // pending keyframe resolver) before the browser or motion-dom's own JS
+      // driver can write anything else, so nothing can land after `settle`
+      // below has already decided what this element should show. See
+      // `MotionControls`, above, for the full why.
+      controls.cancel()
       settle?.()
       // A caller that passed `settle` already owns every property this run
-      // touches (that is the whole of the contract above); one that did not
-      // gets them handed back to the stylesheet, the way `cancel()` used to
-      // for free.
+      // touched (that is the whole of the contract above); one that did not
+      // gets them handed back to the stylesheet — whatever `cancel()` itself
+      // left sitting there, on either driver (`releaseWritten`, above).
       if (settle === undefined) releaseWritten(element, keyframes)
-      controls.stop()
       resolve()
     }
     active.set(element, complete)
