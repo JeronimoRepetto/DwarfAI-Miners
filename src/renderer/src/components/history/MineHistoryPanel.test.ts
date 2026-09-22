@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { AnimatePresence, motion } from 'motion-v'
 import { PORTRAIT_SRC, USER_PORTRAIT_SRC } from '../../lib/art'
 import {
   HISTORY_EMPTY_NOTE,
@@ -8,6 +9,7 @@ import {
   HISTORY_UNREADABLE_NOTE,
   formatHistoryTimestamp
 } from '../../lib/history/mineHistory'
+import { fadeVariants } from '../../lib/shell/presence'
 import { defaultMine } from '../../testing/factories'
 import { MINE_HISTORY_MESSAGE_LIMIT, type MineHistorySpeaker } from '../../types'
 import MineHistoryPanel from './MineHistoryPanel.vue'
@@ -453,5 +455,117 @@ describe('MineHistoryPanel closing', () => {
 
   it('names the mine it is the history of', () => {
     expect(panel().find('.history-panel').attributes('aria-label')).toBe('History of anvil')
+  })
+})
+
+/**
+ * The shared entrance (#566 T4b): an entry appearing in the tab this reader
+ * has open gets `presence.ts`'s own `fadeVariants`, the same opacity-only
+ * reasoning `DwarfMessagePanel`'s own block gives — a `y` offset would shift
+ * `scrollHeight` mid-animation, and `showLatest` above already has to land on
+ * the newest row once the entrance settles. Tab switching stays a cut: a
+ * tab's up-to-fifty entries must not stagger in when the reader merely
+ * chooses a different dwarf.
+ *
+ * `speakerRows` reuses `panelMessagesOf` (`conversation.ts`), whose own key
+ * bakes in the row's ARRAY INDEX — and `latestMessages`' own 50-message
+ * window (`mineHistory.ts`) re-slices from scratch on every read, so once a
+ * speaker has passed the cap every key in the visible window renames itself
+ * on every further message, exactly the reindexing `DwarfMessagePanel`'s own
+ * paging block works around, only unconditional here rather than triggered
+ * by a scroll gesture. `entry.key` is therefore useless for telling "already
+ * shown" apart from "just arrived" once a speaker is this active — what is
+ * used instead is content identity (`from` + `text`) that survives the
+ * reslice, tracked as a plain seen-set rather than through
+ * `lib/message/entryArrival`'s positional `tailArrivals`: the window sliding
+ * evicts a row from the FRONT while `tailArrivals` is built to read a
+ * position-preserving suffix, which a slide is not.
+ */
+describe('MineHistoryPanel list motion (#566 T4b)', () => {
+  function messageRows(wrapper: ReturnType<typeof panel>) {
+    return wrapper.findAllComponents(motion.article)
+  }
+
+  it('wraps the transcript in AnimatePresence, skipping the initial mount stagger', () => {
+    const presence = panel().findComponent(AnimatePresence)
+    expect(presence.exists()).toBe(true)
+    expect(presence.props('initial')).toBe(false)
+  })
+
+  it('carries the shared fadeVariants on every message row, not a literal of its own', () => {
+    const rows = messageRows(panel())
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.props('animate')).toEqual(fadeVariants.animate)
+      expect(row.props('exit')).toEqual(fadeVariants.exit)
+    }
+  })
+
+  it('does not animate any row on an ordinary mount', () => {
+    for (const row of messageRows(panel())) {
+      expect(row.props('initial')).toBe(false)
+    }
+  })
+
+  it('animates a message that arrives after mount, in the same tab', async () => {
+    const wrapper = panel()
+    const grown = {
+      ...NEWEST,
+      messages: [
+        ...NEWEST.messages,
+        { role: 'assistant' as const, text: 'Struck ore.', timestamp: '2026-09-04T09:06:00Z' }
+      ]
+    }
+    await wrapper.setProps({ history: { readable: true, speakers: [OLDER, grown] } })
+
+    const rows = messageRows(wrapper)
+    expect(rows.at(-1)!.text()).toContain('Struck ore.')
+    expect(rows.at(-1)!.props('initial')).toEqual(fadeVariants.initial)
+    expect(rows[0]!.props('initial')).toBe(false)
+    expect(rows[1]!.props('initial')).toBe(false)
+  })
+
+  it('does not animate a tab switch — up to fifty entries appearing at once stays a cut', async () => {
+    const wrapper = panel()
+    await wrapper.findAll('.history-tab')[1]!.trigger('click')
+
+    for (const row of messageRows(wrapper)) {
+      expect(row.props('initial')).toBe(false)
+    }
+  })
+
+  it('does not stagger-animate a speaker past the 50-message cap, where every key reindexes', async () => {
+    // Every one of these keys renames itself on every further message once
+    // past the cap (the module header's own finding) — proof the entrance
+    // still reads only the genuinely new tail entry as an arrival.
+    const many = Array.from({ length: MINE_HISTORY_MESSAGE_LIMIT }, (_, index) => ({
+      role: 'assistant' as const,
+      text: `reply ${index}`,
+      timestamp: `t${index}`
+    }))
+    const wrapper = panel({
+      history: { readable: true, speakers: [OLDER, { ...NEWEST, messages: many }] }
+    })
+
+    await wrapper.setProps({
+      history: {
+        readable: true,
+        speakers: [
+          OLDER,
+          {
+            ...NEWEST,
+            messages: [...many, { role: 'assistant', text: 'reply 50', timestamp: 't50' }]
+          }
+        ]
+      }
+    })
+
+    const rows = messageRows(wrapper)
+    expect(rows).toHaveLength(MINE_HISTORY_MESSAGE_LIMIT)
+    expect(rows.at(-1)!.text()).toContain('reply 50')
+    expect(rows.at(-1)!.props('initial')).toEqual(fadeVariants.initial)
+    for (const row of rows.slice(0, -1)) {
+      expect(row.props('initial')).toBe(false)
+    }
   })
 })

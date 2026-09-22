@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AnimatePresence, motion } from 'motion-v'
 import {
   MESSAGE_PANEL_ASK_HEIGHT,
   MESSAGE_PANEL_MAX_HEIGHT,
@@ -12,6 +13,7 @@ import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
 import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
+import { fadeVariants } from '../../lib/shell/presence'
 import {
   NO_TRANSCRIPT_NOTE,
   NOTHING_SAID_NOTE,
@@ -2588,3 +2590,118 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
   })
 })
 /* --- end of the #510 block --------------------------------------------------- */
+
+/**
+ * The shared entrance (#566 T4b, "falta la animación de desplegar los
+ * mensajes del MessagePanel"): a message row arriving after the reader was
+ * already looking at this conversation gets `presence.ts`'s own
+ * `fadeVariants`, opacity only — a `y` offset would shift `scrollHeight`
+ * mid-animation in a real layout the way it never can here (jsdom performs
+ * no layout at all), and the scroll-to-bottom rule above already has to land
+ * exactly on the newest row once the entrance settles. An already-open
+ * conversation must not animate its own history on mount — the shape a
+ * dwarf switch's own `:key` remount (`MessagePanelWindow.vue`) takes, a
+ * fresh component instance seeing its history for the first time, so
+ * nothing further is needed here to prove that cut beyond an ordinary
+ * mount. A page paged in ahead of the reader (#430) must not animate
+ * either. `lib/message/entryArrival`'s `tailArrivals` is the one fact this
+ * relies on to tell a genuine arrival apart from both.
+ */
+describe('DwarfMessagePanel list motion (#566 T4b)', () => {
+  function messageRows(wrapper: ReturnType<typeof panel>) {
+    return wrapper.findAllComponents(motion.article)
+  }
+
+  it('wraps the conversation in AnimatePresence, skipping the initial mount stagger', () => {
+    const wrapper = panel()
+    const presence = wrapper.findComponent(AnimatePresence)
+    expect(presence.exists()).toBe(true)
+    expect(presence.props('initial')).toBe(false)
+  })
+
+  it('carries the shared fadeVariants on every message row, not a literal of its own', () => {
+    const rows = messageRows(panel())
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.props('animate')).toEqual(fadeVariants.animate)
+      expect(row.props('exit')).toEqual(fadeVariants.exit)
+    }
+  })
+
+  it('does not animate any row on an ordinary mount — an already-open conversation', () => {
+    // HELD carries two rows.
+    for (const row of messageRows(panel())) {
+      expect(row.props('initial')).toBe(false)
+    }
+  })
+
+  it('animates a message that arrives after mount, and leaves the rows already on screen alone', async () => {
+    const wrapper = panel()
+    await wrapper.setProps({
+      feed: heldFeed([...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }])
+    })
+    const rows = messageRows(wrapper)
+    expect(rows).toHaveLength(3)
+    expect(rows.at(-1)!.text()).toContain('Seam exhausted.')
+    expect(rows.at(-1)!.props('initial')).toEqual(fadeVariants.initial)
+    expect(rows[0]!.props('initial')).toBe(false)
+    expect(rows[1]!.props('initial')).toBe(false)
+  })
+
+  it('does not animate an older page paged in ahead of the reader (#430)', async () => {
+    const OBSERVED = [
+      { role: 'assistant' as const, text: 'Halfway down the shaft.', timestamp: 't2' },
+      { role: 'assistant' as const, text: 'Seam exhausted.', timestamp: 't3' }
+    ]
+    const OLDER = [
+      { role: 'assistant' as const, text: 'Starting the shaft.', timestamp: 't0' },
+      { role: 'assistant' as const, text: 'Through the topsoil.', timestamp: 't1' }
+    ]
+    const wrapper = panel({ dwarf: defaultDwarf(), feed: { readable: true, messages: OBSERVED } })
+
+    await wrapper.setProps({ feed: { readable: true, messages: [...OLDER, ...OBSERVED] } })
+
+    const rows = messageRows(wrapper)
+    expect(rows).toHaveLength(4)
+    for (const row of rows) {
+      expect(row.props('initial')).toBe(false)
+    }
+  })
+})
+
+/**
+ * The list's entrance is not the only motion a message row carries — an
+ * echo reconciling into its transcript row (#309) is a real removal from
+ * `entries`: `reconcileEchoes` (`lib/message/echo.ts`) splices the matched
+ * echo out upstream, in `useDwarfMessaging`, so by the time the prop reaches
+ * this component the echo is simply gone from `echoes` and the transcript's
+ * own row has taken its place. The `exit` variant this carries (pinned above)
+ * is exercised here structurally — the row disappears — the same way
+ * `MinesPanel.test.ts`'s own #566 T3 block proved `TierInfoModal`'s close for
+ * a single child rather than the fade itself: jsdom's lack of layout latches
+ * `AnimationFeature`'s exit state at mount (`presence.test.ts`'s module
+ * header has the full trace), so the real exit call resolves on the spot
+ * rather than holding. Real Electron confirmation is T5's job, same as T3's.
+ */
+describe('DwarfMessagePanel echo exit (#566 T4b)', () => {
+  it('removes the echo row once the transcript accounts for it', async () => {
+    const wrapper = panel({
+      echoes: [{ id: 'e1', text: 'dig deeper', sentAt: 0, state: { phase: 'sending' } }]
+    })
+    expect(wrapper.findAll('.message')).toHaveLength(3) // HELD (2) + the echo.
+
+    await wrapper.setProps({
+      feed: heldFeed([
+        ...HELD,
+        { role: 'user', text: 'dig deeper', timestamp: '2026-09-03T09:00:02.000Z' }
+      ]),
+      echoes: []
+    })
+
+    const rows = wrapper.findAll('.message')
+    expect(rows).toHaveLength(3)
+    expect(rows.at(-1)!.find('.bubble').text()).toBe('dig deeper')
+    // No echo left to carry a tick — this row came off the transcript.
+    expect(rows.at(-1)!.find('.bubble-marker').exists()).toBe(false)
+  })
+})
