@@ -414,9 +414,19 @@ describe('columnFoldClip', () => {
     expect(columnFoldClip(200, 'left', 'uncovered', 8)).toBe('inset(0px 200px 0px 0px)')
   })
 
-  it('never insets past zero, whatever it is handed', () => {
+  /*
+   * AMENDED for #585 round 3: only a DRAWER clamps at zero. An uncovered
+   * column's inset is how far the column covering it has come across its box,
+   * and that column starts a whole room away: a negative inset is "not here
+   * yet", and the keyframe has to be allowed to say so or the reveal is
+   * stretched over the whole run instead of tracking the edge that actually
+   * does the covering — the navigation strip appearing over 300ms when the
+   * rail crossed it in one frame.
+   */
+  it('clamps a drawer at zero, and lets an uncovered column say its cover is still a room away', () => {
     expect(columnFoldClip(-5, 'right', 'drawer', 8)).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(-5, 'right', 'uncovered', 8)).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'uncovered', 8)).toBe('inset(0px 0px 0px -5px)')
+    expect(columnFoldClip(-5, 'left', 'uncovered', 8)).toBe('inset(0px -5px 0px 0px)')
   })
 })
 
