@@ -1042,6 +1042,47 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
   })
 
   /*
+   * ADDED for #585, from the real-window probe of the fixed build: opening a
+   * mine beside an open page carried the rail and NOTHING else, leaving the
+   * mine's own slot — 352px of it — as bare amber for the whole run.
+   *
+   * A carried column travels from the footprint it had when it last settled,
+   * and a column that ARRIVED on the previous change had never recorded one:
+   * the unfold that revealed it released it without remembering where it came
+   * to rest, so the next fold found no footprint for it and left it standing
+   * where the row had already repacked it. Every column the unfold touches
+   * records its rest position now, arrivals included.
+   */
+  it('remembers where an entering column came to rest, so the next change carries it too', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.fold.settle(false)
+    // The secondary panel ARRIVES, and is carried by the unfold that reveals
+    // the ground — the case above.
+    const secondary = carriedColumn(36, 555)
+    test.state.secondary = secondary
+    // Main grows the window before Vue ever mounts an arriving column, so the
+    // box `enter` reads it against is already the new one.
+    test.state.shell = sized(test.shell, 1001)
+    test.fold.enter(secondary)
+    test.fold.settle(false)
+    await settled()
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.secondaryAnimations).toHaveLength(1)
+    // And now a mine opens beside it: the row repacks the secondary panel
+    // 356px toward the free edge, so it has to come back from where it was.
+    test.state.shell = sized(test.shell, 1357)
+    const mine = placed(test.column(348), 1009, 348)
+    test.fold.enter(mine)
+    test.fold.settle(false)
+    await settled()
+    expect(test.secondaryAnimations).toHaveLength(2)
+    expect(test.secondaryAnimations[1]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
    * ADDED for #585. The other side of the strip, in the open direction: an
    * entering secondary panel stands FREE of the navigation strip, so it is
    * pulled out from behind that strip's own edge — pre-placed with a travel

@@ -263,6 +263,13 @@ export function useShellFold(options: ShellFoldOptions) {
      * this column out of it by the time the unfold runs.
      */
     fold: ColumnFold
+    /**
+     * Where the row put this column, read before `enter` pre-placed it and
+     * kept for the same reason (#585): it is what the columns registering
+     * after it are ordered against, and what the unfold records as the
+     * footprint the NEXT change carries it from.
+     */
+    rest: number
   }
   /** Entering columns pre-placed since the last unfold consumed them. */
   let entering: Entering[] = []
@@ -400,23 +407,22 @@ export function useShellFold(options: ShellFoldOptions) {
   }
 
   /**
-   * Where `column` stands once nothing this fold wrote is on it — the rest
-   * position `columnStand` answers for every column except one this module has
-   * ALREADY pre-placed (#585).
+   * Where `column` stands with nothing this fold wrote on it — `columnStand`
+   * for every column except one already pre-placed by `enter` (#585), which
+   * answers with the stand `enter` read before it moved anything.
    *
-   * `enter` pre-places each arriving column as it registers, and the columns of
-   * one change register one after another: the second one asks which side of
-   * the row it is on while the first is sitting a whole column's width from
-   * where the row put it. `getBoundingClientRect` includes that transform, so
-   * reading it raw puts the columns of a change in the wrong ORDER — the
-   * navigation strip would find the secondary panel standing docked of itself
-   * and take itself for a drawer. Adding the travel back is exact, because it
-   * is the only thing this module has written onto that element.
+   * The columns of one change register one after another, and each is
+   * translated a whole column's width out of the row as it does:
+   * `getBoundingClientRect` includes that transform, so a second column asking
+   * which side of the row it is on would find the first standing somewhere the
+   * row never put it — the navigation strip taking itself for a drawer because
+   * the secondary panel that arrived with it appeared to be docked of it.
+   * Remembered rather than subtracted back out, because it is the one reading
+   * that is certainly untouched.
    */
   function restStand(shell: HTMLElement, column: HTMLElement): number {
-    const stand = columnStand(shell, column)
     const placed = entering.find((one) => one.column === column)
-    return placed === undefined ? stand : stand + placed.travel
+    return placed === undefined ? columnStand(shell, column) : placed.rest
   }
 
   /**
@@ -711,11 +717,13 @@ export function useShellFold(options: ShellFoldOptions) {
     // read here, off the shell the column has already been laid out inside.
     const gap = parseFloat(getComputedStyle(shell).columnGap) || 0
     const travel = column.getBoundingClientRect().width + gap
-    // Measured BEFORE the pre-placement below, which is the one thing that
-    // would move this column out of the row it is being read against (#585).
+    // Both measured BEFORE the pre-placement below, which is the one thing
+    // that would move this column out of the row it is being read against
+    // (#585).
+    const rest = columnStand(shell, column)
     const fold = columnFoldOf(shell, column, [...mountedColumns(), column])
     placeSelf(column, travel, fold)
-    entering.push({ column, travel, fold })
+    entering.push({ column, travel, fold, rest })
     // The last column to register is what the unfold was waiting for (#585).
     // Asked for here as well as from `settle` because the two arrive in either
     // order and neither is guaranteed: `settle` is the one App.vue's watch
@@ -841,15 +849,24 @@ export function useShellFold(options: ShellFoldOptions) {
     // (their row already repacked around them), so nothing here re-measures
     // it.
     const enteringNow = entering
-    entering = []
     const enteringColumns = new Set(enteringNow.map((one) => one.column))
+    // Where every column this unfold touches comes to REST, which is what the
+    // NEXT change will carry it from. An arriving column is one of them (#585):
+    // released without a rest position of its own, it was left standing
+    // wherever the row had already repacked it on every later fold — the mine
+    // opening beside an open page carried the rail and nothing else, and the
+    // mine's own 352px slot stayed bare amber for the whole run. Read here,
+    // while `entering` still explains the pre-placement `enter` wrote onto it.
+    const stands = new Map<HTMLElement, number>(
+      enteringNow.map((one) => [one.column, restStand(shell, one.column)])
+    )
+    entering = []
     for (const { column, travel, fold } of enteringNow)
       carrySelf(column, travel, 0, transition, fold)
     // Every OTHER carried column returns from the footprint it had when the
     // fold it is answering for last settled — outside the footprint this
     // unfolds FROM when it is entering room the row only just repacked into,
     // which is exactly why it starts there and comes back with the ground.
-    const stands = new Map<HTMLElement, number>()
     for (const column of mountedColumns()) {
       if (enteringColumns.has(column)) continue
       const stand = columnStand(shell, column)
@@ -869,7 +886,6 @@ export function useShellFold(options: ShellFoldOptions) {
           columnOffsets.set(column, stand)
           motion.release(column)
         }
-        for (const column of enteringColumns) motion.release(column)
       },
       () => undefined
     )
