@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  foldedRailOffset,
+  columnFoldClip,
+  columnFoldKeyframes,
+  columnFoldTransform,
+  columnSlideKeyframes,
+  foldedColumnOffset,
   foldedShellWidth,
-  railFoldKeyframes,
-  railFoldTransform,
+  mirrorTravel,
   shellFoldClip,
   shellFoldKeyframes
 } from './shellFold'
@@ -206,7 +209,9 @@ describe('the fold’s end keyframe', () => {
     // the fold clipping away the one column that survives every one of them.
     expect(holds(ends, ROW.rail)).toBe(false)
     const travel =
-      BOOK - ROW.rail.right - foldedRailOffset({ kept, rail: RAIL, padding: 8, remaining: 'mine' })
+      BOOK -
+      ROW.rail.right -
+      foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'mine' })
     expect(holds(ends, moved(ROW.rail, travel))).toBe(true)
     // And it travels exactly what the window is about to stop being: the column
     // leaving and the gap beside it, no more — a rail that overshot would end
@@ -226,7 +231,9 @@ describe('the fold’s end keyframe', () => {
       padding: 8,
       remaining: 'rail'
     })
-    expect(foldedRailOffset({ kept, rail: RAIL, padding: 8, remaining: 'rail' })).toBe(0)
+    expect(
+      foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'rail' })
+    ).toBe(0)
     const travel = BOOK - ROW.rail.right
     expect(holds(strip(BOOK, kept), moved(ROW.rail, travel))).toBe(true)
   })
@@ -240,35 +247,134 @@ describe('the fold’s end keyframe', () => {
       remaining: 'pages'
     })
     expect(
-      BOOK - ROW.rail.right - foldedRailOffset({ kept, rail: RAIL, padding: 8, remaining: 'pages' })
+      BOOK -
+        ROW.rail.right -
+        foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'pages' })
     ).toBe(0)
   })
 
   it('never carries the rail past the docked edge, whatever it was handed', () => {
-    expect(foldedRailOffset({ kept: 12, rail: RAIL, padding: 8, remaining: 'rail' })).toBe(0)
+    expect(
+      foldedColumnOffset({ kept: 12, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'rail' })
+    ).toBe(0)
+  })
+
+  /*
+   * ADDED for #566 T5b. The mine column docks beyond the navigation stack, so
+   * when it is what leaves, the navigation stack — not only the rail — stands
+   * free of it and has to come to rest somewhere too. `before` is what makes
+   * that the SAME formula rather than a second one for "not the free-most
+   * column": every survivor still standing between this one and the free
+   * edge (the rail AND the secondary panel, here — both nearer the free edge
+   * than the navigation stack) is subtracted first, the same way the rail's
+   * own call subtracts nothing because nothing ever stands ahead of it.
+   */
+  it('rests a column that is not the rail behind everything still free of it', () => {
+    const kept = foldedShellWidth({
+      width: BOOK,
+      leaving: [MINE_COLUMN],
+      gap: 8,
+      padding: 8,
+      remaining: 'pages'
+    })
+    const navigationRests = foldedColumnOffset({
+      kept,
+      before: [RAIL, SECONDARY],
+      gap: 8,
+      own: NAVIGATION,
+      padding: 8,
+      remaining: 'pages'
+    })
+    // Mine was the last column standing, docked, so once it leaves the
+    // navigation stack becomes the new docked-most survivor: flush against
+    // the shell's own docked-side padding, and nothing else.
+    expect(navigationRests).toBe(8)
+    const travel = BOOK - ROW.navigation.right - navigationRests
+    // Exactly what the window is about to stop being: the mine column and the
+    // gap beside it, no more — the same rule the rail’s own travel proves
+    // above, now holding for a column that is not the free-most one either.
+    expect(travel).toBe(MINE_COLUMN + 8)
+    expect(holds(strip(BOOK, kept), moved(ROW.navigation, travel))).toBe(true)
   })
 })
 
-describe('railFoldKeyframes', () => {
+describe('columnFoldKeyframes', () => {
   /*
-   * A transform, because the rail has to cross the row without relayouting it:
-   * the mine interior re-measures its anchors from the box it is given, and the
-   * fold exists to leave that box alone until main resizes the window.
+   * A transform, because a carried column has to cross the row without
+   * relayouting it: the mine interior re-measures its anchors from the box it
+   * is given, and the fold exists to leave that box alone until main resizes
+   * the window.
    */
-  it('travels the rail toward the docked edge of a right-docked shell', () => {
-    expect(railFoldKeyframes(0, 563, 'right')).toEqual({ x: [0, 563] })
+  it('travels a carried column toward the docked edge of a right-docked shell', () => {
+    expect(columnFoldKeyframes(0, 563, 'right')).toEqual({ x: [0, 563] })
   })
 
   it('mirrors the travel onto a left-docked shell, whose docked edge is the other one', () => {
-    expect(railFoldKeyframes(0, 563, 'left')).toEqual({ x: [-0, -563] })
+    expect(columnFoldKeyframes(0, 563, 'left')).toEqual({ x: [-0, -563] })
   })
 
-  it('returns the rail to where the row puts it when the shell unfolds', () => {
-    expect(railFoldKeyframes(563, 0, 'right')).toEqual({ x: [563, 0] })
+  it('returns a carried column to where the row puts it when the shell unfolds', () => {
+    expect(columnFoldKeyframes(563, 0, 'right')).toEqual({ x: [563, 0] })
   })
 
-  it('states the settled travel as the transform the rail is left holding', () => {
-    expect(railFoldTransform(563, 'right')).toBe('translateX(563px)')
-    expect(railFoldTransform(563, 'left')).toBe('translateX(-563px)')
+  it('states the settled travel as the transform a carried column is left holding', () => {
+    expect(columnFoldTransform(563, 'right')).toBe('translateX(563px)')
+    expect(columnFoldTransform(563, 'left')).toBe('translateX(-563px)')
+  })
+})
+
+/*
+ * ADDED for #566 T5b. The leaving or entering column's own motion: unlike a
+ * carried column, it is not free of the box it stood in, so its travel has to
+ * stay inside that box rather than paint over the row beside it.
+ */
+describe('columnFoldClip', () => {
+  it('clips nothing at zero travel, the column’s own resting frame', () => {
+    expect(columnFoldClip(0, 'right')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left')).toBe('inset(0px 0px 0px 0px)')
+  })
+
+  /*
+   * The DOCKED-side edge is inset, never the free one: composed with the
+   * SAME travel on `transform`, the visible sliver stays pinned at the
+   * column's own original docked-side edge — the "wall" in the drawing — and
+   * narrows away from the free side as the column slides toward it.
+   */
+  it('insets the docked-side edge of a right-docked column’s own box', () => {
+    expect(columnFoldClip(200, 'right')).toBe('inset(0px 200px 0px 0px)')
+  })
+
+  it('insets the docked-side edge of a left-docked column’s own box, the other side', () => {
+    expect(columnFoldClip(200, 'left')).toBe('inset(0px 0px 0px 200px)')
+  })
+
+  it('never insets past zero, whatever it is handed', () => {
+    expect(columnFoldClip(-5, 'right')).toBe('inset(0px 0px 0px 0px)')
+  })
+})
+
+describe('columnSlideKeyframes', () => {
+  it('carries the transform and the clip on the SAME two keyframes', () => {
+    expect(columnSlideKeyframes(0, 563, 'right')).toEqual({
+      x: [0, 563],
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
+    })
+  })
+
+  it('mirrors both halves onto a left-docked shell together', () => {
+    expect(columnSlideKeyframes(0, 200, 'left')).toEqual({
+      x: [-0, -200],
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 200px)']
+    })
+  })
+})
+
+describe('mirrorTravel', () => {
+  it('leaves a right-docked shell’s travel as it was handed', () => {
+    expect(mirrorTravel(563, 'right')).toBe(563)
+  })
+
+  it('flips the sign for a left-docked shell, the same rule the whole file mirrors by', () => {
+    expect(mirrorTravel(563, 'left')).toBe(-563)
   })
 })
