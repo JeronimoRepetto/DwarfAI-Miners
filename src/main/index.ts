@@ -915,11 +915,15 @@ async function init(): Promise<void> {
   // loudly by design — a locked or corrupt database answers with a reason
   // instead of an empty list — and this is the one place that can turn that
   // refusal into a panel missing its declared mines rather than an app that
-  // will not start. openProjectsStore logs the reason once.
-  projects = await openProjectsStore({
+  // will not start. openProjectsStore logs the reason once; the KIND of
+  // refusal travels on into AgentRuntime (#572) so a database a newer build
+  // wrote can be told apart from every other way this file fails to open.
+  const openedProjects = await openProjectsStore({
     database: appDatabase,
     warn: (message) => console.warn(message)
   })
+  projects = openedProjects.store
+  const projectsRefusal = openedProjects.failure
 
   // What this app launched, kept so a session started before the last restart
   // still has an exit (#231). The third tenant of that same file, and the one
@@ -978,6 +982,7 @@ async function init(): Promise<void> {
     config,
     ledger,
     projects,
+    projectsRefusal,
     launchedSessionStore,
     home,
     fs,
