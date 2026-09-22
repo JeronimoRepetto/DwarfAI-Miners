@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getDefaultTransition } from 'motion-v'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { createBoundedMotion, type MotionAnimate } from './boundedMotion'
-import { PANEL_MOTION_WATCHDOG_MS } from './panelMotion'
+import { motionBoundMs, type MotionTransition } from './motionTiming'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -30,66 +31,93 @@ const STYLE_PROPERTY: Record<string, string> = {
 /**
  * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
  * (was: stubbing `element.animate`, WAAPI's own entry point, which the runner
- * no longer calls). `createBoundedMotion({ animate })` is the seam: tests hand
- * it this fake, production hands it nothing and gets the real motion-v import
+ * no longer calls), and AMENDED again for the `cancel()`-first fix below (was:
+ * a `complete`/`stop` pair, mirroring a `MotionControls` shape the runner no
+ * longer has). `createBoundedMotion({ animate })` is the seam: tests hand it
+ * this fake, production hands it nothing and gets the real motion-v import
  * instead (`motionEngine.test.ts` pins the real one).
  *
- * `finish()` writes the FINAL keyframe value onto the element the way the real
- * engine does — motion-v writes its own final frame straight into inline
- * style rather than compositing a discardable WAAPI effect on top of it — so a
- * test can tell whether the runner handed a property back to the stylesheet
- * afterwards or left the engine's own value sitting there.
+ * AMENDED again for #566: no `options` argument any more — the runner passes
+ * `animate()` no transition at all now, so a fake that recorded one would be
+ * recording something the real call site never sends.
+ *
+ * AMENDED again for #464 (correction to T2): a fourth, OPTIONAL `transition`
+ * argument is back — `boundedMotion.run`'s own new optional parameter,
+ * forwarded straight to `animate()` when a caller (`useShellFold.carry()`)
+ * gives one, so the fold's rail can share the clip's own transition instead
+ * of motion-v picking a different default for each. Recorded here (possibly
+ * `undefined`) so the transition test below can assert exactly what the
+ * engine received.
+ *
+ * `cancel()` writes the INITIAL keyframe by default — mirroring the stronger
+ * of the two real shapes read from motion-dom's own source (`JSAnimation`'s
+ * `cancel()` calls `tick(0)`): a WAAPI `cancel()` that writes nothing is a
+ * no-op the runner does not depend on either way, but one that DOES write has
+ * to run before `settle`, never after, or it would stomp the caller's answer.
+ * `finish()` writes the FINAL keyframe and settles the engine's own thenable,
+ * the way a run that completes on its own timeline does.
  */
 function fakeEngine() {
   const runs: {
     element: Element
     keyframes: DOMKeyframesDefinition
-    options: { duration: number; ease: unknown }
+    transition: MotionTransition | undefined
     finish: () => void
-    complete: ReturnType<typeof vi.fn>
-    stop: ReturnType<typeof vi.fn>
+    cancel: ReturnType<typeof vi.fn>
   }[] = []
-  const animate: MotionAnimate = (element, keyframes, options) => {
+  const animate: MotionAnimate = (element, keyframes, transition) => {
     let resolveFinished!: () => void
     const finished = new Promise<void>((resolve) => {
       resolveFinished = resolve
     })
-    const writeFinalFrame = (): void => {
+    const writeFrame = (which: 'initial' | 'final'): void => {
       const style = (element as HTMLElement).style
       for (const [key, value] of Object.entries(keyframes)) {
         const property = STYLE_PROPERTY[key]
         if (property === undefined || !Array.isArray(value)) continue
-        const last = value[value.length - 1]
+        const frame = which === 'final' ? value[value.length - 1] : value[0]
         const written =
           key === 'x' || key === 'y'
-            ? `translate${key.toUpperCase()}(${String(last)}px)`
-            : String(last)
+            ? `translate${key.toUpperCase()}(${String(frame)}px)`
+            : String(frame)
         style.setProperty(property, written)
       }
     }
-    const complete = vi.fn(() => {
-      writeFinalFrame()
-      resolveFinished()
-    })
-    const stop = vi.fn()
+    const cancel = vi.fn(() => writeFrame('initial'))
     runs.push({
       element,
       keyframes,
-      options,
+      transition,
       finish: () => {
-        writeFinalFrame()
+        writeFrame('final')
         resolveFinished()
       },
-      complete,
-      stop
+      cancel
     })
     return {
-      complete,
-      stop,
+      cancel,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
     }
   }
   return { animate, runs }
+}
+
+/**
+ * A hand-written stand-in for the scheduler `run`'s ender uses to re-apply
+ * `settle` after the engine's own deferred render (ADDED for #566 T2b,
+ * `createBoundedMotion({ afterRender })` — production gets motion-v's real
+ * `frame.postRender`). A real `frame.postRender` is driven by jsdom's own
+ * `requestAnimationFrame`, which several cases here already race against
+ * `vi.useFakeTimers()` for the watchdog; a fake that only RECORDS what it was
+ * asked to schedule, rather than a timer of its own, is what lets a test
+ * decide exactly when that callback fires instead of racing either clock.
+ */
+function fakeAfterRender() {
+  const scheduled: (() => void)[] = []
+  const afterRender = (callback: () => void): void => {
+    scheduled.push(callback)
+  }
+  return { afterRender, scheduled }
 }
 
 function harness(options: { reduced?: boolean; hidden?: boolean; animates?: boolean } = {}) {
@@ -107,8 +135,9 @@ function harness(options: { reduced?: boolean; hidden?: boolean; animates?: bool
     Object.defineProperty(element, 'animate', { configurable: true, value: () => undefined })
   }
   const engine = fakeEngine()
-  const motion = createBoundedMotion({ animate: engine.animate })
-  return { motion, element, runs: engine.runs, media }
+  const after = fakeAfterRender()
+  const motion = createBoundedMotion({ animate: engine.animate, afterRender: after.afterRender })
+  return { motion, element, runs: engine.runs, media, scheduled: after.scheduled }
 }
 
 const RISE: DOMKeyframesDefinition = { opacity: [0, 1] }
@@ -120,38 +149,40 @@ describe('createBoundedMotion', () => {
     const done = test.motion.run(test.element, RISE).then(() => {
       settled = true
     })
+    // No transition is asked for any more (#566) — the runner hands motion-v
+    // only the keyframes, and lets `getDefaultTransition` pick.
     expect(test.runs[0]!.keyframes).toEqual(RISE)
-    expect(test.runs[0]!.options).toEqual({ duration: 0.25, ease: [0.2, 0, 0, 1] })
     expect(settled).toBe(false)
     test.runs[0]!.finish()
     await done
     expect(settled).toBe(true)
-    // `stop()` is the only teardown method the bound calls on the controls —
-    // never `cancel()`, which the injected engine's own minimal type has no
-    // room for.
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    // `cancel()` is the only teardown method the bound calls on the
+    // controls — it discards the engine's own effect (and any still-pending
+    // keyframe resolver) before a `finish` event the engine fires later could
+    // ever land, which the old `complete()`/`stop()` pair never guaranteed.
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
-  it('tries the engine’s own complete() first, then settles the state, then lets the run go, in that order', async () => {
-    // Best-effort: the T0 probe found `complete()` can land a value late
-    // rather than never once the window is hidden, and costs nothing once the
-    // engine already finished on its own. `settle` is what actually
-    // guarantees the state either way, and still has to run before `stop()`
-    // for the reason it always did — cancelling first would have been one
-    // frame of exactly the repaint the motion exists to hide.
+  it('cancels the engine first, then settles the state, then lets the run go, in that order', async () => {
+    // `cancel()` runs FIRST, always: on the WAAPI path it discards the effect
+    // before a `finish` event a hidden window's frozen timeline delayed can
+    // ever land after the fact; on the JS driver it can leave the element at
+    // an arbitrary mid-animation frame (`motionEngine.test.ts` pins the real
+    // one). Either way `settle` has to run right after it, never before, or
+    // the caller's answer for this element would be overwritten by whatever
+    // `cancel()` itself just left there.
     const test = harness()
     const order: string[] = []
     const done = test.motion.run(test.element, RISE, () => order.push('settle'))
-    test.runs[0]!.complete.mockImplementation(() => order.push('complete'))
-    test.runs[0]!.stop.mockImplementation(() => order.push('stop'))
+    test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
     test.runs[0]!.finish()
     await done
     // `finish()` resolves the engine's OWN thenable directly (the way a real
-    // run finishing on its own does), so the bound's best-effort `complete()`
-    // call — made from inside the SAME closure that ran `settle` — is what
-    // shows up here, not the fake's `finish` helper.
-    expect(order).toEqual(['complete', 'settle', 'stop'])
+    // run finishing on its own does), so the bound's own `cancel()` call —
+    // made from inside the SAME closure that ran `settle` — is what shows up
+    // here, not the fake's `finish` helper.
+    expect(order).toEqual(['cancel', 'settle'])
     test.motion.dispose()
   })
 
@@ -160,47 +191,65 @@ describe('createBoundedMotion', () => {
     const done = test.motion.run(test.element, RISE)
     test.runs[0]!.finish()
     await done
+    // `finish()` writes RISE's final keyframe (`opacity: '1'`); `cancel()`
+    // then overwrites it with the INITIAL keyframe (`'0'`, this fake's
+    // default). `releaseWritten` clears the property outright regardless of
+    // which write left it there — proving it does not merely revert the
+    // engine's last value, it hands the property back to the stylesheet.
     expect(test.element.style.opacity).toBe('')
     test.motion.dispose()
   })
 
-  it('leaves the engine’s own written properties alone once the caller has a settle, whatever it wrote', async () => {
-    // Motion-v writes its final frame straight into inline style rather than
-    // compositing a WAAPI effect `cancel()` could drop for free — so a caller
-    // that owns `settle` has to own everything this run touched, the same
-    // contract `useShellFold` and `MessagePanelWindow` already keep.
+  it('leaves whatever cancel() left on the element alone once the caller has a settle, whatever that is', async () => {
+    // `finish()` writes RISE's final keyframe (`opacity: '1'`) and settles the
+    // engine's own thenable; `cancel()` then overwrites it with the INITIAL
+    // keyframe (`'0'`), mirroring motion-dom's own JS driver (`tick(0)`,
+    // `motionEngine.test.ts` pins the real engine doing something similar).
+    // The caller's own `settle` here is a no-op, so `cancel()`'s write is
+    // what stays — proving a caller that owns `settle` really does own
+    // EVERY property this run touches: the runner never calls
+    // `releaseWritten` once `settle` is defined, no matter what either write
+    // left behind.
     const test = harness()
     const done = test.motion.run(test.element, RISE, () => undefined)
     test.runs[0]!.finish()
     await done
-    expect(test.element.style.opacity).toBe('1')
+    expect(test.element.style.opacity).toBe('0')
     test.motion.dispose()
   })
 
-  it('releases a motion whose engine never reports finishing, once the watchdog elapses', async () => {
+  it('cancels then settles, in that order, once the watchdog elapses on an engine that never reports finishing', async () => {
     // Chromium freezes the document timeline for an occluded window: the last
-    // frame lands on the compositor and `finished` never settles (#266).
+    // frame lands on the compositor and `finished` never settles (#266). The
+    // watchdog ends the run anyway — `cancel()` first, so nothing the engine
+    // might still deliver later can land after `settle` decided the state.
     vi.useFakeTimers()
     const test = harness()
     let settled = false
-    void test.motion.run(test.element, RISE).then(() => {
-      settled = true
-    })
-    await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+    const order: string[] = []
+    void test.motion
+      .run(test.element, RISE, () => order.push('settle'))
+      .then(() => {
+        settled = true
+      })
+    test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
+    await vi.advanceTimersByTimeAsync(motionBoundMs(RISE))
     expect(settled).toBe(true)
-    expect(test.runs[0]!.complete).toHaveBeenCalledOnce()
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(order).toEqual(['cancel', 'settle'])
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
-  it('releases a running motion the moment the window becomes hidden', async () => {
+  it('cancels then settles, in that order, the moment the window becomes hidden', async () => {
     const test = harness()
-    const done = test.motion.run(test.element, RISE)
+    const order: string[] = []
+    const done = test.motion.run(test.element, RISE, () => order.push('settle'))
+    test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
     occlude(true)
     document.dispatchEvent(new Event('visibilitychange'))
     await done
-    expect(test.runs[0]!.complete).toHaveBeenCalledOnce()
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(order).toEqual(['cancel', 'settle'])
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
@@ -210,7 +259,7 @@ describe('createBoundedMotion', () => {
     Object.defineProperty(test.media, 'matches', { configurable: true, value: true })
     test.media.dispatchEvent(new Event('change'))
     await done
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     test.motion.dispose()
   })
 
@@ -258,8 +307,8 @@ describe('createBoundedMotion', () => {
     const second = test.motion.run(test.element, RISE)
     await Promise.resolve()
     expect(first).toBe(true)
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
-    expect(test.runs[1]!.stop).not.toHaveBeenCalled()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
+    expect(test.runs[1]!.cancel).not.toHaveBeenCalled()
     test.runs[1]!.finish()
     await second
     test.motion.dispose()
@@ -277,7 +326,7 @@ describe('createBoundedMotion', () => {
     await one
     expect(test.motion.running(test.element)).toBe(false)
     expect(test.motion.running(other)).toBe(true)
-    expect(test.runs[1]!.stop).not.toHaveBeenCalled()
+    expect(test.runs[1]!.cancel).not.toHaveBeenCalled()
     test.motion.release(other)
     await two
     test.motion.dispose()
@@ -288,11 +337,131 @@ describe('createBoundedMotion', () => {
     const done = test.motion.run(test.element, RISE)
     test.motion.dispose()
     await done
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
     // The listeners go with it: a release after teardown would reach into a
     // component that is no longer there.
     occlude(true)
     document.dispatchEvent(new Event('visibilitychange'))
-    expect(test.runs[0]!.stop).toHaveBeenCalledOnce()
+    expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
+  })
+
+  /*
+   * ADDED for #464 (correction to T2). `run`'s own optional fourth argument,
+   * forwarded straight to the engine: `useShellFold.carry()` is the one
+   * caller that gives one, so its rail can share the clip's transition
+   * rather than let motion-v pick the rail's own default spring.
+   */
+  it('forwards an explicit transition straight to the engine, and arms the watchdog off it', async () => {
+    const test = harness()
+    const explicitTransition = getDefaultTransition('clipPath', {
+      keyframes: ['a', 'b'] as unknown as number[]
+    })
+    const done = test.motion.run(test.element, RISE, undefined, explicitTransition)
+    expect(test.runs[0]!.transition).toBe(explicitTransition)
+    test.runs[0]!.finish()
+    await done
+    test.motion.dispose()
+  })
+
+  it('bounds a watchdog by the explicit transition rather than the keyframes’ own default', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    // RISE (`{ opacity: [0, 1] }`) resolves to the flat 300ms ease (350ms
+    // bound) on its own default — a discriminating test needs a transition
+    // that genuinely disagrees, or a bug that silently ignored the fourth
+    // argument would pass all the same. `x`'s own default spring, applied to
+    // RISE's tiny opacity delta (a "granular" spring, motion-dom's own
+    // tighter resting threshold for it), settles at 450ms — measured against
+    // the real engine, not assumed: `motionBoundMs(RISE, explicitSpring)` is
+    // 500, genuinely later than RISE's own 350.
+    const explicitSpring = getDefaultTransition('x', { keyframes: [12, 0] })
+    const explicitBound = motionBoundMs(RISE, explicitSpring)
+    const defaultBound = motionBoundMs(RISE)
+    expect(explicitBound).toBeGreaterThan(defaultBound)
+    let settled = false
+    void test.motion.run(test.element, RISE, undefined, explicitSpring).then(() => {
+      settled = true
+    })
+    // Not yet settled at RISE's own would-be bound: a run that silently
+    // ignored the explicit transition would already be done here.
+    await vi.advanceTimersByTimeAsync(defaultBound)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(explicitBound - defaultBound)
+    expect(settled).toBe(true)
+    test.motion.dispose()
+  })
+
+  /*
+   * ADDED for #566 T2b. `cancel()` closes the late WAAPI `onfinish` write
+   * (the cases above), but not a RENDER the engine's own driver already had
+   * queued before `cancel()` ran — that flushes on its own, one frame later,
+   * regardless of `cancel()` (`motionEngine.test.ts` and the module header
+   * on `run` have the real-engine evidence and the citation). A real-window
+   * probe of the rail carry caught exactly this: a late `transform: none`
+   * landing a frame after `cancel()` + `settle`, in 3 of 7 experiments. These
+   * three cases pin the re-apply that closes it, entirely through the fake
+   * scheduler — none of them touches a real frame or a real timer.
+   */
+  describe('re-applies settle after the engine’s own late render (#566 T2b)', () => {
+    it('restores what settle wrote once the scheduled callback runs, undoing a simulated late engine write', async () => {
+      const test = harness()
+      const done = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '1')
+      )
+      test.runs[0]!.finish()
+      await done
+      expect(test.element.style.opacity).toBe('1')
+      expect(test.scheduled).toHaveLength(1)
+      // Standing in for the engine's own deferred render, one frame later —
+      // the fake engine's `cancel()` already ran and does not model this
+      // itself, so the test writes the late value the way `motionEngine.
+      // test.ts` observed it against the real one.
+      test.element.style.setProperty('opacity', '0.42')
+      test.scheduled[0]!()
+      expect(test.element.style.opacity).toBe('1')
+      test.motion.dispose()
+    })
+
+    it('does not re-apply a superseded run’s settle once a new run on the same element has started', async () => {
+      const test = harness()
+      const first = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '1')
+      )
+      test.runs[0]!.finish()
+      await first
+      expect(test.scheduled).toHaveLength(1)
+      const staleReapply = test.scheduled[0]!
+      // A second run starts before the first run's scheduled re-apply has
+      // fired — exactly the case the identity guard exists for: `run`
+      // cancels the stale schedule the moment a new one starts.
+      const second = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '0.5')
+      )
+      test.runs[1]!.finish()
+      await second
+      expect(test.element.style.opacity).toBe('0.5')
+      // The fake never removes what it recorded — running the stale callback
+      // anyway must still not stomp the second run's answer.
+      staleReapply()
+      expect(test.element.style.opacity).toBe('0.5')
+      test.motion.dispose()
+    })
+
+    it('cancels every pending re-apply on dispose, so nothing fires after teardown', async () => {
+      const test = harness()
+      const done = test.motion.run(test.element, RISE, () =>
+        test.element.style.setProperty('opacity', '1')
+      )
+      test.runs[0]!.finish()
+      await done
+      expect(test.scheduled).toHaveLength(1)
+      const reapply = test.scheduled[0]!
+      test.motion.dispose()
+      test.element.style.setProperty('opacity', '0.9')
+      reapply()
+      // Dispose already released the component's claim on this element; the
+      // scheduled re-apply must not still be able to write to it.
+      expect(test.element.style.opacity).toBe('0.9')
+    })
   })
 })

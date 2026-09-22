@@ -471,13 +471,61 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
   screen.on('display-added', refitMessagePanel)
   screen.on('display-removed', refitMessagePanel)
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
-  }
-
+  // The page is NOT loaded here (#570) — see loadPanelPage below for why.
   return mainWindow
+}
+
+/**
+ * The slice of BrowserWindow the panel's own page load needs. Narrow like the
+ * targets above it: the branch below is asserted with a fake, because the
+ * real BrowserWindow this is aimed at in production cannot be built outside
+ * an actual Electron process at all (`require('electron')` resolves to the
+ * path of its binary there, not the module).
+ */
+export interface PanelPageTarget {
+  loadURL: (url: string) => void
+  loadFile: (filePath: string) => void
+}
+
+/**
+ * Dev server or packaged file — the one branch a panel window's page load
+ * ever takes, split out of createMainWindow so it is assertable on its own
+ * (#570).
+ */
+export function applyPanelPageLoad(
+  target: PanelPageTarget,
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  const devServerUrl = env.ELECTRON_RENDERER_URL
+  if (devServerUrl) {
+    void target.loadURL(devServerUrl)
+  } else {
+    void target.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+  }
+}
+
+/**
+ * Load the shell's own page against the live window (#570).
+ *
+ * This used to happen inside createMainWindow itself, fire-and-forget, right
+ * after the window was built — several hundred lines before index.ts
+ * registered its OWN last `ipcMain.handle`. A renderer fast enough to mount
+ * before that registration finished invoked `mines:get` on a channel nobody
+ * was listening on yet, and Electron rejected the call as "No handler
+ * registered for channel": silent in `pnpm dev`, where the dev server's own
+ * page load is slow enough to lose that race almost every time, and reliable
+ * in a packaged build, where `loadFile` reads local bytes off disk and wins
+ * it — which is why the bug shipped invisibly until a package build exposed
+ * it.
+ *
+ * The fix is ordering, not a retry or a queued call: index.ts now calls this
+ * exactly once, after its whole IPC surface is registered, so there is no
+ * channel left for an early invoke to find missing. A no-op with no window,
+ * like showPanel and placeMessagePanel guard.
+ */
+export function loadPanelPage(): void {
+  if (mainWindow === null) return
+  applyPanelPageLoad(mainWindow)
 }
 
 export function showPanel(): void {
@@ -579,14 +627,24 @@ export const MESSAGE_PANEL_REVEAL_TIMEOUT_MS = 1000
  * crashed, or one whose leave was left un-run by something nobody has thought
  * of. Neither is main's to diagnose, and both must end with the window gone.
  *
- * 350ms is the renderer's own `PANEL_LEAVE_BOUND_MS` (#266), stated here rather
- * than imported: the deadlines behind a Web Animation are renderer facts, and a
- * main process importing them from `renderer/src/lib` would be this file
- * depending on how the shell animates. What has to hold is only the ORDER — the
- * renderer bounds its leave with a watchdog at 300ms and reports, so on any
- * honest close the report arrives first and this never fires.
+ * 400ms is stated here rather than imported: the deadlines behind a Web
+ * Animation are renderer facts, and a main process importing them from
+ * `renderer/src/lib` would be this file depending on how the shell animates.
+ * The renderer bounds the message surface's own leave with a watchdog
+ * (`motionBoundMs` of its keyframes, `{ opacity: [1, 0], y: [0, 12] }` —
+ * #566, was a fixed 300ms this codebase authored itself), currently 350ms —
+ * but this floor is not merely ORDERED after that watchdog, it has to
+ * outlast it by a real margin (#464, correction to T2): the renderer's
+ * watchdog firing is not the moment main hears about it, because `settle`
+ * still has to run and `reportMessagePanelSettled` still has to cross the
+ * IPC hop after it. 400 = the renderer's own 350ms bound, rounded up to the
+ * next 50ms (already there), plus a 50ms IPC margin for exactly that gap.
+ * `window.test.ts` is what keeps this number honest against the renderer's
+ * derived one now that neither is a literal this app chose freely: it is the
+ * ONE place allowed to cross the main -> renderer boundary, and only to PIN
+ * the relationship (see AGENTS.md's boundaries section).
  */
-export const MESSAGE_PANEL_LEAVE_TIMEOUT_MS = 350
+export const MESSAGE_PANEL_LEAVE_TIMEOUT_MS = 400
 
 let messagePanelWindow: BrowserWindow | null = null
 /** The wait above, while one is running. */

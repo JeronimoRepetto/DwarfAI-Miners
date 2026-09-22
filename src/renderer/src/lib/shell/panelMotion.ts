@@ -1,34 +1,5 @@
-import type { DOMKeyframesDefinition, Easing } from 'motion-v'
-
-export const PANEL_MOTION_MS = 250
-/**
- * The same curve WAAPI took as the CSS string `cubic-bezier(0.2, 0, 0, 1)`, in
- * the shape motion-v's `Easing` accepts: a cubic-bezier is a four-number array
- * rather than a string here.
- */
-export const PANEL_MOTION_EASE: Easing = [0.2, 0, 0, 1]
-
-/**
- * Two deadlines behind the 250ms, because `animation.finished` is not a promise
- * of completion (#266).
- *
- * Web Animations run on the DOCUMENT timeline, and Chromium freezes it for a
- * window it considers hidden — which on Windows includes one another program
- * has occluded, since `backgroundThrottling` is on by default. The compositor
- * still lands the last frame, so the leaving column reaches opacity 0 while the
- * main thread never resolves `finished`. The panel is then drawn as its widest
- * composition, painting the amber ground, with every column inside it invisible
- * and awaiting a `done()` that never comes: the entirely yellow frame the issue
- * photographed, at the size the window had before the shrink.
- *
- * So a leave gets `PANEL_MOTION_WATCHDOG_MS` to report itself and is released
- * anyway after that, and the layout queue waits no longer than
- * `PANEL_LEAVE_BOUND_MS` — one margin past the watchdog, so an honest leave
- * always reports before the queue stops listening. Neither changes the 250ms a
- * focused window animates for (#164); they only bound what may follow it.
- */
-export const PANEL_MOTION_WATCHDOG_MS = PANEL_MOTION_MS + 50
-export const PANEL_LEAVE_BOUND_MS = PANEL_MOTION_WATCHDOG_MS + 50
+import type { DOMKeyframesDefinition } from 'motion-v'
+import { WATCHDOG_MARGIN_MS, motionBoundMs } from './motionTiming'
 
 /**
  * The vertical hidden offset every rising or leaving panel starts or ends at,
@@ -71,4 +42,31 @@ export function panelKeyframes(
   const opacity: [number, number] = leaving ? [1, 0] : [0, 1]
   if (vertical) return { opacity, y: leaving ? [0, PANEL_MOTION_Y] : [PANEL_MOTION_Y, 0] }
   return { opacity, x: leaving ? [0, horizontalOffsetPx] : [horizontalOffsetPx, 0] }
+}
+
+/**
+ * The bound a whole SHRINK is willing to wait on its slowest leave (#266):
+ * `usePanelLayout.boundedLeave`'s own race, and `useShellFold`'s `overrun`
+ * timer for the window catching up with a fold — both are the layout queue's
+ * own floor under a leave that never reports, never a single run's watchdog.
+ *
+ * One margin further than that per-run watchdog (`motionBoundMs`, armed
+ * fresh by `boundedMotion.run` for whatever keyframes THAT run is actually
+ * animating): the run's own watchdog is what ends an honest leave that has
+ * stopped reporting, and the queue has to always outlast it, or the shrink
+ * could fire before that leave's own watchdog ever had its say. Was a literal
+ * 350ms (`PANEL_MOTION_MS` 250 + two 50ms margins); the run's own duration is
+ * derived now, so this derives from it too rather than re-stating a number
+ * that would silently go stale the moment motion-dom's own defaults do.
+ *
+ * Derived from the SLOWEST leave the shell can run: a horizontal panel
+ * leaving the fixed 12px offset `panelMotionX`'s own unmirrored default
+ * names (every panel leave in this app travels exactly that, sign aside —
+ * `panelMotionX` only ever mirrors it for a left-docked shell, never changes
+ * its magnitude) — so a vertical leave, which fades the same 12px on `y`, or
+ * any leave with a genuinely smaller offset, is always inside this bound
+ * rather than merely usually.
+ */
+export function panelLeaveBoundMs(): number {
+  return motionBoundMs(panelKeyframes(true, false, 12)) + WATCHDOG_MARGIN_MS
 }

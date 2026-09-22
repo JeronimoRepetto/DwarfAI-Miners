@@ -1,7 +1,21 @@
 import type { BrowserWindow } from 'electron'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { emptyMessagePanel } from './messagePanelState'
 import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
+/*
+ * Crosses the main -> renderer boundary only to PIN two copies equal (see
+ * AGENTS.md's boundaries section): MESSAGE_PANEL_LEAVE_TIMEOUT_MS below,
+ * against the renderer's own derived bound for the message surface's leave —
+ * asserted in "outlasts the message surface's own leave watchdog..." below.
+ * `motionTiming.ts` is pure
+ * (no DOM globals), unlike `panelMotion.ts` beside it (`panelMotionX` reads
+ * `getComputedStyle`) — which the node-side typecheck has no "dom" lib for —
+ * so only this one file crosses, and the leave keyframes it is asked about
+ * are copied below rather than imported for the same reason. Production code
+ * never imports across this boundary either way.
+ */
+import { motionBoundMs } from '../../renderer/src/lib/shell/motionTiming'
 import {
   // ADDED for #389 — the deferred hide that lets a closing surface settle.
   MESSAGE_PANEL_LEAVE_TIMEOUT_MS,
@@ -11,6 +25,10 @@ import {
   applyAlwaysOnTop,
   buildMessagePanelWindowOptions,
   applyPanelBounds,
+  // ADDED for #570 — the page load split out of createMainWindow.
+  applyPanelPageLoad,
+  type PanelPageTarget,
+  loadPanelPage,
   applyUiScale,
   buildMainWindowOptions,
   // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
@@ -298,6 +316,66 @@ describe('buildMainWindowOptions docked bounds', () => {
         RAIL_BOUNDS
       )
     }
+  })
+})
+
+/**
+ * The page load that used to happen inside createMainWindow itself (#570).
+ *
+ * `createMainWindow` used to end by starting this load fire-and-forget —
+ * before index.ts had registered its own `ipcMain.handle` surface, several
+ * hundred lines later. A renderer fast enough to mount before that
+ * registration finished invoked `mines:get` onto a channel nobody was
+ * listening on yet, and Electron rejected it as "No handler registered for
+ * channel": silent in `pnpm dev`, where the dev server's own page load is slow
+ * enough to lose that race almost every time, and reliable in a packaged
+ * build, where `loadFile` reads local bytes and wins it (issue #570).
+ *
+ * The fix is to stop loading the page from inside window creation at all:
+ * `loadPanelPage` is now the only thing that starts this load, and index.ts
+ * calls it once, after the last `ipcMain` registration.
+ *
+ * `createMainWindow` itself is not exercised here, for the same reason no
+ * other test in this file constructs one: a real `BrowserWindow` cannot be
+ * built outside an actual Electron process — `require('electron')` there
+ * resolves to the path of its binary, not the module — so what is provable in
+ * this suite is the branch `loadPanelPage` performs, against a fake target.
+ */
+describe('applyPanelPageLoad (#570)', () => {
+  function fakePageTarget() {
+    const calls: { method: 'loadURL' | 'loadFile'; arg: string }[] = []
+    const target: PanelPageTarget = {
+      loadURL: (url) => {
+        calls.push({ method: 'loadURL', arg: url })
+      },
+      loadFile: (filePath) => {
+        calls.push({ method: 'loadFile', arg: filePath })
+      }
+    }
+    return { target, calls }
+  }
+
+  it('loads the dev server page when ELECTRON_RENDERER_URL names one', () => {
+    const { target, calls } = fakePageTarget()
+    applyPanelPageLoad(target, { ELECTRON_RENDERER_URL: 'http://localhost:5173' })
+    expect(calls).toEqual([{ method: 'loadURL', arg: 'http://localhost:5173' }])
+  })
+
+  it('loads the packaged file when there is no dev server to name one', () => {
+    const { target, calls } = fakePageTarget()
+    applyPanelPageLoad(target, {})
+    expect(calls).toEqual([
+      { method: 'loadFile', arg: join(import.meta.dirname, '../renderer/index.html') }
+    ])
+  })
+})
+
+describe('loadPanelPage (#570)', () => {
+  it('is a no-op with no window, like showPanel and placeMessagePanel guard', () => {
+    // No test in this file ever calls createMainWindow() (see the block
+    // comment above), so module-scope `mainWindow` is still null here — which
+    // is exactly the state this guard exists for.
+    expect(() => loadPanelPage()).not.toThrow()
   })
 })
 
@@ -675,6 +753,21 @@ describe('revealing a panel window nothing measured', () => {
     expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeGreaterThanOrEqual(500)
     expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeLessThanOrEqual(2000)
   })
+
+  /*
+   * ADDED for #464 (correction to T2), the reveal side's own version of the
+   * leave-side check above: unchanged at 1000ms, but that has to still be
+   * true of the DERIVED rise bound rather than an old literal this file no
+   * longer restates. A comfortable margin already, not a tie — no IPC margin
+   * named here on purpose, since this floor was never brought to the razor's
+   * edge the leave one was.
+   */
+  it('still covers the message surface’s own rise bound, with room to spare', () => {
+    const messageRiseKeyframes = { opacity: [0, 1], y: [12, 0] }
+    expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      motionBoundMs(messageRiseKeyframes)
+    )
+  })
 })
 
 /**
@@ -720,12 +813,48 @@ describe('hiding a panel window once its surface has settled', () => {
 
   it('waits out the renderer’s own bounded leave, and no longer', () => {
     // The bound is the requirement, not the number. It has to outlast the
-    // renderer's watchdog — 250ms of motion plus a margin — so an honest leave
-    // always reports before main stops listening; and it has to stay short
-    // enough that a renderer which reports nothing at all still leaves the
-    // window gone rather than standing transparent over other programs.
+    // renderer's own watchdog — the run's derived duration plus one margin,
+    // asserted below against the renderer's own copy rather than a literal
+    // this file restates — so an honest leave always reports before main
+    // stops listening; and it has to stay short enough that a renderer which
+    // reports nothing at all still leaves the window gone rather than
+    // standing transparent over other programs.
     expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeGreaterThan(300)
     expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeLessThanOrEqual(600)
+  })
+
+  /*
+   * ADDED for #566 (was: a literal 350 this file restated from the
+   * renderer's own #266 constants, now gone — see `panelMotion.ts`). Main
+   * cannot import renderer code in production (AGENTS.md), so this pins the
+   * two copies equal instead of trusting them to agree: the message
+   * surface's own leave keyframes against the SAME `motionBoundMs` the
+   * renderer's own `boundedMotion.run` arms its watchdog with. A motion-dom
+   * default that changed the derived bound would fail this test rather than
+   * silently outrunning the literal main still held.
+   *
+   * AMENDED for #464 (correction to T2): the renderer's own watchdog firing
+   * at its bound is not the same MOMENT main learns about it — the run's
+   * `settle` callback still has to execute, and `reportMessagePanelSettled`
+   * still has to cross the IPC hop, before main's own timer may safely have
+   * fired first. `IPC_MARGIN_MS` below is that room, named once so it reads
+   * as a deliberate margin rather than the zero-slack equality the bound and
+   * the constant used to share by coincidence.
+   */
+  it('outlasts the message surface’s own leave watchdog by a whole IPC margin, not merely ties it', () => {
+    // Copied, not imported: `panelKeyframes(true, true)` is the renderer's
+    // own builder for this shape, but it lives in `panelMotion.ts` beside
+    // `panelMotionX`, which reads `getComputedStyle` — a DOM global the
+    // node-side typecheck has no "dom" lib for. `MessagePanelWindow.vue`'s
+    // `settleAndLeave` is what actually runs this exact keyframe pair.
+    const messageLeaveKeyframes = { opacity: [1, 0], y: [0, 12] }
+    // The room for the renderer's `settle` callback to run and its report to
+    // cross the IPC hop, past the renderer's own watchdog firing — not
+    // covered by `motionBoundMs` itself, which only accounts for the motion.
+    const IPC_MARGIN_MS = 50
+    expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      motionBoundMs(messageLeaveKeyframes) + IPC_MARGIN_MS
+    )
   })
 })
 

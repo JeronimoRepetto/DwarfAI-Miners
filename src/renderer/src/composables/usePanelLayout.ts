@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type { PanelEdge, PanelLayout, PanelLayoutRequest } from '../types'
-import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
+import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
 
 /**
  * State for the docked shell's own shape (#90).
@@ -66,7 +66,7 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
       await Promise.race([
         waitForLeave().catch(() => undefined),
         new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, PANEL_LEAVE_BOUND_MS)
+          timer = setTimeout(resolve, panelLeaveBoundMs())
         })
       ])
     } finally {

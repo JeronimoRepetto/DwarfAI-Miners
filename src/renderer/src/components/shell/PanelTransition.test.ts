@@ -4,7 +4,8 @@ import { defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import PanelTransition from './PanelTransition.vue'
-import { PANEL_MOTION_WATCHDOG_MS } from '../../lib/shell/panelMotion'
+import { panelKeyframes } from '../../lib/shell/panelMotion'
+import { motionBoundMs } from '../../lib/shell/motionTiming'
 import type { MotionAnimate } from '../../lib/shell/boundedMotion'
 import type { ShellFoldHold } from '../../composables/useShellFold'
 
@@ -53,32 +54,32 @@ function harness(
   // (was: stubbing `element.animate`, WAAPI's own entry point, which the
   // runner no longer calls). `animate` stays a spy so the call-shape
   // assertions below keep working; only what it is called WITH changed.
-  const animate = vi.fn(
-    (element: Element, _keyframes: DOMKeyframesDefinition, _options: unknown) => {
-      let resolve!: () => void
-      const finished = new Promise<void>((res) => {
-        resolve = res
-      })
-      const cancel = vi.fn()
-      // Writes a stray inline value the way the real engine would, so a test
-      // can prove the panel gets it handed back rather than keeping it —
-      // `PanelTransition` passes no `settle` of its own, unlike `useShellFold`
-      // and `MessagePanelWindow`.
-      const finish = (): void => {
-        ;(element as HTMLElement).style.opacity = '1'
-        resolve()
-      }
-      animations.push({ finish, cancel })
-      return {
-        complete: () => undefined,
-        stop: cancel,
-        then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
-      }
+  //
+  // AMENDED again for #566: no third `options` argument any more — the
+  // runner passes `animate()` no transition at all now, so a fake that took
+  // one would be shaped for a call the real runner never makes.
+  const animate = vi.fn((element: Element, _keyframes: DOMKeyframesDefinition) => {
+    let resolve!: () => void
+    const finished = new Promise<void>((res) => {
+      resolve = res
+    })
+    const cancel = vi.fn()
+    // Writes a stray inline value the way the real engine would, so a test
+    // can prove the panel gets it handed back rather than keeping it —
+    // `PanelTransition` passes no `settle` of its own, unlike `useShellFold`
+    // and `MessagePanelWindow`.
+    const finish = (): void => {
+      ;(element as HTMLElement).style.opacity = '1'
+      resolve()
     }
-  ) as unknown as (
+    animations.push({ finish, cancel })
+    return {
+      cancel,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }) as unknown as (
     element: Element,
-    keyframes: DOMKeyframesDefinition,
-    options: unknown
+    keyframes: DOMKeyframesDefinition
   ) => ReturnType<MotionAnimate>
   const shown = ref(false)
   const leaves: Promise<void>[] = []
@@ -126,15 +127,16 @@ function harness(
 }
 
 describe('PanelTransition', () => {
-  it('animates entry and retains an inert leaving panel until its exact 250ms animation finishes', async () => {
+  it('animates entry and retains an inert leaving panel until its motion actually finishes', async () => {
     const test = harness()
     test.shown.value = true
     await nextTick()
-    expect(test.animate).toHaveBeenLastCalledWith(
-      expect.any(HTMLElement),
-      { opacity: [0, 1], x: [12, 0] },
-      { duration: 0.25, ease: [0.2, 0, 0, 1] }
-    )
+    // No transition is asked for any more (#566) — the runner hands motion-v
+    // only the keyframes, and lets `getDefaultTransition` pick.
+    expect(test.animate).toHaveBeenLastCalledWith(expect.any(HTMLElement), {
+      opacity: [0, 1],
+      x: [12, 0]
+    })
     test.animations[0]!.finish()
     await nextTick()
     test.shown.value = false
@@ -232,7 +234,12 @@ describe('PanelTransition', () => {
     void test.leaves[0]!.then(() => {
       released = true
     })
-    await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+    // The default harness is a horizontal dock: the same leave keyframes
+    // `PanelTransition.run` actually animates (`panelKeyframes(true, false,
+    // 12)` — `panelMotionX` reads jsdom's absent `--panel-motion-x` as its
+    // own 12px fallback), so the watchdog this waits out is the one the run
+    // itself would be armed with.
+    await vi.advanceTimersByTimeAsync(motionBoundMs(panelKeyframes(true, false, 12)))
     await nextTick()
     expect(released).toBe(true)
     expect(test.animations[1]!.cancel).toHaveBeenCalledOnce()
@@ -381,15 +388,14 @@ describe('PanelTransition', () => {
     test.wrapper.unmount()
   })
 
-  it('uses the same fixed timing for a vertical dock and releases its leave on teardown', async () => {
+  it('uses the same keyframe shape for a vertical dock and releases its leave on teardown', async () => {
     const test = harness(false, 'vertical')
     test.shown.value = true
     await nextTick()
-    expect(test.animate).toHaveBeenCalledWith(
-      expect.any(HTMLElement),
-      { opacity: [0, 1], y: [12, 0] },
-      { duration: 0.25, ease: [0.2, 0, 0, 1] }
-    )
+    expect(test.animate).toHaveBeenCalledWith(expect.any(HTMLElement), {
+      opacity: [0, 1],
+      y: [12, 0]
+    })
     test.shown.value = false
     await nextTick()
     test.wrapper.unmount()
