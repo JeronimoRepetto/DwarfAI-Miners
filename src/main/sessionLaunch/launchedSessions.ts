@@ -1,5 +1,5 @@
 import { sameProcessStart } from '../platform/processProbe'
-import type { DwarfProvider, Mine } from '../domain/types'
+import type { DwarfProvider, Mine, TurnOutcome } from '../domain/types'
 import type { LaunchTuning } from '../domain/launchTuning'
 import type { LaunchedSessionStore } from './launchedSessionStore'
 
@@ -106,6 +106,16 @@ export interface LaunchedProcess {
   pid: number
   onExit(listener: () => void): void
   onEarlyFailure?(listener: (failure: LaunchFailure) => void): void
+  /**
+   * What this launch's own turn concluded (#510) — told at most once, and
+   * only once the child has exited; a late subscriber (this registry's own
+   * `retain()`, which runs synchronously right after this handle comes back,
+   * well before a real turn ends) is told the latched answer immediately,
+   * the same latch-and-replay `onEarlyFailure` already is. Optional for the
+   * same reason that one is: a test fixture built before #510 never has to
+   * grow one.
+   */
+  onTurnOutcome?(listener: (outcome: TurnOutcome) => void): void
 }
 
 export interface RetainLaunchRequest {
@@ -166,6 +176,18 @@ interface LaunchRecord {
    * pair instead; see `tuningOfDwarf`.
    */
   tuning?: LaunchTuning
+  /**
+   * What this launch's own turn concluded (#510) — in memory only, on
+   * purpose: `docs/privacy.md` promises no message text this panel displays
+   * is written to disk, and a concluded turn's own text is exactly that. A
+   * RESTORED record can never carry one either way: it is rebuilt from a
+   * store row with no such column, and by the time a launch is restored its
+   * process (and the temp files `TurnOutcomeWatch` would have read) are long
+   * gone from a run that was not there to see the exit — there is no live
+   * mechanism left to attach an outcome to, so none is invented. See
+   * `lastTurnOfDwarf`.
+   */
+  lastTurn?: TurnOutcome
 }
 
 export interface LaunchedSessionRegistryOptions {
@@ -239,6 +261,11 @@ export class LaunchedSessionRegistry {
     request.process.onExit(() => {
       record.gone = true
       this.forget(launchId)
+    })
+    // #510. Latched onto the record in memory only — see `LaunchRecord.lastTurn`
+    // on why this never reaches the store.
+    request.process.onTurnOutcome?.((outcome) => {
+      record.lastTurn = outcome
     })
     return launchId
   }
@@ -472,6 +499,20 @@ export class LaunchedSessionRegistry {
   }
 
   /**
+   * What this dwarf's own launch concluded (#510), or undefined when its
+   * turn has not ended yet, this panel never launched it, or the record is a
+   * RESTORED one — see `LaunchRecord.lastTurn` for why a restored launch can
+   * never carry one. Reads `byDwarf` → `records` exactly as `tuningOfDwarf`
+   * does, and for the same reason: the record outlives the process, so this
+   * stays answerable for the whole run after the launch has already exited.
+   */
+  lastTurnOfDwarf(dwarfId: string): TurnOutcome | undefined {
+    const launchId = this.byDwarf.get(dwarfId)
+    if (launchId === undefined) return undefined
+    return this.records.get(launchId)?.lastTurn
+  }
+
+  /**
    * End one launch's process tree.
    *
    * Never signals a launch already gone, and never claims success the platform
@@ -511,4 +552,31 @@ export class LaunchedSessionRegistry {
     const probed = await this.probeCreation(record.pid)
     return probed !== null && sameProcessStart(probed, recorded)
   }
+}
+
+/**
+ * Put every launched dwarf's own concluded turn onto the board (#510) — the
+ * one-shot twin of `stampHeldTelemetry` (`heldSession.ts`), and the same
+ * shape `stampLaunchReceipts` (`launchReceipts.ts`) already follows for this
+ * same family of launch-correlated facts: keyed by dwarf id, and only ever
+ * ADDS. A dwarf this panel never launched, or whose launch has not concluded
+ * a turn yet, comes back exactly as it went in.
+ *
+ * Never collides with a HELD session's own `lastTurn` (`stampHeldTelemetry`):
+ * a held dwarf is never in `LaunchedSessionRegistry` at all — it is started
+ * through the separate held-session path, never through `launchClaudeSession`
+ * — so `lastTurnOf` answers undefined for one and this stamp leaves it alone
+ * for the later held stamp to fill in.
+ */
+export function stampLaunchedTurnOutcome(
+  mines: readonly Mine[],
+  lastTurnOf: (dwarfId: string) => TurnOutcome | undefined
+): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) => {
+      const lastTurn = lastTurnOf(dwarf.id)
+      return lastTurn === undefined ? dwarf : { ...dwarf, lastTurn }
+    })
+  }))
 }

@@ -11,7 +11,7 @@ import {
   notInstalledReason
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
-import type { AgentLaunchResult, DwarfProvider } from '../domain/types'
+import type { AgentLaunchResult, DwarfProvider, TurnOutcome } from '../domain/types'
 import {
   describeProgramFailure,
   describeShimRefusal,
@@ -20,8 +20,9 @@ import {
 } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import { buildRelayEnv } from '../textDelivery/relay'
-import { buildLaunchArgs, prepareLaunchPrompt } from './launch'
+import { ONE_SHOT_STDOUT_IS_TURN_TEXT, buildLaunchArgs, prepareLaunchPrompt } from './launch'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
+import { oneShotTurnOutcome } from './oneShotTurnOutcome'
 
 /**
  * Running the launch: the spawn seam, and the mapping from every way it can go
@@ -81,6 +82,19 @@ export const EARLY_FAILURE_WINDOW_MS = 3_000
 export const STDERR_TAIL_BYTES = 4 * 1024
 
 /**
+ * Bound on the stdout this app reads back from a launched child (#510) —
+ * the same reasoning as `STDERR_TAIL_BYTES`, sized differently on purpose. A
+ * concluded turn's own final answer is ordinarily prose or code, not the
+ * handful of lines an early refusal's stderr is, so this is 4x
+ * `STDERR_TAIL_BYTES`: generous enough that a real answer almost never hits
+ * the bound, while still refusing to read an unbounded flood into memory.
+ * `boundTurnText` (contracts.ts, char-bounded at `MAX_DWARF_TEXT_CHARS`) is
+ * the wire's own further cut; this is the byte-level floor beneath it, read
+ * back exactly as `STDERR_TAIL_BYTES` already is.
+ */
+export const STDOUT_TAIL_BYTES = 16 * 1024
+
+/**
  * Where a launched child's stderr is captured (#263) — a small, synchronous
  * port of its own rather than a `FsLike` member: that one is async and
  * read-oriented, built for providers reading a session's transcript, and
@@ -111,20 +125,54 @@ export interface StderrFile {
 }
 
 /**
- * The real, disk-backed `StderrFile` (#263) — the seam `runLaunchProcess` is
- * written against, so no unit test other than the one proving THIS works
- * touches a real file. Named on the same pattern this project already uses
- * for "the real implementation of a small port" (`createNodeHostedProcess`,
- * `createSdkModelCatalog`).
+ * `StderrFile`'s own twin for stdout (#510) — same shape, same lifecycle
+ * (opened before `spawn`, this process's own fd closed the instant `spawn`
+ * has taken it, read back bounded, removed after reading), a separate named
+ * type rather than a shared one because a real launch opens two distinct
+ * files for two distinct fds, and a reader should never have to check which
+ * concept a `StderrFile` value stands for at a given call site.
+ *
+ * Also the port a Codex launch reads its OWN `-o` file back through
+ * (`LaunchInvocation.outputFile`) — that file is never opened by this app
+ * (Codex writes it directly), so only `readTail`/`remove` are ever called
+ * against it, never `openForWrite`.
+ */
+export interface StdoutFile {
+  /** A fresh, unique path for one launch's own capture file. */
+  path(): string
+  /** Opens `path` for writing and returns the fd `buildLaunchSpawn` hands to `spawn`. */
+  openForWrite(path: string): number
+  /**
+   * Closes the CALLER's copy of the fd — see `runLaunchProcess` on why this
+   * is safe the instant `spawn` has taken it.
+   */
+  close(fd: number): void
+  /**
+   * The last `maxBytes` written to `path` right now, or `''` if it cannot be
+   * read — already removed, never created, or a genuine I/O error all read
+   * the same way here: nothing to show is not a fact worth failing over.
+   */
+  readTail(path: string, maxBytes: number): string
+  /** Removes `path`; safe to call on one already gone. */
+  remove(path: string): void
+}
+
+/**
+ * The real, disk-backed capture file both `createNodeStderrFile` and
+ * `createNodeStdoutFile` are (#263, #510) — one private implementation
+ * shared by both, since the two are identical apart from the filename that
+ * says which fd a given temp file belongs to. Named on the same pattern
+ * this project already uses for "the real implementation of a small port"
+ * (`createNodeHostedProcess`, `createSdkModelCatalog`).
  *
  * `node:os`'s `tmpdir()`, never Electron's `app.getPath('temp')`: this
  * module has no Electron import anywhere in it, by design (see the module
  * comment — it is composed in the runtime rather than in
  * platformAdapters) — and a temp directory is a Node fact, not an app one.
  */
-export function createNodeStderrFile(): StderrFile {
+function createNodeCaptureFile(kind: 'stderr' | 'stdout'): StderrFile {
   return {
-    path: () => join(tmpdir(), `dwarfai-launch-stderr-${randomUUID()}.log`),
+    path: () => join(tmpdir(), `dwarfai-launch-${kind}-${randomUUID()}.log`),
     openForWrite: (path) => openSync(path, 'w'),
     close: (fd) => {
       try {
@@ -160,6 +208,14 @@ export function createNodeStderrFile(): StderrFile {
       }
     }
   }
+}
+
+export function createNodeStderrFile(): StderrFile {
+  return createNodeCaptureFile('stderr')
+}
+
+export function createNodeStdoutFile(): StdoutFile {
+  return createNodeCaptureFile('stdout')
 }
 
 /**
@@ -227,6 +283,87 @@ class EarlyFailureWatch {
   }
 }
 
+/**
+ * Watches one child for what its own turn concluded (#510) — the one-shot
+ * twin of a held session's `turn: 'ended'` signal. Reads the stdout and
+ * stderr this launch captured on exit, maps them through the pure
+ * `oneShotTurnOutcome`, and latches the result the same way
+ * `EarlyFailureWatch` latches its own — a subscriber (the launch registry)
+ * attaches after `retainedProcess` has already returned, and a fast-exiting
+ * child must not lose the outcome to a listener that has not arrived yet.
+ *
+ * Registered BEFORE `EarlyFailureWatch` inside `retainedProcess`, which
+ * matters and is not a race: Node calls `once('exit', …)` listeners on one
+ * EventEmitter in the order they were added, and `EarlyFailureWatch` removes
+ * the stderr file on EVERY exit regardless of the failure window. Reading
+ * the stderr tail here first is what lets that removal, wherever it runs,
+ * find nothing left to do rather than a race over who reads it first.
+ *
+ * Codex's own `-o` file (`outputFile`, when the invocation carries one) is
+ * preferred over the piped stdout tail whenever it actually has something in
+ * it — stdout also carries whatever the run printed along the way, where the
+ * output file carries only the clean final message. Both `stdoutPath` and
+ * `outputFile` are removed unconditionally on exit, the same discipline
+ * `EarlyFailureWatch` already holds for stderr.
+ */
+class TurnOutcomeWatch {
+  private latched: TurnOutcome | null = null
+  private listener: ((outcome: TurnOutcome) => void) | null = null
+
+  constructor(
+    child: LaunchChild,
+    private readonly stdoutPath: string,
+    private readonly stdoutFile: StdoutFile,
+    private readonly stderrPath: string,
+    private readonly stderrFile: StderrFile,
+    private readonly outputFile: string | undefined,
+    private readonly stdoutIsTurnText: boolean,
+    private readonly now: () => number
+  ) {
+    child.once('exit', (code, signal) => {
+      const stderrTail = this.stderrFile.readTail(this.stderrPath, STDERR_TAIL_BYTES)
+      const outputText =
+        this.outputFile === undefined
+          ? ''
+          : this.stdoutFile.readTail(this.outputFile, STDOUT_TAIL_BYTES)
+      const stdoutTail =
+        outputText !== ''
+          ? outputText
+          : this.stdoutFile.readTail(this.stdoutPath, STDOUT_TAIL_BYTES)
+      this.stdoutFile.remove(this.stdoutPath)
+      if (this.outputFile !== undefined) this.stdoutFile.remove(this.outputFile)
+      this.latch(
+        oneShotTurnOutcome({
+          exitCode: code,
+          signal,
+          stdoutTail,
+          stderrTail,
+          // #510 correction. The file is still read back the same mechanical
+          // way regardless — removing an unread capture is still this
+          // watch's job — but whether that capture may become `text` is
+          // decided by the pure function below, never here.
+          stdoutIsTurnText: this.stdoutIsTurnText,
+          now: this.now()
+        })
+      )
+    })
+  }
+
+  private latch(outcome: TurnOutcome): void {
+    this.latched = outcome
+    this.listener?.(outcome)
+  }
+
+  /** Told now if the outcome already latched, or whenever it does. At most once either way. */
+  subscribe(listener: (outcome: TurnOutcome) => void): void {
+    if (this.latched !== null) {
+      listener(this.latched)
+      return
+    }
+    this.listener = listener
+  }
+}
+
 /*
  * `PRODUCT_NAME` moved to domain/launchProviders.ts for #237, step 5: the held
  * registry needs the same table now that a second provider can be held, and
@@ -259,6 +396,32 @@ export interface LaunchInvocation {
    * platform/cliDetection.ts, which is what read the shim.
    */
   viaNodeEntry: boolean
+  /**
+   * Whether THIS launch's stdout capture is its provider's own turn TEXT, or
+   * an opaque machine envelope `oneShotTurnOutcome` must not read as one
+   * (#510 correction) — `ONE_SHOT_STDOUT_IS_TURN_TEXT` (launch.ts)'s verdict
+   * for `options.provider`, read once by `launchClaudeSession` and carried
+   * here unchanged.
+   *
+   * A required field rather than an optional one defaulting to `true`, on
+   * the same reasoning `viaNodeEntry` above already is: this app does not
+   * invent an answer it has not measured for a provider a future caller
+   * forgets to name, the same discipline `buildLaunchArgs`'s own exhaustive
+   * switch (launch.ts) already holds for argv. `buildLaunchSpawn` itself
+   * never reads this field — the CAPTURE stays provider-agnostic, on
+   * purpose — only `TurnOutcomeWatch`'s exit handler does.
+   */
+  stdoutIsTurnText: boolean
+  /**
+   * A path some CLIs write their own final message to directly (#510) — set
+   * today only for Codex, whose `-o, --output-last-message <FILE>` this
+   * app's own argv includes when it is present (see `launchClaudeSession`).
+   * `TurnOutcomeWatch` prefers this file's content over the piped stdout
+   * tail whenever it has anything in it. This app never opens the file for
+   * writing — the CLI creates and writes it itself — only reads it back
+   * bounded and removes it on exit, through the same `StdoutFile` port.
+   */
+  outputFile?: string
 }
 
 /**
@@ -420,6 +583,7 @@ export const CONSOLE_HOSTING_PROGRAM = [
  */
 export function buildLaunchSpawn(
   invocation: LaunchInvocation,
+  stdoutFd: number,
   stderrFd: number
 ): {
   command: string
@@ -430,20 +594,24 @@ export function buildLaunchSpawn(
     cwd: invocation.cwd,
     env: invocation.env,
     detached: true,
-    // stderr is a FILE's own fd, never a pipe and never 'ignore' (#263).
+    // stdout and stderr are each a FILE's own fd, never a pipe and never
+    // 'ignore' (#263, #510).
     //
     // A pipe's PARENT end belongs to THIS process, and this launch is
     // detached and unref'd on purpose so the session survives the panel
     // quitting (#231) — that is the whole point of a detached launch, not
     // an edge case of it. The moment this process exits, the pipe's read
     // end goes with it, and the next time the still-running child writes to
-    // stderr it gets EPIPE (or the Windows equivalent of a handle that is
-    // simply gone) instead of the write it asked for — which can kill a
-    // session that was never asked to end. "The panel restarted" must never
-    // become "every launched session dies the next time it logs a
-    // warning". 'ignore' has no such hazard, but it is the ORIGINAL gap
-    // this issue exists to close: the words are thrown away and nothing
-    // here can ever say why a launch failed.
+    // stdout or stderr it gets EPIPE (or the Windows equivalent of a handle
+    // that is simply gone) instead of the write it asked for — which can
+    // kill a session that was never asked to end. "The panel restarted"
+    // must never become "every launched session dies the next time it logs
+    // a warning". 'ignore' has no such hazard, but for stdout it was the
+    // ORIGINAL gap #510 exists to close: the very words a one-shot launch
+    // concludes with were thrown away and nothing could ever say what it
+    // answered — 'ignore' was there in the first place only to keep an
+    // unread pipe from stalling the child, which a captured fd already does
+    // not do (it is read from, not written to, by this app).
     //
     // A file has neither problem. There is no reader on the far end to
     // disappear — it is a plain file, opened by `runLaunchProcess` before
@@ -451,7 +619,7 @@ export function buildLaunchSpawn(
     // has taken it, which does not touch the child's own duplicate of the
     // fd — and the bytes are still sitting on disk whenever this app is
     // actually still around to read them.
-    stdio: ['pipe', 'ignore', stderrFd],
+    stdio: ['pipe', stdoutFd, stderrFd],
     windowsHide: true
   }
   if (!invocation.viaNodeEntry) {
@@ -473,12 +641,11 @@ export function buildLaunchSpawn(
  * observer of sessions, and one that died whenever the tray icon quit would be
  * a worse thing than what a terminal already gives the user. stdin is the
  * prompt's only transport and is closed straight after writing — the child then
- * has no stream anyone here reads on stdin, which is also why stdout is
- * ignored rather than piped: an unread pipe fills and stalls the child.
- * stderr is the one exception (#263): captured to a FILE, never ignored and
- * never piped, for the reason `buildLaunchSpawn` states at length — a pipe's
- * parent end would disappear the moment this process exits, and this launch
- * exists specifically to survive that (#231).
+ * has no stream anyone here reads on stdin. Both stdout and stderr are
+ * captured to a FILE, never ignored and never piped (#263, #510), for the
+ * reason `buildLaunchSpawn` states at length — a pipe's parent end would
+ * disappear the moment this process exits, and this launch exists
+ * specifically to survive that (#231).
  *
  * No `shell`, ever, and `detached` is not negotiable — the two are linked. A
  * detached cmd.exe has no console and starts no external program (exit 0,
@@ -491,18 +658,26 @@ export function buildLaunchSpawn(
  * console host first, for the reasons `buildLaunchSpawn` sets out (#208). The
  * prompt still goes to the process this function spawned, which passes that
  * pipe down the chain by inheritance.
+ *
+ * `now` (#510) is `Date.now` by default; a test injects a fixed clock so a
+ * captured `TurnOutcome`'s `endedAt` is asserted exactly rather than merely
+ * "close to now".
  */
 export function runLaunchProcess(
   invocation: LaunchInvocation,
   spawnProcess: SpawnLaunch = spawn,
-  stderrFile: StderrFile = createNodeStderrFile()
+  stderrFile: StderrFile = createNodeStderrFile(),
+  stdoutFile: StdoutFile = createNodeStdoutFile(),
+  now: () => number = Date.now
 ): Promise<LaunchedProcess | undefined> {
   return new Promise((resolve, reject) => {
     let settled = false
     let child: LaunchChild
     const stderrPath = stderrFile.path()
     const stderrFd = stderrFile.openForWrite(stderrPath)
-    const call = buildLaunchSpawn(invocation, stderrFd)
+    const stdoutPath = stdoutFile.path()
+    const stdoutFd = stdoutFile.openForWrite(stdoutPath)
+    const call = buildLaunchSpawn(invocation, stdoutFd, stderrFd)
     try {
       child = spawnProcess(call.command, call.args, call.options)
     } catch (error) {
@@ -510,18 +685,22 @@ export function runLaunchProcess(
       // opened for it rather than leaving an empty file behind.
       stderrFile.close(stderrFd)
       stderrFile.remove(stderrPath)
+      stdoutFile.close(stdoutFd)
+      stdoutFile.remove(stdoutPath)
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
-    // This process's own copy of the fd is closed the instant `spawn` has
-    // taken it (#263) — see `buildLaunchSpawn`'s note on why that is safe:
-    // the child keeps its own duplicate of the fd, and closing this one
-    // does not touch that.
+    // This process's own copy of each fd is closed the instant `spawn` has
+    // taken it (#263, #510) — see `buildLaunchSpawn`'s note on why that is
+    // safe: the child keeps its own duplicate of the fd, and closing this
+    // one does not touch that.
     stderrFile.close(stderrFd)
+    stdoutFile.close(stdoutFd)
     child.once('error', (error) => {
       if (settled) return
       settled = true
       stderrFile.remove(stderrPath)
+      stdoutFile.remove(stdoutPath)
       reject(error)
     })
     child.once('spawn', () => {
@@ -533,7 +712,18 @@ export function runLaunchProcess(
       child.stdin?.on('error', () => {})
       child.stdin?.end(invocation.stdin)
       child.unref()
-      resolve(retainedProcess(child, stderrPath, stderrFile))
+      resolve(
+        retainedProcess(
+          child,
+          stdoutPath,
+          stdoutFile,
+          stderrPath,
+          stderrFile,
+          invocation.outputFile,
+          invocation.stdoutIsTurnText,
+          now
+        )
+      )
     })
   })
 }
@@ -553,21 +743,40 @@ export function runLaunchProcess(
  */
 function retainedProcess(
   child: LaunchChild,
+  stdoutPath: string,
+  stdoutFile: StdoutFile,
   stderrPath: string,
-  stderrFile: StderrFile
+  stderrFile: StderrFile,
+  outputFile: string | undefined,
+  stdoutIsTurnText: boolean,
+  now: () => number
 ): LaunchedProcess | undefined {
   const pid = child.pid
   if (pid === undefined) {
-    // Nothing to hold means nothing to watch either (#263) — this file will
-    // never be read, because there is no handle left to correlate an exit
-    // to, so there is no reason to wait for one.
+    // Nothing to hold means nothing to watch either (#263, #510) — these
+    // files will never be read, because there is no handle left to
+    // correlate an exit to, so there is no reason to wait for one.
+    stdoutFile.remove(stdoutPath)
     stderrFile.remove(stderrPath)
     return undefined
   }
-  // Watching starts now, unconditionally, rather than only once a caller
-  // subscribes (#263): the failure this exists to catch can happen within
-  // milliseconds of spawning, and EarlyFailureWatch's own latch is what
-  // keeps a subscriber that arrives a tick later from losing it.
+  // TurnOutcomeWatch is registered BEFORE EarlyFailureWatch, on purpose —
+  // see TurnOutcomeWatch's own comment on why the order of these two exit
+  // listeners matters. Both start now, unconditionally, rather than only
+  // once a caller subscribes (#263): the failure EarlyFailureWatch exists to
+  // catch can happen within milliseconds of spawning, and each watch's own
+  // latch is what keeps a subscriber that arrives a tick later from losing
+  // its answer.
+  const turnOutcome = new TurnOutcomeWatch(
+    child,
+    stdoutPath,
+    stdoutFile,
+    stderrPath,
+    stderrFile,
+    outputFile,
+    stdoutIsTurnText,
+    now
+  )
   const earlyFailure = new EarlyFailureWatch(child, stderrPath, stderrFile)
   return {
     pid,
@@ -576,6 +785,9 @@ function retainedProcess(
     },
     onEarlyFailure: (listener) => {
       earlyFailure.subscribe(listener)
+    },
+    onTurnOutcome: (listener) => {
+      turnOutcome.subscribe(listener)
     }
   }
 }
@@ -600,6 +812,24 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
   /** Reads a batch shim for the program it points at (#193); the same fs detection probes with. */
   fs: FsLike
   run: LaunchRunner
+  /**
+   * Where Codex's own `-o` flag will write the turn's final message directly
+   * (#510) — ignored by every other provider. Defaults to a fresh real temp
+   * path per call; a test injects a fixed one so it can assert argv and
+   * `LaunchInvocation.outputFile` against a known value.
+   */
+  codexOutputPath?: () => string
+}
+
+/**
+ * The default `codexOutputPath` generator (#510) — a real, unique temp path,
+ * on the same `dwarfai-launch-<kind>-<uuid>.log` naming `createNodeCaptureFile`
+ * already uses for the stdout/stderr capture files. Not built from a
+ * `StdoutFile`/`StderrFile` port: this app never opens the file for writing
+ * (Codex does), so only a fresh name is needed here, never `openForWrite`.
+ */
+function defaultCodexOutputPath(): string {
+  return join(tmpdir(), `dwarfai-launch-codex-output-${randomUUID()}.log`)
 }
 
 /**
@@ -662,6 +892,16 @@ export async function launchClaudeSession(
         error: couldNotStart(options.provider, program.shimPath, describeShimRefusal(program))
       }
     }
+    // #510. Only Codex has a `-o` flag; every other provider's builder
+    // simply never sees this value (see `buildLaunchArgs`'s own comment).
+    // Minted once, here, so the SAME path both lands in argv and travels on
+    // the invocation for `TurnOutcomeWatch` to read back on exit — the two
+    // must agree, and the caller (Codex itself) is who writes the file, so
+    // this app decides the name and nothing else about it.
+    const codexOutputPath =
+      options.provider === 'codex'
+        ? (options.codexOutputPath ?? defaultCodexOutputPath)()
+        : undefined
     const started = await options.run({
       command: program.command,
       // The tuning belongs to the CLI's own argv, so it lands AFTER a shim's
@@ -669,10 +909,14 @@ export async function launchClaudeSession(
       // node rather than to the program node is about to run.
       args: [
         ...program.args,
-        ...buildLaunchArgs(options.provider, {
-          ...(options.model === undefined ? {} : { model: options.model }),
-          ...(options.effort === undefined ? {} : { effort: options.effort })
-        })
+        ...buildLaunchArgs(
+          options.provider,
+          {
+            ...(options.model === undefined ? {} : { model: options.model }),
+            ...(options.effort === undefined ? {} : { effort: options.effort })
+          },
+          codexOutputPath
+        )
       ],
       // The relay's env rule, for the relay's reason: a re-exec of the CLI
       // inside the child must reach the install detection found rather than
@@ -681,7 +925,12 @@ export async function launchClaudeSession(
       env: buildRelayEnv(options.env, detection.path, options.platform),
       cwd: options.minePath,
       stdin: prompt,
-      viaNodeEntry: program.viaNodeEntry
+      viaNodeEntry: program.viaNodeEntry,
+      // #510 correction. Read once here, from the table that decides it
+      // beside each provider's own argv (`ONE_SHOT_STDOUT_IS_TURN_TEXT`,
+      // launch.ts) — never re-derived at the point that reads the capture.
+      stdoutIsTurnText: ONE_SHOT_STDOUT_IS_TURN_TEXT[options.provider],
+      ...(codexOutputPath === undefined ? {} : { outputFile: codexOutputPath })
     })
     // Reported rather than kept: whoever asked for the launch decides whether
     // to hold onto it, because deciding needs the board and this does not have

@@ -268,6 +268,17 @@ function selectDefaultEffort(value: string): void {
         </div>
       </div>
 
+      <!--
+        Why the last preference write did not take. Absent when it did.
+
+        `role="alert"`, because nothing else on screen moved: the mark stays
+        on the profile actually in force, which is the honest drawing and also
+        the reason a failure is invisible without this line.
+      -->
+      <p v-if="props.settings.preferencesError" class="preferences-error" role="alert">
+        {{ props.settings.preferencesError }}
+      </p>
+
       <div v-if="props.settings.configured" class="jev-default-launch">
         <span class="row-label">Default launch</span>
         <div class="default-launch-row">
@@ -444,6 +455,12 @@ function selectDefaultEffort(value: string): void {
 .profile-option:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
+}
+.preferences-error {
+  margin: 0;
+  color: var(--color-cream);
+  font-size: var(--text-helper);
+  line-height: 1.4;
 }
 .profile-name {
   font-size: var(--text-meta);

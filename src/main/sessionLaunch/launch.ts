@@ -160,13 +160,29 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * Both go BEFORE the `-` positional, because the usage line is
  * `codex exec [OPTIONS] [PROMPT]`: a flag written after the prompt would be
  * read as an argument to it rather than as an option.
+ *
+ * ## The output path, and why it is a third parameter rather than tuning (#510)
+ *
+ * `-o, --output-last-message <FILE>` (codex-cli 0.153.4's own
+ * `codex exec --help`) writes ONLY the turn's final message to that file —
+ * cleaner than the stdout tail `launchRunner.ts` reads for every provider,
+ * since Codex's stdout also carries whatever the run printed along the way.
+ * It is not `LaunchTuning` (model/effort are what a PERSON chose; this is a
+ * temp path `launchClaudeSession` mints per launch, unrelated to tuning) and
+ * it goes before the trailing `-` for the same reason the two tuning flags
+ * do — a flag after the prompt positional would be read as its argument.
  */
-export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
-  // The two flags above come from `codexTuningArgs` (#462), the one builder
-  // this and `buildCodexResumeArgs` both delegate to, so the
+export function buildCodexLaunchArgs(tuning: LaunchTuning = {}, outputPath?: string): string[] {
+  // The two tuning flags above come from `codexTuningArgs` (#462), the one
+  // builder this and `buildCodexResumeArgs` both delegate to, so the
   // `model_reasoning_effort` key is spelled in exactly one place rather than
   // twice and at risk of drifting apart.
-  return ['exec', ...codexTuningArgs(tuning), '-']
+  return [
+    'exec',
+    ...codexTuningArgs(tuning),
+    ...(outputPath === undefined ? [] : ['-o', outputPath]),
+    '-'
+  ]
 }
 
 /**
@@ -190,10 +206,16 @@ export function buildCodexLaunchArgs(tuning: LaunchTuning = {}): string[] {
  *
  * `--input-format text` is passed explicitly rather than left to the
  * documented default, for the same reason Claude's and Codex's own argv do:
- * a default can move under us. No `--output-format` is passed — nothing
- * here ever reads the launched process's stdout (launchRunner.ts's `stdio`
- * is `['pipe', 'ignore', 'ignore']`), so there is nothing for a structured
- * output format to serve.
+ * a default can move under us. No `--output-format` is passed, and that
+ * still holds after #510's correction, for a different reason than it once
+ * did: `launchRunner.ts`'s `stdio` is `['pipe', stdoutFd, stderrFd]` now —
+ * every provider's stdout IS captured to a file, this one included — so
+ * this is no longer "nothing reads it". What holds is that Antigravity's
+ * own DEFAULT format (`text`, quoted above) is already the plain response
+ * `TurnOutcomeWatch` needs: see `ONE_SHOT_STDOUT_IS_TURN_TEXT` below, where
+ * `antigravity` is `true` on the strength of this CLI's own headless docs.
+ * Asking for a structured format here would trade a shape this app already
+ * reads correctly for one nothing here has measured.
  *
  * `-p` is deliberately ABSENT. The prior slice included it on an unverified
  * assumption — that a bare `-p` with no positional prompt reads its prompt
@@ -248,10 +270,18 @@ export function buildAntigravityLaunchArgs(tuning: LaunchTuning = {}): string[] 
  * (`session.model.variant` echoes the chosen one back, M1) — not
  * `--model`/`--effort` the way Claude's and Antigravity's own argv spell
  * theirs, and not Codex's `-c model_reasoning_effort=`. `--format json` is
- * what every measured invocation ran with; nothing here ever reads the
- * launched process's stdout (launchRunner.ts's `stdio` is `['pipe',
- * 'ignore', stderrFd]`), so there is nothing for a different output format
- * to serve.
+ * what every measured invocation ran with. `launchRunner.ts`'s `stdio` is
+ * `['pipe', stdoutFd, stderrFd]` now (#510's own correction) — every
+ * provider's stdout is captured to a file the same way, this one included —
+ * but that capture is still never read as OpenCode's own answer: `--format
+ * json` is a stream of raw JSON EVENTS (`opencode run --help` documents only
+ * that much; `docs/opencode-format.md` covers the `opencode.db` store this
+ * app actually reads OpenCode's transcript from, never this stream), so
+ * `ONE_SHOT_STDOUT_IS_TURN_TEXT.opencode` below is `false` and
+ * `oneShotTurnOutcome` never turns this capture into `text`. `json` stays
+ * because it is the flag every measurement in `docs/opencode-format.md` ran
+ * with, not because anything here parses it — switching format on a guess
+ * would be trading one unmeasured shape for another.
  *
  * An absent `model`/`effort` adds nothing, on the same terms as the three
  * builders above: whatever `opencode run` does with no `-m` at all is the
@@ -293,13 +323,22 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * and Codex's is `-c model_reasoning_effort=<level>`, which is not a variant
  * spelling of the same flag but a different mechanism. One shared tail here
  * would hand each CLI the other's.
+ *
+ * `codexOutputPath` (#510) is dispatched the same conservative way: it is
+ * Codex's own `-o` file and nothing else, so every other provider's builder
+ * simply never sees the parameter — never a shared "output path" concept
+ * applied to a CLI that has no such flag.
  */
-export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = {}): string[] {
+export function buildLaunchArgs(
+  provider: DwarfProvider,
+  tuning: LaunchTuning = {},
+  codexOutputPath?: string
+): string[] {
   switch (provider) {
     case 'claude':
       return buildClaudeLaunchArgs(tuning)
     case 'codex':
-      return buildCodexLaunchArgs(tuning)
+      return buildCodexLaunchArgs(tuning, codexOutputPath)
     case 'antigravity':
       // AMENDED for #282 (was: called buildAntigravityLaunchArgs() with no
       // argument, dropping `tuning` on the floor — #237, step 4 gave
@@ -316,6 +355,60 @@ export function buildLaunchArgs(provider: DwarfProvider, tuning: LaunchTuning = 
       // above.
       return buildOpenCodeLaunchArgs(tuning)
   }
+}
+
+/**
+ * Whether a provider's ONE-SHOT stdout — the capture `TurnOutcomeWatch`
+ * (launchRunner.ts) reads back after the process exits — is that turn's own
+ * final answer, printed as prose, or an opaque machine envelope
+ * `oneShotTurnOutcome` (oneShotTurnOutcome.ts) must not read as one (#510
+ * correction).
+ *
+ * Decided HERE rather than beside `oneShotTurnOutcome` itself, because this
+ * is where each provider's own output format is already decided and argued
+ * at length, immediately above — the fact this table states is a direct
+ * restatement of that same argv choice, never a second, independent
+ * judgment call about it. `buildLaunchSpawn` (launchRunner.ts) captures
+ * every provider's stdout the same way regardless of this table — the
+ * CAPTURE stays provider-agnostic, on purpose — and this is the one bit
+ * `launchClaudeSession` reads out of it before handing a `LaunchInvocation`
+ * to that provider-agnostic runner.
+ *
+ * - `claude`: `true`. `buildClaudeLaunchArgs` carries no `--output-format`
+ *   flag at all — `claude -p` prints its response as plain text by default
+ *   (Claude Code 2.1.263's own `--help`, quoted above `buildClaudeLaunchArgs`).
+ * - `codex`: `true`. `codex exec` has no `--format`/`--json` flag in its own
+ *   `--help` (quoted above `buildCodexLaunchArgs`) — its stdout is prose,
+ *   which is also why its own `-o, --output-last-message` file is preferred
+ *   over the piped tail only for cleanliness (see `LaunchInvocation.outputFile`),
+ *   never because the piped tail is a different SHAPE.
+ * - `antigravity`: `true`. Its own default `--output-format` is `text`
+ *   (Antigravity CLI 1.1.26's own `--help`, quoted above), and this argv
+ *   never overrides it — see the comment just above `buildAntigravityLaunchArgs`'s
+ *   return statement for why asking for a structured format here would be a
+ *   regression, not an improvement.
+ * - `opencode`: `false`, the one provider this table refuses. `--format json`
+ *   (`buildOpenCodeLaunchArgs` above) is documented as "raw JSON events" and
+ *   nothing more specific — `opencode run --help`'s own words — and
+ *   `docs/opencode-format.md` covers the `opencode.db` store this app
+ *   already reads OpenCode's transcript from, never this stream. Nothing
+ *   over this app's own evidence bar (official docs, an installed binary's
+ *   `--help`, or a measured reproduction — never a guess) documents that
+ *   stream's shape, so nothing here may parse it as prose. Losing `text` on
+ *   this one path costs nothing a person can read: the ordinary OpenCode
+ *   observer route already reads this same session's own answer out of its
+ *   store.
+ *
+ * Exhaustive the same way `PRODUCT_NAME` (domain/launchProviders.ts) already
+ * is: a `Record` over every `DwarfProvider`, so a build that adds a fifth
+ * provider fails to compile here until someone has measured whether ITS
+ * one-shot stdout is prose — never a silent assumption that it is.
+ */
+export const ONE_SHOT_STDOUT_IS_TURN_TEXT: Readonly<Record<DwarfProvider, boolean>> = {
+  claude: true,
+  codex: true,
+  antigravity: true,
+  opencode: false
 }
 
 /**

@@ -436,3 +436,63 @@ describe('JevSettings — the default launch, gated on configured', () => {
     expect(wrapper.find('[aria-label="Default provider"]').attributes('disabled')).toBeDefined()
   })
 })
+
+/*
+ * Showing the person why a routing profile did not change (2026-09-21).
+ *
+ * The section used to answer a refused write by silently drawing the stored
+ * profile again, which reads as a control that ignores clicks. The reason
+ * existed — main logged it — but only where a terminal could see it.
+ */
+describe('JevSettings reporting a preference write that did not happen', () => {
+  function withError(message: string) {
+    return mount(JevSettings, {
+      props: {
+        settings: {
+          configured: true,
+          preferences: { profile: 'balanced', default: {} },
+          preferencesError: message
+        },
+        saving: false,
+        providers: [],
+        catalogs: []
+      }
+    })
+  }
+
+  it('shows the reason beside the control it belongs to', () => {
+    const wrapper = withError('That default names a provider this build cannot launch.')
+    const notice = wrapper.get('.preferences-error')
+    expect(notice.text()).toContain('cannot launch')
+  })
+
+  it('announces it, since the control it explains looks unchanged', () => {
+    // Nothing else on screen moved, so a sighted user has the sentence and a
+    // screen-reader user would otherwise have nothing at all.
+    expect(withError('nope').get('.preferences-error').attributes('role')).toBe('alert')
+  })
+
+  it('says nothing at all when the last write went through', () => {
+    const wrapper = mount(JevSettings, {
+      props: {
+        settings: { configured: true, preferences: { profile: 'balanced', default: {} } },
+        saving: false,
+        providers: [],
+        catalogs: []
+      }
+    })
+    expect(wrapper.find('.preferences-error').exists()).toBe(false)
+  })
+
+  it('keeps drawing the profile actually in force beside the reason', () => {
+    // The honesty rule: the mark follows what is STORED, never what was
+    // asked for. A failed click must not leave the panel claiming a profile
+    // nothing is routing under.
+    const wrapper = withError('nope')
+    const selected = wrapper
+      .findAll('.profile-option')
+      .filter((option) => option.classes('is-selected'))
+      .map((option) => option.get('.profile-name').text())
+    expect(selected).toEqual(['Balanced'])
+  })
+})

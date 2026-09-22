@@ -2485,3 +2485,106 @@ describe('DwarfMessagePanel on a resumed Codex thread (#450)', () => {
   })
 })
 /* --- end of the #450 block --------------------------------------------------- */
+
+/* --- Turn outcome (#510) — one block, appended ---------------------------- */
+describe('DwarfMessagePanel turn outcome (#510)', () => {
+  it('says nothing when the dwarf carries no last turn', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ lastTurn: undefined }) })
+    expect(wrapper.find('.panel-turn-outcome').exists()).toBe(false)
+    expect(wrapper.find('.panel-turn-outcome-trimmed').exists()).toBe(false)
+  })
+
+  it('says a concluded turn ended and carries its own words', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
+      })
+    })
+    const line = wrapper.find('.panel-turn-outcome')
+    expect(line.text()).toContain('Last turn concluded')
+    expect(line.text()).toContain('Found the seam.')
+    expect(wrapper.find('.panel-turn-outcome-trimmed').exists()).toBe(false)
+  })
+
+  it('says the wire itself trimmed a concluded turn, only when it did', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: {
+          kind: 'concluded',
+          text: 'Found the seam.',
+          truncated: true,
+          endedAt: 1_700_000_000_000
+        }
+      })
+    })
+    expect(wrapper.find('.panel-turn-outcome-trimmed').text()).toBe('(trimmed)')
+  })
+
+  it('says a capped turn stopped at a limit, naming the provider’s own word, and shows no text', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: {
+          kind: 'capped',
+          // A capped turn carries no text on the real wire; set here anyway to
+          // prove the panel never draws one for this kind even if it arrived.
+          text: 'should never be drawn',
+          detail: 'error_max_turns',
+          endedAt: 1_700_000_000_000
+        }
+      })
+    })
+    const line = wrapper.find('.panel-turn-outcome')
+    expect(line.text()).toBe('Last turn stopped at a limit (error_max_turns)')
+    expect(line.text()).not.toContain('should never be drawn')
+  })
+
+  it('says an errored turn failed, naming the provider’s own word, and shows no text', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: {
+          kind: 'errored',
+          detail: 'error_during_execution',
+          endedAt: 1_700_000_000_000
+        }
+      })
+    })
+    expect(wrapper.find('.panel-turn-outcome').text()).toBe(
+      'Last turn failed (error_during_execution)'
+    )
+  })
+
+  it('says an interrupted turn was interrupted, naming the provider’s own word, and shows no text', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: { kind: 'interrupted', detail: 'CANCELED', endedAt: 1_700_000_000_000 }
+      })
+    })
+    expect(wrapper.find('.panel-turn-outcome').text()).toBe('Last turn was interrupted (CANCELED)')
+  })
+
+  it('never claims a delivery or a reaction — only how the turn itself ended', () => {
+    // The invariant AGENTS.md states by name: delivered and reacted are their
+    // own facts, drawn by sendStatusLine/kickStatusLine in .panel-status. This
+    // row must never borrow their words.
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
+      })
+    })
+    const line = wrapper.find('.panel-turn-outcome').text()
+    expect(line).not.toContain('delivered')
+    expect(line).not.toContain('reacted')
+    expect(line).not.toContain('Handed over')
+  })
+
+  it('keeps the composer live and reachable once the line appears — no jump that hides it', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
+      })
+    })
+    expect(wrapper.find('.panel-composer').exists()).toBe(true)
+    expect(wrapper.find('.panel-input').exists()).toBe(true)
+  })
+})
+/* --- end of the #510 block --------------------------------------------------- */

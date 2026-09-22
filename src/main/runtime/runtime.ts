@@ -125,7 +125,11 @@ import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
-import { LaunchedSessionRegistry, type LaunchFailure } from '../sessionLaunch/launchedSessions'
+import {
+  LaunchedSessionRegistry,
+  stampLaunchedTurnOutcome,
+  type LaunchFailure
+} from '../sessionLaunch/launchedSessions'
 import { LaunchReceiptRegistry, stampLaunchReceipts } from '../sessionLaunch/launchReceipts'
 import {
   createSdkHeldSession,
@@ -1557,12 +1561,23 @@ export class AgentRuntime {
         const withReceipts = stampLaunchReceipts(withMaterials, (dwarfId) =>
           this.launchReceipts.receiptOf(dwarfId)
         )
+        // What a one-shot launch's own turn concluded (#510), read straight
+        // off the launch register `retain()` already latched it onto — see
+        // `stampLaunchedTurnOutcome`. Beside `stampLaunchReceipts` above
+        // rather than with the held stamps below, because it belongs to the
+        // same launch-correlated family and can never collide with a held
+        // dwarf's own `lastTurn`: a held session is never in this registry
+        // at all (it starts through the separate held-session path), so this
+        // leaves it untouched for `stampHeldTelemetry` to fill in instead.
+        const withLastTurn = stampLaunchedTurnOutcome(withReceipts, (dwarfId) =>
+          this.launched.lastTurnOfDwarf(dwarfId)
+        )
         // The panel decides which actions to offer per dwarf, so the resolved
         // delivery channel travels with the snapshot instead of costing an
         // extra IPC round trip per sprite.
         const delivered = pollProfiler.measureSync('stamp', () =>
           stampTextDelivery(
-            withReceipts,
+            withLastTurn,
             (dwarfId) => this.deliveryTargetOf(dwarfId),
             // The machine's half of the send capability (#366): a console this
             // port cannot type into is not a send channel, and the kick half
