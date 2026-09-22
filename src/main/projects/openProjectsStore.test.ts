@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
-import { APP_SCHEMA_VERSION } from '../appDatabase/appDatabase'
+import { APP_COMPAT_FLOOR } from '../appDatabase/appDatabase'
 import { openProjectsStore } from './openProjectsStore'
 
 const DB = 'C:\\userData\\projects-v1.db'
@@ -47,16 +47,20 @@ describe('openProjectsStore', () => {
     expect(opened.failure).toBe('corrupt')
   })
 
-  // AMENDED for #572: this fixture (a stamp above APP_SCHEMA_VERSION) is
+  // AMENDED for #572: this fixture (a stamp above APP_COMPAT_FLOOR) is
   // specifically the NEWER-build case, which the classifier now reports as
   // 'newer-build' rather than the generic 'unsupported-schema' — see the two
   // tests below for why the two refusals had to split.
+  // AMENDED again for #575: floor + 1 is 6, the one stamp appDatabase.ts now
+  // normalizes instead of refusing (an additive column bumped the counter by
+  // mistake — see appDatabase.test.ts's #511/#575 block), so this needs floor
+  // + 2 to still exercise a genuine newer-build refusal.
   it('refuses a database written by a newer build, distinctly from an unrecognised one', async () => {
     // The store refuses rather than discarding, and that refusal has to reach
     // the user as a panel with no declared mines, never as a failed launch.
     const sqlite = new MemoryWritableSqlite()
     const handle = await sqlite.open(DB)
-    handle.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION + 1}`)
+    handle.exec(`PRAGMA user_version = ${APP_COMPAT_FLOOR + 2}`)
     handle.close()
     const warn = vi.fn()
 

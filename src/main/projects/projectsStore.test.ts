@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
 import { mineIdForPath } from '../domain/aggregate'
 import { MAP_SPAWN_SITE_COUNT, type MineTier } from '../domain/types'
-import { APP_DB_FILENAME, APP_SCHEMA_VERSION } from '../appDatabase/appDatabase'
+import { APP_COMPAT_FLOOR, APP_DB_FILENAME } from '../appDatabase/appDatabase'
 import { createProjectsStore, type ProjectsResult, type ProjectsStore } from './projectsStore'
 
 const PATH = 'C:\\code\\Cafetería-Ñandú'
@@ -351,11 +351,11 @@ describe('projects store — schema version', () => {
     const { store, sqlite } = newStore()
     value(await store.list())
     const db = await sqlite.open(APP_DB_FILENAME)
-    expect(db.all('PRAGMA user_version')).toEqual([{ user_version: APP_SCHEMA_VERSION }])
+    expect(db.all('PRAGMA user_version')).toEqual([{ user_version: APP_COMPAT_FLOOR }])
     db.close()
   })
 
-  // AMENDED for #572: a stamp above APP_SCHEMA_VERSION is a NEWER build's
+  // AMENDED for #572: a stamp above APP_COMPAT_FLOOR is a NEWER build's
   // file — the fix is updating the app — which is a different answer from
   // the unstamped case below and now carries its own failure kind so the
   // runtime can say so instead of one sentence covering both.
