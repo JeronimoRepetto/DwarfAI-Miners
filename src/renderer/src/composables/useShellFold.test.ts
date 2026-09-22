@@ -198,9 +198,25 @@ function clipFrames(keyframes: DOMKeyframesDefinition): [string, string] {
   return keyframes.clipPath as [string, string]
 }
 
-/** The two `x` offsets a rail carry's keyframes carry, cast once for the same reason. */
-function xFrames(keyframes: DOMKeyframesDefinition): [number, number] {
-  return keyframes.x as [number, number]
+/**
+ * The two transforms a rail carry's keyframes carry, cast once for the same
+ * reason — AMENDED for #585, was `xFrames` reading motion-v's `x` shortcut.
+ */
+function transformFrames(keyframes: DOMKeyframesDefinition): [string, string] {
+  return keyframes.transform as [string, string]
+}
+
+/**
+ * A carried column's travel as the keyframes it is actually handed — ADDED
+ * for #585, where the travel stopped being motion-v's `x` shortcut (a JS-
+ * driven value, on its own clock) and became the `transform` string WAAPI
+ * accelerates, so that a column's translate and its clip are one timeline.
+ * Written out here rather than imported from `shellFold.ts`, whose own test
+ * pins these exact strings: a composable asserted against its own builder
+ * would agree with it however wrong both were.
+ */
+function carries(from: number, to: number): DOMKeyframesDefinition {
+  return { transform: [`translateX(${from}px)`, `translateX(${to}px)`] }
 }
 
 /**
@@ -377,6 +393,9 @@ describe('useShellFold', () => {
     test.fold.settle(false)
     test.state.shell = sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animations).toHaveLength(1)
     expect(test.animations[0]!.keyframes).toEqual({
       clipPath: [
@@ -413,6 +432,9 @@ describe('useShellFold', () => {
     expect(test.animations).toHaveLength(1)
     sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
       'inset(0px 0px 0px calc(100% - 20px) round 12px)'
     )
@@ -434,6 +456,9 @@ describe('useShellFold', () => {
     expect(test.shell.style.clipPath).toBe('')
     sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
       'inset(0px 0px 0px calc(100% - 20px) round 12px)'
     )
@@ -523,6 +548,9 @@ describe('useShellFold', () => {
     reads.forget()
     test.state.shell = sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animations).toHaveLength(1)
     expect(reads.count).toBe(1)
     reads.restore()
@@ -543,7 +571,7 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
     test.animations[0]!.finish()
     await settled()
     // Written rather than left to the engine: motion-v writes straight into
@@ -574,7 +602,7 @@ describe('useShellFold', () => {
     test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
     // The clip run's own transition is motion-dom's real answer for
     // `clipPath` — never asserted as a literal here, so a change to
     // motion-dom's own default would move both sides of this assertion
@@ -596,7 +624,7 @@ describe('useShellFold', () => {
     placed(test.rail, 973, 20)
     void test.fold.hold(test.column(555))
     await settled()
-    expect(xFrames(test.railAnimations[0]!.keyframes)[1]).toBe(-563)
+    expect(transformFrames(test.railAnimations[0]!.keyframes)[1]).toBe('translateX(-563px)')
     test.wrapper.unmount()
   })
 
@@ -764,14 +792,34 @@ describe('useShellFold', () => {
     test.fold.settle(false)
     sized(test.shell, 645)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     // The rail rested against the docked edge; the row has just put it back at
     // the free one, 617px away from where the unfold has to start.
-    expect(test.railAnimations[1]!.keyframes).toEqual({ x: [617, 0] })
+    expect(test.railAnimations[1]!.keyframes).toEqual(carries(617, 0))
     expect(test.rail.style.transform).toBe('translateX(617px)')
     test.animations[1]!.finish()
     await settled()
     expect(test.rail.style.transform).toBe('')
     test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585. The unfold waits a microtask for the rest of its change,
+   * and a microtask cannot be cancelled: the component can go away inside it.
+   * Starting the run anyway would animate an element this instance has just
+   * stopped owning, on a runner it has already disposed — and nothing would
+   * ever end it.
+   */
+  it('withdraws an unfold still waiting for its change when the shell goes away', async () => {
+    const test = harness({ width: 645 })
+    test.fold.settle(false)
+    test.state.shell = sized(test.shell, 1001)
+    test.fold.settle(false)
+    test.wrapper.unmount()
+    await settled()
+    expect(test.animations).toHaveLength(0)
   })
 
   it('releases a fold still running when the shell goes away', async () => {
@@ -808,7 +856,7 @@ describe('useShellFold', () => {
     // However far the rail travels — 563px here, hundreds more elsewhere —
     // its bound under the SAME transition is the clip's own, never a
     // function of the distance.
-    const railBound = motionBoundMs({ x: [0, 563] }, clipTransition)
+    const railBound = motionBoundMs(carries(0, 563), clipTransition)
     expect(railBound).toBe(clipBound)
     expect(panelLeaveBoundMs()).toBeGreaterThanOrEqual(Math.max(clipBound, railBound))
   })
@@ -851,9 +899,9 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // rail, secondary and the navigation stack alike — is carried by exactly
     // the SAME distance: its own width plus the gap beside it, the one thing
     // that changed.
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 356] })
-    expect(test.secondaryAnimations[0]!.keyframes).toEqual({ x: [0, 356] })
-    expect(test.navAnimations[0]!.keyframes).toEqual({ x: [0, 356] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 356))
+    expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(0, 356))
+    expect(test.navAnimations[0]!.keyframes).toEqual(carries(0, 356))
     test.wrapper.unmount()
   })
 
@@ -866,7 +914,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.state.nav = carriedColumn(599, 38)
     void test.fold.hold(test.column(555))
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
     expect(test.navAnimations).toHaveLength(0)
     test.wrapper.unmount()
   })
@@ -877,8 +925,17 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    * distance the columns free of it do, on the SAME transition, clipped at
    * its own docked-side edge so it disappears there instead of painting over
    * the row beside it or past the window's own edge.
+   *
+   * AMENDED for #585: this case's own column is the MINE, which is the one
+   * column the drawing does not describe — it docks BEYOND the navigation
+   * strip, so the strip is on its FREE side and travels across it. What
+   * covers it is that travel, not a travel of its own: its box stands exactly
+   * where the row put it for the whole run (the interior inside it never
+   * re-measures), and the clip on its free side is the strip's own near edge
+   * sweeping over it. The drawer it used to assert is the case below, which
+   * is where a leaving SECONDARY panel proves it unchanged.
    */
-  it('slides and clips the leaving column itself, on the same transition as the carries beside it', async () => {
+  it('uncovers the leaving mine column in place, on the same transition as the carries beside it', async () => {
     const test = harness({ width: 1001 })
     test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
@@ -889,12 +946,32 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const own = test.animationsFor(mine)
     expect(own).toHaveLength(1)
     expect(own[0]!.keyframes).toEqual({
-      x: [0, 356],
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 356px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
     })
     // The clip's own transition — never `x`'s underdamped spring default —
     // the same rule `carry` already proved for the rail.
     expect(own[0]!.transition).toEqual(test.railAnimations[0]!.transition)
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585, the drawer half of the same rule and the case the one
+   * above used to carry. The secondary panel stands on the FREE side of the
+   * navigation strip, so that strip is the fixed mouth it is pushed back
+   * into: it travels, and it is clipped at its own docked-side edge, exactly
+   * as #566 T5b drew it.
+   */
+  it('slides a leaving secondary panel into the strip docked of it, clipped at that edge', async () => {
+    const test = harness({ width: 1001 })
+    test.state.remaining = 'mine'
+    test.state.nav = carriedColumn(599, 38)
+    const secondary = placed(test.column(555), 36, 555)
+    void test.fold.hold(secondary)
+    await settled()
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(0, 563),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
+    })
     test.wrapper.unmount()
   })
 
@@ -911,12 +988,15 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 8, 348)
     void test.fold.hold(mine)
     await settled()
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [-0, -356] })
-    expect(test.secondaryAnimations[0]!.keyframes).toEqual({ x: [-0, -356] })
-    expect(test.navAnimations[0]!.keyframes).toEqual({ x: [-0, -356] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(-0, -356))
+    expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(-0, -356))
+    expect(test.navAnimations[0]!.keyframes).toEqual(carries(-0, -356))
+    // AMENDED for #585: the mine column is uncovered in place on either
+    // dock, so it has no travel at all — and the free side it is clipped on
+    // is the shell's RIGHT here, which is the mirror of the right-docked case
+    // above rather than the same string.
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [-0, -356],
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 356px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -940,19 +1020,172 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
     // Pre-placed synchronously, before this module ever yields to the
-    // browser — nothing here has awaited a microtask yet.
-    expect(mine.style.transform).toBe('translateX(356px)')
-    expect(mine.style.clipPath).toBe('inset(0px 356px 0px 0px)')
+    // browser — nothing here has awaited a microtask yet. AMENDED for #585:
+    // pre-placing the mine column is a clip and nothing else, because being
+    // uncovered in place is exactly not having a position of its own.
+    expect(mine.style.transform).toBe('')
+    expect(mine.style.clipPath).toBe('inset(0px 0px 0px 356px)')
     expect(test.animationsFor(mine)).toHaveLength(0)
     test.state.shell = sized(test.shell, 1001)
     test.fold.settle(false)
+    // AMENDED for #585: the unfold is measured a microtask after the change
+    // asks for it, so that every column of the same change has registered
+    // first — see the case below, which is why.
+    await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [356, 0],
-      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
-    expect(test.secondaryAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
-    expect(test.navAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    expect(test.navAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585, from the real-window probe of the fixed build: opening a
+   * mine beside an open page carried the rail and NOTHING else, leaving the
+   * mine's own slot — 352px of it — as bare amber for the whole run.
+   *
+   * A carried column travels from the footprint it had when it last settled,
+   * and a column that ARRIVED on the previous change had never recorded one:
+   * the unfold that revealed it released it without remembering where it came
+   * to rest, so the next fold found no footprint for it and left it standing
+   * where the row had already repacked it. Every column the unfold touches
+   * records its rest position now, arrivals included.
+   */
+  it('remembers where an entering column came to rest, so the next change carries it too', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.fold.settle(false)
+    // The secondary panel ARRIVES, and is carried by the unfold that reveals
+    // the ground — the case above.
+    const secondary = carriedColumn(36, 555)
+    test.state.secondary = secondary
+    // Main grows the window before Vue ever mounts an arriving column, so the
+    // box `enter` reads it against is already the new one.
+    test.state.shell = sized(test.shell, 1001)
+    test.fold.enter(secondary)
+    test.fold.settle(false)
+    await settled()
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.secondaryAnimations).toHaveLength(1)
+    // And now a mine opens beside it: the row repacks the secondary panel
+    // 356px toward the free edge, so it has to come back from where it was.
+    test.state.shell = sized(test.shell, 1357)
+    const mine = placed(test.column(348), 1009, 348)
+    test.fold.enter(mine)
+    test.fold.settle(false)
+    await settled()
+    expect(test.secondaryAnimations).toHaveLength(2)
+    expect(test.secondaryAnimations[1]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585. The other side of the strip, in the open direction: an
+   * entering secondary panel stands FREE of the navigation strip, so it is
+   * pulled out from behind that strip's own edge — pre-placed with a travel
+   * as well as a clip, and clipped at its DOCKED side, which is the mouth it
+   * comes out of. Without this, "uncovered in place" would be free to
+   * swallow every column rather than the one the strip stands beyond.
+   */
+  it('pre-places an entering secondary panel as a drawer, behind the strip docked of it', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.state.nav = carriedColumn(599, 38)
+    test.fold.settle(false)
+    const secondary = placed(test.column(555), 36, 555)
+    test.fold.enter(secondary)
+    expect(secondary.style.transform).toBe('translateX(563px)')
+    expect(secondary.style.clipPath).toBe('inset(0px 563px 0px 0px)')
+    test.state.shell = sized(test.shell, 1001)
+    test.fold.settle(false)
+    await settled()
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(563, 0),
+      clipPath: ['inset(0px 563px 0px 0px)', 'inset(0px 0px 0px 0px)']
+    })
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585. Which side a column is clipped on is asked of the row it
+   * stands in, and the row is measured — so a column already pre-placed by an
+   * EARLIER `enter` of the same change must not be read where its own
+   * pre-placement has just put it. Opening the pages from the bare rail is
+   * exactly that: the secondary panel registers first and is translated a
+   * whole column's width toward the docked edge, and the navigation strip
+   * registering second would otherwise see it standing docked of ITSELF and
+   * call itself a drawer. The strip is the docked-most column of that row,
+   * with the rail travelling out across it — uncovered in place, by the same
+   * rule the mine column is.
+   */
+  it('reads a column already pre-placed by this change at its resting place, not its pre-placed one', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.fold.settle(false)
+    // `carriedColumn` rather than a bare one: `mountedColumns` drops anything
+    // that cannot run Web Animations, and the row this case is about is the
+    // one those two stand in.
+    const secondary = carriedColumn(36, 555)
+    const nav = carriedColumn(599, 38)
+    test.state.secondary = secondary
+    test.state.nav = nav
+    test.fold.enter(secondary)
+    test.fold.enter(nav)
+    expect(secondary.style.transform).toBe('translateX(563px)')
+    expect(nav.style.transform).toBe('')
+    expect(nav.style.clipPath).toBe('inset(0px 0px 0px 46px)')
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585, from the same real-window probe. Opening was TWO
+   * sequential 300ms runs: the ground unfolded ALONE — 936px of bare amber at
+   * the peak, of a 956px window — and only once it had finished did the
+   * content slide in.
+   *
+   * The cause is an ORDER, not a race. App.vue's `flush: 'post'` watch and a
+   * `<Transition>`'s enter hook go into the same post-flush queue, and Vue
+   * sorts it by id: the watch carries its component's own, the enter hook is
+   * an anonymous callback with none, so the watch ALWAYS runs first. `settle`
+   * therefore unfolded with `entering` empty; every later settle bounced off
+   * `motion.running(shell)` for as long as that run lasted, and the only
+   * thing that ever revealed the column was the drain at the end of it.
+   *
+   * So the unfold is measured one microtask later — the same device `hold`
+   * already uses to make ONE fold out of however many columns leave in a
+   * patch, for the same reason: Vue's whole flush, enter hooks included, has
+   * run by then, and nothing has painted in between.
+   */
+  it('waits for the entering columns of this change before unfolding, so ground and content are ONE run', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.state.secondary = carriedColumn(36, 555)
+    test.state.nav = carriedColumn(599, 38)
+    test.fold.settle(false)
+    test.state.shell = sized(test.shell, 1001)
+    // The order App.vue actually produces: the watch settles first, and Vue
+    // mounts the entering column afterwards in the same flush.
+    test.fold.settle(false)
+    expect(test.animations).toHaveLength(0)
+    const mine = placed(test.column(348), 645, 348)
+    test.fold.enter(mine)
+    await settled()
+    // ONE ground run, and the column that arrived in the same change is on
+    // it rather than waiting for a second one.
+    expect(test.animations).toHaveLength(1)
+    expect(test.animationsFor(mine)).toHaveLength(1)
+    expect(test.railAnimations).toHaveLength(1)
+    // All of them on the one transition this fold computed, #464's rule
+    // reaching the entering column too.
+    expect(test.animationsFor(mine)[0]!.transition).toEqual(test.railAnimations[0]!.transition)
+    // And when the run ends there is nothing left to drain: the second phase
+    // is gone rather than merely shorter.
+    test.animations[0]!.finish()
+    await settled()
+    expect(test.animations).toHaveLength(1)
     test.wrapper.unmount()
   })
 
@@ -978,7 +1211,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    *    ever going to ask `settle` again once the ground's own run, if any,
    *    had finished.
    */
-  it('unfolds a pending entering column on its own settle, even where the box did not move', () => {
+  it('unfolds a pending entering column on its own settle, even where the box did not move', async () => {
     const test = harness({ width: 645 })
     test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
@@ -990,14 +1223,16 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // the real window, but nothing here says so — and the entering column is
     // still carried: `entering` being non-empty is answer enough on its own.
     test.fold.settle(false)
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [356, 0],
-      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
     test.wrapper.unmount()
   })
 
-  it('lets the window’s own resize carry a pre-placed entering column, with nothing else ever asking settle again', () => {
+  it('lets the window’s own resize carry a pre-placed entering column, with nothing else ever asking settle again', async () => {
     const test = harness({ width: 645 })
     test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
@@ -1006,16 +1241,19 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
     expect(test.animationsFor(mine)).toHaveLength(0)
-    expect(mine.style.transform).toBe('translateX(356px)')
+    // AMENDED for #585: the mine column is pre-placed by its clip alone.
+    expect(mine.style.clipPath).toBe('inset(0px 0px 0px 356px)')
     // The window's own resize arrives on its own schedule; nothing here
     // calls `settle` directly — `caughtUp` is the only thing left standing.
     test.state.shell = sized(test.shell, 1001)
     window.dispatchEvent(new Event('resize'))
+    // AMENDED for #585: the unfold waits one microtask for the columns of
+    // this change to register, so what it starts is observed after it.
+    await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      x: [356, 0],
-      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
-    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [356, 0] })
+    expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     test.wrapper.unmount()
   })
 
@@ -1023,7 +1261,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const test = harness({ width: 645 })
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
-    expect(mine.style.transform).not.toBe('')
+    // AMENDED for #585: the mine column is pre-placed by its clip alone now,
+    // so the clip is what proves it was hidden — and both properties are
+    // still what teardown has to hand back.
+    expect(mine.style.clipPath).not.toBe('')
     test.wrapper.unmount()
     expect(mine.style.transform).toBe('')
     expect(mine.style.clipPath).toBe('')
@@ -1034,6 +1275,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
     expect(mine.style.transform).toBe('')
+    expect(mine.style.clipPath).toBe('')
     test.wrapper.unmount()
   })
 })
