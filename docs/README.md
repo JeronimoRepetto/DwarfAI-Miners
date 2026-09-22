@@ -33,6 +33,7 @@ per provider, with `[V]` for what was verified on a real machine and `[I]` for w
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`provider-formats.md`](provider-formats.md)                     | The primary survey: Claude Code, Codex, Antigravity, and why the local `.gemini` data is deliberately not parsed as Gemini CLI.                  |
 | [`codex-v2-format.md`](codex-v2-format.md)                       | The deeper Codex investigation — two different Codex products, the `state_5.sqlite` registry, `logs_2.sqlite`, and rollout storage.              |
+| [`opencode-format.md`](opencode-format.md)                       | OpenCode's on-disk store: the `opencode.db` WAL SQLite schema, the tables the provider reads, and the version floor a build is pinned to.        |
 | [`session-topology-and-roles.md`](session-topology-and-roles.md) | What `foreman` and `worker` mean, why the two shipped backends derive them differently, and the normalized model a third backend should inherit. |
 
 ## Evaluations and decisions
