@@ -147,6 +147,11 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
           remaining: () => state.remaining,
           rail: () => state.rail,
           carried: () => [state.secondary, state.nav],
+          // ADDED for #585 round 3: the navigation strip is the wall a drawer
+          // goes behind, and a wall does not move out of the way of its own
+          // drawer. Every case above is untouched: `state.nav` is `null`
+          // there, which is a shell with no strip to name.
+          strip: () => state.nav,
           applying: () => state.applying,
           engine: engine.animate
         })
@@ -954,8 +959,13 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     await settled()
     const own = test.animationsFor(mine)
     expect(own).toHaveLength(1)
+    // AMENDED for #585 round 3: the clip is measured to the edge of the column
+    // COVERING it — the strip, one gap (8) away at rest and 356 nearer by the
+    // end — rather than to the mine's own width stretched over the run. So it
+    // starts a gap short of covering anything and ends having crossed exactly
+    // the mine's 348.
     expect(own[0]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+      clipPath: ['inset(0px 0px 0px -8px)', 'inset(0px 0px 0px 348px)']
     })
     // The clip's own transition — never `x`'s underdamped spring default —
     // the same rule `carry` already proved for the rail.
@@ -1008,9 +1018,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // AMENDED for #585: the mine column is uncovered in place on either
     // dock, so it has no travel at all — and the free side it is clipped on
     // is the shell's RIGHT here, which is the mirror of the right-docked case
-    // above rather than the same string.
+    // above rather than the same string. AMENDED again for round 3: measured
+    // to the strip's edge, as above.
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 356px 0px 0px)']
+      clipPath: ['inset(0px -8px 0px 0px)', 'inset(0px 348px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -1046,8 +1057,12 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // asks for it, so that every column of the same change has registered
     // first — see the case below, which is why.
     await settled()
+    // AMENDED for #585 round 3: the reveal tracks the strip's own edge coming
+    // back — 356 nearer than its rest at the start, so 348 of the mine (its
+    // whole width) stands under the strip and the row beside it, and a gap
+    // short of it once everything has landed.
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 348px)', 'inset(0px 0px 0px -8px)']
     })
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(356, 0))
@@ -1266,8 +1281,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // AMENDED for #585: the unfold waits one microtask for the columns of
     // this change to register, so what it starts is observed after it.
     await settled()
+    // AMENDED for #585 round 3: measured to the strip's returning edge — see
+    // the pre-place case above.
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 348px)', 'inset(0px 0px 0px -8px)']
     })
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     test.wrapper.unmount()
@@ -1393,16 +1410,20 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     void test.fold.hold(nav)
     await settled()
     const mineRuns = test.animationsFor(mine)
+    // AMENDED for #585 round 3: what covers the mine here is the strip sliding
+    // over it, a gap away at rest and 402 nearer by the end of its own travel
+    // — so the clip runs to 394, past the mine's own 348, and is already whole
+    // where the strip stops sweeping and starts disappearing into its wall.
     expect(mineRuns[mineRuns.length - 1]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+      clipPath: ['inset(0px 0px 0px -8px)', 'inset(0px 0px 0px 394px)']
     })
     // AMENDED for #585 round 2: the strip does not only disappear into its own
     // mouth, it FOLLOWS the 356px the mine column vacates under it first — see
-    // the case below, which is what measured the difference.
-    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
-      ...carries(0, 402),
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
-    })
+    // the case below, which is what measured the difference. AMENDED again
+    // for round 3: its mouth is the shell's own docked edge, and that wall
+    // clips it exactly (`overflow: hidden`), where a clip of its own drawn as
+    // two keyframes thinned it over the whole slide.
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual(carries(0, 402))
     const folds = test.animations
     expect(test.animationsFor(nav)[0]!.transition).toEqual(
       test.railAnimations[test.railAnimations.length - 1]!.transition
@@ -1435,11 +1456,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     await settled()
     void test.fold.hold(nav)
     await settled()
-    // 356 vacated by the mine column, then 38 + 8 of its own.
-    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
-      ...carries(0, 402),
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
-    })
+    // 356 vacated by the mine column, then 38 + 8 of its own. AMENDED for
+    // #585 round 3: no clip of its own, the shell's docked edge is its wall —
+    // see the case above.
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual(carries(0, 402))
     // Which is the rail's own travel but for the padding the bare rail drops:
     // the two cross the ground together instead of one outrunning the other.
     expect(transformFrames(test.railAnimations[test.railAnimations.length - 1]!.keyframes)[1]).toBe(
@@ -1463,8 +1483,119 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     void test.fold.hold(nav)
     await settled()
     const runs = test.animationsFor(mine)
+    // AMENDED for #585 round 3: measured to the strip sliding over it — see
+    // the coalesced-fold case above.
     expect(runs[runs.length - 1]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+      clipPath: ['inset(0px 0px 0px -8px)', 'inset(0px 0px 0px 394px)']
+    })
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 3, the maintainer's own words on the merged fix: the
+   * rail and the navigation strip are two columns glued together, and pressing
+   * the arrow moves the RAIL — the strip stays whole where it is, in its own
+   * amber. What the fix before this one did was clip the strip over its own
+   * width for the WHOLE run, so a 38px strip took 300ms to appear and read as
+   * the strip itself animating.
+   *
+   * An uncovered column is hidden exactly where the column covering it stands,
+   * frame by frame. Here that is the rail, which stood 3px past the strip's
+   * free edge before the change (a 25px window holds the rail alone) and comes
+   * to rest 571px away from it: the clip runs from 49 — the strip entirely
+   * under it, and then some — to −571, whole, on the ONE transition the rail's
+   * own carry runs on, so the two edges are the same edge. It crosses zero in
+   * the first frame; the strip is whole for the other 290ms.
+   */
+  it('uncovers the entering strip at the rail’s own edge, whole once the rail has crossed it', async () => {
+    const test = harness({ width: 25 })
+    test.state.remaining = 'rail'
+    test.fold.settle(false)
+    test.state.remaining = 'pages'
+    const secondary = carriedColumn(36, 555)
+    const nav = carriedColumn(599, 38)
+    test.state.secondary = secondary
+    test.state.nav = nav
+    test.fold.enter(secondary)
+    test.fold.enter(nav)
+    test.state.shell = sized(test.shell, 645)
+    test.fold.settle(false)
+    await settled()
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px 49px)', 'inset(0px 0px 0px -571px)']
+    })
+    expect(test.animationsFor(nav)[0]!.transition).toEqual(test.railAnimations[0]!.transition)
+    // The drawer beside it is untouched: pulled out from behind the strip's
+    // fixed edge, which is what the strip standing still is FOR.
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(563, 0),
+      clipPath: ['inset(0px 555px 0px 0px)', 'inset(0px 0px 0px 0px)']
+    })
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 3, the same rule closing. The strip is the WALL the
+   * drawer goes back behind, and a wall does not move out of the way of its
+   * own drawer: leaving together with the strip, the secondary panel's mouth
+   * stays at the strip's edge (a travel of its own width and gap, clipped by
+   * its width — never the strip's 46 on top), and the strip stands whole until
+   * the rail arrives over it at the very end — 571px away at the start, 46
+   * over it when the fold lands. Without the strip named, round 2 let the
+   * drawer follow the strip's own room and slide over it in the first frames.
+   */
+  it('keeps the strip whole until the rail comes back over it, and its drawer’s mouth at its edge', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'rail'
+    const secondary = carriedColumn(36, 555)
+    const nav = carriedColumn(599, 38)
+    test.state.secondary = secondary
+    test.state.nav = nav
+    void test.fold.hold(secondary)
+    void test.fold.hold(nav)
+    await settled()
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(0, 563),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
+    })
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px -571px)', 'inset(0px 0px 0px 46px)']
+    })
+    expect(nav.style.transform).toBe('')
+    expect(transformFrames(test.railAnimations[0]!.keyframes)[1]).toBe('translateX(617px)')
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 3, from the first real-window probe of this fix. Vue
+   * nulls a leaving component's template ref while its element is still in
+   * the DOM, so at the moment `begin` measures the pages closing, `strip`
+   * reads `null` — and the drawer followed the strip's room again, hiding it
+   * in the first frames. The strip is remembered from the last time it was
+   * seen standing, which every settle while it stood was.
+   */
+  it('still knows which leaving column is the strip once Vue has nulled its ref', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    const secondary = carriedColumn(36, 555)
+    const nav = carriedColumn(599, 38)
+    test.state.secondary = secondary
+    test.state.nav = nav
+    test.fold.settle(false)
+    // The way Vue actually hands a leaving strip over: the ref is gone, the
+    // element is not.
+    test.state.remaining = 'rail'
+    test.state.secondary = null
+    test.state.nav = null
+    void test.fold.hold(secondary)
+    void test.fold.hold(nav)
+    await settled()
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(0, 563),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
+    })
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px -571px)', 'inset(0px 0px 0px 46px)']
     })
     test.wrapper.unmount()
   })

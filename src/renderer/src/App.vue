@@ -248,6 +248,9 @@ const {
   edge: () => layout.value.edge,
   remaining: () => shellComposition(visibleLayout.value),
   rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null),
+  // The strip is named as well as carried (#585 round 3): it is the wall a
+  // drawer goes behind, and the one column whose room a drawer never follows.
+  strip: () => (navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null),
   carried: () => [
     secondaryEl.value,
     navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null

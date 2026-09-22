@@ -211,10 +211,13 @@ export function columnFoldKeyframes(
  *   and it is clipped there. Every column on the free side of the strip is
  *   one of these: the secondary panel, and the strip itself, which has the
  *   window's own docked edge for a wall.
- * - `'uncovered'` — the strip is on this column's FREE side, which is the mine
- *   column and only it: it docks BEYOND the strip, so what reveals or hides it
- *   is the strip and everything beyond it travelling across it. It never
- *   translates at all, and the clip on its free side tracks that moving edge.
+ * - `'uncovered'` — nothing stands docked of this column, so it is what the
+ *   rest of the row travels ACROSS: the mine column, which docks beyond the
+ *   strip, and the strip itself where there is no mine — the maintainer's own
+ *   picture of the rail and the strip as two columns glued together, of which
+ *   only the rail moves (#585 round 3). It never translates at all, and the
+ *   clip on its free side is the edge of the column covering it, frame by
+ *   frame: the strip's over the mine, the rail's over the strip.
  *
  * Which one a column is, is geometry rather than a name: `useShellFold` asks
  * whether anything else in the row stands nearer the docked edge than it does.
@@ -265,10 +268,16 @@ export type ColumnFold = 'drawer' | 'uncovered'
  * distance out from the row and hands it over.
  *
  * An `'uncovered'` column insets the FREE side instead, and has no transform
- * composed with it at all: `travel` there is how far the strip beside it still
- * has to go, so the inset IS that strip sweeping across a box that never
- * moves. It keeps the resting gap between the two rather than closing it —
- * see this file's own note in `columnSlideKeyframes` below.
+ * composed with it at all: `travel` there is how far the edge of the column
+ * COVERING it has come across its box, frame by frame — the strip sweeping
+ * over the mine column, the rail crossing the strip — so the inset IS that
+ * edge, over a box that never moves. It is allowed to be negative (#585
+ * round 3): a cover a whole room away has not reached the box yet, and the
+ * keyframe has to be able to say so, because the two ends of the run are what
+ * the engine interpolates between. Clamped to zero, a strip the rail crossed
+ * in one frame was instead revealed over its own width for the whole 300ms
+ * and read as the strip itself animating. The `mouth` is a drawer's business
+ * alone and is ignored here.
  */
 export function columnFoldClip(
   travel: number,
@@ -276,9 +285,10 @@ export function columnFoldClip(
   fold: ColumnFold,
   mouth: number
 ): string {
-  // The mouth a drawer disappears into stands that far beyond its own edge; an
-  // uncovered column's own edge IS where its strip's travel is measured to.
-  const inset = `${Math.max(0, fold === 'drawer' ? travel - mouth : travel)}px`
+  // The mouth a drawer disappears into stands that far beyond its own edge,
+  // and a drawer clips nothing until it has retreated that far. An uncovered
+  // column's inset is the covering edge itself, wherever it stands.
+  const inset = `${fold === 'drawer' ? Math.max(0, travel - mouth) : travel}px`
   // The docked side of a right-docked shell is its right, and the free side of
   // a left-docked one is the same edge — so the two folds are each other's
   // mirror, and one expression answers for both docks and both of them.
@@ -305,9 +315,11 @@ export function columnSlideKeyframes(
 ): DOMKeyframesDefinition {
   const clipPath = [columnFoldClip(from, edge, fold, mouth), columnFoldClip(to, edge, fold, mouth)]
   // An uncovered column is the one that does NOT slide (#585): its box stays
-  // exactly where the row put it and the strip beside it does the moving, so a
-  // travel of its own would be the second opinion about where it is that this
-  // whole file exists to avoid.
+  // exactly where the row put it and the column covering it does the moving,
+  // so a travel of its own would be the second opinion about where it is that
+  // this whole file exists to avoid. `from` and `to` are that cover's edge at
+  // the two ends of the run, handed over by `useShellFold`, which knows the
+  // row.
   if (fold === 'uncovered') return { clipPath }
   return { ...columnFoldKeyframes(from, to, edge), clipPath }
 }

@@ -131,6 +131,24 @@ export interface ShellFoldOptions {
    */
   carried?: () => (HTMLElement | null)[]
   /**
+   * The navigation strip, named (#585 round 3): the WALL a drawer goes back
+   * behind, in the maintainer's own picture of the shell — the rail and the
+   * strip are two columns glued together, and pressing the arrow moves the
+   * rail while the strip stays whole where it stands.
+   *
+   * Everything else about a column is still asked of the row's geometry. This
+   * one fact cannot be: when the strip leaves together with the drawer in
+   * front of it (the pages closing to the bare rail), the room it stands in is
+   * room a leaving column docked of the drawer is vacating, and the rule that
+   * lets a leaving strip follow the mine's room would let the drawer follow
+   * the strip's — sliding over it in the first frames, mouth and all. A wall
+   * does not move out of the way of its own drawer, so `begin` leaves the
+   * strip's room out of what a drawer follows, and the strip stands until the
+   * rail comes back over it. Optional and defaulted to none, so a caller with
+   * no strip to name — a test harness among them — is untouched.
+   */
+  strip?: () => HTMLElement | null
+  /**
    * Whether main is still answering a layout request (#585 round 2).
    *
    * The renderer cannot be told when the native window is resized, and the
@@ -328,6 +346,24 @@ export function useShellFold(options: ShellFoldOptions) {
   /** Entering columns pre-placed since the last unfold consumed them. */
   let entering: Entering[] = []
   /**
+   * The navigation strip as it was last seen alive (#585 round 3).
+   *
+   * `options.strip` reads a template ref, and Vue nulls a leaving component's
+   * ref while its element is still in the DOM — which is exactly the moment
+   * `begin` needs to know which of the leaving columns the strip is. Measured
+   * live on the first build of this fix, the pages closing to the bare rail
+   * read `null`, let the drawer follow the strip's room, and hid the strip in
+   * the first frames — the one thing naming it was for. So the last non-null
+   * answer is kept, refreshed on every entry point that runs while the strip
+   * is standing.
+   */
+  let strip: HTMLElement | null = null
+  function stripOf(): HTMLElement | null {
+    const live = options.strip?.() ?? null
+    if (live !== null) strip = live
+    return strip
+  }
+  /**
    * Whether an unfold has already been asked for and is waiting for the rest
    * of this change to register (#585) — see `armUnfold`, which is the whole of
    * what it guards: `settle` and `enter` both ask, in either order, and one
@@ -508,17 +544,67 @@ export function useShellFold(options: ShellFoldOptions) {
   }
 
   /**
+   * A column whose docked-side edge sweeps across the row in this fold: where
+   * it stands at rest, and the travel that edge runs from and to. A carried
+   * column sweeps its whole carry; a leaving drawer sweeps the room it
+   * follows, and a drawer following none — its visible edge pinned at the
+   * mouth it slides into — sweeps nothing, and is left out.
+   */
+  interface Sweep {
+    stand: number
+    from: number
+    to: number
+  }
+
+  /**
+   * The clip an `'uncovered'` column runs, as the edge of the column covering
+   * it (#585 round 3): the nearest sweep standing on its FREE side, measured
+   * against its own free-side edge at the two ends of the run.
+   *
+   * The mine column is covered by the strip and everything beyond it sliding
+   * over — a gap away at rest, its whole width nearer by the end. The strip,
+   * where there is no mine, is covered by the RAIL: the maintainer's own
+   * picture is the rail and the strip as two columns glued together, of which
+   * only the rail moves, and what the fix before this one drew instead was
+   * the strip revealed over its own width for the whole run — a 38px strip
+   * taking 300ms to appear reads as the strip animating, not the rail. The
+   * rail crosses it in the first frame, and its edge is where the clip has to
+   * be, so the inset is allowed negative: "a room away" is a frame this run
+   * spends whole, not one it clamps.
+   *
+   * `null` where nothing sweeps across it, which is a caller's cue to keep the
+   * column's own width as the measure, exactly as before.
+   */
+  function coverFor(own: { stand: number; width: number }, sweeps: Iterable<Sweep>): Sweep | null {
+    let nearest: Sweep | null = null
+    for (const sweep of sweeps) {
+      if (sweep.stand <= own.stand || sweep.from === sweep.to) continue
+      if (nearest === null || sweep.stand < nearest.stand) nearest = sweep
+    }
+    if (nearest === null) return null
+    // The room between the cover's edge and this column's free edge at rest,
+    // which the cover's travel has to cross before it hides anything.
+    const room = nearest.stand - (own.stand + own.width)
+    return { stand: nearest.stand, from: nearest.from - room, to: nearest.to - room }
+  }
+
+  /**
    * Hold the LEAVING or ENTERING column itself `travel` px into the edge the
    * strip beside it stands on, clipped there too (#566 T5b) — `place`'s own
    * contract, with the clip `carrySelf` also owns.
    *
    * An `'uncovered'` column is held by the clip ALONE (#585): its box never
    * leaves the place the row gave it, and `place(column, 0)` is what says so —
-   * the empty transform, so the row's own answer is the only one on it.
+   * the empty transform, so the row's own answer is the only one on it. Its
+   * `travel` is the covering column's edge (#585 round 3), and an edge that
+   * has not reached the box, or has left it, hides nothing: the clip is
+   * cleared rather than written negative, so a settled column carries no clip
+   * at all, exactly as a drawer at rest does.
    */
   function placeSelf(column: HTMLElement, travel: number, fold: ColumnFold, mouth: number): void {
     place(column, fold === 'uncovered' ? 0 : travel)
-    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge(), fold, mouth)
+    const whole = fold === 'uncovered' ? travel <= 0 : travel === 0
+    column.style.clipPath = whole ? '' : columnFoldClip(travel, options.edge(), fold, mouth)
   }
 
   /**
@@ -679,6 +765,7 @@ export function useShellFold(options: ShellFoldOptions) {
     // subtracts what is nearer the free edge than IT is — `before` starts
     // empty, which is the rail's own answer and always was.
     const rests = new Map<HTMLElement, number>()
+    const sweeps: Sweep[] = []
     let before: number[] = []
     for (const column of mountedColumns()) {
       if (pending.columns.includes(column)) continue
@@ -692,6 +779,7 @@ export function useShellFold(options: ShellFoldOptions) {
       const stand = columnStand(shell, column)
       carry(column, 0, stand - rest, transition)
       rests.set(column, rest)
+      sweeps.push({ stand, from: 0, to: stand - rest })
       before = [...before, own]
     }
 
@@ -704,8 +792,9 @@ export function useShellFold(options: ShellFoldOptions) {
     // column is never carried and a leaving column's own ref is nulled by Vue
     // while it is still in the DOM (#585).
     const row = [...mountedColumns(), ...pending.columns]
+    const wall = stripOf()
     const stands = pending.columns.map((column) => columnStand(shell, column))
-    for (const [index, column] of pending.columns.entries()) {
+    const leavers = pending.columns.map((column, index) => {
       const width = column.getBoundingClientRect().width
       /*
        * The room the OTHER columns leaving with it are vacating DOCKED of this
@@ -720,20 +809,54 @@ export function useShellFold(options: ShellFoldOptions) {
        * The mouth travels with that room, which is why the clip is measured to
        * `gap + vacated`: what the column ends up clipping away is still
        * exactly its own width, however far the row underneath it moved.
+       *
+       * The strip's own room is never followed (#585 round 3): it is the wall
+       * the drawer in front of it slides behind, and it stands whole until the
+       * rail comes back over it — see `ShellFoldOptions.strip`.
        */
       const vacated = stands.reduce(
         (room, stand, other) =>
-          other === index || stand >= stands[index]! ? room : room + pending.widths[other]! + gap,
+          other === index || stand >= stands[index]! || pending.columns[other] === wall
+            ? room
+            : room + pending.widths[other]! + gap,
         0
       )
-      carrySelf(
+      return {
         column,
-        0,
-        vacated + width + gap,
-        transition,
-        columnFoldOf(shell, column, row),
-        gap + vacated
-      )
+        width,
+        stand: stands[index]!,
+        vacated,
+        fold: columnFoldOf(shell, column, row)
+      }
+    })
+    // A leaving drawer that follows vacated room sweeps that room with its
+    // visible edge before it retreats into its mouth, which is what covers the
+    // mine column under a leaving strip (#585 round 3).
+    for (const { stand, vacated, width, fold } of leavers)
+      if (fold === 'drawer' && vacated > 0)
+        sweeps.push({ stand, from: 0, to: vacated + width + gap })
+    for (const { column, width, stand, vacated, fold } of leavers) {
+      if (fold === 'drawer') {
+        /*
+         * A drawer whose mouth is the shell's own docked edge — everything
+         * docked of it is leaving with it, which is the strip following the
+         * mine out — needs no clip of its own (#585 round 3): the shell is
+         * `overflow: hidden`, so the wall cuts it exactly where the wall is.
+         * Its own clip could not: two keyframes interpolate `max(0, travel −
+         * mouth)` as a straight line from 0 to its width, so the strip was
+         * thinned from its docked side for the whole 402px it slid, and the
+         * mine it uncovers — measured to the strip's box, which is right —
+         * showed a band of ground between the two. The row beside it is
+         * clipped away from under it as it passes (`coverFor`), so nothing
+         * paints over it on the way.
+         */
+        if (gap + vacated >= stand - padding) carry(column, 0, vacated + width + gap, transition)
+        else carrySelf(column, 0, vacated + width + gap, transition, fold, gap + vacated)
+        continue
+      }
+      const cover = coverFor({ stand, width }, sweeps)
+      if (cover === null) carrySelf(column, 0, width + gap, transition, fold, gap)
+      else carrySelf(column, cover.from, cover.to, transition, fold, gap)
     }
 
     run(
@@ -774,6 +897,7 @@ export function useShellFold(options: ShellFoldOptions) {
   function hold(column: HTMLElement): ShellFoldHold | null {
     const shell = options.shell()
     if (shell === null || still(shell)) return null
+    stripOf()
     if (batch === null) {
       /*
        * A fold already running is THIS change's fold, and this column is one
@@ -823,6 +947,7 @@ export function useShellFold(options: ShellFoldOptions) {
   function enter(column: HTMLElement): void {
     const shell = options.shell()
     if (shell === null || still(shell)) return
+    stripOf()
     // One style resolution, the same reason `begin` takes one: only `gap` is
     // read here, off the shell the column has already been laid out inside.
     const gap = parseFloat(getComputedStyle(shell).columnGap) || 0
@@ -982,18 +1107,38 @@ export function useShellFold(options: ShellFoldOptions) {
       enteringNow.map((one) => [one.column, restStand(shell, one.column)])
     )
     entering = []
-    for (const { column, travel, fold, mouth } of enteringNow)
-      carrySelf(column, travel, 0, transition, fold, mouth)
     // Every OTHER carried column returns from the footprint it had when the
     // fold it is answering for last settled — outside the footprint this
     // unfolds FROM when it is entering room the row only just repacked into,
     // which is exactly why it starts there and comes back with the ground.
+    // Measured before the entering columns are run, because a carried column
+    // coming back is what UNCOVERS one of them (#585 round 3).
+    const sweeps: Sweep[] = []
     for (const column of mountedColumns()) {
       if (enteringColumns.has(column)) continue
       const stand = columnStand(shell, column)
       stands.set(column, stand)
       const offset = columnOffsets.get(column)
-      if (offset !== undefined) carry(column, stand - offset, 0, transition)
+      if (offset === undefined) continue
+      carry(column, stand - offset, 0, transition)
+      sweeps.push({ stand, from: stand - offset, to: 0 })
+    }
+    // A drawer comes out from behind the strip's edge on its own travel; an
+    // uncovered column is revealed at the edge of the carried column coming
+    // back across it — the strip's over the mine, the rail's over the strip —
+    // and keeps its own width as the measure only where nothing sweeps it.
+    for (const { column, travel, fold, mouth } of enteringNow) {
+      if (fold === 'drawer') {
+        carrySelf(column, travel, 0, transition, fold, mouth)
+        continue
+      }
+      // Measured now rather than read back from `enter`: an uncovered column
+      // was pre-placed by its clip alone, so its box stands exactly where the
+      // row put it, and the row is the one the sweeps above were read against.
+      const box = column.getBoundingClientRect()
+      const cover = coverFor({ stand: columnStand(shell, column), width: box.width }, sweeps)
+      if (cover === null) carrySelf(column, travel, 0, transition, fold, mouth)
+      else carrySelf(column, cover.from, cover.to, transition, fold, mouth)
     }
     run(
       shell,
@@ -1023,6 +1168,7 @@ export function useShellFold(options: ShellFoldOptions) {
    */
   function settle(reserved: boolean): void {
     const shell = options.shell()
+    stripOf()
     if (shell === null || motion.running(shell)) return
     if (reserved) {
       if (painted !== null && !still(shell)) apply(shell, painted, radiusOf(shell))
