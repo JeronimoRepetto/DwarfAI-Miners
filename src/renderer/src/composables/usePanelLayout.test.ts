@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { usePanelLayout } from './usePanelLayout'
-import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
+import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
 
 /** A leave the frozen document timeline will never report as finished (#266). */
 const stalledLeave = (): Promise<void> => new Promise<void>(() => undefined)
@@ -170,7 +170,7 @@ describe('usePanelLayout', () => {
       const closing = panel.toggle(false)
       await Promise.resolve()
       expect(api.setPanelLayout).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+      await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
       expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({
         expanded: false,
         mineOpen: false
@@ -259,7 +259,7 @@ describe('usePanelLayout', () => {
       // intermediate #266 got stuck in, and it may only last the bound.
       expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ expanded: true, mineOpen: true })
       expect(panel.visibleLayout.value).toEqual({ ...CLOSED, mineOpen: true })
-      await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+      await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
       expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
       await changing
       expect(panel.layout.value).toEqual({ ...CLOSED, mineOpen: true })

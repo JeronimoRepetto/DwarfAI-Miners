@@ -1,7 +1,7 @@
 import { animate as motionAnimate, cancelFrame, frame } from 'motion-v'
-import type { DOMKeyframesDefinition, Easing } from 'motion-v'
+import type { DOMKeyframesDefinition } from 'motion-v'
 import { prefersReducedMotion, watchReducedMotion } from '../scene/sceneMotion'
-import { PANEL_MOTION_EASE, PANEL_MOTION_MS, PANEL_MOTION_WATCHDOG_MS } from './panelMotion'
+import { motionBoundMs, type MotionTransition } from './motionTiming'
 
 /**
  * What the runner actually calls on the controls motion-v's `animate()` hands
@@ -14,40 +14,15 @@ export interface MotionControls {
   /**
    * The ONE teardown method the runner ever calls now, in place of the
    * `complete()`/`stop()` pair an earlier version of this file called in
-   * sequence. `complete()` is `animation.finish()`, and on motion-v's WAAPI
-   * path the browser writes the run's final frame and discards the effect
-   * from inside `onfinish` — a browser EVENT delivered off the document
-   * timeline, one Chromium freezes for a window it considers hidden
-   * (occluded by another program counts; `backgroundThrottling` is on by
-   * default). A run that ends while hidden leaves that event undelivered,
-   * and it fires LATE — after this window is visible again — writing
-   * whatever `settle` already decided over again. `stop()` made this worse,
-   * not better: it returns early once `state === 'finished'`, so calling it
-   * after `complete()` did nothing to stop the late write. `cancel()` is the
-   * one call that discards the WAAPI effect BEFORE the browser can ever
-   * dispatch that event, and it cancels a still-pending keyframe resolver too
-   * (confirmed against the real engine, `motionEngine.test.ts`), so a run
-   * that never actually started never writes anything either. On the JS
-   * driver — any value WAAPI cannot accelerate, `clipPath`'s `calc()` among
-   * them — `cancel()` can instead leave the element at an ARBITRARY
-   * mid-animation frame (also confirmed against the real engine, not merely
-   * read off its source: reading motion-dom's `JSAnimation.cancel()` alone
-   * suggests it writes the initial keyframe, but that computed value never
-   * gets flushed to `element.style` before `cancel()`'s own teardown stops
-   * the driver). Either way, `settle` in `run`, below, always runs right
-   * after `cancel()`, never before, and that used to be read as the whole
-   * fix. It is not: `cancel()` only closes the late WAAPI `onfinish` write
-   * above — it does nothing about a RENDER the engine's own driver already
-   * had queued before `cancel()` ran (`JSAnimation.cancel()`'s `tick(0)`
-   * feeds its `onUpdate` straight into `MotionValue.set`, which calls
-   * `owner.scheduleRender()`, `render/VisualElement.mjs` ~line 135 — a
-   * NativeAnimation mid-flight can leave the same thing queued). That render
-   * flushes on its own one frame later regardless, overwriting whatever
-   * `settle` just wrote with the engine's own latest values. `run`, below,
-   * closes that gap by re-running `settle` a second time, scheduled through
-   * motion-v's own `frame.postRender` so it lands after the engine's queued
-   * render rather than racing it — see `run`'s own comment for why the
-   * ordering is guaranteed rather than hoped for.
+   * sequence — `stop()` returns early once WAAPI's own `finish()` already
+   * flipped the state, so calling it after `complete()` did nothing to stop
+   * a late `onfinish` write, and `complete()`'s `animation.finish()` IS the
+   * WAAPI method that write fires from. `cancel()` is the one call that
+   * discards the WAAPI effect, or a still-pending keyframe resolver on the JS
+   * driver, before either can write anything else on its own schedule. See
+   * the module header below — "`settle` is the runner's last word…" — for
+   * the full mechanics of what `cancel()` closes, what it does not, and why
+   * `settle` still has to run right after it, twice.
    */
   cancel: () => void
   then: (onResolve: () => void, onReject?: () => void) => Promise<void>
@@ -57,20 +32,33 @@ export interface MotionControls {
  * The engine this runner drives, injected so tests can hand it a hand-written
  * fake instead of the real motion-v (`createBoundedMotion({ animate })`) —
  * the house idiom (`skills/tdd`) over `vi.mock`. Typed on exactly what `run`
- * calls: an element, motion-v's own keyframe shape, and the one transition it
- * ever asks for.
+ * calls: an element, motion-v's own keyframe shape, and — optionally — a
+ * transition.
+ *
+ * Optional rather than authored (#566, was: always the app's own fixed
+ * 250ms/easing pair). The user's ruling was to stop authoring one by
+ * default: this runner asks motion-v for NOTHING but the keyframes UNLESS a
+ * caller hands one down, so motion-dom's own `getDefaultTransition` decides
+ * per value in the ordinary case — see `motionTiming.ts`, which is where
+ * this app now reads that same default back to derive its watchdog.
+ *
+ * A caller gives one when it needs MORE than its own default: the shell's
+ * fold (#464) is one motion, not two, so `useShellFold.carry()` passes the
+ * clip's own transition to the rail's run rather than let each half of the
+ * fold pick a different default and drift apart. `run`'s own fourth
+ * argument, below, forwards it here unchanged.
  */
 export type MotionAnimate = (
   element: Element,
   keyframes: DOMKeyframesDefinition,
-  options: { duration: number; ease: Easing }
+  transition?: MotionTransition
 ) => MotionControls
 
 /**
  * Where `run`'s ender schedules the second, defensive write that closes
- * `settle` being the last one (#566 T2b — see the module header and
- * `MotionControls.cancel`, above, for why one write is not enough). Injected
- * exactly like `animate`, the same house idiom (`skills/tdd`) over
+ * `settle` being the last one (#566 T2b — see the module header below,
+ * "`settle` is the runner's last word…", for why one write is not enough).
+ * Injected exactly like `animate`, the same house idiom (`skills/tdd`) over
  * `vi.mock`: production gets motion-v's real `frame.postRender`, and a test
  * hands `createBoundedMotion({ afterRender })` a hand-written recorder
  * instead, so it can decide exactly when that scheduled callback fires
@@ -137,13 +125,15 @@ function releaseWritten(element: Element, keyframes: DOMKeyframesDefinition): vo
  * entirely-yellow frame #266 photographed.
  *
  * So every run here reports itself three ways and the first one wins: the
- * animation finishing, a watchdog one margin past the 250ms, and the window
+ * animation finishing, a watchdog one margin past however long THIS run's own
+ * keyframes take motion-v's default transition to settle (`motionTiming.ts`
+ * — #566, was a fixed 250ms this codebase authored itself), and the window
  * becoming hidden. Reduced motion turned on mid-flight ends it too, because it
  * is a request for the state change without the motion. None of them changes
- * the 250ms a focused window animates for (#164); they only bound what may
- * follow it.
+ * how long a focused window actually animates for (#164); they only bound
+ * what may follow it.
  *
- * ## `settle` runs right after `cancel`, never after a late `finish` event
+ * ## `settle` is the runner's last word, however many times it takes
  *
  * Motion-v's WAAPI path commits the run's final frame into `element.style`
  * and discards its own effect from inside `onfinish` — a browser EVENT fired
@@ -168,33 +158,34 @@ function releaseWritten(element: Element, keyframes: DOMKeyframesDefinition): vo
  * an element whose settled state is not its stylesheet's (a folded clip, a
  * surface held at its hidden keyframe) would snap to the wrong thing for one
  * frame if the caller wrote it too late, which is exactly the repaint the
- * motion exists to hide. The callback is the place to write that state, and
- * it runs right after `cancel` however the run ended — a caller with none of
- * its own gets whatever `cancel` left sitting on the element handed back to
- * the stylesheet instead (`releaseWritten`, below).
+ * motion exists to hide.
  *
- * ## `settle` is the last write, twice (#566 T2b)
+ * `cancel()` running first used to be read as the whole fix, and it is not
+ * (#566 T2b): it only closes the late WAAPI `onfinish` write above, not a
+ * RENDER the engine's own driver already had queued before `cancel()` ran.
+ * `JSAnimation.cancel()`'s own `tick(0)` feeds its `onUpdate` straight into
+ * `MotionValue.set`, which calls `owner.scheduleRender()`
+ * (`render/VisualElement.mjs` ~line 135) — a NativeAnimation mid-flight can
+ * leave the same thing queued. That scheduled render is not undone by
+ * `cancel()`; it flushes on its own, at the RENDER step of the frame AFTER
+ * this one, and writes every one of the visual element's latest values —
+ * which is exactly `settle`'s write, overwritten one frame after `settle`
+ * made it. A real-window probe of the rail carry caught this directly: a
+ * LATE `transform: none` landing a frame after `cancel()` + `settle`, in 3 of
+ * 7 experiments.
  *
- * The paragraph above used to end there, and it was wrong to: `cancel()`
- * closes the late WAAPI `onfinish` write, not every late write the engine
- * can still make. `JSAnimation.cancel()`'s own `tick(0)` feeds its
- * `onUpdate` straight into `MotionValue.set`, which calls
- * `owner.scheduleRender()` (`render/VisualElement.mjs` ~line 135) — and a
- * NativeAnimation mid-flight can leave the same thing queued. That scheduled
- * render is not undone by `cancel()`; it flushes on its own, at the RENDER
- * step of the frame AFTER this one, and writes every one of the visual
- * element's latest values — which is exactly `settle`'s write, overwritten
- * one frame after `settle` made it. A real-window probe of the rail carry
- * caught this directly: a LATE `transform: none` landing a frame after
- * `cancel()` + `settle`, in 3 of 7 experiments. So `settle` (or the
- * hand-back) runs a second time here, scheduled through motion-v's own
+ * So the callback — `complete`, below — writes `settle` (or the hand-back,
+ * `releaseWritten`) TWICE. Once synchronously, right after `cancel()`,
+ * however the run ended: a caller reading the style right after `await run`
+ * has to see the settled state immediately, and a caller with none of its
+ * own gets whatever `cancel` left sitting on the element handed back to the
+ * stylesheet on the spot. And once more, scheduled through motion-v's own
  * `frame.postRender` — the step that runs right after `render` in the SAME
  * batch (`frameloop/frame.mjs`'s `stepsOrder`, `frameloop/batcher.mjs`'s
  * `processBatch`), so it lands after the engine's queued render rather than
- * racing it over an uncertain number of frames. The first, synchronous write
- * still matters and stays: a caller reading the style right after `await
- * run` has to see the settled state immediately, not one frame later. The
- * scheduled one is the defensive second write that makes it stick.
+ * racing it over an uncertain number of frames. The first write is the
+ * guaranteed-immediate one; the second is the defensive one that makes it
+ * stick against a render `cancel()` never touched.
  *
  * ## Framework-agnostic on purpose
  *
@@ -218,8 +209,17 @@ export interface BoundedMotion {
    * was already running on it. Resolves when the motion is over by any of the
    * three routes above — never rejects, because a torn-down motion is not
    * evidence that whatever was waiting on it should keep waiting.
+   *
+   * `transition`, when given, is forwarded to the engine unchanged and used
+   * to derive the watchdog too (#464) — see `MotionAnimate`, above, for why a
+   * caller would ever give one.
    */
-  run: (element: Element, keyframes: DOMKeyframesDefinition, settle?: () => void) => Promise<void>
+  run: (
+    element: Element,
+    keyframes: DOMKeyframesDefinition,
+    settle?: () => void,
+    transition?: MotionTransition
+  ) => Promise<void>
   /** Whether a run is still in flight on this element. */
   running: (element: Element) => boolean
   /** End this element's run now, settling it first. */
@@ -257,8 +257,8 @@ export function createBoundedMotion(
     // such method, and would still drive values through its own rAF timers in
     // jsdom (`motionEngine.test.ts`). What `Element.animate` being missing
     // still tells us is that this is not a real Chromium window: a test
-    // environment wants the settled state on the spot, not a 250ms timer race
-    // against nothing actually rendering.
+    // environment wants the settled state on the spot, not a derived-duration
+    // timer race against nothing actually rendering.
     return reduced || document.hidden || typeof (element as HTMLElement).animate !== 'function'
   }
 
@@ -298,14 +298,24 @@ export function createBoundedMotion(
   function run(
     element: Element,
     keyframes: DOMKeyframesDefinition,
-    settle?: () => void
+    settle?: () => void,
+    transition?: MotionTransition
   ): Promise<void> {
     release(element)
     cancelPendingReapply(element)
-    const controls = animate(element, keyframes, {
-      duration: PANEL_MOTION_MS / 1000,
-      ease: PANEL_MOTION_EASE
-    })
+    // `transition` undefined: `animate()` gets exactly two arguments, same as
+    // ever — motion-v's own `getDefaultTransition` decides per value key
+    // (#566 — see `MotionAnimate`, above, and `motionTiming.ts`, which reads
+    // that same default back to arm the watchdog below with a matching
+    // number). Given, it is passed straight through as a third (#464) —
+    // conditionally, rather than always forwarding a possibly-`undefined`
+    // third argument, so a fake engine asserting on its own exact call shape
+    // (`PanelTransition.test.ts`) sees the same two-argument call it always
+    // has for the ordinary case.
+    const controls =
+      transition === undefined
+        ? animate(element, keyframes)
+        : animate(element, keyframes, transition)
     let resolve!: () => void
     const finished = new Promise<void>((done) => {
       resolve = done
@@ -332,15 +342,16 @@ export function createBoundedMotion(
       resolve()
       // The write above is the synchronous, guaranteed-immediate one — a
       // caller reading the style right after `await run` has to see it. It
-      // is not the LAST write `cancel()` allows for, though (#566 T2b, see
-      // `MotionControls.cancel` and the module header): the engine can still
-      // have a render queued from before `cancel()` ran, and it flushes one
-      // frame later regardless, overwriting exactly what was just written.
-      // So the same write runs again, scheduled through `frame.postRender`
-      // (or its test fake) so it lands after that render rather than racing
-      // it. Guarded by identity against the element's NEXT run rather than
-      // this one — `reapply` has already resolved everything this run owes,
-      // so nothing here needs `active`'s guard a second time.
+      // is not the LAST write `cancel()` allows for, though (#566 T2b — see
+      // the module header, "`settle` is the runner's last word…"): the
+      // engine can still have a render queued from before `cancel()` ran,
+      // and it flushes one frame later regardless, overwriting exactly what
+      // was just written. So the same write runs again, scheduled through
+      // `frame.postRender` (or its test fake) so it lands after that render
+      // rather than racing it. Guarded by identity against the element's
+      // NEXT run rather than this one — `reapply` has already resolved
+      // everything this run owes, so nothing here needs `active`'s guard a
+      // second time.
       const reapply = (): void => {
         if (pendingReapply.get(element) !== reapply) return
         pendingReapply.delete(element)
@@ -355,7 +366,12 @@ export function createBoundedMotion(
     // watchdog is what makes completion bounded rather than merely likely.
     // Declared after `complete` so it can be the timer's own handle — nothing
     // can reach `clearTimeout` before the timer that is being cleared exists.
-    const watchdog = setTimeout(complete, PANEL_MOTION_WATCHDOG_MS)
+    // Armed for THIS run's own keyframes (#566), and the SAME transition just
+    // handed to `animate()` above (#464) — a spring's settling time depends
+    // on the delta it is asked to travel, so the watchdog has to ask
+    // `motionBoundMs` fresh per run rather than share one constant across
+    // every shape this runner is ever handed.
+    const watchdog = setTimeout(complete, motionBoundMs(keyframes, transition))
     void controls.then(complete, complete)
     return finished
   }

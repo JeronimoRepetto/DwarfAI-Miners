@@ -1062,9 +1062,10 @@ function reportHeight(): void {
  * `transform` changes what `offsetHeight` measures, so the height report main
  * sizes the window from is untouched by any of this.
  *
- * The 250ms and the easing are the shell's own, and the keyframes are the same
- * builder its vertical dock uses: one panel motion in this app, not one per
- * window.
+ * The timing is motion-v's own default for these values (#566) — this window
+ * authors no duration or easing of its own, any more than the shell's docked
+ * panels do — and the keyframes are the same builder its vertical dock uses:
+ * one panel motion in this app, not one per window.
  */
 const motion = createBoundedMotion({ animate: props.engine })
 /**

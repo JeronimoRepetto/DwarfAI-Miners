@@ -9,7 +9,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
-import { PANEL_LEAVE_BOUND_MS } from './lib/shell/panelMotion'
+import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -324,7 +324,7 @@ describe('App panel motion (#164)', () => {
    * still gets a bare stub below, because `still()` reads its mere PRESENCE
    * as the app's proxy for "a real Chromium window" and never calls it.
    */
-  const engine: MotionAnimate = (element, _keyframes: DOMKeyframesDefinition, _options) => {
+  const engine: MotionAnimate = (element, _keyframes: DOMKeyframesDefinition) => {
     let finish!: () => void
     const finished = new Promise<void>((resolve) => {
       finish = resolve
@@ -427,7 +427,7 @@ describe('App panel motion (#164)', () => {
     push({ mines: [], tokensObserved: 0 })
     await flushPromises()
     expect(api.setPanelLayout).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+    await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
     expect(wrapper.find('.mine-scene').exists()).toBe(false)
