@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { emptyMessagePanel } from './messagePanelState'
 import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
@@ -11,6 +12,10 @@ import {
   applyAlwaysOnTop,
   buildMessagePanelWindowOptions,
   applyPanelBounds,
+  // ADDED for #570 — the page load split out of createMainWindow.
+  applyPanelPageLoad,
+  type PanelPageTarget,
+  loadPanelPage,
   applyUiScale,
   buildMainWindowOptions,
   // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
@@ -298,6 +303,66 @@ describe('buildMainWindowOptions docked bounds', () => {
         RAIL_BOUNDS
       )
     }
+  })
+})
+
+/**
+ * The page load that used to happen inside createMainWindow itself (#570).
+ *
+ * `createMainWindow` used to end by starting this load fire-and-forget —
+ * before index.ts had registered its own `ipcMain.handle` surface, several
+ * hundred lines later. A renderer fast enough to mount before that
+ * registration finished invoked `mines:get` onto a channel nobody was
+ * listening on yet, and Electron rejected it as "No handler registered for
+ * channel": silent in `pnpm dev`, where the dev server's own page load is slow
+ * enough to lose that race almost every time, and reliable in a packaged
+ * build, where `loadFile` reads local bytes and wins it (issue #570).
+ *
+ * The fix is to stop loading the page from inside window creation at all:
+ * `loadPanelPage` is now the only thing that starts this load, and index.ts
+ * calls it once, after the last `ipcMain` registration.
+ *
+ * `createMainWindow` itself is not exercised here, for the same reason no
+ * other test in this file constructs one: a real `BrowserWindow` cannot be
+ * built outside an actual Electron process — `require('electron')` there
+ * resolves to the path of its binary, not the module — so what is provable in
+ * this suite is the branch `loadPanelPage` performs, against a fake target.
+ */
+describe('applyPanelPageLoad (#570)', () => {
+  function fakePageTarget() {
+    const calls: { method: 'loadURL' | 'loadFile'; arg: string }[] = []
+    const target: PanelPageTarget = {
+      loadURL: (url) => {
+        calls.push({ method: 'loadURL', arg: url })
+      },
+      loadFile: (filePath) => {
+        calls.push({ method: 'loadFile', arg: filePath })
+      }
+    }
+    return { target, calls }
+  }
+
+  it('loads the dev server page when ELECTRON_RENDERER_URL names one', () => {
+    const { target, calls } = fakePageTarget()
+    applyPanelPageLoad(target, { ELECTRON_RENDERER_URL: 'http://localhost:5173' })
+    expect(calls).toEqual([{ method: 'loadURL', arg: 'http://localhost:5173' }])
+  })
+
+  it('loads the packaged file when there is no dev server to name one', () => {
+    const { target, calls } = fakePageTarget()
+    applyPanelPageLoad(target, {})
+    expect(calls).toEqual([
+      { method: 'loadFile', arg: join(import.meta.dirname, '../renderer/index.html') }
+    ])
+  })
+})
+
+describe('loadPanelPage (#570)', () => {
+  it('is a no-op with no window, like showPanel and placeMessagePanel guard', () => {
+    // No test in this file ever calls createMainWindow() (see the block
+    // comment above), so module-scope `mainWindow` is still null here — which
+    // is exactly the state this guard exists for.
+    expect(() => loadPanelPage()).not.toThrow()
   })
 })
 
