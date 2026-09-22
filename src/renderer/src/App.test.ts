@@ -331,8 +331,7 @@ describe('App panel motion (#164)', () => {
     })
     animations.push({ element, finish })
     return {
-      complete: () => undefined,
-      stop: () => undefined,
+      cancel: () => undefined,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
     }
   }

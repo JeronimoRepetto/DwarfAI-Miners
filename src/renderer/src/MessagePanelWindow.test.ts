@@ -2413,8 +2413,7 @@ describe('rising into place and settling before the window goes', () => {
       const cancel = vi.fn()
       runs.push({ element, keyframes, timing, finish, cancel })
       return {
-        complete: () => undefined,
-        stop: cancel,
+        cancel,
         then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
       }
     }
