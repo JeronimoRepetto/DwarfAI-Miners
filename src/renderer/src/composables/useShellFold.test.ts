@@ -1321,6 +1321,93 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.wrapper.unmount()
   })
 
+  /*
+   * ADDED for #585 round 2, from the probe of closing a mine with the
+   * secondary panel already shut — [rail][nav][mine] to [rail], the one
+   * composition where two columns leave in two different Vue patches (the
+   * navigation stack goes one tick after the mine, which AGENTS.md already
+   * records). Two batches opened, `begin` ran twice, and the second run
+   * claimed the ground from the first: every column snapped to its end state
+   * in the first 5ms and never animated at all, the ground folded 61 of the
+   * 417px it owed because the second fold only knew about the navigation
+   * stack, and the remaining 356 arrived as the native resize jump 300ms
+   * later.
+   *
+   * A column that leaves while a fold is still running belongs to that fold:
+   * it joins the batch already in flight, which re-measures the union from
+   * the same footprint and runs once. The superseded run writes nothing on
+   * its way out — its settle is what snapped every column before.
+   */
+  it('coalesces columns leaving in separate ticks into ONE fold over the union', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    // The row is [rail][nav][mine] against the docked edge: 8px of padding,
+    // 20 + 38 + 348 of column and a gap between each.
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    // The mine column goes on the view's own change...
+    const first = test.fold.hold(mine)!
+    await settled()
+    expect(test.animations).toHaveLength(1)
+    // ...and the navigation stack one tick later, on the layout's.
+    const second = test.fold.hold(nav)!
+    await settled()
+    // One fold for the change: the same two moments to wait on, and a ground
+    // whose last word is the union rather than the second column alone (which
+    // measured 376 of 438 live — the ground barely moved).
+    expect(second).toBe(first)
+    const folds = test.animations
+    expect(clipFrames(folds[folds.length - 1]!.keyframes)[1]).toBe(
+      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+    )
+    // From the footprint the first fold started at, not from what it had
+    // already written: nothing was settled on the way past.
+    expect(clipFrames(folds[folds.length - 1]!.keyframes)[0]).toBe(
+      'inset(0px 0px 0px 0px round 12px)'
+    )
+    expect(test.shell.style.clipPath).toBe('')
+    // And every column of the change is carried by the fold that survives.
+    expect(test.animationsFor(nav)).toHaveLength(1)
+    expect(test.animationsFor(mine).length).toBeGreaterThanOrEqual(1)
+    expect(test.railAnimations.length).toBeGreaterThanOrEqual(1)
+    folds[folds.length - 1]!.finish()
+    await settled()
+    expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 20px) round 12px)')
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2. The columns of that one fold keep the roles the
+   * row gives them: the navigation stack is a drawer sliding into the wall
+   * docked of it, and the mine column — docked-most, with the whole row on
+   * its free side — is clipped from its free side without moving at all.
+   * Both on the transition the ground is folding under.
+   */
+  it('gives every column of a coalesced fold its own role, on the fold’s one transition', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    void test.fold.hold(mine)
+    await settled()
+    void test.fold.hold(nav)
+    await settled()
+    const mineRuns = test.animationsFor(mine)
+    expect(mineRuns[mineRuns.length - 1]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+    })
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      ...carries(0, 46),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
+    })
+    const folds = test.animations
+    expect(test.animationsFor(nav)[0]!.transition).toEqual(
+      test.railAnimations[test.railAnimations.length - 1]!.transition
+    )
+    expect(folds[folds.length - 1]!.transition).toBeUndefined()
+    test.wrapper.unmount()
+  })
+
   it('reveals a pre-placed column at once on teardown, rather than leave it invisible for good', () => {
     const test = harness({ width: 645 })
     const mine = placed(test.column(348), 645, 348)

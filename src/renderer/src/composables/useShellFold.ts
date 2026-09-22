@@ -253,6 +253,29 @@ export function useShellFold(options: ShellFoldOptions) {
   /** The columns registering for the next fold, before it is measured. */
   let batch: Leaving | null = null
   /**
+   * The fold whose run is in flight right now, or `null` between folds (#585
+   * round 2).
+   *
+   * A column that starts leaving while this is set belongs to THIS fold and
+   * not to a new one: `hold` reopens it rather than batching a second, and
+   * `begin` runs again over the union. Cleared where the fold's own run ends,
+   * which is where the columns pass to `holding` and the shrink is let go.
+   */
+  let folding: Leaving | null = null
+  /**
+   * Which fold the ground is running, counted up per run so a SUPERSEDED one
+   * can be told to write nothing (#585 round 2).
+   *
+   * Every run the ground starts claims the element from the one before it,
+   * and ending that one calls its settle — which applies its own folded clip,
+   * records `painted`, pins the box and releases every column it was
+   * carrying to its end state. All of that is right when a fold finishes and
+   * wrong when it is replaced: closing a mine with the secondary panel shut
+   * measured every column snapped in the first 5ms and a ground folded to the
+   * wrong strip, because the fold that took over had inherited all of it.
+   */
+  let folds = 0
+  /**
    * Every batch a fold is standing over, until the window has caught up.
    *
    * A list rather than the last one: two changes can fold before either window
@@ -576,7 +599,14 @@ export function useShellFold(options: ShellFoldOptions) {
     // #566 T5b's own carried columns among them — makes far more likely to
     // land inside one test's own timers.
     let settled = false
+    const generation = ++folds
     void motion.run(shell, shellFoldKeyframes(from, to, options.edge(), radius), () => {
+      // A run the ground has already replaced writes nothing at all (#585
+      // round 2): the fold that took over owns `painted`, the pin, the clip
+      // and every column this one was carrying, and it is about to say so
+      // itself. Ending is not finishing, and only the last fold standing may
+      // answer for the ground.
+      if (generation !== folds) return
       apply(shell, to, radius)
       if (settled) return
       settled = true
@@ -611,10 +641,15 @@ export function useShellFold(options: ShellFoldOptions) {
     if (pending === null) return
     const shell = options.shell()
     if (shell === null || still(shell)) {
+      folding = null
       pending.resolve()
       pending.release()
       return
     }
+    // From here this fold is the one in flight, and a column that starts
+    // leaving before it ends joins it rather than opening a second (#585
+    // round 2) — see `hold`, below.
+    folding = pending
     // One style resolution for everything this fold reads off the element: the
     // gaps and padding it measures with, and the corners it is drawn with.
     const style = getComputedStyle(shell)
@@ -687,6 +722,7 @@ export function useShellFold(options: ShellFoldOptions) {
         }
         for (const column of pending.columns) motion.release(column)
         pinned = { box: folded + 2 * padding }
+        folding = null
         // The columns stay standing from here, and the shrink this resolves is
         // what will eventually let them go. The bound is the latest fold's,
         // which is the one the window still owes an answer to.
@@ -710,7 +746,22 @@ export function useShellFold(options: ShellFoldOptions) {
     const shell = options.shell()
     if (shell === null || still(shell)) return null
     if (batch === null) {
-      batch = leaving()
+      /*
+       * A fold already running is THIS change's fold, and this column is one
+       * more of its columns (#585 round 2). The two are not always in the
+       * same Vue patch: closing a mine takes the navigation stack with it one
+       * tick later, and two batches meant two `begin`s, two folded targets
+       * and a second run that claimed the ground from the first — every
+       * column snapped, and the ground folded 61 of the 417px it owed.
+       *
+       * So the batch is reopened rather than replaced: the same two promises
+       * the columns already hold, re-measured over the union from the same
+       * footprint (`painted` is untouched, because the run this supersedes
+       * writes nothing), and run once. What the joining column costs is the
+       * distance the first run had already travelled, which it gives back —
+       * a frame of it, where the probe measured the two arriving 0.1ms apart.
+       */
+      batch = folding ?? leaving()
       // Measured a microtask later, when every column leaving in this patch has
       // registered: still inside the frame Vue is preparing, and with the row
       // it is measuring still intact.
@@ -1029,6 +1080,7 @@ export function useShellFold(options: ShellFoldOptions) {
     motion.dispose()
     batch?.resolve()
     batch?.release()
+    folding = null
     // After `dispose`, which may have ended a fold still running and taken its
     // columns into `holding` on the way past.
     letGo()
