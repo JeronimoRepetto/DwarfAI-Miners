@@ -222,9 +222,55 @@ export interface BoundedMotion {
   ) => Promise<void>
   /** Whether a run is still in flight on this element. */
   running: (element: Element) => boolean
-  /** End this element's run now, settling it first. */
+  /**
+   * End this element's run now, letting the run's OWN `settle` stand as
+   * this element's last word: a re-apply the ending schedules (T2b) is left
+   * standing, because nobody else is about to write the element afterward.
+   *
+   * This is `useShellFold`'s rail carry and `PanelTransition`'s own finish —
+   * both end a run through this and never touch the element themselves
+   * again, so the run's late-render protection has to survive them. A
+   * re-apply already pending BEFORE this call, left by an EARLIER run that
+   * had already ended, is withdrawn regardless: an old run's answer must
+   * never land on top of whichever run owns the element next.
+   *
+   * A caller that is about to write the element's OWN state right after —
+   * `MessagePanelWindow`'s `armRise` and its cut branch — wants the
+   * opposite guarantee and calls `claim`, below, instead.
+   */
   release: (element: Element) => void
-  /** End every run now. */
+  /**
+   * End this element's run now AND withdraw every re-apply pending for it —
+   * including one ending an ACTIVE run would otherwise have scheduled (T2b)
+   * — because THIS caller is about to write the element's state itself, and
+   * nothing the runner still owes it may land afterward.
+   *
+   * This is `MessagePanelWindow`'s `armRise` and the cut branch of its
+   * `panel` watch, both of which call this and then write `holdHidden` /
+   * `releaseHidden` right after — the exact case `release`, above, is not
+   * safe for, because THAT method would leave whatever it just ended free to
+   * fire its own re-apply over what this caller wrote. The cut branch meets
+   * this ACTIVE: a reopen or a dwarf switch landing while the leave it cuts
+   * off is still in flight ends that live run. `armRise` meets it settled:
+   * by construction it only runs once a leave has fully finished, so what it
+   * withdraws is that leave's own re-apply, left pending because main had
+   * already hidden the window before the scheduled frame ran — #566's own
+   * bug. `claim` is correct either way, which is the point of using it in
+   * both places rather than reasoning about which case a given call is.
+   * `run`, below, claims the element for the same reason before starting its
+   * own keyframes.
+   */
+  claim: (element: Element) => void
+  /**
+   * End every run now. Pending re-applies are left standing on purpose
+   * (#566 hotfix): this runs on `visibilitychange` -> hidden and on reduced
+   * motion turning on, and the re-apply IS the protection that lands
+   * `settle` after the engine's own deferred render once frames resume
+   * (T2b) — withdrawing it here would reopen the exact late-render race T2b
+   * closed. Only a STALE one already pending before `release(element)` is
+   * called, `claim(element)`, a newer `run(element)`, or `dispose()`
+   * withdraw one.
+   */
   releaseAll: () => void
   /** Teardown: release everything and stop listening. */
   dispose: () => void
@@ -242,6 +288,17 @@ export function createBoundedMotion(
    * is set, `complete` has already deleted the element from `active` — a
    * pending re-apply is not a run in flight, it is a write still owed to an
    * element whose run already ended.
+   *
+   * It belongs to the run that scheduled it (#566 hotfix). `run()` and
+   * `claim(element)` always withdraw whatever they find here, unconditionally
+   * — a new run, or a caller about to write the element itself, cannot
+   * tolerate anything the runner still owes landing afterward. `release
+   * (element)` is more careful: it withdraws one that was already here when
+   * it was called (stale — left by a run that had already ended), but leaves
+   * standing one it schedules itself by ending a run that was still active,
+   * so that run's OWN `settle` can still be the element's last word (see its
+   * own doc, and `claim`'s, on `BoundedMotion`). `dispose()` withdraws every
+   * one left; `releaseAll()` withdraws none.
    */
   const pendingReapply = new Map<Element, () => void>()
   /**
@@ -267,11 +324,39 @@ export function createBoundedMotion(
   }
 
   function release(element: Element): void {
+    // A re-apply already sitting here is necessarily stale: `active` and
+    // `pendingReapply` are mutually exclusive (see the map's own doc, above),
+    // so one present now was left by a run that had already ended before
+    // this caller ever reached for the element (#566 hotfix — the invisible
+    // reopened message panel). Read BEFORE ending an active run below, which
+    // would otherwise schedule its OWN fresh one and be mistaken for it.
+    const hadStaleReapply = pendingReapply.has(element)
     active.get(element)?.()
+    // The caller is claiming this element back outright: a stale answer to
+    // "what should this element show at rest" must never land on top of
+    // whatever the caller writes next. A re-apply THIS call just scheduled,
+    // by ending a run that was still active, is not stale — it is T2b's own
+    // guarantee to a `release` caller that `settle` still survives the
+    // engine's deferred render — so it is left standing.
+    if (hadStaleReapply) cancelPendingReapply(element)
+  }
+
+  function claim(element: Element): void {
+    // Ends whatever was active exactly like `release` — its own doc covers
+    // that half. What differs is next: unconditional, regardless of whether
+    // ending it just scheduled a fresh re-apply or nothing was running at
+    // all, because THIS caller is about to write the element's state itself
+    // and nothing the runner still owes it — stale or fresh — may land
+    // afterward. See `claim`'s doc on `BoundedMotion` for the callers that
+    // need this over `release`.
+    release(element)
+    cancelPendingReapply(element)
   }
 
   function releaseAll(): void {
     // A copy, because completing one run deletes it from the map underneath.
+    // Pending re-applies are deliberately left standing: see `releaseAll`'s
+    // doc on `BoundedMotion`, above, for why.
     for (const complete of [...active.values()]) complete()
   }
 
@@ -279,14 +364,24 @@ export function createBoundedMotion(
    * Withdraw the re-apply `complete` scheduled for `element`, if one is still
    * outstanding.
    *
-   * Called unconditionally at the top of every `run()` — not only when
-   * `release()` just above it actually had something to end — because a
-   * pending re-apply can outlive the run that scheduled it: the previous run
-   * may already have finished (naturally, by watchdog, by hidden, by reduced
-   * motion) with its own re-apply still waiting for its `frame.postRender`
-   * turn when a new run claims the element. That old re-apply is answering a
-   * question ("what should this element show at rest") a new run has already
-   * re-asked, so it must never land on top of the new run's own answer.
+   * `claim(element)` calls this unconditionally, right after `release`
+   * (claim's own first line) ends whatever was active — see `claim`'s own
+   * doc on `BoundedMotion` for why a caller about to write the element
+   * itself cannot let anything survive, stale or freshly scheduled by
+   * ending an active run. `run(element)` reaches this the same way, through
+   * `claim`, before starting its own keyframes — a new run owns the element
+   * outright for the identical reason. `dispose()` sweeps every element
+   * unconditionally too, for the same reason teardown always wins.
+   * `release(element)` alone calls this conditionally — only for a re-apply
+   * that was already stale (pending before `release` was even called); see
+   * its own doc, above, for why one it schedules itself is left standing
+   * instead. Never called from `releaseAll()`: see its own doc.
+   *
+   * A pending re-apply can outlive the run that scheduled it: the previous
+   * run may already have finished (naturally, by watchdog, by hidden, by
+   * reduced motion) with its own re-apply still waiting for its
+   * `frame.postRender` turn, so whichever caller claims the element next has
+   * to withdraw that stale answer before it can stand as the new one.
    */
   function cancelPendingReapply(element: Element): void {
     const reapply = pendingReapply.get(element)
@@ -301,8 +396,11 @@ export function createBoundedMotion(
     settle?: () => void,
     transition?: MotionTransition
   ): Promise<void> {
-    release(element)
-    cancelPendingReapply(element)
+    // A new run owns `element` outright, exactly like a caller about to
+    // write the element's own state does — see `claim`'s own doc on
+    // `BoundedMotion` for why nothing the runner still owes, stale or
+    // freshly scheduled by ending an active run, may survive it.
+    claim(element)
     // `transition` undefined: `animate()` gets exactly two arguments, same as
     // ever — motion-v's own `getDefaultTransition` decides per value key
     // (#566 — see `MotionAnimate`, above, and `motionTiming.ts`, which reads
@@ -396,5 +494,5 @@ export function createBoundedMotion(
     for (const element of [...pendingReapply.keys()]) cancelPendingReapply(element)
   }
 
-  return { still, run, running, release, releaseAll, dispose }
+  return { still, run, running, release, claim, releaseAll, dispose }
 }

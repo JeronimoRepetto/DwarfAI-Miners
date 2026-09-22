@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import MessagePanelWindow from './MessagePanelWindow.vue'
-import type { MotionAnimate } from './lib/shell/boundedMotion'
+import type { MotionAnimate, ScheduleAfterRender } from './lib/shell/boundedMotion'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -157,12 +157,14 @@ const mounted: VueWrapper[] = []
  * `props` is new in #566, optional and last so every call above it is
  * untouched: only the motion suite near the bottom of this file ever passes
  * `engine`, to hand the window a hand-written fake in place of the real
- * motion-v import.
+ * motion-v import. `afterRender` is its sibling (#566 hotfix), for a test
+ * that needs to decide exactly when a scheduled re-apply fires rather than
+ * racing motion-v's real `frame.postRender`.
  */
 async function mountPanel(
   panel: { surface: string; mineId: string; dwarfId: string },
   overrides: Record<string, unknown> = {},
-  props: { engine?: MotionAnimate } = {}
+  props: { engine?: MotionAnimate; afterRender?: ScheduleAfterRender } = {}
 ) {
   const api = stubApi({ getMessagePanel: vi.fn().mockResolvedValue(panel), ...overrides })
   const wrapper = mount(MessagePanelWindow, { props })
@@ -179,7 +181,7 @@ async function openOn(
   dwarfs: unknown[],
   dwarfId: string,
   overrides: Record<string, unknown> = {},
-  props: { engine?: MotionAnimate } = {}
+  props: { engine?: MotionAnimate; afterRender?: ScheduleAfterRender } = {}
 ) {
   return mountPanel(
     { surface: 'message', mineId: MINE.id, dwarfId },
@@ -2453,9 +2455,30 @@ describe('rising into place and settling before the window goes', () => {
     push(CLOSED)
   }
 
+  /**
+   * A hand-written stand-in for the scheduler `run`'s ender uses to re-apply
+   * `settle` after the engine's own deferred render (#566 T2b), mirroring
+   * `boundedMotion.test.ts`'s own `fakeAfterRender`: it only RECORDS what it
+   * was asked to schedule, so a test can decide exactly when a re-apply fires
+   * instead of racing jsdom's `requestAnimationFrame`.
+   */
+  function fakeAfterRender() {
+    const scheduled: (() => void)[] = []
+    const afterRender: ScheduleAfterRender = (callback) => {
+      scheduled.push(callback)
+    }
+    return { afterRender, scheduled }
+  }
+
+  /** Report the window as Chromium sees it once main has actually hidden it. */
+  function occludeWindow(hidden: boolean): void {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
+  }
+
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+    Reflect.deleteProperty(document, 'hidden')
   })
 
   it('holds the surface at its hidden keyframe while the window is still hidden', async () => {
@@ -2684,6 +2707,148 @@ describe('rising into place and settling before the window goes', () => {
       expect(wrapper.find('.message-panel').exists()).toBe(true)
       expect(surface.style.opacity).toBe('')
       expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  /*
+   * ADDED for the #566 hotfix. User-visible on main and in release 0.12.1:
+   * open a mine, click a dwarf, click again to close, repeat — on about the
+   * third open/close the reopened panel is invisible. The leave that closes
+   * this window ends with `settle = holdHidden` and a re-apply left pending
+   * (#566 T2b); main hides the actual window before that scheduled frame
+   * ever renders, so it stays outstanding. On reopen `armRise` releases the
+   * element and writes `holdHidden` itself, then `riseWhenRevealed` takes
+   * the INSTANT path (`motion.still` is true while `document.hidden`) and
+   * writes `releaseHidden` directly — it never calls `run()`, which used to
+   * be the only thing that withdrew a stale re-apply. Once frames resume,
+   * the leave's stale re-apply fired anyway and wrote `holdHidden` back over
+   * the now-revealed surface.
+   */
+  it('withdraws the closed leave’s pending re-apply on reopen, so a late frame cannot re-hide the risen surface', async () => {
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    const after = fakeAfterRender()
+    try {
+      const { wrapper, api } = await openOn(
+        [OBSERVED_DWARF],
+        'claude:s1',
+        {},
+        { engine: animated.engine, afterRender: after.afterRender }
+      )
+      animated.runs[0]!.finish()
+      await flushPromises()
+
+      // The rise's own completion schedules a re-apply too (T2b); it stays in
+      // `after.scheduled` — the fake never removes what it recorded, same
+      // rule as `boundedMotion.test.ts`'s own `fakeAfterRender` — so the
+      // LEAVE's own re-apply, scheduled below, is whichever entry lands last.
+      const beforeLeave = after.scheduled.length
+
+      // The leave: settles at `holdHidden` and ends with a re-apply pending —
+      // main hides the real window before that scheduled frame ever runs.
+      closePanel(api)
+      await flushPromises()
+      animated.runs[1]!.finish()
+      await flushPromises()
+      expect(after.scheduled.length).toBe(beforeLeave + 1)
+      const staleReapply = after.scheduled[after.scheduled.length - 1]!
+
+      const surface = wrapper.find('.message-surface').element as HTMLElement
+      expect(surface.style.opacity).toBe('0')
+
+      occludeWindow(true)
+
+      // Reopen while the window is still hidden: `armRise` -> height report
+      // -> `riseWhenRevealed`'s instant path, never `run()`.
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+      await flushPromises()
+
+      expect(surface.style.opacity).toBe('')
+      expect(surface.style.transform).toBe('')
+
+      // Frames resume and the leave's stale re-apply fires. It must not
+      // write the panel invisible over the reopened surface.
+      occludeWindow(false)
+      staleReapply()
+
+      expect(surface.style.opacity).toBe('')
+      expect(surface.style.transform).toBe('')
+    } finally {
+      animated.restore()
+      measured.restore()
+    }
+  })
+
+  /*
+   * ADDED for the follow-up to the #566 hotfix. A reopen (same dwarf, or a
+   * different one — the two examples that motivated `claim`) landing while
+   * the leave it is reopening on top of is STILL IN FLIGHT lands on the CUT
+   * branch of the `panel` watch, below (verified: `drawn.value.surface`
+   * stays whatever it was before the leave, since only `settleAndLeave`'s
+   * OWN completion ever sets it to `'none'` — a leave still running has not
+   * reached that yet, so `messageSurfaceMotion` reads both sides as
+   * non-`'none'` and returns `'cut'`, never `'enter'`). The cut branch used
+   * to call `release`, which — once ending an active run stopped
+   * withdrawing its own fresh re-apply (the fold's own need, above) — would
+   * leave THIS leave's re-apply standing to fire `holdHidden` later, right
+   * over the `releaseHidden` the cut branch itself had just written. `claim`
+   * closes that: it withdraws the re-apply its own ending schedules too.
+   */
+  it('withdraws even an in-flight leave’s own re-apply when a reopen cuts it off, so a late frame cannot re-hide it', async () => {
+    const measured = fakeContentHeight(426)
+    const animated = fakeAnimations()
+    const after = fakeAfterRender()
+    try {
+      const { wrapper, api } = await openOn(
+        [OBSERVED_DWARF],
+        'claude:s1',
+        {},
+        { engine: animated.engine, afterRender: after.afterRender }
+      )
+      animated.runs[0]!.finish()
+      await flushPromises()
+
+      closePanel(api)
+      await flushPromises()
+      // The leave's own run (animated.runs[1]) is deliberately left
+      // unfinished: it is still ACTIVE when the reopen below lands, exactly
+      // like a fast double-click. The rise's own completion, above, already
+      // scheduled its own re-apply into `after.scheduled` — the fake never
+      // removes what it recorded, the same rule as `boundedMotion.test.ts`'s
+      // own `fakeAfterRender` — so the leave's own re-apply, checked below,
+      // is whichever entry lands last.
+      expect(animated.runs).toHaveLength(2)
+      const beforeCut = after.scheduled.length
+
+      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
+      await flushPromises()
+
+      // No third `animate()` call: the cut branch never runs a new motion,
+      // it only ends the leave and writes the element's state directly —
+      // confirming this reopen really did land on the CUT branch.
+      expect(animated.runs).toHaveLength(2)
+      // Ending the in-flight leave through `claim` still schedules a
+      // re-apply of its OWN settle (T2b) — `claim` withdraws it right after,
+      // rather than never scheduling one at all.
+      expect(after.scheduled.length).toBe(beforeCut + 1)
+      const staleReapply = after.scheduled[after.scheduled.length - 1]!
+
+      const surface = wrapper.find('.message-surface').element as HTMLElement
+      // The cut branch's own write stands: released, never held hidden.
+      expect(surface.style.opacity).toBe('')
+      expect(surface.style.transform).toBe('')
+
+      // Frames resume and the leave's own re-apply fires. It must not write
+      // `holdHidden` back over what the cut branch just released.
+      staleReapply()
+
+      expect(surface.style.opacity).toBe('')
+      expect(surface.style.transform).toBe('')
     } finally {
       animated.restore()
       measured.restore()
