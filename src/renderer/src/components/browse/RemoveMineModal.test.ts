@@ -112,3 +112,22 @@ describe('RemoveMineModal press and hover feedback', () => {
     expect(confirm.attributes('disabled')).toBeDefined()
   })
 })
+
+/*
+ * ADDED for the #566 T4 follow-up: Remove is disabled while the removal is in
+ * flight, and a control that refuses a press must not answer a hover either.
+ */
+describe('RemoveMineModal withholds the gesture from a disabled control', () => {
+  it('gives Remove no press or hover while the removal is in flight', () => {
+    const wrapper = modal({ removing: true })
+    const confirm = wrapper
+      .findAllComponents(motion.button)
+      .find((control) => control.classes().includes('modal-confirm'))!
+
+    expect(confirm.attributes('disabled')).toBeDefined()
+    expect(confirm.props('whileHover')).toBeUndefined()
+    expect(confirm.props('whilePress')).toBeUndefined()
+    // Close stays live: it is how the dialog is left while the work runs.
+    expect(wrapper.get('.modal-close').attributes('disabled')).toBeUndefined()
+  })
+})

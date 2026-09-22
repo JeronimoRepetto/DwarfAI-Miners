@@ -7,6 +7,7 @@ import { PANEL_MOTION_Y } from './panelMotion'
 import {
   fadeVariants,
   popVariants,
+  pressHoverUnless,
   pressHoverVariants,
   REDUCED_MOTION_TRANSITION
 } from './presence'
@@ -194,3 +195,26 @@ describe('MotionConfig reducedMotion="always": what it actually skips', () => {
  * actually care about); real Electron confirmation that the exit genuinely
  * fades rather than snapping is `T5`'s job, per the parent task document.
  */
+
+/*
+ * ADDED for #566 T4 follow-up: a DISABLED control must answer nothing.
+ *
+ * What the helper HANDS BACK is here, beside the vocabulary it withholds. What
+ * the engine then DOES with that — the finding that made the helper necessary —
+ * is `pressHoverGesture.test.ts`, kept apart because it needs a mounted
+ * component and this file already has one for `MotionConfig`.
+ */
+describe('pressHoverUnless: a disabled control answers nothing', () => {
+  it('hands back the shared variants themselves while the control can be pressed', () => {
+    expect(pressHoverUnless(false)).toBe(pressHoverVariants)
+  })
+
+  // `in` rather than a value check, because the contract is that the props are
+  // ABSENT: `{ whileHover: undefined }` would satisfy a value assertion while
+  // still being a different thing to spread onto a component.
+  it('hands back neither gesture prop once the control is disabled', () => {
+    const bound = pressHoverUnless(true)
+    expect('whileHover' in bound).toBe(false)
+    expect('whilePress' in bound).toBe(false)
+  })
+})

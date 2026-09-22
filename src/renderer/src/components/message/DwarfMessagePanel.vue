@@ -54,7 +54,7 @@ import {
   clampPanelHeight,
   initialPanelHeight
 } from '../../lib/message/panelHeight'
-import { fadeVariants, pressHoverVariants } from '../../lib/shell/presence'
+import { fadeVariants, pressHoverUnless, pressHoverVariants } from '../../lib/shell/presence'
 import {
   maxTextCharsFor,
   messageTooLongReason,
@@ -1281,7 +1281,7 @@ function onKick(): void {
           :disabled="!canAttach"
           aria-label="Attach a file"
           :title="attachTitle"
-          v-bind="pressHoverVariants"
+          v-bind="pressHoverUnless(!canAttach)"
           @click="onAttachClick"
         >
           <span
@@ -1296,7 +1296,7 @@ function onKick(): void {
           :disabled="action('kick')?.enabled !== true"
           :aria-label="action('kick')?.name"
           :title="action('kick')?.hint"
-          v-bind="pressHoverVariants"
+          v-bind="pressHoverUnless(action('kick')?.enabled !== true)"
           @click="onKick"
         >
           <span
@@ -1312,6 +1312,11 @@ function onKick(): void {
           own `applyFlagSettings` resolves as a silent no-op without a
           supportsEffort guard — so a live button here would answer a click
           with silence, which is a worse lie than a disabled one that says why.
+
+          The one control in this row that binds no gesture at all, rather than
+          binding it through `pressHoverUnless` like its two neighbours: there
+          is no state in which it can be pressed, so there is no condition to
+          ask about. Adding one would only suggest an answer might change.
         -->
         <motion.button
           class="control-boost"
@@ -1319,7 +1324,6 @@ function onKick(): void {
           disabled
           :aria-label="action('boost')?.name"
           :title="action('boost')?.hint"
-          v-bind="pressHoverVariants"
         >
           <span
             class="control-glyph"

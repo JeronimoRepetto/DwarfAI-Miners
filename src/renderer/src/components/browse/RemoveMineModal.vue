@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useId } from 'vue'
 import { motion } from 'motion-v'
-import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverUnless, pressHoverVariants } from '../../lib/shell/presence'
 
 /**
  * The confirmation for removing one mine (#169).
@@ -85,7 +85,7 @@ function onConfirm(): void {
       class="modal-confirm"
       type="button"
       :disabled="removing"
-      v-bind="pressHoverVariants"
+      v-bind="pressHoverUnless(removing)"
       @click="onConfirm"
     >
       Remove

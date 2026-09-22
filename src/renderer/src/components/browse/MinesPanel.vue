@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AnimatePresence, motion } from 'motion-v'
 import { ADD_ICON_SRC, INFO_ICON_SRC, SORT_ICON_SRC, maskImageValue } from '../../lib/art'
 import { browseRows } from '../../lib/browse/boardRows'
-import { pressHoverVariants } from '../../lib/shell/presence'
+import { pressHoverUnless, pressHoverVariants } from '../../lib/shell/presence'
 import { TIER_CHIPS, activeAgentsFor, cardStatusFor } from '../../lib/browse/browseCards'
 import type {
   Mine,
@@ -193,7 +193,7 @@ onBeforeUnmount(stopWatching)
         aria-label="Add a project"
         title="Add a project folder"
         :disabled="adding"
-        v-bind="pressHoverVariants"
+        v-bind="pressHoverUnless(adding)"
         @click="emit('add')"
       >
         <!--

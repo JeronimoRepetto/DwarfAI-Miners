@@ -2726,15 +2726,29 @@ describe('DwarfMessagePanel press and hover feedback', () => {
     'control-boost'
   ]
 
-  it('routes every chrome control through motion.button carrying the shared variants', () => {
+  /*
+   * AMENDED for the #566 T4 follow-up (was: every control carries the shared
+   * variants, unconditionally). That form asserted the defect: Attach, Kick and
+   * Boost are all disabled in this mount, and a disabled control carrying the
+   * gesture grows under a cursor that cannot press it. The rule is now stated
+   * as the rule - a control carries the gesture exactly while it is live - so
+   * this one case covers both halves and needs no revisiting when a fixture
+   * changes which controls are live.
+   */
+  it('routes every chrome control through motion.button, carrying the shared variants while it is live', () => {
     const wrapper = panel()
 
     const controls = wrapper.findAllComponents(motion.button)
     expect(controls.map((control) => control.classes()[0])).toEqual(CHROME)
     for (const control of controls) {
-      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
-      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+      const live = control.attributes('disabled') === undefined
+      expect(control.props('whileHover')).toEqual(live ? pressHoverVariants.whileHover : undefined)
+      expect(control.props('whilePress')).toEqual(live ? pressHoverVariants.whilePress : undefined)
     }
+    // Both halves are actually exercised here, rather than the loop passing
+    // because every control happened to land on one side of the branch.
+    expect(controls.some((control) => control.attributes('disabled') === undefined)).toBe(true)
+    expect(controls.some((control) => control.attributes('disabled') !== undefined)).toBe(true)
   })
 
   it('leaves every chrome control a button with the name, state and press it had', async () => {
@@ -2757,5 +2771,40 @@ describe('DwarfMessagePanel press and hover feedback', () => {
 
     await wrapper.get('.panel-agent').trigger('click')
     expect(wrapper.emitted('open-console')).toHaveLength(1)
+  })
+})
+
+/*
+ * ADDED for the #566 T4 follow-up: the composer's controls come and go with the
+ * channel, and Boost is disabled for good. A control that refuses a press must
+ * not answer a hover either - the same line this panel's own CSS already drew
+ * with `:hover:not(:disabled)` long before the gesture arrived.
+ */
+describe('DwarfMessagePanel withholds the gesture from a disabled control', () => {
+  it('gives Boost no press or hover, since no provider can ever answer it', () => {
+    const boost = panel()
+      .findAllComponents(motion.button)
+      .find((control) => control.classes().includes('control-boost'))!
+
+    expect(boost.attributes('disabled')).toBeDefined()
+    expect(boost.props('whileHover')).toBeUndefined()
+    expect(boost.props('whilePress')).toBeUndefined()
+  })
+
+  // A dwarf whose provider declares no `attach` capability, which is every
+  // dwarf the fixtures build and most dwarfs in the wild.
+  it('gives Attach no press or hover on a channel that carries no file', () => {
+    const wrapper = panel()
+    const attach = wrapper
+      .findAllComponents(motion.button)
+      .find((control) => control.classes().includes('control-attach'))!
+
+    expect(attach.attributes('disabled')).toBeDefined()
+    expect(attach.props('whileHover')).toBeUndefined()
+    expect(attach.props('whilePress')).toBeUndefined()
+    // And the reason is still on the hover line, which is why no CSS
+    // `pointer-events: none` may stand in for this: it would take the title
+    // with it, leaving a dead control that no longer says why.
+    expect(attach.attributes('title')).toBeTruthy()
   })
 })

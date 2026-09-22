@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue'
 import { motion } from 'motion-v'
-import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverUnless, pressHoverVariants } from '../../lib/shell/presence'
 import { worktreeQuestionBody } from '../../lib/worktree'
 import type { MineWorktreeOf } from '../../types'
 
@@ -86,7 +86,7 @@ function onOpen(): void {
         class="modal-open"
         type="button"
         :disabled="adding"
-        v-bind="pressHoverVariants"
+        v-bind="pressHoverUnless(adding)"
         @click="onOpen"
       >
         Open the main project

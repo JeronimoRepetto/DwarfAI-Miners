@@ -130,3 +130,22 @@ describe('WorktreeFoldModal press and hover feedback', () => {
     expect(wrapper.get('.modal-cancel').element.tagName).toBe('BUTTON')
   })
 })
+
+/*
+ * ADDED for the #566 T4 follow-up: Open is disabled while the add is in flight,
+ * and a control that refuses a press must not answer a hover either.
+ */
+describe('WorktreeFoldModal withholds the gesture from a disabled control', () => {
+  it('gives Open no press or hover while the add is in flight', () => {
+    const wrapper = modal({ adding: true })
+    const open = wrapper
+      .findAllComponents(motion.button)
+      .find((control) => control.classes().includes('modal-open'))!
+
+    expect(open.attributes('disabled')).toBeDefined()
+    expect(open.props('whileHover')).toBeUndefined()
+    expect(open.props('whilePress')).toBeUndefined()
+    // Cancel stays live: it is how the dialog is left while the work runs.
+    expect(wrapper.get('.modal-cancel').attributes('disabled')).toBeUndefined()
+  })
+})

@@ -654,3 +654,22 @@ describe('MinesPanel press and hover feedback', () => {
     expect(wrapper.find('.info-modal').exists()).toBe(true)
   })
 })
+
+/*
+ * ADDED for the #566 T4 follow-up: Add is disabled while the OS folder picker
+ * is up, and a control that refuses a press must not answer a hover either.
+ */
+describe('MinesPanel withholds the gesture from a disabled control', () => {
+  it('gives Add no press or hover while the picker is up', () => {
+    const wrapper = panel({ adding: true })
+    const add = wrapper
+      .findAllComponents(motion.button)
+      .find((control) => control.classes().includes('add-control'))!
+
+    expect(add.attributes('disabled')).toBeDefined()
+    expect(add.props('whileHover')).toBeUndefined()
+    expect(add.props('whilePress')).toBeUndefined()
+    // The rest of the header is untouched by one control being out of action.
+    expect(wrapper.get('.sort-control').attributes('disabled')).toBeUndefined()
+  })
+})

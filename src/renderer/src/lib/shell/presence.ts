@@ -112,3 +112,36 @@ export const pressHoverVariants = {
   whileHover: { scale: 1.03 },
   whilePress: { scale: 0.96 }
 } as const
+
+/** Nothing to spread: the shape a control gets while it cannot be pressed. */
+const NO_GESTURE = {} as const
+
+/**
+ * The same shape, withheld from a control that cannot be pressed.
+ *
+ * `disabled` is meant to be the SAME expression the control binds to its own
+ * `:disabled`, written out twice on purpose — `v-bind="pressHoverUnless(adding)"`
+ * beside `:disabled="adding"`. Two readings of one fact, on one screen, is what
+ * stops them drifting apart; a control that grows under a cursor it will not
+ * answer is a worse lie than one that simply sits there.
+ *
+ * It is needed because the engine does not do this for us. Neither motion-v's
+ * hover feature (`features/gestures/hover/index.mjs`) nor motion-dom's own
+ * `hover()` and `press()` (`gestures/hover.mjs`, `gestures/press/index.mjs`)
+ * ever reads `element.disabled`: `hover()` attaches a bare `pointerenter`
+ * listener, and `press()` filters only for a primary pointer and an active
+ * drag. Chromium still dispatches pointer events at a disabled form control, so
+ * a disabled button bound with the raw variants grows under the cursor —
+ * `presence.test.ts` reproduces exactly that against the real engine rather
+ * than taking the reading's word for it.
+ *
+ * NOT `pointer-events: none` in CSS, which would look like the same fix and is
+ * not: every one of these controls explains its own refusal through a `title`,
+ * and a control the pointer cannot reach has no hover line left to explain it
+ * with (#217 put those sentences there). The CSS this replaces already drew
+ * the line in the right place — `DwarfMessagePanel`'s own
+ * `.control-attach:hover:not(:disabled)` predates the gesture by a long way.
+ */
+export function pressHoverUnless(disabled: boolean): typeof pressHoverVariants | typeof NO_GESTURE {
+  return disabled ? NO_GESTURE : pressHoverVariants
+}
