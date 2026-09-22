@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_JEV_SETTINGS, type JevSettings } from '../types'
+import { reactive } from 'vue'
+import { DEFAULT_JEV_SETTINGS, type JevPreferences, type JevSettings } from '../types'
 import { useJevSettings } from './useJevSettings'
 
 /**
@@ -381,5 +382,64 @@ describe('useJevSettings reporting a preference write that did not happen', () =
 
     await setPreferences({ profile: 'economy', default: {} })
     expect(settings.value.preferencesError).toBeUndefined()
+  })
+})
+
+/*
+ * The actual defect behind "clicking Economy does nothing" (2026-09-21).
+ *
+ * `window.api` is a contextBridge function, so every argument is structured-
+ * CLONED on its way across. A Vue reactive Proxy cannot be cloned, and the
+ * bridge throws before the preload's own parser — which does build a plain
+ * document — ever runs. The parser can never help: the value has to survive
+ * the crossing to reach it.
+ *
+ * JevSettings emits `{ ...preferences.value, profile }`, and that spread is
+ * SHALLOW: `profile` is replaced with a primitive, while `default` stays the
+ * very Proxy it came from in the props. Hence the one clue that cracked it —
+ * changing the default provider worked, because that handler builds a fresh
+ * `{ provider }` object, while changing the profile reused the Proxy.
+ *
+ * So the plain-ing happens HERE, at the one point the renderer hands anything
+ * to the bridge, rather than in each caller that could forget.
+ */
+describe('useJevSettings crossing the context bridge', () => {
+  it('hands the bridge a document structuredClone accepts, given a reactive one', async () => {
+    const sent = vi.fn(async (_preferences: JevPreferences): Promise<JevSettings> => ({
+      configured: true,
+      preferences: { profile: 'balanced', default: {} }
+    }))
+    fakeApi({ setJevPreferences: sent })
+    const stored = reactive<JevPreferences>({
+      profile: 'balanced',
+      default: { provider: 'opencode' }
+    })
+    const { setPreferences } = useJevSettings()
+
+    // Exactly what the section emits: a shallow spread over reactive props.
+    await setPreferences({ ...stored, profile: 'economy' })
+
+    expect(() => structuredClone(sent.mock.calls[0]![0])).not.toThrow()
+  })
+
+  it('sends the values asked for, not merely something clonable', () => {
+    // Plain-ing must not quietly drop a field on the way past.
+    const sent = vi.fn(async (_preferences: JevPreferences): Promise<JevSettings> => ({
+      configured: true,
+      preferences: { profile: 'balanced', default: {} }
+    }))
+    fakeApi({ setJevPreferences: sent })
+    const stored = reactive<JevPreferences>({
+      profile: 'balanced',
+      default: { provider: 'opencode', model: 'opencode/big-pickle', effort: 'high' }
+    })
+    const { setPreferences } = useJevSettings()
+
+    void setPreferences({ ...stored, profile: 'premium' })
+
+    expect(sent.mock.calls[0]![0]).toEqual({
+      profile: 'premium',
+      default: { provider: 'opencode', model: 'opencode/big-pickle', effort: 'high' }
+    })
   })
 })
