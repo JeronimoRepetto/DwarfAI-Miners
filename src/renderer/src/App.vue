@@ -252,6 +252,14 @@ const {
     secondaryEl.value,
     navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null
   ],
+  /*
+   * The layout queue's own flag, which the fold reads as "not yet" (#585): the
+   * browser's `resize` for a grow arrives before Vue has mounted the columns
+   * that same request brings, and an unfold measured there reveals bare
+   * ground. `usePanelLayout` holds it for exactly one request and clears it in
+   * a `finally`, so nothing can strand the fold behind a request that broke.
+   */
+  applying: () => layoutApplying.value,
   engine: props.engine
 })
 

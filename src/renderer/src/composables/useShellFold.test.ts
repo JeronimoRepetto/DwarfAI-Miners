@@ -127,7 +127,15 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
      * stack too sets these to real elements first.
      */
     secondary: null as HTMLElement | null,
-    nav: null as HTMLElement | null
+    nav: null as HTMLElement | null,
+    /*
+     * ADDED for #585 round 2, `false` by default so every case above is
+     * untouched: whether main is still answering a layout request. The
+     * renderer's own `resize` can land a whole tick before Vue mounts the
+     * columns that same request brings, and an unfold measured there reveals
+     * the ground with nothing on it.
+     */
+    applying: false
   }
   let fold!: ReturnType<typeof useShellFold>
   const wrapper = mount(
@@ -139,6 +147,7 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
           remaining: () => state.remaining,
           rail: () => state.rail,
           carried: () => [state.secondary, state.nav],
+          applying: () => state.applying,
           engine: engine.animate
         })
         return () => h('div')
@@ -968,9 +977,14 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const secondary = placed(test.column(555), 36, 555)
     void test.fold.hold(secondary)
     await settled()
+    // AMENDED for #585 round 2: the drawer's mouth is the STRIP's near edge,
+    // one gap docked of the column's own, so the clip retreats by the
+    // column's width (555) and not by its whole travel (563) — the 8px
+    // difference is the band of bare ground the probe measured between the
+    // emerging panel and the strip it comes out of.
     expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
       ...carries(0, 563),
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -1098,13 +1112,15 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const secondary = placed(test.column(555), 36, 555)
     test.fold.enter(secondary)
     expect(secondary.style.transform).toBe('translateX(563px)')
-    expect(secondary.style.clipPath).toBe('inset(0px 563px 0px 0px)')
+    // AMENDED for #585 round 2: the mouth is the strip's near edge — see the
+    // leave case above.
+    expect(secondary.style.clipPath).toBe('inset(0px 555px 0px 0px)')
     test.state.shell = sized(test.shell, 1001)
     test.fold.settle(false)
     await settled()
     expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
       ...carries(563, 0),
-      clipPath: ['inset(0px 563px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 555px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -1254,6 +1270,202 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
       clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2, from the mechanism trace of the merged fix. A is
+   * still two runs, and the microtask cannot help it: the native `resize`
+   * lands BEFORE Vue mounts the entering columns (3.4ms against 24.4ms cold,
+   * 1.6 against 7.6 warm), so `caughtUp` unfolds with `entering` empty and
+   * there is nothing queued anywhere for a microtask to wait behind. B and E
+   * only work because there the mount happens to land first (30.6 against
+   * 35.7).
+   *
+   * So the unfold waits on BOTH, whichever arrives last: main having finished
+   * answering, and the columns of that answer having registered. While the
+   * request is in flight nothing is unfolded AND nothing is consumed — the
+   * footprint the unfold must start from is the one from before the grow, and
+   * a settle that wrote the new width over it would leave the ground with
+   * nothing left to reveal.
+   */
+  it('waits for main to finish answering before unfolding, even when the resize lands first', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.state.secondary = carriedColumn(36, 555)
+    test.state.nav = carriedColumn(599, 38)
+    test.fold.settle(false)
+    // The request goes out, and main resizes the native window synchronously
+    // inside its own handler: the renderer sees the resize long before Vue
+    // has been told anything.
+    test.state.applying = true
+    test.state.shell = sized(test.shell, 1001)
+    window.dispatchEvent(new Event('resize'))
+    await settled()
+    expect(test.animations).toHaveLength(0)
+    // Main answers; Vue mounts the arriving column and settles in the same
+    // flush, and the unfold is measured on the microtask after it.
+    test.state.applying = false
+    const mine = placed(test.column(348), 645, 348)
+    test.fold.enter(mine)
+    test.fold.settle(false)
+    await settled()
+    expect(test.animations).toHaveLength(1)
+    // From the footprint the shell had BEFORE the grow — proof that the
+    // gated settle consumed nothing on its way past.
+    expect(clipFrames(test.animations[0]!.keyframes)[0]).toBe(
+      'inset(0px 0px 0px calc(100% - 645px) round 12px)'
+    )
+    expect(test.animationsFor(mine)).toHaveLength(1)
+    expect(test.railAnimations).toHaveLength(1)
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2, from the probe of closing a mine with the
+   * secondary panel already shut — [rail][nav][mine] to [rail], the one
+   * composition where two columns leave in two different Vue patches (the
+   * navigation stack goes one tick after the mine, which AGENTS.md already
+   * records). Two batches opened, `begin` ran twice, and the second run
+   * claimed the ground from the first: every column snapped to its end state
+   * in the first 5ms and never animated at all, the ground folded 61 of the
+   * 417px it owed because the second fold only knew about the navigation
+   * stack, and the remaining 356 arrived as the native resize jump 300ms
+   * later.
+   *
+   * A column that leaves while a fold is still running belongs to that fold:
+   * it joins the batch already in flight, which re-measures the union from
+   * the same footprint and runs once. The superseded run writes nothing on
+   * its way out — its settle is what snapped every column before.
+   */
+  it('coalesces columns leaving in separate ticks into ONE fold over the union', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    // The row is [rail][nav][mine] against the docked edge: 8px of padding,
+    // 20 + 38 + 348 of column and a gap between each.
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    // The mine column goes on the view's own change...
+    const first = test.fold.hold(mine)!
+    await settled()
+    expect(test.animations).toHaveLength(1)
+    // ...and the navigation stack one tick later, on the layout's.
+    const second = test.fold.hold(nav)!
+    await settled()
+    // One fold for the change: the same two moments to wait on, and a ground
+    // whose last word is the union rather than the second column alone (which
+    // measured 376 of 438 live — the ground barely moved).
+    expect(second).toBe(first)
+    const folds = test.animations
+    expect(clipFrames(folds[folds.length - 1]!.keyframes)[1]).toBe(
+      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+    )
+    // From the footprint the first fold started at, not from what it had
+    // already written: nothing was settled on the way past.
+    expect(clipFrames(folds[folds.length - 1]!.keyframes)[0]).toBe(
+      'inset(0px 0px 0px 0px round 12px)'
+    )
+    expect(test.shell.style.clipPath).toBe('')
+    // And every column of the change is carried by the fold that survives.
+    expect(test.animationsFor(nav)).toHaveLength(1)
+    expect(test.animationsFor(mine).length).toBeGreaterThanOrEqual(1)
+    expect(test.railAnimations.length).toBeGreaterThanOrEqual(1)
+    folds[folds.length - 1]!.finish()
+    await settled()
+    expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 20px) round 12px)')
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2. The columns of that one fold keep the roles the
+   * row gives them: the navigation stack is a drawer sliding into the wall
+   * docked of it, and the mine column — docked-most, with the whole row on
+   * its free side — is clipped from its free side without moving at all.
+   * Both on the transition the ground is folding under.
+   */
+  it('gives every column of a coalesced fold its own role, on the fold’s one transition', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    void test.fold.hold(mine)
+    await settled()
+    void test.fold.hold(nav)
+    await settled()
+    const mineRuns = test.animationsFor(mine)
+    expect(mineRuns[mineRuns.length - 1]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+    })
+    // AMENDED for #585 round 2: the strip does not only disappear into its own
+    // mouth, it FOLLOWS the 356px the mine column vacates under it first — see
+    // the case below, which is what measured the difference.
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      ...carries(0, 402),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
+    })
+    const folds = test.animations
+    expect(test.animationsFor(nav)[0]!.transition).toEqual(
+      test.railAnimations[test.railAnimations.length - 1]!.transition
+    )
+    expect(folds[folds.length - 1]!.transition).toBeUndefined()
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2, from the probe of the coalesced fold. Closing a
+   * mine with the secondary panel shut left 55px of bare ground where the
+   * composition draws 32 at rest, and the frames say where: the ground's free
+   * edge sweeps the whole 417px and the rail rides it, while the navigation
+   * strip travelled only the 46 of its own width and gap — so the sweep
+   * overtook the strip within two frames and left a 41px band between the
+   * rail and the mine with nothing in it.
+   *
+   * A leaving column is a surviving column that also disappears: it follows
+   * the room the columns docked of it are vacating, exactly as the rail does,
+   * and retreats into its own mouth on top of that. Its clip is measured to
+   * that mouth, which is now moving too, so what it ends up clipping is still
+   * exactly its own width.
+   */
+  it('carries a leaving drawer over the room the columns docked of it vacate', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    void test.fold.hold(mine)
+    await settled()
+    void test.fold.hold(nav)
+    await settled()
+    // 356 vacated by the mine column, then 38 + 8 of its own.
+    expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
+      ...carries(0, 402),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 38px 0px 0px)']
+    })
+    // Which is the rail's own travel but for the padding the bare rail drops:
+    // the two cross the ground together instead of one outrunning the other.
+    expect(transformFrames(test.railAnimations[test.railAnimations.length - 1]!.keyframes)[1]).toBe(
+      'translateX(410px)'
+    )
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585 round 2. The mine column is the docked-most of the row, so
+   * nothing leaving stands docked of it and it has nothing to follow: the
+   * clip alone, exactly as before, and no travel of its own.
+   */
+  it('gives the docked-most leaving column no travel to follow', async () => {
+    const test = harness({ width: 438 })
+    test.state.remaining = 'rail'
+    const nav = placed(test.column(38), 36, 38)
+    const mine = placed(test.column(348), 82, 348)
+    void test.fold.hold(mine)
+    await settled()
+    void test.fold.hold(nav)
+    await settled()
+    const runs = test.animationsFor(mine)
+    expect(runs[runs.length - 1]!.keyframes).toEqual({
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+    })
     test.wrapper.unmount()
   })
 

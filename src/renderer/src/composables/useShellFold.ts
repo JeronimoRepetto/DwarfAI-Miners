@@ -131,6 +131,28 @@ export interface ShellFoldOptions {
    */
   carried?: () => (HTMLElement | null)[]
   /**
+   * Whether main is still answering a layout request (#585 round 2).
+   *
+   * The renderer cannot be told when the native window is resized, and the
+   * two things it CAN observe of a grow arrive in either order: the browser's
+   * own `resize`, and Vue mounting the columns the same request brings. A
+   * mechanism trace of the merged fix measured the resize first every time
+   * the shell opens from the bare rail — 3.4ms against 24.4ms cold, 1.6
+   * against 7.6 warm — so the unfold ran with nothing to reveal, while a mine
+   * opening beside an open page measured the other order (30.6 against 35.7)
+   * and worked. Nothing queued anywhere can bridge that: the columns are not
+   * in any queue yet.
+   *
+   * This is the half that says "not yet". While it answers true the unfold is
+   * refused, and a settle consumes nothing on its way past, so the footprint
+   * the unfold has to start from survives. `usePanelLayout.send` holds it for
+   * exactly one request, in a `finally`, so a request that breaks mid-flight
+   * still clears it and the `sync()` that follows settles the fold again.
+   * Optional and defaulted to open, so a caller with no layout queue of its
+   * own — a test harness among them — is untouched.
+   */
+  applying?: () => boolean
+  /**
    * The engine `createBoundedMotion` runs, for a test to hand in a
    * hand-written fake — production never sets this, and gets the real
    * motion-v import (#566).
@@ -231,6 +253,29 @@ export function useShellFold(options: ShellFoldOptions) {
   /** The columns registering for the next fold, before it is measured. */
   let batch: Leaving | null = null
   /**
+   * The fold whose run is in flight right now, or `null` between folds (#585
+   * round 2).
+   *
+   * A column that starts leaving while this is set belongs to THIS fold and
+   * not to a new one: `hold` reopens it rather than batching a second, and
+   * `begin` runs again over the union. Cleared where the fold's own run ends,
+   * which is where the columns pass to `holding` and the shrink is let go.
+   */
+  let folding: Leaving | null = null
+  /**
+   * Which fold the ground is running, counted up per run so a SUPERSEDED one
+   * can be told to write nothing (#585 round 2).
+   *
+   * Every run the ground starts claims the element from the one before it,
+   * and ending that one calls its settle — which applies its own folded clip,
+   * records `painted`, pins the box and releases every column it was
+   * carrying to its end state. All of that is right when a fold finishes and
+   * wrong when it is replaced: closing a mine with the secondary panel shut
+   * measured every column snapped in the first 5ms and a ground folded to the
+   * wrong strip, because the fold that took over had inherited all of it.
+   */
+  let folds = 0
+  /**
    * Every batch a fold is standing over, until the window has caught up.
    *
    * A list rather than the last one: two changes can fold before either window
@@ -270,6 +315,15 @@ export function useShellFold(options: ShellFoldOptions) {
      * footprint the NEXT change carries it from.
      */
     rest: number
+    /**
+     * How far the mouth this column comes out of stands from its own edge,
+     * read when it registered (#585 round 2): one `--space-nav-gap` where the
+     * strip beside it stays put, which is every arrival this shell has — the
+     * column docked of an arriving drawer is the one the row uncovers in
+     * place, and that one never moves. The unfold that carries it is not the
+     * place that reads the shell's style, so it is kept here.
+     */
+    mouth: number
   }
   /** Entering columns pre-placed since the last unfold consumed them. */
   let entering: Entering[] = []
@@ -462,9 +516,9 @@ export function useShellFold(options: ShellFoldOptions) {
    * leaves the place the row gave it, and `place(column, 0)` is what says so —
    * the empty transform, so the row's own answer is the only one on it.
    */
-  function placeSelf(column: HTMLElement, travel: number, fold: ColumnFold): void {
+  function placeSelf(column: HTMLElement, travel: number, fold: ColumnFold, mouth: number): void {
     place(column, fold === 'uncovered' ? 0 : travel)
-    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge(), fold)
+    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge(), fold, mouth)
   }
 
   /**
@@ -479,14 +533,15 @@ export function useShellFold(options: ShellFoldOptions) {
     from: number,
     to: number,
     transition: MotionTransition,
-    fold: ColumnFold
+    fold: ColumnFold,
+    mouth: number
   ): void {
     if (from === to) return
-    placeSelf(column, from, fold)
+    placeSelf(column, from, fold, mouth)
     void motion.run(
       column,
-      columnSlideKeyframes(from, to, options.edge(), fold),
-      () => placeSelf(column, to, fold),
+      columnSlideKeyframes(from, to, options.edge(), fold, mouth),
+      () => placeSelf(column, to, fold, mouth),
       transition
     )
   }
@@ -546,7 +601,14 @@ export function useShellFold(options: ShellFoldOptions) {
     // #566 T5b's own carried columns among them — makes far more likely to
     // land inside one test's own timers.
     let settled = false
+    const generation = ++folds
     void motion.run(shell, shellFoldKeyframes(from, to, options.edge(), radius), () => {
+      // A run the ground has already replaced writes nothing at all (#585
+      // round 2): the fold that took over owns `painted`, the pin, the clip
+      // and every column this one was carrying, and it is about to say so
+      // itself. Ending is not finishing, and only the last fold standing may
+      // answer for the ground.
+      if (generation !== folds) return
       apply(shell, to, radius)
       if (settled) return
       settled = true
@@ -581,10 +643,15 @@ export function useShellFold(options: ShellFoldOptions) {
     if (pending === null) return
     const shell = options.shell()
     if (shell === null || still(shell)) {
+      folding = null
       pending.resolve()
       pending.release()
       return
     }
+    // From here this fold is the one in flight, and a column that starts
+    // leaving before it ends joins it rather than opening a second (#585
+    // round 2) — see `hold`, below.
+    folding = pending
     // One style resolution for everything this fold reads off the element: the
     // gaps and padding it measures with, and the corners it is drawn with.
     const style = getComputedStyle(shell)
@@ -637,9 +704,36 @@ export function useShellFold(options: ShellFoldOptions) {
     // column is never carried and a leaving column's own ref is nulled by Vue
     // while it is still in the DOM (#585).
     const row = [...mountedColumns(), ...pending.columns]
-    for (const column of pending.columns) {
+    const stands = pending.columns.map((column) => columnStand(shell, column))
+    for (const [index, column] of pending.columns.entries()) {
       const width = column.getBoundingClientRect().width
-      carrySelf(column, 0, width + gap, transition, columnFoldOf(shell, column, row))
+      /*
+       * The room the OTHER columns leaving with it are vacating DOCKED of this
+       * one (#585 round 2). A leaving column is a surviving column that also
+       * disappears: it has to follow that room exactly as the rail does, and
+       * retreat into its own mouth on top of it. Closing a mine with the
+       * secondary panel shut is where the difference shows — the ground's free
+       * edge sweeps the whole width and the rail rides it, so a navigation
+       * strip that only travelled its own 46px was overtaken within two frames
+       * and left a 41px band of bare ground behind the rail.
+       *
+       * The mouth travels with that room, which is why the clip is measured to
+       * `gap + vacated`: what the column ends up clipping away is still
+       * exactly its own width, however far the row underneath it moved.
+       */
+      const vacated = stands.reduce(
+        (room, stand, other) =>
+          other === index || stand >= stands[index]! ? room : room + pending.widths[other]! + gap,
+        0
+      )
+      carrySelf(
+        column,
+        0,
+        vacated + width + gap,
+        transition,
+        columnFoldOf(shell, column, row),
+        gap + vacated
+      )
     }
 
     run(
@@ -657,6 +751,7 @@ export function useShellFold(options: ShellFoldOptions) {
         }
         for (const column of pending.columns) motion.release(column)
         pinned = { box: folded + 2 * padding }
+        folding = null
         // The columns stay standing from here, and the shrink this resolves is
         // what will eventually let them go. The bound is the latest fold's,
         // which is the one the window still owes an answer to.
@@ -680,7 +775,22 @@ export function useShellFold(options: ShellFoldOptions) {
     const shell = options.shell()
     if (shell === null || still(shell)) return null
     if (batch === null) {
-      batch = leaving()
+      /*
+       * A fold already running is THIS change's fold, and this column is one
+       * more of its columns (#585 round 2). The two are not always in the
+       * same Vue patch: closing a mine takes the navigation stack with it one
+       * tick later, and two batches meant two `begin`s, two folded targets
+       * and a second run that claimed the ground from the first — every
+       * column snapped, and the ground folded 61 of the 417px it owed.
+       *
+       * So the batch is reopened rather than replaced: the same two promises
+       * the columns already hold, re-measured over the union from the same
+       * footprint (`painted` is untouched, because the run this supersedes
+       * writes nothing), and run once. What the joining column costs is the
+       * distance the first run had already travelled, which it gives back —
+       * a frame of it, where the probe measured the two arriving 0.1ms apart.
+       */
+      batch = folding ?? leaving()
       // Measured a microtask later, when every column leaving in this patch has
       // registered: still inside the frame Vue is preparing, and with the row
       // it is measuring still intact.
@@ -722,8 +832,9 @@ export function useShellFold(options: ShellFoldOptions) {
     // (#585).
     const rest = columnStand(shell, column)
     const fold = columnFoldOf(shell, column, [...mountedColumns(), column])
-    placeSelf(column, travel, fold)
-    entering.push({ column, travel, fold, rest })
+    const mouth = gap
+    placeSelf(column, travel, fold, mouth)
+    entering.push({ column, travel, fold, rest, mouth })
     // The last column to register is what the unfold was waiting for (#585).
     // Asked for here as well as from `settle` because the two arrive in either
     // order and neither is guaranteed: `settle` is the one App.vue's watch
@@ -791,18 +902,21 @@ export function useShellFold(options: ShellFoldOptions) {
    * leave in a patch, for the same reason with the sign reversed. Vue puts
    * App.vue's `flush: 'post'` watch and a `<Transition>`'s own enter hook in
    * the SAME post-flush queue and sorts it by id — the watch carries its
-   * component's, an enter hook is an anonymous callback with none — so
-   * `settle` is always asked first and `enter` always registers afterwards.
-   * Unfolding where it was asked therefore revealed the ground with `entering`
-   * still empty, every later settle bounced off `motion.running(shell)` for
-   * the 300ms that took, and the content only arrived on the drain at the end
-   * of it: two sequential runs, and 936px of bare amber in between, measured
-   * live.
+   * component's, an enter hook is an anonymous callback with none — so within
+   * one flush `settle` is always asked first and `enter` always registers
+   * afterwards, and this microtask is what lets the unfold see both. Vue's
+   * flush — patch, refs, watches and enter hooks alike — is one synchronous
+   * job, so this lands after all of it and before the browser has painted
+   * anything. Idempotent, because both `settle` and `enter` ask and either
+   * may be first.
    *
-   * A microtask and not a frame or a timer: Vue's flush — patch, refs, watches
-   * and enter hooks alike — is one synchronous job, so this lands after all of
-   * it and before the browser has painted anything. Idempotent, because both
-   * `settle` and `enter` ask and either may be first.
+   * That ordering is real, and it is NOT what beat the shell opening from the
+   * bare rail (#585 round 2): there the first settle comes from the native
+   * `resize`, a whole tick before Vue is told anything at all, and no
+   * microtask can wait behind columns that are not in any queue yet. The
+   * unfold is refused outright while the request that brings them is in
+   * flight — see `applying` on `ShellFoldOptions`, and `unfold` below, which
+   * is where the two halves finally meet.
    */
   function armUnfold(): void {
     if (unfoldQueued) return
@@ -836,6 +950,13 @@ export function useShellFold(options: ShellFoldOptions) {
   function unfold(): void {
     const shell = options.shell()
     if (shell === null || motion.running(shell)) return
+    // Main has not finished answering, so the columns this change brings are
+    // not mounted yet and the ground would be revealed with nothing on it
+    // (#585 round 2). Refused rather than rescheduled: the settle that armed
+    // this consumed nothing, so the footprint is intact, and the same request
+    // reassigns `visibleLayout` on every path it can end on — which settles
+    // the fold again, after the patch that mounts them.
+    if (options.applying?.() === true) return
     const width = shell.getBoundingClientRect().width
     const pending = unfoldable(shell, width)
     if (pending === null) return
@@ -861,8 +982,8 @@ export function useShellFold(options: ShellFoldOptions) {
       enteringNow.map((one) => [one.column, restStand(shell, one.column)])
     )
     entering = []
-    for (const { column, travel, fold } of enteringNow)
-      carrySelf(column, travel, 0, transition, fold)
+    for (const { column, travel, fold, mouth } of enteringNow)
+      carrySelf(column, travel, 0, transition, fold, mouth)
     // Every OTHER carried column returns from the footprint it had when the
     // fold it is answering for last settled — outside the footprint this
     // unfolds FROM when it is entering room the row only just repacked into,
@@ -989,13 +1110,14 @@ export function useShellFold(options: ShellFoldOptions) {
     motion.dispose()
     batch?.resolve()
     batch?.release()
+    folding = null
     // After `dispose`, which may have ended a fold still running and taken its
     // columns into `holding` on the way past.
     letGo()
     // An entering column pre-placed by `enter` but never carried by an unfold
     // this instance saw — the component that owns the fold went away first —
     // is not this app's to leave invisible: nothing else will ever reveal it.
-    for (const { column, fold } of entering) placeSelf(column, 0, fold)
+    for (const { column, fold, mouth } of entering) placeSelf(column, 0, fold, mouth)
     entering = []
   })
 
