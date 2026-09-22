@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { acceleratedValues } from 'motion-v'
 import {
   columnFoldClip,
   columnFoldKeyframes,
@@ -304,17 +305,48 @@ describe('columnFoldKeyframes', () => {
    * relayouting it: the mine interior re-measures its anchors from the box it
    * is given, and the fold exists to leave that box alone until main resizes
    * the window.
+   *
+   * AMENDED for #585 (was motion-v's `x` shortcut). Which KEY carries the
+   * travel decides which engine drives it, and that is the whole of the bug:
+   * see the case below.
    */
   it('travels a carried column toward the docked edge of a right-docked shell', () => {
-    expect(columnFoldKeyframes(0, 563, 'right')).toEqual({ x: [0, 563] })
+    expect(columnFoldKeyframes(0, 563, 'right')).toEqual({
+      transform: ['translateX(0px)', 'translateX(563px)']
+    })
   })
 
   it('mirrors the travel onto a left-docked shell, whose docked edge is the other one', () => {
-    expect(columnFoldKeyframes(0, 563, 'left')).toEqual({ x: [-0, -563] })
+    expect(columnFoldKeyframes(0, 563, 'left')).toEqual({
+      transform: ['translateX(0px)', 'translateX(-563px)']
+    })
   })
 
   it('returns a carried column to where the row puts it when the shell unfolds', () => {
-    expect(columnFoldKeyframes(563, 0, 'right')).toEqual({ x: [563, 0] })
+    expect(columnFoldKeyframes(563, 0, 'right')).toEqual({
+      transform: ['translateX(563px)', 'translateX(0px)']
+    })
+  })
+
+  /*
+   * ADDED for #585, and the reason the key changed at all. motion-dom drives
+   * a value on WAAPI only if it is in its own `acceleratedValues` set; `x` is
+   * a transform SHORTCUT and is not in it, so it ran on the JS pipeline while
+   * `clipPath` — which is — ran on WAAPI. Two engines, two clocks: the probe
+   * measured the transform 10% travelled while the clip was 50% through the
+   * same run, which painted a column 353px past its own rest edge and clipped
+   * the rail away entirely for 14 frames.
+   *
+   * Asserted against the engine's own set rather than the string 'transform',
+   * so a motion-dom that stopped accelerating this key would fail here rather
+   * than silently split the run in two again.
+   */
+  it('carries the travel on a key motion-dom hardware-accelerates, the clip’s own engine', () => {
+    for (const key of Object.keys(columnFoldKeyframes(0, 563, 'right'))) {
+      expect(acceleratedValues.has(key)).toBe(true)
+    }
+    expect(acceleratedValues.has('clipPath')).toBe(true)
+    expect(acceleratedValues.has('x')).toBe(false)
   })
 
   it('states the settled travel as the transform a carried column is left holding', () => {
@@ -330,8 +362,10 @@ describe('columnFoldKeyframes', () => {
  */
 describe('columnFoldClip', () => {
   it('clips nothing at zero travel, the column’s own resting frame', () => {
-    expect(columnFoldClip(0, 'right')).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(0, 'left')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'right', 'drawer')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left', 'drawer')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'right', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
   })
 
   /*
@@ -339,32 +373,75 @@ describe('columnFoldClip', () => {
    * SAME travel on `transform`, the visible sliver stays pinned at the
    * column's own original docked-side edge — the "wall" in the drawing — and
    * narrows away from the free side as the column slides toward it.
+   *
+   * AMENDED for #585: which side is the wall is now asked rather than
+   * assumed. A drawer's wall is the strip docked of it, and this is that
+   * case, unchanged.
    */
-  it('insets the docked-side edge of a right-docked column’s own box', () => {
-    expect(columnFoldClip(200, 'right')).toBe('inset(0px 200px 0px 0px)')
+  it('insets the docked-side edge of a right-docked drawer’s own box', () => {
+    expect(columnFoldClip(200, 'right', 'drawer')).toBe('inset(0px 200px 0px 0px)')
   })
 
-  it('insets the docked-side edge of a left-docked column’s own box, the other side', () => {
-    expect(columnFoldClip(200, 'left')).toBe('inset(0px 0px 0px 200px)')
+  it('insets the docked-side edge of a left-docked drawer’s own box, the other side', () => {
+    expect(columnFoldClip(200, 'left', 'drawer')).toBe('inset(0px 0px 0px 200px)')
+  })
+
+  /*
+   * ADDED for #585, and the other half of the one rule: a column is clipped
+   * on the side the navigation strip stands on. The mine column docks BEYOND
+   * that strip, so the strip is on its FREE side and what reveals it is the
+   * strip travelling off it — the edge that moves is the free one, and the
+   * column itself never translates at all.
+   */
+  it('insets the free-side edge of a right-docked column the strip uncovers', () => {
+    expect(columnFoldClip(200, 'right', 'uncovered')).toBe('inset(0px 0px 0px 200px)')
+  })
+
+  it('insets the free-side edge of a left-docked column the strip uncovers', () => {
+    expect(columnFoldClip(200, 'left', 'uncovered')).toBe('inset(0px 200px 0px 0px)')
   })
 
   it('never insets past zero, whatever it is handed', () => {
-    expect(columnFoldClip(-5, 'right')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'drawer')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
   })
 })
 
 describe('columnSlideKeyframes', () => {
+  /*
+   * AMENDED for #585: `x` was a second engine, not a second key — see
+   * `columnFoldKeyframes` above. Both halves are accelerated values now, so
+   * "the SAME two keyframes" is finally the same CLOCK as well.
+   */
   it('carries the transform and the clip on the SAME two keyframes', () => {
-    expect(columnSlideKeyframes(0, 563, 'right')).toEqual({
-      x: [0, 563],
+    expect(columnSlideKeyframes(0, 563, 'right', 'drawer')).toEqual({
+      transform: ['translateX(0px)', 'translateX(563px)'],
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
     })
   })
 
   it('mirrors both halves onto a left-docked shell together', () => {
-    expect(columnSlideKeyframes(0, 200, 'left')).toEqual({
-      x: [-0, -200],
+    expect(columnSlideKeyframes(0, 200, 'left', 'drawer')).toEqual({
+      transform: ['translateX(0px)', 'translateX(-200px)'],
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 200px)']
+    })
+  })
+
+  /*
+   * ADDED for #585. A column the strip uncovers has NO travel of its own —
+   * that is the whole of what "in place" means: the clip alone answers for
+   * it, on the free-side edge the strip is sweeping across, and its box never
+   * moves so the interior inside it is never asked to re-measure.
+   */
+  it('gives an uncovered column the clip alone, with no travel of its own', () => {
+    expect(columnSlideKeyframes(0, 356, 'right', 'uncovered')).toEqual({
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+    })
+  })
+
+  it('mirrors an uncovered column’s clip onto a left-docked shell, still with no travel', () => {
+    expect(columnSlideKeyframes(356, 0, 'left', 'uncovered')).toEqual({
+      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
   })
 })

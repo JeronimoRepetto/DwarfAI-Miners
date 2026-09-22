@@ -154,9 +154,8 @@ export function foldedColumnOffset(shell: {
  * side is travelling the other way on a left-docked shell (#464, generalized
  * #566 T5b: was named for the rail alone, which is one carried column among
  * now several). Shared by `columnFoldTransform` (the inline style `place`
- * writes) and `columnFoldKeyframes` (the motion-v `x` shortcut this file
- * hands the runner), so the two can never mirror the sign differently from
- * each other.
+ * writes) and `columnFoldKeyframes` (the keyframes this file hands the
+ * runner), so the two can never mirror the sign differently from each other.
  */
 export function mirrorTravel(travel: number, edge: PanelEdge): number {
   return edge === 'right' ? travel : -travel
@@ -176,22 +175,57 @@ export function columnFoldTransform(travel: number, edge: PanelEdge): string {
 
 /**
  * A carried column's travel from where it is now to where the change leaves
- * it, in motion-v's own shape: `x` is its transform shortcut, driven as a
- * plain number rather than the CSS string `columnFoldTransform` writes
- * inline.
+ * it — the SAME `transform` string `columnFoldTransform` writes inline, run
+ * as two keyframes.
+ *
+ * `transform`, and not motion-v's `x` shortcut this used to hand over (#585).
+ * Which key a value is named by decides which ENGINE drives it: motion-dom
+ * accelerates exactly `opacity`, `clipPath`, `filter`, `transform` and
+ * `backgroundColor` onto WAAPI (its own `acceleratedValues`, asserted against
+ * in `shellFold.test.ts`), and `x` is in none of them — it is a transform
+ * shortcut resolved by motion-dom's own JS driver, on its own rAF clock. So a
+ * column asked for `x` AND `clipPath` in one `animate()` call got two
+ * animations on two clocks: a real-window probe measured the transform 10%
+ * travelled while the clip of the same run was 50% through it, which paints
+ * the content 353px past its own rest edge and, closing, clips a column away
+ * entirely for a dozen frames. Named as the property WAAPI already drives and
+ * the two halves share one timeline, which is the whole of what
+ * `columnSlideKeyframes` below claims.
  */
 export function columnFoldKeyframes(
   from: number,
   to: number,
   edge: PanelEdge
 ): DOMKeyframesDefinition {
-  return { x: [mirrorTravel(from, edge), mirrorTravel(to, edge)] }
+  return { transform: [columnFoldTransform(from, edge), columnFoldTransform(to, edge)] }
 }
 
 /**
+ * How a leaving or entering column's own motion reads, which is decided by
+ * where the navigation strip stands relative to it (#585).
+ *
+ * One rule, two answers: **a column is clipped on the side the strip is on.**
+ *
+ * - `'drawer'` — the strip is on this column's DOCKED side, so that edge is a
+ *   fixed mouth the column is pulled out of and pushed back into. It travels,
+ *   and it is clipped there. Every column on the free side of the strip is
+ *   one of these: the secondary panel, and the strip itself, which has the
+ *   window's own docked edge for a wall.
+ * - `'uncovered'` — the strip is on this column's FREE side, which is the mine
+ *   column and only it: it docks BEYOND the strip, so what reveals or hides it
+ *   is the strip and everything beyond it travelling across it. It never
+ *   translates at all, and the clip on its free side tracks that moving edge.
+ *
+ * Which one a column is, is geometry rather than a name: `useShellFold` asks
+ * whether anything else in the row stands nearer the docked edge than it does.
+ */
+export type ColumnFold = 'drawer' | 'uncovered'
+
+/**
  * The clip that keeps a leaving or entering column's own vanishing point
- * pinned at its DOCKED-side edge while it travels (#566 T5b: the maintainer's
- * own drawing — a drawer sliding into a wall, not a panel fading beside one).
+ * pinned at the edge the navigation strip stands on while the change runs
+ * (#566 T5b: the maintainer's own drawing — a drawer sliding into a wall, not
+ * a panel fading beside one; generalized to both sides of the strip in #585).
  *
  * A carried column (the rail, or a secondary panel and navigation stack
  * carried by a mine closing beside them) is free of the box it stood in: it
@@ -212,10 +246,22 @@ export function columnFoldKeyframes(
  * docked-side edge and narrows away from the free-side edge as `travel`
  * grows — the "wall" in the drawing is that docked-side edge, fixed, and the
  * content slides toward and behind it rather than being clipped uniformly.
+ *
+ * An `'uncovered'` column insets the FREE side instead, and has no transform
+ * composed with it at all: `travel` there is how far the strip beside it still
+ * has to go, so the inset IS the strip's own edge sweeping across a box that
+ * never moves. The gap between the two columns rides along with it, because
+ * the inset is measured to the strip's near edge rather than to the column's
+ * own — which is why a mine being uncovered keeps the 8px of ground beside it
+ * that it has at rest, rather than growing out of the strip's own side.
  */
-export function columnFoldClip(travel: number, edge: PanelEdge): string {
+export function columnFoldClip(travel: number, edge: PanelEdge, fold: ColumnFold): string {
   const inset = `${Math.max(0, travel)}px`
-  return edge === 'right' ? `inset(0px ${inset} 0px 0px)` : `inset(0px 0px 0px ${inset})`
+  // The docked side of a right-docked shell is its right, and the free side of
+  // a left-docked one is the same edge — so the two folds are each other's
+  // mirror, and one expression answers for both docks and both of them.
+  const insetRight = fold === 'drawer' ? edge === 'right' : edge === 'left'
+  return insetRight ? `inset(0px ${inset} 0px 0px)` : `inset(0px 0px 0px ${inset})`
 }
 
 /**
@@ -223,14 +269,22 @@ export function columnFoldClip(travel: number, edge: PanelEdge): string {
  * carrying `columnFoldClip` along on the SAME two keyframes, so one
  * `animate()` call drives both compositor properties in lockstep and neither
  * can finish or watchdog-end ahead of the other (#566 T5b).
+ *
+ * "In lockstep" only became true with #585: both keys are WAAPI-accelerated
+ * values now, so they are one timeline rather than two engines handed the
+ * same two keyframes — see `columnFoldKeyframes` above.
  */
 export function columnSlideKeyframes(
   from: number,
   to: number,
-  edge: PanelEdge
+  edge: PanelEdge,
+  fold: ColumnFold
 ): DOMKeyframesDefinition {
-  return {
-    ...columnFoldKeyframes(from, to, edge),
-    clipPath: [columnFoldClip(from, edge), columnFoldClip(to, edge)]
-  }
+  const clipPath = [columnFoldClip(from, edge, fold), columnFoldClip(to, edge, fold)]
+  // An uncovered column is the one that does NOT slide (#585): its box stays
+  // exactly where the row put it and the strip beside it does the moving, so a
+  // travel of its own would be the second opinion about where it is that this
+  // whole file exists to avoid.
+  if (fold === 'uncovered') return { clipPath }
+  return { ...columnFoldKeyframes(from, to, edge), clipPath }
 }
