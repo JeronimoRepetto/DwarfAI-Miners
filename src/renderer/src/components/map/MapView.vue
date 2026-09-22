@@ -31,7 +31,7 @@ import type { MapSpawnPoint } from '../../lib/map/spawnPoints.generated'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
 import { mapMines } from '../../lib/map/mapPopulation'
 import { assignSlots } from '../../lib/placement'
-import { fadeVariants } from '../../lib/shell/presence'
+import { fadeVariants, pressHoverVariants } from '../../lib/shell/presence'
 import type { MaterialTotals, Mine, ProjectSummary } from '../../types'
 import MineMarker from './MineMarker.vue'
 import VaultChip from '../vault/VaultChip.vue'
@@ -353,16 +353,17 @@ const tooltipStyle = computed<Record<string, string>>(() => {
         The modal reuses the shared confirmation shell so it does not invent a
         new panel language.
       -->
-      <button
+      <motion.button
         class="map-info"
         type="button"
         aria-label="Material values"
         title="Material values"
         :style="{ '--info-icon': maskImageValue(INFO_ICON_SRC) }"
+        v-bind="pressHoverVariants"
         @click="showInfoModal = true"
       >
         <span class="map-info-glyph" aria-hidden="true"></span>
-      </button>
+      </motion.button>
       <AnimatePresence>
         <MaterialInfoModal v-if="showInfoModal" @close="showInfoModal = false" />
       </AnimatePresence>

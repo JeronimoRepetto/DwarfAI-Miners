@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AnimatePresence, motion } from 'motion-v'
 import { MAP_ART_SIZE, MAP_BG_SRC } from '../../lib/art'
-import { fadeVariants } from '../../lib/shell/presence'
+import { fadeVariants, pressHoverVariants } from '../../lib/shell/presence'
 import { MAP_TIME_REFRESH_MS } from '../../lib/map/mapTime'
 import { MAP_TOOLTIP_DELAY_MS } from '../../lib/map/mapTooltip'
 import { MAP_SPAWN_POINTS } from '../../lib/map/spawnPoints.generated'
@@ -449,5 +449,38 @@ describe('MapView material info', () => {
   it('wraps the material popup in AnimatePresence', () => {
     const wrapper = mount(MapView, { props: { mines: MINES } })
     expect(wrapper.findComponent(AnimatePresence).exists()).toBe(true)
+  })
+})
+
+/*
+ * ADDED for #566 T4: the map's info trigger answers a pointer through the
+ * shared vocabulary.
+ *
+ * It is the map's ONLY `motion.button`, and that is asserted rather than
+ * assumed: a mine marker is a control too, but its hover belongs to
+ * `MineMarker.vue`'s own hexagon (`.marker-hex`, a CSS scale that predates this
+ * task) and replacing it was never T4's to do.
+ */
+describe('MapView press and hover feedback', () => {
+  it('gives the info trigger the shared press/hover variants and nothing else the map draws', () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    const controls = wrapper.findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual(['map-info'])
+    expect(controls[0]!.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+    expect(controls[0]!.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+  })
+
+  it('leaves the info trigger a button with the name, hint and press it had', async () => {
+    const wrapper = mount(MapView, { props: { mines: MINES } })
+    const info = wrapper.get('.map-info')
+
+    expect(info.element.tagName).toBe('BUTTON')
+    expect(info.attributes('type')).toBe('button')
+    expect(info.attributes('aria-label')).toBe('Material values')
+    expect(info.attributes('title')).toBe('Material values')
+
+    await info.trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(true)
   })
 })

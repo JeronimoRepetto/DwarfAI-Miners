@@ -18,7 +18,7 @@
  */
 import { motion } from 'motion-v'
 import { NUGGET_SRC } from '../../lib/art'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 import { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../../types'
 
 const emit = defineEmits<{ close: [] }>()
@@ -28,9 +28,15 @@ const emit = defineEmits<{ close: [] }>()
   <motion.div class="info-modal" role="dialog" v-bind="popVariants" @keydown.escape="emit('close')">
     <header class="modal-head">
       <h2 class="modal-title">Material values</h2>
-      <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
+      <motion.button
+        class="modal-close"
+        type="button"
+        aria-label="Close"
+        v-bind="pressHoverVariants"
+        @click="emit('close')"
+      >
         &times;
-      </button>
+      </motion.button>
     </header>
     <div class="info-scroll">
       <table class="info-table">

@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { motion } from 'motion-v'
 import { MOUND_SRC } from '../../lib/art'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 import TierInfoModal from './TierInfoModal.vue'
 
@@ -63,6 +63,24 @@ describe('TierInfoModal', () => {
     expect(root.props('initial')).toEqual(popVariants.initial)
     expect(root.props('animate')).toEqual(popVariants.animate)
     expect(root.props('exit')).toEqual(popVariants.exit)
+  })
+
+  /*
+   * ADDED for #566 T4: the close button answers a pointer, through the shared
+   * `pressHoverVariants` and never a scale of its own. The second half is the
+   * half worth having — a `motion.button` is still a `<button>`, with the same
+   * class, the same accessible name and the same handler, because the gesture
+   * is the only thing this task was allowed to add.
+   */
+  it('gives the close button the shared press/hover variants and changes nothing else about it', () => {
+    const wrapper = mount(TierInfoModal)
+    const close = wrapper.getComponent(motion.button)
+    expect(close.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+    expect(close.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    expect(close.classes()).toContain('modal-close')
+    expect(close.attributes('type')).toBe('button')
+    expect(close.attributes('aria-label')).toBe('Close')
+    expect(wrapper.get('.modal-close').element.tagName).toBe('BUTTON')
   })
 })
 

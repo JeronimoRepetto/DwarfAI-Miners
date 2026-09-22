@@ -54,7 +54,7 @@ import {
   clampPanelHeight,
   initialPanelHeight
 } from '../../lib/message/panelHeight'
-import { fadeVariants } from '../../lib/shell/presence'
+import { fadeVariants, pressHoverVariants } from '../../lib/shell/presence'
 import {
   maxTextCharsFor,
   messageTooLongReason,
@@ -881,14 +881,15 @@ function onKick(): void {
         the old action bar's console icon went.
       -->
       <span class="panel-who">
-        <button
+        <motion.button
           class="panel-agent"
           type="button"
           :title="CONSOLE_HINT"
+          v-bind="pressHoverVariants"
           @click="emit('open-console')"
         >
           {{ dwarf.name }}
-        </button>
+        </motion.button>
         <!--
           Which worktree this dwarf is in (#348). Text, never a control: a mine
           folded from several worktrees has a crew in several folders, and this
@@ -897,22 +898,29 @@ function onKick(): void {
         -->
         <span v-if="workplaceLabel" class="panel-workplace">· {{ workplaceLabel }}</span>
       </span>
-      <button
+      <motion.button
         class="panel-history"
         type="button"
         :aria-expanded="historyOpen"
         :aria-label="historyOpen ? 'Collapse message history' : 'Expand message history'"
+        v-bind="pressHoverVariants"
         @click="toggleHistory"
       >
         <span class="history-arrow" aria-hidden="true"></span>
-      </button>
-      <button class="panel-close" type="button" aria-label="Close messages" @click="emit('close')">
+      </motion.button>
+      <motion.button
+        class="panel-close"
+        type="button"
+        aria-label="Close messages"
+        v-bind="pressHoverVariants"
+        @click="emit('close')"
+      >
         <span
           class="close-glyph"
           :style="{ '--close-icon': maskImageValue(CLOSE_ICON_SRC) }"
           aria-hidden="true"
         ></span>
-      </button>
+      </motion.button>
     </header>
 
     <!--
@@ -1267,12 +1275,13 @@ function onKick(): void {
           title — the action bar's own rule, and the one the whole capability
           exists to serve: the panel never accepts a file it would drop.
         -->
-        <button
+        <motion.button
           class="control-attach"
           type="button"
           :disabled="!canAttach"
           aria-label="Attach a file"
           :title="attachTitle"
+          v-bind="pressHoverVariants"
           @click="onAttachClick"
         >
           <span
@@ -1280,13 +1289,14 @@ function onKick(): void {
             :style="{ '--control-icon': maskImageValue(ATTACH_ICON_SRC) }"
             aria-hidden="true"
           ></span>
-        </button>
-        <button
+        </motion.button>
+        <motion.button
           class="control-kick"
           type="button"
           :disabled="action('kick')?.enabled !== true"
           :aria-label="action('kick')?.name"
           :title="action('kick')?.hint"
+          v-bind="pressHoverVariants"
           @click="onKick"
         >
           <span
@@ -1294,7 +1304,7 @@ function onKick(): void {
             :style="{ '--control-icon': maskImageValue(KICK_ICON_SRC) }"
             aria-hidden="true"
           ></span>
-        </button>
+        </motion.button>
         <!--
           Boost is drawn where the design puts it and does nothing, on purpose.
           No provider exposes a channel to change a running session's effort
@@ -1303,19 +1313,20 @@ function onKick(): void {
           supportsEffort guard — so a live button here would answer a click
           with silence, which is a worse lie than a disabled one that says why.
         -->
-        <button
+        <motion.button
           class="control-boost"
           type="button"
           disabled
           :aria-label="action('boost')?.name"
           :title="action('boost')?.hint"
+          v-bind="pressHoverVariants"
         >
           <span
             class="control-glyph"
             :style="{ '--control-icon': maskImageValue(BOOST_ICON_SRC) }"
             aria-hidden="true"
           ></span>
-        </button>
+        </motion.button>
       </div>
     </div>
 

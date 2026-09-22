@@ -13,7 +13,7 @@ import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
 import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
-import { fadeVariants } from '../../lib/shell/presence'
+import { fadeVariants, pressHoverVariants } from '../../lib/shell/presence'
 import {
   NO_TRANSCRIPT_NOTE,
   NOTHING_SAID_NOTE,
@@ -2703,5 +2703,59 @@ describe('DwarfMessagePanel echo exit (#566 T4b)', () => {
     expect(rows.at(-1)!.find('.bubble').text()).toBe('dig deeper')
     // No echo left to carry a tick — this row came off the transcript.
     expect(rows.at(-1)!.find('.bubble-marker').exists()).toBe(false)
+  })
+})
+
+/*
+ * ADDED for #566 T4: the panel chrome answers a pointer through the shared
+ * vocabulary - the header row and the composer's control column, the controls
+ * that are on screen for every dwarf.
+ *
+ * Not the transcript's own buttons (the activity disclosure, an openable path,
+ * Send again, the jump to the terminal, an attachment chip's remove): each is a
+ * conditional row needing its own fixture, and they are left for a follow-up
+ * rather than changed here untested.
+ */
+describe('DwarfMessagePanel press and hover feedback', () => {
+  const CHROME = [
+    'panel-agent',
+    'panel-history',
+    'panel-close',
+    'control-attach',
+    'control-kick',
+    'control-boost'
+  ]
+
+  it('routes every chrome control through motion.button carrying the shared variants', () => {
+    const wrapper = panel()
+
+    const controls = wrapper.findAllComponents(motion.button)
+    expect(controls.map((control) => control.classes()[0])).toEqual(CHROME)
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  it('leaves every chrome control a button with the name, state and press it had', async () => {
+    const wrapper = panel()
+
+    for (const control of CHROME) {
+      const button = wrapper.get(`.${control}`)
+      expect(button.element.tagName).toBe('BUTTON')
+      expect(button.attributes('type')).toBe('button')
+    }
+
+    expect(wrapper.get('.panel-history').attributes('aria-label')).toBe('Expand message history')
+    expect(wrapper.get('.panel-close').attributes('aria-label')).toBe('Close messages')
+    // Boost is drawn and refuses on purpose (no provider can change a running
+    // session's effort) - the gesture must not have talked it into being live.
+    expect(wrapper.get('.control-boost').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('.panel-close').trigger('click')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+
+    await wrapper.get('.panel-agent').trigger('click')
+    expect(wrapper.emitted('open-console')).toHaveLength(1)
   })
 })

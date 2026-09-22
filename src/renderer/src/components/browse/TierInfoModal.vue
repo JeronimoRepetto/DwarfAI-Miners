@@ -20,7 +20,7 @@
  */
 import { motion } from 'motion-v'
 import { MOUND_SRC } from '../../lib/art'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 
 const emit = defineEmits<{ close: [] }>()
@@ -37,9 +37,15 @@ function thresholdText(tier: string): string {
   <motion.div class="info-modal" role="dialog" v-bind="popVariants" @keydown.escape="emit('close')">
     <header class="modal-head">
       <h2 class="modal-title">Tier thresholds</h2>
-      <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
+      <motion.button
+        class="modal-close"
+        type="button"
+        aria-label="Close"
+        v-bind="pressHoverVariants"
+        @click="emit('close')"
+      >
         &times;
-      </button>
+      </motion.button>
     </header>
     <div class="info-scroll">
       <table class="info-table">

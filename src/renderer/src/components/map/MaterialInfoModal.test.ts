@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { motion } from 'motion-v'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 import { MATERIALS, MATERIAL_TOKENS_PER_UNIT } from '../../types'
 import MaterialInfoModal from './MaterialInfoModal.vue'
 
@@ -55,5 +55,23 @@ describe('MaterialInfoModal', () => {
     expect(root.props('initial')).toEqual(popVariants.initial)
     expect(root.props('animate')).toEqual(popVariants.animate)
     expect(root.props('exit')).toEqual(popVariants.exit)
+  })
+})
+
+/*
+ * ADDED for #566 T4: the close button answers a pointer through the shared
+ * vocabulary, and stays the button it was in every other respect.
+ */
+describe('MaterialInfoModal press and hover feedback', () => {
+  it('gives the close button the shared press/hover variants and changes nothing else', () => {
+    const wrapper = mount(MaterialInfoModal)
+    const close = wrapper.getComponent(motion.button)
+
+    expect(close.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+    expect(close.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    expect(close.classes()).toContain('modal-close')
+    expect(close.attributes('type')).toBe('button')
+    expect(close.attributes('aria-label')).toBe('Close')
+    expect(wrapper.get('.modal-close').element.tagName).toBe('BUTTON')
   })
 })

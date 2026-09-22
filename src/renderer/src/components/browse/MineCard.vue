@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { motion } from 'motion-v'
 import {
   DELETE_ICON_SRC,
   DIALOG_ICON_SRC,
@@ -16,6 +17,7 @@ import {
   type CardStatus
 } from '../../lib/browse/browseCards'
 import { orePileLabel } from '../../lib/presentation'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import { formatUnits, vaultRows } from '../../lib/vault/vault'
 import type { ProjectSummary } from '../../types'
 
@@ -222,13 +224,19 @@ const removable = computed(() => props.unrecorded !== true)
       Upper-right because the lower-right corner already belongs to the status
       markers. The design source places no removal at all; see the amendment in
       `screens/browse.md`.
+
+      The only control on this card that answers a pointer (#566 T4). The body
+      above is a `<button>` ONLY when the mine can be entered, and whether a
+      whole card should grow under a hover is a visual decision the design
+      source marks Unspecified — asked rather than answered, per `ui-rebuild`.
     -->
-    <button
+    <motion.button
       v-if="removable"
       class="card-remove"
       type="button"
       :aria-label="`Remove the mine ${project.name}`"
       title="Stop tracking this mine"
+      v-bind="pressHoverVariants"
       @click="emit('remove', project.id)"
     >
       <span
@@ -236,7 +244,7 @@ const removable = computed(() => props.unrecorded !== true)
         :style="{ '--remove-icon': maskImageValue(DELETE_ICON_SRC) }"
         aria-hidden="true"
       ></span>
-    </button>
+    </motion.button>
   </li>
 </template>
 

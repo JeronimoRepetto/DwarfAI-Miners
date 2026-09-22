@@ -2,7 +2,9 @@
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AnimatePresence } from 'motion-v'
+import { AnimatePresence, motion } from 'motion-v'
+import { TIER_CHIPS } from '../../lib/browse/browseCards'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import { defaultDwarf, defaultMine, defaultProject } from '../../testing/factories'
 import MinesPanel from './MinesPanel.vue'
 
@@ -586,5 +588,69 @@ describe('MinesPanel popup exit (#566 T3, AnimatePresence)', () => {
 
     await wrapper.get('.modal-close').trigger('click')
     expect(wrapper.find('.remove-modal').exists()).toBe(false)
+  })
+})
+
+/*
+ * ADDED for #566 T4: press and hover feedback. Nothing in this panel answered a
+ * pointer before, so a chip and a caption felt alike until one of them did
+ * something.
+ *
+ * The control list is spelled out rather than counted: a control added later
+ * with no feedback is exactly what this is here to catch, and a length check
+ * would let it through as long as the total agreed.
+ */
+describe('MinesPanel press and hover feedback', () => {
+  it('routes every control through motion.button carrying the shared variants', () => {
+    const controls = panel().findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual([
+      'sort-control',
+      'add-control',
+      ...TIER_CHIPS.map(() => 'tier-chip'),
+      'mines-info'
+    ])
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  // The half worth having: a `motion.button` is still a `<button>`, with the
+  // same class, the same accessible name and the same pressed state, because
+  // the gesture is the only thing T4 was allowed to add.
+  it('leaves every control a button with the name and state it already had', () => {
+    const wrapper = panel({ tier: 'gold' })
+
+    const sort = wrapper.get('.sort-control')
+    expect(sort.element.tagName).toBe('BUTTON')
+    expect(sort.attributes('type')).toBe('button')
+    expect(sort.attributes('aria-label')).toBe('Order by last activity')
+
+    const add = wrapper.get('.add-control')
+    expect(add.element.tagName).toBe('BUTTON')
+    expect(add.attributes('aria-label')).toBe('Add a project')
+
+    const info = wrapper.get('.mines-info')
+    expect(info.element.tagName).toBe('BUTTON')
+    expect(info.attributes('aria-label')).toBe('Tier thresholds')
+
+    const pressed = wrapper
+      .findAll('.tier-chip')
+      .filter((chip) => chip.attributes('aria-pressed') === 'true')
+    expect(pressed).toHaveLength(1)
+  })
+
+  it('still reports the press of every control it owns', async () => {
+    const wrapper = panel()
+
+    await wrapper.get('.sort-control').trigger('click')
+    expect(wrapper.emitted('toggle-direction')).toHaveLength(1)
+
+    await wrapper.get('.add-control').trigger('click')
+    expect(wrapper.emitted('add')).toHaveLength(1)
+
+    await wrapper.get('.mines-info').trigger('click')
+    expect(wrapper.find('.info-modal').exists()).toBe(true)
   })
 })

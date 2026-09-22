@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { motion } from 'motion-v'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 import RemoveMineModal from './RemoveMineModal.vue'
 
 function modal(props: Record<string, unknown> = {}) {
@@ -77,5 +77,38 @@ describe('RemoveMineModal', () => {
     expect(root.props('initial')).toEqual(popVariants.initial)
     expect(root.props('animate')).toEqual(popVariants.animate)
     expect(root.props('exit')).toEqual(popVariants.exit)
+  })
+})
+
+/*
+ * ADDED for #566 T4: both of this modal's buttons answer a pointer through the
+ * shared vocabulary. Named rather than counted, so a third button added later
+ * without feedback fails here.
+ */
+describe('RemoveMineModal press and hover feedback', () => {
+  it('routes both buttons through motion.button carrying the shared variants', () => {
+    const controls = modal().findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual([
+      'modal-close',
+      'modal-confirm'
+    ])
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  it('leaves both buttons as they were - tag, name, and the refusal while removing', () => {
+    const wrapper = modal({ removing: true })
+
+    const close = wrapper.get('.modal-close')
+    expect(close.element.tagName).toBe('BUTTON')
+    expect(close.attributes('type')).toBe('button')
+    expect(close.attributes('aria-label')).toBe('Close')
+
+    const confirm = wrapper.get('.modal-confirm')
+    expect(confirm.element.tagName).toBe('BUTTON')
+    expect(confirm.attributes('disabled')).toBeDefined()
   })
 })

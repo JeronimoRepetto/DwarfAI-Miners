@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { motion } from 'motion-v'
 import { CLOSE_ICON_SRC, USER_PORTRAIT_SRC, maskImageValue } from '../../lib/art'
 import {
   COMMAND_PLACEHOLDER,
@@ -11,6 +12,7 @@ import {
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import {
   HELD_PERMISSION_MODES,
   type HeldPermissionMode,
@@ -322,10 +324,11 @@ function onCommandKeydown(event: KeyboardEvent): void {
     <!-- The same window-drag handle the message panel's header carries (#296). -->
     <header class="panel-bar" data-window-drag>
       <h2 class="panel-title">{{ COMPOSER_DISABLED_PLACEHOLDER }}</h2>
-      <button
+      <motion.button
         class="launch-close"
         type="button"
         aria-label="Close the launch panel"
+        v-bind="pressHoverVariants"
         @click="emit('close')"
       >
         <span
@@ -333,7 +336,7 @@ function onCommandKeydown(event: KeyboardEvent): void {
           :style="{ '--close-icon': maskImageValue(CLOSE_ICON_SRC) }"
           aria-hidden="true"
         ></span>
-      </button>
+      </motion.button>
     </header>
 
     <!--
@@ -342,17 +345,18 @@ function onCommandKeydown(event: KeyboardEvent): void {
       under them, so choosing Other grows the row instead of moving it.
     -->
     <div v-if="!launched" class="launch-choices">
-      <button
+      <motion.button
         v-for="chip in chips"
         :key="chip.choice"
         class="provider-chip"
         type="button"
         :data-state="chip.state"
         :aria-pressed="chip.state === 'selected'"
+        v-bind="pressHoverVariants"
         @click="emit('choose', chip.choice)"
       >
         {{ chip.label }}
-      </button>
+      </motion.button>
       <input
         v-if="showCommand"
         class="launch-command is-selectable"

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { motion } from 'motion-v'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../../shared/accelerator'
 import type { ShortcutState } from '../../types'
 import {
@@ -427,5 +429,48 @@ describe('SettingsPanel section grouping', () => {
     const rules = wrapper.findAll('.group-divider')
     expect(rules.length).toBeGreaterThan(0)
     for (const rule of rules) expect(rule.attributes('role')).toBe('presentation')
+  })
+})
+
+/*
+ * ADDED for #566 T4: the panel's own two controls answer a pointer through the
+ * shared vocabulary.
+ *
+ * Its OWN two, and that boundary is asserted: the settings groups above them
+ * are their own components (audio, notifications, Jev, database, shortcut,
+ * typography, position), and giving their controls the same feedback is a
+ * separate change against the files that own them.
+ */
+describe('SettingsPanel press and hover feedback', () => {
+  it('routes both application controls through motion.button carrying the shared variants', () => {
+    const controls = render().findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual(['pin', 'hide-panel'])
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  it('leaves both buttons with the name, pressed state, hint and press they had', async () => {
+    const wrapper = render({
+      pinned: true,
+      pinTooltip: 'Pinned: the panel stays above other windows'
+    })
+
+    const pin = wrapper.get('.pin')
+    expect(pin.element.tagName).toBe('BUTTON')
+    expect(pin.attributes('type')).toBe('button')
+    expect(pin.attributes('aria-label')).toBe('Keep panel on top')
+    expect(pin.attributes('aria-pressed')).toBe('true')
+    expect(pin.attributes('title')).toBe('Pinned: the panel stays above other windows')
+    await pin.trigger('click')
+    expect(wrapper.emitted('toggle-pin')).toHaveLength(1)
+
+    const hide = wrapper.get('.hide-panel')
+    expect(hide.element.tagName).toBe('BUTTON')
+    expect(hide.attributes('title')).toBe('Hide the panel; the shortcut or the tray brings it back')
+    await hide.trigger('click')
+    expect(wrapper.emitted('hide-panel')).toHaveLength(1)
   })
 })

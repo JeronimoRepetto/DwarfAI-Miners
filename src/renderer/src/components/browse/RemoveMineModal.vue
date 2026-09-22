@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useId } from 'vue'
 import { motion } from 'motion-v'
-import { popVariants } from '../../lib/shell/presence'
+import { popVariants, pressHoverVariants } from '../../lib/shell/presence'
 
 /**
  * The confirmation for removing one mine (#169).
@@ -66,18 +66,30 @@ function onConfirm(): void {
   >
     <header class="modal-head">
       <h2 :id="titleId" class="modal-title">Remove mine</h2>
-      <button class="modal-close" type="button" aria-label="Close" @click="emit('close')">
+      <motion.button
+        class="modal-close"
+        type="button"
+        aria-label="Close"
+        v-bind="pressHoverVariants"
+        @click="emit('close')"
+      >
         &times;
-      </button>
+      </motion.button>
     </header>
     <p class="modal-message">
       Stop tracking {{ name }}? It leaves the map and this list. Everything it has mined is kept,
       and adding the folder again brings the mine back.
     </p>
     <p v-if="error" class="modal-error" role="alert">{{ error }}</p>
-    <button class="modal-confirm" type="button" :disabled="removing" @click="onConfirm">
+    <motion.button
+      class="modal-confirm"
+      type="button"
+      :disabled="removing"
+      v-bind="pressHoverVariants"
+      @click="onConfirm"
+    >
       Remove
-    </button>
+    </motion.button>
   </motion.div>
 </template>
 
