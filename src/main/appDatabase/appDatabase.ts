@@ -40,17 +40,45 @@ import {
  */
 export const APP_DB_FILENAME = 'projects-v1.db'
 
-/** Stamped in PRAGMA user_version. Older versions walk up to it; above is refused. */
-export const APP_SCHEMA_VERSION = 6
+/**
+ * The minimum build generation that can read this file without doing damage —
+ * a COMPATIBILITY FLOOR, not a change counter (#575).
+ *
+ * Pinned at 5, the generation the last released build (0.12.0) actually
+ * knows. Every migration this app has ever shipped only ADDS a table or a
+ * NULLABLE column, and SQLite ignores a column nobody selects — so a build
+ * that only understands 5 can safely open a file this build has converged,
+ * even though this build's own vocabulary (routed_by_jev included) reaches
+ * further than 5 ever described. That is the bug #575 fixes: treating the
+ * stamp as "how many changes have shipped" rather than "what does a reader
+ * need to know" locked a real user's 0.12.0 install (knows 5) out of a file a
+ * dev build had stamped 6 for nothing more than an additive column — 40 mines
+ * and 562M mined tokens, otherwise perfectly intact, made unreadable by the
+ * stamp alone.
+ *
+ * Moving this floor is reserved for a change an older reader genuinely could
+ * not survive: a dropped table or column, a rename, a reshape, or a backfill
+ * that changes what an existing row means. None of the migrations below is
+ * any of those, so none of them has ever needed to.
+ *
+ * PRAGMA user_version stores it. `prepareAppSchema` converges a file to this
+ * build's full known shape by presence, not by walking a counter, and stamps
+ * the result at this floor rather than at "however many changes have
+ * shipped" — see that function's own doc comment for the full policy, and
+ * `ADDITIVE_MISSTAMP` below for the one stamp value normalized down rather
+ * than read literally.
+ */
+export const APP_COMPAT_FLOOR = 5
 
 /**
  * The version the ledger's tables arrived in.
  *
  * Read by openLedgerStore to answer one question it cannot otherwise answer: a
  * database stamped below this has never held the vault, so the JSON file is
- * still the current copy. It equals APP_SCHEMA_VERSION today and must NOT be
- * bumped along with it — a later schema change does not move when the ledger
- * moved in.
+ * still the current copy. It was the current schema version when the ledger
+ * arrived and must NOT be bumped along with APP_COMPAT_FLOOR since — a later
+ * additive change, or a later floor correction like #575's, does not move
+ * when the ledger moved in.
  */
 export const LEDGER_TABLES_SINCE = 2
 
@@ -109,6 +137,12 @@ CREATE INDEX projects_last_opened_at ON projects (last_opened_at);
 /**
  * Schema v2 — the material vault, moved out of material-ledger-v1.json.
  *
+ * Split into three separate CREATE statements, one per table, rather than one
+ * script — convergence (see prepareAppSchema) checks and creates EACH table by
+ * its own presence, so a crash between two of these three, or a table one of
+ * them collides with by name, converges to completion on the next open instead
+ * of needing this trio treated as one indivisible unit.
+ *
  * `materials` is one row per mine per material, keyed on the pair. That shape
  * is the "materials never convert into one another" invariant made structural:
  * there is no column a total could be summed into, and no way to write a mine's
@@ -124,18 +158,22 @@ CREATE INDEX projects_last_opened_at ON projects (last_opened_at);
  * ledger/ledgerMigration.ts for why that has to be a stored fact rather than an
  * inference from whether any rows exist.
  */
-const CREATE_LEDGER = `
+const CREATE_MATERIALS = `
 CREATE TABLE materials (
   mine_id TEXT NOT NULL,
   material TEXT NOT NULL,
   tokens INTEGER NOT NULL,
   PRIMARY KEY (mine_id, material)
 );
+`
+const CREATE_SESSION_MARKS = `
 CREATE TABLE session_marks (
   key TEXT PRIMARY KEY NOT NULL,
   tokens INTEGER NOT NULL,
   seen_at INTEGER NOT NULL
 );
+`
+const CREATE_LEDGER_META = `
 CREATE TABLE ledger_meta (
   key TEXT PRIMARY KEY NOT NULL,
   migrated_at INTEGER NOT NULL,
@@ -190,7 +228,8 @@ CREATE TABLE launched_sessions (
   session_id TEXT NOT NULL,
   mine_path TEXT NOT NULL,
   pid INTEGER NOT NULL,
-  proc_start_ms INTEGER NOT NULL
+  proc_start_ms INTEGER NOT NULL,
+  routed_by_jev INTEGER
 );
 `
 
@@ -214,37 +253,69 @@ CREATE TABLE launched_sessions (
 const ADD_HIDDEN_AT = `ALTER TABLE projects ADD COLUMN hidden_at INTEGER`
 
 /**
- * Schema v6 — whether a launch this panel started was routed by Jev's own
- * decision (#511), so the marker survives a restart the same way the rest of
+ * Whether a launch this panel started was routed by Jev's own decision
+ * (#511), so the marker survives a restart the same way the rest of
  * `launched_sessions` does. NULL for every row written before this column
- * existed — `toLaunch` (launchedSessionStore.ts) reads that as `false`,
- * which is the honest answer: none of those launches could have been
- * Jev-routed, because the feature did not exist yet.
+ * existed — `toLaunch` (launchedSessionStore.ts) reads that as `false`, which
+ * is the honest answer: none of those launches could have been Jev-routed,
+ * because the feature did not exist yet.
  *
- * `CREATE_LAUNCHED_SESSIONS` deliberately does NOT bake this column in,
- * unlike `CREATE_PROJECTS` baking in `map_site`/`hidden_at`: that table is
- * rebuilt from scratch only at v0 and never touched by the walk again, but
- * `launched_sessions` is created BY the walk itself (the v3 step) for a
- * database that predates it, so a v1/v2 upgrade runs CREATE_LAUNCHED_SESSIONS
- * and this ALTER in the same open — baking the column into the CREATE would
- * make that second statement fail on a duplicate column. The fresh-install
- * (v0) branch below runs both explicitly, in the same order, for the same
- * reason.
+ * `CREATE_LAUNCHED_SESSIONS` now bakes this column in directly, the same way
+ * `CREATE_PROJECTS` bakes in `map_site`/`hidden_at`: convergence (see
+ * prepareAppSchema) checks a column's presence before running its ALTER
+ * regardless of whether the table was just created in this same pass or
+ * already existed, so baking it into the CREATE can no longer collide with
+ * this statement — the ALTER below simply finds the column already there and
+ * is skipped. It stays a separate convergence step for the one case baking it
+ * in does not reach: a `launched_sessions` table that already existed before
+ * this column did (#511's own migration, or any database converged by a build
+ * before this one).
+ *
+ * This is also why bumping `APP_COMPAT_FLOOR` for this column would have been
+ * wrong even before #575 named the mistake: nothing about adding it required
+ * an older reader to understand anything new.
  */
 const ADD_ROUTED_BY_JEV = `ALTER TABLE launched_sessions ADD COLUMN routed_by_jev INTEGER`
 
 /**
- * One step up from `from` to `from + 1`, applied in order and each in its own
- * transaction — which is what lets a database that has fallen two versions
- * behind catch up in one open without a crash ever leaving a stamp that does
- * not describe the file.
+ * A stamp of 6 was never a real schema break — it was #511's routed_by_jev
+ * column, additive like every other migration here, bumping the counter by
+ * mistake instead of leaving the floor where it belonged. #575 corrects that:
+ * a file carrying this exact stamp converges like any other and is restamped
+ * to APP_COMPAT_FLOOR, rather than being refused as "newer" the way a
+ * genuinely unknown stamp still is. This is a bounded, one-value transitional
+ * rule — it exists because a dev build already shipped 6 before this fix
+ * landed, not a general license to keep granting old floors to new stamps.
+ * Anything above the floor that is NOT this exact value is still refused.
  */
-const UPGRADES: readonly { from: number; apply: (db: WritableSqliteDb) => void }[] = [
-  { from: 1, apply: (db) => db.exec(CREATE_LEDGER) },
-  { from: 2, apply: (db) => db.exec(ADD_MAP_SITE) },
-  { from: 3, apply: (db) => db.exec(CREATE_LAUNCHED_SESSIONS) },
-  { from: 4, apply: (db) => db.exec(ADD_HIDDEN_AT) },
-  { from: 5, apply: (db) => db.exec(ADD_ROUTED_BY_JEV) }
+const ADDITIVE_MISSTAMP = 6
+
+/**
+ * Every table this build expects, checked and created by presence — never by
+ * `IF NOT EXISTS`, so a name already occupied by something this code did not
+ * create (see the rollback test in appDatabase.test.ts) still fails loudly
+ * rather than being silently adopted.
+ */
+const EXPECTED_TABLES: readonly { name: string; create: string }[] = [
+  { name: 'projects', create: CREATE_PROJECTS },
+  { name: 'materials', create: CREATE_MATERIALS },
+  { name: 'session_marks', create: CREATE_SESSION_MARKS },
+  { name: 'ledger_meta', create: CREATE_LEDGER_META },
+  { name: 'launched_sessions', create: CREATE_LAUNCHED_SESSIONS }
+]
+
+/**
+ * Every additive column this build expects on a table that might predate it,
+ * checked and added by presence. A column already baked into its table's
+ * CREATE (map_site and hidden_at into CREATE_PROJECTS, routed_by_jev into
+ * CREATE_LAUNCHED_SESSIONS) is present the moment that table is created, so
+ * its ALTER here is a no-op on a fresh table and real work only on an older
+ * one that predates the column.
+ */
+const EXPECTED_COLUMNS: readonly { table: string; column: string; ddl: string }[] = [
+  { table: 'projects', column: 'map_site', ddl: ADD_MAP_SITE },
+  { table: 'projects', column: 'hidden_at', ddl: ADD_HIDDEN_AT },
+  { table: 'launched_sessions', column: 'routed_by_jev', ddl: ADD_ROUTED_BY_JEV }
 ]
 
 export interface AppDatabase {
@@ -326,77 +397,96 @@ export function createAppDatabase(options: AppDatabaseOptions): AppDatabase {
 }
 
 /**
- * Bring a database up to the current schema, or REFUSE to touch it.
+ * Bring a database up to this build's full known shape, or REFUSE to touch
+ * it (#575).
  *
- * Three cases, and the third is the one that matters:
+ * The stamp is read as a FLOOR, not a counter — see APP_COMPAT_FLOOR's own
+ * doc comment for what that distinction means and why it matters. That
+ * reframing changes what this function does on every path:
  *
- * - **v0** (an empty file, or none) gets both tenants created from scratch.
- * - **an older stamp** walks UP one version at a time through `UPGRADES` — a
- *   v1 database gets the ledger tables and then the map-site column in the same
- *   open. Every step is additive: nothing existing is dropped, rewritten or
- *   reshaped, so an upgrade cannot lose a project even if it fails halfway.
- * - **anything else refuses**, leaving the file untouched. The JSON stores
- *   discard a document whose version they do not know (domain/ledger.ts:294-306)
- *   and that is right for a document the app rebuilds from what it observes
- *   next. A database is the opposite case: discarding it deletes history no
- *   poll regenerates, silently, at startup, on the machine of whoever
- *   downgraded. A user can be told; a deleted table cannot be untold.
+ * - **An unstamped file that already has a `projects` table** refuses: this
+ *   build never wrote it and will not guess at a version for it. Unchanged
+ *   from before #575 — see point 6 of the issue and UnsupportedSchemaError's
+ *   own doc comment.
+ * - **A stamp above the floor** refuses as 'newer', UNLESS it is exactly
+ *   `ADDITIVE_MISSTAMP` (6) — the one stamp a dev build issued for a change
+ *   that was additive all along (see that constant's doc comment). Anything
+ *   else above the floor is a genuinely breaking change this build does not
+ *   know how to read: a drop, a rename, a reshape, or a backfill that changes
+ *   what an existing row means, none of which any migration here has ever
+ *   been.
+ * - **Everything else — 0 through the floor, and the one misstamp above it —
+ *   CONVERGES.** `converge` below creates every expected table this build
+ *   knows that is missing, and adds every expected column that is missing,
+ *   entirely by presence: never a counter walked one step at a time, never an
+ *   `IF NOT EXISTS` that would silently adopt a shape this code did not
+ *   write. A crash partway through leaves the file exactly where it started
+ *   (one transaction — see `converge`); the NEXT open finishes it, because
+ *   presence is checked fresh every time rather than resumed from a
+ *   remembered step. That is also what makes running this twice on an
+ *   already-converged file a genuine no-op: nothing is missing, so nothing
+ *   is written.
  *
- * A DOWNGRADED app still refuses this v2 file, and that is correct rather than
- * unfortunate. A v1 build has no `materials` table in its vocabulary, so it
- * would not read the vault; what it WOULD do is keep writing
- * material-ledger-v1.json, whose last line is the pre-migration snapshot.
- * Accruing onto that stale snapshot and then upgrading again would credit every
- * delta twice. Refusing costs the downgraded run its project list and leaves
- * the vault on the JSON file it never stopped trusting — which is the same
- * degraded-but-honest shape openLedgerStore lands on, and it is recoverable by
- * upgrading again.
- *
- * Each version step is one transaction with its own stamp, so a crash can only
- * leave the version it started from. A half-created database carrying tables
- * with no stamp would refuse itself forever, which is why the stamp is never a
- * separate statement.
+ * A DOWNGRADED app still refuses a file this build converged, and that is
+ * correct rather than unfortunate — but only for a floor it does not know. A
+ * v1 build has no `materials` table in its vocabulary, so it would not read
+ * the vault; what it WOULD do is keep writing material-ledger-v1.json, whose
+ * last line is the pre-migration snapshot. Accruing onto that stale snapshot
+ * and then upgrading again would credit every delta twice. Refusing costs the
+ * downgraded run its project list and leaves the vault on the JSON file it
+ * never stopped trusting — which is the same degraded-but-honest shape
+ * openLedgerStore lands on, and it is recoverable by upgrading again. What
+ * #575 changes is that this refusal now only fires when the floor a file
+ * needs is ABOVE what the reader knows — an additive change no longer raises
+ * that floor, so a build far older than "the latest schema change" can still
+ * keep reading, exactly as 0.12.0 needed to.
  */
 export function prepareAppSchema(db: WritableSqliteDb): void {
   const version = readUserVersion(db)
-  if (version === APP_SCHEMA_VERSION) return
 
-  if (version === 0) {
-    if (hasTable(db, 'projects')) {
-      throw new UnsupportedSchemaError(
-        'app database carries a projects table with no version stamp; this build will not guess at it',
-        'unstamped'
-      )
-    }
-    inTransaction(db, () => {
-      db.exec(CREATE_PROJECTS)
-      db.exec(CREATE_LEDGER)
-      db.exec(CREATE_LAUNCHED_SESSIONS)
-      db.exec(ADD_ROUTED_BY_JEV)
-      db.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION}`)
-    })
-    return
+  if (version === 0 && hasTable(db, 'projects')) {
+    throw new UnsupportedSchemaError(
+      'app database carries a projects table with no version stamp; this build will not guess at it',
+      'unstamped'
+    )
   }
 
-  if (version >= 1 && version < APP_SCHEMA_VERSION) {
-    // Plain CREATE and plain ADD COLUMN, never IF NOT EXISTS: each transaction
-    // below is what makes a partial upgrade impossible, so a table or column
-    // already standing here means something this code did not write, and
-    // adopting it blind would hand a tenant a shape it cannot count on.
-    for (const upgrade of UPGRADES) {
-      if (upgrade.from < version) continue
-      inTransaction(db, () => {
-        upgrade.apply(db)
-        db.exec(`PRAGMA user_version = ${upgrade.from + 1}`)
-      })
-    }
-    return
+  if (version > APP_COMPAT_FLOOR && version !== ADDITIVE_MISSTAMP) {
+    throw new UnsupportedSchemaError(
+      `app database is schema version ${version}, this build knows ${APP_COMPAT_FLOOR}`,
+      'newer'
+    )
   }
 
-  throw new UnsupportedSchemaError(
-    `app database is schema version ${version}, this build knows ${APP_SCHEMA_VERSION}`,
-    'newer'
+  if (version === APP_COMPAT_FLOOR && isConverged(db)) return
+
+  converge(db)
+}
+
+/** True when every table and column this build expects is already present. */
+function isConverged(db: WritableSqliteDb): boolean {
+  return (
+    EXPECTED_TABLES.every((table) => hasTable(db, table.name)) &&
+    EXPECTED_COLUMNS.every((column) => hasColumn(db, column.table, column.column))
   )
+}
+
+/**
+ * Create every missing table, add every missing column, and stamp the floor —
+ * all in ONE transaction, so a failure partway through (an unexpected name
+ * collision, a real I/O error) rolls back to exactly the file this open
+ * started with, never a half-converged one with a stamp that outruns it.
+ */
+function converge(db: WritableSqliteDb): void {
+  inTransaction(db, () => {
+    for (const table of EXPECTED_TABLES) {
+      if (!hasTable(db, table.name)) db.exec(table.create)
+    }
+    for (const column of EXPECTED_COLUMNS) {
+      if (!hasColumn(db, column.table, column.column)) db.exec(column.ddl)
+    }
+    db.exec(`PRAGMA user_version = ${APP_COMPAT_FLOOR}`)
+  })
 }
 
 function inTransaction(db: WritableSqliteDb, work: () => void): void {
@@ -424,4 +514,14 @@ function hasTable(db: WritableSqliteDb, name: string): boolean {
   return (
     db.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [name]).length > 0
   )
+}
+
+/**
+ * `table` is always one of this file's own literals (see EXPECTED_COLUMNS),
+ * never external input — PRAGMA statements do not accept bound parameters for
+ * their own argument, which is why this interpolates rather than binding `?`
+ * the way `hasTable` does for a value comparison.
+ */
+function hasColumn(db: WritableSqliteDb, table: string, column: string): boolean {
+  return db.all(`PRAGMA table_info(${table})`).some((row) => row.name === column)
 }

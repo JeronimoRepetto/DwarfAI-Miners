@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
+import type { WritableSqliteDb } from '../adapters/sqliteWritable'
 import {
+  APP_COMPAT_FLOOR,
   APP_DB_FILENAME,
-  APP_SCHEMA_VERSION,
   LEDGER_TABLES_SINCE,
   UnsupportedSchemaError,
   createAppDatabase,
@@ -34,7 +35,7 @@ describe('app database — a fresh file', () => {
     // AMENDED for #231: a third tenant, and it has to be created on the v0
     // path as well as by the upgrade — a fresh install never walks the steps.
     expect(tables(db)).toContain('launched_sessions')
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
   })
 
   it('opens the file the app has always used, so slice 1 keeps its rows', () => {
@@ -79,7 +80,7 @@ describe('app database — the v1 to v2 upgrade (#93)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(tables(db)).toContain('materials')
     expect(db.all('SELECT id FROM projects')).toEqual([{ id: 'mine:a' }])
   })
@@ -95,19 +96,26 @@ describe('app database — the v1 to v2 upgrade (#93)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
   })
 
-  it('rolls the whole upgrade back when one of the new tables cannot be created', async () => {
-    // The upgrade is one transaction, and this proves it by failing in the
-    // MIDDLE of it: session_marks is the second table created, so materials is
-    // already standing when the failure lands. A half-upgraded database stamped
-    // v2 would refuse itself forever with the vault it promised only half there.
+  it('rolls the whole convergence back when one of the new tables cannot be created', async () => {
+    // AMENDED for #575: convergence checks a table's PRESENCE, not its shape,
+    // so a pre-existing TABLE named session_marks (however malformed) would
+    // now be read as "already there" and silently skipped — the conflict this
+    // test used to force is gone by design. A VIEW of the same name still
+    // forces a real failure, because CREATE TABLE and CREATE VIEW share one
+    // namespace in sqlite_master: `hasTable` (type = 'table') does not count
+    // it as present, so convergence still attempts the CREATE and SQLite still
+    // refuses the name collision. That keeps the guarantee this test exists
+    // for — one convergence is one transaction, and a failure partway through
+    // (materials is the table created just before session_marks) rolls back
+    // everything, never leaving a half-converged, half-stamped file.
     const sqlite = new MemoryWritableSqlite()
     await seedVersion1(sqlite)
     const db = await sqlite.open(DB)
-    db.exec('CREATE TABLE session_marks (nonsense TEXT)')
+    db.exec('CREATE VIEW session_marks AS SELECT 1 AS nonsense')
 
     await expect(createAppDatabase({ filePath: DB, sqlite }).connect()).rejects.toThrow()
 
@@ -174,7 +182,7 @@ describe('app database — the v2 to v3 upgrade (#136)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(db.all('SELECT id, known_tier, map_site FROM projects')).toEqual([
       { id: 'mine:a', known_tier: 'gold', map_site: null }
     ])
@@ -206,7 +214,7 @@ describe('app database — the v2 to v3 upgrade (#136)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(tables(db)).toContain('materials')
     expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: null }])
   })
@@ -216,7 +224,7 @@ describe('app database — the v2 to v3 upgrade (#136)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(db.all('SELECT map_site FROM projects')).toEqual([])
   })
 })
@@ -272,7 +280,7 @@ describe('app database — the v3 to v4 upgrade (#231)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(tables(db)).toContain('launched_sessions')
     expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: 4 }])
     expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
@@ -288,7 +296,7 @@ describe('app database — the v3 to v4 upgrade (#231)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(tables(db)).toContain('materials')
     expect(tables(db)).toContain('launched_sessions')
     expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: null }])
@@ -299,7 +307,7 @@ describe('app database — the v3 to v4 upgrade (#231)', () => {
     // with it: openLedgerStore reads that to know whether a database it cannot
     // open has ever held the vault, and a later bump is not when it moved in.
     expect(LEDGER_TABLES_SINCE).toBe(2)
-    expect(APP_SCHEMA_VERSION).toBeGreaterThan(LEDGER_TABLES_SINCE)
+    expect(APP_COMPAT_FLOOR).toBeGreaterThan(LEDGER_TABLES_SINCE)
   })
 })
 
@@ -355,7 +363,7 @@ describe('app database — the v4 to v5 upgrade (#169)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(db.all('SELECT id, known_tier, map_site, hidden_at FROM projects')).toEqual([
       { id: 'mine:a', known_tier: 'gold', map_site: 4, hidden_at: null }
     ])
@@ -387,7 +395,7 @@ describe('app database — the v4 to v5 upgrade (#169)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(tables(db)).toContain('materials')
     expect(tables(db)).toContain('launched_sessions')
     expect(db.all('SELECT id, map_site, hidden_at FROM projects')).toEqual([
@@ -400,13 +408,22 @@ describe('app database — the v4 to v5 upgrade (#169)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(db.all('SELECT hidden_at FROM projects')).toEqual([])
   })
 })
 
 /* --- MCP subtask delegation: the routedByJev column (#511) — one block, appended --- */
-describe('app database — the v5 to v6 upgrade (#511)', () => {
+/*
+ * AMENDED for #575: this block was titled "the v5 to v6 upgrade" while the
+ * stamp counted every schema change. routed_by_jev was always additive — the
+ * column is nullable and no existing reader depended on its absence — so
+ * bumping the counter for it was the mistake #575 corrects, not a genuine
+ * compatibility break. The column still arrives exactly as before; it simply
+ * no longer moves the floor a build has to declare. See the last test in this
+ * block for the transitional stamp-6 case #575 exists to fix.
+ */
+describe('app database — the routed-by-Jev column stays additive (#511, #575)', () => {
   /** A database exactly as the v5 build left it: no routed_by_jev column anywhere. */
   async function seedVersion5(sqlite: MemoryWritableSqlite): Promise<void> {
     const seeded = await sqlite.open(DB)
@@ -449,13 +466,17 @@ describe('app database — the v5 to v6 upgrade (#511)', () => {
     seeded.close()
   }
 
-  it('adds the routed-by-Jev column and stamps v6, keeping every row', async () => {
+  // AMENDED for #575 (was: "adds the routed-by-Jev column and stamps v6,
+  // keeping every row"). The column still arrives and every row still
+  // survives; only the destination stamp changed, from a counter bump to the
+  // pinned floor.
+  it('adds the routed-by-Jev column by convergence, keeping the floor at 5', async () => {
     const sqlite = new MemoryWritableSqlite()
     await seedVersion5(sqlite)
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(5)
     expect(db.all('SELECT launch_id, routed_by_jev FROM launched_sessions')).toEqual([
       { launch_id: 'launch:1', routed_by_jev: null }
     ])
@@ -472,17 +493,103 @@ describe('app database — the v5 to v6 upgrade (#511)', () => {
 
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
 
-    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
     expect(db.all('SELECT routed_by_jev FROM launched_sessions')).toEqual([])
+  })
+
+  /*
+   * #575: a dev build stamped a real user's file at 6 for exactly this
+   * additive column (#511) — 40 mines and 562M mined tokens became
+   * unreadable to the released 0.12.0 build, which only knew up to 5, for a
+   * change nothing in 0.12.0's vocabulary needed protecting from. A stamp of
+   * 6 is the one value this build normalizes down rather than refusing: it
+   * converges the file exactly like any other and restamps it at the floor,
+   * which is the fix that restores that machine's access.
+   */
+  it('normalizes a stamp of 6 down to the floor, without losing what it already held', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        origin TEXT NOT NULL,
+        last_provider TEXT,
+        known_tier TEXT,
+        map_site INTEGER,
+        hidden_at INTEGER
+      );
+      CREATE TABLE materials (
+        mine_id TEXT NOT NULL,
+        material TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (mine_id, material)
+      );
+      CREATE TABLE session_marks (
+        key TEXT PRIMARY KEY NOT NULL,
+        tokens INTEGER NOT NULL,
+        seen_at INTEGER NOT NULL
+      );
+      CREATE TABLE ledger_meta (
+        key TEXT PRIMARY KEY NOT NULL,
+        migrated_at INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        mines INTEGER NOT NULL,
+        sessions INTEGER NOT NULL
+      );
+      CREATE TABLE launched_sessions (
+        launch_id TEXT PRIMARY KEY NOT NULL,
+        provider TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        mine_path TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        proc_start_ms INTEGER NOT NULL,
+        routed_by_jev INTEGER
+      );
+    `)
+    seeded.run(
+      `INSERT INTO projects (id, path, name, name_norm, added_at, last_opened_at, origin,
+       last_provider, known_tier, map_site, hidden_at) VALUES (?, ?, ?, ?, ?, ?, 'declared', NULL, 'gold', 4, NULL)`,
+      ['mine:a', 'C:\\code\\forge', 'forge', 'forge', 10, 20]
+    )
+    seeded.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
+      'mine:a',
+      'gold',
+      562_000_000
+    ])
+    seeded.run(
+      `INSERT INTO launched_sessions
+       (launch_id, provider, session_id, mine_path, pid, proc_start_ms, routed_by_jev)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ['launch:1', 'codex', 'thread-1', 'C:\\work\\project', 4242, 1_788_001_972_136, 1]
+    )
+    seeded.exec('PRAGMA user_version = 6')
+    seeded.close()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(5)
+    expect(db.all('SELECT id, map_site FROM projects')).toEqual([{ id: 'mine:a', map_site: 4 }])
+    expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 562_000_000 }])
+    expect(db.all('SELECT routed_by_jev FROM launched_sessions')).toEqual([{ routed_by_jev: 1 }])
   })
 })
 /* --- end of the #511 block ---------------------------------------------------- */
 
 describe('app database — versions it refuses', () => {
+  // AMENDED for #575: floor + 1 is 6, and 6 is now the one stamp this build
+  // normalizes rather than refuses (see the #511/#575 block above) — it was
+  // never a real break, only a counter bumped for an additive column. floor +
+  // 2 is a stamp nothing has ever shipped and nothing here special-cases, so
+  // it is what still proves a genuinely newer file gets refused.
   it('refuses a version above the one this build knows', async () => {
     const sqlite = new MemoryWritableSqlite()
     const seeded = await sqlite.open(DB)
-    seeded.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION + 1}`)
+    seeded.exec(`PRAGMA user_version = ${APP_COMPAT_FLOOR + 2}`)
     seeded.close()
 
     await expect(createAppDatabase({ filePath: DB, sqlite }).connect()).rejects.toThrow(
@@ -509,10 +616,13 @@ describe('app database — versions it refuses', () => {
    * `reason` is what lets a caller two layers up tell them apart without
    * re-parsing the message string.
    */
+  // AMENDED for #575: same reason as the test above — floor + 1 (6) is the
+  // normalized stamp, not a refusal, so this needs floor + 2 to still exercise
+  // a genuine "newer" refusal.
   it('marks a version above this build as newer, not merely unsupported', async () => {
     const sqlite = new MemoryWritableSqlite()
     const seeded = await sqlite.open(DB)
-    seeded.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION + 1}`)
+    seeded.exec(`PRAGMA user_version = ${APP_COMPAT_FLOOR + 2}`)
     seeded.close()
 
     await expect(createAppDatabase({ filePath: DB, sqlite }).connect()).rejects.toMatchObject({
@@ -545,6 +655,77 @@ describe('app database — versions it refuses', () => {
     const db = await sqlite.open(DB)
     expect(version(db)).toBe(9)
     expect(tables(db)).toEqual(['later_thing'])
+  })
+})
+
+describe('app database — convergence, not a version walk (#575)', () => {
+  /** Every exec() call `prepareAppSchema` makes on this handle, in order. */
+  function spyOnExec(db: WritableSqliteDb): string[] {
+    const calls: string[] = []
+    const real = db.exec.bind(db)
+    vi.spyOn(db, 'exec').mockImplementation((sql: string) => {
+      calls.push(sql)
+      real(sql)
+    })
+    return calls
+  }
+
+  it('brings a stamp-1 database to the floor in one open, stamping it exactly once', async () => {
+    // The old UPGRADES walk stamped 2, then 3, then 4, then 5 — a separate
+    // PRAGMA write per step. Convergence checks presence once and writes the
+    // floor once; there is no intermediate stamp to observe from outside.
+    const sqlite = new MemoryWritableSqlite()
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        origin TEXT NOT NULL,
+        last_provider TEXT,
+        known_tier TEXT
+      );
+    `)
+    seeded.run(
+      `INSERT INTO projects (id, path, name, name_norm, added_at, last_opened_at, origin,
+       last_provider, known_tier) VALUES (?, ?, ?, ?, ?, ?, 'declared', NULL, 'gold')`,
+      ['mine:a', 'C:\\code\\forge', 'forge', 'forge', 10, 20]
+    )
+    seeded.exec('PRAGMA user_version = 1')
+    const calls = spyOnExec(seeded)
+
+    prepareAppSchema(seeded)
+
+    const stampWrites = calls.filter((sql) => sql.includes('PRAGMA user_version ='))
+    expect(stampWrites).toEqual([`PRAGMA user_version = ${APP_COMPAT_FLOOR}`])
+    expect(version(seeded)).toBe(APP_COMPAT_FLOOR)
+    expect(tables(seeded)).toContain('materials')
+    expect(tables(seeded)).toContain('launched_sessions')
+    expect(seeded.all('SELECT id FROM projects')).toEqual([{ id: 'mine:a' }])
+  })
+
+  it('changes nothing on a second, already-converged open', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const first = await createAppDatabase({ filePath: DB, sqlite }).connect()
+    first.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
+      'mine:a',
+      'gold',
+      7
+    ])
+
+    const db = await sqlite.open(DB)
+    const calls = spyOnExec(db)
+
+    prepareAppSchema(db)
+
+    // Nothing to create, nothing to add, nothing to restamp — the file is
+    // already what this build expects, so nothing gets written a second time.
+    expect(calls).toEqual([])
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
+    expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
   })
 })
 

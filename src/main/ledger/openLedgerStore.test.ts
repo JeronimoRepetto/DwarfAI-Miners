@@ -131,10 +131,28 @@ describe('openLedgerStore — a fresh install with no document', () => {
 })
 
 describe('openLedgerStore — a migration that could not be written', () => {
-  /** A v2 database whose session_marks table is gone, so the write fails. */
+  /**
+   * A v2 database whose materials table has the wrong shape, so the
+   * migration's write fails.
+   *
+   * AMENDED for #575, twice over. First: a bare DROP used to be enough, but
+   * convergence (appDatabase.ts) now notices a table is MISSING on the next
+   * connect() and recreates it — silently healing what this fixture means to
+   * be a genuine write failure. Recreating it with the wrong columns keeps it
+   * PRESENT (convergence checks presence, not shape, so it is left alone).
+   * Second: the table this fixture breaks moved from session_marks to
+   * materials. writeLedger (sqliteLedgerStore.ts) always runs `DELETE FROM
+   * session_marks` — harmless against any shape, since DELETE with no WHERE
+   * names no column — and only reaches the shape-sensitive `INSERT INTO
+   * session_marks` when the document actually has session marks, which
+   * DOCUMENT here does not. `INSERT INTO materials` always runs, because
+   * DOCUMENT always credits one, so breaking materials' shape is what still
+   * makes this write fail for this document.
+   */
   async function brokenTable(sqlite: MemoryWritableSqlite): Promise<void> {
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
-    db.exec('DROP TABLE session_marks')
+    db.exec('DROP TABLE materials')
+    db.exec('CREATE TABLE materials (nonsense TEXT)')
   }
 
   it('falls back to the document for this run, because it is still the current copy', async () => {
@@ -178,12 +196,20 @@ describe('openLedgerStore — a database that will not open', () => {
 
   it('keeps the document when the file is stamped below the version the vault moved in', async () => {
     // A database still at v1 has never held a materials table, so the document
-    // is provably the current copy even though the upgrade to v2 failed.
+    // is provably the current copy even though the convergence to the floor
+    // failed.
+    // AMENDED for #575: convergence (appDatabase.ts) checks a table's
+    // PRESENCE, not its shape, so a pre-existing TABLE named session_marks
+    // (however malformed) is now read as "already there" and left alone —
+    // it no longer forces the failure this fixture needs. A same-named VIEW
+    // still does: CREATE TABLE and CREATE VIEW share one namespace in
+    // sqlite_master, `hasTable` (type = 'table') does not count it as
+    // present, and convergence still attempts (and fails) the CREATE.
     const sqlite = new MemoryWritableSqlite()
     const seeded = await sqlite.open(DB)
     seeded.exec('PRAGMA user_version = 1')
-    // session_marks standing in the way makes the v1 -> v2 upgrade fail.
-    seeded.exec('CREATE TABLE session_marks (nonsense TEXT)')
+    // session_marks standing in the way makes convergence fail.
+    seeded.exec('CREATE VIEW session_marks AS SELECT 1 AS nonsense')
     seeded.close()
 
     const opened = await open({ sqlite, fs: fakeFs({ [JSON_PATH]: DOCUMENT }) })
@@ -212,11 +238,20 @@ describe('openLedgerStore — a database that will not open', () => {
   })
 
   it('refuses a schema from the future rather than reviving a stale document', async () => {
-    // A downgraded app. The v3 file certainly held the vault, so the document is
-    // certainly stale.
+    // AMENDED for #575: a bare `user_version = 3` with no tables at all used
+    // to fail here for an unrelated reason — the old walk applied only the
+    // steps AFTER v3 (skipping the ones that create `projects` and
+    // `materials`), so it crashed trying to ALTER a `projects` table that
+    // never existed in this artificial fixture, and that crash — not an
+    // actual future-schema refusal — was what produced 'memory'. Convergence
+    // creates whatever is missing regardless of history, so that accidental
+    // crash is gone: this now needs a genuinely-refused stamp (above the
+    // floor, and not the one normalized value) to still be a database "from
+    // the future" — 7 is floor(5) + 2, matching the convention the appDatabase
+    // suite uses for the same refusal.
     const sqlite = new MemoryWritableSqlite()
     const seeded = await sqlite.open(DB)
-    seeded.exec('PRAGMA user_version = 3')
+    seeded.exec('PRAGMA user_version = 7')
     seeded.close()
 
     const opened = await open({ sqlite, fs: fakeFs({ [JSON_PATH]: DOCUMENT }) })
@@ -240,11 +275,20 @@ describe('openLedgerStore — a vault the database cannot be read back from', ()
   it('remembers nothing this run rather than reporting a mined history as gone', async () => {
     // The marker says the database took over, and then the read fails. Same
     // reasoning as a corrupt file, arriving one step later.
+    // AMENDED for #575: a bare DROP TABLE materials no longer reproduces this
+    // — convergence (appDatabase.ts) notices the table is MISSING on the next
+    // connect() and recreates it empty, which is the correct behavior for a
+    // table this build has simply never seen before, but silently "heals"
+    // what this test means to be a genuine read-back failure. Recreating it
+    // in a broken SHAPE keeps the table's presence (so convergence leaves it
+    // alone — it checks presence, not shape) while still making an actual
+    // SELECT against it fail exactly as intended.
     const sqlite = new MemoryWritableSqlite()
     const fs = fakeFs({ [JSON_PATH]: DOCUMENT })
     await open({ sqlite, fs })
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
     db.exec('DROP TABLE materials')
+    db.exec('CREATE TABLE materials (nonsense TEXT)')
 
     const opened = await open({ sqlite, fs })
 

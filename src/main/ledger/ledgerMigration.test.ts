@@ -196,10 +196,19 @@ describe('ledger migration — a document that is not there', () => {
 })
 
 describe('ledger migration — a write that cannot finish', () => {
+  // AMENDED for #575: a bare DROP TABLE session_marks used to be enough to
+  // make the migration's own write fail, but convergence (appDatabase.ts)
+  // now notices the table is MISSING the next time `run()` connects (a
+  // fresh AppDatabase per call — see `fixture()`) and recreates it, silently
+  // healing what these two tests mean to be a genuine write failure.
+  // Recreating it in the wrong SHAPE keeps it present — convergence checks
+  // presence, not shape, so it is left alone — while the migration's own
+  // INSERT into it still fails exactly as intended.
   it('records no marker, so the next boot tries again', async () => {
     const { sqlite, run } = fixture()
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
     db.exec('DROP TABLE session_marks')
+    db.exec('CREATE TABLE session_marks (nonsense TEXT)')
 
     const outcome = await run()
 
@@ -212,6 +221,7 @@ describe('ledger migration — a write that cannot finish', () => {
     const { sqlite, run } = fixture()
     const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
     db.exec('DROP TABLE session_marks')
+    db.exec('CREATE TABLE session_marks (nonsense TEXT)')
 
     await run()
 
