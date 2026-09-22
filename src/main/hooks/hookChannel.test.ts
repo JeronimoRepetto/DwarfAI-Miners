@@ -335,3 +335,38 @@ describe('HookChannel event relay', () => {
     expect(onEvent).toHaveBeenCalledWith({ provider: 'claude', event: 'Stop' })
   })
 })
+
+describe('HookChannel OpenCode push relay (#588 T3)', () => {
+  it('threads onOpenCodePush straight through to the server it constructs', async () => {
+    const onOpenCodePush = vi.fn()
+    const fs = new FakeHookFs()
+    fs.addDir(USER_DATA)
+    fs.addDir(ROOT)
+    let captured: ((push: unknown) => void) | undefined
+    const channel = new HookChannel({
+      fs,
+      roots: [ROOT],
+      userDataDir: USER_DATA,
+      port: 47821,
+      platform: 'win32',
+      onEvent: () => undefined,
+      onOpenCodePush,
+      createServer: (options) => {
+        captured = options.onOpenCodePush as ((push: unknown) => void) | undefined
+        return new FakeServer()
+      },
+      curlAvailable: async () => true
+    })
+    await channel.enable()
+    const push = {
+      provider: 'opencode',
+      kind: 'replied',
+      serverUrl: 'http://127.0.0.1:63417/',
+      sessionId: 's',
+      requestId: 'r',
+      reply: 'once'
+    }
+    captured!(push)
+    expect(onOpenCodePush).toHaveBeenCalledWith(push)
+  })
+})

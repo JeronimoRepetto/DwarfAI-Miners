@@ -1,15 +1,14 @@
 /**
  * Shaping OpenCode's `permission.asked` / `permission.replied` plugin events
- * (docs/opencode-format.md Rows 15/16, #588) into the payload this app will
- * eventually route once a push channel exists to carry it.
+ * (docs/opencode-format.md Rows 15/16, #588) into the payload this app routes
+ * internally. `hookServer.ts`'s OpenCode route is the one caller.
  *
  * This is main-process-internal only. It does NOT touch `shared/contracts.ts`
  * — the wire boundary AGENTS.md reserves for main <-> preload <-> renderer —
- * because nothing crosses that boundary yet: T3 (HookChannel changes), T4
- * (provider wiring) and T5 (the answer path) are what will eventually route a
- * built payload to something the renderer can read, and only THAT slice earns
- * the contracts.ts entry. Until then this is a pure, tested function with no
- * channel behind it.
+ * because nothing crosses that boundary yet: a push stops at the registry
+ * beside this file. T4 (provider wiring) is what puts an ask in front of the
+ * renderer, through the `DwarfPermissionRequest` contracts.ts already has, and
+ * only that slice decides whether a new wire symbol is owed at all.
  *
  * `serverUrl` is not a convenience field: every OpenCode instance binds its
  * own arbitrary port when none is pinned on launch (#588 T2 STEP 0, verified
@@ -135,4 +134,32 @@ export function buildOpenCodePermissionPush(
     default:
       return null
   }
+}
+
+/**
+ * Parse the raw POST body `opencodePermissionPlugin.ts` sends: `{ event,
+ * serverUrl }`, with `serverUrl` as the `.href` string that module carries it
+ * as -- `ctx.serverUrl` itself is a `URL` instance and cannot cross JSON (see
+ * the module comment above). This is the one boundary that receives that
+ * string off the wire, so the reconstruction happens here: a malformed
+ * `serverUrl` is a rejected push, not a throw, the same as every other field
+ * `buildOpenCodePermissionPush` rejects rather than repairs (#588 T3).
+ */
+export function parseOpenCodePushBody(body: string): OpenCodePermissionPush | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return null
+  }
+  if (!isRecord(parsed)) return null
+  if (!Object.hasOwn(parsed, 'serverUrl') || typeof parsed.serverUrl !== 'string') return null
+
+  let serverUrl: URL
+  try {
+    serverUrl = new URL(parsed.serverUrl)
+  } catch {
+    return null
+  }
+  return buildOpenCodePermissionPush(parsed.event, serverUrl)
 }

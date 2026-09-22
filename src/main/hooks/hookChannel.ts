@@ -5,6 +5,7 @@ import { installClaudeHooks, uninstallClaudeHooks, type HookInstallReport } from
 import type { HookEvent } from './hookPayload'
 import { HookServer, type HookServerOptions } from './hookServer'
 import { HOOK_TOKEN_FILE, loadOrCreateHookToken } from './hookToken'
+import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
 
 /**
  * Marker file under Electron's userData directory recording that the user
@@ -38,6 +39,8 @@ export interface HookChannelOptions {
   port: number
   platform: NodeJS.Platform
   onEvent: (event: HookEvent) => void
+  /** Threaded straight to HookServer's own option of the same name (#588 T3). */
+  onOpenCodePush?: (push: OpenCodePermissionPush) => void
   createServer?: (options: HookServerOptions) => HookServerLike
   curlAvailable?: () => Promise<boolean>
   log?: (message: string) => void
@@ -162,6 +165,7 @@ export class HookChannel {
       port: this.options.port,
       token,
       onEvent: this.options.onEvent,
+      onOpenCodePush: this.options.onOpenCodePush,
       log: this.options.log
     })
     const started = await this.startServer(server)

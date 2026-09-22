@@ -15,17 +15,33 @@
  * ingredients (the event, and its own `ctx.serverUrl`) verbatim; shaping them
  * into the app's push payload happens once, server-side, in
  * `buildOpenCodePermissionPush` beside this file — the one place that
- * already-tested logic needs to exist. Nothing calls it yet: the listener
- * that receives this POST and runs the builder over its body is #588 T3,
- * unstarted.
+ * already-tested logic needs to exist. `hookServer.ts`'s OpenCode route is
+ * what receives this POST and runs `parseOpenCodePushBody` over its body.
  *
  * PUSH_URL and PUSH_TOKEN are placeholders. The installer that writes this
- * file (T6) substitutes the real listener address and a per-machine token
- * before it ever reaches disk, mirroring how `buildHookCommand` bakes a port
- * and a token into the Claude hook command it installs
- * (`src/main/hooks/hookCommand.ts`) rather than this app trusting a fixed
- * one. Until T6 exists, this file is syntactically complete and loadable,
- * and simply has nowhere real to POST to.
+ * file (T6) substitutes the real listener address -- `http://127.0.0.1:<the
+ * hooks port><OPENCODE_PUSH_ROUTE>` (`src/main/hooks/hookCommand.ts`,
+ * `src/main/hooks/hookServer.ts`, #588 T3) -- and a per-machine token before
+ * it ever reaches disk, mirroring how `buildHookCommand` bakes a port and a
+ * token into the Claude hook command it installs rather than this app
+ * trusting a fixed one. Until T6 exists, this file is syntactically complete
+ * and loadable, and simply has nowhere real to POST to.
+ *
+ * The auth header is `x-dwarfai-token: <token>` -- HOOK_TOKEN_HEADER exactly
+ * as `hookServer.ts` checks it via `tokensMatch` (`hookToken.ts`), not an
+ * `Authorization: Bearer` scheme. This app has one token mechanism for both
+ * channels (#588 T3): reusing it here, rather than inventing a second one,
+ * is what lets the same listener serve both without a second auth code path.
+ * The literal string is repeated rather than imported for the same
+ * zero-import reason PUSH_URL and PUSH_TOKEN are hardcoded placeholders.
+ *
+ * Reusing it is a coupling, not only a simplification: T6 will write this
+ * same per-install token in plaintext into `~/.config/opencode/plugin/`, so
+ * any local process able to read that file can then forge `Stop` /
+ * `SessionEnd` / `Notification` events on the Claude route too. The token is
+ * already plaintext in `~/.claude/settings.json` under the same threat
+ * model, so this widens the FILE surface carrying it, not the trust model
+ * itself -- T6 should inherit that fact rather than rediscover it.
  *
  * Never throws into its host and never blocks a turn on the network: a
  * broken push is "this app never heard about it", not a broken OpenCode
@@ -60,7 +76,10 @@ function pushEvent(serverUrl: URL, event: OpenCodePluginEvent): void {
   try {
     fetch(PUSH_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PUSH_TOKEN}` },
+      // 'x-dwarfai-token', not 'authorization': see the module comment on why
+      // this must match the Claude channel's own scheme rather than inventing
+      // a second one.
+      headers: { 'content-type': 'application/json', 'x-dwarfai-token': PUSH_TOKEN },
       body: JSON.stringify({ event, serverUrl: serverUrl.href }),
       signal: AbortSignal.timeout(2000)
     }).catch(() => {

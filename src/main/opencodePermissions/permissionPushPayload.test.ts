@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildOpenCodePermissionPush } from './permissionPushPayload'
+import { buildOpenCodePermissionPush, parseOpenCodePushBody } from './permissionPushPayload'
 
 /**
  * The plugin's own address, exactly as it arrives: a bound `URL` instance
@@ -152,5 +152,58 @@ describe('buildOpenCodePermissionPush', () => {
         serverUrl
       )
     ).toBeNull()
+  })
+})
+
+/**
+ * The wire envelope opencodePermissionPlugin.ts actually posts (#588 T3):
+ * `{ event, serverUrl }`, with `serverUrl` as the `.href` string that module
+ * carries it as, never the `URL` instance `buildOpenCodePermissionPush` wants.
+ * This is the one boundary that reconstructs it, so the string -> URL
+ * conversion has its own tests here rather than being assumed.
+ */
+describe('parseOpenCodePushBody', () => {
+  function envelope(event: unknown, serverUrlValue: unknown = serverUrl.href): string {
+    return JSON.stringify({ event, serverUrl: serverUrlValue })
+  }
+
+  it('parses the exact envelope opencodePermissionPlugin.ts posts', () => {
+    expect(parseOpenCodePushBody(envelope(asked))).toEqual({
+      provider: 'opencode',
+      kind: 'asked',
+      serverUrl: 'http://127.0.0.1:63417/',
+      sessionId: 'ses_xyz789',
+      requestId: 'per_abc123',
+      permission: 'bash',
+      patterns: ['echo hello'],
+      command: 'echo hello',
+      callId: 'call_1'
+    })
+  })
+
+  it('parses a replied event the same way', () => {
+    expect(parseOpenCodePushBody(envelope(replied))).toEqual({
+      provider: 'opencode',
+      kind: 'replied',
+      serverUrl: 'http://127.0.0.1:63417/',
+      sessionId: 'ses_xyz789',
+      requestId: 'per_abc123',
+      reply: 'once'
+    })
+  })
+
+  it('rejects a malformed serverUrl rather than throwing', () => {
+    expect(parseOpenCodePushBody(envelope(asked, 'not-a-url'))).toBeNull()
+  })
+
+  it.each([
+    ['malformed JSON', '{ not json'],
+    ['an empty body', ''],
+    ['a JSON array', '[]'],
+    ['a body missing serverUrl', JSON.stringify({ event: asked })],
+    ['a non-string serverUrl', JSON.stringify({ event: asked, serverUrl: 7 })],
+    ['an unrecognized event type', envelope({ type: 'session.idle', properties: {} })]
+  ])('rejects %s', (_label, raw) => {
+    expect(parseOpenCodePushBody(raw)).toBeNull()
   })
 })
