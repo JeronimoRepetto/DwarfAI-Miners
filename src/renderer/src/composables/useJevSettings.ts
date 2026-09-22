@@ -40,6 +40,37 @@ async function safelyAsk<T>(ask: () => Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+/**
+ * The document, as something the context bridge can actually carry.
+ *
+ * `window.api` is a contextBridge function, so every argument is structured-
+ * CLONED on the way across — and a Vue reactive Proxy is not clonable. The
+ * bridge throws `An object could not be cloned` before the preload's own
+ * parser, which does build a plain document, is ever reached; the value has
+ * to survive the crossing to get there.
+ *
+ * The section emits `{ ...preferences.value, profile }`, and that spread is
+ * SHALLOW: `profile` becomes a primitive while `default` stays the very Proxy
+ * it came from in the props. That is why changing the default PROVIDER always
+ * worked and changing the profile never did — the provider handler builds a
+ * fresh `{ provider }`, the profile handler reuses the Proxy.
+ *
+ * Rebuilt field by field rather than deep-cloned: `JevLaunchDefault` is flat
+ * and every member is a primitive, so this is total, and a member added later
+ * is a type error here rather than a value that silently stops crossing.
+ */
+function acrossTheBridge(preferences: JevPreferences): JevPreferences {
+  const { provider, model, effort } = preferences.default
+  return {
+    profile: preferences.profile,
+    default: {
+      ...(provider === undefined ? {} : { provider }),
+      ...(model === undefined ? {} : { model }),
+      ...(effort === undefined ? {} : { effort })
+    }
+  }
+}
+
 export function useJevSettings() {
   // Matches main's DEFAULT_JEV_SETTINGS so the first paint is almost always
   // right; sync() corrects it from the stored verdict after mount.
@@ -121,7 +152,7 @@ export function useJevSettings() {
       // Main answers with what is STORED plus, when the request did not take,
       // why — so a refusal arrives here as an ordinary value carrying its own
       // `preferencesError`, and nothing has to be inferred from silence.
-      settings.value = await window.api.setJevPreferences(preferences)
+      settings.value = await window.api.setJevPreferences(acrossTheBridge(preferences))
     } catch (error) {
       /*
        * A rejection means the call itself never landed, so the stored state
