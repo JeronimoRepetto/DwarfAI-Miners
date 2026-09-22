@@ -1698,7 +1698,8 @@ describe('the add panel', () => {
     expect(api.launchHeldSession).toHaveBeenCalledWith({
       mineId: MINE.id,
       provider: 'claude',
-      prompt: 'dig the east gallery'
+      prompt: 'dig the east gallery',
+      routedByJev: true
     })
   })
 })

@@ -7988,6 +7988,58 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
   })
 
   /*
+   * MCP subtask delegation (#511). The held twin of the detached path's own
+   * launchId/lastTurn stamps: a held launch request carrying routedByJev
+   * reaches the foreman it becomes, once the board has proved which session
+   * that launch is (same "stamped once the board catches up" shape every
+   * held stamp above already has).
+   */
+  it("stamps a held launch's own routedByJev marker on its foreman once the board proves it (#511)", async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    // Nothing to stamp before the session even starts.
+    expect('routedByJev' in runtime.getMines()[0]!.dwarfs[0]!).toBe(false)
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
+      prompt: 'dig',
+      routedByJev: true
+    })
+    port.reportSessionId(0, 'sess-1')
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.dwarfs[0]!.routedByJev).toBe(true)
+    runtime.stop()
+  })
+
+  // ADDS ONLY, the same honesty rule the wire field's own comment states:
+  // absent means not routed, never a stamped `false`.
+  it('leaves routedByJev absent for a held launch that was not routed by Jev', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    await runtime.refresh()
+
+    expect('routedByJev' in runtime.getMines()[0]!.dwarfs[0]!).toBe(false)
+    runtime.stop()
+  })
+
+  /*
    * Issue #96's read-only surface, the half no stream message can serve. The
    * panel asks for a context reading when a mine opens, main resolves the
    * dwarf to the session it HOLDS, and the reading arrives on the next

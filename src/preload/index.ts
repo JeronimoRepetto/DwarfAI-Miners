@@ -792,7 +792,12 @@ const api: DwarfAiMinersApi = {
       // reads a present-but-empty value as a real instruction and refuses the
       // whole request for it (see parseLaunchTuning).
       ...(typeof request?.model === 'string' ? { model: request.model } : {}),
-      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {})
+      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
+      // Whether a Jev DECISION was applied (#511) — crosses only when true,
+      // the same "say nothing" reading `model`/`effort` hold: a caller that
+      // never routed through Jev must not cross a `false` main would have to
+      // tell apart from "not asked at all".
+      ...(request?.routedByJev === true ? { routedByJev: true } : {})
     }),
   // Subscription, exactly like onMessagePanel and onDwarfDeliveryReport: the
   // renderer never sees the IpcRendererEvent, only the push itself.
@@ -846,7 +851,9 @@ const api: DwarfAiMinersApi = {
       // change the behaviour of.
       ...(typeof request?.permissionMode === 'string'
         ? { permissionMode: request.permissionMode }
-        : {})
+        : {}),
+      // Same discipline as launchAgent's, and the same reason (#511).
+      ...(request?.routedByJev === true ? { routedByJev: true } : {})
     }),
   // Field by field once more, for the reason the two launch channels above are
   // rebuilt rather than forwarded: this one starts a real process too, and the

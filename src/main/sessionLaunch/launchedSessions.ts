@@ -134,6 +134,14 @@ export interface RetainLaunchRequest {
    * outlive the process it started.
    */
   tuning?: LaunchTuning
+  /**
+   * Whether a Jev DECISION routed this launch (#511) — the wire's own
+   * honesty rule (`AgentLaunchRequest.routedByJev`), carried in so far as
+   * this registry stamps the marker onto the dwarf the launch becomes. Absent
+   * means not routed, same "say nothing" reading every other optional field
+   * on a launch request holds.
+   */
+  routedByJev?: boolean
 }
 
 /**
@@ -188,6 +196,15 @@ interface LaunchRecord {
    * `lastTurnOfDwarf`.
    */
   lastTurn?: TurnOutcome
+  /**
+   * Whether a Jev decision routed this launch (#511), carried past the
+   * process's own exit AND a restart — unlike `tuning` above, this one has a
+   * real store column (appDatabase.ts's v6 migration), so a RESTORED record
+   * reads the actual stored value rather than falling to an observed pair. A
+   * definite boolean rather than optional for exactly that reason: every
+   * record, in-run or restored, has an honest answer.
+   */
+  routedByJev: boolean
 }
 
 export interface LaunchedSessionRegistryOptions {
@@ -249,6 +266,7 @@ export class LaunchedSessionRegistry {
       knownSessionIds: new Set(request.knownSessionIds),
       gone: false,
       restored: false,
+      routedByJev: request.routedByJev === true,
       ...(request.tuning === undefined ? {} : { tuning: request.tuning })
     }
     // Asked NOW, while this panel still holds the handle, which is the only
@@ -306,7 +324,8 @@ export class LaunchedSessionRegistry {
         sessionId: row.sessionId,
         gone: false,
         procStartMs: row.processStartTimeMs,
-        restored: true
+        restored: true,
+        routedByJev: row.routedByJev
       })
       this.bySession.set(row.sessionId, row.launchId)
       this.log(`[launched] ${row.launchId} is still session ${row.sessionId} from a previous run`)
@@ -372,7 +391,8 @@ export class LaunchedSessionRegistry {
           sessionId,
           minePath: record.minePath,
           pid: record.pid,
-          processStartTimeMs
+          processStartTimeMs,
+          routedByJev: record.routedByJev
         })
       })
       .catch((error: unknown) => {
@@ -513,6 +533,21 @@ export class LaunchedSessionRegistry {
   }
 
   /**
+   * Whether this dwarf's own launch was routed by a Jev decision (#511) —
+   * `false` rather than undefined for "no such dwarf", the same reading
+   * `holdsRunningProcess` holds: this is a definite fact question, not an
+   * absent-payload one like `tuningOfDwarf`. Reads `byDwarf` → `records`
+   * exactly the same way, and for the same reason answers correctly for a
+   * launch whose process has already exited AND for a restored one — see
+   * `LaunchRecord.routedByJev`'s own comment on why restoring it is safe.
+   */
+  routedByJevOfDwarf(dwarfId: string): boolean {
+    const launchId = this.byDwarf.get(dwarfId)
+    if (launchId === undefined) return false
+    return this.records.get(launchId)?.routedByJev === true
+  }
+
+  /**
    * End one launch's process tree.
    *
    * Never signals a launch already gone, and never claims success the platform
@@ -578,5 +613,24 @@ export function stampLaunchedTurnOutcome(
       const lastTurn = lastTurnOf(dwarf.id)
       return lastTurn === undefined ? dwarf : { ...dwarf, lastTurn }
     })
+  }))
+}
+
+/**
+ * Put the "chosen by Jev" marker onto the one dwarf whose launch earned it
+ * (#511) — the same ADD-ONLY shape `stampLaunchReceipts` holds: a dwarf the
+ * lookup answers false for is left exactly as it was, never stamped
+ * `routedByJev: false`, so `Dwarf.routedByJev` stays absent rather than
+ * carrying a value nobody here proved.
+ */
+export function stampLaunchedRoutedByJev(
+  mines: readonly Mine[],
+  routedByJevOf: (dwarfId: string) => boolean
+): Mine[] {
+  return mines.map((mine) => ({
+    ...mine,
+    dwarfs: mine.dwarfs.map((dwarf) =>
+      routedByJevOf(dwarf.id) ? { ...dwarf, routedByJev: true } : dwarf
+    )
   }))
 }

@@ -41,7 +41,7 @@ import {
 export const APP_DB_FILENAME = 'projects-v1.db'
 
 /** Stamped in PRAGMA user_version. Older versions walk up to it; above is refused. */
-export const APP_SCHEMA_VERSION = 5
+export const APP_SCHEMA_VERSION = 6
 
 /**
  * The version the ledger's tables arrived in.
@@ -197,6 +197,26 @@ CREATE TABLE launched_sessions (
 const ADD_HIDDEN_AT = `ALTER TABLE projects ADD COLUMN hidden_at INTEGER`
 
 /**
+ * Schema v6 — whether a launch this panel started was routed by Jev's own
+ * decision (#511), so the marker survives a restart the same way the rest of
+ * `launched_sessions` does. NULL for every row written before this column
+ * existed — `toLaunch` (launchedSessionStore.ts) reads that as `false`,
+ * which is the honest answer: none of those launches could have been
+ * Jev-routed, because the feature did not exist yet.
+ *
+ * `CREATE_LAUNCHED_SESSIONS` deliberately does NOT bake this column in,
+ * unlike `CREATE_PROJECTS` baking in `map_site`/`hidden_at`: that table is
+ * rebuilt from scratch only at v0 and never touched by the walk again, but
+ * `launched_sessions` is created BY the walk itself (the v3 step) for a
+ * database that predates it, so a v1/v2 upgrade runs CREATE_LAUNCHED_SESSIONS
+ * and this ALTER in the same open — baking the column into the CREATE would
+ * make that second statement fail on a duplicate column. The fresh-install
+ * (v0) branch below runs both explicitly, in the same order, for the same
+ * reason.
+ */
+const ADD_ROUTED_BY_JEV = `ALTER TABLE launched_sessions ADD COLUMN routed_by_jev INTEGER`
+
+/**
  * One step up from `from` to `from + 1`, applied in order and each in its own
  * transaction — which is what lets a database that has fallen two versions
  * behind catch up in one open without a crash ever leaving a stamp that does
@@ -206,7 +226,8 @@ const UPGRADES: readonly { from: number; apply: (db: WritableSqliteDb) => void }
   { from: 1, apply: (db) => db.exec(CREATE_LEDGER) },
   { from: 2, apply: (db) => db.exec(ADD_MAP_SITE) },
   { from: 3, apply: (db) => db.exec(CREATE_LAUNCHED_SESSIONS) },
-  { from: 4, apply: (db) => db.exec(ADD_HIDDEN_AT) }
+  { from: 4, apply: (db) => db.exec(ADD_HIDDEN_AT) },
+  { from: 5, apply: (db) => db.exec(ADD_ROUTED_BY_JEV) }
 ]
 
 export interface AppDatabase {
@@ -333,6 +354,7 @@ export function prepareAppSchema(db: WritableSqliteDb): void {
       db.exec(CREATE_PROJECTS)
       db.exec(CREATE_LEDGER)
       db.exec(CREATE_LAUNCHED_SESSIONS)
+      db.exec(ADD_ROUTED_BY_JEV)
       db.exec(`PRAGMA user_version = ${APP_SCHEMA_VERSION}`)
     })
     return

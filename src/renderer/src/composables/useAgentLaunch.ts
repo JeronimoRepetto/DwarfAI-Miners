@@ -25,6 +25,7 @@ import {
   launchPrompt,
   launchTuning,
   openLaunch,
+  routedByJev,
   setJevSettings,
   shouldAskJev,
   startedDetached,
@@ -418,7 +419,10 @@ export function useAgentLaunch(): AgentLaunch {
           provider: choice,
           prompt,
           ...launchTuning(state.value),
-          ...(permissionMode === undefined ? {} : { permissionMode })
+          ...(permissionMode === undefined ? {} : { permissionMode }),
+          // #511: true only once a Jev DECISION was applied to this launch —
+          // never on a fallback, whatever its own pickers ended up showing.
+          ...(routedByJev(state.value) ? { routedByJev: true } : {})
         })
         // A verdict of `launched: true` says a session STARTED and nothing
         // more, on every channel. What differs is what can be done with it: a
@@ -434,7 +438,9 @@ export function useAgentLaunch(): AgentLaunch {
         mineId: mineId.value,
         provider: choice,
         prompt,
-        ...launchTuning(state.value)
+        ...launchTuning(state.value),
+        // Same rule and same reason as the held channel's own (#511).
+        ...(routedByJev(state.value) ? { routedByJev: true } : {})
       })
       if (!result.launched) {
         state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)

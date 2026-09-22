@@ -49,7 +49,8 @@ function fakeFs(initial: Record<string, string> = {}) {
 describe('createJevPreferenceStore — a fresh install', () => {
   it('answers the documented defaults on a first run, with no file to read', async () => {
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs: fakeFs().fs })
-    expect(await store.load()).toEqual({ profile: 'balanced', default: {} })
+    // AMENDED for #511: `delegation` joined this document, default off.
+    expect(await store.load()).toEqual({ profile: 'balanced', default: {}, delegation: false })
   })
 })
 
@@ -57,16 +58,22 @@ describe('createJevPreferenceStore — saving a valid default', () => {
   it('saves a profile alone, and reads it back after a "restart"', async () => {
     const { fs } = fakeFs()
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    expect(await store.save({ profile: 'premium', default: {} })).toEqual({ saved: true })
+    expect(await store.save({ profile: 'premium', default: {}, delegation: false })).toEqual({
+      saved: true
+    })
 
     const rebooted = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    expect(await rebooted.load()).toEqual({ profile: 'premium', default: {} })
+    expect(await rebooted.load()).toEqual({ profile: 'premium', default: {}, delegation: false })
   })
 
   it('saves a default that only pins a provider, leaving model and effort to the CLI', async () => {
     const { fs } = fakeFs()
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    const preferences = { profile: 'balanced' as const, default: { provider: 'claude' as const } }
+    const preferences = {
+      profile: 'balanced' as const,
+      default: { provider: 'claude' as const },
+      delegation: false
+    }
     expect(await store.save(preferences)).toEqual({ saved: true })
     expect(await store.load()).toEqual(preferences)
   })
@@ -76,7 +83,8 @@ describe('createJevPreferenceStore — saving a valid default', () => {
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const preferences = {
       profile: 'economy' as const,
-      default: { provider: 'claude' as const, model: 'sonnet', effort: 'low' }
+      default: { provider: 'claude' as const, model: 'sonnet', effort: 'low' },
+      delegation: false
     }
     expect(await store.save(preferences)).toEqual({ saved: true })
     expect(await store.load()).toEqual(preferences)
@@ -85,7 +93,7 @@ describe('createJevPreferenceStore — saving a valid default', () => {
   it('writes atomically: a sibling temp file first, then a rename onto the final path', async () => {
     const { fs, events } = fakeFs()
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    await store.save({ profile: 'balanced', default: {} })
+    await store.save({ profile: 'balanced', default: {}, delegation: false })
     expect(events).toHaveLength(2)
     const [write = '', rename = ''] = events
     expect(write.startsWith(`write:${FILE}`)).toBe(true)
@@ -93,6 +101,20 @@ describe('createJevPreferenceStore — saving a valid default', () => {
     expect(rename.endsWith(`->${FILE}`)).toBe(true)
   })
 })
+
+/* --- MCP subtask delegation: the gate preference (#511) — one block, appended --- */
+describe('createJevPreferenceStore — the delegation checkbox', () => {
+  it('saves it on, and reads it back after a "restart"', async () => {
+    const { fs } = fakeFs()
+    const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
+    const preferences = { profile: 'balanced' as const, default: {}, delegation: true }
+    expect(await store.save(preferences)).toEqual({ saved: true })
+
+    const rebooted = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
+    expect(await rebooted.load()).toEqual(preferences)
+  })
+})
+/* --- end of the #511 block ---------------------------------------------------- */
 
 /*
  * AMENDED for #534 (was: `default: { provider: 'opencode' }`, relying on
@@ -112,7 +134,8 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const result = await store.save({
       profile: 'balanced',
-      default: { provider: NEVER_LAUNCHED }
+      default: { provider: NEVER_LAUNCHED },
+      delegation: false
     })
     expect(result).toEqual({ saved: false, reason: 'default-provider-not-launchable' })
     expect(events).toHaveLength(0)
@@ -123,7 +146,8 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     const result = await store.save({
       profile: 'balanced',
-      default: { provider: 'claude', effort: 'ultra' }
+      default: { provider: 'claude', effort: 'ultra' },
+      delegation: false
     })
     expect(result).toEqual({ saved: false, reason: 'default-tuning-invalid' })
     expect(events).toHaveLength(0)
@@ -131,11 +155,15 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
 
   it('refuses a model or effort with no provider to validate it against', async () => {
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs: fakeFs().fs })
-    expect(await store.save({ profile: 'balanced', default: { effort: 'high' } })).toEqual({
+    expect(
+      await store.save({ profile: 'balanced', default: { effort: 'high' }, delegation: false })
+    ).toEqual({
       saved: false,
       reason: 'default-tuning-invalid'
     })
-    expect(await store.save({ profile: 'balanced', default: { model: 'sonnet' } })).toEqual({
+    expect(
+      await store.save({ profile: 'balanced', default: { model: 'sonnet' }, delegation: false })
+    ).toEqual({
       saved: false,
       reason: 'default-tuning-invalid'
     })
@@ -144,10 +172,18 @@ describe('createJevPreferenceStore — refusing a default the launch gate would 
   it('leaves a previously saved default in place when a later save is refused', async () => {
     const { fs } = fakeFs()
     const store = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
-    const good = { profile: 'balanced' as const, default: { provider: 'claude' as const } }
+    const good = {
+      profile: 'balanced' as const,
+      default: { provider: 'claude' as const },
+      delegation: false
+    }
     await store.save(good)
 
-    await store.save({ profile: 'premium', default: { provider: NEVER_LAUNCHED } })
+    await store.save({
+      profile: 'premium',
+      default: { provider: NEVER_LAUNCHED },
+      delegation: false
+    })
 
     const rebooted = createJevPreferenceStore({ userDataDir: USER_DATA_DIR, fs })
     expect(await rebooted.load()).toEqual(good)
@@ -170,7 +206,11 @@ describe('createJevPreferenceStore — a corrupt or malformed file', () => {
       userDataDir: USER_DATA_DIR,
       fs: fakeFs({ [FILE]: '{ not json' }).fs
     })
-    await expect(store.load()).resolves.toEqual({ profile: 'balanced', default: {} })
+    await expect(store.load()).resolves.toEqual({
+      profile: 'balanced',
+      default: {},
+      delegation: false
+    })
   })
 
   it('never throws on a corrupt file', async () => {

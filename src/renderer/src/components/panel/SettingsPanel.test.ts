@@ -286,7 +286,7 @@ describe('SettingsPanel — forwarding intents up (App owns the IPC)', () => {
     const options = wrapper.findAll('.profile-option')
     await options[2]?.trigger('click')
     expect(wrapper.emitted('jev-preferences-change')).toEqual([
-      [{ profile: 'premium', default: {} }]
+      [{ profile: 'premium', default: {}, delegation: false }]
     ])
   })
 })

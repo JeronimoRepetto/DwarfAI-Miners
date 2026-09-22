@@ -405,6 +405,79 @@ describe('app database — the v4 to v5 upgrade (#169)', () => {
   })
 })
 
+/* --- MCP subtask delegation: the routedByJev column (#511) — one block, appended --- */
+describe('app database — the v5 to v6 upgrade (#511)', () => {
+  /** A database exactly as the v5 build left it: no routed_by_jev column anywhere. */
+  async function seedVersion5(sqlite: MemoryWritableSqlite): Promise<void> {
+    const seeded = await sqlite.open(DB)
+    seeded.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        last_opened_at INTEGER,
+        origin TEXT NOT NULL,
+        last_provider TEXT,
+        known_tier TEXT,
+        map_site INTEGER,
+        hidden_at INTEGER
+      );
+      CREATE TABLE materials (
+        mine_id TEXT NOT NULL,
+        material TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (mine_id, material)
+      );
+      CREATE TABLE launched_sessions (
+        launch_id TEXT PRIMARY KEY NOT NULL,
+        provider TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        mine_path TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        proc_start_ms INTEGER NOT NULL
+      );
+    `)
+    seeded.run(
+      `INSERT INTO launched_sessions
+       (launch_id, provider, session_id, mine_path, pid, proc_start_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['launch:1', 'codex', 'thread-1', 'C:\\work\\project', 4242, 1_788_001_972_136]
+    )
+    seeded.exec('PRAGMA user_version = 5')
+    seeded.close()
+  }
+
+  it('adds the routed-by-Jev column and stamps v6, keeping every row', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await seedVersion5(sqlite)
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(db.all('SELECT launch_id, routed_by_jev FROM launched_sessions')).toEqual([
+      { launch_id: 'launch:1', routed_by_jev: null }
+    ])
+  })
+
+  /*
+   * The migration flags nothing, and that is the point: NULL is what
+   * `toLaunch` (launchedSessionStore.ts) reads as `routedByJev: false` — a
+   * launch from before this column existed was never routed by Jev, because
+   * Jev-routed launches did not exist yet either.
+   */
+  it('creates a fresh database with the column already there', async () => {
+    const sqlite = new MemoryWritableSqlite()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(version(db)).toBe(APP_SCHEMA_VERSION)
+    expect(db.all('SELECT routed_by_jev FROM launched_sessions')).toEqual([])
+  })
+})
+/* --- end of the #511 block ---------------------------------------------------- */
+
 describe('app database — versions it refuses', () => {
   it('refuses a version above the one this build knows', async () => {
     const sqlite = new MemoryWritableSqlite()
