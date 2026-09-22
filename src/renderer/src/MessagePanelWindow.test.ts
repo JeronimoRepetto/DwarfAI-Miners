@@ -16,7 +16,7 @@ import {
   NO_OLDER_PAGES_NOTE
 } from './lib/message/feedPages'
 // ADDED for #389 — the deadline the window's own leave is bounded by.
-import { PANEL_MOTION_WATCHDOG_MS } from './lib/shell/panelMotion'
+import { motionBoundMs } from './lib/shell/motionTiming'
 // ADDED for #370 — the faces this window paints with before main answers.
 import { DEFAULT_TYPOGRAPHY_PREFERENCES } from './types'
 
@@ -2396,23 +2396,26 @@ describe('rising into place and settling before the window goes', () => {
    * `HTMLElement.prototype.animate` still gets a bare stub below, because
    * `still()` reads its mere PRESENCE as the app's proxy for "a real
    * Chromium window" and never calls it.
+   *
+   * AMENDED again for #566: no `timing` argument any more — the runner
+   * passes `animate()` no transition at all now, so a fake that recorded one
+   * would be recording something the real call site never sends.
    */
   function fakeAnimations(order: string[] = []) {
     const runs: {
       element: Element
       keyframes: DOMKeyframesDefinition
-      timing: { duration: number; ease: unknown }
       finish: () => void
       cancel: ReturnType<typeof vi.fn>
     }[] = []
-    const animate: MotionAnimate = (element, keyframes, timing) => {
+    const animate: MotionAnimate = (element, keyframes) => {
       order.push('animate')
       let finish!: () => void
       const finished = new Promise<void>((resolve) => {
         finish = resolve
       })
       const cancel = vi.fn()
-      runs.push({ element, keyframes, timing, finish, cancel })
+      runs.push({ element, keyframes, finish, cancel })
       return {
         cancel,
         then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
@@ -2440,7 +2443,6 @@ describe('rising into place and settling before the window goes', () => {
 
   const RISE: DOMKeyframesDefinition = { opacity: [0, 1], y: [12, 0] }
   const SETTLE: DOMKeyframesDefinition = { opacity: [1, 0], y: [0, 12] }
-  const TIMING = { duration: 0.25, ease: [0.2, 0, 0, 1] }
 
   /** The close both windows make, which is the only close there is. */
   function closePanel(api: Record<string, ReturnType<typeof vi.fn>>): void {
@@ -2498,12 +2500,13 @@ describe('rising into place and settling before the window goes', () => {
       )
       expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
       // The report is what reveals the window, so the rise may only be started
-      // after it: started first, the surface would spend part of its 250ms
+      // after it: started first, the surface would spend part of its motion
       // animating inside a window nobody can see yet.
       expect(order).toEqual(['report', 'animate'])
       expect(animated.runs[0]!.element).toBe(wrapper.find('.message-surface').element)
+      // No transition is asked for any more (#566) — the runner hands
+      // motion-v only the keyframes, and lets `getDefaultTransition` pick.
       expect(animated.runs[0]!.keyframes).toEqual(RISE)
-      expect(animated.runs[0]!.timing).toEqual(TIMING)
     } finally {
       animated.restore()
       measured.restore()
@@ -2558,7 +2561,6 @@ describe('rising into place and settling before the window goes', () => {
       // settling after it.
       expect(wrapper.find('.message-panel').exists()).toBe(true)
       expect(animated.runs[1]!.keyframes).toEqual(SETTLE)
-      expect(animated.runs[1]!.timing).toEqual(TIMING)
       expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
 
       animated.runs[1]!.finish()
@@ -2589,7 +2591,7 @@ describe('rising into place and settling before the window goes', () => {
       await flushPromises()
       expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
 
-      await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+      await vi.advanceTimersByTimeAsync(motionBoundMs(SETTLE))
       await flushPromises()
 
       expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()

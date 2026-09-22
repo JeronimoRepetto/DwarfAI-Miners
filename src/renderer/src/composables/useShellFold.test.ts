@@ -3,8 +3,10 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DOMKeyframesDefinition } from 'motion-v'
+import { getDefaultTransition } from 'motion-v'
 import { useShellFold } from './useShellFold'
-import { PANEL_LEAVE_BOUND_MS, PANEL_MOTION_WATCHDOG_MS } from '../lib/shell/panelMotion'
+import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
+import { motionBoundMs, type MotionTransition } from '../lib/shell/motionTiming'
 import type { MotionAnimate } from '../lib/shell/boundedMotion'
 import type { PanelEdge } from '../types'
 import type { ShellComposition } from '../lib/shell/composition'
@@ -50,22 +52,31 @@ function placed<T extends HTMLElement>(element: T, left: number, width: number):
  * are recorded into one list and the harness filters by element — preserving
  * the two per-element lists (`animations`, `railAnimations`) every case below
  * already indexes into.
+ *
+ * AMENDED again for #566: no `timing` argument any more — the runner passes
+ * `animate()` no transition at all now, so a fake that recorded one would be
+ * recording something the real call site never sends.
+ *
+ * AMENDED again for #464 (correction to T2): `transition` is back, recorded
+ * (possibly `undefined`) rather than asserted on — the fold's own clip run
+ * never passes one (its default IS what the rail is meant to share), but the
+ * rail's carry now does.
  */
 function fakeEngine() {
   const runs: {
     element: Element
     keyframes: DOMKeyframesDefinition
-    timing: { duration: number; ease: unknown }
+    transition: MotionTransition | undefined
     finish: () => void
     cancel: ReturnType<typeof vi.fn>
   }[] = []
-  const animate: MotionAnimate = (element, keyframes, timing) => {
+  const animate: MotionAnimate = (element, keyframes, transition) => {
     let resolve!: () => void
     const finished = new Promise<void>((done) => {
       resolve = done
     })
     const cancel = vi.fn()
-    runs.push({ element, keyframes, timing, finish: resolve, cancel })
+    runs.push({ element, keyframes, transition, finish: resolve, cancel })
     return {
       cancel,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
@@ -199,10 +210,6 @@ describe('useShellFold', () => {
         'inset(0px 0px 0px calc(100% - 438px) round 12px)'
       ]
     })
-    expect(test.animations[0]!.timing).toEqual({
-      duration: 0.25,
-      ease: [0.2, 0, 0, 1]
-    })
     test.wrapper.unmount()
   })
 
@@ -269,7 +276,11 @@ describe('useShellFold', () => {
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(test.animations).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+    // The fold's own run is `clipPath`, never a transformProp — motion-v's
+    // default for it is the flat 0.3s ease regardless of the strip widths
+    // (`motionTiming.ts`), so the derived watchdog is asked of the exact
+    // keyframes this run is animating rather than restated as a literal.
+    await vi.advanceTimersByTimeAsync(motionBoundMs(test.animations[0]!.keyframes))
     expect(folded).toBe(true)
     expect(test.animations[0]!.cancel).toHaveBeenCalledOnce()
     test.wrapper.unmount()
@@ -498,10 +509,6 @@ describe('useShellFold', () => {
     void test.fold.hold(test.column(555))
     await settled()
     expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
-    expect(test.railAnimations[0]!.timing).toEqual({
-      duration: 0.25,
-      ease: [0.2, 0, 0, 1]
-    })
     test.animations[0]!.finish()
     await settled()
     // Written rather than left to the engine: motion-v writes straight into
@@ -515,6 +522,33 @@ describe('useShellFold', () => {
     // The row has caught up with the fold, so the travel is the layout's own
     // again and holding the transform would push the rail out of the window.
     expect(test.rail.style.transform).toBe('')
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #464 (correction to T2). The fold is ONE motion: without a
+   * shared transition, `x` (the rail's own transformProp) picks up the
+   * underdamped spring while `clipPath` (never a transformProp) gets the
+   * flat 0.3s ease, and a 563px rail carry under that spring can take
+   * anywhere from 400ms to 650ms — well past the clip's fixed 300ms, so the
+   * rail would still be travelling inside the band the clip has already cut
+   * away when the shrink goes out.
+   */
+  it('carries the rail on the SAME transition the clip run gets, never its own default spring', async () => {
+    const test = harness()
+    test.state.remaining = 'mine'
+    void test.fold.hold(test.column(555))
+    await settled()
+    expect(test.railAnimations[0]!.keyframes).toEqual({ x: [0, 563] })
+    // The clip run's own transition is motion-dom's real answer for
+    // `clipPath` — never asserted as a literal here, so a change to
+    // motion-dom's own default would move both sides of this assertion
+    // together rather than only the rail's.
+    const clipTransition = getDefaultTransition('clipPath', {
+      keyframes: clipFrames(test.animations[0]!.keyframes) as unknown as number[]
+    })
+    expect(test.animations[0]!.transition).toBeUndefined()
+    expect(test.railAnimations[0]!.transition).toEqual(clipTransition)
     test.wrapper.unmount()
   })
 
@@ -587,7 +621,7 @@ describe('useShellFold', () => {
     test.animations[0]!.finish()
     await vi.advanceTimersByTimeAsync(0)
     expect(released).toBe(false)
-    await vi.advanceTimersByTimeAsync(PANEL_LEAVE_BOUND_MS)
+    await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
     expect(released).toBe(true)
     test.wrapper.unmount()
   })
@@ -715,6 +749,33 @@ describe('useShellFold', () => {
     test.wrapper.unmount()
     await settled()
     expect(folded).toBe(true)
+  })
+
+  /*
+   * ADDED for #464 (correction to T2): `panelLeaveBoundMs()` covers the
+   * `overrun` timer above — one constant, not a `Math.max` derived per fold —
+   * and this is WHY, in code rather than by coincidence: every run a fold
+   * ever starts (clip, rail) now shares the clip's own transition, and a
+   * non-spring transition's duration is `transition.duration * 1000`
+   * regardless of the keyframes it is handed (`motionTiming.ts`), so the
+   * fold's own bound can never exceed the clip's, however far the rail
+   * travels. `panelLeaveBoundMs()` already covers the clip's own bound (it is
+   * derived from `panelKeyframes`' fixed 12px leave, which resolves to the
+   * SAME 300ms/350ms as `clipPath`'s flat ease) — that relationship stays
+   * asserted here rather than left to hold by accident.
+   */
+  it('panelLeaveBoundMs covers the fold’s own bound, because clip and rail now share one non-spring transition', () => {
+    const clipTransition = getDefaultTransition('clipPath', {
+      keyframes: ['a', 'b'] as unknown as number[]
+    })
+    expect(clipTransition.type).not.toBe('spring')
+    const clipBound = motionBoundMs({ clipPath: ['a', 'b'] }, clipTransition)
+    // However far the rail travels — 563px here, hundreds more elsewhere —
+    // its bound under the SAME transition is the clip's own, never a
+    // function of the distance.
+    const railBound = motionBoundMs({ x: [0, 563] }, clipTransition)
+    expect(railBound).toBe(clipBound)
+    expect(panelLeaveBoundMs()).toBeGreaterThanOrEqual(Math.max(clipBound, railBound))
   })
   /*
    * REMOVED for #488: three cases appended by #472/#474 that pinned the

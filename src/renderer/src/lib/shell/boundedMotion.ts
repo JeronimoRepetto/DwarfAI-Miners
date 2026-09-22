@@ -1,7 +1,7 @@
 import { animate as motionAnimate } from 'motion-v'
-import type { DOMKeyframesDefinition, Easing } from 'motion-v'
+import type { DOMKeyframesDefinition } from 'motion-v'
 import { prefersReducedMotion, watchReducedMotion } from '../scene/sceneMotion'
-import { PANEL_MOTION_EASE, PANEL_MOTION_MS, PANEL_MOTION_WATCHDOG_MS } from './panelMotion'
+import { motionBoundMs, type MotionTransition } from './motionTiming'
 
 /**
  * What the runner actually calls on the controls motion-v's `animate()` hands
@@ -46,13 +46,26 @@ export interface MotionControls {
  * The engine this runner drives, injected so tests can hand it a hand-written
  * fake instead of the real motion-v (`createBoundedMotion({ animate })`) —
  * the house idiom (`skills/tdd`) over `vi.mock`. Typed on exactly what `run`
- * calls: an element, motion-v's own keyframe shape, and the one transition it
- * ever asks for.
+ * calls: an element, motion-v's own keyframe shape, and — optionally — a
+ * transition.
+ *
+ * Optional rather than authored (#566, was: always the app's own fixed
+ * 250ms/easing pair). The user's ruling was to stop authoring one by
+ * default: this runner asks motion-v for NOTHING but the keyframes UNLESS a
+ * caller hands one down, so motion-dom's own `getDefaultTransition` decides
+ * per value in the ordinary case — see `motionTiming.ts`, which is where
+ * this app now reads that same default back to derive its watchdog.
+ *
+ * A caller gives one when it needs MORE than its own default: the shell's
+ * fold (#464) is one motion, not two, so `useShellFold.carry()` passes the
+ * clip's own transition to the rail's run rather than let each half of the
+ * fold pick a different default and drift apart. `run`'s own fourth
+ * argument, below, forwards it here unchanged.
  */
 export type MotionAnimate = (
   element: Element,
   keyframes: DOMKeyframesDefinition,
-  options: { duration: number; ease: Easing }
+  transition?: MotionTransition
 ) => MotionControls
 
 /**
@@ -112,11 +125,13 @@ function releaseWritten(element: Element, keyframes: DOMKeyframesDefinition): vo
  * entirely-yellow frame #266 photographed.
  *
  * So every run here reports itself three ways and the first one wins: the
- * animation finishing, a watchdog one margin past the 250ms, and the window
+ * animation finishing, a watchdog one margin past however long THIS run's own
+ * keyframes take motion-v's default transition to settle (`motionTiming.ts`
+ * — #566, was a fixed 250ms this codebase authored itself), and the window
  * becoming hidden. Reduced motion turned on mid-flight ends it too, because it
  * is a request for the state change without the motion. None of them changes
- * the 250ms a focused window animates for (#164); they only bound what may
- * follow it.
+ * how long a focused window actually animates for (#164); they only bound
+ * what may follow it.
  *
  * ## `settle` runs right after `cancel`, never after a late `finish` event
  *
@@ -172,8 +187,17 @@ export interface BoundedMotion {
    * was already running on it. Resolves when the motion is over by any of the
    * three routes above — never rejects, because a torn-down motion is not
    * evidence that whatever was waiting on it should keep waiting.
+   *
+   * `transition`, when given, is forwarded to the engine unchanged and used
+   * to derive the watchdog too (#464) — see `MotionAnimate`, above, for why a
+   * caller would ever give one.
    */
-  run: (element: Element, keyframes: DOMKeyframesDefinition, settle?: () => void) => Promise<void>
+  run: (
+    element: Element,
+    keyframes: DOMKeyframesDefinition,
+    settle?: () => void,
+    transition?: MotionTransition
+  ) => Promise<void>
   /** Whether a run is still in flight on this element. */
   running: (element: Element) => boolean
   /** End this element's run now, settling it first. */
@@ -200,8 +224,8 @@ export function createBoundedMotion(deps: { animate?: MotionAnimate } = {}): Bou
     // such method, and would still drive values through its own rAF timers in
     // jsdom (`motionEngine.test.ts`). What `Element.animate` being missing
     // still tells us is that this is not a real Chromium window: a test
-    // environment wants the settled state on the spot, not a 250ms timer race
-    // against nothing actually rendering.
+    // environment wants the settled state on the spot, not a derived-duration
+    // timer race against nothing actually rendering.
     return reduced || document.hidden || typeof (element as HTMLElement).animate !== 'function'
   }
 
@@ -221,13 +245,23 @@ export function createBoundedMotion(deps: { animate?: MotionAnimate } = {}): Bou
   function run(
     element: Element,
     keyframes: DOMKeyframesDefinition,
-    settle?: () => void
+    settle?: () => void,
+    transition?: MotionTransition
   ): Promise<void> {
     release(element)
-    const controls = animate(element, keyframes, {
-      duration: PANEL_MOTION_MS / 1000,
-      ease: PANEL_MOTION_EASE
-    })
+    // `transition` undefined: `animate()` gets exactly two arguments, same as
+    // ever — motion-v's own `getDefaultTransition` decides per value key
+    // (#566 — see `MotionAnimate`, above, and `motionTiming.ts`, which reads
+    // that same default back to arm the watchdog below with a matching
+    // number). Given, it is passed straight through as a third (#464) —
+    // conditionally, rather than always forwarding a possibly-`undefined`
+    // third argument, so a fake engine asserting on its own exact call shape
+    // (`PanelTransition.test.ts`) sees the same two-argument call it always
+    // has for the ordinary case.
+    const controls =
+      transition === undefined
+        ? animate(element, keyframes)
+        : animate(element, keyframes, transition)
     let resolve!: () => void
     const finished = new Promise<void>((done) => {
       resolve = done
@@ -258,7 +292,12 @@ export function createBoundedMotion(deps: { animate?: MotionAnimate } = {}): Bou
     // watchdog is what makes completion bounded rather than merely likely.
     // Declared after `complete` so it can be the timer's own handle — nothing
     // can reach `clearTimeout` before the timer that is being cleared exists.
-    const watchdog = setTimeout(complete, PANEL_MOTION_WATCHDOG_MS)
+    // Armed for THIS run's own keyframes (#566), and the SAME transition just
+    // handed to `animate()` above (#464) — a spring's settling time depends
+    // on the delta it is asked to travel, so the watchdog has to ask
+    // `motionBoundMs` fresh per run rather than share one constant across
+    // every shape this runner is ever handed.
+    const watchdog = setTimeout(complete, motionBoundMs(keyframes, transition))
     void controls.then(complete, complete)
     return finished
   }

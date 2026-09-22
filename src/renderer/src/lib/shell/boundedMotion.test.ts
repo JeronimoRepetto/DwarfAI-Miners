@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getDefaultTransition } from 'motion-v'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import { createBoundedMotion, type MotionAnimate } from './boundedMotion'
-import { PANEL_MOTION_WATCHDOG_MS } from './panelMotion'
+import { motionBoundMs, type MotionTransition } from './motionTiming'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -36,6 +37,18 @@ const STYLE_PROPERTY: Record<string, string> = {
  * this fake, production hands it nothing and gets the real motion-v import
  * instead (`motionEngine.test.ts` pins the real one).
  *
+ * AMENDED again for #566: no `options` argument any more — the runner passes
+ * `animate()` no transition at all now, so a fake that recorded one would be
+ * recording something the real call site never sends.
+ *
+ * AMENDED again for #464 (correction to T2): a fourth, OPTIONAL `transition`
+ * argument is back — `boundedMotion.run`'s own new optional parameter,
+ * forwarded straight to `animate()` when a caller (`useShellFold.carry()`)
+ * gives one, so the fold's rail can share the clip's own transition instead
+ * of motion-v picking a different default for each. Recorded here (possibly
+ * `undefined`) so the transition test below can assert exactly what the
+ * engine received.
+ *
  * `cancel()` writes the INITIAL keyframe by default — mirroring the stronger
  * of the two real shapes read from motion-dom's own source (`JSAnimation`'s
  * `cancel()` calls `tick(0)`): a WAAPI `cancel()` that writes nothing is a
@@ -48,11 +61,11 @@ function fakeEngine() {
   const runs: {
     element: Element
     keyframes: DOMKeyframesDefinition
-    options: { duration: number; ease: unknown }
+    transition: MotionTransition | undefined
     finish: () => void
     cancel: ReturnType<typeof vi.fn>
   }[] = []
-  const animate: MotionAnimate = (element, keyframes, options) => {
+  const animate: MotionAnimate = (element, keyframes, transition) => {
     let resolveFinished!: () => void
     const finished = new Promise<void>((resolve) => {
       resolveFinished = resolve
@@ -74,7 +87,7 @@ function fakeEngine() {
     runs.push({
       element,
       keyframes,
-      options,
+      transition,
       finish: () => {
         writeFrame('final')
         resolveFinished()
@@ -117,8 +130,9 @@ describe('createBoundedMotion', () => {
     const done = test.motion.run(test.element, RISE).then(() => {
       settled = true
     })
+    // No transition is asked for any more (#566) — the runner hands motion-v
+    // only the keyframes, and lets `getDefaultTransition` pick.
     expect(test.runs[0]!.keyframes).toEqual(RISE)
-    expect(test.runs[0]!.options).toEqual({ duration: 0.25, ease: [0.2, 0, 0, 1] })
     expect(settled).toBe(false)
     test.runs[0]!.finish()
     await done
@@ -200,7 +214,7 @@ describe('createBoundedMotion', () => {
         settled = true
       })
     test.runs[0]!.cancel.mockImplementation(() => order.push('cancel'))
-    await vi.advanceTimersByTimeAsync(PANEL_MOTION_WATCHDOG_MS)
+    await vi.advanceTimersByTimeAsync(motionBoundMs(RISE))
     expect(settled).toBe(true)
     expect(order).toEqual(['cancel', 'settle'])
     expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
@@ -310,5 +324,51 @@ describe('createBoundedMotion', () => {
     occlude(true)
     document.dispatchEvent(new Event('visibilitychange'))
     expect(test.runs[0]!.cancel).toHaveBeenCalledOnce()
+  })
+
+  /*
+   * ADDED for #464 (correction to T2). `run`'s own optional fourth argument,
+   * forwarded straight to the engine: `useShellFold.carry()` is the one
+   * caller that gives one, so its rail can share the clip's transition
+   * rather than let motion-v pick the rail's own default spring.
+   */
+  it('forwards an explicit transition straight to the engine, and arms the watchdog off it', async () => {
+    const test = harness()
+    const explicitTransition = getDefaultTransition('clipPath', {
+      keyframes: ['a', 'b'] as unknown as number[]
+    })
+    const done = test.motion.run(test.element, RISE, undefined, explicitTransition)
+    expect(test.runs[0]!.transition).toBe(explicitTransition)
+    test.runs[0]!.finish()
+    await done
+    test.motion.dispose()
+  })
+
+  it('bounds a watchdog by the explicit transition rather than the keyframes’ own default', async () => {
+    vi.useFakeTimers()
+    const test = harness()
+    // RISE (`{ opacity: [0, 1] }`) resolves to the flat 300ms ease (350ms
+    // bound) on its own default — a discriminating test needs a transition
+    // that genuinely disagrees, or a bug that silently ignored the fourth
+    // argument would pass all the same. `x`'s own default spring, applied to
+    // RISE's tiny opacity delta (a "granular" spring, motion-dom's own
+    // tighter resting threshold for it), settles at 450ms — measured against
+    // the real engine, not assumed: `motionBoundMs(RISE, explicitSpring)` is
+    // 500, genuinely later than RISE's own 350.
+    const explicitSpring = getDefaultTransition('x', { keyframes: [12, 0] })
+    const explicitBound = motionBoundMs(RISE, explicitSpring)
+    const defaultBound = motionBoundMs(RISE)
+    expect(explicitBound).toBeGreaterThan(defaultBound)
+    let settled = false
+    void test.motion.run(test.element, RISE, undefined, explicitSpring).then(() => {
+      settled = true
+    })
+    // Not yet settled at RISE's own would-be bound: a run that silently
+    // ignored the explicit transition would already be done here.
+    await vi.advanceTimersByTimeAsync(defaultBound)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(explicitBound - defaultBound)
+    expect(settled).toBe(true)
+    test.motion.dispose()
   })
 })

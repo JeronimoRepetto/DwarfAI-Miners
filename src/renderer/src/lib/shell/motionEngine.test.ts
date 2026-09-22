@@ -12,8 +12,10 @@
  * any more than it did to the spike itself: there is no production behaviour of
  * ours to watch fail first.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { animate, MotionGlobalConfig } from 'motion-v'
+import { createBoundedMotion } from './boundedMotion'
+import { motionBoundMs } from './motionTiming'
 
 // `MotionGlobalConfig` is plain, module-scoped, mutable state with no reset API
 // of its own (found in the T0 spike) — a value set in one test bleeds into the
@@ -54,6 +56,70 @@ describe('motion-v engine: lands the final frame', () => {
     // interpolate or landing short of it.
     expect(element.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 438px) round 12px)')
     element.remove()
+  })
+
+  /*
+   * ADDED for #566. The runner never passes a transition any more (see
+   * `MotionAnimate` in `boundedMotion.ts`) — this is the same pin as above,
+   * with NO third argument at all, so it fails if motion-v ever stopped
+   * accepting an omitted transition rather than only if it wrote the wrong
+   * value under one this codebase still authored.
+   */
+  it('writes the x transform shortcut under instantAnimations with no transition argument at all', async () => {
+    MotionGlobalConfig.instantAnimations = true
+    const element = document.createElement('div')
+    document.body.append(element)
+    const controls = animate(element, { x: [12, 0] })
+    await controls
+    // `x: 0` collapses to `none` rather than `translateX(0px)`, exactly as
+    // the explicit-transition pin above measures.
+    expect(element.style.transform).toBe('none')
+    element.remove()
+  })
+})
+
+/**
+ * ADDED for #566. Motion-v's own frameloop — not `boundedMotion.run`'s
+ * `setTimeout` watchdog — is what has to actually settle a spring for the
+ * derived bound to mean anything: a runner whose promise only ever resolved
+ * off its OWN watchdog would report success at `motionBoundMs` however wrong
+ * `motionTiming.ts`'s number was.
+ *
+ * Whether vitest's fake timers can drive that frameloop at all was checked
+ * empirically here, not assumed: `vi.useFakeTimers()` with vitest's DEFAULT
+ * `toFake` set (unlike `App.test.ts`'s restricted one, which excludes
+ * `requestAnimationFrame` on purpose to keep its own hand-written fake
+ * engine's promises from racing a real frameloop it does not use) includes
+ * `requestAnimationFrame`, and motion-v's JS driver — the one jsdom's
+ * missing `Element.prototype.animate` forces every run here through — reads
+ * time off exactly that and off `performance.now`, which the same fake set
+ * also covers. A probe run confirmed a real `{ x: [12, 0] }` spring under
+ * `vi.useFakeTimers()` had NOT settled at `motionDurationMs - 50` and HAD
+ * settled by `motionBoundMs`, so this is pinned as a real assertion rather
+ * than an unverified escape hatch.
+ */
+describe('motion-v engine: a real spring settles inside its own derived bound', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('resolves the bounded runner’s promise once fake time reaches motionBoundMs, with no fake engine', async () => {
+    vi.useFakeTimers()
+    // No injected `animate`: this is production's own wiring
+    // (`createBoundedMotion()` with no `deps`), the real motion-v import and
+    // all.
+    const motion = createBoundedMotion()
+    const element = document.createElement('div')
+    document.body.append(element)
+    const keyframes = { x: [12, 0] }
+    let settled = false
+    void motion.run(element, keyframes).then(() => {
+      settled = true
+    })
+    await vi.advanceTimersByTimeAsync(motionBoundMs(keyframes))
+    expect(settled).toBe(true)
+    element.remove()
+    motion.dispose()
   })
 })
 

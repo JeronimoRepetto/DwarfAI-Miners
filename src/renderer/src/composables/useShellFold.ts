@@ -1,6 +1,8 @@
 import { onBeforeUnmount } from 'vue'
+import { getDefaultTransition } from 'motion-v'
 import { createBoundedMotion, type MotionAnimate } from '../lib/shell/boundedMotion'
-import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
+import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
+import type { MotionTransition } from '../lib/shell/motionTiming'
 import {
   foldedRailOffset,
   foldedShellWidth,
@@ -60,7 +62,7 @@ import type { PanelEdge } from '../types'
  * not be let go of over a box that is still the width the fold started from;
  * and the rail's travel, which is the row's own again the moment the row is
  * right. A `resize` listener is the first thing the renderer can observe of the
- * resize itself, and `PANEL_LEAVE_BOUND_MS` is the floor under a window that
+ * resize itself, and `panelLeaveBoundMs()` is the floor under a window that
  * never answers at all.
  */
 export interface ShellFoldOptions {
@@ -270,13 +272,28 @@ export function useShellFold(options: ShellFoldOptions) {
    * repaint being hidden here — `boundedMotion`'s own `settle` contract, true
    * under WAAPI's `fill: 'both'` and equally true of motion-v writing its last
    * frame straight into the same property (#566).
+   *
+   * `transition` is the clip's own (#464), not the rail's own default: the
+   * fold is ONE motion, and `x` (a transformProp) would otherwise pick up the
+   * underdamped spring while `clipPath` (never a transformProp) gets the flat
+   * 0.3s ease — a rail travelling hundreds of pixels under that spring can
+   * take longer than the clip it is meant to be carried inside of, so the
+   * shrink could go out while the rail is still mid-travel through a band the
+   * clip has already cut away. `clipTransitionFor`, below, is where both
+   * `begin` and `settle` compute the one transition every run of a given fold
+   * shares.
    */
-  function carry(rail: HTMLElement, from: number, to: number): void {
+  function carry(rail: HTMLElement, from: number, to: number, transition: MotionTransition): void {
     // A fold that leaves the rail where it is has nothing to carry, and running
     // the motion anyway would be an animation the shrink then waits on.
     if (from === to) return
     place(rail, from)
-    void motion.run(rail, railFoldKeyframes(from, to, options.edge()), () => place(rail, to))
+    void motion.run(
+      rail,
+      railFoldKeyframes(from, to, options.edge()),
+      () => place(rail, to),
+      transition
+    )
   }
 
   function radiusOf(shell: HTMLElement): string {
@@ -285,6 +302,23 @@ export function useShellFold(options: ShellFoldOptions) {
     // caller resolves the style once and passes the answer down, `begin`
     // included — it takes the radius off the style it has already resolved.
     return getComputedStyle(shell).borderRadius || '0px'
+  }
+
+  /**
+   * The ONE transition every run of a fold shares (#464): motion-v's own
+   * default for the clip it is folding to, asked for directly rather than
+   * left for `boundedMotion.run` to re-derive per key — the clip's own run
+   * still gets `undefined` and asks for its own default too, but `carry`'s
+   * rail run needs this SAME answer handed to it explicitly, or motion-v
+   * would pick `x`'s own spring for it instead.
+   */
+  function clipTransitionFor(
+    from: ShellFoldState,
+    to: ShellFoldState,
+    radius: string
+  ): MotionTransition {
+    const clip = shellFoldKeyframes(from, to, options.edge(), radius).clipPath as [string, string]
+    return getDefaultTransition('clipPath', { keyframes: clip as unknown as number[] })
   }
 
   function run(
@@ -348,12 +382,18 @@ export function useShellFold(options: ShellFoldOptions) {
             padding,
             remaining
           })
-    if (rail !== null && rests !== null) carry(rail, 0, railStand(shell, rail) - rests)
+    const radius = style.borderRadius || '0px'
+    const from = painted ?? 'whole'
+    // Computed ONCE and shared with `run`'s own clip run below (#464): both
+    // runs of this fold have to agree on exactly the same transition, not
+    // two independently-derived answers that happen to match today.
+    const transition = clipTransitionFor(from, folded, radius)
+    if (rail !== null && rests !== null) carry(rail, 0, railStand(shell, rail) - rests, transition)
     run(
       shell,
-      painted ?? 'whole',
+      from,
       folded,
-      style.borderRadius || '0px',
+      radius,
       () => {
         painted = folded
         railOffset = rests
@@ -366,7 +406,7 @@ export function useShellFold(options: ShellFoldOptions) {
         // which is the one the window still owes an answer to.
         holding.push(pending)
         clearTimeout(overrun)
-        overrun = setTimeout(letGo, PANEL_LEAVE_BOUND_MS)
+        overrun = setTimeout(letGo, panelLeaveBoundMs())
       },
       pending.resolve
     )
@@ -430,7 +470,12 @@ export function useShellFold(options: ShellFoldOptions) {
       // outside the footprint this unfolds FROM: it starts where it was inside
       // that footprint and comes back with the ground.
       const stand = rail === null ? null : railStand(shell, rail)
-      if (rail !== null && stand !== null && railOffset !== null) carry(rail, stand - railOffset, 0)
+      // Computed ONCE and shared with `run`'s own clip run below (#464), the
+      // same way `begin` does for the fold's other direction.
+      const transition = clipTransitionFor(painted, 'whole', radius)
+      if (rail !== null && stand !== null && railOffset !== null) {
+        carry(rail, stand - railOffset, 0, transition)
+      }
       run(
         shell,
         painted,

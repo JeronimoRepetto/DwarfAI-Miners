@@ -117,7 +117,7 @@ function leave(element: Element, done: () => void): void {
 }
 /**
  * The window going away mid-animation ends a retained column here rather than
- * in 300ms (#266).
+ * on the runner's own derived watchdog (#266).
  *
  * The runner releases its own animations on both of these; what it cannot see
  * is a column held by the shell's FOLD, which is somebody else's promise and

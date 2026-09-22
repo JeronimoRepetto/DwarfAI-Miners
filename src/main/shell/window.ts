@@ -579,14 +579,24 @@ export const MESSAGE_PANEL_REVEAL_TIMEOUT_MS = 1000
  * crashed, or one whose leave was left un-run by something nobody has thought
  * of. Neither is main's to diagnose, and both must end with the window gone.
  *
- * 350ms is the renderer's own `PANEL_LEAVE_BOUND_MS` (#266), stated here rather
- * than imported: the deadlines behind a Web Animation are renderer facts, and a
- * main process importing them from `renderer/src/lib` would be this file
- * depending on how the shell animates. What has to hold is only the ORDER — the
- * renderer bounds its leave with a watchdog at 300ms and reports, so on any
- * honest close the report arrives first and this never fires.
+ * 400ms is stated here rather than imported: the deadlines behind a Web
+ * Animation are renderer facts, and a main process importing them from
+ * `renderer/src/lib` would be this file depending on how the shell animates.
+ * The renderer bounds the message surface's own leave with a watchdog
+ * (`motionBoundMs` of its keyframes, `{ opacity: [1, 0], y: [0, 12] }` —
+ * #566, was a fixed 300ms this codebase authored itself), currently 350ms —
+ * but this floor is not merely ORDERED after that watchdog, it has to
+ * outlast it by a real margin (#464, correction to T2): the renderer's
+ * watchdog firing is not the moment main hears about it, because `settle`
+ * still has to run and `reportMessagePanelSettled` still has to cross the
+ * IPC hop after it. 400 = the renderer's own 350ms bound, rounded up to the
+ * next 50ms (already there), plus a 50ms IPC margin for exactly that gap.
+ * `window.test.ts` is what keeps this number honest against the renderer's
+ * derived one now that neither is a literal this app chose freely: it is the
+ * ONE place allowed to cross the main -> renderer boundary, and only to PIN
+ * the relationship (see AGENTS.md's boundaries section).
  */
-export const MESSAGE_PANEL_LEAVE_TIMEOUT_MS = 350
+export const MESSAGE_PANEL_LEAVE_TIMEOUT_MS = 400
 
 let messagePanelWindow: BrowserWindow | null = null
 /** The wait above, while one is running. */
