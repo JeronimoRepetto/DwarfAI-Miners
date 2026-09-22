@@ -405,6 +405,90 @@ already found no port to reach such a session from the outside; whether a global
 still gets pushed events for a sibling session it never touched is a related but distinct question
 this row does not close.
 
+CLOSED by Row 16, T1b: yes, with the caveat that Row 16's TUI was itself started with a fixed
+`--port`/`--hostname`, so "entirely outside any app driving it" holds for the plugin and the
+permission round trip, not for how the port was chosen.
+
+## Row 16 — the global plugin loads for the TUI's own spawned server too, and an outside answer unblocks it `[V]`
+
+Measured 2026-09-22, OpenCode 1.18.31, Windows 11 (#588 T1b). This row closes Row 15's own open
+question: does a session opened through the user's **interactive TUI** — the actual binary someone
+runs in their own terminal, not this investigation's HTTP calls — still load the global plugin and
+still answer to an outside `permission.asked` reply?
+
+**Binary mode actually measured:** the TUI's default command (`opencode [project]`), given
+`--port`, `--hostname 127.0.0.1`, `--prompt` and `--agent build`, run with no real terminal attached
+(no pty). This is **not** `opencode run` — the process still tried to negotiate real terminal
+capabilities (garbled cursor-position and capability-query escape sequences on its stdout, matching
+what a genuine TUI does when it probes the terminal it's attached to, not what the non-interactive
+`run` subcommand does) before falling back to driving itself off `--prompt` alone. Whether the same
+holds with a real pty attached, and how large the plugin/permission window is for someone typing
+live, is not measured here — this row covers the fixed-port, no-pty case only.
+
+- **The global plugin loaded, once, for the TUI's own session**, with the exact same `ctx` key set
+  already on record from Row 15 (`client, project, worktree, directory, experimental_workspace,
+serverUrl, $`), and `ctx.serverUrl` equal to `http://127.0.0.1:<the --port value>/` — the same
+  address `--hostname`/`--port` fixed on the command line, reachable from outside the TUI's own
+  process.
+- A throwaway scratch project (its own `git init`, its own `opencode.json` carrying
+  `{"permission":{"bash":"ask"}}`) was the TUI's target directory; the session's `directory` in
+  every event matched it exactly, confirming the TUI process itself — not this investigation's own
+  HTTP calls — created the session.
+- The prompt ("run this exact shell command using your bash tool: echo ...") drove the model into a
+  gated `bash` tool call. The probe's event hook received `permission.asked`
+  (`{"id":"per_...","permission":"bash","patterns":["echo ..."],...}`), identical in shape to Row
+  15's own capture, and the tool part sat at `state.status: "running"` — genuinely blocked, not
+  auto-allowed.
+- **`POST http://127.0.0.1:<port>/session/{sessionID}/permissions/{permissionID}` with
+  `{"response":"once"}`, issued from a plain `curl` call outside the TUI entirely, returned `200`**
+  and the reply body `true`. Polling the session afterward showed the `bash` tool part move from
+  `running` to `completed` with the real command output and `exit: 0`; the probe's own log then
+  recorded `permission.replied` followed by `session.idle` — the turn finished normally. The outside
+  answer did not just get accepted by the endpoint, it demonstrably unblocked the TUI's own turn.
+- **Process shape, an aside:** with `--port` given explicitly, exactly one `opencode.exe` process
+  served both the TUI and the HTTP server (confirmed via a live process listing) — unlike Row 3's
+  residue note of two run ids for a plain, portless TUI launch. Not investigated further; recorded
+  because it was observed, not because anything depends on it.
+- Cleanup: the process tree was killed (`taskkill /F /T` on the top-level pid), confirmed by a
+  before/after process listing showing zero `opencode.exe` processes and the fixed port no longer in
+  a listening state. The probe file was removed from the global plugins directory and that
+  directory's listing (names and sizes) was diffed against a pre-change snapshot: the same
+  pre-existing files came back unchanged, nothing left over. The already-established singular
+  `~/.config/opencode/plugin/` path (Row 15) was not touched again this time.
+
+**Side effect, diagnosed and fixed — and the diagnosis is the useful part.** Partway through this
+run the machine's globally linked `opencode` stopped working, failing with Windows' own _"this
+version is not compatible with the Windows version you're running"_. That message is a red herring,
+and the first reading of it here was wrong: nothing had upgraded, nothing was the wrong
+architecture. The installed package was still 1.18.31, and `bin/opencode.exe` was a **479-byte shell
+script** whose own text says why:
+
+```
+Error: opencode-ai's postinstall script was not run.
+This occurs when using --ignore-scripts during installation, or when using a
+package manager like pnpm that does not run postinstall scripts by default.
+```
+
+`opencode-ai` ships a stub and downloads the ~172 MB platform binary from its `postinstall`, and
+pnpm does not run lifecycle scripts unless the dependency is approved. Windows then tries to execute
+a shell script named `.exe` and reports an incompatible-binary error for it. The package's own
+remedy works: `node ./postinstall.mjs` inside the installed package directory restored a 171.7 MB
+`opencode.exe`, and `opencode --version` printed `1.18.31` again — no reinstall, no version change.
+
+Worth a row of its own attention because it is a live, differently-shaped recurrence of Row 10's
+warning: **a name on PATH is not proof of a working install**, and here even the file size was the
+tell while the OS error message pointed somewhere else entirely. Any check this app makes for a
+usable `opencode` should run the binary, not find it.
+
+**Consequence for #588:** #588's premise holds for the case that matters — a session the user opens
+in their own terminal, not only one this app launches, is visible to a global plugin and answerable
+from outside it, provided the server's own address is known. What Row 16 does **not** establish is
+how an outside caller learns that address for a TUI the user started without `--port` pinned by
+whoever needs to reach it: Row 5b already found no port to join by, and a plain interactive launch
+does not print the address anywhere this investigation captured. Wiring #588's actual channel still
+needs an answer to that separate question; this row only closes whether the plugin-and-permission
+mechanism itself works once the address is known.
+
 ## What this settles for the design
 
 | Question              | Answer                                                                                                                                                                                       |
