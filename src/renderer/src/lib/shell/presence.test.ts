@@ -4,7 +4,12 @@ import { defineComponent } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MotionConfig, motion } from 'motion-v'
 import { PANEL_MOTION_Y } from './panelMotion'
-import { fadeVariants, popVariants, REDUCED_MOTION_TRANSITION } from './presence'
+import {
+  fadeVariants,
+  popVariants,
+  pressHoverVariants,
+  REDUCED_MOTION_TRANSITION
+} from './presence'
 
 describe('presence vocabulary: the shapes #566 T3 hands every popup/tooltip surface', () => {
   it('popVariants rises PANEL_MOTION_Y and fades, both ways', () => {
@@ -30,6 +35,46 @@ describe('presence vocabulary: the shapes #566 T3 hands every popup/tooltip surf
   it('authors no transition on either shape — motion-v decides, per #566', () => {
     expect('transition' in popVariants).toBe(false)
     expect('transition' in fadeVariants).toBe(false)
+  })
+})
+
+/*
+ * ADDED for #566 T4: the press/hover vocabulary. Its own describe rather than a
+ * fourth case above, because it is a different KIND of shape — the two above are
+ * presence (what a surface does on the way in and out, driven by
+ * `AnimatePresence`), and this one is gesture (what a control does under a
+ * pointer, driven by motion-v's own hover/press features). They share a file
+ * because they share the rule that made the file: one vocabulary, imported, so
+ * a control never carries a literal of its own.
+ */
+describe('press/hover vocabulary: the shape #566 T4 hands every panel control', () => {
+  it('grows under a hover and gives under a press, touching nothing but scale', () => {
+    expect(pressHoverVariants).toEqual({
+      whileHover: { scale: 1.03 },
+      whilePress: { scale: 0.96 }
+    })
+  })
+
+  /*
+   * The prop names are motion-v's own (`state/utils/variant-props.mjs` lists
+   * `whileHover` and `whilePress` among the variant props its components read),
+   * which is what lets a control spread the whole shape with one
+   * `v-bind="pressHoverVariants"` — the same idiom `popVariants` already has on
+   * the modal roots. A rename upstream, or a well-meaning `whileTap` here,
+   * would leave every control silently gestureless, so the keys are pinned as
+   * keys and not only through the value assertion above.
+   */
+  it('uses the prop names motion-v actually reads, so one v-bind reaches both', () => {
+    expect(Object.keys(pressHoverVariants).sort()).toEqual(['whileHover', 'whilePress'])
+  })
+
+  // The same "motion-v decides" ruling the two presence shapes are held to
+  // (#566 T2, extended through T3): no duration and no curve is authored here
+  // either, and a control that wants one is a design decision, not a literal.
+  it('authors no transition — motion-v decides, per #566', () => {
+    expect('transition' in pressHoverVariants).toBe(false)
+    expect('transition' in pressHoverVariants.whileHover).toBe(false)
+    expect('transition' in pressHoverVariants.whilePress).toBe(false)
   })
 })
 
