@@ -32,6 +32,7 @@
  *   removes pixels from an EDGE, and the rail is painted inside the band about
  *   to go, so it has to be out of that band before main shrinks.
  */
+import type { DOMKeyframesDefinition } from 'motion-v'
 import type { ShellComposition } from './composition'
 import type { PanelEdge } from '../../types'
 
@@ -61,11 +62,8 @@ export function shellFoldKeyframes(
   to: ShellFoldState,
   edge: PanelEdge,
   radius: string
-): Keyframe[] {
-  return [
-    { clipPath: shellFoldClip(from, edge, radius) },
-    { clipPath: shellFoldClip(to, edge, radius) }
-  ]
+): DOMKeyframesDefinition {
+  return { clipPath: [shellFoldClip(from, edge, radius), shellFoldClip(to, edge, radius)] }
 }
 
 /**
@@ -120,19 +118,37 @@ export function foldedRailOffset(shell: {
 }
 
 /**
+ * The rail's travel, mirrored on `edge` — travelling toward the docked side is
+ * travelling the other way on a left-docked shell. Shared by `railFoldTransform`
+ * (the inline style `place` writes) and `railFoldKeyframes` (the motion-v `x`
+ * shortcut this file hands the runner), so the two can never mirror the sign
+ * differently from each other.
+ */
+export function railFoldOffset(travel: number, edge: PanelEdge): number {
+  return edge === 'right' ? travel : -travel
+}
+
+/**
  * The rail's travel, as the transform it is left holding.
  *
  * A transform because it is a compositor property, which is the same rule the
  * clip is chosen under: the mine interior re-measures its anchors from the box
  * it is given, and the fold exists to leave that box alone until main resizes
- * the window around it. Mirrored on `edge`, because travelling toward the
- * docked side is travelling the other way on a left-docked shell.
+ * the window around it.
  */
 export function railFoldTransform(travel: number, edge: PanelEdge): string {
-  return `translateX(${edge === 'right' ? travel : -travel}px)`
+  return `translateX(${railFoldOffset(travel, edge)}px)`
 }
 
-/** The rail's travel from where it is now to where the change leaves it. */
-export function railFoldKeyframes(from: number, to: number, edge: PanelEdge): Keyframe[] {
-  return [{ transform: railFoldTransform(from, edge) }, { transform: railFoldTransform(to, edge) }]
+/**
+ * The rail's travel from where it is now to where the change leaves it, in
+ * motion-v's own shape: `x` is its transform shortcut, driven as a plain
+ * number rather than the CSS string `railFoldTransform` writes inline.
+ */
+export function railFoldKeyframes(
+  from: number,
+  to: number,
+  edge: PanelEdge
+): DOMKeyframesDefinition {
+  return { x: [railFoldOffset(from, edge), railFoldOffset(to, edge)] }
 }

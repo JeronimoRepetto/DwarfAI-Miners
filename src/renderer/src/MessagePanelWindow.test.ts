@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DOMKeyframesDefinition } from 'motion-v'
 import MessagePanelWindow from './MessagePanelWindow.vue'
+import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -148,12 +150,19 @@ const MINE = {
  */
 const mounted: VueWrapper[] = []
 
+/**
+ * `props` is new in #566, optional and last so every call above it is
+ * untouched: only the motion suite near the bottom of this file ever passes
+ * `engine`, to hand the window a hand-written fake in place of the real
+ * motion-v import.
+ */
 async function mountPanel(
   panel: { surface: string; mineId: string; dwarfId: string },
-  overrides: Record<string, unknown> = {}
+  overrides: Record<string, unknown> = {},
+  props: { engine?: MotionAnimate } = {}
 ) {
   const api = stubApi({ getMessagePanel: vi.fn().mockResolvedValue(panel), ...overrides })
-  const wrapper = mount(MessagePanelWindow)
+  const wrapper = mount(MessagePanelWindow, { props })
   mounted.push(wrapper)
   await flushPromises()
   return { wrapper, api }
@@ -163,13 +172,19 @@ async function mountPanel(
  * The window as it comes up when a dwarf was clicked in the shell: main was
  * asked for the message surface on that dwarf, and this window reads it back.
  */
-async function openOn(dwarfs: unknown[], dwarfId: string, overrides: Record<string, unknown> = {}) {
+async function openOn(
+  dwarfs: unknown[],
+  dwarfId: string,
+  overrides: Record<string, unknown> = {},
+  props: { engine?: MotionAnimate } = {}
+) {
   return mountPanel(
     { surface: 'message', mineId: MINE.id, dwarfId },
     {
       getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
       ...overrides
-    }
+    },
+    props
   )
 }
 
@@ -2373,32 +2388,46 @@ describe('rising into place and settling before the window goes', () => {
   }
 
   /**
-   * jsdom ships no Web Animations, so every run is recorded and finished by
-   * hand — the same fake PanelTransition.test.ts keeps, on the prototype because
-   * the element that animates is one Vue made.
+   * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
+   * (was: stubbing `HTMLElement.prototype.animate`, WAAPI's own entry point,
+   * which the runner no longer calls). `engine` is handed to
+   * `mountPanel`/`openOn` as a prop (`createBoundedMotion({ animate })`);
+   * `HTMLElement.prototype.animate` still gets a bare stub below, because
+   * `still()` reads its mere PRESENCE as the app's proxy for "a real
+   * Chromium window" and never calls it.
    */
   function fakeAnimations(order: string[] = []) {
     const runs: {
-      element: HTMLElement
-      keyframes: Keyframe[]
-      timing: KeyframeAnimationOptions
+      element: Element
+      keyframes: DOMKeyframesDefinition
+      timing: { duration: number; ease: unknown }
       finish: () => void
       cancel: ReturnType<typeof vi.fn>
     }[] = []
+    const animate: MotionAnimate = (element, keyframes, timing) => {
+      order.push('animate')
+      let finish!: () => void
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const cancel = vi.fn()
+      runs.push({ element, keyframes, timing, finish, cancel })
+      return {
+        complete: () => undefined,
+        stop: cancel,
+        then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+      }
+    }
     Object.defineProperty(HTMLElement.prototype, 'animate', {
       configurable: true,
-      value(this: HTMLElement, keyframes: Keyframe[], timing: KeyframeAnimationOptions) {
-        order.push('animate')
-        let finish!: () => void
-        const finished = new Promise<void>((resolve) => {
-          finish = resolve
-        })
-        const cancel = vi.fn()
-        runs.push({ element: this, keyframes, timing, finish, cancel })
-        return { finished, cancel }
-      }
+      value: () => undefined
     })
-    return { runs, order, restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'animate') }
+    return {
+      runs,
+      order,
+      engine: animate,
+      restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+    }
   }
 
   /** Reduced motion, or the ordinary machine that has not asked for it. */
@@ -2409,12 +2438,9 @@ describe('rising into place and settling before the window goes', () => {
     return media
   }
 
-  const RISE: Keyframe[] = [
-    { opacity: 0, transform: 'translateY(12px)' },
-    { opacity: 1, transform: 'translate(0, 0)' }
-  ]
-  const SETTLE: Keyframe[] = [...RISE].reverse()
-  const TIMING = { duration: 250, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'both' }
+  const RISE: DOMKeyframesDefinition = { opacity: [0, 1], y: [12, 0] }
+  const SETTLE: DOMKeyframesDefinition = { opacity: [1, 0], y: [0, 12] }
+  const TIMING = { duration: 0.25, ease: [0.2, 0, 0, 1] }
 
   /** The close both windows make, which is the only close there is. */
   function closePanel(api: Record<string, ReturnType<typeof vi.fn>>): void {
@@ -2440,7 +2466,8 @@ describe('rising into place and settling before the window goes', () => {
     try {
       const { wrapper, api } = await mountPanel(
         { surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' },
-        { getMines: vi.fn().mockReturnValue(board) }
+        { getMines: vi.fn().mockReturnValue(board) },
+        { engine: animated.engine }
       )
       const surface = wrapper.find('.message-surface').element as HTMLElement
       expect(surface.style.opacity).toBe('0')
@@ -2463,9 +2490,12 @@ describe('rising into place and settling before the window goes', () => {
     const order: string[] = []
     const animated = fakeAnimations(order)
     try {
-      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
-        setMessagePanelHeight: vi.fn(() => order.push('report'))
-      })
+      const { wrapper, api } = await openOn(
+        [OBSERVED_DWARF],
+        'claude:s1',
+        { setMessagePanelHeight: vi.fn(() => order.push('report')) },
+        { engine: animated.engine }
+      )
       expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
       // The report is what reveals the window, so the rise may only be started
       // after it: started first, the surface would spend part of its 250ms
@@ -2484,13 +2514,20 @@ describe('rising into place and settling before the window goes', () => {
     const measured = fakeContentHeight(426)
     const animated = fakeAnimations()
     try {
-      const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      const { wrapper } = await openOn(
+        [OBSERVED_DWARF],
+        'claude:s1',
+        {},
+        { engine: animated.engine }
+      )
       const surface = wrapper.find('.message-surface').element as HTMLElement
       animated.runs[0]!.finish()
       await flushPromises()
-      // Cleared BEFORE the animation is let go: `fill: 'both'` is holding the
-      // last frame, and an inline hidden keyframe left behind it would be what
-      // the surface snapped back to.
+      // Cleared BEFORE the run is let go: this window's own `releaseHidden`
+      // owns writing that state, exactly as it did under WAAPI's `fill:
+      // 'both'` — motion-v would otherwise leave its own last frame sitting
+      // on the element with nothing to hand it back (`releaseWritten` in
+      // `boundedMotion.ts` only does that for a caller with no `settle`).
       expect(surface.style.opacity).toBe('')
       expect(surface.style.transform).toBe('')
       expect(animated.runs[0]!.cancel).toHaveBeenCalledOnce()
@@ -2504,7 +2541,12 @@ describe('rising into place and settling before the window goes', () => {
     const measured = fakeContentHeight(426)
     const animated = fakeAnimations()
     try {
-      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      const { wrapper, api } = await openOn(
+        [OBSERVED_DWARF],
+        'claude:s1',
+        {},
+        { engine: animated.engine }
+      )
       animated.runs[0]!.finish()
       await flushPromises()
 
@@ -2538,7 +2580,7 @@ describe('rising into place and settling before the window goes', () => {
     const measured = fakeContentHeight(426)
     const animated = fakeAnimations()
     try {
-      const { api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      const { api } = await openOn([OBSERVED_DWARF], 'claude:s1', {}, { engine: animated.engine })
       animated.runs[0]!.finish()
       await flushPromises()
       vi.useFakeTimers()
@@ -2586,7 +2628,12 @@ describe('rising into place and settling before the window goes', () => {
     const measured = fakeContentHeight(426)
     const animated = fakeAnimations()
     try {
-      const { wrapper, api } = await openOn([OBSERVED_DWARF, HELD_DWARF], 'claude:s1')
+      const { wrapper, api } = await openOn(
+        [OBSERVED_DWARF, HELD_DWARF],
+        'claude:s1',
+        {},
+        { engine: animated.engine }
+      )
       animated.runs[0]!.finish()
       await flushPromises()
 
@@ -2610,7 +2657,12 @@ describe('rising into place and settling before the window goes', () => {
     const measured = fakeContentHeight(426)
     const animated = fakeAnimations()
     try {
-      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+      const { wrapper, api } = await openOn(
+        [OBSERVED_DWARF],
+        'claude:s1',
+        {},
+        { engine: animated.engine }
+      )
       animated.runs[0]!.finish()
       await flushPromises()
 

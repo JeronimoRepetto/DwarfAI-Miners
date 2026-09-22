@@ -1,5 +1,5 @@
 import { onBeforeUnmount } from 'vue'
-import { createBoundedMotion } from '../lib/shell/boundedMotion'
+import { createBoundedMotion, type MotionAnimate } from '../lib/shell/boundedMotion'
 import { PANEL_LEAVE_BOUND_MS } from '../lib/shell/panelMotion'
 import {
   foldedRailOffset,
@@ -80,6 +80,12 @@ export interface ShellFoldOptions {
    * still folds, and only the travel is lost.
    */
   rail: () => HTMLElement | null
+  /**
+   * The engine `createBoundedMotion` runs, for a test to hand in a
+   * hand-written fake — production never sets this, and gets the real
+   * motion-v import (#566).
+   */
+  engine?: MotionAnimate
 }
 
 /**
@@ -101,7 +107,7 @@ export interface ShellFoldHold {
 }
 
 export function useShellFold(options: ShellFoldOptions) {
-  const motion = createBoundedMotion()
+  const motion = createBoundedMotion({ animate: options.engine })
 
   /**
    * How much of the shell was painted when it last settled.
@@ -258,9 +264,12 @@ export function useShellFold(options: ShellFoldOptions) {
   /**
    * Carry the rail from one travel to another, and leave it at the second.
    *
-   * Settled as well as animated for the reason the clip is: cancelling drops
-   * `fill: 'both'`, and a rail that snapped back to the free edge for the frames
-   * between the fold ending and main resizing is the repaint being hidden here.
+   * Settled as well as animated for the reason the clip is: `place` has to own
+   * `transform` once the run ends, or a rail that snapped back to the free
+   * edge for the frames between the fold ending and main resizing is the
+   * repaint being hidden here — `boundedMotion`'s own `settle` contract, true
+   * under WAAPI's `fill: 'both'` and equally true of motion-v writing its last
+   * frame straight into the same property (#566).
    */
   function carry(rail: HTMLElement, from: number, to: number): void {
     // A fold that leaves the rail where it is has nothing to carry, and running
@@ -288,10 +297,12 @@ export function useShellFold(options: ShellFoldOptions) {
   ): void {
     // Everything the end of a fold owes its callers happens in `settle` rather
     // than off the promise, because it all has to land in the frame the fold
-    // ended in: the settled clip goes on BEFORE the animation is let go (which
-    // is what `settle` is for — cancelling drops `fill: 'both'` and the ground
-    // would snap back to the frame it started from), and the columns waiting on
-    // the fold are released in the same turn rather than a microtask later.
+    // ended in: the settled clip goes on BEFORE the run is let go (which is
+    // what `settle` is for — `apply` has to own `clip-path` once `stop()` is
+    // called, or the ground would be left wherever the engine last wrote it
+    // rather than the frame this fold actually ended on), and the columns
+    // waiting on the fold are released in the same turn rather than a
+    // microtask later.
     void motion.run(shell, shellFoldKeyframes(from, to, options.edge(), radius), () => {
       apply(shell, to, radius)
       done()

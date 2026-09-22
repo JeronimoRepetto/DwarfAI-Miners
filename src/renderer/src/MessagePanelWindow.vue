@@ -14,8 +14,8 @@ import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
 import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from './lib/message/feedPages'
 import { messageSurfaceMotion } from './lib/message/surfaceMotion'
-import { createBoundedMotion } from './lib/shell/boundedMotion'
-import { panelKeyframes } from './lib/shell/panelMotion'
+import { createBoundedMotion, type MotionAnimate } from './lib/shell/boundedMotion'
+import { PANEL_MOTION_Y, panelKeyframes } from './lib/shell/panelMotion'
 import { isWindowDragTarget } from './lib/shell/windowDrag'
 import type {
   Dwarf,
@@ -65,6 +65,16 @@ import type {
  * WINDOW that height. Which is also what makes "vertically only" true of the
  * window rather than merely intended by the component: main owns the width.
  */
+
+const props = defineProps<{
+  /**
+   * The engine `createBoundedMotion` runs, for a test to hand in a
+   * hand-written fake — production never sets this (`main.ts` mounts this
+   * component with no props at all), and gets the real motion-v import
+   * (#566).
+   */
+  engine?: MotionAnimate
+}>()
 
 const { state, setMines } = useMines()
 const {
@@ -1056,17 +1066,17 @@ function reportHeight(): void {
  * builder its vertical dock uses: one panel motion in this app, not one per
  * window.
  */
-const motion = createBoundedMotion()
+const motion = createBoundedMotion({ animate: props.engine })
 /**
- * Where an arriving surface waits and a leaving one stops, read off the shell's
- * own pair rather than restated here — the 12px and the fade belong to
- * `panelKeyframes` and are written once.
+ * Where an arriving surface waits and a leaving one stops, read off
+ * `panelMotion.ts`'s own vertical offset rather than restated here — the
+ * 12px and the fade belong to `panelKeyframes` and are written once.
  *
- * The entering pair is `[hidden, shown]`, so the first frame is the one. Its
- * default is unreachable (the builder always returns both) and is itself a
- * hidden surface, which is the only thing this is ever allowed to be.
+ * AMENDED for #566 (was: destructured off `panelKeyframes(false, true)`'s
+ * first keyframe — a shape motion-v's own return, `{ opacity: [...], y: [...] }`,
+ * has no array position for). Opacity 0 is hardcoded because it never varies
+ * with axis or edge, unlike `PANEL_MOTION_Y`.
  */
-const [SURFACE_HIDDEN = { opacity: 0, transform: 'none' }] = panelKeyframes(false, true)
 
 /**
  * A surface waiting for the report that will reveal its window.
@@ -1085,11 +1095,16 @@ let leaveToken = 0
 
 /**
  * Hold the surface where it rises FROM, written inline so it survives the
- * animation being cancelled.
+ * motion being let go — motion-v writes its own last frame into
+ * `element.style` too, but this still has to be the CALLER's write: it is
+ * what the bound hands back to a leave that finishes on its own timing rather
+ * than this one (see `settleAndLeave`'s `still` branch, and `releaseWritten`
+ * in `boundedMotion.ts`, which would otherwise clear a property no run ever
+ * touched here).
  */
 function holdHidden(element: HTMLElement): void {
-  element.style.opacity = String(SURFACE_HIDDEN.opacity)
-  element.style.transform = String(SURFACE_HIDDEN.transform)
+  element.style.opacity = '0'
+  element.style.transform = `translateY(${PANEL_MOTION_Y}px)`
 }
 
 /** Let the stylesheet have the surface back: drawn, in place, at full strength. */

@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DOMKeyframesDefinition } from 'motion-v'
 import App from './App.vue'
+import type { MotionAnimate } from './lib/shell/boundedMotion'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
@@ -312,21 +314,34 @@ async function mountOpenApp(overrides: Record<string, unknown> = {}) {
 beforeEach(() => useView().clear())
 
 describe('App panel motion (#164)', () => {
-  const animations: { element: HTMLElement; finish: () => void }[] = []
+  const animations: { element: Element; finish: () => void }[] = []
   const wrappers: VueWrapper[] = []
+  /**
+   * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
+   * (was: stubbing `HTMLElement.prototype.animate`, WAAPI's own entry point,
+   * which the runner no longer calls). Handed to `App` as the `engine` prop
+   * (`createBoundedMotion({ animate })`); `HTMLElement.prototype.animate`
+   * still gets a bare stub below, because `still()` reads its mere PRESENCE
+   * as the app's proxy for "a real Chromium window" and never calls it.
+   */
+  const engine: MotionAnimate = (element, _keyframes: DOMKeyframesDefinition, _options) => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    animations.push({ element, finish })
+    return {
+      complete: () => undefined,
+      stop: () => undefined,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     animations.length = 0
     Object.defineProperty(HTMLElement.prototype, 'animate', {
       configurable: true,
-      value: function (this: HTMLElement) {
-        let finish!: () => void
-        const finished = new Promise<void>((resolve) => {
-          finish = resolve
-        })
-        animations.push({ element: this, finish })
-        return { finished, cancel: () => undefined }
-      }
+      value: () => undefined
     })
   })
   afterEach(() => {
@@ -337,7 +352,7 @@ describe('App panel motion (#164)', () => {
   })
   async function animatedApp(overrides: Record<string, unknown> = {}) {
     const api = stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT), ...overrides })
-    const wrapper = mount(App, { global: { stubs: { transition: false } } })
+    const wrapper = mount(App, { props: { engine }, global: { stubs: { transition: false } } })
     wrappers.push(wrapper)
     await flushPromises()
     for (const animation of animations.splice(0)) animation.finish()
