@@ -285,9 +285,28 @@ function stubApi(overrides: Record<string, unknown> = {}) {
   return api
 }
 
+/**
+ * Every App this file mounts, so that each one is UNMOUNTED once its test is
+ * over (#566 follow-up, CI red since the panel controls became motion
+ * components).
+ *
+ * A mounted App is never garbage: `useShellFold` listens to `resize` on
+ * `window`, so every instance stays reachable from there — its Vue tree, its
+ * detached DOM and every motion state on it — until something unmounts it.
+ * Nothing did for the hundred-odd tests below, and the tree fit under the
+ * 2GB heap of a vitest fork only for as long as it was small: twenty
+ * `motion.button`s per mount pushed it over, and the worker running this
+ * file died mid-run with "JavaScript heap out of memory", taking whatever
+ * two tests it was on down as 5000ms timeouts. Measured on the tree before
+ * that change and after, under `--max-old-space-size=2048`: 130 passed, then
+ * 89 of 130 before the crash.
+ */
+const mounted: VueWrapper[] = []
+
 async function mountApp(overrides: Record<string, unknown> = {}) {
   const api = stubApi(overrides)
   const wrapper = mount(App)
+  mounted.push(wrapper)
   await flushPromises()
   return { wrapper, api }
 }
@@ -314,6 +333,9 @@ async function mountOpenApp(overrides: Record<string, unknown> = {}) {
  * navigation now leaks and not only the ones that walk into a mine.
  */
 beforeEach(() => useView().clear())
+afterEach(() => {
+  for (const wrapper of mounted.splice(0)) wrapper.unmount()
+})
 
 describe('App panel motion (#164)', () => {
   const animations: { element: Element; finish: () => void }[] = []
