@@ -925,8 +925,17 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    * distance the columns free of it do, on the SAME transition, clipped at
    * its own docked-side edge so it disappears there instead of painting over
    * the row beside it or past the window's own edge.
+   *
+   * AMENDED for #585: this case's own column is the MINE, which is the one
+   * column the drawing does not describe — it docks BEYOND the navigation
+   * strip, so the strip is on its FREE side and travels across it. What
+   * covers it is that travel, not a travel of its own: its box stands exactly
+   * where the row put it for the whole run (the interior inside it never
+   * re-measures), and the clip on its free side is the strip's own near edge
+   * sweeping over it. The drawer it used to assert is the case below, which
+   * is where a leaving SECONDARY panel proves it unchanged.
    */
-  it('slides and clips the leaving column itself, on the same transition as the carries beside it', async () => {
+  it('uncovers the leaving mine column in place, on the same transition as the carries beside it', async () => {
     const test = harness({ width: 1001 })
     test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
@@ -937,12 +946,32 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const own = test.animationsFor(mine)
     expect(own).toHaveLength(1)
     expect(own[0]!.keyframes).toEqual({
-      ...carries(0, 356),
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 356px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
     })
     // The clip's own transition — never `x`'s underdamped spring default —
     // the same rule `carry` already proved for the rail.
     expect(own[0]!.transition).toEqual(test.railAnimations[0]!.transition)
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585, the drawer half of the same rule and the case the one
+   * above used to carry. The secondary panel stands on the FREE side of the
+   * navigation strip, so that strip is the fixed mouth it is pushed back
+   * into: it travels, and it is clipped at its own docked-side edge, exactly
+   * as #566 T5b drew it.
+   */
+  it('slides a leaving secondary panel into the strip docked of it, clipped at that edge', async () => {
+    const test = harness({ width: 1001 })
+    test.state.remaining = 'mine'
+    test.state.nav = carriedColumn(599, 38)
+    const secondary = placed(test.column(555), 36, 555)
+    void test.fold.hold(secondary)
+    await settled()
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(0, 563),
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
+    })
     test.wrapper.unmount()
   })
 
@@ -962,9 +991,12 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(-0, -356))
     expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(-0, -356))
     expect(test.navAnimations[0]!.keyframes).toEqual(carries(-0, -356))
+    // AMENDED for #585: the mine column is uncovered in place on either
+    // dock, so it has no travel at all — and the free side it is clipped on
+    // is the shell's RIGHT here, which is the mirror of the right-docked case
+    // above rather than the same string.
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      ...carries(-0, -356),
-      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 356px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -988,9 +1020,11 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
     // Pre-placed synchronously, before this module ever yields to the
-    // browser — nothing here has awaited a microtask yet.
-    expect(mine.style.transform).toBe('translateX(356px)')
-    expect(mine.style.clipPath).toBe('inset(0px 356px 0px 0px)')
+    // browser — nothing here has awaited a microtask yet. AMENDED for #585:
+    // pre-placing the mine column is a clip and nothing else, because being
+    // uncovered in place is exactly not having a position of its own.
+    expect(mine.style.transform).toBe('')
+    expect(mine.style.clipPath).toBe('inset(0px 0px 0px 356px)')
     expect(test.animationsFor(mine)).toHaveLength(0)
     test.state.shell = sized(test.shell, 1001)
     test.fold.settle(false)
@@ -999,12 +1033,69 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // first — see the case below, which is why.
     await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      ...carries(356, 0),
-      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     expect(test.secondaryAnimations[0]!.keyframes).toEqual(carries(356, 0))
     expect(test.navAnimations[0]!.keyframes).toEqual(carries(356, 0))
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585. The other side of the strip, in the open direction: an
+   * entering secondary panel stands FREE of the navigation strip, so it is
+   * pulled out from behind that strip's own edge — pre-placed with a travel
+   * as well as a clip, and clipped at its DOCKED side, which is the mouth it
+   * comes out of. Without this, "uncovered in place" would be free to
+   * swallow every column rather than the one the strip stands beyond.
+   */
+  it('pre-places an entering secondary panel as a drawer, behind the strip docked of it', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.state.nav = carriedColumn(599, 38)
+    test.fold.settle(false)
+    const secondary = placed(test.column(555), 36, 555)
+    test.fold.enter(secondary)
+    expect(secondary.style.transform).toBe('translateX(563px)')
+    expect(secondary.style.clipPath).toBe('inset(0px 563px 0px 0px)')
+    test.state.shell = sized(test.shell, 1001)
+    test.fold.settle(false)
+    await settled()
+    expect(test.animationsFor(secondary)[0]!.keyframes).toEqual({
+      ...carries(563, 0),
+      clipPath: ['inset(0px 563px 0px 0px)', 'inset(0px 0px 0px 0px)']
+    })
+    test.wrapper.unmount()
+  })
+
+  /*
+   * ADDED for #585. Which side a column is clipped on is asked of the row it
+   * stands in, and the row is measured — so a column already pre-placed by an
+   * EARLIER `enter` of the same change must not be read where its own
+   * pre-placement has just put it. Opening the pages from the bare rail is
+   * exactly that: the secondary panel registers first and is translated a
+   * whole column's width toward the docked edge, and the navigation strip
+   * registering second would otherwise see it standing docked of ITSELF and
+   * call itself a drawer. The strip is the docked-most column of that row,
+   * with the rail travelling out across it — uncovered in place, by the same
+   * rule the mine column is.
+   */
+  it('reads a column already pre-placed by this change at its resting place, not its pre-placed one', async () => {
+    const test = harness({ width: 645 })
+    test.state.remaining = 'pages'
+    test.fold.settle(false)
+    // `carriedColumn` rather than a bare one: `mountedColumns` drops anything
+    // that cannot run Web Animations, and the row this case is about is the
+    // one those two stand in.
+    const secondary = carriedColumn(36, 555)
+    const nav = carriedColumn(599, 38)
+    test.state.secondary = secondary
+    test.state.nav = nav
+    test.fold.enter(secondary)
+    test.fold.enter(nav)
+    expect(secondary.style.transform).toBe('translateX(563px)')
+    expect(nav.style.transform).toBe('')
+    expect(nav.style.clipPath).toBe('inset(0px 0px 0px 46px)')
     test.wrapper.unmount()
   })
 
@@ -1095,8 +1186,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // this change to register, so what it starts is observed after it.
     await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      ...carries(356, 0),
-      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
     test.wrapper.unmount()
   })
@@ -1110,7 +1200,8 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
     expect(test.animationsFor(mine)).toHaveLength(0)
-    expect(mine.style.transform).toBe('translateX(356px)')
+    // AMENDED for #585: the mine column is pre-placed by its clip alone.
+    expect(mine.style.clipPath).toBe('inset(0px 0px 0px 356px)')
     // The window's own resize arrives on its own schedule; nothing here
     // calls `settle` directly — `caughtUp` is the only thing left standing.
     test.state.shell = sized(test.shell, 1001)
@@ -1119,8 +1210,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // this change to register, so what it starts is observed after it.
     await settled()
     expect(test.animationsFor(mine)[0]!.keyframes).toEqual({
-      ...carries(356, 0),
-      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
+      clipPath: ['inset(0px 0px 0px 356px)', 'inset(0px 0px 0px 0px)']
     })
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(356, 0))
     test.wrapper.unmount()
@@ -1130,7 +1220,10 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const test = harness({ width: 645 })
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
-    expect(mine.style.transform).not.toBe('')
+    // AMENDED for #585: the mine column is pre-placed by its clip alone now,
+    // so the clip is what proves it was hidden — and both properties are
+    // still what teardown has to hand back.
+    expect(mine.style.clipPath).not.toBe('')
     test.wrapper.unmount()
     expect(mine.style.transform).toBe('')
     expect(mine.style.clipPath).toBe('')
@@ -1141,6 +1234,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     const mine = placed(test.column(348), 645, 348)
     test.fold.enter(mine)
     expect(mine.style.transform).toBe('')
+    expect(mine.style.clipPath).toBe('')
     test.wrapper.unmount()
   })
 })

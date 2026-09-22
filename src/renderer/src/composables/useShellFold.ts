@@ -8,6 +8,7 @@ import {
   columnFoldTransform,
   columnFoldClip,
   columnSlideKeyframes,
+  type ColumnFold,
   foldedColumnOffset,
   foldedShellWidth,
   shellFoldClip,
@@ -82,10 +83,21 @@ import type { PanelEdge } from '../types'
  * The column that is actually leaving or entering gets its OWN motion now too
  * — not the fade `PanelTransition` used to have before #388 removed it, but a
  * slide the maintainer's own drawing asked for: it travels the same distance
- * the columns free of it do, clipped at its own docked-side edge so the
- * travelling content disappears there rather than painting over the row
- * beside it. `carrySelf`/`placeSelf`, below, are `carry`/`place` with that one
- * difference.
+ * the columns free of it do, clipped at the edge the navigation strip stands
+ * on so the travelling content disappears there rather than painting over the
+ * row beside it. `carrySelf`/`placeSelf`, below, are `carry`/`place` with that
+ * one difference.
+ *
+ * ## Which side the strip is on decides the motion (#585)
+ *
+ * That drawing describes every column on the FREE side of the navigation
+ * strip, and the mine column is not one: it docks BEYOND the strip, so the
+ * strip and everything past it travel ACROSS it. It is therefore uncovered in
+ * place — no travel at all, and a clip on its free side tracking the strip's
+ * own moving edge — which is also the only way its interior is never asked to
+ * re-measure a box that moved. `columnFoldOf`, below, asks which of the two a
+ * column is by measuring the row rather than by knowing its name; `ColumnFold`
+ * in `shellFold.ts` carries the rule itself.
  */
 export interface ShellFoldOptions {
   /** The element the amber ground is painted on. */
@@ -111,7 +123,7 @@ export interface ShellFoldOptions {
    * one, `null` for one the current composition does not draw (#566 T5b). The
    * secondary panel and the navigation stack are both free of the mine column
    * when IT is what closes or opens beside them; neither is free of anything
-   * else, and `begin`/`settle` work that out themselves by walking this list
+   * else, and `begin`/`unfold` work that out themselves by walking this list
    * free-to-docked and asking `foldedColumnOffset` for each one's own rest
    * position, the rail's own formula since #464 generalized rather than
    * restated. Optional and defaulted to none, so a caller with nothing beside
@@ -244,6 +256,13 @@ export function useShellFold(options: ShellFoldOptions) {
   interface Entering {
     column: HTMLElement
     travel: number
+    /**
+     * Which side of this column the strip beside it stands on, decided in
+     * `enter` and kept (#585). Decided THERE and not at the unfold, because
+     * the answer is measured off the row and `enter` has already translated
+     * this column out of it by the time the unfold runs.
+     */
+    fold: ColumnFold
   }
   /** Entering columns pre-placed since the last unfold consumed them. */
   let entering: Entering[] = []
@@ -381,34 +400,87 @@ export function useShellFold(options: ShellFoldOptions) {
   }
 
   /**
-   * Hold the LEAVING or ENTERING column itself `travel` px into its own
-   * docked-side edge, clipped there too (#566 T5b) — `place`'s own contract,
-   * with the clip `carrySelf` also owns.
+   * Where `column` stands once nothing this fold wrote is on it — the rest
+   * position `columnStand` answers for every column except one this module has
+   * ALREADY pre-placed (#585).
+   *
+   * `enter` pre-places each arriving column as it registers, and the columns of
+   * one change register one after another: the second one asks which side of
+   * the row it is on while the first is sitting a whole column's width from
+   * where the row put it. `getBoundingClientRect` includes that transform, so
+   * reading it raw puts the columns of a change in the wrong ORDER — the
+   * navigation strip would find the secondary panel standing docked of itself
+   * and take itself for a drawer. Adding the travel back is exact, because it
+   * is the only thing this module has written onto that element.
    */
-  function placeSelf(column: HTMLElement, travel: number): void {
-    place(column, travel)
-    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge())
+  function restStand(shell: HTMLElement, column: HTMLElement): number {
+    const stand = columnStand(shell, column)
+    const placed = entering.find((one) => one.column === column)
+    return placed === undefined ? stand : stand + placed.travel
+  }
+
+  /**
+   * Which way THIS column's own motion goes, asked of the row rather than of
+   * its name (#585).
+   *
+   * One rule: a column is clipped on the side the navigation strip stands on
+   * (`ColumnFold`, in `shellFold.ts`). Geometrically that is the same question
+   * as "is anything else in this row nearer the docked edge than I am" — the
+   * strip, and the mine column beyond it, are the only things that can be, and
+   * the column with NOTHING docked of it is the one the whole rest of the row
+   * travels across. It is the mine when there is one, and the strip itself
+   * when there is not: opening the pages from the bare rail uncovers that
+   * strip with the rail's own travel in exactly the same way.
+   *
+   * `row` is every column standing in this change — the carried ones and the
+   * ones leaving or entering, which `mountedColumns` alone does not answer for
+   * (the mine column is never carried, and a leaving column's own ref is
+   * nulled by Vue while it is still in the DOM).
+   */
+  function columnFoldOf(
+    shell: HTMLElement,
+    column: HTMLElement,
+    row: readonly HTMLElement[]
+  ): ColumnFold {
+    const stand = restStand(shell, column)
+    const behind = row.some((other) => other !== column && restStand(shell, other) < stand)
+    return behind ? 'drawer' : 'uncovered'
+  }
+
+  /**
+   * Hold the LEAVING or ENTERING column itself `travel` px into the edge the
+   * strip beside it stands on, clipped there too (#566 T5b) — `place`'s own
+   * contract, with the clip `carrySelf` also owns.
+   *
+   * An `'uncovered'` column is held by the clip ALONE (#585): its box never
+   * leaves the place the row gave it, and `place(column, 0)` is what says so —
+   * the empty transform, so the row's own answer is the only one on it.
+   */
+  function placeSelf(column: HTMLElement, travel: number, fold: ColumnFold): void {
+    place(column, fold === 'uncovered' ? 0 : travel)
+    column.style.clipPath = travel === 0 ? '' : columnFoldClip(travel, options.edge(), fold)
   }
 
   /**
    * Carry the leaving or entering column itself, sharing `carry`'s own
-   * contract but on `columnSlideKeyframes` — `x` AND `clipPath` together, so
-   * the two compositor properties this column's own motion touches finish, or
-   * watchdog-end, in the same run rather than two independently-timed ones
-   * that could disagree about where it is (#566 T5b).
+   * contract but on `columnSlideKeyframes` — the travel AND the clip together,
+   * so the two compositor properties this column's own motion touches finish,
+   * or watchdog-end, in the same run rather than two independently-timed ones
+   * that could disagree about where it is (#566 T5b, one timeline since #585).
    */
   function carrySelf(
     column: HTMLElement,
     from: number,
     to: number,
-    transition: MotionTransition
+    transition: MotionTransition,
+    fold: ColumnFold
   ): void {
     if (from === to) return
-    placeSelf(column, from)
+    placeSelf(column, from, fold)
     void motion.run(
       column,
-      columnSlideKeyframes(from, to, options.edge()),
-      () => placeSelf(column, to),
+      columnSlideKeyframes(from, to, options.edge(), fold),
+      () => placeSelf(column, to, fold),
       transition
     )
   }
@@ -550,13 +622,18 @@ export function useShellFold(options: ShellFoldOptions) {
       before = [...before, own]
     }
 
-    // Each leaving column slides and clips on its own account (#566 T5b): it
-    // is not free of the box it is vacating, so `carry` alone — a transform
-    // with nothing else changed — would paint it over whatever the row draws
-    // beside it, or past the window's own edge, for as long as the run takes.
+    // Each leaving column clips, and slides if it is a drawer, on its own
+    // account (#566 T5b): it is not free of the box it is vacating, so a
+    // transform with nothing else changed would paint it over whatever the row
+    // draws beside it, or past the window's own edge, for as long as the run
+    // takes. Which of the two it is, is asked of the row it is standing in —
+    // the carried columns AND everything leaving with it, because the mine
+    // column is never carried and a leaving column's own ref is nulled by Vue
+    // while it is still in the DOM (#585).
+    const row = [...mountedColumns(), ...pending.columns]
     for (const column of pending.columns) {
       const width = column.getBoundingClientRect().width
-      carrySelf(column, 0, width + gap, transition)
+      carrySelf(column, 0, width + gap, transition, columnFoldOf(shell, column, row))
     }
 
     run(
@@ -634,8 +711,11 @@ export function useShellFold(options: ShellFoldOptions) {
     // read here, off the shell the column has already been laid out inside.
     const gap = parseFloat(getComputedStyle(shell).columnGap) || 0
     const travel = column.getBoundingClientRect().width + gap
-    placeSelf(column, travel)
-    entering.push({ column, travel })
+    // Measured BEFORE the pre-placement below, which is the one thing that
+    // would move this column out of the row it is being read against (#585).
+    const fold = columnFoldOf(shell, column, [...mountedColumns(), column])
+    placeSelf(column, travel, fold)
+    entering.push({ column, travel, fold })
     // The last column to register is what the unfold was waiting for (#585).
     // Asked for here as well as from `settle` because the two arrive in either
     // order and neither is guaranteed: `settle` is the one App.vue's watch
@@ -763,7 +843,8 @@ export function useShellFold(options: ShellFoldOptions) {
     const enteringNow = entering
     entering = []
     const enteringColumns = new Set(enteringNow.map((one) => one.column))
-    for (const { column, travel } of enteringNow) carrySelf(column, travel, 0, transition)
+    for (const { column, travel, fold } of enteringNow)
+      carrySelf(column, travel, 0, transition, fold)
     // Every OTHER carried column returns from the footprint it had when the
     // fold it is answering for last settled — outside the footprint this
     // unfolds FROM when it is entering room the row only just repacked into,
@@ -898,7 +979,7 @@ export function useShellFold(options: ShellFoldOptions) {
     // An entering column pre-placed by `enter` but never carried by an unfold
     // this instance saw — the component that owns the fold went away first —
     // is not this app's to leave invisible: nothing else will ever reveal it.
-    for (const { column } of entering) placeSelf(column, 0)
+    for (const { column, fold } of entering) placeSelf(column, 0, fold)
     entering = []
   })
 

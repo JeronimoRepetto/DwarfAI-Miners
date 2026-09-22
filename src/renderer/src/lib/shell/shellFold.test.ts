@@ -362,8 +362,10 @@ describe('columnFoldKeyframes', () => {
  */
 describe('columnFoldClip', () => {
   it('clips nothing at zero travel, the column’s own resting frame', () => {
-    expect(columnFoldClip(0, 'right')).toBe('inset(0px 0px 0px 0px)')
-    expect(columnFoldClip(0, 'left')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'right', 'drawer')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left', 'drawer')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'right', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(0, 'left', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
   })
 
   /*
@@ -371,17 +373,37 @@ describe('columnFoldClip', () => {
    * SAME travel on `transform`, the visible sliver stays pinned at the
    * column's own original docked-side edge — the "wall" in the drawing — and
    * narrows away from the free side as the column slides toward it.
+   *
+   * AMENDED for #585: which side is the wall is now asked rather than
+   * assumed. A drawer's wall is the strip docked of it, and this is that
+   * case, unchanged.
    */
-  it('insets the docked-side edge of a right-docked column’s own box', () => {
-    expect(columnFoldClip(200, 'right')).toBe('inset(0px 200px 0px 0px)')
+  it('insets the docked-side edge of a right-docked drawer’s own box', () => {
+    expect(columnFoldClip(200, 'right', 'drawer')).toBe('inset(0px 200px 0px 0px)')
   })
 
-  it('insets the docked-side edge of a left-docked column’s own box, the other side', () => {
-    expect(columnFoldClip(200, 'left')).toBe('inset(0px 0px 0px 200px)')
+  it('insets the docked-side edge of a left-docked drawer’s own box, the other side', () => {
+    expect(columnFoldClip(200, 'left', 'drawer')).toBe('inset(0px 0px 0px 200px)')
+  })
+
+  /*
+   * ADDED for #585, and the other half of the one rule: a column is clipped
+   * on the side the navigation strip stands on. The mine column docks BEYOND
+   * that strip, so the strip is on its FREE side and what reveals it is the
+   * strip travelling off it — the edge that moves is the free one, and the
+   * column itself never translates at all.
+   */
+  it('insets the free-side edge of a right-docked column the strip uncovers', () => {
+    expect(columnFoldClip(200, 'right', 'uncovered')).toBe('inset(0px 0px 0px 200px)')
+  })
+
+  it('insets the free-side edge of a left-docked column the strip uncovers', () => {
+    expect(columnFoldClip(200, 'left', 'uncovered')).toBe('inset(0px 200px 0px 0px)')
   })
 
   it('never insets past zero, whatever it is handed', () => {
-    expect(columnFoldClip(-5, 'right')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'drawer')).toBe('inset(0px 0px 0px 0px)')
+    expect(columnFoldClip(-5, 'right', 'uncovered')).toBe('inset(0px 0px 0px 0px)')
   })
 })
 
@@ -392,16 +414,34 @@ describe('columnSlideKeyframes', () => {
    * "the SAME two keyframes" is finally the same CLOCK as well.
    */
   it('carries the transform and the clip on the SAME two keyframes', () => {
-    expect(columnSlideKeyframes(0, 563, 'right')).toEqual({
+    expect(columnSlideKeyframes(0, 563, 'right', 'drawer')).toEqual({
       transform: ['translateX(0px)', 'translateX(563px)'],
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 563px 0px 0px)']
     })
   })
 
   it('mirrors both halves onto a left-docked shell together', () => {
-    expect(columnSlideKeyframes(0, 200, 'left')).toEqual({
+    expect(columnSlideKeyframes(0, 200, 'left', 'drawer')).toEqual({
       transform: ['translateX(0px)', 'translateX(-200px)'],
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 200px)']
+    })
+  })
+
+  /*
+   * ADDED for #585. A column the strip uncovers has NO travel of its own —
+   * that is the whole of what "in place" means: the clip alone answers for
+   * it, on the free-side edge the strip is sweeping across, and its box never
+   * moves so the interior inside it is never asked to re-measure.
+   */
+  it('gives an uncovered column the clip alone, with no travel of its own', () => {
+    expect(columnSlideKeyframes(0, 356, 'right', 'uncovered')).toEqual({
+      clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 0px 0px 356px)']
+    })
+  })
+
+  it('mirrors an uncovered column’s clip onto a left-docked shell, still with no travel', () => {
+    expect(columnSlideKeyframes(356, 0, 'left', 'uncovered')).toEqual({
+      clipPath: ['inset(0px 356px 0px 0px)', 'inset(0px 0px 0px 0px)']
     })
   })
 })
