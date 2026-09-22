@@ -100,6 +100,35 @@ describe('OpenCodePermissionRegistry', () => {
     expect(asks.isOpen('ses_1')).toBe(false)
   })
 
+  describe('pendingSessionIds() (#588 T4)', () => {
+    // T4's own way of driving forget() on session end: a poll walks every id
+    // this registry is still holding and forgets whichever one has left the
+    // published board, mirroring runtime.ts's existing hosted-process sweep
+    // (`this.hosted.states()`) generalised to a session this app never
+    // started. Nothing else in this registry can enumerate its own keys.
+    it('lists every session with a pending ask right now', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked({ sessionId: 'ses_1', requestId: 'per_1' }))
+      asks.note(asked({ sessionId: 'ses_2', requestId: 'per_2' }))
+      expect([...asks.pendingSessionIds()].sort()).toEqual(['ses_1', 'ses_2'])
+    })
+
+    it('answers empty with nothing pending', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      expect(asks.pendingSessionIds()).toEqual([])
+    })
+
+    it('drops a session once it is forgotten', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked({ sessionId: 'ses_1', requestId: 'per_1' }))
+      asks.forget('ses_1')
+      expect(asks.pendingSessionIds()).toEqual([])
+    })
+  })
+
   it('closes only the session named, leaving a sibling session alone', () => {
     const clock = { now: 1_000 }
     const asks = registry(clock)
@@ -170,6 +199,80 @@ describe('OpenCodePermissionRegistry', () => {
       asks.note(asked({ requestId: 'per_2' }))
       clock.now += UNCLAIMED_ASK_GRACE_MS - 1
       expect(asks.isOpen('ses_1')).toBe(true)
+    })
+  })
+
+  /**
+   * #588 review F1/F3: a pending ask now tracks whether it has ever been
+   * SEEN on a dwarf, not merely whether it is pending. `askFor()` is the one
+   * call OpenCodeProvider makes while actually drawing a session's dwarf
+   * (opencodeProvider.ts's `publish()`), so a defined answer from it IS the
+   * "drawn" event -- there is no second, separate signal for it.
+   */
+  describe('drawn lifecycle (#588 review F1/F3)', () => {
+    it('never-drawn: stays off drawnSessionIds(), so board-absence alone has nothing to act on', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked())
+      // Nothing has called askFor()/isOpen() yet -- the session was never
+      // found on a poll's board, F1's own concrete failure.
+      expect(asks.drawnSessionIds()).toEqual([])
+      expect(asks.pendingSessionIds()).toEqual(['ses_1'])
+    })
+
+    it('never-drawn: still ages out at the grace window exactly as before (unaffected by F3)', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked())
+      clock.now += UNCLAIMED_ASK_GRACE_MS
+      asks.observe()
+      expect(asks.size).toBe(0)
+    })
+
+    it('drawn: askFor() returning the ask is what marks it drawn, and adds it to drawnSessionIds()', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked())
+      expect(asks.drawnSessionIds()).toEqual([])
+      expect(asks.askFor('ses_1')).toEqual(asked())
+      expect(asks.drawnSessionIds()).toEqual(['ses_1'])
+    })
+
+    it('drawn: no longer ages out on the clock, unlike a never-drawn ask (#588 review F3)', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked())
+      asks.askFor('ses_1') // drawn: a dwarf carried this card at least once
+      // Two minutes -- twice the grace window -- with the dialog still open
+      // the whole time. The window was written for an ask nobody has SEEN;
+      // it must not govern one that is actually on screen.
+      clock.now += UNCLAIMED_ASK_GRACE_MS * 2
+      asks.observe()
+      expect(asks.size).toBe(1)
+      expect(asks.askFor('ses_1')).toEqual(asked())
+    })
+
+    it('a fresh requestId replacing a drawn ask starts undrawn again, taking its own grace window', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked({ requestId: 'per_1' }))
+      asks.askFor('ses_1') // drawn
+      clock.now += 10_000
+      // A genuinely new ask for the same session -- e.g. the person answered
+      // the first and the agent immediately hit a second gated call.
+      asks.note(asked({ requestId: 'per_2' }))
+      expect(asks.drawnSessionIds()).toEqual([])
+      expect(asks.pendingSessionIds()).toEqual(['ses_1'])
+    })
+
+    it('a reply closes a drawn ask exactly as it closes an undrawn one', () => {
+      const clock = { now: 1_000 }
+      const asks = registry(clock)
+      asks.note(asked())
+      asks.askFor('ses_1')
+      asks.note(replied())
+      expect(asks.isOpen('ses_1')).toBe(false)
+      expect(asks.drawnSessionIds()).toEqual([])
     })
   })
 })

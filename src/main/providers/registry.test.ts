@@ -48,7 +48,10 @@ function context(): ProviderContext {
     // AMENDED for #237, step 5: the context gained one narrow seam, for the one
     // fact the Antigravity store cannot recover about a conversation this panel
     // holds. Nothing here holds one, so it answers undefined.
-    heldWorkspaceOf: () => undefined
+    heldWorkspaceOf: () => undefined,
+    // AMENDED for #588 T4: the context gained one more narrow seam, for the
+    // OpenCode registry's own pending ask. Nothing here holds one either.
+    openCodePendingAsk: () => undefined
   }
 }
 

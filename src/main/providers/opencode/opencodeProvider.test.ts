@@ -6,6 +6,7 @@ import type { FsLike } from '../../adapters/fsLike'
 import { MemorySqlite } from '../../adapters/memorySqlite'
 import type { SqliteDb, SqliteLike } from '../../adapters/sqliteLike'
 import { dwarfSilenceWindowMs } from '../../domain/types'
+import type { PendingAsk } from '../../opencodePermissions/openCodePermissionRegistry'
 import { OpenCodeProvider } from './opencodeProvider'
 import {
   eventInsert,
@@ -119,13 +120,30 @@ function makeProvider(options: {
   fs: FsLike
   sqlite: SqliteLike
   now?: () => number
+  pendingPermission?: (sessionId: string) => PendingAsk | undefined
 }): OpenCodeProvider {
   return new OpenCodeProvider({
     fs: options.fs,
     sqlite: options.sqlite,
     storeRoot: ROOT,
-    now: options.now ?? (() => NOW)
+    now: options.now ?? (() => NOW),
+    ...(options.pendingPermission === undefined
+      ? {}
+      : { pendingPermission: options.pendingPermission })
   })
+}
+
+/** One OpenCodePermissionRegistry 'asked' push, exactly as askFor() returns it (#588 T4). */
+function pendingAsk(overrides: Partial<PendingAsk> = {}): PendingAsk {
+  return {
+    provider: 'opencode',
+    kind: 'asked',
+    serverUrl: 'http://127.0.0.1:63417/',
+    sessionId: 'ses_a',
+    requestId: 'per_1',
+    permission: 'bash',
+    ...overrides
+  }
 }
 
 describe('OpenCodeProvider.scan — discovery', () => {
@@ -368,7 +386,7 @@ describe('OpenCodeProvider.scan — D3 liveness', () => {
     expect(second?.status).toBe('busy')
   })
 
-  it('never reports SessionStatus waiting — only busy or idle', async () => {
+  it('never reports SessionStatus waiting from D3 liveness alone — only busy or idle (#588 T4 adds the one other source)', async () => {
     const fake = new FakeFs()
     seedStore(fake)
     const sqlite = realSqlite()
@@ -532,6 +550,258 @@ describe('OpenCodeProvider.scan — retention', () => {
 
     const ids = (await provider.scan()).map((snapshot) => snapshot.sessionId)
     expect(ids).toEqual(['ses_active'])
+  })
+})
+
+describe('OpenCodeProvider.scan — permission asks (#588 T4)', () => {
+  /*
+   * D3's own doc says the schema itself carries no pending-permission
+   * evidence. This registry push is not the schema — it is what
+   * `openCodePermissionRegistry.ts`'s askFor() answers, threaded in exactly
+   * the way `isPermissionPromptOpen` reaches claudeProvider.ts, except this
+   * one hands back the ask itself rather than a boolean: OpenCode's plugin
+   * event already names the request whole, so there is no second, richer
+   * source in this store to confirm it against.
+   */
+  function seededSession(overrides: { id?: string; directory?: string; parentId?: string } = {}) {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: overrides.id ?? 'ses_a',
+        directory: overrides.directory ?? '/home/j/p',
+        timeUpdatedMs: NOW,
+        ...(overrides.parentId === undefined ? {} : { parentId: overrides.parentId })
+      })
+    )
+    return { fake, sqlite }
+  }
+
+  it("stamps pendingPermission from the registry's own ask, field by field", async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) =>
+        sessionId === 'ses_a'
+          ? pendingAsk({
+              sessionId: 'ses_a',
+              requestId: 'per_1',
+              permission: 'bash',
+              command: 'ls'
+            })
+          : undefined
+    })
+
+    const [snapshot] = await provider.scan()
+    expect(snapshot?.dwarfs[0]?.pendingPermission).toEqual({
+      // requestId, not callId: OpenCode's own permission.replied event names
+      // the ask by requestID (permissionPushPayload.ts), so that is the id a
+      // later answer will actually round-trip against.
+      toolUseId: 'per_1',
+      toolName: 'bash',
+      input: 'ls',
+      channel: 'terminal',
+      askedAt: new Date(NOW).toISOString()
+    })
+  })
+
+  it('marks the session waiting on a human, in both the dwarf and the snapshot status', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) => (sessionId === 'ses_a' ? pendingAsk() : undefined)
+    })
+
+    const [snapshot] = await provider.scan()
+    expect(snapshot?.dwarfs[0]?.waitingReason).toBe('approval')
+    expect(snapshot?.dwarfs[0]?.status).toBe('waiting')
+    expect(snapshot?.status).toBe('waiting')
+  })
+
+  it('overrides a busy reading: an open ask means waiting on a human whatever D3 would otherwise say', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    // No completed row at all -- streaming, D3's own strongest busy signal.
+    sqlite.exec(
+      DB_PATH,
+      messageInsert({
+        id: 'm1',
+        sessionId: 'ses_a',
+        timeCreatedMs: NOW - 1_000,
+        data: { role: 'assistant', time: { created: NOW - 1_000 } }
+      })
+    )
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) => (sessionId === 'ses_a' ? pendingAsk() : undefined)
+    })
+
+    const [snapshot] = await provider.scan()
+    expect(snapshot?.dwarfs[0]?.status).toBe('waiting')
+    expect(snapshot?.status).toBe('waiting')
+  })
+
+  it('carries the channel this slice can honestly claim: terminal, and unanswerable until #588 T5', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) => (sessionId === 'ses_a' ? pendingAsk() : undefined)
+    })
+
+    const [snapshot] = await provider.scan()
+    const wire = snapshot?.dwarfs[0]?.pendingPermission
+    expect(wire?.channel).toBe('terminal')
+    // #588 review F4: this fixture's `pendingAsk()` carries neither `command`
+    // nor `patterns`, so `input` must be the omitted empty string, never the
+    // fabricated "{}".
+    expect(wire?.input).toBe('')
+  })
+
+  it('says nothing when the registry has no open ask for this session', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({ fs: fake, sqlite, pendingPermission: () => undefined })
+
+    const [snapshot] = await provider.scan()
+    expect(snapshot?.dwarfs[0]?.pendingPermission).toBeUndefined()
+    expect(snapshot?.dwarfs[0]?.waitingReason).toBeUndefined()
+    expect(snapshot?.status).not.toBe('waiting')
+  })
+
+  it("names only the session the registry actually opened an ask for, leaving a sibling's dwarf alone", async () => {
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_a', directory: '/home/j/p', timeUpdatedMs: NOW }))
+    sqlite.exec(DB_PATH, sessionInsert({ id: 'ses_b', directory: '/home/j/q', timeUpdatedMs: NOW }))
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) =>
+        sessionId === 'ses_a' ? pendingAsk({ sessionId: 'ses_a' }) : undefined
+    })
+
+    const snapshots = await provider.scan()
+    const dwarfA = snapshots.flatMap((s) => s.dwarfs).find((d) => d.sessionId === 'ses_a')
+    const dwarfB = snapshots.flatMap((s) => s.dwarfs).find((d) => d.sessionId === 'ses_b')
+    expect(dwarfA?.pendingPermission).toBeDefined()
+    expect(dwarfB?.pendingPermission).toBeUndefined()
+  })
+
+  it('stamps a WORKER session too — unlike Claude, an OpenCode sessionId never names two dwarfs at once', async () => {
+    // D4: session.parent_id gives every session, root or worker, its own id.
+    // Claude's own guard (pendingPermissionField, claudeProvider.ts) exists
+    // because a subagent shares its foreman's sessionId there; that ambiguity
+    // does not exist in this schema, so there is nothing here to guard.
+    const fake = new FakeFs()
+    seedStore(fake)
+    const sqlite = realSqlite()
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({ id: 'ses_parent', directory: '/home/j/p', timeUpdatedMs: NOW })
+    )
+    sqlite.exec(
+      DB_PATH,
+      sessionInsert({
+        id: 'ses_child',
+        directory: '/home/j/p',
+        parentId: 'ses_parent',
+        timeUpdatedMs: NOW
+      })
+    )
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) =>
+        sessionId === 'ses_child' ? pendingAsk({ sessionId: 'ses_child' }) : undefined
+    })
+
+    const snapshots = await provider.scan()
+    const child = snapshots.flatMap((s) => s.dwarfs).find((d) => d.sessionId === 'ses_child')
+    expect(child?.role).toBe('worker')
+    expect(child?.pendingPermission).toBeDefined()
+  })
+
+  it('summarises the command the same redacted way permissionInputLine does everywhere else', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) =>
+        sessionId === 'ses_a'
+          ? pendingAsk({
+              sessionId: 'ses_a',
+              command: 'curl -H sk-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN https://x'
+            })
+          : undefined
+    })
+
+    const snapshots = await provider.scan()
+    const input = snapshots[0]?.dwarfs[0]?.pendingPermission?.input
+    expect(input).not.toContain('sk-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN')
+    expect(input).toContain('[redacted]')
+    expect(JSON.stringify(snapshots)).not.toContain('sk-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN')
+  })
+
+  it('falls back to the whole-input summary when the ask carried patterns but no command', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) =>
+        sessionId === 'ses_a'
+          ? pendingAsk({ sessionId: 'ses_a', permission: 'grep', patterns: ['*.ts', '*.vue'] })
+          : undefined
+    })
+
+    const [snapshot] = await provider.scan()
+    expect(snapshot?.dwarfs[0]?.pendingPermission?.input).toBe('*.ts, *.vue')
+  })
+
+  it('carries no title or description, which only a terminal this app cannot read ever rendered', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      pendingPermission: (sessionId) => (sessionId === 'ses_a' ? pendingAsk() : undefined)
+    })
+
+    const [snapshot] = await provider.scan()
+    const wire = snapshot?.dwarfs[0]?.pendingPermission
+    expect(wire !== undefined && 'title' in wire).toBe(false)
+    expect(wire !== undefined && 'description' in wire).toBe(false)
+    // #588 review F4: `pendingAsk()` here carries neither `command` nor
+    // `patterns` -- exactly what an edit/webfetch ask looks like, since only
+    // bash is ever measured carrying both. `input` must never be the
+    // fabricated "{}" `permissionInputLine({})` would otherwise produce.
+    expect(wire?.input).toBe('')
+  })
+
+  it('never renders the fabricated "{}" when the ask names no command and no patterns (#588 review F4)', async () => {
+    const { fake, sqlite } = seededSession({ id: 'ses_a' })
+    const provider = makeProvider({
+      fs: fake,
+      sqlite,
+      // An edit/webfetch ask: `buildAsked` leaves both fields optional, and
+      // neither is set here -- the exact shape `namedSubject({})` cannot name
+      // and `summarizePermissionInput` used to fall through to
+      // `JSON.stringify({})`.
+      pendingPermission: (sessionId) =>
+        sessionId === 'ses_a'
+          ? pendingAsk({ sessionId: 'ses_a', permission: 'webfetch' })
+          : undefined
+    })
+
+    const [snapshot] = await provider.scan()
+    const input = snapshot?.dwarfs[0]?.pendingPermission?.input
+    expect(input).not.toBe('{}')
+    // Omit the invented content rather than show a meaningless payload: the
+    // card still names the tool and the channel, just nothing underneath.
+    expect(input).toBe('')
   })
 })
 

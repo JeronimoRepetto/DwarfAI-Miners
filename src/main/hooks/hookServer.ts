@@ -25,9 +25,10 @@ export interface HookServerOptions {
   onEvent: (event: HookEvent) => void
   /**
    * A parsed OpenCode permission push, when the plugin's own route
-   * (OPENCODE_PUSH_ROUTE) is hit. Optional: nothing consumes it yet -- a
-   * later slice (#588 T4) wires a registry to it, exactly as onEvent above
-   * is wired to Claude's PermissionPromptRegistry from runtime.ts today.
+   * (OPENCODE_PUSH_ROUTE) is hit. Optional in this file's own tests, but
+   * main/index.ts now wires it to `AgentRuntime.noteOpenCodePush`, which
+   * feeds `OpenCodePermissionRegistry` (#588 T4) -- exactly as onEvent above
+   * is wired to Claude's PermissionPromptRegistry.
    */
   onOpenCodePush?: (push: OpenCodePermissionPush) => void
   log?: (message: string) => void

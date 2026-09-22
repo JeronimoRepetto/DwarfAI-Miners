@@ -1178,6 +1178,15 @@ async function init(): Promise<void> {
       runtime?.noteHookEvent(event)
       runtime?.nudge()
     },
+    // The OpenCode plugin's own push (#588 T3 carries the route, T4 is the
+    // first consumer): recorded on OpenCodePermissionRegistry the same way
+    // onEvent above records onto PermissionPromptRegistry, and nudged for the
+    // same reason — an ask should reach the panel as fast as Claude's own
+    // hook does, not wait for the next ordinary poll.
+    onOpenCodePush: (push) => {
+      runtime?.noteOpenCodePush(push)
+      runtime?.nudge()
+    },
     log: (message) => console.log(message),
     warn: warnWithOptionalCause
   })

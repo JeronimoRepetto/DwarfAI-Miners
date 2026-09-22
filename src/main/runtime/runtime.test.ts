@@ -56,6 +56,9 @@ import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
+import { UNCLAIMED_ASK_GRACE_MS } from '../opencodePermissions/openCodePermissionRegistry'
+import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
+import { PROVIDER_REGISTRY, type ProviderFactory } from '../providers/registry'
 import type { Provider } from '../providers/provider'
 import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
 import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
@@ -11712,6 +11715,250 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
     runtime.stop()
 
     expect(reasonOf(runtime)).toBeUndefined()
+  })
+})
+
+describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
+  /**
+   * A provider narrow enough to prove runtime.ts's OWN wiring — construction,
+   * noteOpenCodePush, observe() on the poll chain, forget() on session end —
+   * without opencode.db: it reads sessions from a getter (mutable across
+   * scans, unlike a captured array) and stamps pendingPermission straight
+   * from the context seam runtime.ts is supposed to hand every provider,
+   * exactly as PROVIDER_REGISTRY.opencode's real row does (registry.ts).
+   */
+  function openCodeStub(getSessions: () => string[]): ProviderFactory {
+    return (ctx) => ({
+      kind: 'opencode',
+      scan: async () =>
+        getSessions().map((sessionId) => {
+          const ask = ctx.openCodePendingAsk(sessionId)
+          return {
+            provider: 'opencode' as const,
+            sessionId,
+            cwd: `C:\\X\\${sessionId}`,
+            status: ask === undefined ? ('idle' as const) : ('waiting' as const),
+            updatedAt: 7,
+            dwarfs: [
+              {
+                id: `opencode:${sessionId}`,
+                provider: 'opencode' as const,
+                role: 'foreman' as const,
+                name: sessionId,
+                status: 'waiting' as const,
+                sessionId,
+                ...(ask === undefined ? {} : { waitingReason: 'approval' as const })
+              }
+            ]
+          }
+        }),
+      feed: async () => []
+    })
+  }
+
+  function askPush(sessionId = 'ses_1', requestId = 'per_1'): OpenCodePermissionPush {
+    return {
+      provider: 'opencode',
+      kind: 'asked',
+      serverUrl: 'http://127.0.0.1:1/',
+      sessionId,
+      requestId,
+      permission: 'bash'
+    }
+  }
+
+  it("reaches OpenCodeProvider's own context seam from a pushed ask", async () => {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      platformAdapters: worktreePlatformAdapters(),
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+  })
+
+  // AMENDED for #588 review F1/F3 (was "sweeps an unclaimed ask past its grace
+  // window..."): the old body pushed the ask while `ses_1` was ALREADY on the
+  // board, so the very first refresh() drew the card -- that is a DRAWN ask,
+  // and the old assertion that it vanished a grace window later was pinning
+  // the F3 bug (a displayed card silently disappearing), not the unclaimed
+  // case its name claimed. A genuinely UNCLAIMED ask is one nothing has ever
+  // drawn, which is what this now sets up: `ses_1` stays off the board for
+  // the whole grace window, so askFor() is never called for it at all. The
+  // drawn case gets its own test below.
+  it('sweeps a NEVER-DRAWN ask past its grace window, exactly as before it could ever reach a dwarf (#588 review F1)', async () => {
+    let clock = 1_000
+    let sessions: string[] = []
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    // The session is not on the board yet -- the plugin's push beat the
+    // scan, F1's own concrete failure -- so askFor() is never reached and
+    // this ask is never drawn.
+    await runtime.refresh()
+    expect(runtime.getMines()).toHaveLength(0)
+
+    clock += UNCLAIMED_ASK_GRACE_MS
+    await runtime.refresh()
+
+    // Only now does the session appear on the board, with no fresh ask
+    // pushed. If the never-drawn entry had outlived its own grace window, it
+    // would show here.
+    sessions = ['ses_1']
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+  })
+
+  it('never forgets a NEVER-DRAWN ask merely for being absent from one poll board (#588 review F1)', async () => {
+    // The exact concrete failure F1 names: the plugin's push reaches the
+    // registry and nudges an immediate poll, but the session row is not
+    // readable yet on that first scan (a transient sqlite lock, or the write
+    // simply has not landed) -- so the very first poll's board has no dwarf
+    // for this session at all. Board-absence on ONE poll must never be read
+    // as the session having ended.
+    let clock = 1_000
+    let sessions: string[] = []
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    expect(runtime.getMines()).toHaveLength(0)
+
+    // The session is readable now, well inside the grace window -- the card
+    // must still show the ask nobody ever took away.
+    clock += 1_000
+    sessions = ['ses_1']
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+  })
+
+  it('keeps a DRAWN ask open past its own grace window while the session is still on the board (#588 review F3)', async () => {
+    let clock = 1_000
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    // Drawn: the provider attached this ask to a real dwarf on this poll.
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+
+    // Two minutes -- twice UNCLAIMED_ASK_GRACE_MS -- with the terminal's own
+    // dialog still open the whole time and the session still on the board.
+    // The window was written for an ask nobody has SEEN yet; it must not
+    // govern one that is actually displayed.
+    clock += UNCLAIMED_ASK_GRACE_MS * 2
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+  })
+
+  it('closes an ask the moment a matching reply is pushed', async () => {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      platformAdapters: worktreePlatformAdapters(),
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+
+    runtime.noteOpenCodePush({
+      provider: 'opencode',
+      kind: 'replied',
+      serverUrl: 'http://127.0.0.1:1/',
+      sessionId: 'ses_1',
+      requestId: 'per_1',
+      reply: 'once'
+    })
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+  })
+
+  it('forgets a session once its dwarf actually leaves the published board, well short of the ask grace window', async () => {
+    // Proves forget() fires from the board leaving, not from the ask's own
+    // clock: the dwarf lifecycle tracker keeps a vanished provider session
+    // drawn as 'leaving' for config.dwarfLeaveGraceS (20s default) before it
+    // truly drops off `published`, so the clock has to clear THAT grace
+    // window -- but 21s is still far short of UNCLAIMED_ASK_GRACE_MS (60s),
+    // so only forget() on the board leaving, never the time-based sweep,
+    // explains the ask being gone below.
+    //
+    // #588 review F1/F3: this is specifically the DRAWN-then-absent branch —
+    // the first refresh() below finds `ses_1` on the board and draws the
+    // card (askFor() returns the ask), so by the time the session leaves,
+    // this ask is exactly the kind board-absence is now allowed to end. The
+    // never-drawn branch, where board-absence must NOT forget it, is pinned
+    // by the two tests above.
+    let clock = 1_000
+    let sessions = ['ses_1']
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs).toHaveLength(1)
+
+    sessions = []
+    // First poll after disappearing: the lifecycle tracker draws it 'leaving'
+    // rather than dropping it, so it is still on `published` and the ask must
+    // still stand.
+    clock += 1_000
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+
+    // Clears config.dwarfLeaveGraceS (20s default) since the dwarf went
+    // missing, so THIS poll is the one where it truly drops off `published` —
+    // the moment forget() fires. Still 21s total, far short of
+    // UNCLAIMED_ASK_GRACE_MS (60s).
+    clock += 20_000
+    await runtime.refresh()
+
+    // The same session id returns with no fresh ask -- if the earlier one
+    // were still held, this dwarf would wrongly carry it again.
+    sessions = ['ses_1']
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
   })
 })
 

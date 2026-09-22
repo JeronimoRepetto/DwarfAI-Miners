@@ -2,6 +2,7 @@ import type { FsLike } from '../adapters/fsLike'
 import type { SqliteLike } from '../adapters/sqliteLike'
 import type { AppConfig } from '../config/config'
 import type { DwarfProvider } from '../domain/types'
+import type { PendingAsk } from '../opencodePermissions/openCodePermissionRegistry'
 import type { PlatformAdapters } from '../platform/platformAdapters'
 import { AntigravityProvider } from './antigravity/antigravityProvider'
 import { ClaudeProvider } from './claude/claudeProvider'
@@ -81,6 +82,13 @@ export interface ProviderContext {
    * read it, exactly as Codex reads neither of the two above.
    */
   heldWorkspaceOf: (sessionId: string) => string | undefined
+  /**
+   * `OpenCodePermissionRegistry.askFor`'s answer for a session (#588 T4) —
+   * the OpenCode plugin's own push, for the provider whose store carries no
+   * pending-permission evidence of its own. A provider whose CLI pushes
+   * nothing simply does not read it, exactly as `heldWorkspaceOf` above.
+   */
+  openCodePendingAsk: (sessionId: string) => PendingAsk | undefined
 }
 
 /** How one provider is built. */
@@ -153,11 +161,16 @@ export const PROVIDER_REGISTRY: Record<DwarfProvider, ProviderFactory> = {
   // The plainest row so far (#444): one setting, no platform, no probe, no
   // held-session lookup. opencode.db is the single source; there is no path
   // set to fold for any OS, so no Platform is taken either.
-  opencode: ({ config, fs, sqlite, expandPath }) =>
+  //
+  // AMENDED for #588 T4: one seam joined it, openCodePendingAsk, for the one
+  // thing opencode.db cannot carry — a permission ask, which reaches this app
+  // only as a push from the plugin, never as a store row.
+  opencode: ({ config, fs, sqlite, expandPath, openCodePendingAsk }) =>
     new OpenCodeProvider({
       fs,
       sqlite,
-      storeRoot: expandPath(config.providers.opencode.storeRoot)
+      storeRoot: expandPath(config.providers.opencode.storeRoot),
+      pendingPermission: openCodePendingAsk
     })
 }
 

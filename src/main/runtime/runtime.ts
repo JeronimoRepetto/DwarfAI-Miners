@@ -94,6 +94,8 @@ import {
 } from '../domain/aggregate'
 import type { HookEvent } from '../hooks/hookPayload'
 import { PermissionPromptRegistry, stampPermissionPrompts } from '../hooks/permissionPrompts'
+import { OpenCodePermissionRegistry } from '../opencodePermissions/openCodePermissionRegistry'
+import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
@@ -1103,6 +1105,18 @@ export class AgentRuntime {
    * rules that close a prompt.
    */
   private readonly permissionPrompts: PermissionPromptRegistry
+  /**
+   * Which OpenCode sessions this app only OBSERVES have a permission ask open
+   * right now, as the OpenCode plugin's own push reports it (#588 T4).
+   *
+   * Beside `permissionPrompts` above and deliberately not folded into it:
+   * this one reads a different push shape (OpenCode's own plugin event, not
+   * a Claude Code hook) and its evidence already names the request whole —
+   * see `openCodePermissionRegistry.ts`'s own class doc. Fed by
+   * `noteOpenCodePush` and read once per poll, exactly the same split
+   * `permissionPrompts` holds.
+   */
+  private readonly openCodePermissions: OpenCodePermissionRegistry
   /** Which agent CLIs this machine has (#91), asked when the Add Panel opens. */
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
@@ -1286,6 +1300,7 @@ export class AgentRuntime {
       platform.platform
     )
     this.permissionPrompts = new PermissionPromptRegistry({ now: this.now })
+    this.openCodePermissions = new OpenCodePermissionRegistry({ now: this.now })
 
     // The development-only simulated valley (#42). Null in every ordinary run,
     // and null in EVERY packaged run whatever the environment says — the two
@@ -1330,7 +1345,13 @@ export class AgentRuntime {
           // transcript move takes away: answering the dialog writes the
           // `tool_result`, so the open call is gone on exactly the poll that
           // would otherwise still be reporting a stale prompt.
-          isPermissionPromptOpen: (sessionId) => this.permissionPrompts.isOpen(sessionId)
+          isPermissionPromptOpen: (sessionId) => this.permissionPrompts.isOpen(sessionId),
+          // The same seam for the OpenCode plugin's push (#588 T4). Read one
+          // poll behind observe() below, for the same harmless-lag reason
+          // isPermissionPromptOpen's own comment gives -- unlike Claude's
+          // hook, though, nothing here needs a second proof to close early;
+          // the registry's own note()/observe() are the whole lifecycle.
+          openCodePendingAsk: (sessionId) => this.openCodePermissions.askFor(sessionId)
         },
         options.providerRegistry ?? PROVIDER_REGISTRY
       )
@@ -1843,6 +1864,12 @@ export class AgentRuntime {
         // that closed it. Both calls are plain synchronous lookups over the
         // board already in hand, so the poll's own budget is unchanged.
         this.permissionPrompts.observe(ranked)
+        // The OpenCode registry's own sweep (#588 T4), on the same poll chain
+        // as the Claude one above and for the same "bounded, never unbounded"
+        // reason -- see UNCLAIMED_ASK_GRACE_MS. No board to reconcile against:
+        // OpenCodeProvider reads this registry directly (registry.ts's
+        // openCodePendingAsk), so nothing here needs to stamp `ranked`.
+        this.openCodePermissions.observe()
         const published = stampPermissionPrompts(
           ranked,
           (sessionId) =>
@@ -1917,6 +1944,37 @@ export class AgentRuntime {
             mine.dwarfs.some((dwarf) => dwarf.id === state.hostedId)
           )
           if (!stillDrawn) this.hosted.forget(state.hostedId)
+        }
+        // A DRAWN OpenCode ask whose session has left the published board is
+        // forgotten as soon as `published` says so -- riding the SAME
+        // lifecycle grace window `hosted.forget` above already waits on,
+        // rather than the ask's own UNCLAIMED_ASK_GRACE_MS (#588 T4). The
+        // pattern is the hosted-process sweep just above, generalised to a
+        // session this app only OBSERVES rather than started: an observed
+        // session has no lifecycle event of its own to call forget() from
+        // (unlike a hosted process's own exit, or Claude's Stop/SessionEnd
+        // hook), so the published board is the only proof this registry gets
+        // that one has ended.
+        //
+        // AMENDED for #588 review F1: walks `drawnSessionIds()`, never
+        // `pendingSessionIds()`. Board-absence is positive proof of an ending
+        // only for an ask a dwarf has actually carried at least once -- a
+        // never-drawn ask can be absent from THIS poll's board for reasons
+        // that are not "the session ended" (the plugin's push beating the
+        // scan by more than one poll; opencode.db transiently locked, which
+        // empties the whole board via publishNothing()), and forgetting it
+        // on that alone is exactly the silent loss #588 review F1 found: the
+        // permission card never draws, the terminal sits blocked, and the
+        // plugin never re-sends. A never-drawn ask still has a bound -- see
+        // UNCLAIMED_ASK_GRACE_MS and the registry's own observe() above --
+        // it is just not THIS one.
+        for (const sessionId of this.openCodePermissions.drawnSessionIds()) {
+          const stillDrawn = published.some((mine) =>
+            mine.dwarfs.some(
+              (dwarf) => dwarf.provider === 'opencode' && dwarf.sessionId === sessionId
+            )
+          )
+          if (!stillDrawn) this.openCodePermissions.forget(sessionId)
         }
         // Throttled inside the ledger, and deliberately not awaited: the panel
         // must never wait on a disk write to see its dwarfs move.
@@ -2551,6 +2609,17 @@ export class AgentRuntime {
    */
   noteHookEvent(event: HookEvent): void {
     this.permissionPrompts.note(event)
+  }
+
+  /**
+   * Read one OpenCode plugin push for what it says about a session (#588
+   * T4), exactly as noteHookEvent above reads Claude's own hook events —
+   * kept separate from nudge() for the same reason: this records, and
+   * nudge() is what makes the poll republish sooner than its ordinary
+   * schedule.
+   */
+  noteOpenCodePush(push: OpenCodePermissionPush): void {
+    this.openCodePermissions.note(push)
   }
 
   /**

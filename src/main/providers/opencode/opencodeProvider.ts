@@ -1,14 +1,18 @@
 import { normalize } from 'node:path'
 import type { FsLike } from '../../adapters/fsLike'
 import type { SqliteLike } from '../../adapters/sqliteLike'
+import { permissionInputLine } from '../../domain/permissionSummary'
 import { redactSecrets } from '../../domain/redactSecrets'
 import {
   dwarfSilenceWindowMs,
   type Dwarf,
+  type DwarfPermissionRequest,
   type FeedMessage,
   type FeedPageCursor,
-  type ProviderSnapshot
+  type ProviderSnapshot,
+  type WaitingReason
 } from '../../domain/types'
+import type { PendingAsk } from '../../opencodePermissions/openCodePermissionRegistry'
 import { cursorIndex, feedPageOf, textCount, trimFeed, type FeedWindowRead } from '../feedWindow'
 import type { Provider } from '../provider'
 import { pollProfiler } from '../../runtime/perf'
@@ -50,8 +54,13 @@ import { opencodeDbPath, opencodeWalPath } from './store'
  * message with `finish: 'tool-calls'` is an intermediate step and keeps the
  * session busy until `BUSY_WINDOW_MS` passes with no further `seq` movement —
  * the guard against a crashed mid-turn row. `idle` is `time.completed` set
- * with `finish: 'stop'`. `waiting` is never reported: no pending-permission
- * evidence exists anywhere in this schema (`docs/opencode-format.md`).
+ * with `finish: 'stop'`. `waiting` was never reported from this heuristic
+ * alone: no pending-permission evidence exists anywhere in THIS SCHEMA
+ * (`docs/opencode-format.md`). AMENDED for #588 T4: a session with a pending
+ * ask now reports `waiting` regardless of what D3's own signals say, because
+ * the evidence for that comes from `OpenCodePermissionRegistry` — the
+ * plugin's own push, never the store — and overrides D3 rather than joining
+ * it. See `pendingPermissionField` below.
  *
  * ## Topology (D4)
  *
@@ -112,6 +121,20 @@ export interface OpenCodeProviderOptions {
   /** The store root, already expanded. */
   storeRoot: string
   now?: () => number
+  /**
+   * `OpenCodePermissionRegistry.askFor`'s answer for a session (#588 T4) —
+   * the OpenCode plugin's own push, for the provider whose store carries no
+   * pending-permission evidence of its own (see this class's D3 note above).
+   *
+   * Unlike claudeProvider.ts's `isPermissionPromptOpen`, this hands back the
+   * ask itself rather than a boolean. Claude's hook only proves a dialog is
+   * open and needs a second proof — the transcript's own unresolved
+   * `tool_use` — to say what it asks; OpenCode's plugin event already names
+   * the request whole (permission, command, patterns), so there is no
+   * second, richer source in this store to confirm it against. The push IS
+   * the evidence.
+   */
+  pendingPermission?: (sessionId: string) => PendingAsk | undefined
 }
 
 /**
@@ -178,6 +201,84 @@ function activityOf(facts: SessionFacts, seqAdvanced: boolean, nowMs: number): n
   return Math.max(seqAdvanced ? nowMs : 0, newestRowMs(facts), facts.updatedMs)
 }
 
+/**
+ * The registry's pending ask as a spreadable dwarf field, redacted (#588 T4).
+ *
+ * Field by field rather than by spreading the push, mirroring
+ * claudeProvider.ts's own `pendingPermissionField` and for the same reason: a
+ * field OpenCode's plugin starts sending later must not ride across
+ * unredacted by being forgotten here.
+ *
+ * No foreman restriction, unlike that one's own guard: a Claude subagent
+ * shares its foreman's sessionId, which is the trap `pendingPermissionField`
+ * (claudeProvider.ts) and `stampPermissionPrompts` (permissionPrompts.ts)
+ * both exist to avoid. An OpenCode session never does — `session.parent_id`
+ * gives every session, root or worker, its own id (D4) — so the push's
+ * `sessionId` already names exactly one dwarf and there is nothing here to
+ * guard against.
+ *
+ * `waitingReason` travels with the card rather than being left to a second,
+ * generic pass: unlike Claude's hook, which only proves a dialog is open and
+ * needs `stampPermissionPrompts` to turn that into a cross-provider stamp,
+ * this ask is the whole proof by itself, so the one function that reads it
+ * sets both fields together.
+ */
+function pendingPermissionField(
+  ask: PendingAsk | undefined,
+  nowMs: number
+): { pendingPermission?: DwarfPermissionRequest; waitingReason?: WaitingReason } {
+  if (ask === undefined) return {}
+  const summary: Record<string, unknown> = {}
+  // Only the two fields buildOpenCodePermissionPush ever puts on the ask
+  // (permissionPushPayload.ts) — never the whole push spread in, for the
+  // reason this function's own doc gives.
+  if (ask.command !== undefined) summary.command = ask.command
+  if (ask.patterns !== undefined) summary.pattern = ask.patterns.join(', ')
+  // Neither field present -- an edit/webfetch ask carries no command and no
+  // patterns; only bash is ever measured carrying both (docs/opencode-format.
+  // md), which is why this went unmeasured (#588 review F4). `summary` is
+  // empty rather than merely lacking a NAMED field, so
+  // `permissionInputLine({})` would fall all the way through
+  // `namedSubject`/`summarizePermissionInput` to `JSON.stringify({})` — the
+  // literal string "{}", which names nothing real. Omit the content rather
+  // than invent it: the card still shows the tool name and channel, just
+  // nothing underneath.
+  const input = Object.keys(summary).length === 0 ? '' : permissionInputLine(summary)
+  return {
+    waitingReason: 'approval',
+    pendingPermission: {
+      // requestId, not callId: OpenCode's own permission.replied event names
+      // the ask by requestID (permissionPushPayload.ts), so that is the id a
+      // later answer will actually round-trip against, not the tool call's
+      // own id.
+      toolUseId: ask.requestId,
+      toolName: ask.permission,
+      input,
+      // No answer route exists yet: #588 T5, which would reply to OpenCode's
+      // own HTTP server, is unstarted. 'terminal' is still the honest
+      // reading and not a claim of answerability this slice never built —
+      // the dialog genuinely lives in a console this app only watches,
+      // exactly what 'terminal' means (see DwarfPromptChannel), and
+      // answerDwarfPermission's existing routing (runtime.ts) already
+      // refuses it correctly today: OpenCodeProvider.textDelivery() never
+      // returns a 'terminal'-kind endpoint (it returns
+      // 'opencode-run-continue', or null for a worker), so
+      // resolveKickDelivery finds nothing to type into and the card's click
+      // answers CANNOT_REACH_TERMINAL rather than pretending to press a key.
+      // The same honest-refusal shape codexProvider.ts's own pendingQuestion
+      // comment already states for its own 'terminal' channel ("never
+      // offered as answerable").
+      channel: 'terminal',
+      // OpenCode's own event carries no timestamp for when the ask was
+      // raised (unlike Claude's transcript line, or Codex's rollout row) —
+      // the moment this scan learned of it is the only honest clock there
+      // is, exactly the fallback claudeProvider.ts's own askedAtFallback
+      // reaches for when ITS better evidence wrote none.
+      askedAt: new Date(nowMs).toISOString()
+    }
+  }
+}
+
 export class OpenCodeProvider implements Provider {
   readonly kind = 'opencode' as const
 
@@ -186,6 +287,7 @@ export class OpenCodeProvider implements Provider {
   private readonly dbPath: string
   private readonly walPath: string
   private readonly now: () => number
+  private readonly pendingPermission: (sessionId: string) => PendingAsk | undefined
 
   /** Sizes at the previous scan; both unchanged skips the read, never the verdict (#461). */
   private lastDbSize: number | undefined
@@ -213,6 +315,7 @@ export class OpenCodeProvider implements Provider {
     this.dbPath = opencodeDbPath(options.storeRoot)
     this.walPath = opencodeWalPath(options.storeRoot)
     this.now = options.now ?? Date.now
+    this.pendingPermission = options.pendingPermission ?? (() => undefined)
   }
 
   async scan(): Promise<ProviderSnapshot[]> {
@@ -342,12 +445,20 @@ export class OpenCodeProvider implements Provider {
       const stalled = nowMs - facts.seqChangedAtMs >= BUSY_WINDOW_MS
       const busy = streaming || seqAdvanced || (intermediateStep && !stalled)
 
+      // Whether OpenCode's own plugin has an ask open for this session (#588
+      // T4) — read before status below, because a pending ask overrides D3's
+      // busy/idle reading rather than joining it: a session cannot move until
+      // a human decides, whatever the store's own rows currently say (see
+      // pendingPermissionField and this class's D3 doc above).
+      const ask = this.pendingPermission(facts.sessionId)
+      const blockedOnApproval = ask !== undefined
+
       const dwarf: Dwarf = {
         id: `opencode:${facts.sessionId}`,
         provider: 'opencode',
         role,
         name: facts.agent ?? `opencode-${facts.sessionId.slice(0, 8)}`,
-        status: busy ? 'working' : 'waiting',
+        status: blockedOnApproval ? 'waiting' : busy ? 'working' : 'waiting',
         sessionId: facts.sessionId,
         // D4: every case reports 'unknown' — stated explicitly (mirroring
         // claudeProvider.ts's own attendance field) rather than left to the
@@ -360,7 +471,8 @@ export class OpenCodeProvider implements Provider {
         // exactly what its own session burned. Feeds observationsFrom/accrue
         // (domain/ledger.ts) with no new ledger code, the same path Claude
         // and Codex already credit through.
-        tokensObserved: facts.tokensUsed
+        tokensObserved: facts.tokensUsed,
+        ...pendingPermissionField(ask, nowMs)
       }
       if (facts.modelId !== undefined) dwarf.model = facts.modelId
       if (facts.parentSessionId !== undefined) {
@@ -373,7 +485,7 @@ export class OpenCodeProvider implements Provider {
         provider: 'opencode',
         sessionId: facts.sessionId,
         cwd: facts.cwd,
-        status: busy ? 'busy' : 'idle',
+        status: blockedOnApproval ? 'waiting' : busy ? 'busy' : 'idle',
         dwarfs: [dwarf],
         updatedAt: activityMs
       })
