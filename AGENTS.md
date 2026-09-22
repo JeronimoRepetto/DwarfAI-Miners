@@ -203,11 +203,12 @@ adding a file. This is the index — one line per group, so you can tell what a 
   `ipcMain` and `globalShortcut`. Beside it, one directory per subject: `adapters` (fs and sqlite
   seams with their fakes), `appDatabase` (the one SQLite file), `config`, `domain` (pure rules and
   the type barrel), `history`, `hooks` (the opt-in Claude push channel), `jev` (asking the TypeSafe
-  Jev model which provider, model and effort to launch with), `ledger` (mined, persisted),
-  `notifications` (the OS notification centre, behind a port), `platform` (composed once in
-  `platformAdapters.ts`), `projects`, `providers` (one per agent CLI plus the simulated one),
-  `runtime` (the poll loop), `sessionLaunch` (starting a session and holding one), `shell` (window,
-  tray, autostart, shortcuts), `textDelivery`, `tier`.
+  Jev model which provider, model and effort to launch with), `ledger` (mined, persisted), `mcp`
+  (the subtask-delegation gate, and (T2+) the stdio MCP server itself), `notifications` (the OS
+  notification centre, behind a port), `platform` (composed once in `platformAdapters.ts`),
+  `projects`, `providers` (one per agent CLI plus the simulated one), `runtime` (the poll loop),
+  `sessionLaunch` (starting a session and holding one), `shell` (window, tray, autostart,
+  shortcuts), `textDelivery`, `tier`.
 
 <!-- END GENERATED: main-tree -->
 

@@ -347,7 +347,16 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   // parseLaunchTuning for why.
   const tuning = parseLaunchTuning(record.provider, record)
   if (tuning === null) return null
-  return { mineId: record.mineId, provider: record.provider, prompt: record.prompt, ...tuning }
+  return {
+    mineId: record.mineId,
+    provider: record.provider,
+    prompt: record.prompt,
+    ...tuning,
+    // Whether a Jev DECISION was applied to this launch (#511) — trusted only
+    // as `true`; anything else (absent, junk) reads as not routed, the same
+    // "say nothing" boundary discipline model/effort hold above.
+    ...(record.routedByJev === true ? { routedByJev: true } : {})
+  }
 }
 
 /**
@@ -442,7 +451,9 @@ function parseHeldLaunchRequest(payload: unknown): HeldSessionLaunchRequest | nu
     provider: record.provider,
     prompt: record.prompt,
     ...tuning,
-    ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode })
+    ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode }),
+    // Same rule and same reasoning as parseLaunchRequest's own (#511).
+    ...(record.routedByJev === true ? { routedByJev: true } : {})
   }
 }
 

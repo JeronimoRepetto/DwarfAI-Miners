@@ -5,6 +5,7 @@ import type { Dwarf, Mine, TurnOutcome } from '../domain/types'
 import { createSqliteLaunchedSessionStore, type LaunchedSessionStore } from './launchedSessionStore'
 import {
   LaunchedSessionRegistry,
+  stampLaunchedRoutedByJev,
   stampLaunchedTurnOutcome,
   type LaunchedProcess
 } from './launchedSessions'
@@ -360,6 +361,7 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
       start?: number | null
       sessionId?: string
       tuning?: { model?: string; effort?: string }
+      routedByJev?: boolean
     } = {}
   ) {
     const pid = options.pid ?? 4242
@@ -375,7 +377,8 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
       minePath: MINE_PATH,
       process: handle(pid).process,
       knownSessionIds: [],
-      ...(options.tuning === undefined ? {} : { tuning: options.tuning })
+      ...(options.tuning === undefined ? {} : { tuning: options.tuning }),
+      ...(options.routedByJev === undefined ? {} : { routedByJev: options.routedByJev })
     })
     launched.observe([mine(MINE_PATH, [dwarf({ sessionId: options.sessionId ?? 'thread-new' })])])
     await launched.settle()
@@ -393,7 +396,8 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
         sessionId: 'thread-new',
         minePath: MINE_PATH,
         pid: 4242,
-        processStartTimeMs: PROC_START
+        processStartTimeMs: PROC_START,
+        routedByJev: false
       }
     ])
   })
@@ -838,6 +842,64 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
     })
   })
   /* --- end of the #510 lastTurnOfDwarf block --------------------------------- */
+
+  /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+  describe('routedByJevOfDwarf', () => {
+    function boundWithRouting(routedByJev: boolean | undefined) {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: [],
+        ...(routedByJev === undefined ? {} : { routedByJev })
+      })
+      launched.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+      return { launched, exiting }
+    }
+
+    it('answers true once the launch asked for it', () => {
+      const { launched } = boundWithRouting(true)
+      expect(launched.routedByJevOfDwarf('codex:thread-new')).toBe(true)
+    })
+
+    it('answers false for a launch that never asked for it', () => {
+      const { launched } = boundWithRouting(undefined)
+      expect(launched.routedByJevOfDwarf('codex:thread-new')).toBe(false)
+    })
+
+    it('still answers true once the launch process has exited', () => {
+      const { launched, exiting } = boundWithRouting(true)
+      exiting.exit()
+      expect(launched.routedByJevOfDwarf('codex:thread-new')).toBe(true)
+    })
+
+    it('answers false for a dwarf this panel never launched', () => {
+      const { launched } = boundWithRouting(true)
+      expect(launched.routedByJevOfDwarf('codex:somebody-elses')).toBe(false)
+    })
+
+    // #511's own promise: unlike LaunchTuning (D1b), this fact is a real
+    // column — see appDatabase.ts's v6 migration — so a RESTORED record
+    // carries whatever the row said, rather than falling to an observed pair.
+    it('survives a restart, read back off the stored row', async () => {
+      const { store: launchStore, sqlite } = store()
+      await runWithLaunch(launchStore, { routedByJev: true })
+
+      const { store: reopened } = store(sqlite)
+      const nextRun = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(true),
+        processStartTimeMs: probe({ 4242: PROC_START }).processStartTimeMs,
+        store: reopened
+      })
+      await nextRun.restore()
+      nextRun.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+
+      expect(nextRun.routedByJevOfDwarf('codex:thread-new')).toBe(true)
+    })
+  })
+  /* --- end of the #511 block ---------------------------------------------------- */
 })
 
 /**
@@ -869,6 +931,34 @@ describe('stampLaunchedTurnOutcome (#510)', () => {
   it('changes nothing at all when the lookup names no dwarf on the board', () => {
     const mines = [mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' })])]
     const stamped = stampLaunchedTurnOutcome(mines, () => undefined)
+    expect(stamped).toEqual(mines)
+  })
+})
+
+/**
+ * `stampLaunchedRoutedByJev` (#511) — the pure, dwarf-id-keyed board stamp
+ * for the "chosen by Jev" marker, proven the same way `stampLaunchedTurnOutcome`
+ * above is. ADDS ONLY, like `stampLaunchReceipts`: a dwarf the lookup answers
+ * false for is left exactly as it was, never stamped `routedByJev: false`.
+ */
+describe('stampLaunchedRoutedByJev (#511)', () => {
+  it('adds routedByJev to the one dwarf the lookup names', () => {
+    const mines = [mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' })])]
+    const stamped = stampLaunchedRoutedByJev(mines, (dwarfId) => dwarfId === 'codex:thread-1')
+    expect(stamped[0]!.dwarfs[0]!.routedByJev).toBe(true)
+  })
+
+  it('leaves every other dwarf exactly as it was, routedByJev absent', () => {
+    const mines = [
+      mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' }), dwarf({ sessionId: 'thread-2' })])
+    ]
+    const stamped = stampLaunchedRoutedByJev(mines, (dwarfId) => dwarfId === 'codex:thread-1')
+    expect(stamped[0]!.dwarfs[1]!.routedByJev).toBeUndefined()
+  })
+
+  it('changes nothing at all when the lookup answers false for everyone', () => {
+    const mines = [mine(MINE_PATH, [dwarf({ sessionId: 'thread-1' })])]
+    const stamped = stampLaunchedRoutedByJev(mines, () => false)
     expect(stamped).toEqual(mines)
   })
 })

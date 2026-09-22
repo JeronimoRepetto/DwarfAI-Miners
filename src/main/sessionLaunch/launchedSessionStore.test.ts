@@ -17,6 +17,7 @@ function launch(overrides: Partial<PersistedLaunch> = {}): PersistedLaunch {
     minePath: 'C:\\work\\project',
     pid: 4242,
     processStartTimeMs: 1_788_001_972_136,
+    routedByJev: false,
     ...overrides
   }
 }
@@ -124,3 +125,33 @@ describe('the launch register on disk (#231)', () => {
     await expect(open(sqlite).store.list()).rejects.toThrow()
   })
 })
+
+/* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
+describe('the launch register on disk — routedByJev', () => {
+  it('persists a launch routed by Jev, and reads it back after a "restart"', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    await open(sqlite).store.put(launch({ routedByJev: true }))
+
+    await expect(open(sqlite).store.list()).resolves.toEqual([launch({ routedByJev: true })])
+  })
+
+  // The migration's own contract (appDatabase.test.ts): a row written before
+  // this column existed carries NULL, and that reads as false — none of
+  // those launches could have been Jev-routed, since the feature did not
+  // exist yet.
+  it('reads a NULL column — a row from before this migration — as false', async () => {
+    const { store, database } = open()
+    const db = await database.connect()
+    db.run(
+      `INSERT INTO launched_sessions
+       (launch_id, provider, session_id, mine_path, pid, proc_start_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['launch:9', 'codex', 'thread-old', 'C:\\work\\project', 4242, 1_788_001_972_136]
+    )
+
+    await expect(store.list()).resolves.toEqual([
+      launch({ launchId: 'launch:9', sessionId: 'thread-old', routedByJev: false })
+    ])
+  })
+})
+/* --- end of the #511 block ---------------------------------------------------- */

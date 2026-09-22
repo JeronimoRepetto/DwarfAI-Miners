@@ -211,6 +211,16 @@ function selectDefaultEffort(value: string): void {
   }
   emit('preferences-change', { ...preferences.value, default: nextDefault })
 }
+
+/**
+ * The MCP subtask-delegation checkbox (#511) — gate level (2) of the three
+ * `delegationGate.ts` requires. Off by default, and drawn exactly like the
+ * profile and default-launch controls above: key-gated, whole-document
+ * `preferences-change`, nothing local to redraw from.
+ */
+function toggleDelegation(checked: boolean): void {
+  emit('preferences-change', { ...preferences.value, delegation: checked })
+}
 </script>
 
 <template>
@@ -328,6 +338,23 @@ function selectDefaultEffort(value: string): void {
           </select>
         </div>
         <p class="hint">Used when Jev cannot decide.</p>
+      </div>
+
+      <div v-if="props.settings.configured" class="jev-delegation">
+        <label class="delegation-label">
+          <input
+            class="delegation-checkbox"
+            type="checkbox"
+            :checked="preferences.delegation"
+            :disabled="props.saving"
+            @change="toggleDelegation(($event.target as HTMLInputElement).checked)"
+          />
+          Let Jev choose subagents by subtask complexity
+        </label>
+        <p class="hint">
+          A launched session may hand a subtask back through Jev, so a bigger job can be split
+          across cheaper models instead of running entirely on the one you started.
+        </p>
       </div>
     </template>
 
@@ -495,6 +522,33 @@ function selectDefaultEffort(value: string): void {
   cursor: default;
 }
 .tuning-select:focus-visible {
+  outline: 2px solid var(--color-cream);
+  outline-offset: 2px;
+}
+
+/* The delegation checkbox (#511): a row-label-less control, because the
+   sentence beside it already names what it is — a second label would repeat
+   it rather than add to it. */
+.jev-delegation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.delegation-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-settings);
+  color: var(--color-cream);
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+.delegation-checkbox {
+  cursor: pointer;
+}
+.delegation-checkbox:disabled {
+  cursor: default;
+}
+.delegation-checkbox:focus-visible {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }

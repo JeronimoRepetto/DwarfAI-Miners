@@ -2142,3 +2142,65 @@ describe('a held launch that names a model and an effort (#239)', () => {
     expect('permissionMode' in port.started[1]!).toBe(false)
   })
 })
+
+/*
+ * MCP subtask delegation (#511). Whether Jev's own decision routed this held
+ * launch — the held twin of `LaunchedSessionRegistry.routedByJevOfDwarf`,
+ * kept on the record on the same terms `openingPrompt` is: a fact about how
+ * the session STARTED, carried in memory only. A held session dies with the
+ * app like the rest of this registry's state, so unlike the launched
+ * register (appDatabase.ts's v6 column) there is nothing to persist here.
+ */
+describe('HeldSessionRegistry.routedByJevState', () => {
+  it('answers held: false for a session this panel does not hold', () => {
+    const registry = registryOver(new FakePort())
+    expect(registry.routedByJevState('sess-nobody')).toEqual({ held: false })
+  })
+
+  it('carries true once the launch asked for it', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      routedByJev: true
+    })
+    port.reportSessionId(0, 'sess-1')
+
+    expect(registry.routedByJevState('sess-1')).toEqual({ held: true, routedByJev: true })
+  })
+
+  it('answers false for a launch that never asked for it', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    expect(registry.routedByJevState('sess-1')).toEqual({ held: true, routedByJev: false })
+  })
+
+  it('keeps each held session’s own answer independent, in the same mine', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig the east gallery',
+      routedByJev: true
+    })
+    port.reportSessionId(0, 'sess-routed')
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig the west gallery'
+    })
+    port.reportSessionId(1, 'sess-plain')
+
+    expect(registry.routedByJevState('sess-routed')).toEqual({ held: true, routedByJev: true })
+    expect(registry.routedByJevState('sess-plain')).toEqual({ held: true, routedByJev: false })
+  })
+})
