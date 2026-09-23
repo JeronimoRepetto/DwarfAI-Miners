@@ -358,17 +358,17 @@ walked the support matrix on real hardware — including "it all worked". See
 - [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
   audio assets.
 
-## Support the project
+<h2>
+  Support the project
+  <img align="right" src="docs/media/hero02.gif" width="210" alt="Worker">
+  <img align="right" src="docs/media/hero03.gif" width="100" alt="Foreman">
+</h2>
 
 DwarfAI-Miners' code is free and MIT-licensed. The artwork remains the creator's property and is
 not separately reusable without authorization. If the project has earned a spot on your desktop,
 you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
 nothing in the app is, or will be, gated on it.
-<p align="right">
-  <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/media/hero02.gif" width="210" alt="Worker">
-</p>
+
 ## License
 
 [MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
