@@ -6,16 +6,6 @@
   Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
 </p>
 
-<p align="center">
-  <img src="docs/media/hero01.gif" width="210" alt="Worker2">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/media/hero.gif" width="100" paddin="10" alt="Foreman">
-   &nbsp;&nbsp;
-  <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/media/hero02.gif" width="210" alt="Worker">
-</p>
-
 <div align="center">
 
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
@@ -138,6 +128,13 @@ processed.
 - **Autostart and tray** — starts at login, lives in the tray, and hides instead of closing.
 
 Every screen and control is described in the [user guide](docs/guide.md).
+<p align="left">
+  <img src="docs/media/hero01.gif" width="210" alt="Worker2">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/media/hero.gif" width="100" paddin="10" alt="Foreman">
+   &nbsp;&nbsp;
+</p>
+
 
 ## Install
 
@@ -273,6 +270,12 @@ Notes on the three honest gaps:
   fixtures.
 
 </details>
+
+<p align="right">
+  <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/media/hero02.gif" width="210" alt="Worker">
+</p>
 
 ## Provider support
 
