@@ -957,7 +957,7 @@ export class HeldSessionRegistry {
    * reaching for a second channel: there is no honest one here.
    */
   sendText(sessionId: string, text: string): boolean {
-    return this.queue(sessionId, text, (handle) => handle.send(text))
+    return this.pushToRecord(this.recordFor(sessionId), text, (handle) => handle.send(text))
   }
 
   /**
@@ -971,7 +971,29 @@ export class HeldSessionRegistry {
    * whose images the session never saw.
    */
   sendContent(sessionId: string, content: HeldMessageContent): boolean {
-    return this.queue(sessionId, content, (handle) => handle.sendContent?.(content) ?? false)
+    return this.pushToRecord(
+      this.recordFor(sessionId),
+      content,
+      (handle) => handle.sendContent?.(content) ?? false
+    )
+  }
+
+  /**
+   * Put a delegated ticket's settled result onto a held session's own
+   * stream, addressed by MINE rather than session id (#601).
+   *
+   * A delegated ticket's token names only the mine its held parent launched
+   * into (`DelegationParentContext.mineId`), never a session id — that id is
+   * assigned by the CLI itself and, per this class's own "why the id it is
+   * keyed by arrives late" note, can still be unset by the time a fast child
+   * settles. `mineId` has no such gap: it is known from the moment the token
+   * is minted, before the held launch it belongs to has even started. Scans
+   * every held record the same way `recordFor` does, on the same
+   * one-session-per-mine assumption every other mine-keyed lookup in this
+   * app already leans on.
+   */
+  sendToMine(mineId: string, text: string): boolean {
+    return this.pushToRecord(this.recordForMine(mineId), text, (handle) => handle.send(text))
   }
 
   /**
@@ -1001,12 +1023,11 @@ export class HeldSessionRegistry {
    * session already closing, above all) is not a turn the person had, and
    * retaining one would show a row for words the session never received.
    */
-  private queue(
-    sessionId: string,
+  private pushToRecord(
+    record: HeldRecord | undefined,
     content: HeldMessageContent,
     push: (handle: HeldSessionHandle) => boolean
   ): boolean {
-    const record = this.recordFor(sessionId)
     if (record === undefined) return false
     const sent = push(record.handle)
     if (sent) {
@@ -1100,6 +1121,14 @@ export class HeldSessionRegistry {
     if (sessionId === '') return undefined
     for (const record of this.held.values()) {
       if (record.sessionId === sessionId) return record
+    }
+    return undefined
+  }
+
+  /** `sendToMine`'s own lookup (#601) — see that method's own comment for why the mine, not the session id, is the correlator. */
+  private recordForMine(mineId: string): HeldRecord | undefined {
+    for (const record of this.held.values()) {
+      if (record.mineId === mineId) return record
     }
     return undefined
   }

@@ -609,4 +609,206 @@ describe('DelegationService', () => {
       })
     })
   })
+
+  /*
+   * #601: a held parent's own delegated ticket, pushed to its live
+   * conversation once it settles and its own `delegate_subtask` wait is no
+   * longer there to hand the answer back on its own. `deliverToHeldParent`
+   * is the one seam — bound in production to `AgentRuntime.pushToHeldParent`
+   * (which forwards to `HeldSessionRegistry.sendToMine`), a fake `vi.fn`
+   * here so this stays a hand-written fake, no real held session anywhere.
+   * `parent.held` (only ever set by `resolveHeldDelegationInjection` in
+   * runtime.ts) is what tells a held ticket apart from a detached one —
+   * `mineId` alone cannot, since both mint a token through the same
+   * `issueLaunchToken`.
+   */
+  describe('held-parent push (#601)', () => {
+    let deliverToHeldParent: ReturnType<typeof vi.fn<(mineId: string, text: string) => boolean>>
+    let log: ReturnType<typeof vi.fn<(message: string) => void>>
+
+    function heldOptions(
+      overrides: Partial<DelegationServiceOptions> = {}
+    ): DelegationServiceOptions {
+      return options({ deliverToHeldParent, log, ...overrides })
+    }
+
+    afterEach(() => {
+      deliverToHeldParent = vi.fn<(mineId: string, text: string) => boolean>(() => true)
+      log = vi.fn<(message: string) => void>()
+    })
+    deliverToHeldParent = vi.fn<(mineId: string, text: string) => boolean>(() => true)
+    log = vi.fn<(message: string) => void>()
+
+    it('never attempts a push for a detached parent, even after its ticket settles', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+      service.waitEnded('t-1')
+
+      expect(deliverToHeldParent).not.toHaveBeenCalled()
+      expect(log.mock.calls.some((call) => call[0].includes('t-1'))).toBe(false)
+    })
+
+    it('does not push while the parent is still inside its own delegate_subtask wait — the ticket settles first', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+      expect(deliverToHeldParent).not.toHaveBeenCalled()
+      expect(log).toHaveBeenCalledWith('[delegation] ticket t-1 push skipped (parent-waiting)')
+    })
+
+    it('logs "still pending" when the wait ends before the child has concluded, and still pushes once it later does', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      service.waitEnded('t-1')
+      expect(log).toHaveBeenCalledWith(
+        '[delegation] ticket t-1 still pending after the wait window'
+      )
+      expect(deliverToHeldParent).not.toHaveBeenCalled()
+
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+      expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+      expect(deliverToHeldParent).toHaveBeenCalledWith(
+        'mine:a',
+        `Delegated subtask t-1 finished (done).\n\n${JSON.stringify({
+          status: 'done',
+          outcome: CONCLUDED
+        })}`
+      )
+      expect(log).toHaveBeenCalledWith('[delegation] ticket t-1 result pushed to held parent')
+    })
+
+    // THE RACE (#601): the ticket can settle between the wait's own last poll
+    // and the moment the wait gives up and answers pending. Both orderings
+    // must still push exactly once, through the SAME idempotent decision.
+    describe('the settle/wait-ends interleaving race', () => {
+      it('settles, THEN the wait ends — pushes once, at wait-end', async () => {
+        service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+        await service.start()
+        const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+        await service.delegateDirect(token, 'find the bug', undefined)
+
+        onConcludedByMine.get('mine:a')!(CONCLUDED)
+        expect(deliverToHeldParent).not.toHaveBeenCalled()
+
+        service.waitEnded('t-1')
+
+        expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+      })
+
+      it('the wait ends, THEN it settles — pushes once, at settle', async () => {
+        service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+        await service.start()
+        const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+        await service.delegateDirect(token, 'find the bug', undefined)
+
+        service.waitEnded('t-1')
+        expect(deliverToHeldParent).not.toHaveBeenCalled()
+
+        onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+        expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    it('never pushes twice for one ticket, however many times the decision is re-run', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      service.waitEnded('t-1')
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+      // A stray repeat of either trigger — never wired in production, but
+      // the guarantee has to hold structurally, not just "in the one order
+      // the wiring happens to call things".
+      service.waitEnded('t-1')
+
+      expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+    })
+
+    it('skips with not-held when no held-parent delivery port is configured at all', async () => {
+      service = new DelegationService(
+        options({ generateTicketId: () => 't-1', log }) // no deliverToHeldParent
+      )
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      service.waitEnded('t-1')
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+      expect(log).toHaveBeenCalledWith('[delegation] ticket t-1 push skipped (not-held)')
+    })
+
+    it('skips with parent-ended when the held parent no longer takes the message', async () => {
+      deliverToHeldParent.mockReturnValue(false)
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      service.waitEnded('t-1')
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+      expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+      expect(log).toHaveBeenCalledWith('[delegation] ticket t-1 push skipped (parent-ended)')
+    })
+
+    it('a failed child’s ticket pushes the failure payload, not just a done outcome', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      service.waitEnded('t-1')
+      onConcludedByMine.get('mine:a')!({ kind: 'errored', endedAt: 9, text: 'crashed' })
+
+      expect(deliverToHeldParent).toHaveBeenCalledWith(
+        'mine:a',
+        expect.stringContaining('Delegated subtask t-1 finished (done).')
+      )
+    })
+
+    it('subtask_result still answers the real settled data after a push (claimed, never erased)', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      service.waitEnded('t-1')
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+      expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+
+      expect(service.resultDirect(token, 't-1')).toEqual({ status: 'done', outcome: CONCLUDED })
+      // Still no second push just for having been read again.
+      expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+    })
+
+    it('never logs the parent’s own delegation token, on a push or on a skip', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      onConcludedByMine.get('mine:a')!(CONCLUDED) // parent-waiting skip
+      service.waitEnded('t-1') // pushes
+
+      expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
+      for (const call of log.mock.calls) {
+        expect(call[0]).not.toContain(token)
+      }
+    })
+  })
 })

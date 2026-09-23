@@ -29,6 +29,7 @@ import {
   MAX_DELEGATION_BODY_BYTES,
   RESULT_ROUTE_PREFIX,
   delegationFailure,
+  formatDelegationResultText,
   parseDelegateRequestBody
 } from './delegationServerProtocol'
 import { DelegationTicketRegistry } from './delegationTickets'
@@ -79,6 +80,30 @@ interface DelegationLaunchRequest {
   effort?: string
 }
 
+/**
+ * One HELD parent's own ticket, tracked only for the life of its push
+ * decision (#601) — see `heldPushState`'s own comment for the map this
+ * lives in and the invariant that every ticket ever gets exactly one.
+ */
+interface HeldTicketPushState {
+  /** Scopes `this.tickets.get` to the SAME owner `delegateDirect` already checked. */
+  token: string
+  /** Where to push — see `DelegationServiceOptions.deliverToHeldParent`'s own comment for why this, not a session id. */
+  mineId: string
+  /**
+   * True from the instant a held ticket is created until its own direct
+   * wait ends (`waitEnded`) — a wait ALWAYS begins immediately after
+   * `delegateDirect` returns a ticket for a held parent (see
+   * `delegationDirectLink.ts`'s own `delegate`), so starting `true` here
+   * closes the narrow gap between ticket creation and the wait's own first
+   * poll, not just the gap `waitEnded` itself closes. While true, a settle
+   * is answered inside `delegate_subtask` itself — pushing too would be a
+   * second, redundant delivery for the overwhelming majority of
+   * delegations, which conclude well inside the wait window.
+   */
+  waiting: boolean
+}
+
 export interface DelegationServiceOptions {
   /** 0 asks the OS for a free port; tests rely on that. */
   port: number
@@ -110,6 +135,22 @@ export interface DelegationServiceOptions {
   limits?: DelegationConcurrencyLimits
   now?: () => number
   log?: (message: string) => void
+  /**
+   * Pushes a settled ticket's own result into its HELD parent's live
+   * conversation (#601) — bound in `index.ts` to `AgentRuntime.pushToHeldParent`,
+   * which forwards to `HeldSessionRegistry.sendToMine`. Addressed by MINE
+   * rather than session id: the token this service tracks names only the
+   * mine a held launch started in (`DelegationParentContext.mineId`), and
+   * that identifier is stable from the instant the token is minted — unlike
+   * the CLI-reported session id, which can still be unset when a fast child
+   * settles (see `HeldSessionRegistry`'s own "why the id it is keyed by
+   * arrives late"). This class never imports `HeldSessionRegistry` itself;
+   * this closure is the one seam `maybePush` reaches through. Undefined for
+   * a build with no held-parent delivery wired (or any test that never
+   * exercises this path) — a held ticket then logs `not-held` rather than
+   * pretending a push landed.
+   */
+  deliverToHeldParent?: (mineId: string, text: string) => boolean
 }
 
 /** One prompt for the delegated child: context first (sets the stage), then the task, exactly as the acceptance test fixes it. */
@@ -124,6 +165,16 @@ export class DelegationService {
   private readonly concurrency: DelegationConcurrencyGate
   private server: Server | null = null
   private boundPort = 0
+  /**
+   * One entry per HELD parent's own ticket, from creation until its push
+   * decision is final (#601) — never populated for a detached parent's
+   * ticket at all, which is what keeps that path byte-for-byte unchanged
+   * (#602's own scope line): `maybePush` reads this map's absence as
+   * "nothing to ever push for this ticket." See `registerHeldTicket`,
+   * `maybePush` and `markClaimed` for the full lifecycle and why every exit
+   * from it deletes the entry — a ticket only ever gets ONE push decision.
+   */
+  private readonly heldPushState = new Map<string, HeldTicketPushState>()
 
   constructor(options: DelegationServiceOptions) {
     this.options = options
@@ -280,6 +331,12 @@ export class DelegationService {
    */
   resultDirect(token: string, ticketId: string): ResultBody {
     const state = this.tickets.get(ticketId, token)
+    // #601: a non-pending answer handed back HERE — whether this call is
+    // `subtask_result`, or the wait's own poll inside `pollUntil` finding
+    // its own answer before giving up — is a settled result reaching its
+    // parent through the ordinary channel. `markClaimed` is a no-op for any
+    // ticket `maybePush` was never tracking (every detached ticket, always).
+    if (state !== undefined && state.status !== 'pending') this.markClaimed(ticketId)
     return (
       state ?? { status: 'failed', failure: delegationFailure('unknown-ticket', 'No such ticket.') }
     )
@@ -421,6 +478,9 @@ export class DelegationService {
       }
       this.tickets.resolveDone(state.ticketId, outcome)
       this.concurrency.release(token)
+      // #601: the settle half of the race `maybePush`'s own comment
+      // describes — a no-op for any ticket this class never marked held.
+      this.maybePush(state.ticketId)
     }
 
     let result: AgentLaunchResult
@@ -450,11 +510,124 @@ export class DelegationService {
     }
 
     state.ticketId = this.tickets.create(token, routing)
+    // #601: only a HELD parent's own ticket is ever tracked for a push — a
+    // detached parent's own delivery stays exactly what it was (#602's own
+    // scope line). `mineId` alone cannot tell the two apart (both mint a
+    // token through this same method); `parent.held` is the one field that
+    // can, set only by `resolveHeldDelegationInjection` in runtime.ts.
+    if (parent.held === true) this.registerHeldTicket(state.ticketId, token, parent.mineId)
     if (state.pendingOutcome !== undefined) {
       this.tickets.resolveDone(state.ticketId, state.pendingOutcome)
       this.concurrency.release(token)
+      this.maybePush(state.ticketId)
     }
     return { ticket: state.ticketId }
+  }
+
+  /**
+   * Told once a held ticket's own direct wait (`delegate_subtask`'s own
+   * `pollUntil`, wired through `onWaitEnded` in `delegationDirectLink.ts`)
+   * gives up on its deadline with nothing settled (#601) — the other half
+   * of the settle race `maybePush`'s own comment describes. A no-op for any
+   * ticket this class never marked held, or one whose push decision is
+   * already final (see `heldPushState`'s own comment).
+   */
+  waitEnded(ticketId: string): void {
+    const state = this.heldPushState.get(ticketId)
+    if (state === undefined) return
+    state.waiting = false
+    const settled = this.tickets.get(ticketId, state.token)
+    if (settled === undefined || settled.status === 'pending') {
+      // The ordinary case for a genuinely slow child: nothing to push YET —
+      // the eventual settle is what will call `maybePush` next, now that
+      // `waiting` no longer stands in its way.
+      this.options.log?.(`[delegation] ticket ${ticketId} still pending after the wait window`)
+      return
+    }
+    this.maybePush(ticketId)
+  }
+
+  /** Starts a held ticket's own push tracking — called once, right after `this.tickets.create` (#601). */
+  private registerHeldTicket(ticketId: string, token: string, mineId: string): void {
+    this.heldPushState.set(ticketId, { token, mineId, waiting: true })
+  }
+
+  /**
+   * THE RACE this class exists to close (#601): a delegated ticket can
+   * settle (`launchChild`'s own `onConcluded`) between a held parent's own
+   * direct wait taking its LAST poll and the moment that wait gives up and
+   * answers `pending` (`waitEnded`, above). Whichever of the two happens
+   * SECOND is the one that must actually decide whether to push — settling
+   * while a wait is still live must never push (the wait answers it
+   * synchronously, inside `delegate_subtask` itself), and a wait giving up
+   * on an already-settled ticket must push right there, since nothing else
+   * will. Both paths call this SAME idempotent decision rather than each
+   * carrying its own half of the logic, which is what closes the race: it
+   * reads the ticket's CURRENT state fresh every time, never a stale
+   * snapshot either caller captured earlier.
+   *
+   * A no-op for any ticket this class never marked held — see
+   * `heldPushState`'s own comment — and for one whose decision has already
+   * been made: every exit below deletes the entry, so a ticket only ever
+   * gets ONE push attempt, however many times settle/waitEnded each fire
+   * (each fires at most once in production, but this holds even if that
+   * ever stopped being true).
+   */
+  private maybePush(ticketId: string): void {
+    const state = this.heldPushState.get(ticketId)
+    if (state === undefined) return
+    if (state.waiting) {
+      this.logPushSkip(ticketId, 'parent-waiting')
+      return
+    }
+    const settled = this.tickets.get(ticketId, state.token)
+    // Not yet settled: nothing to push. Reached only from the settle site
+    // itself in production (always settled there) — this guard is what
+    // keeps the decision correct even if that call order ever changed.
+    if (settled === undefined || settled.status === 'pending') return
+
+    this.heldPushState.delete(ticketId)
+    const deliver = this.options.deliverToHeldParent
+    if (deliver === undefined) {
+      this.logPushSkip(ticketId, 'not-held')
+      return
+    }
+    // The same result payload `subtask_result` would answer for this exact
+    // ticket, reusing ITS formatting rather than a second one of this
+    // method's own — see `formatDelegationResultText`'s own comment.
+    const text =
+      `Delegated subtask ${ticketId} finished (${settled.status}).\n\n` +
+      formatDelegationResultText(settled)
+    if (!deliver(state.mineId, text)) {
+      this.logPushSkip(ticketId, 'parent-ended')
+      return
+    }
+    this.options.log?.(`[delegation] ticket ${ticketId} result pushed to held parent`)
+  }
+
+  /**
+   * A settled result handed back through the ORDINARY channel — the wait's
+   * own poll finding it before giving up, or a `subtask_result` call, both
+   * of which reach here through `resultDirect` (#601). Ends this ticket's
+   * push tracking either way: an answer already delivered this way will
+   * never need pushing, so nothing must ever visit this ticket again.
+   */
+  private markClaimed(ticketId: string): void {
+    const state = this.heldPushState.get(ticketId)
+    if (state === undefined) return
+    this.heldPushState.delete(ticketId)
+    // Only worth a line when a push was actually imminent: `waiting` still
+    // true here is nothing but the ticket's own wait finding its answer on
+    // schedule — the expected outcome for most delegations, and not a skip
+    // of anything a log should call out. `waiting` already false means this
+    // ticket's OWN wait had already given up on it (`waitEnded` already
+    // ran) before this ordinary answer reached it — a genuine race with the
+    // push this class would otherwise have attempted next.
+    if (!state.waiting) this.logPushSkip(ticketId, 'already-claimed')
+  }
+
+  private logPushSkip(ticketId: string, reason: string): void {
+    this.options.log?.(`[delegation] ticket ${ticketId} push skipped (${reason})`)
   }
 
   private refuse(response: ServerResponse, failure: ReturnType<typeof delegationFailure>): void {

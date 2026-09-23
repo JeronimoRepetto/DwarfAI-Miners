@@ -1399,6 +1399,70 @@ describe('HeldSessionRegistry lifetime', () => {
     expect(registry.sendText('sess-nobody', 'dig deeper')).toBe(false)
   })
 
+  /*
+   * #601: the delegation push port addresses a held session by its MINE, not
+   * its session id — a settled ticket's token names only the mine it was
+   * launched into (see DelegationParentContext), and that identifier is
+   * known from the moment the token is minted, unlike the CLI-reported
+   * session id `sendText` keys on (which can still be unset).
+   */
+  describe('sendToMine (#601)', () => {
+    it('routes text to the held session running in that mine, with no session id reported yet', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+      // Deliberately no port.reportSessionId(...) here — a delegated child can
+      // settle before the parent's own CLI has reported which session it is.
+
+      expect(registry.sendToMine('mine-1', 'the delegated subtask finished')).toBe(true)
+      expect(port.sent).toEqual(['the delegated subtask finished'])
+    })
+
+    it('answers false for a mine this panel holds no session in', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+
+      expect(registry.sendToMine('mine-nobody', 'text')).toBe(false)
+      expect(port.sent).toEqual([])
+    })
+
+    it('addresses the right record among several held mines', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+      await registry.launch({
+        mineId: 'mine-2',
+        provider: 'claude',
+        minePath: '/home/j/code/forge',
+        prompt: 'dig'
+      })
+
+      expect(registry.sendToMine('mine-2', 'for mine two')).toBe(true)
+      expect(port.sent).toEqual(['for mine two'])
+    })
+
+    it('records the pushed text into that session’s own conversation, same as sendText (#436)', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+      port.reportSessionId(0, 'sess-1')
+      const before = registry.conversationState('sess-1')
+
+      registry.sendToMine('mine-1', 'the delegated subtask finished')
+
+      const after = registry.conversationState('sess-1')
+      expect(after).toMatchObject({ held: true })
+      if (!after.held) throw new Error('expected held')
+      if (!before.held) throw new Error('expected held')
+      expect(after.revision).toBeGreaterThan(before.revision)
+      expect(after.conversation.at(-1)).toMatchObject({
+        role: 'user',
+        text: 'the delegated subtask finished'
+      })
+    })
+  })
+
   it('interrupts the turn on a session it holds, and refuses one it does not (#210)', async () => {
     const port = new FakePort()
     const registry = registryOver(port)

@@ -12,6 +12,20 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 export interface DelegationParentContext {
   /** The mine the parent launch itself started in. */
   mineId: string
+  /**
+   * True only for a token minted for a HELD launch's own in-process
+   * delegation tools (#601, `resolveHeldDelegationInjection` in runtime.ts)
+   * — absent (never `false`) for a detached `-p`/OpenCode/Codex launch, the
+   * same "absent means not" terms this app's other launch-time facts use
+   * (`HeldRecord.routedByJev`, above, is the same shape for a different
+   * fact). `mineId` alone cannot tell the two apart: both launch kinds mint
+   * a token through the SAME `issueLaunchToken`, naming the SAME identifier.
+   * Read only by `DelegationService`'s own held-parent push decision
+   * (#601's own `maybePush`) — a detached parent's own delivery stays
+   * exactly what it was (#602's own scope line), and this is the one field
+   * that keeps a settled ticket's push from ever being attempted for one.
+   */
+  held?: true
 }
 
 export interface DelegationTokenRegistryOptions {

@@ -15,6 +15,7 @@ import {
   RESULT_ROUTE_PREFIX,
   SUBTASK_RESULT_TOOL_NAME,
   delegationFailure,
+  formatDelegationResultText,
   parseDelegateRequestBody
 } from './delegationServerProtocol'
 
@@ -128,5 +129,28 @@ describe('MAX_DELEGATION_BODY_BYTES', () => {
   it('is a positive integer', () => {
     expect(Number.isInteger(MAX_DELEGATION_BODY_BYTES)).toBe(true)
     expect(MAX_DELEGATION_BODY_BYTES).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * #601: the ONE place either MCP tool's own result text is built —
+ * `subtask_result`'s own `toCallToolResult` (delegationHeldServer.ts) and a
+ * settled ticket's push to its held parent (delegationService.ts) both call
+ * this, so a delegated child's own payload reads identically whichever path
+ * the agent sees it through — "reuse its formatting, never invent a second
+ * one."
+ */
+describe('formatDelegationResultText (#601)', () => {
+  it('is plain JSON.stringify of the tool result, with no extra shape of its own', () => {
+    const result = { status: 'done' as const, outcome: { kind: 'concluded' as const, endedAt: 1 } }
+    expect(formatDelegationResultText(result)).toBe(JSON.stringify(result))
+  })
+
+  it('formats a failed result the same way', () => {
+    const result = {
+      status: 'failed' as const,
+      failure: delegationFailure('launch-failed', 'boom')
+    }
+    expect(formatDelegationResultText(result)).toBe(JSON.stringify(result))
   })
 })
