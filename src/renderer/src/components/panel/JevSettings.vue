@@ -349,7 +349,7 @@ function toggleDelegation(checked: boolean): void {
             :disabled="props.saving"
             @change="toggleDelegation(($event.target as HTMLInputElement).checked)"
           />
-          Let Jev choose subagents by subtask complexity
+          Let Jev choose subagents by subtask complexity (BETA - CRITICAL WARNING)
         </label>
         <p class="hint">
           A launched session may hand a subtask back through Jev, so a bigger job can be split

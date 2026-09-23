@@ -563,7 +563,7 @@ on top of [Jev](#jev) rather than opening a separate assist — see
 
 1. Enter your own TypeSafe key in Settings' Jev section — see [Jev](#jev).
 2. Turn on **Let Jev choose** for the launch itself, in the Add Panel.
-3. Turn on Settings' own **Let Jev choose subagents by subtask complexity** checkbox, in the Jev
+3. Turn on Settings' own **Let Jev choose subagents by subtask complexity (BETA - CRITICAL WARNING)** checkbox, in the Jev
    section — shown only once a key is configured, and separate from the toggle above it.
 
 A session started any other way — Jev off, or merely available but not the thing that actually chose

@@ -337,7 +337,7 @@ each is necessary and none is sufficient alone:
 1. **A TypeSafe key is configured**, in Settings' Jev section.
 2. **This launch was itself routed by an applied Jev decision** — "Let Jev choose" was on and Jev's
    choice was actually used, never a fallback onto a default (`AgentLaunchRequest.routedByJev`).
-3. **Settings' own checkbox**, "Let Jev choose subagents by subtask complexity" — off by default,
+3. **Settings' own checkbox**, "Let Jev choose subagents by subtask complexity (BETA - CRITICAL WARNING)" — off by default,
    shown only once a key is configured (`JevSettings.vue`).
 
 All three are re-checked at the moment of each real launch, never once per app session

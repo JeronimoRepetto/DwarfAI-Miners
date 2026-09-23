@@ -476,7 +476,7 @@ describe('JevSettings — the delegation checkbox, gated on configured', () => {
   it('names what the checkbox does', () => {
     const wrapper = render({ configured: true })
     expect(wrapper.find('.jev-delegation').text()).toContain(
-      'Let Jev choose subagents by subtask complexity'
+      'Let Jev choose subagents by subtask complexity (BETA - CRITICAL WARNING)'
     )
   })
 
