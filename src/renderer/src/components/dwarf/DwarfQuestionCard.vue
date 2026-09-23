@@ -596,15 +596,16 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 }
 /*
  * A walked call's Submit before every question has an answer (#443). The
- * design leaves a disabled control unspecified, so this borrows the one quiet
- * state it does specify — the dimmed option's ink and surface — rather than
- * inventing a colour.
+ * design's disabled-control convention applies here (foundations.md): the
+ * foreground shows "do-not-click" in --color-control-disabled (3.61:1),
+ * against --color-panel-deep. The dimmed option pair is a different state —
+ * passed over but still clickable — so it does not apply to disabled controls.
  */
 .answer-send:disabled {
-  border-color: var(--color-panel);
-  color: var(--color-panel);
+  border: 2px solid var(--color-control-disabled);
+  color: var(--color-control-disabled);
   cursor: not-allowed;
-  background: var(--color-question-dark);
+  background: var(--color-panel-deep);
 }
 /* The walk's row (#443): Back, the k-of-n line, Next, on one baseline. */
 .question-walk {
@@ -653,9 +654,12 @@ function onFreeformKeydown(event: KeyboardEvent): void {
   outline: 2px solid var(--color-cream);
   outline-offset: 2px;
 }
-/* Nowhere further to go: the underline that says "press me" goes. */
+/* Nowhere further to go: the underline that says "press me" goes, and the
+   text takes the disabled-control colour (foundations.md, --color-control-disabled)
+   to show it cannot be chosen. */
 .question-back:disabled,
 .question-next:disabled {
+  color: var(--color-control-disabled);
   text-decoration: none;
   cursor: not-allowed;
 }
