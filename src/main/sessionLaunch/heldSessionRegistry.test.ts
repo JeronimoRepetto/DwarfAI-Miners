@@ -11,7 +11,8 @@ import {
   TUNING_UNSUPPORTED
 } from './heldSessionRegistry'
 import { HELD_CONTEXT_USAGE_TIMEOUT_MS, HELD_TUNING_TIMEOUT_MS } from './heldSession'
-import type { DelegationInjectionContext } from '../mcp/delegationInjection'
+import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
+import type { DelegationLink } from '../mcp/delegationLink'
 import type {
   HeldAnswer,
   HeldPermission,
@@ -2209,21 +2210,37 @@ describe('HeldSessionRegistry.routedByJevState', () => {
 /*
  * MCP subtask delegation, injection (#511 T4). The gate check and the token
  * lifecycle both live in `runtime.ts`'s `launchAgent`/`launchHeldSession` —
- * this registry only has to forward whatever `DelegationInjectionContext`
- * it was handed straight to the engine (so `sdkHeldSession.ts` can put it on
- * the SDK's own `mcpServers`/`allowedTools` options), and call `onEnded`
- * EXACTLY ONCE when this held session's own lifetime ends, however it ends —
- * never for a launch that never started, and never twice for one that both
+ * this registry only has to forward whatever `HeldDelegationLink` it was
+ * handed straight to the engine (so `sdkHeldSession.ts` can put it on the
+ * SDK's own `mcpServers`/`allowedTools` options), and call `onEnded` EXACTLY
+ * ONCE when this held session's own lifetime ends, however it ends — never
+ * for a launch that never started, and never twice for one that both
  * reports its own `onEnd` and is later swept by `closeAll`.
+ *
+ * AMENDED for #511 M1a: `delegation()` below built a `DelegationInjectionContext`
+ * (endpoint/token/serverCommand/serverArgs) — the shape a DETACHED launch's
+ * own stdio server needs. A held launch's own delegation is now a
+ * `HeldDelegationLink` (an in-process `DelegationLink` + a wait budget, no
+ * endpoint or token at all) — see `heldSession.ts`'s own comment on
+ * `HeldSessionStartRequest.delegation` for why. This registry still decides
+ * nothing about the shape; only the fixture changed.
  */
 describe('HeldSessionRegistry delegation injection (#511 T4)', () => {
-  function delegation(): DelegationInjectionContext {
+  function fakeLink(): DelegationLink {
     return {
-      serverCommand: '/opt/DwarfAI-Miners/DwarfAI-Miners',
-      serverArgs: ['/opt/DwarfAI-Miners/resources/app.asar.unpacked/out/main/jevMcpServer.js'],
-      endpoint: 'http://127.0.0.1:54321',
-      token: 'tok-abc123'
+      delegate: async () => ({
+        status: 'done',
+        outcome: { kind: 'concluded', text: 'ok', endedAt: 1 }
+      }),
+      result: async () => ({
+        status: 'done',
+        outcome: { kind: 'concluded', text: 'ok', endedAt: 1 }
+      })
     }
+  }
+
+  function delegation(): HeldDelegationLink {
+    return { link: fakeLink(), waitMs: 50_000 }
   }
 
   it("forwards the injection context to the engine's own start request untouched", async () => {

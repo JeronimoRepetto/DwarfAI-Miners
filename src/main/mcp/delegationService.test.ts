@@ -504,4 +504,109 @@ describe('DelegationService', () => {
     await service.stop()
     await service.stop()
   })
+
+  /*
+   * In-process direct entry points (#511 M1a) — the SAME checks the HTTP
+   * handlers above already prove (key/preference/concurrency/routing/launch,
+   * depth 1, unknown-ticket scoping), reached with no fetch, no port and no
+   * `x-dwarfai-token` header at all: a held Claude session's SDK in-process
+   * server calls these directly, so its own delegation token never has to
+   * leave this process to be authenticated. `handleDelegate`/`handleResult`
+   * above are now thin HTTP wrappers around exactly these two methods, which
+   * is what the tests above already exercise indirectly; this block proves
+   * the direct callers get the identical answers.
+   */
+  describe('delegateDirect / resultDirect (#511 M1a, in-process)', () => {
+    it('accepts a well-formed delegation with no HTTP at all, and answers the same shape /delegate would', async () => {
+      service = new DelegationService(options({ generateTicketId: () => 't-direct' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+
+      const result = await service.delegateDirect(token, 'find the bug', undefined)
+
+      expect(result).toEqual({ ticket: 't-direct', routing: ROUTING })
+      expect(launch).toHaveBeenCalledWith(
+        { mineId: 'mine:a', provider: 'claude', prompt: 'find the bug', model: 'sonnet' },
+        expect.objectContaining({ onConcluded: expect.any(Function) })
+      )
+    })
+
+    it('combines context and task exactly as the HTTP path does', async () => {
+      service = new DelegationService(options())
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+
+      await service.delegateDirect(token, 'find the bug', 'it started after #511')
+
+      expect(launch).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: 'it started after #511\n\nfind the bug' }),
+        expect.anything()
+      )
+    })
+
+    it('refuses a token this service never issued — the same as an HTTP 401, never a throw', async () => {
+      service = new DelegationService(options())
+      await service.start()
+
+      const result = await service.delegateDirect('never-issued', 'x', undefined)
+
+      expect(result).toMatchObject({ failure: { kind: 'link-unconfigured' } })
+      expect(launch).not.toHaveBeenCalled()
+    })
+
+    it('never sets routedByJev on the request handed to launch — depth 1 holds for the direct path too', async () => {
+      service = new DelegationService(options())
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      const request = launch.mock.calls[0]?.[0]
+      expect(request).toBeDefined()
+      expect(Object.hasOwn(request as object, 'routedByJev')).toBe(false)
+    })
+
+    it('respects the same gate checks (key configured, delegation allowed, concurrency)', async () => {
+      keyConfigured.mockReturnValue(false)
+      service = new DelegationService(options())
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+
+      const result = await service.delegateDirect(token, 'x', undefined)
+
+      expect(result).toMatchObject({ failure: { kind: 'disabled' } })
+      expect(launch).not.toHaveBeenCalled()
+    })
+
+    it('resultDirect answers pending, then done, keyed by the same token — no HTTP, no ticket route', async () => {
+      service = new DelegationService(options({ generateTicketId: () => 't-direct' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      expect(service.resultDirect(token, 't-direct')).toEqual({
+        status: 'pending',
+        routing: ROUTING
+      })
+
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+      expect(service.resultDirect(token, 't-direct')).toEqual({
+        status: 'done',
+        outcome: CONCLUDED
+      })
+    })
+
+    it('resultDirect scopes a ticket to its own token — a different token reads unknown-ticket', async () => {
+      service = new DelegationService(options({ generateTicketId: () => 't-direct' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a' })
+      const other = service.issueLaunchToken({ mineId: 'mine:b' }).token
+      await service.delegateDirect(token, 'find the bug', undefined)
+
+      expect(service.resultDirect(other, 't-direct')).toMatchObject({
+        failure: { kind: 'unknown-ticket' }
+      })
+    })
+  })
 })

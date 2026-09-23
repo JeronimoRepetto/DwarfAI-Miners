@@ -6,7 +6,7 @@ import {
 } from './delegationServerCommand'
 
 /**
- * Where `jevMcpServer.js` lives at runtime, and how to spawn it (#511 T4) —
+ * Where `jevMcpServer.mjs` lives at runtime, and how to spawn it (#511 T4) —
  * pure, so dev/packaged and all three OS path styles are asserted on any
  * host (`platform-ports`). The packaged answer resolves under
  * `app.asar.unpacked`: see this module's own top comment for the asar
@@ -40,28 +40,28 @@ const POSIX_DEV: DelegationServerPathOptions = {
 describe('resolveDelegationServerScriptPath', () => {
   it('resolves under app.asar.unpacked when packaged, on Windows', () => {
     expect(resolveDelegationServerScriptPath(WIN_PACKAGED, 'win32')).toBe(
-      'C:\\Program Files\\DwarfAI-Miners\\resources\\app.asar.unpacked\\out\\main\\jevMcpServer.js'
+      'C:\\Program Files\\DwarfAI-Miners\\resources\\app.asar.unpacked\\out\\main\\jevMcpServer.mjs'
     )
   })
 
   it('resolves alongside out/main at the project root when in dev, on Windows', () => {
     expect(resolveDelegationServerScriptPath(WIN_DEV, 'win32')).toBe(
-      'C:\\Users\\j\\DwarfAI-Miners\\out\\main\\jevMcpServer.js'
+      'C:\\Users\\j\\DwarfAI-Miners\\out\\main\\jevMcpServer.mjs'
     )
   })
 
   it('resolves under app.asar.unpacked when packaged, on macOS/Linux', () => {
     expect(resolveDelegationServerScriptPath(POSIX_PACKAGED, 'darwin')).toBe(
-      '/Applications/DwarfAI-Miners.app/Contents/Resources/app.asar.unpacked/out/main/jevMcpServer.js'
+      '/Applications/DwarfAI-Miners.app/Contents/Resources/app.asar.unpacked/out/main/jevMcpServer.mjs'
     )
     expect(resolveDelegationServerScriptPath(POSIX_PACKAGED, 'linux')).toBe(
-      '/Applications/DwarfAI-Miners.app/Contents/Resources/app.asar.unpacked/out/main/jevMcpServer.js'
+      '/Applications/DwarfAI-Miners.app/Contents/Resources/app.asar.unpacked/out/main/jevMcpServer.mjs'
     )
   })
 
   it('resolves alongside out/main at the project root when in dev, on macOS/Linux', () => {
     expect(resolveDelegationServerScriptPath(POSIX_DEV, 'darwin')).toBe(
-      '/home/j/DwarfAI-Miners/out/main/jevMcpServer.js'
+      '/home/j/DwarfAI-Miners/out/main/jevMcpServer.mjs'
     )
   })
 
@@ -81,7 +81,7 @@ describe('resolveDelegationServerCommand', () => {
     expect(resolveDelegationServerCommand(WIN_PACKAGED, execPath, 'win32')).toEqual({
       command: execPath,
       args: [
-        'C:\\Program Files\\DwarfAI-Miners\\resources\\app.asar.unpacked\\out\\main\\jevMcpServer.js'
+        'C:\\Program Files\\DwarfAI-Miners\\resources\\app.asar.unpacked\\out\\main\\jevMcpServer.mjs'
       ]
     })
   })
@@ -90,7 +90,7 @@ describe('resolveDelegationServerCommand', () => {
     const execPath = '/home/j/.local/share/electron/electron'
     expect(resolveDelegationServerCommand(POSIX_DEV, execPath, 'linux')).toEqual({
       command: execPath,
-      args: ['/home/j/DwarfAI-Miners/out/main/jevMcpServer.js']
+      args: ['/home/j/DwarfAI-Miners/out/main/jevMcpServer.mjs']
     })
   })
 })

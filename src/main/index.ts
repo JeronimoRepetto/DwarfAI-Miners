@@ -107,6 +107,7 @@ import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { DelegationService } from './mcp/delegationService'
+import { delegationFailure } from './mcp/delegationServerProtocol'
 import { NodeFs } from './adapters/fsLike'
 import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
@@ -1012,7 +1013,34 @@ async function init(): Promise<void> {
       keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
       delegationAllowed: async () => (await jevPreferenceStore.load()).delegation,
       issueLaunchToken: (context) => delegationService?.issueLaunchToken(context),
-      revoke: (token) => delegationService?.revoke(token)
+      revoke: (token) => delegationService?.revoke(token),
+      // #511 M1a: `delegate`/`result` close over the SAME module-level
+      // `delegationService`, lazily, for the SAME reason `issueLaunchToken`/
+      // `revoke` above do — read only by a HELD Claude session's in-process
+      // server (`resolveHeldDelegationInjection` in runtime.ts), which never
+      // reaches these before `issueLaunchToken` has already minted a real
+      // token, so `delegationService` being null here is not observed in
+      // production; the fallback exists only so the type stays honest about
+      // what a null service means rather than throwing.
+      delegate: async (token, task, context) =>
+        delegationService === null
+          ? {
+              failure: delegationFailure(
+                'link-unconfigured',
+                'The delegation service is not running.'
+              )
+            }
+          : delegationService.delegateDirect(token, task, context),
+      result: (token, ticket) =>
+        delegationService === null
+          ? {
+              status: 'failed',
+              failure: delegationFailure(
+                'link-unconfigured',
+                'The delegation service is not running.'
+              )
+            }
+          : delegationService.resultDirect(token, ticket)
     },
     /* --- end of the #511 T4 block ---------------------------------------------- */
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {

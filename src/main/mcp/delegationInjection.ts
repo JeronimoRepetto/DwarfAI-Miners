@@ -173,21 +173,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Parses an existing `OPENCODE_CONFIG_CONTENT` value, or answers an empty
- * object for one this app cannot trust — absent, not JSON, or JSON that is
- * not an object. A launch's own env carrying a malformed value is not this
- * function's failure to report: OpenCode itself would refuse to parse it the
- * same way, and refusing to LAUNCH over a value this app never wrote would
- * be a worse outcome than starting fresh under the one key `mcp.jev` this
- * app actually owns.
+ * Parses an existing `OPENCODE_CONFIG_CONTENT` value: `{}` for one this app
+ * may safely start fresh under — absent or empty, nothing to preserve — and
+ * `undefined` for one that is PRESENT but this app cannot trust as a JSON
+ * object (#511 L4) — not JSON at all, or JSON that is not an object (an
+ * array, a string, a number). The two cases used to collapse into the same
+ * `{}`, which meant `mergeOpenCodeConfigContent` REPLACED a launch's own
+ * existing, malformed content with just `{mcp:{jev:...}}` — discarding
+ * whatever was there for a reason this app cannot see. Distinguishing them
+ * is what lets that caller skip injection instead (see its own comment).
  */
-function parseExistingOpenCodeConfig(existing: string | undefined): Record<string, unknown> {
+function parseExistingOpenCodeConfig(
+  existing: string | undefined
+): Record<string, unknown> | undefined {
   if (existing === undefined || existing === '') return {}
   try {
     const parsed: unknown = JSON.parse(existing)
-    return isRecord(parsed) ? parsed : {}
+    return isRecord(parsed) ? parsed : undefined
   } catch {
-    return {}
+    return undefined
   }
 }
 
@@ -198,12 +202,23 @@ function parseExistingOpenCodeConfig(existing: string | undefined): Record<strin
  * itself is replaced outright if one was already there (a stale prior
  * registration this app itself left behind, never a name a person would
  * pick for their own server).
+ *
+ * Answers `undefined` (#511 L4) when `existing` is PRESENT but this app
+ * cannot parse it as a JSON object — never silently replaces it with just
+ * `{mcp:{jev:...}}`, which would discard content this app cannot see the
+ * reason for. `launchRunner.ts`'s own `delegationInjectionFor` reads
+ * `undefined` as "skip delegation injection for this one launch" (the
+ * launch proceeds exactly as an ungated one would; the token minted for it
+ * simply goes unused and is revoked on the ordinary end-of-launch path,
+ * same as any launch that never reaches its engine) — never as a reason to
+ * refuse the launch itself.
  */
 export function mergeOpenCodeConfigContent(
   existing: string | undefined,
   context: DelegationInjectionContext
-): string {
+): string | undefined {
   const parsed = parseExistingOpenCodeConfig(existing)
+  if (parsed === undefined) return undefined
   const existingMcp = isRecord(parsed.mcp) ? parsed.mcp : {}
   return JSON.stringify({
     ...parsed,

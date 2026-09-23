@@ -2,8 +2,8 @@ import { posix, win32 } from 'node:path'
 import { currentPlatform, type Platform } from '../platform/platform'
 
 /**
- * Where the built `jevMcpServer.js` (electron-vite's second `main` entry,
- * `electron.vite.config.ts`) lives at runtime, and how a CLI this app
+ * Where the built `jevMcpServer.mjs` (its own separate electron-vite build,
+ * `electron.vite.jevMcpServer.config.ts` — #511 M1a/L2) lives at runtime, and how a CLI this app
  * launches should spawn it (#511 T4).
  *
  * ## The packaged-build decision: `app.asar.unpacked`, not asar
@@ -18,11 +18,23 @@ import { currentPlatform, type Platform } from '../platform/platform'
  * `ELECTRON_RUN_AS_NODE`, as opposed to a `require()` from application code)
  * was found, so this resolves the packaged path under
  * `resources/app.asar.unpacked/` and package.json's own `build.asarUnpack`
- * lists `out/main/jevMcpServer.js` to put it there — the safe default this
+ * lists `out/main/jevMcpServer.mjs` to put it there — the safe default this
  * task's own instructions name, kept rather than an unverified shortcut.
  * `out/main/index.js` (the app itself) is unaffected: it stays inside the
  * asar, exactly as before, because Electron's own bootstrap (not a plain
  * Node one) is what loads it.
+ *
+ * ## The `.mjs` extension (#511 L2)
+ *
+ * Unpacking puts this file OUTSIDE this app's own `package.json` (sealed
+ * inside `app.asar`), so Node's ESM-vs-CommonJS syntax detection for an
+ * extensionless `.js` file — which falls back to the NEAREST ancestor
+ * `package.json`'s own `"type"` field — can land on an unrelated ancestor
+ * defaulting to `"type":"commonjs"` and refuse to parse the ESM syntax
+ * inside (an independent verifier reproduced this under Electron 44's
+ * `ELECTRON_RUN_AS_NODE`). `.mjs` is unambiguous regardless of any nearby
+ * `package.json`, so `electron.vite.jevMcpServer.config.ts` emits this entry with
+ * that extension and this resolver reads it back by the same name.
  *
  * ## Dev
  *
@@ -43,8 +55,8 @@ export interface DelegationServerPathOptions {
   appPath: string
 }
 
-/** The one build output this resolves — see `electron.vite.config.ts`'s `jevMcpServer` entry. */
-const SERVER_SCRIPT_SEGMENTS = ['out', 'main', 'jevMcpServer.js'] as const
+/** The one build output this resolves — see `electron.vite.jevMcpServer.config.ts`'s own `jevMcpServer` entry. */
+const SERVER_SCRIPT_SEGMENTS = ['out', 'main', 'jevMcpServer.mjs'] as const
 
 /**
  * The build's own unpacked-asar segment, joined between `resourcesPath` and

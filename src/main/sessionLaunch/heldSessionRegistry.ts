@@ -41,7 +41,7 @@ import {
   type HeldTuningState
 } from './heldSession'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
-import type { DelegationInjectionContext } from '../mcp/delegationInjection'
+import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
 
 /**
  * Every session the panel is currently holding, and the ask-answer loop over
@@ -400,9 +400,11 @@ export class HeldSessionRegistry {
        * or absent when it declined (#511 T4). Forwarded to the engine
        * untouched — only `sdkHeldSession.ts`'s Claude engine ever reads it,
        * to put it on the SDK's own `mcpServers`/`allowedTools` options; this
-       * registry decides nothing about it.
+       * registry decides nothing about it. See `HeldSessionStartRequest.delegation`'s
+       * own comment for why this is a `HeldDelegationLink` (#511 M1a) rather
+       * than the detached path's `DelegationInjectionContext`.
        */
-      delegation?: DelegationInjectionContext
+      delegation?: HeldDelegationLink
       /**
        * Told EXACTLY ONCE when this session ends, however it ends (#511
        * T4) — see `HeldRecord.onEnded`'s own comment. Never called for a

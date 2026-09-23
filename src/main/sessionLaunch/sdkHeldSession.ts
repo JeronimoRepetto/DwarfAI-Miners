@@ -8,7 +8,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
-import { DELEGATION_ALLOWED_TOOLS, claudeHeldMcpServers } from '../mcp/delegationInjection'
+import { DELEGATION_ALLOWED_TOOLS } from '../mcp/delegationInjection'
+import { createHeldDelegationMcpServer } from '../mcp/delegationHeldServer'
 import { resultTurnOutcome } from './claudeTurnOutcome'
 import type { HeldSessionSubagentSignal, HeldTaskEndStatus } from './heldCrew'
 import {
@@ -322,12 +323,22 @@ export function createSdkHeldSession(): HeldSessionPort {
         ...(request.effort === undefined ? {} : { effort: request.effort as EffortLevel }),
         ...(request.maxTurns === undefined ? {} : { maxTurns: request.maxTurns }),
         /*
-         * MCP subtask delegation (#511 T4). `mcpServers` registers the
-         * per-launch stdio server this launch's own gate check already
-         * approved (`delegationGate.ts`, evaluated in `runtime.ts`); absent
-         * entirely for a launch the gate declined, which is what keeps every
-         * OTHER held session's `query()` options byte for byte what they
-         * were before this issue.
+         * MCP subtask delegation (#511 T4, in-process since #511 M1a).
+         * `mcpServers` registers the per-launch IN-PROCESS server this
+         * launch's own gate check already approved (`delegationGate.ts`,
+         * evaluated in `runtime.ts`); absent entirely for a launch the gate
+         * declined, which is what keeps every OTHER held session's `query()`
+         * options byte for byte what they were before this issue.
+         *
+         * `createHeldDelegationMcpServer` returns a `type: 'sdk'` config —
+         * never `type: 'stdio'` — which is the whole point (see its own
+         * module comment): the Agent SDK filters a `type: 'sdk'` entry out
+         * of the argv it builds for `--mcp-config`, so this launch's
+         * delegation link never reaches the CLASSIC `claude` process's own
+         * command line at all, where any other local user on this machine
+         * could otherwise read it via `ps`/Task Manager. A held session
+         * needs no endpoint or token for this reason: its tool handlers call
+         * `DelegationService` directly, in this same process.
          *
          * `allowedTools` names exactly `DELEGATION_ALLOWED_TOOLS`
          * (`delegate_subtask`/`subtask_result`) — the minimal, honest grant:
@@ -341,7 +352,7 @@ export function createSdkHeldSession(): HeldSessionPort {
         ...(request.delegation === undefined
           ? {}
           : {
-              mcpServers: claudeHeldMcpServers(request.delegation),
+              mcpServers: { jev: createHeldDelegationMcpServer(request.delegation) },
               allowedTools: [...DELEGATION_ALLOWED_TOOLS]
             }),
         canUseTool: async (toolName, toolInput, extras): Promise<PermissionResult> => {

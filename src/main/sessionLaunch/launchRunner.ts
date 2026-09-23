@@ -242,10 +242,42 @@ export interface DelegationConfigFile {
   remove(path: string): void
 }
 
-export function createNodeDelegationConfigFile(): DelegationConfigFile {
+/**
+ * The low-level write primitive `createNodeDelegationConfigFile` calls,
+ * injectable so a test can pin the exact OPTIONS this app passes without
+ * depending on the OS actually enforcing them (#511 M1b) — Windows has no
+ * real per-class (owner/group/other) permission bits to read back, so a
+ * test asserting the round-tripped file mode would pass or fail on the
+ * wrong grounds depending on which OS runs it. What this app controls, and
+ * what is worth pinning, is the CALL: `{ mode: 0o600, flag: 'wx' }`.
+ */
+type WriteFileSyncLike = (
+  path: string,
+  contents: string,
+  options: { encoding: 'utf8'; mode: number; flag: string }
+) => void
+
+/**
+ * The `--mcp-config` temp file's own permissions (#511 M1b) — an independent
+ * verifier found this written with no `mode` at all, which is 0644 on
+ * Linux/macOS: the file (this launch's own delegation endpoint AND token)
+ * lands world-readable in a SHARED `/tmp`. `mode: 0o600` restricts it to
+ * this app's own OS user; `flag: 'wx'` creates it exclusively (`O_CREAT |
+ * O_EXCL`), refusing to write over a path that already exists rather than
+ * silently truncating one a `randomUUID()` collision (or something else)
+ * left behind — the same "fail rather than clobber" posture a secret file
+ * deserves. Both apply on Windows too, where `flag: 'wx'` behaves
+ * identically even though `mode`'s effect is limited to the read-only
+ * attribute there — see this file's own `WriteFileSyncLike` comment for why
+ * this is proven by pinning the CALL rather than the OS's own enforcement.
+ */
+export function createNodeDelegationConfigFile(
+  writeFile: WriteFileSyncLike = writeFileSync
+): DelegationConfigFile {
   return {
     path: () => join(tmpdir(), `dwarfai-launch-mcp-config-${randomUUID()}.json`),
-    write: (path, contents) => writeFileSync(path, contents, 'utf8'),
+    write: (path, contents) =>
+      writeFile(path, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
     remove: (path) => {
       try {
         unlinkSync(path)
@@ -748,6 +780,15 @@ export function runLaunchProcess(
       stderrFile.remove(stderrPath)
       stdoutFile.close(stdoutFd)
       stdoutFile.remove(stdoutPath)
+      // #511 L1: nothing will ever spawn to read this delegation config file
+      // back either — an independent verifier found it left behind on this
+      // exact path (a synchronous spawn throw, before `options.run`'s
+      // promise ever settles), and it carries this launch's own delegation
+      // secret, so it is removed on every path that opened it, the same
+      // discipline the two capture files above already hold.
+      if (invocation.delegationConfigFile !== undefined) {
+        stdoutFile.remove(invocation.delegationConfigFile)
+      }
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
@@ -762,6 +803,12 @@ export function runLaunchProcess(
       settled = true
       stderrFile.remove(stderrPath)
       stdoutFile.remove(stdoutPath)
+      // #511 L1: same reasoning as the synchronous spawn-throw branch above
+      // — the child never reached `retainedProcess`, so nothing else will
+      // ever remove this file.
+      if (invocation.delegationConfigFile !== undefined) {
+        stdoutFile.remove(invocation.delegationConfigFile)
+      }
       reject(error)
     })
     child.once('spawn', () => {
@@ -818,14 +865,19 @@ function retainedProcess(
   if (pid === undefined) {
     // Nothing to hold means nothing to watch either (#263, #510) — these
     // files will never be read, because there is no handle left to
-    // correlate an exit to, so there is no reason to wait for one. The
-    // mcp-config file (#511 T4) is left exactly where `outputFile` above
-    // already is in this branch — a real launch this app cannot even
-    // retain a pid for is a vanishingly rare edge case, and this stays
-    // consistent with the existing tradeoff rather than growing a special
-    // case with no test coverage behind it.
+    // correlate an exit to, so there is no reason to wait for one.
+    //
+    // AMENDED for #511 L1 (was: the mcp-config file left behind here as an
+    // accepted tradeoff, on the reasoning that a launch with no pid to
+    // retain is vanishingly rare). An independent verifier asked for it to
+    // be cleaned up anyway: unlike the stdout/stderr capture files, this one
+    // carries a live delegation secret, and "vanishingly rare" is still a
+    // stray secret on disk rather than nothing. It goes through the SAME
+    // `StdoutFile` port `outputFile`'s own cleanup already uses — never a
+    // fourth file lifecycle of its own.
     stdoutFile.remove(stdoutPath)
     stderrFile.remove(stderrPath)
+    if (delegationConfigFile !== undefined) stdoutFile.remove(delegationConfigFile)
     return undefined
   }
   // TurnOutcomeWatch is registered BEFORE EarlyFailureWatch, on purpose —
@@ -944,13 +996,25 @@ function delegationInjectionFor(
     return { extraArgs: claudeDetachedExtraArgs(path), env, delegationConfigFile: path }
   }
   if (provider === 'opencode') {
-    return {
-      extraArgs: [],
-      env: {
-        ...env,
-        OPENCODE_CONFIG_CONTENT: mergeOpenCodeConfigContent(env.OPENCODE_CONFIG_CONTENT, delegation)
-      }
-    }
+    // #511 L3: this env is inherited by the CLI process itself (never only
+    // the server this app spawns from it), so `DWARFAI_DELEGATION_TOKEN`
+    // sits in OpenCode's own process environment for the life of that
+    // launch — readable by anything OpenCode itself spawns as a subprocess,
+    // which this app has no visibility into. Left as a documented, deferred
+    // risk (T5's own privacy doc covers it) rather than fixed here: unlike
+    // the held-Claude argv exposure (#511 M1a) or the detached-Claude temp
+    // file (#511 M1b), there is no narrower per-invocation mechanism
+    // OpenCode's own docs expose that would keep this env off the CLI's own
+    // process without also keeping it off the SERVER process that needs it.
+    const merged = mergeOpenCodeConfigContent(env.OPENCODE_CONFIG_CONTENT, delegation)
+    // #511 L4: `merged` is `undefined` only when this launch's OWN
+    // `OPENCODE_CONFIG_CONTENT` was already present and this app could not
+    // parse it as a JSON object — see `mergeOpenCodeConfigContent`'s own
+    // comment. Skipping injection here (the launch proceeds exactly as an
+    // ungated one would) is the safe default: REPLACING content this app
+    // cannot see the reason for would silently discard it.
+    if (merged === undefined) return { extraArgs: [], env }
+    return { extraArgs: [], env: { ...env, OPENCODE_CONFIG_CONTENT: merged } }
   }
   return { extraArgs: [], env }
 }

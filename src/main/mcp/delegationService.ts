@@ -196,6 +196,95 @@ export class DelegationService {
     this.tokens.revoke(token)
   }
 
+  /**
+   * In-process direct entry (#511 M1a) — the SAME core logic `POST /delegate`
+   * runs (key/preference checks, concurrency, routing, launch), called
+   * directly from main rather than over loopback+HTTP. A held Claude
+   * session's SDK-in-process MCP server (`delegationHeldServer.ts`) calls
+   * this through the `DelegationLink` `AgentRuntime.resolveHeldDelegationInjection`
+   * builds, closing over the SAME token `issueLaunchToken` minted for that
+   * launch — kept ONLY in main's own memory as a correlation key, never
+   * placed on any child process's argv or env, because a held session's
+   * tools never leave this process at all. `handleDelegate` below is now a
+   * thin HTTP wrapper around this same method, so the detached/`-p` and
+   * OpenCode paths (which DO need a real loopback token, since those launch
+   * a genuinely separate process) share every check byte for byte with the
+   * held path.
+   */
+  async delegateDirect(
+    token: string,
+    task: string,
+    context: string | undefined
+  ): Promise<
+    | { ticket: string; routing: DelegationRouting }
+    | { failure: ReturnType<typeof delegationFailure> }
+  > {
+    const parent = this.tokens.contextFor(token)
+    if (parent === undefined) {
+      return {
+        failure: delegationFailure(
+          'link-unconfigured',
+          'This session was not given a delegation endpoint.'
+        )
+      }
+    }
+    if (!this.options.keyConfigured()) {
+      return { failure: delegationFailure('disabled', 'No TypeSafe key is configured.') }
+    }
+    if (!(await this.options.delegationAllowed())) {
+      return { failure: delegationFailure('disabled', 'Subtask delegation is turned off.') }
+    }
+    if (!this.concurrency.tryAcquire(token)) {
+      return {
+        failure: delegationFailure(
+          'concurrency-limit',
+          'Too many delegated subtasks are already running.'
+        )
+      }
+    }
+
+    const prompt = combinedPrompt(task, context)
+    let resolved: ReturnType<typeof resolveDelegationRouting>
+    try {
+      resolved = resolveDelegationRouting(await this.options.route({ prompt }))
+    } catch (error) {
+      // #511 LOW-3's same discipline, reused here: a throwing router must not
+      // leak the slot `tryAcquire` already reserved.
+      this.concurrency.release(token)
+      return {
+        failure: delegationFailure(
+          'launch-failed',
+          `Routing the delegated child threw: ${String(error)}`
+        )
+      }
+    }
+    if ('failure' in resolved) {
+      this.concurrency.release(token)
+      return { failure: resolved.failure }
+    }
+
+    const launched = await this.launchChild(parent, resolved.routing, prompt, token)
+    if ('failure' in launched) {
+      this.concurrency.release(token)
+      return { failure: launched.failure }
+    }
+    return { ticket: launched.ticket, routing: resolved.routing }
+  }
+
+  /**
+   * In-process direct entry for `subtask_result` (#511 M1a) — the same
+   * ticket lookup `GET /result` performs, addressed by the same token
+   * `delegateDirect` used. No HTTP body, no 200 wrapper: the ticket's raw
+   * state, exactly as `handleResult` below now also reads it through this
+   * same method.
+   */
+  resultDirect(token: string, ticketId: string): ResultBody {
+    const state = this.tickets.get(ticketId, token)
+    return (
+      state ?? { status: 'failed', failure: delegationFailure('unknown-ticket', 'No such ticket.') }
+    )
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const method = request.method ?? ''
     const url = request.url ?? ''
@@ -225,16 +314,16 @@ export class DelegationService {
       return
     }
 
-    await this.handleDelegate(request, response, token, parent)
+    await this.handleDelegate(request, response, token)
   }
 
+  /** The HTTP wrapper around `resultDirect` (#511 M1a) — see that method's own comment. */
   private handleResult(response: ServerResponse, url: string, token: string): void {
     const ticketId = this.decodeTicketId(url)
-    const state = ticketId === undefined ? undefined : this.tickets.get(ticketId, token)
-    const body: ResultBody = state ?? {
-      status: 'failed',
-      failure: delegationFailure('unknown-ticket', 'No such ticket.')
-    }
+    const body: ResultBody =
+      ticketId === undefined
+        ? { status: 'failed', failure: delegationFailure('unknown-ticket', 'No such ticket.') }
+        : this.resultDirect(token, ticketId)
     this.writeJson(response, 200, body)
   }
 
@@ -256,11 +345,17 @@ export class DelegationService {
     }
   }
 
+  /**
+   * The HTTP wrapper around `delegateDirect` (#511 M1a) — parses the body,
+   * hands the two plain strings to the SAME core method the in-process held
+   * path calls, and translates its answer into the HTTP response shape.
+   * Every check that used to live here directly (key/preference/concurrency/
+   * routing/launch) now lives once, in `delegateDirect`.
+   */
   private async handleDelegate(
     request: IncomingMessage,
     response: ServerResponse,
-    token: string,
-    parent: DelegationParentContext
+    token: string
   ): Promise<void> {
     const body = await this.readBody(request, response)
     if (body === undefined) return // 413 already answered, connection drained
@@ -281,58 +376,13 @@ export class DelegationService {
       return
     }
 
-    if (!this.options.keyConfigured()) {
-      this.refuse(response, delegationFailure('disabled', 'No TypeSafe key is configured.'))
-      return
-    }
-    if (!(await this.options.delegationAllowed())) {
-      this.refuse(response, delegationFailure('disabled', 'Subtask delegation is turned off.'))
+    const result = await this.delegateDirect(token, parsed.task, parsed.context)
+    if ('failure' in result) {
+      this.refuse(response, result.failure)
       return
     }
 
-    if (!this.concurrency.tryAcquire(token)) {
-      this.refuse(
-        response,
-        delegationFailure('concurrency-limit', 'Too many delegated subtasks are already running.')
-      )
-      return
-    }
-
-    const prompt = combinedPrompt(parsed.task, parsed.context)
-    let resolved: ReturnType<typeof resolveDelegationRouting>
-    try {
-      resolved = resolveDelegationRouting(await this.options.route({ prompt }))
-    } catch (error) {
-      // #511 LOW-3: `route` runs AFTER `tryAcquire` already reserved this
-      // token's slot. Every failure branch below releases that slot
-      // explicitly before answering — a bare `await` here would let a
-      // throwing router skip all of them, leaking the slot forever (until
-      // the whole token is revoked) and turning an ordinary refusal into an
-      // unexplained 500 from `start`'s own top-level catch.
-      this.concurrency.release(token)
-      this.refuse(
-        response,
-        delegationFailure('launch-failed', `Routing the delegated child threw: ${String(error)}`)
-      )
-      return
-    }
-    if ('failure' in resolved) {
-      this.concurrency.release(token)
-      this.refuse(response, resolved.failure)
-      return
-    }
-
-    const launched = await this.launchChild(parent, resolved.routing, prompt, token)
-    if ('failure' in launched) {
-      this.concurrency.release(token)
-      this.refuse(response, launched.failure)
-      return
-    }
-
-    const acceptedBody: DelegateAcceptedBody = {
-      ticket: launched.ticket,
-      routing: resolved.routing
-    }
+    const acceptedBody: DelegateAcceptedBody = { ticket: result.ticket, routing: result.routing }
     this.writeJson(response, 202, acceptedBody)
   }
 

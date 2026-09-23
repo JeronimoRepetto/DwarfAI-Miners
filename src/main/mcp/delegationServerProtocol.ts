@@ -53,6 +53,13 @@ export const DELEGATION_ENDPOINT_ENV = 'DWARFAI_DELEGATION_ENDPOINT'
 export const DELEGATION_TOKEN_ENV = 'DWARFAI_DELEGATION_TOKEN'
 export const DELEGATION_WAIT_MS_ENV = 'DWARFAI_DELEGATION_WAIT_MS'
 /**
+ * Added for #511 M1a: `runtime.ts`'s `resolveHeldDelegationInjection` needs
+ * this default too, for a held Claude session whose in-process server takes
+ * a concrete `waitMs` rather than an env var a detached child's own process
+ * parses — same duplication reasoning as every other constant here.
+ */
+export const DEFAULT_DELEGATION_WAIT_MS = 50_000
+/**
  * Mirrors `MAX_HOOK_BODY_BYTES`'s own cap-before-parse style
  * (`hooks/hookServer.ts`), sized to fit the actual worst case rather than a
  * round guess (#511 LOW-9). Neither the zod schema (`jevMcpServerCore.ts`)

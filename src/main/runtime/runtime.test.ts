@@ -54,7 +54,7 @@ import type { AntigravityModelCatalogPort } from '../providers/antigravity/model
 import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
-import { createCliDetector } from '../platform/cliDetection'
+import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import type { Provider } from '../providers/provider'
 import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
 import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
@@ -6787,7 +6787,14 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
           const token = `tok-${nextToken++}`
           return { endpoint: 'http://127.0.0.1:54321', token }
         },
-        revoke: (token: string) => revoked.push(token)
+        revoke: (token: string) => revoked.push(token),
+        // #511 M1a: the in-process direct entry a held session's own SDK
+        // server would call — never exercised by the detached-launch tests
+        // in this block (they never build a `DelegationLink`), and only
+        // asserted for SHAPE by the held-session tests below, so a fixed,
+        // harmless answer is enough here.
+        delegate: async () => ({ ticket: 'fake-ticket', routing: { provider: 'claude' as const } }),
+        result: () => ({ status: 'pending' as const, routing: { provider: 'claude' as const } })
       },
       issued,
       revoked
@@ -6921,6 +6928,14 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
     await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
 
     expect(fake.issued).toEqual([])
+    // #511 L6: amended to also prove the launch request itself carries no
+    // `delegation` field, the same assertion the "no delegation options at
+    // all" and "not routed by Jev" tests above already make — an empty
+    // `issued` array alone does not rule out a stray `delegation: undefined`
+    // key surviving onto the wire.
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
   })
 
   it("never injects when Settings' own delegation checkbox is off", async () => {
@@ -6933,6 +6948,10 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
     await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
 
     expect(fake.issued).toEqual([])
+    // #511 L6: same amendment as the key-off test above.
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
   })
 
   it('degrades to an ordinary, uninjected launch when the service has no token to give yet', async () => {
@@ -7016,10 +7035,19 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
     })
 
     expect(fake.issued).toEqual([{ mineId }])
-    expect(engine.started[0]!.delegation).toMatchObject({
-      endpoint: 'http://127.0.0.1:54321',
-      token: 'tok-0'
-    })
+    // #511 M1a: a held launch's own delegation is an in-process
+    // DelegationLink + waitMs now, never the endpoint/token shape a
+    // detached launch's own stdio server needs — see
+    // `resolveHeldDelegationInjection`'s own comment.
+    expect(engine.started[0]!.delegation).toMatchObject({ waitMs: expect.any(Number) })
+    expect(typeof engine.started[0]!.delegation?.link.delegate).toBe('function')
+    expect(typeof engine.started[0]!.delegation?.link.result).toBe('function')
+    // #511 M1a's own point: no endpoint, no token anywhere on what a held
+    // session's own request carries — there is nothing here a CLI's own
+    // argv could ever expose, because nothing here is handed to a CLI at
+    // all.
+    expect(Object.hasOwn(engine.started[0]!.delegation as object, 'endpoint')).toBe(false)
+    expect(Object.hasOwn(engine.started[0]!.delegation as object, 'token')).toBe(false)
     expect(fake.revoked).toEqual([])
 
     engine.started[0]!.onEnd('the turn finished')
@@ -7077,6 +7105,49 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
     })
 
     expect(engine.started).toEqual([])
+    expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  /*
+   * #511 L5: `HeldSessionRegistry.launch` catches its own engine's throw
+   * internally (see its own try/catch), but `this.detector.detect(...)`
+   * runs BEFORE that try block — a detector that throws (a real disk error,
+   * never observed from the shipped detector but not structurally
+   * impossible) reaches `AgentRuntime.launchHeldSession` uncaught. Before
+   * this fix nothing there revoked the token that had already been minted.
+   */
+  it('revokes the token and rethrows when the held registry itself throws before ever reaching the engine', async () => {
+    const fake = delegationFake()
+    const engine = fakeHeldEngine()
+    const throwingDetector: CliDetector = {
+      detect: () => {
+        throw new Error('disk read failed')
+      },
+      peek: () => 'unprobed'
+    }
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      heldSessions: new HeldSessionRegistry({
+        detector: throwingDetector,
+        start: { claude: engine.port },
+        now: () => 9_000,
+        log: () => {}
+      }),
+      onMinesUpdated: vi.fn(),
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+      delegation: fake.options
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    await expect(
+      runtime.launchHeldSession({ provider: 'claude', mineId, prompt: 'dig', routedByJev: true })
+    ).rejects.toThrow('disk read failed')
+
+    expect(fake.issued).toEqual([{ mineId }])
     expect(fake.revoked).toEqual(['tok-0'])
   })
 })

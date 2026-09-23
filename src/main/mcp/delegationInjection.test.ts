@@ -80,7 +80,7 @@ describe('claudeMcpConfigJson / claudeDetachedExtraArgs', () => {
 
 describe('mergeOpenCodeConfigContent', () => {
   it('builds a fresh OPENCODE_CONFIG_CONTENT when the launch env carries none', () => {
-    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(undefined, CTX))
+    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(undefined, CTX)!)
     expect(merged).toEqual({
       mcp: {
         jev: {
@@ -102,7 +102,7 @@ describe('mergeOpenCodeConfigContent', () => {
       $schema: 'https://opencode.ai/config.json',
       mcp: { other: { type: 'local', command: ['other-server'], enabled: true } }
     })
-    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(existing, CTX))
+    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(existing, CTX)!)
     expect(merged).toEqual({
       $schema: 'https://opencode.ai/config.json',
       mcp: {
@@ -121,17 +121,32 @@ describe('mergeOpenCodeConfigContent', () => {
     })
   })
 
-  it('treats malformed existing content as absent rather than throwing', () => {
+  // AMENDED for #511 L4 (was: "treats malformed existing content as absent
+  // rather than throwing", asserting the merge silently REPLACED the
+  // launch's own malformed OPENCODE_CONFIG_CONTENT with just
+  // {mcp:{jev:...}}). That was the bug: existing content this app cannot
+  // see the reason for was being discarded rather than preserved. The
+  // correct answer is `undefined` — never a throw, still — which tells the
+  // caller (launchRunner.ts's delegationInjectionFor) to skip injection for
+  // that one launch instead of clobbering content it cannot parse.
+  it('answers undefined for existing content this app cannot parse as a JSON object, rather than replacing it (#511 L4)', () => {
     expect(() => mergeOpenCodeConfigContent('{not json', CTX)).not.toThrow()
-    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent('{not json', CTX))
-    expect(merged).toMatchObject({ mcp: { jev: { enabled: true } } })
+    expect(mergeOpenCodeConfigContent('{not json', CTX)).toBeUndefined()
+    expect(mergeOpenCodeConfigContent('[]', CTX)).toBeUndefined()
+    expect(mergeOpenCodeConfigContent('"a string"', CTX)).toBeUndefined()
+    expect(mergeOpenCodeConfigContent('42', CTX)).toBeUndefined()
+  })
+
+  it('still builds fresh content for genuinely absent or empty existing content', () => {
+    expect(mergeOpenCodeConfigContent(undefined, CTX)).toBeDefined()
+    expect(mergeOpenCodeConfigContent('', CTX)).toBeDefined()
   })
 
   it('replaces a same-named jev entry rather than merging under it, so a stale registration never survives', () => {
     const existing = JSON.stringify({
       mcp: { jev: { type: 'local', command: ['stale'], enabled: false } }
     })
-    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(existing, CTX))
+    const merged: unknown = JSON.parse(mergeOpenCodeConfigContent(existing, CTX)!)
     expect(merged).toMatchObject({
       mcp: { jev: { command: [CTX.serverCommand, ...CTX.serverArgs] } }
     })

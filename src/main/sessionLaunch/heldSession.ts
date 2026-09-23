@@ -1,5 +1,5 @@
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
-import type { DelegationInjectionContext } from '../mcp/delegationInjection'
+import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
 import { permissionInputLine, toolActivityLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
@@ -469,8 +469,18 @@ export interface HeldSessionStartRequest {
    * own `mcpServers`/`allowedTools` `query()` options; `antigravityHeldSession.ts`
    * has no held delegation route (Antigravity is excluded from
    * `DELEGATION_CAPABLE_PROVIDERS`) and simply never reads this field.
+   *
+   * AMENDED for #511 M1a (was: `DelegationInjectionContext`, the same
+   * endpoint+token shape a DETACHED launch's own stdio server needs). A held
+   * session's server runs IN-PROCESS instead (`delegationHeldServer.ts`), so
+   * it carries an already-built `DelegationLink` and a wait budget rather
+   * than an endpoint/token a real subprocess would need — see
+   * `delegationHeldServer.ts`'s own module comment for why: an Agent SDK
+   * `type: 'stdio'` `mcpServers` entry ends up on the CLASSIC `claude`
+   * process's own `--mcp-config` argv, readable by any other local user via
+   * `ps`, while a `type: 'sdk'` one (what this becomes) never does.
    */
-  delegation?: DelegationInjectionContext
+  delegation?: HeldDelegationLink
   /**
    * This host's own clock (#510) — the same one `HeldSessionRegistry` stamps
    * every other timestamp with (see `appendMessage`'s "this host's clock"

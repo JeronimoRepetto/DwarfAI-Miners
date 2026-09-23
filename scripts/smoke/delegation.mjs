@@ -9,7 +9,7 @@
  * yourself, by hand, when you actually want to know whether a real
  * installed CLI exposes the delegation tool to its model:
  *
- *     pnpm build   # out/main/jevMcpServer.js must exist and be current
+ *     pnpm build   # out/main/jevMcpServer.mjs must exist and be current
  *     node scripts/smoke/delegation.mjs
  *
  * ## What it proves, and what it does not
@@ -56,22 +56,53 @@
  * `delegationServerProtocol.ts` already documents for its own duplicates.
  * `delegationInjection.test.ts` is what actually proves those two modules
  * agree with each other; this script only has to agree with the WIRE the
- * built `jevMcpServer.js` actually speaks, which is covered by
+ * built `jevMcpServer.mjs` actually speaks, which is covered by
  * `delegationProtocol.test.ts` and this file's own `pnpm build` dependency.
+ *
+ * ## Windows fixes (#511 M2)
+ *
+ * An independent verifier found three bugs specific to this script, never
+ * exercised by CI or by any agent working this issue because it never runs
+ * automatically:
+ *
+ * 1. `claude`/`opencode`/`codex` install as `.cmd` shims on Windows, and a
+ *    bare `spawn('claude', …)` cannot execute one — Windows' own
+ *    `CreateProcess` needs a real `.exe`, so this ENOENTs even when the CLI
+ *    IS installed. Fixed by checking each CLI's own existence on PATH
+ *    (`commandExists`, PATH + PATHEXT on Windows) BEFORE ever spawning,
+ *    rather than inferring "not installed" from a spawn failure — the same
+ *    shim problem `src/main/platform/cliDetection.ts`'s `resolveProgram`
+ *    solves for the real app, mirrored here only as an existence check
+ *    (never that module's full shim-target resolution) since this script
+ *    stays out of `src/` per this file's own top comment. `shell: true` on
+ *    win32 then lets `cmd.exe` itself execute the resolved `.cmd`.
+ * 2. Because SKIPPED used to be inferred from a spawn-level ENOENT, and that
+ *    ENOENT fired for an INSTALLED CLI on Windows, this script always read
+ *    "not installed" there and never actually measured anything — silently,
+ *    since SKIPPED does not fail the exit code. Deciding SKIPPED up front
+ *    means every spawn failure AFTER it is a genuine FAIL.
+ * 3. `child.kill('SIGTERM')` does not kill a process TREE — OpenCode's own
+ *    server detaches and keeps its port open past the CLI's own exit. Fixed
+ *    by `killTree`: `taskkill /T /F` on Windows, a negative-pid process
+ *    group signal (`detached: true` at spawn) on POSIX.
  */
 
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter as PATH_DELIMITER, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import electronPath from 'electron'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = join(__dirname, '..', '..')
-const SERVER_SCRIPT = join(PROJECT_ROOT, 'out', 'main', 'jevMcpServer.js')
+const SERVER_SCRIPT = join(PROJECT_ROOT, 'out', 'main', 'jevMcpServer.mjs')
+const IS_WINDOWS = process.platform === 'win32'
+/** Windows' own PATHEXT default — a locally installed CLI is one of these, never a bare extensionless file. */
+const WINDOWS_EXTENSIONS = ['.COM', '.EXE', '.BAT', '.CMD']
 
 /* --- Wire literals, duplicated by hand — see this file's own top comment --- */
 const DELEGATE_ROUTE = '/delegate'
@@ -240,6 +271,70 @@ async function buildLaunch(provider, workDir, endpoint, token) {
   }
 }
 
+/**
+ * Whether `command` resolves to a real file on PATH (#511 M2) — checked
+ * BEFORE spawning, so SKIPPED ("not installed") is decided by this app,
+ * never inferred from a spawn-level `error` event. Windows needs the
+ * PATHEXT search because a locally installed CLI is a `.cmd`/`.ps1` shim,
+ * never a bare extensionless file — see this file's own top comment.
+ */
+async function commandExists(command) {
+  const dirs = (process.env.PATH ?? '').split(PATH_DELIMITER).filter((dir) => dir !== '')
+  const candidates = IS_WINDOWS ? WINDOWS_EXTENSIONS.map((ext) => command + ext) : [command]
+  for (const dir of dirs) {
+    for (const candidate of candidates) {
+      try {
+        await access(join(dir, candidate), fsConstants.X_OK)
+        return true
+      } catch {
+        // Not this directory/extension — keep looking.
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Ends the WHOLE process tree a launch started, not just its own pid (#511
+ * M2) — OpenCode's own server detaches and keeps its port open past the CLI
+ * process's own exit, which a plain `child.kill()` never reaches. POSIX:
+ * `spawnCli` below starts the child in its own process group (`detached:
+ * true`), so a negative pid signals that whole group. Windows has no such
+ * flag; `taskkill /T` walks the process tree itself.
+ */
+function killTree(child) {
+  if (child.pid === undefined) return
+  if (IS_WINDOWS) {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'])
+    } catch {
+      // Best-effort — nothing else to fall back to.
+    }
+    return
+  }
+  try {
+    process.kill(-child.pid, 'SIGTERM')
+  } catch {
+    // Already gone, or never got its own group.
+  }
+}
+
+/**
+ * `spawn`, resolved the way this app's own CLI detection has to resolve a
+ * locally installed CLI on Windows (#511 M2) — `claude`/`opencode`/`codex`
+ * install as `.cmd` shims there, and `CreateProcess` cannot execute one
+ * directly; `shell: true` lets `cmd.exe` itself do that resolution. POSIX
+ * needs neither: every one of these CLIs installs as a real executable
+ * there, so this only changes Windows' own spawn shape.
+ */
+function spawnCli(command, args, options) {
+  return spawn(command, args, {
+    ...options,
+    shell: IS_WINDOWS,
+    ...(IS_WINDOWS ? {} : { detached: true })
+  })
+}
+
 /** Runs one provider's launch and waits for either the fake endpoint's own POST or the timeout. */
 function runProbe(launch) {
   return new Promise((resolve) => {
@@ -248,17 +343,13 @@ function runProbe(launch) {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      try {
-        child.kill('SIGTERM')
-      } catch {
-        // Already gone.
-      }
+      killTree(child)
       resolve({ verdict, detail })
     }
 
     let child
     try {
-      child = spawn(launch.command, launch.args, {
+      child = spawnCli(launch.command, launch.args, {
         cwd: launch.cwd,
         env: { ...process.env, ...(launch.env ?? {}) },
         stdio: ['pipe', 'ignore', 'pipe']
@@ -272,11 +363,11 @@ function runProbe(launch) {
     child.stderr?.on('data', (chunk) => {
       stderr += chunk.toString('utf8')
     })
+    // #511 M2: SKIPPED is decided by `commandExists` in `main()`, BEFORE
+    // this function is ever called — this CLI is already known installed,
+    // so an `error` event reaching here is a genuine spawn failure, never
+    // "not on PATH".
     child.once('error', (error) => {
-      if (error && error.code === 'ENOENT') {
-        finish('SKIPPED', `${launch.command} is not on PATH`)
-        return
-      }
       finish('FAIL', `spawn error: ${String(error)}`)
     })
     child.stdin?.on('error', () => {})
@@ -316,15 +407,17 @@ async function main() {
   const results = []
   try {
     for (const provider of ['claude', 'opencode', 'codex']) {
+      // #511 M2: decided BEFORE spawning anything, never inferred from a
+      // spawn-level error — see commandExists's own comment for why.
+      if (!(await commandExists(provider))) {
+        results.push({ provider, verdict: 'SKIPPED', detail: `${provider} is not on PATH` })
+        continue
+      }
       const token = `smoke-${provider}-${randomUUID()}`
       const launch = await buildLaunch(provider, workDir, endpoint.endpoint, token)
       const outcome = await runProbe(launch)
       const received = endpoint.receivedDelegateCall()
 
-      if (outcome.verdict === 'SKIPPED') {
-        results.push({ provider, verdict: 'SKIPPED', detail: outcome.detail })
-        continue
-      }
       if (received !== undefined && received.token === token) {
         results.push({
           provider,

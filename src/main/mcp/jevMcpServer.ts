@@ -8,9 +8,10 @@ import { createJevMcpServer } from './jevMcpServerCore'
  * plain Node process (#511, T4's injection adapters) — OUTSIDE Electron's
  * module loader entirely. Whether an `ELECTRON_RUN_AS_NODE` process can even
  * resolve an asar-packed `node_modules` is unmeasured, and this design does
- * not depend on it: `electron.vite.config.ts` bundles `@modelcontextprotocol
- * /sdk` and `zod` straight into this file's own build output, so it needs
- * nothing at runtime beyond Node builtins — see that config's own comment.
+ * not depend on it: `electron.vite.jevMcpServer.config.ts` (its own, wholly
+ * separate build — #511 M1a/L2) bundles `@modelcontextprotocol/sdk` and
+ * `zod` straight into this file's own build output, so it needs nothing at
+ * runtime beyond Node builtins — see that config's own comment.
  *
  * Composition only. Every real decision — what the two tools do, how a
  * failure is built, how the loopback link talks to main — lives in

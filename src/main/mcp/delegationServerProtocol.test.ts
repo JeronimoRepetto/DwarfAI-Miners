@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as canonical from './delegationProtocol'
 import {
+  DEFAULT_DELEGATION_WAIT_MS,
   DELEGATE_ROUTE,
   DELEGATE_SUBTASK_TOOL_NAME,
   DELEGATION_ENDPOINT_ENV,
@@ -78,6 +79,13 @@ describe('delegationServerProtocol drift guard', () => {
 
   it('DELEGATION_WAIT_MS_ENV matches the canonical constant', () => {
     expect(DELEGATION_WAIT_MS_ENV).toBe(canonical.DELEGATION_WAIT_MS_ENV)
+  })
+
+  // #511 M1a: runtime.ts's own held-session default, added when a held
+  // launch's in-process server needed a concrete waitMs — see this file's
+  // own top comment.
+  it('DEFAULT_DELEGATION_WAIT_MS matches the canonical constant', () => {
+    expect(DEFAULT_DELEGATION_WAIT_MS).toBe(canonical.DEFAULT_DELEGATION_WAIT_MS)
   })
 })
 
