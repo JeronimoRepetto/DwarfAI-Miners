@@ -654,6 +654,26 @@ describe('the Jev option', () => {
       expect(wrapper.get('.jev-decision-summary').text()).toContain('87%')
     })
 
+    /*
+     * #608 T3: `confidence` is now `undefined` (never `0`) when no part was
+     * actually answered — the headline must show no percentage at all
+     * rather than fall back to a number that never came from Jev.
+     */
+    it('shows no confidence figure at all when nothing was actually answered', () => {
+      const wrapper = withDecision({
+        jev: {
+          ...READY_JEV,
+          enabled: true,
+          routing: {
+            phase: 'decided',
+            decision: { ...DECISION.decision, confidence: undefined }
+          }
+        }
+      })
+
+      expect(wrapper.get('.jev-decision-summary').text()).not.toMatch(/\d+%/)
+    })
+
     it('notes a trimmed prompt only when the decision says it was truncated', () => {
       const trimmed = withDecision({
         jev: {
@@ -756,6 +776,167 @@ describe('the Jev option', () => {
 
         expect(large.get('.jev-decision-large-context').text()).toBeTruthy()
         expect(notLarge.find('.jev-decision-large-context').exists()).toBe(false)
+      })
+    })
+
+    /*
+     * #608 T3. `parts.model` (jev-routing-profiles T3/#608) is a THIRD
+     * routing step, but never `JevRouteAnsweredPart`-shaped: it is a Noul
+     * per candidate plus a tie-breaking Choice, not one Choice with a
+     * `confidence`. Its three `applied` states — `'answered'`,
+     * `'only-candidate'`, `'safe-default'` — each read differently on the
+     * per-part line, per the issue's own acceptance criterion: never call a
+     * safe default or a forced-single-candidate pick "Jev chose".
+     */
+    describe('the model step (#608)', () => {
+      // Arrow, not `function` — a nested `function` declaration resets
+      // TypeScript's control-flow narrowing of `DECISION` (typed as the
+      // wider `JevState['routing']` union) back to the full union, even
+      // though `DECISION` is a `const` initialized with a `'decided'`
+      // literal; an arrow function here keeps `DECISION.decision` typed.
+      const withModel = (model: Record<string, unknown>) => {
+        return withDecision({
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'decided',
+              decision: {
+                ...DECISION.decision,
+                parts: { ...DECISION.decision.parts, model }
+              }
+            }
+          }
+        })
+      }
+
+      it('credits Jev’s own pick with the winning candidate’s fit percentage', () => {
+        const text = withModel({
+          value: 'gpt-5.6-sol',
+          applied: 'answered',
+          probability: 0.82
+        })
+          .get('.jev-decision-parts')
+          .text()
+
+        expect(text).toContain('Jev picked the model')
+        expect(text).toContain('82%')
+        expect(text).not.toContain('Tie broken')
+      })
+
+      it('names the Choice tiebreak when one broke a Noul tie', () => {
+        const text = withModel({
+          value: 'gpt-5.6-sol',
+          applied: 'answered',
+          probability: 0.55,
+          choiceProbability: 0.61
+        })
+          .get('.jev-decision-parts')
+          .text()
+
+        expect(text).toContain('Jev picked the model')
+        expect(text).toContain('55%')
+        expect(text).toContain("Tie broken by Jev's ranking")
+        expect(text).toContain('61%')
+      })
+
+      it('says plainly that only one model fit the tier — neither Jev’s own pick nor a safe default', () => {
+        const text = withModel({ value: 'gpt-5.6-sol', applied: 'only-candidate' })
+          .get('.jev-decision-parts')
+          .text()
+
+        expect(text).toContain('Only one model fits that tier')
+        expect(text).not.toContain('Jev picked the model')
+        expect(text).not.toContain('unsure')
+      })
+
+      /*
+       * Every `JevModelFallbackReason` maps to fixed words — the union is
+       * `JevFallbackReason` (request 2's own way of failing) plus
+       * `'no-live-model'`, the one reason that predates #608 entirely: no
+       * launchable, catalogued model existed at any tier step, so there was
+       * never a candidate and never a second request either.
+       */
+      it.each([
+        ['no-key', 'no TypeSafe key is set'],
+        ['no-launchable-provider', 'no launchable provider to choose from'],
+        ['unreachable', 'Jev could not be reached'],
+        ['timeout', 'Jev took too long'],
+        ['rate-limited', 'Jev is rate-limited right now'],
+        ['unauthorized', 'TypeSafe rejected the API key'],
+        ['low-confidence', 'Jev was not confident enough'],
+        ['invalid-response', "Jev's answer could not be used"],
+        ['budget-exceeded', "the prompt and catalogue do not fit Jev's request budget"],
+        ['no-live-model', 'no live model exists for this provider and tier']
+      ])(
+        'maps the %s fallback reason to fixed words, and says the local choice was used',
+        (reason, words) => {
+          const text = withModel({ applied: 'safe-default', reason })
+            .get('.jev-decision-parts')
+            .text()
+
+          expect(text).toContain('Jev could not pick the model')
+          expect(text).toContain(words)
+          expect(text).toContain('local choice was used')
+        }
+      )
+    })
+
+    /*
+     * #608's own bug: the Add Panel card said "Jev chose opencode, Big
+     * Pickle (19% confidence)" when the provider was a SAFE DEFAULT at 19%
+     * (below the floor) and the model was picked locally — crediting Jev
+     * with a choice it never made, and showing a confidence number that was
+     * never Jev's own answer about the thing that launched.
+     */
+    describe('#608 regression: the exact bug case', () => {
+      function withIssue608() {
+        return withDecision({
+          jev: {
+            ...READY_JEV,
+            enabled: true,
+            routing: {
+              phase: 'decided',
+              decision: {
+                kind: 'decision',
+                provider: 'opencode',
+                model: 'big-pickle',
+                confidence: 0.75,
+                truncated: false,
+                tier: 'frontier',
+                parts: {
+                  provider: { value: 'opencode', confidence: 0.19, applied: 'safe-default' },
+                  tier: { value: 'frontier', confidence: 0.92, applied: 'answered' },
+                  trivial: { value: false, probability: 0.05 },
+                  largeContext: { value: false, probability: 0.05 },
+                  model: { value: 'big-pickle', applied: 'answered', probability: 0.75 }
+                }
+              }
+            }
+          }
+        })
+      }
+
+      it('never says "Jev chose" when the named provider was a safe default', () => {
+        expect(withIssue608().get('.jev-decision-summary').text()).not.toContain('Jev chose')
+      })
+
+      it('never shows the discarded 19% provider confidence as the headline figure', () => {
+        const summary = withIssue608().get('.jev-decision-summary').text()
+
+        expect(summary).not.toContain('19%')
+        // The MIN over the ANSWERED parts only — tier 92%, model 75% — never
+        // the excluded safe-default provider figure.
+        expect(summary).toContain('75%')
+      })
+
+      it('still credits Jev for the tier and the model on the per-part line, and names the provider as unsure', () => {
+        const text = withIssue608().get('.jev-decision-parts').text()
+
+        expect(text).toContain('unsure about the provider')
+        expect(text).toContain('19%')
+        expect(text).toContain('Jev picked the model')
+        expect(text).toContain('75%')
       })
     })
 

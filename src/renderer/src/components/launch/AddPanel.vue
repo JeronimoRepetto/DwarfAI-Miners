@@ -17,6 +17,8 @@ import {
   HELD_PERMISSION_MODES,
   type HeldPermissionMode,
   type JevFallbackReason,
+  type JevModelFallbackReason,
+  type JevRouteModelPart,
   type ModelTier
 } from '../../types'
 
@@ -165,25 +167,40 @@ const jevModelLabel = computed(() => {
   )
 })
 
-// #608: `confidence` is now absent when no part was answered at all (MIN
-// over only the parts actually 'answered' — never a discarded safe-default
-// part's own number). Minimal compile fix for the wire change; T3 owns
-// wording this honestly on the card — 0 here is only the pre-existing
-// "nothing to show yet" placeholder this computed already used for `null`.
-const jevConfidencePercent = computed(() => {
+/**
+ * #608: `confidence` is `undefined` (never `0`) when no part was actually
+ * answered — the MIN is taken over only the parts `applied: 'answered'`, so
+ * a discarded safe-default part's own number (the bug's own 19% provider
+ * figure) never reaches this computed at all. `null` here, not `0`: `0` was
+ * the bug's own overclaim, a number standing in for "nothing to show" that
+ * a reader cannot tell apart from a genuine 0% answer.
+ */
+const jevConfidencePercent = computed<number | null>(() => {
   const decision = jevDecision.value
-  if (decision === null || decision.confidence === undefined) return 0
+  if (decision === null || decision.confidence === undefined) return null
   return Math.round(decision.confidence * 100)
 })
 
-/** The one sentence the card states Jev chose, provider/model/effort/confidence together. */
+/**
+ * The one sentence naming what is about to launch (#608). Deliberately
+ * never "Jev chose" — a named part (the provider, in the issue that opened
+ * #608) can be a safe default rather than Jev's own answer, while it is
+ * still what launches, so this states the plain fact of the launch and
+ * leaves WHO chose each part to `jevPartsSummary` below. The confidence
+ * shown here, when there is one, is labelled as Jev's own LEAST certain
+ * answer — never the raw `decision.confidence`'s meaning misread as "how
+ * sure Jev was about this launch", since a part that fell back was never
+ * asked and cannot make the launch more or less certain either way.
+ */
 const jevDecisionSummary = computed(() => {
   const decision = jevDecision.value
   if (decision === null) return ''
   const parts = [jevProviderLabel.value]
   if (jevModelLabel.value !== null) parts.push(jevModelLabel.value)
   if (decision.effort !== undefined) parts.push(`${decision.effort} effort`)
-  return `Jev chose ${parts.join(', ')} (${jevConfidencePercent.value}% confidence).`
+  const launch = `Launching ${parts.join(', ')}.`
+  const confidence = jevConfidencePercent.value
+  return confidence === null ? launch : `${launch} Jev's least certain answer was ${confidence}%.`
 })
 
 /**
@@ -246,8 +263,65 @@ const jevPartsSummary = computed(() => {
     } ${unsureValues.join(' and ')} ${plural ? 'were' : 'was'} used.`
     sentence = sentence === '' ? unsureSentence : `${sentence} ${unsureSentence}`
   }
-  return sentence
+  const modelSentence = jevModelPartSentence(decision.parts.model)
+  return sentence === '' ? modelSentence : `${sentence} ${modelSentence}`
 })
+
+/**
+ * Fixed English words for every way the model step's own second request
+ * (#608) fell back to `pickModel`'s local choice instead of a winner —
+ * `Record<JevModelFallbackReason, string>` is exhaustive over the union on
+ * purpose, so a fallback reason added to the wire fails typecheck here
+ * rather than rendering silently as nothing. The first nine reuse
+ * `JEV_FALLBACK_REASONS`' own wording above (request 1's vocabulary,
+ * mid-sentence here rather than sentence-starting); `'no-live-model'` is
+ * the one reason that predates #608 entirely — no launchable, catalogued
+ * model existed at any tier step, so there was never a candidate and never
+ * a second request either.
+ */
+const JEV_MODEL_FALLBACK_REASONS: Record<JevModelFallbackReason, string> = {
+  'no-key': 'no TypeSafe key is set',
+  'no-launchable-provider': 'no launchable provider to choose from',
+  unreachable: 'Jev could not be reached',
+  timeout: 'Jev took too long',
+  'rate-limited': 'Jev is rate-limited right now',
+  unauthorized: 'TypeSafe rejected the API key',
+  'low-confidence': 'Jev was not confident enough',
+  'invalid-response': "Jev's answer could not be used",
+  'budget-exceeded': "the prompt and catalogue do not fit Jev's request budget",
+  'no-live-model': 'no live model exists for this provider and tier'
+}
+
+/**
+ * The model step's own sentence (#608) — kept out of the chosen/unsure
+ * lists above on purpose, because its three `applied` states do not share
+ * their vocabulary: `'only-candidate'` is neither Jev's own pick nor a
+ * safe default (nothing was defaulted to; it was the only option), so it
+ * needs a third sentence shape rather than being forced into "chose" or
+ * "unsure about".
+ */
+function jevModelPartSentence(model: JevRouteModelPart): string {
+  if (model.applied === 'answered') {
+    // `probability` is always present when `applied === 'answered'` (see
+    // `JevRouteModelPart`'s own comment in contracts.ts) — the `?? 0` is
+    // belt-and-braces for a state the wire's own type rules out, never a
+    // stand-in for "no answer" the way the old `jevConfidencePercent` used
+    // `0` for (#608's own bug).
+    const fitPct = Math.round((model.probability ?? 0) * 100)
+    let modelSentence = `Jev picked the model (${fitPct}% fit).`
+    if (model.choiceProbability !== undefined) {
+      const choicePct = Math.round(model.choiceProbability * 100)
+      modelSentence += ` Tie broken by Jev's ranking (${choicePct}%).`
+    }
+    return modelSentence
+  }
+  if (model.applied === 'only-candidate') {
+    return 'Only one model fits that tier, so no second question was asked.'
+  }
+  const reason =
+    model.reason === undefined ? 'an unknown reason' : JEV_MODEL_FALLBACK_REASONS[model.reason]
+  return `Jev could not pick the model (${reason}); the closest local choice was used.`
+}
 
 /**
  * Fixed English sentences per fallback reason (#509's own acceptance
