@@ -44,6 +44,13 @@ export const DEFAULT_DELEGATION_WAIT_MS = 50_000
 export const DELEGATION_TOKEN_HEADER = 'x-dwarfai-token'
 
 export const DELEGATE_ROUTE = '/delegate'
+/**
+ * Private on purpose (#511 T3): `resultRoute` below is this constant's only
+ * real consumer. T3's own listener needs the SAME prefix to match `GET`
+ * requests, but it keeps its own local copy rather than importing this one —
+ * see `delegationService.ts`'s own comment on why, and `MAX_DELEGATION_BODY_BYTES`'s
+ * own note just below for the sibling case.
+ */
 const RESULT_ROUTE_PREFIX = '/result/'
 
 /** `GET` route for one ticket. URL-encoded, so T3's router and this link agree on the exact byte shape. */
@@ -52,12 +59,19 @@ export function resultRoute(ticket: string): string {
 }
 
 /**
- * Largest `/delegate` body this wire accepts, mirroring `MAX_HOOK_BODY_BYTES`'s
- * own cap-before-parse style (`hooks/hookServer.ts`) — sized for a subtask's
- * prose rather than a terse hook payload, but still a hard ceiling so T3's
- * listener never buffers an unbounded body before the token is even checked.
+ * `MAX_DELEGATION_BODY_BYTES` (the largest `/delegate` HTTP body T3's own
+ * listener accepts, mirroring `MAX_HOOK_BODY_BYTES`'s cap-before-parse style
+ * in `hooks/hookServer.ts`) and `parseDelegateRequestBody` (T3's own boundary
+ * read of that body) live in `delegationServerProtocol.ts`, never here —
+ * SERVER-only, with no client-side consumer at all (`delegationLink.ts` never
+ * builds or caps its OWN outgoing body against either), so declaring them
+ * here would have made this file a runtime dependency of BOTH
+ * `jevMcpServer.js` and `index.js`, splitting into a shared Rollup chunk that
+ * breaks the self-contained build `electron.vite.config.ts` promises (see
+ * `KNOWN_PROVIDERS`'s own comment below for the identical reasoning already
+ * established for a different symbol).
  */
-export const MAX_DELEGATION_BODY_BYTES = 32_768
+
 /** Bound on `delegate_subtask`'s own `task` argument (the zod schema in jevMcpServerCore.ts enforces this). */
 export const MAX_DELEGATION_TASK_CHARS = 4_000
 /** Bound on `delegate_subtask`'s own `context` argument. */
@@ -124,6 +138,19 @@ export type DelegationFailureKind =
   | 'link-unconfigured'
   | 'link-unreachable'
   | 'invalid-response'
+  /**
+   * ADDED by T3: the decided provider passed every check (launchable,
+   * within depth, under every concurrency cap) and the delegation service
+   * still could not start the child — the mine it would launch into no
+   * longer exists, or the launch attempt itself threw. Distinct from
+   * `provider-not-launchable`, which is decided BEFORE any launch is
+   * attempted (the provider itself is not one this build can start at
+   * all); this kind is the launch attempt failing anyway. A real, narrow
+   * addition to the wire contract T2 shipped — additive only, so every
+   * existing `DelegationFailureKind` switch/parser stays exhaustive and
+   * every value T2 already produces is unchanged.
+   */
+  | 'launch-failed'
 
 export interface DelegationFailure {
   kind: DelegationFailureKind
@@ -223,7 +250,8 @@ const DELEGATION_FAILURE_KINDS: ReadonlySet<DelegationFailureKind> = new Set([
   'unknown-ticket',
   'link-unconfigured',
   'link-unreachable',
-  'invalid-response'
+  'invalid-response',
+  'launch-failed'
 ])
 
 function isDelegationFailureKind(value: unknown): value is DelegationFailureKind {

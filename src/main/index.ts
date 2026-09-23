@@ -106,6 +106,7 @@ import { sumTokensObserved } from './domain/aggregate'
 import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
+import { DelegationService } from './mcp/delegationService'
 import { NodeFs } from './adapters/fsLike'
 import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
@@ -181,6 +182,8 @@ import { createNotifier, type Notifier } from './notifications/notifier'
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
+/** The MCP subtask-delegation loopback listener (#511 T3). Issues no tokens yet — T4 wires injection. */
+let delegationService: DelegationService | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
@@ -1041,6 +1044,36 @@ async function init(): Promise<void> {
   await runtime.restoreLaunchedSessions()
   runtime.start()
 
+  /* --- MCP subtask delegation: the loopback service (#511 T3) — one block, appended --- */
+  // Always started, like `jevLaunchRouter` above — this listener answers
+  // every request with a typed refusal until a token is presented, so
+  // running it costs nothing for a build with delegation off; only T4's
+  // injection adapters ever call `issueLaunchToken`, and this task wires
+  // none of them in. `launch`/`route` close over `runtime`/`jevLaunchRouter`
+  // exactly as the Jev block above does, for the same reason: `runtime` is
+  // still null at THIS point in startup for any closure defined earlier, and
+  // reading it lazily is what lets a call made after startup see the real
+  // instance. `keyConfigured`/`delegationAllowed` are read fresh on every
+  // `/delegate` call (never cached at token-issue time) — the same "ask
+  // fresh" discipline the whole Jev block already holds, and the one that
+  // lets a person turn delegation off or clear the key while a long-running
+  // parent session's token is still valid.
+  delegationService = new DelegationService({
+    port: 0,
+    launch: (request, hooks) =>
+      runtime?.launchAgent(request, hooks) ??
+      Promise.resolve({
+        launched: false,
+        provider: 'none',
+        error: 'The panel is still starting up.'
+      }),
+    route: jevLaunchRouter.route,
+    keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
+    delegationAllowed: async () => (await jevPreferenceStore.load()).delegation
+  })
+  await delegationService.start()
+  /* --- end of the #511 T3 block ---------------------------------------------- */
+
   // The historical coal pile, produced once and never again (see #22).
   //
   // Deliberately NOT awaited: it reads through transcript trees that can be
@@ -1823,6 +1856,10 @@ if (!app.requestSingleInstanceLock()) {
     // non-blocking error.
     void hooks?.shutdown()
     hooks = null
+    // #511 T3: releases the loopback port only, same terms as the hooks
+    // channel just above — nothing here is written to disk to bring back.
+    void delegationService?.stop()
+    delegationService = null
     // Drops the store's reference. It no longer closes the database — that file
     // is shared with the vault, whose forced final save is still in flight at
     // this point (see the composition block above). Whatever the last poll

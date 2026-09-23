@@ -36,7 +36,8 @@ describe('delegationFailure', () => {
     'unknown-ticket',
     'link-unconfigured',
     'link-unreachable',
-    'invalid-response'
+    'invalid-response',
+    'launch-failed'
   ] as const)('carries the fallback sentence for kind %s', (kind) => {
     expect(delegationFailure(kind, 'reason').detail).toContain(NATIVE_SUBAGENT_FALLBACK_SENTENCE)
   })
@@ -187,7 +188,28 @@ describe('parseDelegateRefusedBody', () => {
   ])('returns undefined for %s', (_label, json) => {
     expect(parseDelegateRefusedBody(json)).toBeUndefined()
   })
+
+  // T3 (#511): the delegation service's own "the child never launched at all"
+  // failure — a mine that vanished, a spawn that threw — distinct from
+  // 'provider-not-launchable' (decided BEFORE any launch was attempted).
+  it('round-trips a refusal for the launch-failed kind', () => {
+    const body = { failure: { kind: 'launch-failed', detail: 'the mine no longer exists' } }
+    expect(parseDelegateRefusedBody(body)).toEqual(body)
+  })
 })
+
+/*
+ * `parseDelegateRequestBody` and the `RESULT_ROUTE_PREFIX` matching it are
+ * SERVER-only (#511 T3) — nothing in the client-side graph
+ * (`delegationLink.ts`, `jevMcpServerCore.ts`) ever calls either, so both are
+ * declared in `delegationServerProtocol.ts`, never here: this file is a
+ * runtime dependency of BOTH `jevMcpServer.js`'s build graph and
+ * `index.js`'s, and a server-only runtime value declared here would pull it
+ * into both, with Rollup extracting a shared chunk between them — the same
+ * failure mode `electron.vite.config.ts`'s own comment and this file's own
+ * `KNOWN_PROVIDERS` already document for `DWARF_PROVIDERS`. Their tests live
+ * in `delegationServerProtocol.test.ts`, beside the code.
+ */
 
 describe('parseResultBody', () => {
   it('parses a pending result, routing included', () => {

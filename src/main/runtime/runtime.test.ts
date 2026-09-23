@@ -40,7 +40,8 @@ import {
   type FeedMessage,
   type DwarfSendSettledPush,
   type LaunchFailedPush,
-  type ProviderSnapshot
+  type ProviderSnapshot,
+  type TurnOutcome
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
@@ -6574,6 +6575,154 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
 
     expect(onLaunchFailed).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * T3 (#511): the delegation service's own reason for calling `launchAgent`
+ * at all rather than a bare launcher — an optional second `hooks` argument,
+ * never part of the wire `AgentLaunchRequest`, that is told EXACTLY ONCE
+ * what the launch's own turn concluded. Every existing call site (the
+ * `agent:launch` IPC handler above all) calls `launchAgent` with one
+ * argument, so `hooks` is always `undefined` there and every describe block
+ * above this one is unaffected.
+ */
+describe('AgentRuntime launching for delegation, awaiting a TurnOutcome by callback (#511 T3)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'codex',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'codex:session-1',
+            provider: 'codex',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  /** A retained handle whose exit and turn conclusion this test can fire by hand. */
+  function concludableHandle(pid = 4242): {
+    process: LaunchedProcess
+    exit: () => void
+    concludeTurn: (outcome: TurnOutcome) => void
+  } {
+    const exitListeners: Array<() => void> = []
+    const turnListeners: Array<(outcome: TurnOutcome) => void> = []
+    return {
+      process: {
+        pid,
+        onExit: (listener) => exitListeners.push(listener),
+        onTurnOutcome: (listener) => turnListeners.push(listener)
+      },
+      exit: () => {
+        for (const listener of exitListeners) listener()
+      },
+      concludeTurn: (outcome) => {
+        for (const listener of turnListeners) listener(outcome)
+      }
+    }
+  }
+
+  async function runtimeWith(
+    launchSession: SessionLauncher,
+    now?: () => number
+  ): Promise<{ runtime: AgentRuntime; mineId: string }> {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      ...(now === undefined ? {} : { now })
+    })
+    await runtime.refresh()
+    return { runtime, mineId: runtime.getMines()[0]!.id }
+  }
+
+  it('calls hooks.onConcluded with the real TurnOutcome once the launched process reports one', async () => {
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+    const onConcluded = vi.fn()
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' }, { onConcluded })
+    expect(onConcluded).not.toHaveBeenCalled()
+
+    const outcome: TurnOutcome = { kind: 'concluded', text: 'ready', endedAt: 1 }
+    handle.concludeTurn(outcome)
+
+    expect(onConcluded).toHaveBeenCalledTimes(1)
+    expect(onConcluded).toHaveBeenCalledWith(outcome)
+  })
+
+  it('calls hooks.onConcluded with a synthetic interrupted outcome when the child exits reporting none', async () => {
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const now = vi.fn().mockReturnValue(777)
+    const { runtime, mineId } = await runtimeWith(launchSession, now)
+    const onConcluded = vi.fn()
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' }, { onConcluded })
+    handle.exit()
+
+    expect(onConcluded).toHaveBeenCalledTimes(1)
+    expect(onConcluded).toHaveBeenCalledWith({ kind: 'interrupted', endedAt: 777 })
+  })
+
+  it('calls hooks.onConcluded with a synthetic interrupted outcome when nothing could be retained at all', async () => {
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex' })
+    const now = vi.fn().mockReturnValue(888)
+    const { runtime, mineId } = await runtimeWith(launchSession, now)
+    const onConcluded = vi.fn()
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' }, { onConcluded })
+
+    expect(onConcluded).toHaveBeenCalledTimes(1)
+    expect(onConcluded).toHaveBeenCalledWith({ kind: 'interrupted', endedAt: 888 })
+  })
+
+  it('never calls hooks.onConcluded when the launch itself was refused', async () => {
+    const launchSession: SessionLauncher = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession)
+    const onConcluded = vi.fn()
+
+    const result = await runtime.launchAgent(
+      { mineId: `${mineId}-does-not-exist`, provider: 'codex', prompt: 'dig' },
+      { onConcluded }
+    )
+
+    expect(result.launched).toBe(false)
+    expect(onConcluded).not.toHaveBeenCalled()
+  })
+
+  it('behaves exactly as an ordinary call when hooks is omitted', async () => {
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    ).resolves.toMatchObject({ launched: true })
+    expect(() => handle.concludeTurn({ kind: 'concluded', endedAt: 1 })).not.toThrow()
   })
 })
 

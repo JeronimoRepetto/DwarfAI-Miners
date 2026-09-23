@@ -81,6 +81,7 @@ import {
   type ProjectSummary,
   type ProviderSnapshot,
   type TextDeliveryChannel,
+  type TurnOutcome,
   type WatchedFeedPush
 } from '../domain/types'
 import {
@@ -867,6 +868,30 @@ export interface RuntimeOptions {
 }
 
 /**
+ * `launchAgent`'s own second, main-only argument (#511 T3) — deliberately
+ * NOT part of `AgentLaunchRequest`: that type crosses the wire (`src/README.md`'s
+ * own single-declaration-point discipline for `shared/contracts.ts`, #77),
+ * and a callback can neither serialise nor belong there. The delegation
+ * service is the one caller today, launching a subtask's child in the same
+ * mine as its parent and needing to know what its turn concluded WITHOUT
+ * polling — every existing caller (the `agent:launch` IPC handler above all)
+ * calls `launchAgent` with one argument, so `hooks` stays entirely absent
+ * for them and nothing about their behaviour changes.
+ */
+export interface LaunchAgentHooks {
+  /**
+   * Told EXACTLY ONCE what this launch's own turn concluded — see
+   * `RetainLaunchRequest.onConcluded` (`launchedSessions.ts`) for the full
+   * guarantee, including the synthetic `interrupted` reading a launch that
+   * reports nothing still receives. Threaded straight through to `retain`
+   * when a process was retained; answered directly, right here, for the one
+   * case `retain` never runs at all — a launch that started but retained no
+   * process to hold.
+   */
+  onConcluded?: (outcome: TurnOutcome) => void
+}
+
+/**
  * Runtime bridge between disk-backed providers and Electron IPC. Keeping it
  * independent from Electron makes its lifecycle and activation behavior testable.
  */
@@ -1289,7 +1314,12 @@ export class AgentRuntime {
         endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
         processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid),
         ...(options.launchedSessionStore == null ? {} : { store: options.launchedSessionStore }),
-        log: (message) => console.log(message)
+        log: (message) => console.log(message),
+        // #511 T3: the same clock `this.now` reads, so a launch's own
+        // synthetic `interrupted` outcome (see `RetainLaunchRequest.onConcluded`)
+        // is stamped with the SAME wall clock a test injects here, not a
+        // second, unrelated one this registry would otherwise default to.
+        now: this.now
       })
     // #263. A no-op default, exactly as `log` above defaults to one: nothing
     // this build ever wires still logs the failure, since that half of
@@ -4312,7 +4342,10 @@ export class AgentRuntime {
    * `parseLaunchTuning` before this method ever sees the request, so this hop
    * only has to forward, never to validate a second time. Absent stays absent.
    */
-  async launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
+  async launchAgent(
+    request: AgentLaunchRequest,
+    hooks?: LaunchAgentHooks
+  ): Promise<AgentLaunchResult> {
     const mine = this.mines.find((item) => item.id === request.mineId)
     if (mine === undefined) return { launched: false, provider: 'none', error: NO_SUCH_MINE }
 
@@ -4384,7 +4417,13 @@ export class AgentRuntime {
           // becomes can be stamped once the board proves which one that is —
           // see LaunchedSessionRegistry.routedByJevOfDwarf. Same spread idiom
           // as tuning above; absent stays absent.
-          ...(request.routedByJev === true ? { routedByJev: true } : {})
+          ...(request.routedByJev === true ? { routedByJev: true } : {}),
+          // #511 T3: the delegation service's own reason for calling this
+          // method at all — never part of the wire request, and threaded
+          // through to `retain` rather than subscribed here directly, so it
+          // is wired in the exact same synchronous breath as the registry's
+          // own `onExit`/`onTurnOutcome` (see `RetainLaunchRequest.onConcluded`).
+          ...(hooks?.onConcluded === undefined ? {} : { onConcluded: hooks.onConcluded })
         })
         // #263. Subscribed here, never behind the launcher: the receipt this
         // failure is correlated by is the one just issued a few lines above,
@@ -4398,6 +4437,12 @@ export class AgentRuntime {
             this.reportLaunchFailure(launchId, request.provider, mine, failure)
           )
         }
+      } else if (result.launched && hooks?.onConcluded !== undefined) {
+        // #511 T3: started, but the launcher reported no pid to retain — the
+        // one situation `retain` never runs for a successful launch, so its
+        // own "never a hung caller" guarantee cannot fire either. A caller
+        // that asked to be told is still owed a definite answer.
+        hooks.onConcluded({ kind: 'interrupted', endedAt: this.now() })
       }
       console.log(
         `[runtime] Launch of ${request.provider} in ${mine.id}: ` +

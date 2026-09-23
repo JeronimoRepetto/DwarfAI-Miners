@@ -900,6 +900,94 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
     })
   })
   /* --- end of the #511 block ---------------------------------------------------- */
+
+  /* --- MCP subtask delegation: never a hung ticket (#511 T3) — one block, appended --- */
+  describe('retain onConcluded', () => {
+    it('calls onConcluded with the real outcome once the launch reports one', () => {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      const onConcluded = vi.fn()
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: [],
+        onConcluded
+      })
+
+      const outcome: TurnOutcome = { kind: 'concluded', text: 'done', endedAt: 5 }
+      exiting.concludeTurn(outcome)
+
+      expect(onConcluded).toHaveBeenCalledTimes(1)
+      expect(onConcluded).toHaveBeenCalledWith(outcome)
+    })
+
+    /*
+     * The delegation service's whole reason for asking (#511): a provider
+     * this app never taught to read #510's own signal, or a plain crash,
+     * must still answer something rather than leave a caller waiting on a
+     * launch that will never report anything on its own.
+     */
+    it('calls onConcluded with a synthetic interrupted outcome when the process exits with no outcome ever reported', () => {
+      const now = vi.fn().mockReturnValue(999)
+      const launched = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(true),
+        now
+      })
+      const exiting = handle(4242)
+      const onConcluded = vi.fn()
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: [],
+        onConcluded
+      })
+
+      exiting.exit()
+
+      expect(onConcluded).toHaveBeenCalledTimes(1)
+      expect(onConcluded).toHaveBeenCalledWith({ kind: 'interrupted', endedAt: 999 })
+    })
+
+    // The documented order (see lastTurnOfDwarf's own comment above): a turn
+    // concludes, THEN the process exits. onConcluded must fire once off the
+    // first of those two signals, never a second time off the other.
+    it('never calls onConcluded twice when the real outcome arrives before exit', () => {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      const onConcluded = vi.fn()
+      launched.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: [],
+        onConcluded
+      })
+
+      const outcome: TurnOutcome = { kind: 'errored', detail: 'boom', endedAt: 5 }
+      exiting.concludeTurn(outcome)
+      exiting.exit()
+
+      expect(onConcluded).toHaveBeenCalledTimes(1)
+      expect(onConcluded).toHaveBeenCalledWith(outcome)
+    })
+
+    it('is silent, and behaves exactly as before, for a launch retained with no onConcluded at all', () => {
+      const { registry: launched } = registry()
+      const exiting = handle(4242)
+      expect(() =>
+        launched.retain({
+          provider: 'codex',
+          minePath: MINE_PATH,
+          process: exiting.process,
+          knownSessionIds: []
+        })
+      ).not.toThrow()
+      expect(() => exiting.exit()).not.toThrow()
+    })
+  })
+  /* --- end of the #511 T3 onConcluded block ---------------------------------- */
 })
 
 /**
