@@ -7,6 +7,7 @@ import type { DelegationToolResult } from './delegationProtocol'
 import { DELEGATION_SERVER_NAME } from './delegationInjection'
 import {
   DELEGATE_SUBTASK_TOOL_NAME,
+  formatDelegationResultText,
   MAX_DELEGATION_CONTEXT_CHARS,
   MAX_DELEGATION_TASK_CHARS,
   NATIVE_SUBAGENT_FALLBACK_SENTENCE,
@@ -100,7 +101,7 @@ export const SUBTASK_RESULT_DESCRIPTION =
  */
 function toCallToolResult(result: DelegationToolResult): CallToolResult {
   return {
-    content: [{ type: 'text', text: JSON.stringify(result) }],
+    content: [{ type: 'text', text: formatDelegationResultText(result) }],
     structuredContent: { ...result }
   }
 }

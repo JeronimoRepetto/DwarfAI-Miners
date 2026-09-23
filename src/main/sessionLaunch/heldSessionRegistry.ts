@@ -298,6 +298,19 @@ interface HeldRecord {
    * optional field on this record carries.
    */
   onEnded?: () => void
+  /**
+   * The per-launch delegation token `resolveHeldDelegationInjection`
+   * (runtime.ts) minted for this held session, if delegation was injected
+   * at all (#601). Absent means either this launch never got a token, or
+   * one is not owed — the same "absent means not" terms `onEnded` above
+   * carries. The one correlator `sendToDelegationParent` matches on: a
+   * MINE is not unique to one held session (this same `launch` places no
+   * limit on how many can share one), but a token is minted once per
+   * launch and never reused, so it is the only fact that tells a settled
+   * ticket's OWN held parent apart from an unrelated sibling holding the
+   * same mine.
+   */
+  delegationToken?: string
 }
 
 /**
@@ -411,6 +424,8 @@ export class HeldSessionRegistry {
        * launch that never started.
        */
       onEnded?: () => void
+      /** Stored on the record verbatim — see `HeldRecord.delegationToken`'s own comment (#601). */
+      delegationToken?: string
     } & LaunchTuning
   ): Promise<HeldSessionLaunchResult> {
     // Refused before anything else, because nothing about this machine could
@@ -520,7 +535,10 @@ export class HeldSessionRegistry {
         revision: seeded.length,
         ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] }),
         routedByJev: request.routedByJev === true,
-        ...(request.onEnded === undefined ? {} : { onEnded: request.onEnded })
+        ...(request.onEnded === undefined ? {} : { onEnded: request.onEnded }),
+        ...(request.delegationToken === undefined
+          ? {}
+          : { delegationToken: request.delegationToken })
       })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
@@ -957,7 +975,7 @@ export class HeldSessionRegistry {
    * reaching for a second channel: there is no honest one here.
    */
   sendText(sessionId: string, text: string): boolean {
-    return this.queue(sessionId, text, (handle) => handle.send(text))
+    return this.pushToRecord(this.recordFor(sessionId), text, (handle) => handle.send(text))
   }
 
   /**
@@ -971,7 +989,34 @@ export class HeldSessionRegistry {
    * whose images the session never saw.
    */
   sendContent(sessionId: string, content: HeldMessageContent): boolean {
-    return this.queue(sessionId, content, (handle) => handle.sendContent?.(content) ?? false)
+    return this.pushToRecord(
+      this.recordFor(sessionId),
+      content,
+      (handle) => handle.sendContent?.(content) ?? false
+    )
+  }
+
+  /**
+   * Put a delegated ticket's settled result onto a held session's own
+   * stream, addressed by the launch's own delegation TOKEN — never a mine
+   * and never a session id (#601, corrected).
+   *
+   * A mine is NOT unique to one held session: `launchHeldSession` in
+   * runtime.ts and the renderer's own Add Panel both allow several held
+   * sessions to share one mine at once. An earlier version of this method
+   * matched by `mineId` alone and could inject one session's own delegated
+   * result into an unrelated sibling holding the same mine — see
+   * `HeldRecord.delegationToken`'s own comment. The token has no such gap:
+   * it is minted once per held launch (`resolveHeldDelegationInjection`)
+   * and never reused, so it is the one correlator that survives both a
+   * shared mine and a session id that, per this class's own "why the id it
+   * is keyed by arrives late" note, can still be unset by the time a fast
+   * child settles.
+   */
+  sendToDelegationParent(token: string, text: string): boolean {
+    return this.pushToRecord(this.recordForDelegationToken(token), text, (handle) =>
+      handle.send(text)
+    )
   }
 
   /**
@@ -1001,12 +1046,11 @@ export class HeldSessionRegistry {
    * session already closing, above all) is not a turn the person had, and
    * retaining one would show a row for words the session never received.
    */
-  private queue(
-    sessionId: string,
+  private pushToRecord(
+    record: HeldRecord | undefined,
     content: HeldMessageContent,
     push: (handle: HeldSessionHandle) => boolean
   ): boolean {
-    const record = this.recordFor(sessionId)
     if (record === undefined) return false
     const sent = push(record.handle)
     if (sent) {
@@ -1100,6 +1144,15 @@ export class HeldSessionRegistry {
     if (sessionId === '') return undefined
     for (const record of this.held.values()) {
       if (record.sessionId === sessionId) return record
+    }
+    return undefined
+  }
+
+  /** `sendToDelegationParent`'s own lookup (#601) — see that method's own comment for why the token, not the mine or the session id, is the correlator. */
+  private recordForDelegationToken(token: string): HeldRecord | undefined {
+    if (token === '') return undefined
+    for (const record of this.held.values()) {
+      if (record.delegationToken === token) return record
     }
     return undefined
   }

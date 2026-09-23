@@ -825,6 +825,8 @@ export interface RuntimeOptions {
      */
     issueLaunchToken: (context: {
       mineId: string
+      /** #601: set only by `resolveHeldDelegationInjection`, below — see `DelegationParentContext.held`'s own comment for why. */
+      held?: true
     }) => { endpoint: string; token: string } | undefined
     /** Forgets a token whose launch has ended; a no-op for one never issued. */
     revoke: (token: string) => void
@@ -846,6 +848,15 @@ export interface RuntimeOptions {
       context: string | undefined
     ) => Promise<{ ticket: string; routing: DelegationRouting } | { failure: DelegationFailure }>
     result: (token: string, ticket: string) => ResultBody
+    /**
+     * `DelegationService.waitEnded` bound in `index.ts` (#601) — told once a
+     * held ticket's own direct wait gives up on its deadline with nothing
+     * settled, so a settle arriving after that point still knows to push.
+     * Wired only into a HELD launch's own `createDirectDelegationLink` call,
+     * below; a detached launch has no direct wait at all (its wait lives in
+     * the launched CLI's own process, over the loopback protocol instead).
+     */
+    waitEnded?: (ticket: string) => void
   }
   /**
    * Sessions the panel STARTS and HOLDS over the Agent SDK (#86, #94) —
@@ -3692,13 +3703,20 @@ export class AgentRuntime {
       provider
     })
     if (!enabled) return undefined
-    const issued = delegation.issueLaunchToken({ mineId })
+    // #601: `held: true` is the one fact `DelegationService` cannot derive
+    // from `mineId` alone (`resolveDelegationInjection`'s own detached call
+    // just above mints a token through this SAME method, naming the SAME
+    // identifier) — see `DelegationParentContext.held`'s own comment.
+    const issued = delegation.issueLaunchToken({ mineId, held: true })
     if (issued === undefined) return undefined
     const link = createDirectDelegationLink({
       delegate: (task, context) => delegation.delegate(issued.token, task, context),
       result: (ticket) => delegation.result(issued.token, ticket),
       now: this.now,
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      // #601: the other half of the settle race `DelegationService.maybePush`
+      // closes — see that method's own comment.
+      onWaitEnded: (ticket) => delegation.waitEnded?.(ticket)
     })
     return {
       token: issued.token,
@@ -3707,6 +3725,21 @@ export class AgentRuntime {
         waitMs: delegation.waitMs ?? DEFAULT_DELEGATION_WAIT_MS
       }
     }
+  }
+
+  /**
+   * Deliver a delegated ticket's settled result to its HELD parent's live
+   * conversation (#601) — the one bridge `DelegationService.deliverToHeldParent`
+   * is bound to in `index.ts`, so that service never imports
+   * `HeldSessionRegistry` itself. Addressed by the launch's own delegation
+   * TOKEN, never a mine — see `HeldSessionRegistry.sendToDelegationParent`'s
+   * own comment for why: a mine can hold several live held sessions at
+   * once, so a mine-keyed push could reach the wrong one. False for a token
+   * whose held session has already ended (or never existed), the exact
+   * "parent-ended" signal `DelegationService`'s own push decision reads.
+   */
+  pushToHeldParent(token: string, text: string): boolean {
+    return this.heldSessions.sendToDelegationParent(token, text)
   }
 
   /**
@@ -3770,6 +3803,12 @@ export class AgentRuntime {
           ? {}
           : {
               delegation: delegationIssue.delegation,
+              // #601: stored on the record so `sendToDelegationParent` can
+              // find it — the one correlator that survives two held
+              // sessions sharing this same mine, which a mine-keyed lookup
+              // could not (see `HeldSessionRegistry.sendToDelegationParent`'s
+              // own comment).
+              delegationToken: delegationIssue.token,
               // #511 T4: told exactly once when this held session ends,
               // however it ends (`HeldSessionRegistry`'s own `finish`/
               // `closeAll`) — never for a launch that never started, which is

@@ -42,11 +42,24 @@ export interface DirectDelegationLinkOptions {
   now: () => number
   /** Injected so a test drives every poll tick deterministically. */
   sleep: (ms: number) => Promise<void>
+  /**
+   * Told once this wait's own deadline elapses with nothing settled (#601) —
+   * the other half of the settle race `DelegationService.maybePush` closes
+   * (see that method's own comment): a ticket can settle between this wait's
+   * last poll and the moment it gives up, and without this signal a settle
+   * landing in that gap would never learn the wait is no longer there to
+   * hand the answer back on its own. Never called when a poll DOES find a
+   * settled state — that answer already reached the parent through the
+   * ordinary `delegate_subtask` return value, so no second delivery path is
+   * needed for it. Absent for the standalone `result()` call `subtask_result`
+   * makes, which is not a wait at all.
+   */
+  onWaitEnded?: (ticket: string) => void
 }
 
 /** Build the in-process link a held session's SDK tools call (#511 M1a). */
 export function createDirectDelegationLink(options: DirectDelegationLinkOptions): DelegationLink {
-  const { delegate, result, now, sleep } = options
+  const { delegate, result, now, sleep, onWaitEnded } = options
 
   async function pollUntil(
     ticket: string,
@@ -59,6 +72,7 @@ export function createDirectDelegationLink(options: DirectDelegationLinkOptions)
       const polled = result(ticket)
       if (polled.status !== 'pending') return polled
     }
+    onWaitEnded?.(ticket)
     return { status: 'pending', ticket, routing }
   }
 
