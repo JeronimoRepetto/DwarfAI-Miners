@@ -240,7 +240,9 @@ channel beside the detached `agent:launch`, not a replacement.
   and **the redacted spellings map back**: the panel is only ever shown the redacted question and
   labels (#59), which the agent's own tool would not recognise, so the match runs against the
   redacted forms and **what is sent is the original**, two questions redacting alike refusing rather
-  than guessing [#113].
+  than guessing [#113]. Since #443 that refusal moves to parse time: `parseAskUserQuestion` denies
+  the whole call the moment two of its questions redact alike, because the SDK's own `answers` record
+  is keyed by question text and a duplicate can never be addressed by name.
 - Three rules #113 states at length and this page only names: **an open ask dissolves** rather than
   being answered for the user; **a permission prompt parks exactly like an ask and reaches the panel**
   as `Dwarf.pendingPermission`, decided through `agent:answerPermission` — a prompt still open when the

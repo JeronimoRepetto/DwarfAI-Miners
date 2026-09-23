@@ -812,6 +812,15 @@ export type AnswerResolution = { ok: true; answers: AnswerRecord } | { ok: false
 const NOTHING_ANSWERED = 'No answer was chosen.'
 const TOO_MANY_ANSWERS = 'That is more answers than the agent asked for.'
 const UNKNOWN_QUESTION = 'The agent did not ask that question.'
+/**
+ * Unreachable from a parsed ask since #443's second fix: `parseAskUserQuestion`
+ * now refuses such a call whole, at the same redacted-text comparison
+ * `byRedactedQuestion` below makes, so a HeldAsk with two colliding questions
+ * can no longer come out of it. The constant and the branch below stay
+ * anyway — they still guard a HeldAsk built by hand rather than parsed (a
+ * test does, for exactly this reason), and resolveAnswers has no way to know
+ * a caller skipped the parser.
+ */
 const AMBIGUOUS_QUESTION = 'Two of the questions read the same, so that answer cannot be matched.'
 const UNKNOWN_OPTION = 'The agent did not offer that option.'
 /**
@@ -905,6 +914,19 @@ function parseQuestion(value: unknown): HeldAskQuestion | undefined {
  * shortened list would claim the agent asked less than it did. The absence is
  * the miss this file already accepted (see parseQuestion); the half is a
  * false claim it must not make.
+ *
+ * Two questions that redact to the same text are refused whole here too, not
+ * only as an ambiguous answer once one arrives (#443, second fix). The SDK's
+ * own `answers` record is keyed by question TEXT (see resolveAnswers below),
+ * so a repeated question can never be addressed by name — whichever of the
+ * two an answer is meant for, sending it back would let the agent believe
+ * the OTHER one was chosen instead, or was never asked. The comparison is the
+ * same redacted text `byRedactedQuestion` there keys by, so parser and
+ * resolver agree on what counts as "the same question". A call refused here
+ * takes the existing null path in `receiveAsk` (heldSessionRegistry.ts): the
+ * agent's tool call is denied at once, its `tool_result` carrying "The panel
+ * could not read that question." as the reason, rather than a card opening
+ * on a question this app could show but could never let anyone release.
  */
 export function parseAskUserQuestion(
   toolUseId: string,
@@ -913,9 +935,13 @@ export function parseAskUserQuestion(
   if (!isRecord(input) || !Array.isArray(input.questions)) return null
   if (input.questions.length === 0) return null
   const questions: HeldAskQuestion[] = []
+  const redactedTexts = new Set<string>()
   for (const entry of input.questions) {
     const question = parseQuestion(entry)
     if (question === undefined) return null
+    const redacted = redactSecrets(question.question)
+    if (redactedTexts.has(redacted)) return null
+    redactedTexts.add(redacted)
     questions.push(question)
   }
   return { toolUseId, questions }

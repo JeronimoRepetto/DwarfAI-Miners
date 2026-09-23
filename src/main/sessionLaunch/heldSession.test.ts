@@ -155,6 +155,23 @@ describe('parseAskUserQuestion', () => {
       })
     ).toBeNull()
   })
+
+  it('refuses a call whole when two of its questions are worded the same, because the SDK keys answers by text', () => {
+    // #443, finding 2 of an independent verifier's review of T3. The SDK's
+    // own `answers` record for AskUserQuestion is keyed by question TEXT (see
+    // resolveAnswers below), so two questions worded the same could never be
+    // addressed separately by an answer naming either of them — the same
+    // refuse-whole rule this file already applies to a question it cannot
+    // even read (see the test above).
+    expect(
+      parseAskUserQuestion('toolu_32', {
+        questions: [
+          { question: 'Which?', multiSelect: false, options: [{ label: 'A' }] },
+          { question: 'Which?', multiSelect: false, options: [{ label: 'B' }] }
+        ]
+      })
+    ).toBeNull()
+  })
 })
 
 describe('askToWireQuestion', () => {
@@ -363,6 +380,12 @@ describe('resolveAnswers', () => {
     // #443 T3. A single-select question offers one choice at a time; several
     // labels for it is not a smaller mistake than an unoffered option, it is a
     // claim that a mutually-exclusive question was answered two ways at once.
+    //
+    // AMENDED (verifier finding, #443): was `expect(resolved.ok).toBe(false)`
+    // alone. Against the parent commit this exact input already failed —
+    // with UNKNOWN_OPTION, because the joined string matched no option — so
+    // asserting only `.ok` never proved the TOO_MANY_LABELS branch below is
+    // what refuses it. Pinning the reason is what tells the two apart.
     const ask = parseAskUserQuestion('toolu_29', {
       questions: [
         { question: 'Which?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }
@@ -370,6 +393,7 @@ describe('resolveAnswers', () => {
     })!
     const resolved = resolveAnswers(ask, { 'Which?': joinAnswerLabels(['A', 'B']) })
     expect(resolved.ok).toBe(false)
+    expect(resolved.ok ? '' : resolved.reason).toContain('only takes one')
   })
 
   it('refuses more answers than the ask has questions', () => {
@@ -379,11 +403,19 @@ describe('resolveAnswers', () => {
     )
   })
 
-  it('refuses an answer to two questions that redact to the same text', () => {
-    // Redaction is lossy on purpose, so it can collapse two distinct questions
-    // into one string. Guessing which of them was answered is how the agent
-    // would come to read an answer nobody gave.
-    const ask = parseAskUserQuestion('toolu_28', {
+  it('refuses an answer to two questions that redact to the same text, for a HeldAsk built by hand', () => {
+    // AMENDED for #443, finding 2 (was: built via `parseAskUserQuestion`, whose
+    // premise this fix closes). Redaction is lossy on purpose, so it can
+    // collapse two distinct questions into one string — but
+    // `parseAskUserQuestion` now refuses such a call whole, at parse time, on
+    // the same redacted-text comparison `byRedactedQuestion` makes below (see
+    // the parseAskUserQuestion test with the same premise), so this ask can no
+    // longer reach resolveAnswers through the parser at all. AMBIGUOUS_QUESTION
+    // still guards a HeldAsk built by hand, as here, rather than parsed:
+    // guessing which question an answer was meant for is how the agent would
+    // come to read an answer nobody gave.
+    const ask: HeldAsk = {
+      toolUseId: 'toolu_28',
       questions: [
         { question: `Use ${secret}?`, multiSelect: false, options: [{ label: 'A' }] },
         {
@@ -392,7 +424,7 @@ describe('resolveAnswers', () => {
           options: [{ label: 'B' }]
         }
       ]
-    })!
+    }
     const resolved = resolveAnswers(ask, { 'Use [redacted]?': 'A' })
     expect(resolved.ok).toBe(false)
     expect(resolved.ok ? '' : resolved.reason).toContain('same')
