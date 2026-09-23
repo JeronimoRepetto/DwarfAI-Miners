@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { motion } from 'motion-v'
 import type { ShellComposition } from '../../lib/shell/composition'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import EdgeRail from './EdgeRail.vue'
 
 /*
@@ -93,5 +95,76 @@ describe('EdgeRail', () => {
   it('reports which edge it hangs on, so the frame can mirror with it', () => {
     expect(mountRail({ edge: 'left' }).classes()).toContain('edge-left')
     expect(mountRail({ edge: 'right' }).classes()).toContain('edge-right')
+  })
+})
+
+/*
+ * ADDED for #566 (the follow-up #592 left for after #585): the arrow answers a
+ * pointer through the shared vocabulary, like every other control in the shell.
+ *
+ * NOT on the root button, and these cases exist to keep it off there. The root
+ * IS the column the fold carries (`App.vue` hands `railEl.$el` to
+ * `useShellFold` as `rail`): the fold writes its travel into that element's own
+ * inline `transform`, runs its carry on the same property, and measures the
+ * element with `getBoundingClientRect`, which includes any transform on it. A
+ * `motion.button` root would have motion-v writing `scale(...)` into that one
+ * property — erasing the fold's `translateX` mid-carry, and handing the fold a
+ * box 3% off the one the row laid out, at exactly the moment a pointer is on
+ * the arrow: the press that starts the fold.
+ */
+describe('EdgeRail press and hover feedback', () => {
+  async function settle(): Promise<void> {
+    for (let frame = 0; frame < 20; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    }
+  }
+
+  it('gives the arrow the shared press/hover variants, on a face inside the rail', () => {
+    const rail = mountRail({ composition: 'pages' })
+    const face = rail.getComponent(motion.span)
+
+    expect(face.classes()).toContain('rail-face')
+    expect(face.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+    expect(face.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    expect(face.find('.rail-arrow').exists()).toBe(true)
+  })
+
+  it('leaves the rail itself a plain button carrying no gesture of its own', () => {
+    const rail = mountRail()
+
+    expect(rail.element.tagName).toBe('BUTTON')
+    expect(rail.findAllComponents(motion.button)).toHaveLength(0)
+    // The face is the only thing that answers a pointer; the app mark stays
+    // outside it, at the top of the rail, where a grow would push it off the
+    // edge of the window.
+    expect(rail.findAllComponents(motion.span)).toHaveLength(1)
+    expect(rail.get('.rail-face').find('.rail-mark').exists()).toBe(false)
+  })
+
+  it('still reports the press when it lands on the face', async () => {
+    const rail = mountRail()
+
+    await rail.get('.rail-face').trigger('click')
+    expect(rail.emitted('toggle')).toHaveLength(1)
+  })
+
+  // Against the real engine, because "the gesture writes somewhere else" is a
+  // claim about where motion-v puts its transform, and only running it says so.
+  it('grows the face under a hover and leaves the transform the fold wrote on the rail alone', async () => {
+    const rail = mount(EdgeRail, {
+      props: { edge: 'right', composition: 'pages' },
+      attachTo: document.body
+    })
+    const root = rail.element as HTMLElement
+    const face = rail.get('.rail-face').element as HTMLElement
+    // What `useShellFold`'s `place` writes on a carried column mid-fold.
+    root.style.transform = 'translateX(40px)'
+
+    face.dispatchEvent(new window.PointerEvent('pointerenter'))
+    await settle()
+
+    expect(face.style.transform).toBe(`scale(${pressHoverVariants.whileHover.scale})`)
+    expect(root.style.transform).toBe('translateX(40px)')
+    rail.unmount()
   })
 })
