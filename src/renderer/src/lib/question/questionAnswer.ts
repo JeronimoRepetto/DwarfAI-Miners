@@ -29,8 +29,8 @@ export const PRESS_ENTER_TO_SEND = 'Press ENTER to send'
  *
  * A button rather than Enter, and that is the point rather than a style: what
  * a toggle changes is a SET, so there is no moment at which the panel could
- * read a keypress as "this is my answer now". Nothing is typed into somebody's
- * console until this is pressed.
+ * read a keypress as "this is my answer now". Nothing reaches the agent — typed
+ * into a console, or sent up the held stream — until this is pressed.
  */
 export const SEND_ANSWER_NAME = 'Answer'
 
@@ -119,17 +119,18 @@ export function canSendAnswer(
  * against the ask it actually made — in the redacted spelling the panel was
  * shown — so anything folded or trimmed here would stop matching.
  *
- * One label per question on the HELD channel, even for a multi-select ask, and
- * that is the channel's own rule rather than a simplification: how the agent's
- * own picker joins several answers is unmeasured, and inventing a separator
- * would make it read an answer nobody gave (see resolveAnswers in main).
- *
- * On the terminal channel a value may be several labels joined, because there
- * the answer is a measured keystroke per option rather than a record handed to
- * a tool — see toggledAnswer, which is what builds that value, and
- * joinAnswerLabels in contracts, which is the encoding both sides read. This
- * function is unchanged by it: what it takes is one answer VALUE, and it still
- * repeats it verbatim.
+ * A value may be several labels joined, on EITHER channel now (AMENDED for
+ * #443 T3b, was: joined labels only on the terminal channel, because the held
+ * one took a single label per question on the strength of an unmeasured
+ * picker separator). `@anthropic-ai/claude-agent-sdk` 0.3.258's own
+ * `sdk-tools.d.ts` documents `AskUserQuestionOutput.answers` as "question
+ * text -> answer string; multi-select answers are comma-separated", and
+ * `resolveAnswers` (main, heldSession.ts) already reads several labels for a
+ * `multiSelect` question off that measurement — see `togglesAt`, which is
+ * what now lets either channel's card build that value. See `chooseAt` and
+ * `askAnswerValues`, which build it, and `joinAnswerLabels` in contracts,
+ * which is the encoding both sides read. This function is unchanged by any of
+ * it: what it takes is one answer VALUE, and it still repeats it verbatim.
  *
  * AMENDED for #443: `answer` is either one value — the answer to a
  * ONE-question call, keyed by its only question exactly as before — or a list
@@ -386,13 +387,19 @@ export interface AskAnswers {
 /**
  * Whether question `index` of this ask takes toggles rather than one choice.
  *
- * The card's existing rule, per question: the channel AND the question's own
- * `multiSelect`, because only the terminal gesture for several labels is
- * measured. A held multi-select question keeps the single choice, since the
- * held channel takes one label per question (see resolveAnswers in main).
+ * The question's own `multiSelect` alone, on EITHER channel (AMENDED for
+ * #443 T3b, was: the channel AND `multiSelect`, because only the terminal
+ * gesture for several labels was measured — the held channel was kept
+ * single-choice on the strength of that gap). `@anthropic-ai/claude-agent-sdk`
+ * 0.3.258's own `sdk-tools.d.ts` documents `AskUserQuestionOutput.answers` as
+ * "question text -> answer string; multi-select answers are comma-separated",
+ * and `resolveAnswers` (main, heldSession.ts) already accepts several labels
+ * for a `multiSelect` question and rejoins them with that comma — so the rule
+ * this project had no evidence for at #362 is now measured, and the channel
+ * this ask arrived on stops deciding its gesture.
  */
 export function togglesAt(question: DwarfQuestion, index: number): boolean {
-  return question.channel === 'terminal' && question.questions[index]?.multiSelect === true
+  return question.questions[index]?.multiSelect === true
 }
 
 /** The labels chosen on question `index` of the ask `toolUseId` names. */

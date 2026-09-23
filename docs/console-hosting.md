@@ -2070,11 +2070,12 @@ and Linux, and nobody has watched it.
   so nothing needed measuring first.) A multi-select question's several chosen labels join with a
   comma on their way into the tool's own `answers` record — `@anthropic-ai/claude-agent-sdk`
   0.3.258's own `AskUserQuestionOutput.answers` field documents the encoding now (`sdk-tools.d.ts`:
-  "multi-select answers are comma-separated"), where before this was unmeasured and a held
-  multi-select question was kept single-choice on the strength of that gap. The card still does keep
-  it single-choice (`togglesAt`, questionAnswer.ts) — this is a capability `resolveAnswers` now has,
-  not a behaviour shipped yet — and the terminal picker's own multi-select separator remains
-  unmeasured regardless. **The buttons shipped:** `DwarfQuestionCard.vue` and `DwarfPermissionCard.vue`
+  "multi-select answers are comma-separated"), which is what let a held multi-select question stop
+  being kept single-choice on the strength of an unmeasured gap. The card now toggles and takes
+  several labels on the held channel exactly as it does on the terminal one (`togglesAt`,
+  questionAnswer.ts, #443 T3b) — a shipped behaviour, not only a capability `resolveAnswers` had —
+  and the terminal picker's own multi-select separator remains unmeasured regardless. **The buttons
+  shipped:** `DwarfQuestionCard.vue` and `DwarfPermissionCard.vue`
   render both prompts and answer them, closing #90/#105, with the approval surface at #96.
 
 **No test file is touched by this document**, and none should be: it records decisions already pinned
