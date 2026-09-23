@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { PROVIDER_EFFORT_LEVELS } from '../domain/launchTuning'
+import { DWARF_PROVIDERS } from '../domain/types'
 import type { AgentProviderOption, DwarfProvider } from '../domain/types'
 import type { ModelCapabilityEntry } from './capabilities/modelCapability'
 import { MODEL_CAPABILITIES } from './capabilities/modelCapability'
+import { PROVIDER_TOOLING_MARKERS } from './capabilities/providerTooling'
 import type { JevCapabilityTable } from './routeDecision'
 import {
   EFFORT_RUBRIC,
@@ -13,6 +15,7 @@ import {
   buildJevModelRouteRequest,
   buildJevRouteRequest,
   candidateCapabilityFacts,
+  distinctiveToolingNames,
   mapEffortScore,
   modelChoiceInstructions,
   modelFitInstructions,
@@ -260,6 +263,131 @@ describe('buildJevRouteRequest', () => {
     expect(criteria.what.length).toBeGreaterThan(0)
     expect(criteria.examples[0]).not.toBe('')
     expect(criteria.examples[1]).not.toBe('')
+  })
+})
+
+/*
+ * #625: the `provider` criteria used to describe held-vs-detached session
+ * style and nothing else — a prompt naming Codex's own `request_user_input`
+ * tool had nothing here to connect it to Codex, and Jev routed it to Claude
+ * at 0.68 confidence instead (issue #625's own reported root cause). These
+ * pin that a launchable provider's own SOURCED tooling markers
+ * (`PROVIDER_TOOLING_MARKERS`, capabilities/providerTooling.ts) actually
+ * reach the wire, driven from that one constant rather than restated here —
+ * and that a marker distinctive to one provider never leaks into another's
+ * criteria, the same shared-marker honesty the issue's own scope demands for
+ * `AGENTS.md`.
+ */
+describe('provider tooling markers (#625)', () => {
+  it("renders Codex's own sourced distinctive tool names into its provider criteria — issue #625's own reported case", () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'codex' })],
+      capabilities: MODEL_CAPABILITIES
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    const what = result.request.providerCriteria.codex!.what
+    for (const name of distinctiveToolingNames('codex', 'toolNames')) {
+      expect(what).toContain(name)
+    }
+    expect(what).toContain('request_user_input')
+  })
+
+  it("renders Claude Code's own sourced distinctive AskUserQuestion tool into its provider criteria", () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'claude' })],
+      capabilities: MODEL_CAPABILITIES
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    expect(result.request.providerCriteria.claude!.what).toContain('AskUserQuestion')
+  })
+
+  it("renders OpenCode's own sourced distinctive question tool into its provider criteria", () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'opencode' })],
+      capabilities: {
+        ...MODEL_CAPABILITIES,
+        opencode: { 'opencode/free-fast': capabilityEntry({ tier: 'fast-cheap' }) }
+      }
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    expect(result.request.providerCriteria.opencode!.what).toContain('question')
+  })
+
+  it('never lets a marker distinctive to one provider leak into another launchable provider’s criteria', () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [
+        provider({ provider: 'claude' }),
+        provider({ provider: 'codex' }),
+        provider({ provider: 'antigravity' }),
+        provider({ provider: 'opencode' })
+      ],
+      capabilities: {
+        ...MODEL_CAPABILITIES,
+        opencode: { 'opencode/free-fast': capabilityEntry({ tier: 'fast-cheap' }) }
+      }
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    for (const owner of DWARF_PROVIDERS) {
+      const distinctive = distinctiveToolingNames(owner, 'toolNames')
+      for (const otherProvider of DWARF_PROVIDERS) {
+        if (otherProvider === owner) continue
+        const otherWhat = result.request.providerCriteria[otherProvider]?.what
+        if (!otherWhat) continue
+        for (const name of distinctive) {
+          expect(
+            otherWhat,
+            `${owner}'s own distinctive tool "${name}" leaked into ${otherProvider}'s criteria`
+          ).not.toContain(name)
+        }
+      }
+    }
+  })
+
+  it('marks apply_patch as shared rather than exclusive — it is sourced for both Codex and OpenCode', () => {
+    expect(distinctiveToolingNames('codex', 'toolNames')).not.toContain('apply_patch')
+    expect(distinctiveToolingNames('opencode', 'toolNames')).not.toContain('apply_patch')
+    expect(PROVIDER_TOOLING_MARKERS.codex?.toolNames).toContain('apply_patch')
+    expect(PROVIDER_TOOLING_MARKERS.opencode?.toolNames).toContain('apply_patch')
+  })
+
+  it('leaves Antigravity’s criteria unchanged — no verified tooling markers yet', () => {
+    const result = buildJevRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      providers: [provider({ provider: 'antigravity' })],
+      capabilities: MODEL_CAPABILITIES
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    const what = result.request.providerCriteria.antigravity!.what
+    expect(what).toContain('Antigravity CLI')
+    expect(what).not.toContain('`')
+  })
+
+  it('still fits the request token budget with every launchable provider offered at once', () => {
+    const result = buildJevRouteRequest({
+      prompt: 'a short prompt',
+      routingProfile: 'balanced',
+      providers: DWARF_PROVIDERS.map((p) => provider({ provider: p })),
+      capabilities: {
+        ...MODEL_CAPABILITIES,
+        opencode: { 'opencode/free-fast': capabilityEntry({ tier: 'fast-cheap' }) }
+      }
+    })
+
+    expect(result.kind).toBe('request')
   })
 })
 
