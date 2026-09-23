@@ -19,6 +19,9 @@
       "out/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "out/main/jevMcpServer.mjs"
+    ],
     "extraResources": [
       {
         "from": "resources",
@@ -79,8 +82,9 @@
     "art:build": "node scripts/build-art.mjs",
     "icons": "node scripts/build-icons.mjs",
     "interior:map": "node scripts/build-interior-map.mjs",
-    "dev": "install-electron && electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "install-electron && pnpm build:mcp-server && electron-vite dev",
+    "build": "electron-vite build && pnpm build:mcp-server",
+    "build:mcp-server": "electron-vite build --config electron.vite.jevMcpServer.config.ts",
     "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
     "package:mac": "pnpm build && electron-builder --mac --publish never",
     "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",

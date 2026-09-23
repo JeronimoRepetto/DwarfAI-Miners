@@ -22,6 +22,7 @@
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
     "electron.vite.config.ts",
+    "electron.vite.jevMcpServer.config.ts",
     "vitest.config.ts"
   ]
 }

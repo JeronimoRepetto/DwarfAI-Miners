@@ -22,8 +22,11 @@ function input(overrides: Partial<Parameters<typeof delegationEnabledFor>[0]> = 
 }
 
 describe('DELEGATION_CAPABLE_PROVIDERS', () => {
-  it('names exactly Claude and OpenCode today', () => {
-    expect(DELEGATION_CAPABLE_PROVIDERS).toEqual(['claude', 'opencode'])
+  // AMENDED for #511 (Codex smoke measurement, 2026-09-23): was
+  // `['claude', 'opencode']` — see the constant's own comment for the
+  // evidence that moved Codex off the pending list.
+  it('names exactly Claude, OpenCode and Codex today', () => {
+    expect(DELEGATION_CAPABLE_PROVIDERS).toEqual(['claude', 'opencode', 'codex'])
   })
 })
 
@@ -31,6 +34,7 @@ describe('delegationEnabledFor', () => {
   it('is true when every gate level holds and the provider is capable', () => {
     expect(delegationEnabledFor(input())).toBe(true)
     expect(delegationEnabledFor(input({ provider: 'opencode' }))).toBe(true)
+    expect(delegationEnabledFor(input({ provider: 'codex' }))).toBe(true)
   })
 
   it('is false with no TypeSafe key configured', () => {
@@ -45,9 +49,13 @@ describe('delegationEnabledFor', () => {
     expect(delegationEnabledFor(input({ routedByJev: false }))).toBe(false)
   })
 
-  // Codex waits on one measurement (see the constant's own comment);
-  // Antigravity is excluded on documented-mechanism grounds, not a gap.
-  it.each(['codex', 'antigravity'] as const)(
+  // AMENDED for #511 (Codex smoke measurement, 2026-09-23): was
+  // `['codex', 'antigravity']` — Codex moved to the capable-provider
+  // assertion above once a real `codex exec` launch was measured exposing
+  // the `-c`-registered server's tools to the model. Antigravity remains
+  // excluded on documented-mechanism grounds, not a gap (see the constant's
+  // own comment).
+  it.each(['antigravity'] as const)(
     'is false for %s, whatever the other three levels say',
     (provider) => {
       expect(delegationEnabledFor(input({ provider }))).toBe(false)

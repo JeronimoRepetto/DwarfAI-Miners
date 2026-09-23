@@ -41,6 +41,7 @@ import {
   type HeldTuningState
 } from './heldSession'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
+import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
 
 /**
  * Every session the panel is currently holding, and the ask-answer loop over
@@ -288,6 +289,15 @@ interface HeldRecord {
    * honest answer, not just the routed ones.
    */
   routedByJev: boolean
+  /**
+   * Told EXACTLY ONCE when this held session's own lifetime ends, however it
+   * ends (#511 T4) — `runtime.ts`'s `launchHeldSession` is the one caller,
+   * and its own job is revoking this launch's delegation token
+   * (`delegationService.ts`'s `revoke`) without a leak. Absent for a launch
+   * the gate declined, on the same absent-means-not-asked terms every other
+   * optional field on this record carries.
+   */
+  onEnded?: () => void
 }
 
 /**
@@ -384,6 +394,23 @@ export class HeldSessionRegistry {
        * no use for it.
        */
       routedByJev?: boolean
+      /**
+       * The MCP delegation server this launch's own gate check
+       * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved,
+       * or absent when it declined (#511 T4). Forwarded to the engine
+       * untouched — only `sdkHeldSession.ts`'s Claude engine ever reads it,
+       * to put it on the SDK's own `mcpServers`/`allowedTools` options; this
+       * registry decides nothing about it. See `HeldSessionStartRequest.delegation`'s
+       * own comment for why this is a `HeldDelegationLink` (#511 M1a) rather
+       * than the detached path's `DelegationInjectionContext`.
+       */
+      delegation?: HeldDelegationLink
+      /**
+       * Told EXACTLY ONCE when this session ends, however it ends (#511
+       * T4) — see `HeldRecord.onEnded`'s own comment. Never called for a
+       * launch that never started.
+       */
+      onEnded?: () => void
     } & LaunchTuning
   ): Promise<HeldSessionLaunchResult> {
     // Refused before anything else, because nothing about this machine could
@@ -453,6 +480,8 @@ export class HeldSessionRegistry {
         ...(request.effort === undefined ? {} : { effort: request.effort }),
         ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
         ...(this.maxTurns === undefined ? {} : { maxTurns: this.maxTurns }),
+        // #511 T4: forwarded untouched — see this parameter's own comment.
+        ...(request.delegation === undefined ? {} : { delegation: request.delegation }),
         now: this.now,
         onSessionId: (sessionId) => this.recordSessionId(key, sessionId),
         onTelemetry: (update) => this.recordTelemetry(key, update),
@@ -490,7 +519,8 @@ export class HeldSessionRegistry {
         conversation: seeded,
         revision: seeded.length,
         ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] }),
-        routedByJev: request.routedByJev === true
+        routedByJev: request.routedByJev === true,
+        ...(request.onEnded === undefined ? {} : { onEnded: request.onEnded })
       })
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
@@ -1058,6 +1088,11 @@ export class HeldSessionRegistry {
       this.dissolve(record, DISSOLVED)
       this.held.delete(key)
       record.handle.close()
+      // #511 T4: `record` was already deleted above, so the engine's own
+      // `onEnd` (wired to `finish`, below) will find nothing and no-op —
+      // this is the one path that has to call `onEnded` itself, exactly
+      // once, for a session that was still open when the app quit.
+      record.onEnded?.()
     }
   }
 
@@ -1206,6 +1241,9 @@ export class HeldSessionRegistry {
     if (record === undefined) return
     this.dissolve(record, `${DISSOLVED} (${reason})`)
     this.held.delete(key)
+    // #511 T4: the ordinary end path — the engine's own stream closing on
+    // its own, never a `closeAll()` the app already swept this record from.
+    record.onEnded?.()
   }
 
   private dissolve(record: HeldRecord, reason: string): void {

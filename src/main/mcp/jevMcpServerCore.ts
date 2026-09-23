@@ -64,12 +64,21 @@ const TOOL_DESCRIPTION_PREFACE =
   'Hands a subtask to the DwarfAI-Miners panel, which asks Jev (TypeSafe) which provider, ' +
   'model and effort suit it and runs the subtask as its own session in the same mine.'
 
-const DELEGATE_SUBTASK_DESCRIPTION =
+/**
+ * EXPORTED (#511 M1a) so `delegationHeldServer.test.ts` can pin its own
+ * duplicate of this wording equal, byte for byte — see that module's own
+ * top comment for why it duplicates rather than imports this file at
+ * runtime (this file is a runtime dependency of `jevMcpServer.js`'s build
+ * graph; a TEST import crosses that boundary freely, since tests are never
+ * bundled into the server script).
+ */
+export const DELEGATE_SUBTASK_DESCRIPTION =
   `${TOOL_DESCRIPTION_PREFACE} Blocks until the child session concludes or the wait budget is ` +
   `spent. A \`pending\` answer means the child is still running — call ${SUBTASK_RESULT_TOOL_NAME} ` +
   `with its \`ticket\` later to fetch the result. On any \`failed\` answer, ${NATIVE_SUBAGENT_FALLBACK_SENTENCE}`
 
-const SUBTASK_RESULT_DESCRIPTION =
+/** EXPORTED for the same reason `DELEGATE_SUBTASK_DESCRIPTION` above is. */
+export const SUBTASK_RESULT_DESCRIPTION =
   `Fetches the result of a subtask started with ${DELEGATE_SUBTASK_TOOL_NAME}, by its \`ticket\`. ` +
   `May itself still answer \`pending\` if the child has not concluded yet. On any \`failed\` ` +
   `answer, ${NATIVE_SUBAGENT_FALLBACK_SENTENCE}`

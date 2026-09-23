@@ -40,11 +40,13 @@ import {
   type FeedMessage,
   type DwarfSendSettledPush,
   type LaunchFailedPush,
-  type ProviderSnapshot
+  type ProviderSnapshot,
+  type TurnOutcome
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
+import { resolveDelegationServerScriptPath } from '../mcp/delegationServerCommand'
 import {
   MODEL_CATALOG_TIMEOUT_MS,
   type ClaudeModelCatalogPort
@@ -53,7 +55,7 @@ import type { AntigravityModelCatalogPort } from '../providers/antigravity/model
 import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
-import { createCliDetector } from '../platform/cliDetection'
+import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import type { Provider } from '../providers/provider'
 import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
 import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
@@ -6574,6 +6576,664 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
 
     expect(onLaunchFailed).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * T3 (#511): the delegation service's own reason for calling `launchAgent`
+ * at all rather than a bare launcher — an optional second `hooks` argument,
+ * never part of the wire `AgentLaunchRequest`, that is told EXACTLY ONCE
+ * what the launch's own turn concluded. Every existing call site (the
+ * `agent:launch` IPC handler above all) calls `launchAgent` with one
+ * argument, so `hooks` is always `undefined` there and every describe block
+ * above this one is unaffected.
+ */
+describe('AgentRuntime launching for delegation, awaiting a TurnOutcome by callback (#511 T3)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'codex',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'codex:session-1',
+            provider: 'codex',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  /** A retained handle whose exit and turn conclusion this test can fire by hand. */
+  function concludableHandle(pid = 4242): {
+    process: LaunchedProcess
+    exit: () => void
+    concludeTurn: (outcome: TurnOutcome) => void
+  } {
+    const exitListeners: Array<() => void> = []
+    const turnListeners: Array<(outcome: TurnOutcome) => void> = []
+    return {
+      process: {
+        pid,
+        onExit: (listener) => exitListeners.push(listener),
+        onTurnOutcome: (listener) => turnListeners.push(listener)
+      },
+      exit: () => {
+        for (const listener of exitListeners) listener()
+      },
+      concludeTurn: (outcome) => {
+        for (const listener of turnListeners) listener(outcome)
+      }
+    }
+  }
+
+  async function runtimeWith(
+    launchSession: SessionLauncher,
+    now?: () => number
+  ): Promise<{ runtime: AgentRuntime; mineId: string }> {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      ...(now === undefined ? {} : { now })
+    })
+    await runtime.refresh()
+    return { runtime, mineId: runtime.getMines()[0]!.id }
+  }
+
+  it('calls hooks.onConcluded with the real TurnOutcome once the launched process reports one', async () => {
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+    const onConcluded = vi.fn()
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' }, { onConcluded })
+    expect(onConcluded).not.toHaveBeenCalled()
+
+    const outcome: TurnOutcome = { kind: 'concluded', text: 'ready', endedAt: 1 }
+    handle.concludeTurn(outcome)
+
+    expect(onConcluded).toHaveBeenCalledTimes(1)
+    expect(onConcluded).toHaveBeenCalledWith(outcome)
+  })
+
+  it('calls hooks.onConcluded with a synthetic interrupted outcome when the child exits reporting none', async () => {
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const now = vi.fn().mockReturnValue(777)
+    const { runtime, mineId } = await runtimeWith(launchSession, now)
+    const onConcluded = vi.fn()
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' }, { onConcluded })
+    handle.exit()
+
+    expect(onConcluded).toHaveBeenCalledTimes(1)
+    expect(onConcluded).toHaveBeenCalledWith({ kind: 'interrupted', endedAt: 777 })
+  })
+
+  it('calls hooks.onConcluded with a synthetic interrupted outcome when nothing could be retained at all', async () => {
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex' })
+    const now = vi.fn().mockReturnValue(888)
+    const { runtime, mineId } = await runtimeWith(launchSession, now)
+    const onConcluded = vi.fn()
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' }, { onConcluded })
+
+    expect(onConcluded).toHaveBeenCalledTimes(1)
+    expect(onConcluded).toHaveBeenCalledWith({ kind: 'interrupted', endedAt: 888 })
+  })
+
+  it('never calls hooks.onConcluded when the launch itself was refused', async () => {
+    const launchSession: SessionLauncher = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession)
+    const onConcluded = vi.fn()
+
+    const result = await runtime.launchAgent(
+      { mineId: `${mineId}-does-not-exist`, provider: 'codex', prompt: 'dig' },
+      { onConcluded }
+    )
+
+    expect(result.launched).toBe(false)
+    expect(onConcluded).not.toHaveBeenCalled()
+  })
+
+  it('behaves exactly as an ordinary call when hooks is omitted', async () => {
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    ).resolves.toMatchObject({ launched: true })
+    expect(() => handle.concludeTurn({ kind: 'concluded', endedAt: 1 })).not.toThrow()
+  })
+})
+
+/*
+ * MCP subtask delegation, injection (#511 T4). `RuntimeOptions.delegation` is
+ * OMITTED by every test above this block and by every existing production
+ * caller of `AgentRuntime` that has not been updated — see
+ * `resolveDelegationInjection`'s own comment in `runtime.ts` for why that
+ * keeps every launch byte for byte unchanged until it is wired at the
+ * composition root (`index.ts`). This block is what proves the gate check
+ * (`delegationGate.ts`), evaluated HERE rather than trusted from the wire —
+ * a delegated child's own launch request never carries `routedByJev`
+ * (`delegationService.ts`'s own comment), so depth 1 holds structurally as
+ * long as this stays the one place the check runs.
+ */
+describe('AgentRuntime injecting the delegation server into an eligible launch (#511 T4)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'codex',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'codex:session-1',
+            provider: 'codex',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  interface DelegationFake {
+    options: NonNullable<ConstructorParameters<typeof AgentRuntime>[0]['delegation']>
+    issued: Array<{ mineId: string }>
+    revoked: string[]
+  }
+
+  function delegationFake(
+    overrides: {
+      keyConfigured?: boolean
+      delegationAllowed?: boolean
+      tokenUnavailable?: boolean
+    } = {}
+  ): DelegationFake {
+    const issued: Array<{ mineId: string }> = []
+    const revoked: string[] = []
+    let nextToken = 0
+    return {
+      options: {
+        keyConfigured: () => overrides.keyConfigured ?? true,
+        delegationAllowed: async () => overrides.delegationAllowed ?? true,
+        issueLaunchToken: (context) => {
+          issued.push(context)
+          if (overrides.tokenUnavailable === true) return undefined
+          const token = `tok-${nextToken++}`
+          return { endpoint: 'http://127.0.0.1:54321', token }
+        },
+        revoke: (token: string) => revoked.push(token),
+        // #511 M1a: the in-process direct entry a held session's own SDK
+        // server would call — never exercised by the detached-launch tests
+        // in this block (they never build a `DelegationLink`), and only
+        // asserted for SHAPE by the held-session tests below, so a fixed,
+        // harmless answer is enough here.
+        delegate: async () => ({ ticket: 'fake-ticket', routing: { provider: 'claude' as const } }),
+        result: () => ({ status: 'pending' as const, routing: { provider: 'claude' as const } })
+      },
+      issued,
+      revoked
+    }
+  }
+
+  function concludableHandle(pid = 5150): {
+    process: LaunchedProcess
+    exit: () => void
+  } {
+    const exitListeners: Array<() => void> = []
+    return {
+      process: { pid, onExit: (listener) => exitListeners.push(listener) },
+      exit: () => {
+        for (const listener of exitListeners) listener()
+      }
+    }
+  }
+
+  const DELEGATION_APP_PATHS = {
+    isPackaged: false,
+    resourcesPath: '',
+    appPath: 'C:\\DwarfAI-Miners'
+  } as const
+
+  /**
+   * A `FakeFs` with `jevMcpServer.mjs` already registered at the exact path
+   * `resolveDelegationServerCommand` resolves for `DELEGATION_APP_PATHS` on
+   * `win32` (#511 T5) — the ordinary, built-and-present case every test in
+   * this block asserted before the exists check below existed. Built through
+   * the SAME `resolveDelegationServerScriptPath` production code calls,
+   * never a hand-typed path, so a future change to the resolver cannot make
+   * this fixture silently stop matching what `AgentRuntime` itself checks.
+   */
+  function fsWithDelegationServer(): FsLike {
+    const fs = new FakeFs()
+    fs.addFile(resolveDelegationServerScriptPath(DELEGATION_APP_PATHS, 'win32'), '// stub\n')
+    return fs
+  }
+
+  async function runtimeWith(
+    launchSession: SessionLauncher,
+    delegation?: DelegationFake['options'],
+    fs: FsLike = fsWithDelegationServer()
+  ): Promise<{ runtime: AgentRuntime; mineId: string }> {
+    const runtime = new AgentRuntime({
+      fs,
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      appPaths: DELEGATION_APP_PATHS,
+      ...(delegation === undefined ? {} : { delegation })
+    })
+    await runtime.refresh()
+    return { runtime, mineId: runtime.getMines()[0]!.id }
+  }
+
+  it('never asks the gate at all when the build carries no delegation options', async () => {
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig', routedByJev: true })
+
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
+  })
+
+  it('never injects when the launch was not routed by Jev, even with a key configured and delegation on', async () => {
+    const fake = delegationFake()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    expect(fake.issued).toEqual([])
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
+  })
+
+  // AMENDED for #511 (Codex smoke measurement, 2026-09-23): was
+  // `provider: 'codex'` — Codex joined `DELEGATION_CAPABLE_PROVIDERS`
+  // (`delegationGate.ts`) once a real launch was measured exposing its
+  // `-c`-registered server's tools to the model, so this test now needs a
+  // provider genuinely OUTSIDE the capable list. Antigravity is the one
+  // that remains, on documented-mechanism grounds unrelated to this
+  // measurement (see `delegationGate.ts`'s own comment).
+  it('never injects for a provider outside DELEGATION_CAPABLE_PROVIDERS, even when routed', async () => {
+    const fake = delegationFake()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'antigravity' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'antigravity', prompt: 'dig', routedByJev: true })
+
+    expect(fake.issued).toEqual([])
+  })
+
+  it('injects a resolved server command and the issued token for an eligible claude launch, and revokes it on exit', async () => {
+    const fake = delegationFake()
+    const handle = concludableHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude', retained: handle.process })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
+
+    expect(fake.issued).toEqual([{ mineId }])
+    const call = (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]
+    expect(call.delegation).toMatchObject({ endpoint: 'http://127.0.0.1:54321', token: 'tok-0' })
+    expect(typeof call.delegation.serverCommand).toBe('string')
+    expect(Array.isArray(call.delegation.serverArgs)).toBe(true)
+    expect(fake.revoked).toEqual([])
+
+    handle.exit()
+
+    expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  it('revokes immediately when the eligible launch itself never started', async () => {
+    const fake = delegationFake()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: false, provider: 'claude', error: 'nope' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
+
+    expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  it('revokes immediately when nothing could be retained for the eligible launch', async () => {
+    const fake = delegationFake()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
+
+    expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  it('never injects when no TypeSafe key is configured', async () => {
+    const fake = delegationFake({ keyConfigured: false })
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
+
+    expect(fake.issued).toEqual([])
+    // #511 L6: amended to also prove the launch request itself carries no
+    // `delegation` field, the same assertion the "no delegation options at
+    // all" and "not routed by Jev" tests above already make — an empty
+    // `issued` array alone does not rule out a stray `delegation: undefined`
+    // key surviving onto the wire.
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
+  })
+
+  it("never injects when Settings' own delegation checkbox is off", async () => {
+    const fake = delegationFake({ delegationAllowed: false })
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig', routedByJev: true })
+
+    expect(fake.issued).toEqual([])
+    // #511 L6: same amendment as the key-off test above.
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
+  })
+
+  it('degrades to an ordinary, uninjected launch when the service has no token to give yet', async () => {
+    const fake = delegationFake({ tokenUnavailable: true })
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
+
+    const result = await runtime.launchAgent({
+      mineId,
+      provider: 'claude',
+      prompt: 'dig',
+      routedByJev: true
+    })
+
+    expect(result.launched).toBe(true)
+    expect('delegation' in (launchSession as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe(
+      false
+    )
+    expect(fake.revoked).toEqual([])
+  })
+
+  /*
+   * #511 T5: `pnpm dev`'s own gap (see `electron.vite.config.ts`'s own top
+   * comment) — `jevMcpServer.mjs` can be absent from disk (a fresh checkout
+   * before its first build, a failed prebuild step, or `electron-vite dev -w`
+   * run directly rather than through `pnpm dev`). Handing a CLI a
+   * `--mcp-config`/`OPENCODE_CONFIG_CONTENT` naming a script that does not
+   * exist is worse than no delegation: the CLI's own MCP client would fail to
+   * start the server and the tool would simply never be there, with nothing
+   * in this app's own log to say why. This checks the SAME path
+   * `serverArgs[0]` would otherwise name, through the injected `FsLike.exists`
+   * port `fsWithDelegationServer`'s absence below stands in for — never the
+   * real filesystem.
+   */
+  it('skips injection and logs once when jevMcpServer.mjs does not exist on disk', async () => {
+    const fake = delegationFake()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { runtime, mineId } = await runtimeWith(launchSession, fake.options, new FakeFs())
+
+      const first = await runtime.launchAgent({
+        mineId,
+        provider: 'claude',
+        prompt: 'dig',
+        routedByJev: true
+      })
+      const second = await runtime.launchAgent({
+        mineId,
+        provider: 'claude',
+        prompt: 'dig again',
+        routedByJev: true
+      })
+
+      // Never issued, never revoked — the launch degrades to ordinary and
+      // uninjected, exactly like every other gate failure above, rather than
+      // minting a token this launch will never use.
+      expect(fake.issued).toEqual([])
+      expect(fake.revoked).toEqual([])
+      expect(first.launched).toBe(true)
+      expect(second.launched).toBe(true)
+      const calls = (launchSession as ReturnType<typeof vi.fn>).mock.calls
+      expect('delegation' in calls[0]![0]).toBe(false)
+      expect('delegation' in calls[1]![0]).toBe(false)
+      // Logged once, not once per launch.
+      const delegationWarnings = warn.mock.calls.filter(([message]) =>
+        String(message).includes('[delegation]')
+      )
+      expect(delegationWarnings).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  /**
+   * A real `HeldSessionRegistry` over a fake Claude engine that just
+   * records what it was started with — never a mocked registry, so the
+   * ordinary poll's own `crewState`/`questionState`/etc. reads (every one of
+   * them, for every dwarf) stay answered exactly as they are for any other
+   * held-session test in this file (see `heldPort`/`heldRegistry` above).
+   */
+  function fakeHeldEngine(): { port: HeldSessionPort; started: HeldSessionStartRequest[] } {
+    const started: HeldSessionStartRequest[] = []
+    return {
+      started,
+      port: async (request) => {
+        started.push(request)
+        return { close: () => {}, send: () => true }
+      }
+    }
+  }
+
+  function heldRegistryOver(port: HeldSessionPort): HeldSessionRegistry {
+    const fs = new FakeFs()
+    fs.addFile('/home/j/.local/bin/claude', '#!/bin/sh\n')
+    return new HeldSessionRegistry({
+      detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+      start: { claude: port },
+      now: () => 9_000,
+      log: () => {}
+    })
+  }
+
+  /*
+   * The held twin (#511 T4): `launchHeldSession` runs the SAME gate check,
+   * and revocation rides on `HeldSessionRegistry`'s own `onEnded` hook
+   * (`heldSessionRegistry.test.ts` proves that hook fires exactly once and
+   * survives `closeAll`) — this only has to prove `launchHeldSession` WIRES
+   * it, since the gate/token logic itself is already proven above.
+   */
+  it('injects into an eligible held launch and revokes through onEnded when the registry reports it', async () => {
+    const fake = delegationFake()
+    const engine = fakeHeldEngine()
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      heldSessions: heldRegistryOver(engine.port),
+      onMinesUpdated: vi.fn(),
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+      delegation: fake.options
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId,
+      prompt: 'dig',
+      routedByJev: true
+    })
+
+    expect(fake.issued).toEqual([{ mineId }])
+    // #511 M1a: a held launch's own delegation is an in-process
+    // DelegationLink + waitMs now, never the endpoint/token shape a
+    // detached launch's own stdio server needs — see
+    // `resolveHeldDelegationInjection`'s own comment.
+    expect(engine.started[0]!.delegation).toMatchObject({ waitMs: expect.any(Number) })
+    expect(typeof engine.started[0]!.delegation?.link.delegate).toBe('function')
+    expect(typeof engine.started[0]!.delegation?.link.result).toBe('function')
+    // #511 M1a's own point: no endpoint, no token anywhere on what a held
+    // session's own request carries — there is nothing here a CLI's own
+    // argv could ever expose, because nothing here is handed to a CLI at
+    // all.
+    expect(Object.hasOwn(engine.started[0]!.delegation as object, 'endpoint')).toBe(false)
+    expect(Object.hasOwn(engine.started[0]!.delegation as object, 'token')).toBe(false)
+    expect(fake.revoked).toEqual([])
+
+    engine.started[0]!.onEnd('the turn finished')
+
+    expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  it('never injects into a held launch that was not routed by Jev', async () => {
+    const fake = delegationFake()
+    const engine = fakeHeldEngine()
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      heldSessions: heldRegistryOver(engine.port),
+      onMinesUpdated: vi.fn(),
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+      delegation: fake.options
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    await runtime.launchHeldSession({ provider: 'claude', mineId, prompt: 'dig' })
+
+    expect(fake.issued).toEqual([])
+    expect('delegation' in engine.started[0]!).toBe(false)
+  })
+
+  it('revokes immediately when the eligible held launch itself never started', async () => {
+    const fake = delegationFake()
+    // A held launch's own refusal path never reaches the engine at all — an
+    // empty prompt is the cheapest way to make `HeldSessionRegistry.launch`
+    // refuse before it ever calls the port, so this stays a REAL registry
+    // rather than a special-cased fake for one refusal.
+    const engine = fakeHeldEngine()
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      heldSessions: heldRegistryOver(engine.port),
+      onMinesUpdated: vi.fn(),
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+      delegation: fake.options
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId,
+      prompt: '   ',
+      routedByJev: true
+    })
+
+    expect(engine.started).toEqual([])
+    expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  /*
+   * #511 L5: `HeldSessionRegistry.launch` catches its own engine's throw
+   * internally (see its own try/catch), but `this.detector.detect(...)`
+   * runs BEFORE that try block — a detector that throws (a real disk error,
+   * never observed from the shipped detector but not structurally
+   * impossible) reaches `AgentRuntime.launchHeldSession` uncaught. Before
+   * this fix nothing there revoked the token that had already been minted.
+   */
+  it('revokes the token and rethrows when the held registry itself throws before ever reaching the engine', async () => {
+    const fake = delegationFake()
+    const engine = fakeHeldEngine()
+    const throwingDetector: CliDetector = {
+      detect: () => {
+        throw new Error('disk read failed')
+      },
+      peek: () => 'unprobed'
+    }
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      heldSessions: new HeldSessionRegistry({
+        detector: throwingDetector,
+        start: { claude: engine.port },
+        now: () => 9_000,
+        log: () => {}
+      }),
+      onMinesUpdated: vi.fn(),
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+      delegation: fake.options
+    })
+    await runtime.refresh()
+    const mineId = runtime.getMines()[0]!.id
+
+    await expect(
+      runtime.launchHeldSession({ provider: 'claude', mineId, prompt: 'dig', routedByJev: true })
+    ).rejects.toThrow('disk read failed')
+
+    expect(fake.issued).toEqual([{ mineId }])
+    expect(fake.revoked).toEqual(['tok-0'])
   })
 })
 

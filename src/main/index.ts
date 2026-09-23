@@ -106,6 +106,8 @@ import { sumTokensObserved } from './domain/aggregate'
 import { parseLaunchTuning } from './domain/launchTuning'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
+import { DelegationService } from './mcp/delegationService'
+import { delegationFailure } from './mcp/delegationServerProtocol'
 import { NodeFs } from './adapters/fsLike'
 import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
@@ -181,6 +183,12 @@ import { createNotifier, type Notifier } from './notifications/notifier'
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
+/**
+ * The MCP subtask-delegation loopback listener (#511 T3). `issueLaunchToken`/
+ * `revoke` are called from `AgentRuntime`'s own gate check now (#511 T4),
+ * through the closures the `delegation` option below hands it.
+ */
+let delegationService: DelegationService | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
@@ -991,6 +999,50 @@ async function init(): Promise<void> {
     platformAdapters,
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
     readAttachment,
+    /* --- MCP subtask delegation: the gate's live inputs and the service's own port (#511 T4) — one block, appended --- */
+    // `keyConfigured`/`delegationAllowed` read exactly the same two stores
+    // the loopback service's own options do, below — the "ask fresh, never
+    // cache" discipline that whole block already states applies here too.
+    // `issueLaunchToken`/`revoke` close over the module-level
+    // `delegationService`, which is still null at THIS point in startup
+    // (constructed after `runtime.start()`, further down): reading it
+    // lazily, inside these two closures, is what lets a launch made after
+    // startup see the real instance — the identical trick
+    // `delegationService`'s own `launch` option already plays on `runtime`.
+    delegation: {
+      keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
+      delegationAllowed: async () => (await jevPreferenceStore.load()).delegation,
+      issueLaunchToken: (context) => delegationService?.issueLaunchToken(context),
+      revoke: (token) => delegationService?.revoke(token),
+      // #511 M1a: `delegate`/`result` close over the SAME module-level
+      // `delegationService`, lazily, for the SAME reason `issueLaunchToken`/
+      // `revoke` above do — read only by a HELD Claude session's in-process
+      // server (`resolveHeldDelegationInjection` in runtime.ts), which never
+      // reaches these before `issueLaunchToken` has already minted a real
+      // token, so `delegationService` being null here is not observed in
+      // production; the fallback exists only so the type stays honest about
+      // what a null service means rather than throwing.
+      delegate: async (token, task, context) =>
+        delegationService === null
+          ? {
+              failure: delegationFailure(
+                'link-unconfigured',
+                'The delegation service is not running.'
+              )
+            }
+          : delegationService.delegateDirect(token, task, context),
+      result: (token, ticket) =>
+        delegationService === null
+          ? {
+              status: 'failed',
+              failure: delegationFailure(
+                'link-unconfigured',
+                'The delegation service is not running.'
+              )
+            }
+          : delegationService.resultDirect(token, ticket)
+    },
+    /* --- end of the #511 T4 block ---------------------------------------------- */
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the
@@ -1040,6 +1092,36 @@ async function init(): Promise<void> {
   // launch and a new one must never be handed the same id (#231).
   await runtime.restoreLaunchedSessions()
   runtime.start()
+
+  /* --- MCP subtask delegation: the loopback service (#511 T3) — one block, appended --- */
+  // Always started, like `jevLaunchRouter` above — this listener answers
+  // every request with a typed refusal until a token is presented, so
+  // running it costs nothing for a build with delegation off; only T4's
+  // injection adapters ever call `issueLaunchToken`, and this task wires
+  // none of them in. `launch`/`route` close over `runtime`/`jevLaunchRouter`
+  // exactly as the Jev block above does, for the same reason: `runtime` is
+  // still null at THIS point in startup for any closure defined earlier, and
+  // reading it lazily is what lets a call made after startup see the real
+  // instance. `keyConfigured`/`delegationAllowed` are read fresh on every
+  // `/delegate` call (never cached at token-issue time) — the same "ask
+  // fresh" discipline the whole Jev block already holds, and the one that
+  // lets a person turn delegation off or clear the key while a long-running
+  // parent session's token is still valid.
+  delegationService = new DelegationService({
+    port: 0,
+    launch: (request, hooks) =>
+      runtime?.launchAgent(request, hooks) ??
+      Promise.resolve({
+        launched: false,
+        provider: 'none',
+        error: 'The panel is still starting up.'
+      }),
+    route: jevLaunchRouter.route,
+    keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
+    delegationAllowed: async () => (await jevPreferenceStore.load()).delegation
+  })
+  await delegationService.start()
+  /* --- end of the #511 T3 block ---------------------------------------------- */
 
   // The historical coal pile, produced once and never again (see #22).
   //
@@ -1823,6 +1905,10 @@ if (!app.requestSingleInstanceLock()) {
     // non-blocking error.
     void hooks?.shutdown()
     hooks = null
+    // #511 T3: releases the loopback port only, same terms as the hooks
+    // channel just above — nothing here is written to disk to bring back.
+    void delegationService?.stop()
+    delegationService = null
     // Drops the store's reference. It no longer closes the database — that file
     // is shared with the vault, whose forced final save is still in flight at
     // this point (see the composition block above). Whatever the last poll

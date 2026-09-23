@@ -142,6 +142,21 @@ export interface RetainLaunchRequest {
    * on a launch request holds.
    */
   routedByJev?: boolean
+  /**
+   * T3's own reason for calling `retain` at all rather than the bare launcher
+   * (#511): told EXACTLY ONCE what this launch's own turn concluded — the
+   * real `TurnOutcome` when the process reports one, or a synthetic
+   * `{ kind: 'interrupted' }` reading when the process exits having never
+   * reported one (a provider this app never taught to read #510's own
+   * signal, or a plain crash). This is the delegation service's whole
+   * "never a hung ticket" guarantee, and it lives HERE rather than as a
+   * separate subscription API precisely so it can be wired in the same
+   * synchronous breath as `onExit`/`onTurnOutcome` below — no launchId is
+   * ever handed back to a caller before this closure already exists, so
+   * there is no race to subscribe into. Absent behaves exactly as before
+   * this field existed: every other caller of `retain` is unaffected.
+   */
+  onConcluded?: (outcome: TurnOutcome) => void
 }
 
 /**
@@ -223,6 +238,13 @@ export interface LaunchedSessionRegistryOptions {
    */
   store?: LaunchedSessionStore
   log?: (message: string) => void
+  /**
+   * Wall clock for the synthetic `interrupted` outcome `retain`'s own
+   * `onConcluded` answers with when a launch exits having reported no real
+   * one (#511). Injected so a test can assert the exact `endedAt` it stamps;
+   * defaults to `Date.now`.
+   */
+  now?: () => number
 }
 
 export class LaunchedSessionRegistry {
@@ -239,6 +261,7 @@ export class LaunchedSessionRegistry {
   private readonly probeStart: ((pid: number) => Promise<number | null>) | null
   private readonly store: LaunchedSessionStore | null
   private readonly log: (message: string) => void
+  private readonly now: () => number
   private sequence = 0
   /**
    * Serializes the fire-and-forget register writes, and is what settle() hands
@@ -253,6 +276,7 @@ export class LaunchedSessionRegistry {
     this.probeStart = options.processStartTimeMs ?? null
     this.store = options.store ?? null
     this.log = options.log ?? ((): void => {})
+    this.now = options.now ?? Date.now
   }
 
   /** Keep hold of what a launch started, and answer with the id of that launch. */
@@ -274,16 +298,36 @@ export class LaunchedSessionRegistry {
     // question about whatever owns the number by then (#231).
     if (this.keepsRegister()) record.procStart = this.probeCreation(record.pid)
     this.records.set(launchId, record)
+    // #511 T3: exactly one call to `request.onConcluded`, off whichever of
+    // the two signals below settles it first — the documented order is a
+    // turn concluding, THEN the process exiting (see `lastTurnOfDwarf`'s own
+    // comment), so the ordinary case is `onTurnOutcome` firing first and
+    // `onExit`'s own call becoming a no-op. A `concluded` guard rather than
+    // trusting that order absolutely: a provider this app never taught to
+    // read #510's own signal fires ONLY `onExit`, and this must still answer
+    // exactly once, never zero and never twice.
+    let concluded = false
+    const concludeOnce = (outcome: TurnOutcome): void => {
+      if (concluded) return
+      concluded = true
+      request.onConcluded?.(outcome)
+    }
     // Subscribed here rather than probed later: this is the fact that keeps a
     // recycled pid from ever being signalled.
     request.process.onExit(() => {
       record.gone = true
       this.forget(launchId)
+      // #511: a launch that exits having never reported a real outcome is
+      // still owed a definite answer — never a hang. `record.lastTurn` is
+      // read here rather than assumed absent, so this is a no-op when
+      // `onTurnOutcome` already settled it above.
+      concludeOnce(record.lastTurn ?? { kind: 'interrupted', endedAt: this.now() })
     })
     // #510. Latched onto the record in memory only — see `LaunchRecord.lastTurn`
     // on why this never reaches the store.
     request.process.onTurnOutcome?.((outcome) => {
       record.lastTurn = outcome
+      concludeOnce(outcome)
     })
     return launchId
   }

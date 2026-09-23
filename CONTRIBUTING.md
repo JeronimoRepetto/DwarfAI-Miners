@@ -93,6 +93,24 @@ The whole test suite is platform-independent and must stay that way: it runs and
 any host OS, because per-OS behavior is tested through pure builders (see below), never by
 executing platform commands.
 
+### Delegation smoke test
+
+`scripts/smoke/delegation.mjs` is a separate, opt-in check for [subtask delegation](docs/guide.md#delegation)
+(#511) — not part of the seven checks above, never run by CI, and never run automatically by an
+agent working this repository. It launches real, installed agent CLIs, which every unit test in this
+project refuses to do:
+
+```bash
+pnpm build   # out/main/jevMcpServer.mjs must exist and be current
+node scripts/smoke/delegation.mjs
+```
+
+For each of `claude`, `opencode` and `codex` actually installed on your machine, it spends one
+short, low-cost turn confirming the delegation server was registered and its tool was actually
+exposed to the model — `PASS`, `FAIL`, or `SKIPPED` for a CLI not on this machine's PATH. Run it by
+hand when you want to know whether a real CLI still honours its own documented MCP mechanism; the
+script's own top comment says exactly what it proves and what it does not.
+
 ## Testing philosophy
 
 - **Tests come with the change.** New behavior arrives with the test that pins it — write the

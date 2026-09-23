@@ -39,12 +39,22 @@ export interface DelegationGateInput {
 /**
  * Providers this build can register the delegation server for (#511).
  *
- * Codex is deliberately absent pending one measurement: whether
- * `-c mcp_servers.jev.command=…` actually registers a server on a plain
- * `codex exec` at all is unmeasured (`codex -c … mcp list`, read-only,
- * still to run) — see the Evidence section of the feature document. A build
- * that guessed here could hand a session a tool call that silently does
- * nothing, which is worse than the tool never appearing.
+ * Codex joined this list on the strength of a real measurement, not a guess
+ * (2026-09-23, codex-cli 0.153.4, Windows). A direct, no-shell probe —
+ * `node <codex.js> exec --skip-git-repo-check -c mcp_servers.jev.command=…
+ * -c mcp_servers.jev.args=[…] -c mcp_servers.jev.env={…} -`, the same shape
+ * `codexDelegationConfigArgs` builds — registered the server AND exposed its
+ * tools to the model (`mcp: jev/delegate_subtask started`), which is the one
+ * fact `codex … mcp list` alone could not answer: it shows a server is
+ * registered, never whether its TOOLS reach the model. The call itself then
+ * needed two per-tool `approval_mode="approve"` overrides
+ * (`codexDelegationConfigArgs`'s own comment has the source citation) before
+ * the POST reached a fake endpoint end to end. The app's own real launch
+ * path never goes through a shell either (`resolveProgram`/`resolveShimTarget`
+ * in `platform/cliDetection.ts`, `buildLaunchSpawn`'s own "No shell, ever"
+ * — `launchRunner.ts`), so the Windows `.cmd`-shim argv-mangling that made
+ * the FIRST, `shell: true` smoke run fail (`scripts/smoke/delegation.mjs`,
+ * fixed alongside this) never applies to it.
  *
  * Antigravity is excluded for a different reason, and is not waiting on a
  * measurement: only a global (`~/.gemini/config/mcp_config.json`) or
@@ -53,7 +63,11 @@ export interface DelegationGateInput {
  * server registration into the user's own project file, on their behalf,
  * was decided against (#511, #512).
  */
-export const DELEGATION_CAPABLE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'opencode']
+export const DELEGATION_CAPABLE_PROVIDERS: readonly DwarfProvider[] = [
+  'claude',
+  'opencode',
+  'codex'
+]
 
 export function delegationEnabledFor(input: DelegationGateInput): boolean {
   return (

@@ -81,6 +81,7 @@ import {
   type ProjectSummary,
   type ProviderSnapshot,
   type TextDeliveryChannel,
+  type TurnOutcome,
   type WatchedFeedPush
 } from '../domain/types'
 import {
@@ -145,6 +146,16 @@ import {
   runLaunchProcess,
   type SessionLauncher
 } from '../sessionLaunch/launchRunner'
+import { delegationEnabledFor } from '../mcp/delegationGate'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
+import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
+import { createDirectDelegationLink } from '../mcp/delegationDirectLink'
+import type { DelegationFailure, DelegationRouting, ResultBody } from '../mcp/delegationProtocol'
+import { DEFAULT_DELEGATION_WAIT_MS } from '../mcp/delegationServerProtocol'
+import {
+  resolveDelegationServerCommand,
+  type DelegationServerCommand
+} from '../mcp/delegationServerCommand'
 import type { Provider } from '../providers/provider'
 import { trimFeed } from '../providers/feedWindow'
 import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
@@ -727,6 +738,56 @@ export interface RuntimeOptions {
    */
   launchSession?: SessionLauncher
   /**
+   * The delegation gate's live inputs and the loopback service's own port
+   * (#511 T4) — OMITTED disables delegation injection entirely, which is
+   * what keeps every existing test and every existing launch byte for byte
+   * unchanged: no gate check runs, and `launchAgent`/`launchHeldSession`
+   * never add a `delegation` field to what they hand `launchSession`/
+   * `heldSessions.launch`. The composition root (`index.ts`) is the only
+   * caller that wires this, closing over the module-level `delegationService`
+   * exactly as the service's own `launch` option already closes over
+   * `runtime` — both are still null at the point `AgentRuntime` is
+   * constructed, so `issueLaunchToken` reads it lazily, at call time.
+   */
+  delegation?: {
+    /** A TypeSafe key is actually configured (`delegationGate.ts`'s own first level). */
+    keyConfigured: () => boolean
+    /** Settings' own checkbox, read live — never cached at token-issue time. */
+    delegationAllowed: () => Promise<boolean>
+    /**
+     * Mints this launch's own token, or `undefined` when the delegation
+     * service is not running yet (never observed in production — it starts
+     * before any window can send a launch IPC — but a test seam nobody
+     * should have to prove is unreachable). `undefined` degrades to an
+     * ORDINARY, uninjected launch rather than refusing it: a launch must
+     * never fail merely because the delegation side-channel could not be
+     * armed.
+     */
+    issueLaunchToken: (context: {
+      mineId: string
+    }) => { endpoint: string; token: string } | undefined
+    /** Forgets a token whose launch has ended; a no-op for one never issued. */
+    revoke: (token: string) => void
+    /** Overrides the server's own default answer-by deadline for this build; absent leaves it. */
+    waitMs?: number
+    /**
+     * `DelegationService.delegateDirect`/`resultDirect`, bound in `index.ts`
+     * on the same lazy-closure terms `issueLaunchToken` above already is
+     * (#511 M1a). Read only by `resolveHeldDelegationInjection`, for a HELD
+     * Claude launch: its in-process SDK server (`delegationHeldServer.ts`)
+     * calls these directly rather than over the loopback `issueLaunchToken`
+     * hands the OTHER providers, so a held session's own token never has to
+     * leave this process — see `resolveHeldDelegationInjection`'s own
+     * comment for the argv-exposure finding this exists to fix.
+     */
+    delegate: (
+      token: string,
+      task: string,
+      context: string | undefined
+    ) => Promise<{ ticket: string; routing: DelegationRouting } | { failure: DelegationFailure }>
+    result: (token: string, ticket: string) => ResultBody
+  }
+  /**
    * Sessions the panel STARTS and HOLDS over the Agent SDK (#86, #94) —
    * injected already composed, exactly as the ledger and the tier service are,
    * so no test can reach the SDK. The default drives the real one over the
@@ -867,6 +928,30 @@ export interface RuntimeOptions {
 }
 
 /**
+ * `launchAgent`'s own second, main-only argument (#511 T3) — deliberately
+ * NOT part of `AgentLaunchRequest`: that type crosses the wire (`src/README.md`'s
+ * own single-declaration-point discipline for `shared/contracts.ts`, #77),
+ * and a callback can neither serialise nor belong there. The delegation
+ * service is the one caller today, launching a subtask's child in the same
+ * mine as its parent and needing to know what its turn concluded WITHOUT
+ * polling — every existing caller (the `agent:launch` IPC handler above all)
+ * calls `launchAgent` with one argument, so `hooks` stays entirely absent
+ * for them and nothing about their behaviour changes.
+ */
+export interface LaunchAgentHooks {
+  /**
+   * Told EXACTLY ONCE what this launch's own turn concluded — see
+   * `RetainLaunchRequest.onConcluded` (`launchedSessions.ts`) for the full
+   * guarantee, including the synthetic `interrupted` reading a launch that
+   * reports nothing still receives. Threaded straight through to `retain`
+   * when a process was retained; answered directly, right here, for the one
+   * case `retain` never runs at all — a launch that started but retained no
+   * process to hold.
+   */
+  onConcluded?: (outcome: TurnOutcome) => void
+}
+
+/**
  * Runtime bridge between disk-backed providers and Electron IPC. Keeping it
  * independent from Electron makes its lifecycle and activation behavior testable.
  */
@@ -880,6 +965,33 @@ export class AgentRuntime {
     decision: DwarfPermissionDecision
   ) => PermissionKeystroke | null
   private readonly launchSession: SessionLauncher
+  /**
+   * The delegation gate's live inputs and the loopback service's own port
+   * (#511 T4), or undefined when this build never wired one — see
+   * `RuntimeOptions.delegation`'s own comment for what undefined means.
+   */
+  private readonly delegation: RuntimeOptions['delegation']
+  /**
+   * How a launched CLI should spawn `jevMcpServer.js` (#511 T4) — resolved
+   * ONCE, here, from the same `appPaths`/`platform` every other per-OS path
+   * in this constructor already reads, never per launch: the answer cannot
+   * change while this process runs.
+   */
+  private readonly delegationServerCommand: DelegationServerCommand
+  /**
+   * The same `FsLike` port every other disk read in this runtime already
+   * uses (#511 T5) — kept as a field so `resolveDelegationInjection` can
+   * check whether `delegationServerCommand`'s own script is actually THERE
+   * before minting a token for it, per launch, without a real disk read in a
+   * unit test (`FakeFs` in every test above this comment).
+   */
+  private readonly fs: FsLike
+  /**
+   * Whether the "jevMcpServer.mjs is missing" warning has already fired
+   * once (#511 T5) — a repeated launch attempt while the server stays
+   * unbuilt must not flood the log with the same line every time.
+   */
+  private loggedMissingDelegationServer = false
   /** One attached image's bytes, for a held session's content block (#408). */
   private readonly readAttachment: AttachmentReader
   /** Sessions this panel started and still holds (#86, #94). */
@@ -1161,6 +1273,18 @@ export class AgentRuntime {
     const platform = options.platformAdapters
 
     this.now = options.now ?? Date.now
+    this.fs = fs
+    // #511 T4: stored as given (possibly undefined) — see
+    // `RuntimeOptions.delegation`'s own comment. Resolved from the SAME
+    // `appPaths`/`platform` every other per-OS path above already reads, so
+    // dev vs. packaged and the three OS path styles are covered by
+    // `delegationServerCommand.test.ts` rather than re-proven here.
+    this.delegation = options.delegation
+    this.delegationServerCommand = resolveDelegationServerCommand(
+      appPaths,
+      process.execPath,
+      platform.platform
+    )
     this.permissionPrompts = new PermissionPromptRegistry({ now: this.now })
 
     // The development-only simulated valley (#42). Null in every ordinary run,
@@ -1289,7 +1413,12 @@ export class AgentRuntime {
         endProcessTree: (pid) => platform.processEnd.endProcessTree(pid),
         processStartTimeMs: (pid) => platform.processProbe.processStartTimeMs(pid),
         ...(options.launchedSessionStore == null ? {} : { store: options.launchedSessionStore }),
-        log: (message) => console.log(message)
+        log: (message) => console.log(message),
+        // #511 T3: the same clock `this.now` reads, so a launch's own
+        // synthetic `interrupted` outcome (see `RetainLaunchRequest.onConcluded`)
+        // is stamped with the SAME wall clock a test injects here, not a
+        // second, unrelated one this registry would otherwise default to.
+        now: this.now
       })
     // #263. A no-op default, exactly as `log` above defaults to one: nothing
     // this build ever wires still logs the failure, since that half of
@@ -1345,6 +1474,10 @@ export class AgentRuntime {
           // keeps an untuned launch byte for byte what it was before #239.
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),
+          // #511 T4: forwarded exactly as model/effort above are; absent
+          // stays absent, which is what keeps an ordinary launch byte for
+          // byte what it was before this issue.
+          ...(request.delegation === undefined ? {} : { delegation: request.delegation }),
           detector: platform.cliDetector,
           env: process.env,
           platform: platform.platform,
@@ -3323,6 +3456,129 @@ export class AgentRuntime {
   }
 
   /**
+   * The MCP subtask-delegation gate (#511 T4), evaluated HERE — inside
+   * `launchAgent`, at the moment of each real launch — rather than trusted
+   * from anything the wire request claims for what happens AFTER the gate.
+   * `routedByJev` itself DOES arrive off the wire (the renderer's own launch
+   * IPC), so this is not what keeps a delegated child from passing the gate
+   * a second time: depth 1 holds because `delegationService.ts` builds that
+   * child's own launch request IN MAIN, and it never sets `routedByJev` on
+   * it (pinned by that file's own LOW-7 test) — so the SAME gate, reading
+   * the SAME field, has nothing to read on a delegated child's own request
+   * and declines it, with no depth counter anywhere. `launchHeldSession`'s
+   * own held twin is `resolveHeldDelegationInjection`, just below.
+   *
+   * Returns undefined for every reason a launch stays uninjected: no
+   * `RuntimeOptions.delegation` wired at all, the gate declined, or the
+   * service could not mint a token yet (`issueLaunchToken` answering
+   * undefined) — never a thrown error, because none of these should ever
+   * turn an otherwise-good launch into a refusal.
+   */
+  private async resolveDelegationInjection(
+    provider: DwarfProvider,
+    routedByJev: boolean,
+    mineId: string
+  ): Promise<{ token: string; injection: DelegationInjectionContext } | undefined> {
+    const delegation = this.delegation
+    if (delegation === undefined) return undefined
+    const enabled = delegationEnabledFor({
+      keyConfigured: delegation.keyConfigured(),
+      delegation: await delegation.delegationAllowed(),
+      routedByJev,
+      provider
+    })
+    if (!enabled) return undefined
+    // #511 T5: `pnpm dev` (package.json) can start Electron before
+    // `jevMcpServer.mjs` exists on disk — see `electron.vite.config.ts`'s own
+    // top comment for why `dev` now builds it first, and the cases this
+    // guards for whenever it still does not (a fresh checkout before its
+    // first build, a failed prebuild step, or `electron-vite dev -w` invoked
+    // directly rather than through `pnpm dev`). Handing a CLI a
+    // `--mcp-config`/`OPENCODE_CONFIG_CONTENT` that names a script which is
+    // not there is worse than no delegation at all: the CLI's own MCP client
+    // would fail to start the server and the tool would simply never be
+    // there, with nothing in this app's own log to explain why. Checked here,
+    // per launch attempt, rather than once at startup — the answer can change
+    // while this process runs (a build finishing, `out/` being cleared) —
+    // and BEFORE `issueLaunchToken`, so a missing script costs neither a
+    // token nor a slot against `DelegationService`'s own concurrency caps.
+    const scriptPath = this.delegationServerCommand.args[0]
+    if (scriptPath !== undefined && !(await this.fs.exists(scriptPath))) {
+      if (!this.loggedMissingDelegationServer) {
+        this.loggedMissingDelegationServer = true
+        console.warn(
+          `[delegation] ${scriptPath} does not exist — skipping delegation injection until it is ` +
+            "built ('pnpm build', or 'pnpm dev', which builds it first)."
+        )
+      }
+      return undefined
+    }
+    const issued = delegation.issueLaunchToken({ mineId })
+    if (issued === undefined) return undefined
+    return {
+      token: issued.token,
+      injection: {
+        endpoint: issued.endpoint,
+        token: issued.token,
+        serverCommand: this.delegationServerCommand.command,
+        serverArgs: this.delegationServerCommand.args,
+        ...(delegation.waitMs === undefined ? {} : { waitMs: delegation.waitMs })
+      }
+    }
+  }
+
+  /**
+   * `launchHeldSession`'s own held twin of `resolveDelegationInjection`
+   * above (#511 M1a) — the SAME three gate levels
+   * (`delegationEnabledFor`/`issueLaunchToken`), but building a
+   * `HeldDelegationLink` instead of a `DelegationInjectionContext`: a held
+   * Claude session runs its delegation tools IN-PROCESS
+   * (`delegationHeldServer.ts`), never as a real subprocess reading an
+   * endpoint/token off its own env, so this never touches
+   * `delegationServerCommand` at all. The token `issueLaunchToken` mints is
+   * still minted — it is still what scopes concurrency and ticket ownership
+   * inside `DelegationService`, and still what `revoke` forgets on the way
+   * out — it is simply never handed to anything outside this process: this
+   * method closes it into `delegation.delegate`/`delegation.result` calls
+   * instead of serializing it into a child's env, which is the exact fix
+   * for the finding that a held session's `mcpServers` entry used to put its
+   * endpoint and token on the CLASSIC `claude` process's own `--mcp-config`
+   * argv (see `delegationHeldServer.ts`'s own module comment for the
+   * `sdk.mjs` evidence that a `type: 'sdk'` entry, built from this, never
+   * reaches that argv at all).
+   */
+  private async resolveHeldDelegationInjection(
+    provider: DwarfProvider,
+    routedByJev: boolean,
+    mineId: string
+  ): Promise<{ token: string; delegation: HeldDelegationLink } | undefined> {
+    const delegation = this.delegation
+    if (delegation === undefined) return undefined
+    const enabled = delegationEnabledFor({
+      keyConfigured: delegation.keyConfigured(),
+      delegation: await delegation.delegationAllowed(),
+      routedByJev,
+      provider
+    })
+    if (!enabled) return undefined
+    const issued = delegation.issueLaunchToken({ mineId })
+    if (issued === undefined) return undefined
+    const link = createDirectDelegationLink({
+      delegate: (task, context) => delegation.delegate(issued.token, task, context),
+      result: (ticket) => delegation.result(issued.token, ticket),
+      now: this.now,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    })
+    return {
+      token: issued.token,
+      delegation: {
+        link,
+        waitMs: delegation.waitMs ?? DEFAULT_DELEGATION_WAIT_MS
+      }
+    }
+  }
+
+  /**
    * Start a session the panel HOLDS, in a mine's folder (#86, #94).
    *
    * The request names a mine and the folder is resolved HERE, from the board
@@ -3354,19 +3610,58 @@ export class AgentRuntime {
     const mine = this.mines.find((item) => item.id === request.mineId)
     if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
 
-    return this.heldSessions.launch({
-      mineId: mine.id,
-      provider: request.provider,
-      minePath: mine.path,
-      prompt: request.prompt,
-      ...(request.model === undefined ? {} : { model: request.model }),
-      ...(request.effort === undefined ? {} : { effort: request.effort }),
-      ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
-      // #511: same rule as launchAgent's own retain() call — carried onto
-      // the held record so routedByJevState (and this session's own dwarf)
-      // can answer it later.
-      ...(request.routedByJev === true ? { routedByJev: true } : {})
-    })
+    // #511 T4: issued BEFORE the launch itself is attempted — see
+    // `resolveHeldDelegationInjection`'s own comment. A launch that goes on
+    // to refuse (an empty prompt, above all) never reaches the engine, so
+    // the explicit revoke below is what keeps that token from leaking
+    // rather than relying on `onEnded`, which only ever fires for a session
+    // that actually started.
+    const delegationIssue = await this.resolveHeldDelegationInjection(
+      request.provider,
+      request.routedByJev === true,
+      mine.id
+    )
+
+    try {
+      const result = await this.heldSessions.launch({
+        mineId: mine.id,
+        provider: request.provider,
+        minePath: mine.path,
+        prompt: request.prompt,
+        ...(request.model === undefined ? {} : { model: request.model }),
+        ...(request.effort === undefined ? {} : { effort: request.effort }),
+        ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
+        // #511: same rule as launchAgent's own retain() call — carried onto
+        // the held record so routedByJevState (and this session's own dwarf)
+        // can answer it later.
+        ...(request.routedByJev === true ? { routedByJev: true } : {}),
+        ...(delegationIssue === undefined
+          ? {}
+          : {
+              delegation: delegationIssue.delegation,
+              // #511 T4: told exactly once when this held session ends,
+              // however it ends (`HeldSessionRegistry`'s own `finish`/
+              // `closeAll`) — never for a launch that never started, which is
+              // exactly why the explicit revoke below exists for that case.
+              onEnded: () => this.delegation?.revoke(delegationIssue.token)
+            })
+      })
+      if (delegationIssue !== undefined && !result.launched) {
+        this.delegation?.revoke(delegationIssue.token)
+      }
+      return result
+    } catch (error) {
+      // #511 L5: `HeldSessionRegistry.launch` catches its own engine's
+      // throws internally today, so this is not observed in production —
+      // but it was the one path here with no revoke on a throw at all
+      // (unlike `launchAgent`'s own try/catch a few methods up), and a
+      // future engine that DOES throw past this point must not leak the
+      // token it was issued. Rethrown after revoking: this method has never
+      // swallowed an error from `heldSessions.launch`, and starting now
+      // would be a second, unrelated behaviour change riding on this fix.
+      if (delegationIssue !== undefined) this.delegation?.revoke(delegationIssue.token)
+      throw error
+    }
   }
 
   /**
@@ -4312,12 +4607,24 @@ export class AgentRuntime {
    * `parseLaunchTuning` before this method ever sees the request, so this hop
    * only has to forward, never to validate a second time. Absent stays absent.
    */
-  async launchAgent(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
+  async launchAgent(
+    request: AgentLaunchRequest,
+    hooks?: LaunchAgentHooks
+  ): Promise<AgentLaunchResult> {
     const mine = this.mines.find((item) => item.id === request.mineId)
     if (mine === undefined) return { launched: false, provider: 'none', error: NO_SUCH_MINE }
 
     const prompt = prepareLaunchPrompt(request.prompt)
     if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
+
+    // #511 T4: evaluated per launch, at the moment of this real launch — see
+    // `resolveDelegationInjection`'s own comment on why that is what makes
+    // depth 1 structural.
+    const delegationIssue = await this.resolveDelegationInjection(
+      request.provider,
+      request.routedByJev === true,
+      mine.id
+    )
 
     const timer = createStageTimer(this.now)
     try {
@@ -4327,7 +4634,8 @@ export class AgentRuntime {
           minePath: mine.path,
           prompt,
           ...(request.model === undefined ? {} : { model: request.model }),
-          ...(request.effort === undefined ? {} : { effort: request.effort })
+          ...(request.effort === undefined ? {} : { effort: request.effort }),
+          ...(delegationIssue === undefined ? {} : { delegation: delegationIssue.injection })
         })
       )
       // The receipt this launch will be recognised by (#191). Opened for every
@@ -4384,7 +4692,13 @@ export class AgentRuntime {
           // becomes can be stamped once the board proves which one that is —
           // see LaunchedSessionRegistry.routedByJevOfDwarf. Same spread idiom
           // as tuning above; absent stays absent.
-          ...(request.routedByJev === true ? { routedByJev: true } : {})
+          ...(request.routedByJev === true ? { routedByJev: true } : {}),
+          // #511 T3: the delegation service's own reason for calling this
+          // method at all — never part of the wire request, and threaded
+          // through to `retain` rather than subscribed here directly, so it
+          // is wired in the exact same synchronous breath as the registry's
+          // own `onExit`/`onTurnOutcome` (see `RetainLaunchRequest.onConcluded`).
+          ...(hooks?.onConcluded === undefined ? {} : { onConcluded: hooks.onConcluded })
         })
         // #263. Subscribed here, never behind the launcher: the receipt this
         // failure is correlated by is the one just issued a few lines above,
@@ -4398,6 +4712,26 @@ export class AgentRuntime {
             this.reportLaunchFailure(launchId, request.provider, mine, failure)
           )
         }
+      } else if (result.launched && hooks?.onConcluded !== undefined) {
+        // #511 T3: started, but the launcher reported no pid to retain — the
+        // one situation `retain` never runs for a successful launch, so its
+        // own "never a hung caller" guarantee cannot fire either. A caller
+        // that asked to be told is still owed a definite answer.
+        hooks.onConcluded({ kind: 'interrupted', endedAt: this.now() })
+      }
+      // #511 T4: no leaked tokens. `retained.onExit` is this launch's own
+      // real end — the same signal `LaunchedSessionRegistry.retain` above
+      // already subscribes for its own reasons, registered independently
+      // here so this revoke fires whether or not a pid was ever retained
+      // for bookkeeping. Every OTHER outcome (never started, or started
+      // with nothing to hold onto) has no later "ended" to wait for, so the
+      // token is revoked right here instead.
+      if (delegationIssue !== undefined) {
+        if (retained !== undefined && result.launched) {
+          retained.onExit(() => this.delegation?.revoke(delegationIssue.token))
+        } else {
+          this.delegation?.revoke(delegationIssue.token)
+        }
       }
       console.log(
         `[runtime] Launch of ${request.provider} in ${mine.id}: ` +
@@ -4406,6 +4740,8 @@ export class AgentRuntime {
       )
       return result
     } catch (error) {
+      // #511 T4: the launch never resolved at all — still owed its revoke.
+      if (delegationIssue !== undefined) this.delegation?.revoke(delegationIssue.token)
       console.warn(`[runtime] Launch in ${request.mineId} threw`, error)
       // The provider that was ASKED for, not a favourite: a verdict naming the
       // wrong CLI would have the panel report a failure against a chip nobody

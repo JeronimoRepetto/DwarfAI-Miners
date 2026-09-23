@@ -8,6 +8,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
+import { DELEGATION_ALLOWED_TOOLS } from '../mcp/delegationInjection'
+import { createHeldDelegationMcpServer } from '../mcp/delegationHeldServer'
 import { resultTurnOutcome } from './claudeTurnOutcome'
 import type { HeldSessionSubagentSignal, HeldTaskEndStatus } from './heldCrew'
 import {
@@ -320,6 +322,39 @@ export function createSdkHeldSession(): HeldSessionPort {
         // the SDK's shapes and decides nothing about them.
         ...(request.effort === undefined ? {} : { effort: request.effort as EffortLevel }),
         ...(request.maxTurns === undefined ? {} : { maxTurns: request.maxTurns }),
+        /*
+         * MCP subtask delegation (#511 T4, in-process since #511 M1a).
+         * `mcpServers` registers the per-launch IN-PROCESS server this
+         * launch's own gate check already approved (`delegationGate.ts`,
+         * evaluated in `runtime.ts`); absent entirely for a launch the gate
+         * declined, which is what keeps every OTHER held session's `query()`
+         * options byte for byte what they were before this issue.
+         *
+         * `createHeldDelegationMcpServer` returns a `type: 'sdk'` config —
+         * never `type: 'stdio'` — which is the whole point (see its own
+         * module comment): the Agent SDK filters a `type: 'sdk'` entry out
+         * of the argv it builds for `--mcp-config`, so this launch's
+         * delegation link never reaches the CLASSIC `claude` process's own
+         * command line at all, where any other local user on this machine
+         * could otherwise read it via `ps`/Task Manager. A held session
+         * needs no endpoint or token for this reason: its tool handlers call
+         * `DelegationService` directly, in this same process.
+         *
+         * `allowedTools` names exactly `DELEGATION_ALLOWED_TOOLS`
+         * (`delegate_subtask`/`subtask_result`) — the minimal, honest grant:
+         * per `sdk.d.ts`'s own documented precedence, an allow rule here is
+         * checked BEFORE `canUseTool` runs, so these two tools skip the
+         * interactive permission prompt below without widening what any
+         * OTHER tool call may do. Nothing else is pre-approved; every other
+         * tool this session's own model reaches for still stops at
+         * `canUseTool` exactly as it always has.
+         */
+        ...(request.delegation === undefined
+          ? {}
+          : {
+              mcpServers: { jev: createHeldDelegationMcpServer(request.delegation) },
+              allowedTools: [...DELEGATION_ALLOWED_TOOLS]
+            }),
         canUseTool: async (toolName, toolInput, extras): Promise<PermissionResult> => {
           if (toolName !== ASK_USER_QUESTION) {
             const verdict = await request.onPermission({

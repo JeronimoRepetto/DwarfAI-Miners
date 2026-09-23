@@ -377,6 +377,57 @@ describe('buildLaunchArgs dispatches the Codex output path (#510)', () => {
   })
 })
 
+/*
+ * #511 T4 correction. `codexDelegationConfigArgs` (delegationInjection.ts)
+ * builds Codex's own delegation `-c` triples. Appending them AFTER this
+ * function's return value — the way `launchRunner.ts` already appends
+ * Claude's `--mcp-config`/`--allowedTools` — would land them AFTER the
+ * trailing "-", read as an argument to the prompt positional: exactly the
+ * mistake the two tuning flags and the output path above already avoid. So
+ * `buildCodexLaunchArgs` takes them as a third parameter and places them
+ * before "-", on the same terms as the output path.
+ */
+describe('buildCodexLaunchArgs with delegation config args (#511 T4)', () => {
+  it('adds no delegation args when none are given, unchanged from before #511', () => {
+    expect(buildCodexLaunchArgs()).toEqual(['exec', '-'])
+    expect(buildCodexLaunchArgs({}, undefined, [])).toEqual(['exec', '-'])
+    expect(buildCodexLaunchArgs({}, undefined, undefined)).toEqual(['exec', '-'])
+  })
+
+  it('inserts delegation config args before the trailing "-", after the output path', () => {
+    expect(
+      buildCodexLaunchArgs({}, '/tmp/out.log', ['-c', 'mcp_servers.jev.command="node"'])
+    ).toEqual(['exec', '-o', '/tmp/out.log', '-c', 'mcp_servers.jev.command="node"', '-'])
+  })
+
+  it('inserts delegation config args before the trailing "-" even with no output path', () => {
+    expect(buildCodexLaunchArgs({}, undefined, ['-c', 'mcp_servers.jev.command="node"'])).toEqual([
+      'exec',
+      '-c',
+      'mcp_servers.jev.command="node"',
+      '-'
+    ])
+  })
+})
+
+describe('buildLaunchArgs dispatches Codex delegation config args (#511 T4)', () => {
+  it('passes delegation config args through to Codex only', () => {
+    const args = ['-c', 'mcp_servers.jev.command="node"']
+    expect(buildLaunchArgs('codex', {}, undefined, args)).toEqual(
+      buildCodexLaunchArgs({}, undefined, args)
+    )
+  })
+
+  it('ignores a fourth argument for every other provider, unchanged from before #511', () => {
+    const args = ['-c', 'mcp_servers.jev.command="node"']
+    expect(buildLaunchArgs('claude', {}, undefined, args)).toEqual(buildClaudeLaunchArgs())
+    expect(buildLaunchArgs('antigravity', {}, undefined, args)).toEqual(
+      buildAntigravityLaunchArgs()
+    )
+    expect(buildLaunchArgs('opencode', {}, undefined, args)).toEqual(buildOpenCodeLaunchArgs())
+  })
+})
+
 describe('launch argv with a model and an effort (#239)', () => {
   /*
    * Both flags are read out of the installed CLIs' own help, on 2026-09-07:
