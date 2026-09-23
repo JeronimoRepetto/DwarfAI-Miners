@@ -341,6 +341,31 @@ describe('createJevLaunchRouter — the second (model) request (#608)', () => {
     expect(result.parts.model).toEqual({ value: 'sonnet', applied: 'answered', probability: 0.9 })
   })
 
+  /*
+   * Verifier fix (#608): the missing route()-level test for ZERO live
+   * candidates — distinct from the single- and multi-candidate paths above.
+   * `models: []` means nothing is live for claude at ANY tier step, so
+   * `candidatesAtTier` finds nothing at all (`decided.model` stays
+   * undefined, exactly as it already did before #608), and there is no
+   * candidate to ask about — no second request, ever.
+   */
+  it('sends no second request, and marks the model as no-live-model, when nothing is live for the chosen provider at any tier', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    const service = serviceWith({
+      router: fake,
+      models: [catalog({ provider: 'claude', models: [] })]
+    })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    expect(fake.modelRequestsSeen()).toHaveLength(0)
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBeUndefined()
+    expect(result.effort).toBeUndefined()
+    expect(result.parts.model).toEqual({ applied: 'safe-default', reason: 'no-live-model' })
+  })
+
   it.each([
     ['timeout' as const],
     ['unreachable' as const],
@@ -391,6 +416,50 @@ describe('createJevLaunchRouter — the second (model) request (#608)', () => {
       applied: 'safe-default',
       reason: 'budget-exceeded'
     })
+  })
+
+  /*
+   * Verifier fix (#608): the remaining budget for request 2 must be measured
+   * from the instant the shared abort timer was actually armed (right
+   * before request 1 is sent), never from `route()`'s own earlier
+   * `startedAt` — which is read BEFORE the provider/model/preferences
+   * listing. The old formula silently double-charged request 2 for
+   * whatever the listing itself took.
+   *
+   * `now()` is scripted to a fixed sequence rather than a running clock:
+   * call 1 (`route()`'s `startedAt`, before listing) reads 0; every later
+   * call reads 1500 — i.e., listing "took" 1500ms, and everything from the
+   * moment the timer is armed onward is instant.
+   *
+   * totalBudgetMs is 1000: under the OLD (buggy) formula, remaining would
+   * read `1000 - (1500 - 0) = -500` — wrongly exhausted — while the correct
+   * one reads `1000 - (1500 - 1500) = 1000`, still full, because none of
+   * that 1500ms happened AFTER the timer was armed.
+   */
+  it('measures the remaining budget from when the abort timer was armed, not from before the provider/model listing', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    fake.queueModelOutcome({
+      kind: 'answers',
+      fits: { '0': 0.2, '1': 0.9 },
+      choice: { choice: '1', probabilities: { '0': 0.1, '1': 0.9 } },
+      usage: { inputTokens: 300 }
+    })
+    const timestamps = [0, 1500, 1500, 1500, 1500, 1500]
+    let call = 0
+    const service = serviceWith({
+      router: fake,
+      models: TWO_CANDIDATE_CATALOGS,
+      totalBudgetMs: 1000,
+      now: () => timestamps[Math.min(call++, timestamps.length - 1)]!
+    })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    expect(fake.modelRequestsSeen()).toHaveLength(1)
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBe('sonnet')
+    expect(result.parts.model.applied).toBe('answered')
   })
 
   it('folds the model part into the overall confidence, alongside provider and tier — ignoring a safe-default provider (#608 card bug)', async () => {

@@ -40,7 +40,17 @@ async function resolveModelPart(input: {
   prompt: string
   routingProfile: JevPreferences['profile']
   totalBudgetMs: number
-  startedAt: number
+  /**
+   * The instant the shared AbortController's timer was actually armed —
+   * verifier fix (#608): NOT `route()`'s own `startedAt`, which is read
+   * BEFORE the `listProviders`/`listModels`/`readPreferences`/
+   * `readOpenCodeCatalogue` listing and `decideLaunch` run. Measuring
+   * "how much of the budget is left" from `startedAt` double-counts that
+   * listing time against request 2's own remaining runway — the real
+   * deadline is `timerArmedAt + totalBudgetMs`, the exact instant the timer
+   * itself was scheduled from.
+   */
+  timerArmedAt: number
   now: () => number
   signal: AbortSignal
 }): Promise<{ model?: string; effort?: string; part: JevRouteModelPart }> {
@@ -67,8 +77,10 @@ async function resolveModelPart(input: {
 
   // Both requests share ONE total budget (#608's own decision) — request 2
   // gets whatever is left of it, and is skipped entirely, never even sent,
-  // once nothing is left.
-  const remainingMs = input.totalBudgetMs - (input.now() - input.startedAt)
+  // once nothing is left. Measured from `timerArmedAt`, the same instant
+  // the shared abort deadline itself was set from — see this function's own
+  // parameter comment for why not `route()`'s earlier `startedAt`.
+  const remainingMs = input.totalBudgetMs - (input.now() - input.timerArmedAt)
   if (remainingMs <= 0) {
     return { ...safeDefault, part: safeDefaultPart('budget-exceeded') }
   }
@@ -319,7 +331,12 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
       // gets whatever remains" falls out of reusing this signal rather than
       // computing a second budget. Cleared once, at the very end, so the
       // deadline still governs request 2 even after request 1 settles.
+      // `timerArmedAt` is read right here, the same instant the deadline
+      // itself is set from — verifier fix (#608): `resolveModelPart`'s own
+      // "how much budget is left" must measure from THIS instant, not the
+      // earlier `startedAt` (before the provider/model/preferences listing).
       const controller = new AbortController()
+      const timerArmedAt = now()
       const timer = setTimeout(() => controller.abort(), totalBudgetMs)
       try {
         const outcome: JevRouteOutcome = await Promise.race([
@@ -350,7 +367,7 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
           prompt: request.prompt,
           routingProfile: preferences.profile,
           totalBudgetMs,
-          startedAt,
+          timerArmedAt,
           now,
           signal: controller.signal
         })

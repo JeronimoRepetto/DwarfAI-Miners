@@ -125,6 +125,21 @@ function asNoulCriteria(value: unknown): NoulQuestion['criteria'] {
   return value as NoulQuestion['criteria']
 }
 
+/**
+ * Whether `value` is a real probability — verifier fix (#608): `typeof
+ * value === 'number'` alone accepts `Infinity`, `-Infinity`, and anything
+ * outside `0..1`, and would accept `NaN` too were it not already lossy
+ * through `JSON.stringify`/`JSON.parse` (which turns a literal `NaN` into
+ * `null`, itself caught by the `typeof` check). Used to validate every
+ * Noul `noul` and every Choice `probabilities` entry `routeModel` reads,
+ * so a malformed value from the wire degrades this ONE request to
+ * `invalid-response` — never reaches `selectModelWinner`'s own
+ * `Math.max`/tie-band arithmetic (routeDecision.ts) unnoticed.
+ */
+function isValidProbability(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+}
+
 export interface CreateTypesafeJevRouterOptions {
   /** Reads the configured TypeSafe API key; undefined when none is set. */
   readKey: () => string | undefined
@@ -345,11 +360,19 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
         const fits: Record<string, number> = {}
         for (const key of candidateKeys) {
           const fitAnswer = answers[`fits::${key}`]
-          if (fitAnswer === undefined || typeof fitAnswer.noul !== 'number') {
+          if (fitAnswer === undefined || !isValidProbability(fitAnswer.noul)) {
             emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
             return { kind: 'fallback', reason: 'invalid-response' }
           }
           fits[key] = fitAnswer.noul
+        }
+
+        // Every reported Choice probability, not only the winner's own —
+        // `selectModelWinner` reads the tied candidates' own shares too.
+        const choiceProbabilities = whichAnswer.probabilities ?? {}
+        if (!Object.values(choiceProbabilities).every(isValidProbability)) {
+          emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
+          return { kind: 'fallback', reason: 'invalid-response' }
         }
 
         emit('answers ←', { ...answers, inputTokens: result.usage.input_tokens })
@@ -357,7 +380,7 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
         return {
           kind: 'answers',
           fits,
-          choice: { choice: whichAnswer.choice!, probabilities: whichAnswer.probabilities ?? {} },
+          choice: { choice: whichAnswer.choice!, probabilities: choiceProbabilities },
           usage: { inputTokens: result.usage.input_tokens }
         }
       } catch (error) {

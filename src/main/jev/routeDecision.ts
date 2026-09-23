@@ -357,6 +357,14 @@ export function selectModelWinner(
   const tied = candidates.filter(
     (candidate) => maxProbability - probabilityOf(candidate) <= MODEL_TIE_BAND
   )
+  // Defense in depth (#608 verifier fix): a malformed `fits` value (NaN —
+  // `typesafeJevRouter.ts`'s own `isValidProbability` keeps this out of a
+  // real wire answer, but this is a pure function any caller can reach
+  // directly) makes every `<=` comparison above false, emptying `tied`
+  // entirely. `cheapestOrPriciestCandidate` must never be called with an
+  // empty array — undefined here is the same honest "cannot pick" this
+  // function already reports for an empty CANDIDATE list.
+  if (tied.length === 0) return undefined
   if (tied.length === 1) {
     return { candidate: tied[0]!, probability: probabilityOf(tied[0]!) }
   }
@@ -365,6 +373,8 @@ export function selectModelWinner(
     choice.probabilities[candidate.key] ?? 0
   const maxChoiceShare = Math.max(...tied.map(choiceShareOf))
   const choiceTied = tied.filter((candidate) => choiceShareOf(candidate) === maxChoiceShare)
+  // Same defense, for a malformed Choice `probabilities` value.
+  if (choiceTied.length === 0) return undefined
   if (choiceTied.length === 1) {
     const winner = choiceTied[0]!
     return {

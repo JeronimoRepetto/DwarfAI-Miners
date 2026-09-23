@@ -15,7 +15,8 @@ import {
   candidateCapabilityFacts,
   mapEffortScore,
   modelChoiceInstructions,
-  modelFitInstructions
+  modelFitInstructions,
+  truncateAndCheckBudget
 } from './routeRequest'
 
 /*
@@ -446,5 +447,71 @@ describe('buildJevModelRouteRequest', () => {
     })
 
     expect(result).toEqual({ kind: 'skip', reason: 'budget-exceeded' })
+  })
+
+  /*
+   * Verifier fix (#608): the 64k combined ceiling covers `state` PLUS every
+   * question (models.md: "The 64k budget covers the state plus all
+   * questions combined") — the check used to sum only question tokens,
+   * never the prompt. Many small candidates keep every single question,
+   * and their SUM, comfortably under both the 32k-per-question and the old
+   * 64k-questions-only ceilings — proven by the SAME candidate set fitting
+   * with a short prompt — but a long prompt (truncated to the still-large
+   * remaining state budget) tips the COMBINED total over 64k.
+   */
+  it('adds the (truncated) state tokens to the 64k combined ceiling — questions alone fit, combined with a large prompt they do not', () => {
+    const smallCandidates = Array.from({ length: 800 }, (_, i) =>
+      candidate(`id-${i}`, { what: 'w', notFor: 'n', examples: ['a', 'b'] })
+    )
+
+    const withShortPrompt = buildJevModelRouteRequest({
+      prompt: 'a short prompt',
+      routingProfile: 'balanced',
+      tier: 'balanced',
+      candidates: smallCandidates
+    })
+    // Proves the questions alone (state ~= 0) fit under every ceiling —
+    // the failure below is not just "too many candidates" on its own.
+    expect(withShortPrompt.kind).toBe('request')
+
+    const withLongPrompt = buildJevModelRouteRequest({
+      prompt: 'x'.repeat(200_000),
+      routingProfile: 'balanced',
+      tier: 'balanced',
+      candidates: smallCandidates
+    })
+
+    expect(withLongPrompt).toEqual({ kind: 'skip', reason: 'budget-exceeded' })
+  })
+})
+
+/*
+ * Verifier fix (#608), direct against the shared helper — see
+ * `truncateAndCheckBudget`'s own comment in routeRequest.ts for why
+ * `buildJevRouteRequest` gets its coverage here rather than end to end: its
+ * five questions are bounded by fixed constants and the closed
+ * `DwarfProvider` union, so no realistic input can push `allQuestionsTokens`
+ * anywhere near 64k — `buildJevModelRouteRequest`'s own many-candidate test
+ * above already proves the SAME fix end to end where it IS reachable.
+ */
+describe('truncateAndCheckBudget', () => {
+  it('adds the post-truncation state tokens into the combined 64k check — questions alone fit, combined with a large prompt they do not', () => {
+    // allQuestionsTokens (50,000) is comfortably under 64,000 alone;
+    // longestQuestionTokens (100) leaves a ~31,900-token state budget, and a
+    // prompt long enough to fill it tips the combined total to ~81,900.
+    const result = truncateAndCheckBudget('x'.repeat(500_000), 100, 50_000)
+    expect(result).toEqual({ kind: 'over-budget' })
+  })
+
+  it('fits when state plus every question stays under the combined 64k ceiling', () => {
+    const result = truncateAndCheckBudget('a short prompt', 100, 50_000)
+    expect(result.kind).toBe('fits')
+  })
+
+  it('still truncates the prompt to the 32k state-plus-longest-question ceiling first, unchanged', () => {
+    const result = truncateAndCheckBudget('x'.repeat(500_000), 100, 100)
+    if (result.kind !== 'fits') throw new Error('expected it to fit the 64k combined ceiling')
+    expect(result.truncated).toBe(true)
+    expect(result.prompt.length).toBeLessThan(500_000)
   })
 })

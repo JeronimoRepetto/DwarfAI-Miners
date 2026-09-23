@@ -719,4 +719,36 @@ describe('selectModelWinner', () => {
     )
     expect(result?.candidate.id).toBe('expensive')
   })
+
+  /*
+   * Verifier fix (#608), defense in depth: `typesafeJevRouter.ts`'s own
+   * `isValidProbability` check keeps NaN/out-of-range values out of a real
+   * wire answer, but `selectModelWinner` is a PURE function any caller can
+   * reach directly (as these tests do) — it must never crash on malformed
+   * input either. `NaN` propagates through `Math.max`/subtraction
+   * (`NaN <= x` is always false), which can empty out the tied-candidate
+   * list entirely; `cheapestOrPriciestCandidate` must never be called with
+   * that empty list.
+   */
+  it('is undefined, rather than throwing, when every Noul probability is NaN', () => {
+    const candidates = [candidate('0', 'a'), candidate('1', 'b')]
+    const result = selectModelWinner(
+      candidates,
+      { '0': Number.NaN, '1': Number.NaN },
+      { choice: '0', probabilities: { '0': 1, '1': 0 } },
+      'balanced'
+    )
+    expect(result).toBeUndefined()
+  })
+
+  it('is undefined, rather than throwing, when the Noul probabilities tie but every Choice probability is NaN', () => {
+    const candidates = [candidate('0', 'a'), candidate('1', 'b')]
+    const result = selectModelWinner(
+      candidates,
+      { '0': 0.8, '1': 0.8 },
+      { choice: '0', probabilities: { '0': Number.NaN, '1': Number.NaN } },
+      'balanced'
+    )
+    expect(result).toBeUndefined()
+  })
 })

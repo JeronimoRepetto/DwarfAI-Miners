@@ -367,6 +367,47 @@ function truncateHeadTail(text: string, maxChars: number): string {
   return text.slice(0, headChars) + TRUNCATION_MARKER + tail
 }
 
+/**
+ * The shared truncate-then-check tail of building a System One request,
+ * for BOTH requests (verifier fix, #608): per models.md, "The 64k budget
+ * covers the `state` plus all questions combined" — trims the prompt to fit
+ * the 32k state-plus-longest-question ceiling first (unchanged), THEN
+ * checks the estimated POST-TRUNCATION state tokens plus every question
+ * against the 64k ceiling. The check used to read `allQuestionsTokens`
+ * alone, never adding the prompt at all — a request whose questions fit on
+ * their own could still carry a prompt that pushes the combined total over
+ * 64k, and TypeSafe would see the OVER-budget request, not this app's own
+ * (wrong) verdict that it fit.
+ *
+ * Exported for a direct test: `buildJevRouteRequest`'s own five questions
+ * are ALL fixed-size or bounded by the closed `DwarfProvider` union (at most
+ * four short, constant option texts) — no caller input can make
+ * `allQuestionsTokens` approach anywhere near 64k, so a real end-to-end
+ * `buildJevRouteRequest` call can never actually exercise the combined
+ * check this function adds (`buildJevModelRouteRequest`'s own many-candidate
+ * test in routeRequest.test.ts DOES exercise it end to end — its question
+ * count scales with the tier's own candidates, unlike request 1's). Both
+ * builders delegate to this one function for the check, so a direct test
+ * against realistic-but-controllable token counts proves the fix for
+ * BOTH call sites at once, honestly, rather than fabricating an
+ * unreachable scenario for request 1.
+ */
+export function truncateAndCheckBudget(
+  prompt: string,
+  longestQuestionTokens: number,
+  allQuestionsTokens: number
+): { kind: 'over-budget' } | { kind: 'fits'; prompt: string; truncated: boolean } {
+  const stateBudgetTokens = MAX_STATE_AND_LONGEST_QUESTION_TOKENS - longestQuestionTokens
+  const truncated = estimateTokens(prompt) > stateBudgetTokens
+  const trimmedPrompt = truncated
+    ? truncateHeadTail(prompt, stateBudgetTokens * CHARS_PER_TOKEN_ESTIMATE)
+    : prompt
+  if (estimateTokens(trimmedPrompt) + allQuestionsTokens >= MAX_REQUEST_TOKENS) {
+    return { kind: 'over-budget' }
+  }
+  return { kind: 'fits', prompt: trimmedPrompt, truncated }
+}
+
 export interface BuildJevRouteRequestInput {
   prompt: string
   routingProfile: JevRoutingProfile
@@ -433,22 +474,23 @@ export function buildJevRouteRequest(input: BuildJevRouteRequestInput): BuildJev
   const longestQuestionTokens = Math.max(...Object.values(questionTokenCosts))
   const allQuestionsTokens = Object.values(questionTokenCosts).reduce((sum, cost) => sum + cost, 0)
 
-  if (
-    longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS ||
-    allQuestionsTokens >= MAX_REQUEST_TOKENS
-  ) {
+  if (longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS) {
     return { kind: 'skip', reason: 'budget-exceeded' }
   }
 
-  const stateBudgetTokens = MAX_STATE_AND_LONGEST_QUESTION_TOKENS - longestQuestionTokens
-  const truncated = estimateTokens(input.prompt) > stateBudgetTokens
-  const prompt = truncated
-    ? truncateHeadTail(input.prompt, stateBudgetTokens * CHARS_PER_TOKEN_ESTIMATE)
-    : input.prompt
+  const budgeted = truncateAndCheckBudget(input.prompt, longestQuestionTokens, allQuestionsTokens)
+  if (budgeted.kind === 'over-budget') {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
 
   return {
     kind: 'request',
-    request: { prompt, routingProfile: input.routingProfile, truncated, providerCriteria }
+    request: {
+      prompt: budgeted.prompt,
+      routingProfile: input.routingProfile,
+      truncated: budgeted.truncated,
+      providerCriteria
+    }
   }
 }
 
@@ -566,25 +608,21 @@ export function buildJevModelRouteRequest(
   const longestQuestionTokens = Math.max(...Object.values(questionTokenCosts))
   const allQuestionsTokens = Object.values(questionTokenCosts).reduce((sum, cost) => sum + cost, 0)
 
-  if (
-    longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS ||
-    allQuestionsTokens >= MAX_REQUEST_TOKENS
-  ) {
+  if (longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS) {
     return { kind: 'skip', reason: 'budget-exceeded' }
   }
 
-  const stateBudgetTokens = MAX_STATE_AND_LONGEST_QUESTION_TOKENS - longestQuestionTokens
-  const truncated = estimateTokens(input.prompt) > stateBudgetTokens
-  const prompt = truncated
-    ? truncateHeadTail(input.prompt, stateBudgetTokens * CHARS_PER_TOKEN_ESTIMATE)
-    : input.prompt
+  const budgeted = truncateAndCheckBudget(input.prompt, longestQuestionTokens, allQuestionsTokens)
+  if (budgeted.kind === 'over-budget') {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
 
   return {
     kind: 'request',
     request: {
-      prompt,
+      prompt: budgeted.prompt,
       routingProfile: input.routingProfile,
-      truncated,
+      truncated: budgeted.truncated,
       tier: input.tier,
       candidates: candidateCriteria
     }

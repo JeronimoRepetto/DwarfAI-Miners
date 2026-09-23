@@ -355,6 +355,28 @@ describe('createTypesafeJevRouter — routeModel (#608)', () => {
     expect(outcome).toEqual({ kind: 'fallback', reason: 'invalid-response' })
   })
 
+  /*
+   * Verifier fix (#608): `typeof value === 'number'` alone accepts anything
+   * numeric — out of range, or (were `JSON.stringify` not already lossy
+   * about it) `NaN` itself. A malformed Noul or Choice probability must
+   * never reach `selectModelWinner`'s own `Math.max`/tie-band arithmetic
+   * unnoticed — it degrades this ONE request to invalid-response (falling
+   * to the local pick), never a throw that reaches `route()`'s outer catch.
+   */
+  it.each([
+    ['a fit Noul probability above 1', { fits: { '0': 1.5 } }],
+    ['a fit Noul probability below 0', { fits: { '0': -0.2 } }],
+    ['a Choice probability above 1', { probabilities: { '0': 1.2, '1': 0.2 } }],
+    ['a Choice probability below 0', { probabilities: { '0': -0.1, '1': 0.2 } }]
+  ] as const)('refuses an answer with %s, rather than pass it on', async (_label, overrides) => {
+    const fetchFake: typeof fetch = async () => jsonResponse(modelSuccessBody(overrides))
+    const router = createTypesafeJevRouter({ readKey: () => 'sk-test', fetch: fetchFake })
+
+    const outcome = await router.routeModel(modelRouteRequest(), {})
+
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'invalid-response' })
+  })
+
   it('reads a 401 as unauthorized end to end, without retrying', async () => {
     const fetchSpy = vi.fn(async () => jsonResponse({ error: 'bad key' }, 401))
     const router = createTypesafeJevRouter({ readKey: () => 'sk-bad', fetch: fetchSpy })
