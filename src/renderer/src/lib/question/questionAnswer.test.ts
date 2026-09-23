@@ -623,13 +623,21 @@ describe('chooseAt and chosenAt (#443)', () => {
     expect(chosenAt(both, 'toolu_01', 1)).toEqual(['West'])
   })
 
-  it('keeps a HELD multi-select question on the single-choice gesture', () => {
-    // The held channel takes one label per question, the rule answerRequest's
-    // own block pins: how the agent's picker joins several is unmeasured.
+  /*
+   * AMENDED for #443 T3b (was: "keeps a HELD multi-select question on the
+   * single-choice gesture" — the held channel took one label per question, on
+   * the strength of an unmeasured picker separator. `@anthropic-ai/claude-agent-sdk`
+   * 0.3.258's own `sdk-tools.d.ts` now documents `AskUserQuestionOutput.answers`
+   * as "question text -> answer string; multi-select answers are
+   * comma-separated", and `resolveAnswers` (main, heldSession.ts) already
+   * accepts several labels for a `multiSelect` question on the strength of
+   * that measurement — so `togglesAt` stops singling the held channel out).
+   */
+  it('toggles a HELD multi-select question exactly as a terminal one', () => {
     const ask = pair()
-    expect(togglesAt(ask, 1)).toBe(false)
+    expect(togglesAt(ask, 1)).toBe(true)
     const answers = chooseAt(chooseAt(null, ask, 1, 'East'), ask, 1, 'West')
-    expect(chosenAt(answers, 'toolu_01', 1)).toEqual(['West'])
+    expect(chosenAt(answers, 'toolu_01', 1)).toEqual(['East', 'West'])
   })
 
   it('toggles a multi-select question where the gesture is measured', () => {
@@ -696,6 +704,19 @@ describe('askAnswerValues (#443)', () => {
 
   it('joins a toggled question’s labels in the ask’s option order, as toggledAnswer does', () => {
     const ask = pair({ channel: 'terminal' })
+    const answers = chooseAt(
+      chooseAt(chooseAt(null, ask, 0, 'SQLite'), ask, 1, 'North'),
+      ask,
+      1,
+      'East'
+    )
+    expect(askAnswerValues(answers, ask)).toEqual(['SQLite', joinAnswerLabels(['East', 'North'])])
+  })
+
+  // AMENDED for #443 T3b: a HELD multi-select question now joins its toggled
+  // labels the same way, since the held channel toggles too (see togglesAt).
+  it('joins a HELD multi-select question’s labels the same way', () => {
+    const ask = pair()
     const answers = chooseAt(
       chooseAt(chooseAt(null, ask, 0, 'SQLite'), ask, 1, 'North'),
       ask,

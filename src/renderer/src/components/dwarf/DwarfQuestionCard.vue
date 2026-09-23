@@ -52,14 +52,18 @@ import {
  * fields are exactly what main's `answerDwarfQuestion` guards on, so the card
  * cannot offer an answer main would refuse.
  *
- * A MULTI-SELECT ask on that channel is the one place the gesture differs, and
- * the channel decides it because the EVIDENCE differs rather than because the
- * ask does. The terminal gesture is measured — one digit per chosen option,
- * then a confirmation — so several labels can be sent, the options become
- * toggles, and an explicit Answer control releases them: nothing is typed into
- * somebody's console until they say so. On the held channel the same ask keeps
- * the single-choice gesture it always had, because how the agent's own picker
- * joins several answers is unmeasured (see resolveAnswers in main).
+ * A MULTI-SELECT ask is a toggle gesture on EITHER channel now (AMENDED for
+ * #443 T3b, was: the terminal channel only, because how the agent's own
+ * picker joined several answers on the held one was unmeasured). The options
+ * become toggles and an explicit Answer control releases them: nothing is
+ * sent until it is pressed, whichever channel the ask arrived on.
+ * `@anthropic-ai/claude-agent-sdk` 0.3.258's own `sdk-tools.d.ts` documents
+ * `AskUserQuestionOutput.answers` as "question text -> answer string;
+ * multi-select answers are comma-separated", and `resolveAnswers` (main,
+ * heldSession.ts) already accepts several labels for a `multiSelect` question
+ * on the strength of that measurement (#443 T3). See `togglesAt` in
+ * lib/question/questionAnswer.ts, which is the one place this decision is
+ * made.
  *
  * ## A call that asked several questions (#443)
  *
@@ -162,8 +166,9 @@ const shown = computed(
 )
 /*
  * Whether the shown question's options are toggles rather than one choice
- * (#362). The channel, not just `multiSelect`: only the terminal gesture for
- * several answers has been measured — see the module comment and togglesAt.
+ * (#362). `multiSelect` alone now, on either channel (AMENDED for #443 T3b —
+ * see the module comment and togglesAt for the SDK evidence that closed the
+ * held channel's gap).
  */
 const toggling = computed(() => togglesAt(props.question, index.value))
 const answerable = computed(

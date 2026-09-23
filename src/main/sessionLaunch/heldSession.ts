@@ -1037,10 +1037,10 @@ export function permissionToWire(prompt: HeldPermission, askedAt: string): Dwarf
  * answers are comma-separated." That is a measurement this app did not have
  * when `ANSWER_LABEL_SEPARATOR`'s own comment in contracts.ts was written: it
  * called the picker's separator unmeasured and kept a held multi-select
- * question single-choice on the strength of that gap (`togglesAt` in the
- * renderer's questionAnswer.ts still does, until that gap is closed there
- * too — this only prepares what resolveAnswers does with the answer once it
- * is). No worked example in the SDK's own file gives the surrounding
+ * question single-choice on the strength of that gap — closed for the
+ * renderer too now (`togglesAt`, questionAnswer.ts, #443 T3b), which toggles a
+ * multi-select question on either channel rather than only the terminal one.
+ * No worked example in the SDK's own file gives the surrounding
  * whitespace, so this is the plain, literal reading of "comma-separated" —
  * the delimiter is sourced, not guessed; the whitespace around it is not
  * settled by anything read.

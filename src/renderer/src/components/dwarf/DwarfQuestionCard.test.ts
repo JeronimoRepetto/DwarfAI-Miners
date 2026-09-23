@@ -682,19 +682,35 @@ describe('a multi-select question at the session’s own terminal', () => {
     expect(wrapper.find('.answer-send').exists()).toBe(false)
   })
 
-  it('keeps a HELD multi-select ask on the single-choice gesture it always had', async () => {
-    // Deliberately not toggles. The terminal gesture is measured — one digit
-    // per option — where the agent's own picker's join for several labels is
-    // not, so the held channel still takes a single label per question (see
-    // resolveAnswers in main). Same card, and the channel decides the gesture
-    // because the EVIDENCE differs, not because the ask does.
+  /*
+   * AMENDED for #443 T3b (was: "keeps a HELD multi-select ask on the
+   * single-choice gesture it always had" — the held channel took one label
+   * per question, on the strength of an unmeasured picker separator.
+   * `@anthropic-ai/claude-agent-sdk` 0.3.258's own `sdk-tools.d.ts` now
+   * documents `AskUserQuestionOutput.answers` as "question text -> answer
+   * string; multi-select answers are comma-separated", and `resolveAnswers`
+   * (main, heldSession.ts) already accepts several labels for a `multiSelect`
+   * question on the strength of that measurement — so the card stops
+   * singling the held channel out too, and this ask toggles like the
+   * terminal one, sending through the same explicit Answer control.
+   */
+  it('toggles a HELD multi-select ask and sends every toggle through the Answer control', async () => {
     const wrapper = card({ question: question({ multiSelect: true }) })
     await wrapper.findAll('.option-card')[0]!.trigger('click')
     await wrapper.findAll('.option-card')[1]!.trigger('click')
-    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-dimmed')
+    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-selected')
+    expect(wrapper.findAll('.option-card')[1]!.classes()).toContain('is-selected')
+    expect(wrapper.find('.answer-send').exists()).toBe(true)
+    await wrapper.find('.answer-send').trigger('click')
+    expect(wrapper.emitted('answer')).toEqual([[joinAnswerLabels(['Postgres', 'SQLite'])]])
+  })
+
+  it('sends nothing on a HELD multi-select ask with zero toggles', () => {
+    const wrapper = card({ question: question({ multiSelect: true }) })
     expect(wrapper.find('.answer-send').exists()).toBe(false)
-    pressEnter(wrapper.find('.question-card').element)
-    expect(wrapper.emitted('answer')).toEqual([['SQLite']])
+    const event = pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(event.defaultPrevented).toBe(false)
   })
 })
 
@@ -824,10 +840,17 @@ describe('a call that asks several questions (#443)', () => {
     }
   })
 
-  it('sends one answer with every question’s value when Submit is pressed', async () => {
-    // A held call, one single-select and one multi-select question. The held
-    // channel takes one label per question, so the multi-select one keeps the
-    // single-choice gesture the one-question card gives it.
+  /*
+   * AMENDED for #443 T3b (was: "A held call, one single-select and one
+   * multi-select question. The held channel takes one label per question, so
+   * the multi-select one keeps the single-choice gesture the one-question
+   * card gives it" — the two clicks below replaced one choice with the
+   * other). The held channel now toggles a multi-select question exactly as
+   * the terminal one does (see togglesAt, questionAnswer.ts, and the SDK
+   * evidence there), so both clicks stay toggled and Submit carries both,
+   * joined in the ask's own option order.
+   */
+  it('sends one answer with every question’s value when Submit is pressed, toggling a held multi-select question', async () => {
     const wrapper = walk()
     await wrapper.findAll('.option-card')[0]!.trigger('click')
     await next(wrapper)
@@ -836,7 +859,7 @@ describe('a call that asks several questions (#443)', () => {
     const submit = wrapper.find('.answer-submit')
     expect(submit.attributes('disabled')).toBeUndefined()
     await submit.trigger('click')
-    expect(wrapper.emitted('answer')).toEqual([[['Postgres', 'West']]])
+    expect(wrapper.emitted('answer')).toEqual([[['Postgres', joinAnswerLabels(['West', 'North'])]]])
   })
 
   it('sends nothing on Enter: the walk has a Submit of its own', async () => {
