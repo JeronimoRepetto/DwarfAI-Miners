@@ -538,7 +538,10 @@ describe('the Jev option', () => {
         provider: { value: 'codex', confidence: 0.87, applied: 'answered' },
         tier: { value: 'frontier', confidence: 0.9, applied: 'answered' },
         trivial: { value: false, probability: 0.05 },
-        largeContext: { value: false, probability: 0.05 }
+        largeContext: { value: false, probability: 0.05 },
+        // #608: `parts` gained a `model` field — mechanical fixture update,
+        // this suite (T4) does not yet render it; matches `model` above.
+        model: { value: 'gpt-5.6-sol', applied: 'answered', probability: 0.82 }
       }
     }
   }

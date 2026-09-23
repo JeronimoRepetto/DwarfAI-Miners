@@ -506,7 +506,11 @@ describe('the Jev option (#509)', () => {
         provider: { value: 'codex', confidence: 0.9, applied: 'answered' },
         tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
         trivial: { value: false, probability: 0.05 },
-        largeContext: { value: false, probability: 0.05 }
+        largeContext: { value: false, probability: 0.05 },
+        // #608: `parts` gained a `model` field — mechanical fixture update,
+        // same as `tier`/`parts` above; this fixture names no `model` at the
+        // top level either, so nothing was answered about it here.
+        model: { applied: 'safe-default', reason: 'no-live-model' }
       },
       ...overrides
     }
@@ -917,7 +921,9 @@ describe('the Jev entry path (#523)', () => {
         provider: { value: 'codex', confidence: 0.9, applied: 'answered' },
         tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
         trivial: { value: false, probability: 0.05 },
-        largeContext: { value: false, probability: 0.05 }
+        largeContext: { value: false, probability: 0.05 },
+        // #608: mechanical fixture update, same as `decision()` above.
+        model: { applied: 'safe-default', reason: 'no-live-model' }
       }
     }
 

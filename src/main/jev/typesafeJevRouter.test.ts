@@ -8,7 +8,7 @@ import {
   RateLimitError
 } from '@typesafe-ai/sdk'
 import { describe, expect, it, vi } from 'vitest'
-import type { JevRouteRequest } from './jevRouterPort'
+import type { JevModelRouteRequest, JevRouteRequest } from './jevRouterPort'
 import {
   EFFORT_QUESTION_INSTRUCTIONS,
   EFFORT_RUBRIC,
@@ -18,7 +18,9 @@ import {
   MODEL_TIER_QUESTION_INSTRUCTIONS,
   NEEDS_LARGE_CONTEXT_CRITERIA,
   NEEDS_LARGE_CONTEXT_INSTRUCTIONS,
-  PROVIDER_QUESTION_INSTRUCTIONS
+  PROVIDER_QUESTION_INSTRUCTIONS,
+  modelChoiceInstructions,
+  modelFitInstructions
 } from './routeRequest'
 import { classifyError, createTypesafeJevRouter, jevDebugEnabled } from './typesafeJevRouter'
 
@@ -231,6 +233,164 @@ describe('createTypesafeJevRouter', () => {
     const outcome = await router.route(routeRequest(), { signal: controller.signal })
 
     expect(outcome).toEqual({ kind: 'fallback', reason: 'timeout' })
+  })
+})
+
+/*
+ * #608's second request: one Noul per candidate ('fits::<index>') plus one
+ * Choice ('which') over the same candidates, keyed by index — never by a
+ * candidate's own model id. Mirrors the shape and idioms of the `route`
+ * suite above: real jsonResponse/hangingFetch fakes, no vi.mock (skills/tdd).
+ */
+describe('createTypesafeJevRouter — routeModel (#608)', () => {
+  function modelRouteRequest(overrides: Partial<JevModelRouteRequest> = {}): JevModelRouteRequest {
+    return {
+      prompt: 'add a field to this form',
+      routingProfile: 'balanced',
+      truncated: false,
+      tier: 'balanced',
+      candidates: {
+        '0': {
+          what: 'A quick, cheap model.',
+          not_for: 'Hard work.',
+          examples: ['a', 'b'],
+          tier: 'balanced',
+          relativeCost: 'low'
+        },
+        '1': {
+          what: 'A pricier, deeper model.',
+          not_for: 'Trivial work.',
+          examples: ['c', 'd'],
+          tier: 'balanced',
+          relativeCost: 'high'
+        }
+      },
+      ...overrides
+    }
+  }
+
+  function modelSuccessBody(
+    overrides: Partial<{
+      choice: string
+      fits: Record<string, number>
+      probabilities: Record<string, number>
+    }> = {}
+  ): unknown {
+    const choiceKey = overrides.choice ?? '0'
+    return {
+      model: 'jev-latest-v1',
+      answers: {
+        which: {
+          type: 'choice',
+          choice: choiceKey,
+          confidence: 0.8,
+          probabilities: overrides.probabilities ?? { '0': 0.8, '1': 0.2 }
+        },
+        'fits::0': { type: 'noul', noul: overrides.fits?.['0'] ?? 0.9 },
+        'fits::1': { type: 'noul', noul: overrides.fits?.['1'] ?? 0.3 }
+      },
+      usage: { input_tokens: 700, output_tokens: 20 }
+    }
+  }
+
+  it('never calls fetch when no key is configured', async () => {
+    const fetchSpy = vi.fn()
+    const router = createTypesafeJevRouter({
+      readKey: () => undefined,
+      fetch: fetchSpy as unknown as typeof fetch
+    })
+
+    const outcome = await router.routeModel(modelRouteRequest(), {})
+
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'no-key' })
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('sends one Noul per candidate keyed by index, plus one Choice over the same candidates — never a model id', async () => {
+    let captured: { url: string; init: RequestInit } | undefined
+    const fetchFake: typeof fetch = async (input, init) => {
+      captured = { url: String(input), init: init ?? {} }
+      return jsonResponse(modelSuccessBody())
+    }
+    const router = createTypesafeJevRouter({ readKey: () => 'sk-test', fetch: fetchFake })
+    const request = modelRouteRequest()
+
+    const outcome = await router.routeModel(request, {})
+
+    expect(captured?.url).toBe('https://api.typesafe.ai/v1/systemone')
+    const body = JSON.parse(captured!.init.body as string) as Record<string, unknown>
+    expect(body.state).toEqual({ prompt: request.prompt, routing_profile: request.routingProfile })
+    const questions = body.questions as Record<string, unknown>
+    expect(Object.keys(questions).sort()).toEqual(['fits::0', 'fits::1', 'which'].sort())
+    expect(questions.which).toEqual({
+      type: 'choice',
+      instructions: modelChoiceInstructions(request.tier),
+      criteria: request.candidates
+    })
+    expect(questions['fits::0']).toEqual({
+      type: 'noul',
+      instructions: modelFitInstructions(request.tier, request.candidates['0']!)
+    })
+    expect(questions['fits::1']).toEqual({
+      type: 'noul',
+      instructions: modelFitInstructions(request.tier, request.candidates['1']!)
+    })
+    expect(JSON.stringify(body)).not.toMatch(/sonnet|gpt-5|claude-|codex-/)
+
+    expect(outcome).toEqual({
+      kind: 'answers',
+      fits: { '0': 0.9, '1': 0.3 },
+      choice: { choice: '0', probabilities: { '0': 0.8, '1': 0.2 } },
+      usage: { inputTokens: 700 }
+    })
+  })
+
+  it('refuses an answer whose Choice names a candidate this request never sent', async () => {
+    const fetchFake: typeof fetch = async () =>
+      jsonResponse(modelSuccessBody({ choice: 'unknown' }))
+    const router = createTypesafeJevRouter({ readKey: () => 'sk-test', fetch: fetchFake })
+
+    const outcome = await router.routeModel(modelRouteRequest(), {})
+
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'invalid-response' })
+  })
+
+  it('reads a 401 as unauthorized end to end, without retrying', async () => {
+    const fetchSpy = vi.fn(async () => jsonResponse({ error: 'bad key' }, 401))
+    const router = createTypesafeJevRouter({ readKey: () => 'sk-bad', fetch: fetchSpy })
+
+    const outcome = await router.routeModel(modelRouteRequest(), {})
+
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'unauthorized' })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a caller abort as timeout end to end, without retrying', async () => {
+    const router = createTypesafeJevRouter({ readKey: () => 'sk-test', fetch: hangingFetch() })
+    const controller = new AbortController()
+    controller.abort()
+
+    const outcome = await router.routeModel(modelRouteRequest(), { signal: controller.signal })
+
+    expect(outcome).toEqual({ kind: 'fallback', reason: 'timeout' })
+  })
+
+  it('traces a request and answers block through the same debugLog sink, keeping the key out of every line', async () => {
+    const lines: string[] = []
+    const router = createTypesafeJevRouter({
+      readKey: () => 'sk-secret-test-key',
+      fetch: async () => jsonResponse(modelSuccessBody()),
+      debugLog: (line) => lines.push(line)
+    })
+
+    await router.routeModel(modelRouteRequest(), {})
+
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toBe('[jev:debug] request →')
+    expect(lines[2]).toBe('[jev:debug] answers ←')
+    for (const line of lines) {
+      expect(line).not.toContain('sk-secret-test-key')
+    }
   })
 })
 

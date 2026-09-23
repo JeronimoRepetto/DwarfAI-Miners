@@ -9,6 +9,10 @@ import type { JevRouteLaunchResult } from '../domain/types'
  * DelegationFailure (#511). Pure: no router, no launcher, plain objects only.
  */
 
+// #608: `parts` gained a `model` field — mechanical fixture update, this
+// suite reads none of `parts` at all (resolveDelegationRouting is pure over
+// `provider`/`model`/`effort`/`reason`/`fallbackTo` only), so a placeholder
+// 'safe-default' default keeps every existing case unaffected.
 function decision(overrides: Partial<Extract<JevRouteLaunchResult, { kind: 'decision' }>> = {}) {
   return {
     kind: 'decision' as const,
@@ -20,7 +24,8 @@ function decision(overrides: Partial<Extract<JevRouteLaunchResult, { kind: 'deci
       provider: { value: 'claude' as const, confidence: 0.9, applied: 'answered' as const },
       tier: { value: 'balanced' as const, confidence: 0.9, applied: 'answered' as const },
       trivial: { value: false, probability: 0.1 },
-      largeContext: { value: false, probability: 0.1 }
+      largeContext: { value: false, probability: 0.1 },
+      model: { applied: 'safe-default' as const, reason: 'no-live-model' as const }
     },
     ...overrides
   }
@@ -39,6 +44,34 @@ describe('resolveDelegationRouting', () => {
   it('turns a decision with no model or effort into a routing naming only the provider', () => {
     const result = resolveDelegationRouting(decision())
     expect(result).toEqual({ routing: { provider: 'claude' } })
+  })
+
+  /*
+   * #608: a delegated subtask routes through the SAME `JevLaunchRouter.route`
+   * an ordinary launch uses (this file's own module comment), so whatever
+   * model #608's second request chose reaches here exactly like any other —
+   * `resolveDelegationRouting` reads `result.model` alone, with no special
+   * case for HOW it was chosen. Proven with a `parts.model` shaped like a
+   * genuine request-2 winner (`applied: 'answered'`, a Noul probability) to
+   * show the seam carries it through untouched.
+   */
+  it('picks up whatever model #608’s second Jev request chose, exactly like any other', () => {
+    const result = resolveDelegationRouting(
+      decision({
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        parts: {
+          provider: { value: 'claude', confidence: 0.9, applied: 'answered' },
+          tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
+          trivial: { value: false, probability: 0.1 },
+          largeContext: { value: false, probability: 0.1 },
+          model: { value: 'gpt-5.6-sol', applied: 'answered', probability: 0.82 }
+        }
+      })
+    )
+    expect(result).toEqual({
+      routing: { provider: 'claude', model: 'gpt-5.6-sol', effort: 'high' }
+    })
   })
 
   it('uses the user’s own configured default when a fallback still carries one, even for low-confidence', () => {

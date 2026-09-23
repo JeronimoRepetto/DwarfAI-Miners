@@ -2,17 +2,138 @@ import type {
   AgentModelCatalog,
   AgentProviderOption,
   JevFallbackReason,
+  JevModelFallbackReason,
   JevPreferences,
   JevRouteLaunchRequest,
-  JevRouteLaunchResult
+  JevRouteLaunchResult,
+  JevRouteModelPart
 } from '../domain/types'
 import type { OpenCodeCatalogueModel } from '../providers/opencode/models'
 import { MODEL_CAPABILITIES } from './capabilities/modelCapability'
 import { mergeOpenCodeCapabilityTable } from './capabilities/opencode'
 import { deriveOpenCodeCapabilities } from './capabilities/opencodeDerived'
-import type { JevRouteOutcome, JevRouterPort } from './jevRouterPort'
-import { decideLaunch, type JevCapabilityTable } from './routeDecision'
-import { buildJevRouteRequest } from './routeRequest'
+import type { JevModelRouteOutcome, JevRouteOutcome, JevRouterPort } from './jevRouterPort'
+import {
+  decideLaunch,
+  finalizeModel,
+  minOfAnswered,
+  selectModelWinner,
+  type JevCapabilityTable,
+  type JevDecideResult,
+  type ModelSelectionCandidate
+} from './routeDecision'
+import { buildJevModelRouteRequest, buildJevRouteRequest } from './routeRequest'
+
+/**
+ * #608's own model step, over an already-resolved provider/tier decision:
+ * no live candidate at all, exactly one (no second request), or two-or-more
+ * (the second request, with its own budget check and every way it can fall
+ * back). Kept as its own function — rather than inline in `route` below —
+ * so the "what did the model step decide, and why" question has ONE answer
+ * whether request 2 ran or not, mirrored into both the wire `model`/`effort`
+ * and the honest `JevRouteModelPart` shown on the card.
+ */
+async function resolveModelPart(input: {
+  router: JevRouterPort
+  decided: Extract<JevDecideResult, { kind: 'decision' }>
+  effortScore: number
+  prompt: string
+  routingProfile: JevPreferences['profile']
+  totalBudgetMs: number
+  startedAt: number
+  now: () => number
+  signal: AbortSignal
+}): Promise<{ model?: string; effort?: string; part: JevRouteModelPart }> {
+  const { decided } = input
+  const candidates = decided.modelCandidates.options
+  // decideLaunch's own pickModel/finalizeModel choice — already resolved,
+  // and reused as the fallback value whenever request 2 is skipped, fails,
+  // or its answer cannot be acted on. Guaranteed defined whenever
+  // `candidates.length >= 1` (decideLaunch would have refused the whole
+  // decision with 'invalid-response' otherwise — see its own comment).
+  const safeDefault = { model: decided.model, effort: decided.effort }
+  const safeDefaultPart = (reason: JevModelFallbackReason): JevRouteModelPart => ({
+    ...(decided.model === undefined ? {} : { value: decided.model }),
+    applied: 'safe-default',
+    reason
+  })
+
+  if (candidates.length === 0) {
+    return { ...safeDefault, part: safeDefaultPart('no-live-model') }
+  }
+  if (candidates.length === 1) {
+    return { ...safeDefault, part: { value: candidates[0]!.id, applied: 'only-candidate' } }
+  }
+
+  // Both requests share ONE total budget (#608's own decision) — request 2
+  // gets whatever is left of it, and is skipped entirely, never even sent,
+  // once nothing is left.
+  const remainingMs = input.totalBudgetMs - (input.now() - input.startedAt)
+  if (remainingMs <= 0) {
+    return { ...safeDefault, part: safeDefaultPart('budget-exceeded') }
+  }
+
+  const built = buildJevModelRouteRequest({
+    prompt: input.prompt,
+    routingProfile: input.routingProfile,
+    tier: decided.modelCandidates.tier,
+    candidates
+  })
+  if (built.kind === 'skip') {
+    return { ...safeDefault, part: safeDefaultPart(built.reason) }
+  }
+
+  const outcome: JevModelRouteOutcome = await Promise.race([
+    input.router.routeModel(built.request, { signal: input.signal }),
+    timeoutOutcome(input.signal)
+  ])
+  if (outcome.kind === 'fallback') {
+    return { ...safeDefault, part: safeDefaultPart(outcome.reason) }
+  }
+
+  const selectionCandidates: ModelSelectionCandidate[] = candidates.map((candidate, index) => ({
+    key: String(index),
+    id: candidate.id,
+    entry: candidate.entry
+  }))
+  const selection = selectModelWinner(
+    selectionCandidates,
+    outcome.fits,
+    outcome.choice,
+    input.routingProfile
+  )
+  if (selection === undefined) {
+    // Not reachable — candidates.length >= 2 here, and selectModelWinner is
+    // only ever undefined for an empty list. Belt and braces.
+    return { ...safeDefault, part: safeDefaultPart('invalid-response') }
+  }
+
+  const finalized = finalizeModel(
+    decided.provider,
+    selection.candidate.id,
+    selection.candidate.entry,
+    input.effortScore
+  )
+  if (finalized === undefined) {
+    // The same belt-and-braces discipline `finalizeModel` already holds for
+    // decideLaunch's OWN pick — a derived (model, effort) pairing the launch
+    // gate would refuse is never carried out, request-2 winner or not.
+    return { ...safeDefault, part: safeDefaultPart('invalid-response') }
+  }
+
+  return {
+    model: finalized.model,
+    effort: finalized.effort,
+    part: {
+      value: finalized.model,
+      applied: 'answered',
+      probability: selection.probability,
+      ...(selection.choiceProbability === undefined
+        ? {}
+        : { choiceProbability: selection.choiceProbability })
+    }
+  }
+}
 
 /**
  * The main-side service behind the `jev:route` IPC channel (#509): turns one
@@ -93,11 +214,15 @@ export interface JevLaunchRouter {
 /**
  * Resolves once the given signal aborts, with the one outcome an abort ever
  * means here: this app's own budget ran out, whatever the router itself was
- * doing with it. Racing this against `router.route()` is what makes the
- * budget absolute — a router that does not honour the signal still cannot
- * make this service wait past it.
+ * doing with it. Racing this against `router.route()`/`router.routeModel()`
+ * is what makes the budget absolute — a router that does not honour the
+ * signal still cannot make this service wait past it. Typed as the minimal
+ * shared shape rather than either specific outcome union, so ONE function
+ * races against both requests (#608) — a plain `{kind:'fallback', reason:
+ * 'timeout'}` is a valid member of both `JevRouteOutcome` and
+ * `JevModelRouteOutcome`.
  */
-function timeoutOutcome(signal: AbortSignal): Promise<JevRouteOutcome> {
+function timeoutOutcome(signal: AbortSignal): Promise<{ kind: 'fallback'; reason: 'timeout' }> {
   return new Promise((resolve) => {
     const settle = (): void => resolve({ kind: 'fallback', reason: 'timeout' })
     if (signal.aborted) {
@@ -189,39 +314,82 @@ export function createJevLaunchRouter(options: CreateJevLaunchRouterOptions): Je
         return fallback(built.reason)
       }
 
+      // #608: ONE controller/timer for the WHOLE call — request 1 AND
+      // request 2 race against the SAME absolute deadline, so "request 2
+      // gets whatever remains" falls out of reusing this signal rather than
+      // computing a second budget. Cleared once, at the very end, so the
+      // deadline still governs request 2 even after request 1 settles.
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), totalBudgetMs)
-      let outcome: JevRouteOutcome
       try {
-        outcome = await Promise.race([
+        const outcome: JevRouteOutcome = await Promise.race([
           options.router.route(built.request, { signal: controller.signal }),
           timeoutOutcome(controller.signal)
         ])
+
+        if (outcome.kind === 'fallback') {
+          return fallback(outcome.reason, outcome.confidence)
+        }
+
+        const decided = decideLaunch({
+          answers: outcome,
+          profile: preferences.profile,
+          providers,
+          catalogs: models,
+          capabilities,
+          userDefault
+        })
+        if (decided.kind === 'fallback') {
+          return fallback(decided.reason)
+        }
+
+        const modelPart = await resolveModelPart({
+          router: options.router,
+          decided,
+          effortScore: outcome.effort.score,
+          prompt: request.prompt,
+          routingProfile: preferences.profile,
+          totalBudgetMs,
+          startedAt,
+          now,
+          signal: controller.signal
+        })
+
+        const result: JevRouteLaunchResult = {
+          kind: 'decision',
+          provider: decided.provider,
+          ...(modelPart.model === undefined ? {} : { model: modelPart.model }),
+          ...(modelPart.effort === undefined ? {} : { effort: modelPart.effort }),
+          // The function-calling cookbook's own rule, over every part
+          // (provider/tier/model) actually `applied: 'answered'` — see
+          // `minOfAnswered`'s own comment. `decided.confidence` is already
+          // the provider/tier half of this; the model part folds in here,
+          // never inside `decideLaunch` itself, since only THIS call knows
+          // whether request 2 was even sent.
+          confidence: minOfAnswered(
+            decided.confidence,
+            modelPart.part.applied === 'answered' ? modelPart.part.probability : undefined
+          ),
+          truncated: built.request.truncated,
+          tier: decided.tier,
+          parts: {
+            provider: decided.parts.provider,
+            tier: decided.parts.tier,
+            trivial: decided.parts.trivial,
+            largeContext: decided.parts.largeContext,
+            model: modelPart.part
+          }
+        }
+
+        if (options.debugLog !== undefined) {
+          options.debugLog('[jev:debug] decision =')
+          options.debugLog(JSON.stringify({ ...result, elapsedMs: now() - startedAt }, null, 2))
+        }
+
+        return result
       } finally {
         clearTimeout(timer)
       }
-
-      if (outcome.kind === 'fallback') {
-        return fallback(outcome.reason, outcome.confidence)
-      }
-
-      const decided = decideLaunch({
-        answers: outcome,
-        profile: preferences.profile,
-        providers,
-        catalogs: models,
-        capabilities,
-        userDefault
-      })
-      if (options.debugLog !== undefined) {
-        options.debugLog('[jev:debug] decision =')
-        options.debugLog(JSON.stringify({ ...decided, elapsedMs: now() - startedAt }, null, 2))
-      }
-      if (decided.kind === 'fallback') {
-        return fallback(decided.reason)
-      }
-
-      return { ...decided, truncated: built.request.truncated }
     } catch (error) {
       // Never thrown onward — a launch must always have something honest to
       // fall back to. Logged WITHOUT the prompt, only how long the call ran.

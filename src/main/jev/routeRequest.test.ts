@@ -10,8 +10,12 @@ import {
   MODEL_TIER_CRITERIA,
   NEEDS_LARGE_CONTEXT_CRITERIA,
   TIER_CHOICE_KEYS,
+  buildJevModelRouteRequest,
   buildJevRouteRequest,
-  mapEffortScore
+  candidateCapabilityFacts,
+  mapEffortScore,
+  modelChoiceInstructions,
+  modelFitInstructions
 } from './routeRequest'
 
 /*
@@ -317,5 +321,130 @@ describe('mapEffortScore', () => {
 describe('EFFORT_RUBRIC', () => {
   it('has exactly the four task-difficulty levels, trivial to architectural', () => {
     expect(EFFORT_RUBRIC).toHaveLength(4)
+  })
+})
+
+/*
+ * #608's second request: one Noul per candidate model plus one Choice over
+ * the same candidates, keyed by INDEX — never a model's own id, name or
+ * family. `buildJevModelRouteRequest` is only ever called by `routeLaunch.ts`
+ * with two or more candidates (0 or 1 skip the second request entirely
+ * before this function is reached — see routeLaunch.test.ts); the token
+ * budget below is still real, since unlike the five fixed questions in
+ * `buildJevRouteRequest`, this one scales with the candidate count.
+ */
+describe('candidateCapabilityFacts', () => {
+  const entry = capabilityEntry({
+    tier: 'frontier',
+    what: 'A reasoning model for hard, multi-file work.',
+    notFor: 'A trivial prompt.',
+    examples: ['Design the data model.', 'Untangle the deadlock.'],
+    relativeCost: 'high',
+    contextWindowTokens: 200_000
+  })
+
+  it('carries what/notFor/examples plus tier, relativeCost and contextWindowTokens — never the model id', () => {
+    const facts = candidateCapabilityFacts(entry)
+
+    expect(facts).toEqual({
+      what: entry.what,
+      not_for: entry.notFor,
+      examples: entry.examples,
+      tier: 'frontier',
+      relativeCost: 'high',
+      contextWindowTokens: 200_000
+    })
+  })
+
+  it('omits contextWindowTokens when the entry never verified one', () => {
+    const noContext = capabilityEntry({ tier: 'balanced' })
+    expect(candidateCapabilityFacts(noContext)).not.toHaveProperty('contextWindowTokens')
+  })
+})
+
+describe('modelChoiceInstructions / modelFitInstructions', () => {
+  it('name the tier the task needs, and never a model id', () => {
+    const choice = modelChoiceInstructions('frontier')
+    expect(choice.question).toContain('frontier')
+
+    const facts = candidateCapabilityFacts(capabilityEntry({ tier: 'frontier' }))
+    const fit = modelFitInstructions('frontier', facts)
+    expect(fit.question).toContain('frontier')
+    expect(fit.candidate).toBe(facts)
+    expect(JSON.stringify(fit)).not.toContain('sonnet')
+    expect(JSON.stringify(fit)).not.toContain('gpt-5')
+  })
+})
+
+describe('buildJevModelRouteRequest', () => {
+  function candidate(
+    id: string,
+    overrides: Partial<ModelCapabilityEntry> = {}
+  ): {
+    id: string
+    entry: ModelCapabilityEntry
+  } {
+    return { id, entry: capabilityEntry({ tier: 'balanced', ...overrides }) }
+  }
+
+  it('keys every candidate by index — never by its own model id — in both the fits and the choice questions', () => {
+    const result = buildJevModelRouteRequest({
+      prompt: 'add a field to this form',
+      routingProfile: 'balanced',
+      tier: 'balanced',
+      candidates: [candidate('sonnet'), candidate('gpt-5.6-sol')]
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    expect(Object.keys(result.request.candidates)).toEqual(['0', '1'])
+    expect(JSON.stringify(result.request)).not.toContain('sonnet')
+    expect(JSON.stringify(result.request)).not.toContain('gpt-5.6-sol')
+  })
+
+  it('carries the tier the task needs, for the fit question to read from', () => {
+    const result = buildJevModelRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      tier: 'frontier',
+      candidates: [candidate('a'), candidate('b')]
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    expect(result.request.tier).toBe('frontier')
+  })
+
+  it('truncates the prompt head+tail the same way request 1 does, when it does not fit the budget', () => {
+    const long = 'x'.repeat(200_000)
+    const result = buildJevModelRouteRequest({
+      prompt: long,
+      routingProfile: 'balanced',
+      tier: 'balanced',
+      candidates: [candidate('a'), candidate('b')]
+    })
+
+    if (result.kind !== 'request') throw new Error('expected a request')
+    expect(result.request.truncated).toBe(true)
+    expect(result.request.prompt.length).toBeLessThan(long.length)
+    expect(result.request.prompt).toContain('\n…\n')
+  })
+
+  it('skips with budget-exceeded when even a trimmed prompt cannot fit alongside every candidate', () => {
+    // Each candidate's own capability text counts toward the same 32k
+    // state-plus-longest-question ceiling `buildJevRouteRequest` reads —
+    // enough candidates with a long `what`/`notFor` makes the longest
+    // single question (the Choice, holding every candidate's own criteria)
+    // alone exceed it.
+    const hugeWhat = 'w'.repeat(40_000)
+    const manyCandidates = Array.from({ length: 20 }, (_, i) =>
+      candidate(`id-${i}`, { what: hugeWhat })
+    )
+    const result = buildJevModelRouteRequest({
+      prompt: 'anything',
+      routingProfile: 'balanced',
+      tier: 'balanced',
+      candidates: manyCandidates
+    })
+
+    expect(result).toEqual({ kind: 'skip', reason: 'budget-exceeded' })
   })
 })

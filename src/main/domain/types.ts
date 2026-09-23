@@ -134,6 +134,10 @@ export type {
   JevRouteNoulPart,
   JevRouteParts,
   /* --- end of the jev-routing-profiles T3 block ------------------------------ */
+  /* --- Jev routing v2: the model step (#608) — one block, appended --------- */
+  JevRouteModelPart,
+  JevModelFallbackReason,
+  /* --- end of the #608 block -------------------------------------------------- */
   /* --- Turn outcome (#510) — one block, appended ---------------------------- */
   TurnOutcome,
   TurnOutcomeKind,

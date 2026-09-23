@@ -7,7 +7,12 @@ import type {
   ModelTier
 } from '../domain/types'
 import type { ModelCapabilityEntry } from './capabilities/modelCapability'
-import type { JevChoiceCriteria, JevRouteRequest } from './jevRouterPort'
+import type {
+  JevChoiceCriteria,
+  JevModelCandidateCriteria,
+  JevModelRouteRequest,
+  JevRouteRequest
+} from './jevRouterPort'
 import type { JevCapabilityTable } from './routeDecision'
 
 /**
@@ -446,3 +451,144 @@ export function buildJevRouteRequest(input: BuildJevRouteRequestInput): BuildJev
     request: { prompt, routingProfile: input.routingProfile, truncated, providerCriteria }
   }
 }
+
+/* --- #608: the second request, over the tier's own candidate models ------- */
+
+/**
+ * One candidate's own capability facts, in `JevModelCandidateCriteria`'s own
+ * shape (jevRouterPort.ts) — `what`/`notFor`/`examples` straight off the
+ * entry, plus `tier`/`relativeCost`/`contextWindowTokens` so two same-tier
+ * candidates can still be told apart on cost and context alone when their
+ * prose is close. Never the model's own id, name, alias or family — see this
+ * module's own top comment and the jev-capabilities skill's evidence rule.
+ * The one function both `buildJevModelRouteRequest` below and
+ * `typesafeJevRouter.ts`'s adapter call, so the Choice criteria and every
+ * Noul's own embedded facts are built from the identical values.
+ */
+export function candidateCapabilityFacts(entry: ModelCapabilityEntry): JevModelCandidateCriteria {
+  return {
+    what: entry.what,
+    not_for: entry.notFor,
+    examples: entry.examples,
+    tier: entry.tier,
+    relativeCost: entry.relativeCost,
+    ...(entry.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: entry.contextWindowTokens })
+  }
+}
+
+/**
+ * The `which` Choice question's own instructions (#608) — parameterised by
+ * `tier`, unlike request 1's fixed questions, because THIS tier is a fact
+ * about the launch just resolved, not a fixed rubric. Mirrors the skill-
+ * suggestion cookbook's own `RERANK_INSTRUCTIONS`: exactly one candidate is
+ * the right one, read what each actually offers rather than guessing from a
+ * label — there is no label here to guess from anyway.
+ */
+export function modelChoiceInstructions(tier: ModelTier): JevQuestionInstructions {
+  return {
+    question:
+      `Exactly one of these models is the best fit for the prompt in state, given the task ` +
+      `needs a ${tier} model. Which one?`
+  }
+}
+
+/**
+ * One `fits::<index>` Noul question's own instructions (#608) — the
+ * candidate's own capability facts ride INSIDE the structured instructions
+ * object (never in `criteria`, which a Noul only ever gives two fixed
+ * yes/no sides — primitives/noul.md), the same "structure when the question
+ * needs data alongside it" shape the SDE cascade cookbook and this file's
+ * own `EFFORT_QUESTION_INSTRUCTIONS` sibling questions already use.
+ */
+export function modelFitInstructions(
+  tier: ModelTier,
+  candidate: JevModelCandidateCriteria
+): { question: string; candidate: JevModelCandidateCriteria } {
+  return {
+    question: `Given the task needs a ${tier} model, does this specific model fit the prompt in state?`,
+    candidate
+  }
+}
+
+export interface BuildJevModelRouteRequestInput {
+  prompt: string
+  routingProfile: JevRoutingProfile
+  /** The tier the task needs — read into the fit question, and carried on the request for the adapter to phrase the Choice question with too. */
+  tier: ModelTier
+  /**
+   * Two or more candidates. `routeLaunch.ts` never calls this with fewer:
+   * zero candidates means nothing to ask about, and exactly one means no
+   * second request at all (`applied: 'only-candidate'`) — both decided
+   * before this function is ever reached.
+   */
+  candidates: ReadonlyArray<{ id: string; entry: ModelCapabilityEntry }>
+}
+
+export type BuildJevModelRouteRequestResult =
+  { kind: 'request'; request: JevModelRouteRequest } | { kind: 'skip'; reason: 'budget-exceeded' }
+
+/**
+ * Builds #608's second System One request, or says why it could not fit —
+ * the same token-budgeting discipline `buildJevRouteRequest` already holds
+ * to (TypeSafe's own 64k-total / 32k-state-plus-longest-question limits,
+ * estimated the same conservative ceil(chars/4) way), reused rather than
+ * reimplemented. Unlike request 1's fixed five questions, THIS request's
+ * size scales with the candidate count, so `budget-exceeded` is a real,
+ * reachable outcome here — a large OpenCode tier with many differentiated
+ * candidates is exactly the case #608 T1 exists for.
+ *
+ * Candidates are keyed by INDEX (`'0'`, `'1'`, …) in both the returned
+ * request's own `candidates` and the `fits::<index>` Noul questions the
+ * adapter builds from it — never by the candidate's own model id, so a
+ * model's identity never rides the wire to Jev (jev-capabilities skill's
+ * evidence rule).
+ */
+export function buildJevModelRouteRequest(
+  input: BuildJevModelRouteRequestInput
+): BuildJevModelRouteRequestResult {
+  const candidateCriteria: Record<string, JevModelCandidateCriteria> = {}
+  input.candidates.forEach((candidate, index) => {
+    candidateCriteria[String(index)] = candidateCapabilityFacts(candidate.entry)
+  })
+
+  const questionTokenCosts: Record<string, number> = {
+    which: estimateTokens(
+      JSON.stringify(modelChoiceInstructions(input.tier)) + JSON.stringify(candidateCriteria)
+    )
+  }
+  for (const [key, criteria] of Object.entries(candidateCriteria)) {
+    questionTokenCosts[`fits::${key}`] = estimateTokens(
+      JSON.stringify(modelFitInstructions(input.tier, criteria))
+    )
+  }
+  const longestQuestionTokens = Math.max(...Object.values(questionTokenCosts))
+  const allQuestionsTokens = Object.values(questionTokenCosts).reduce((sum, cost) => sum + cost, 0)
+
+  if (
+    longestQuestionTokens >= MAX_STATE_AND_LONGEST_QUESTION_TOKENS ||
+    allQuestionsTokens >= MAX_REQUEST_TOKENS
+  ) {
+    return { kind: 'skip', reason: 'budget-exceeded' }
+  }
+
+  const stateBudgetTokens = MAX_STATE_AND_LONGEST_QUESTION_TOKENS - longestQuestionTokens
+  const truncated = estimateTokens(input.prompt) > stateBudgetTokens
+  const prompt = truncated
+    ? truncateHeadTail(input.prompt, stateBudgetTokens * CHARS_PER_TOKEN_ESTIMATE)
+    : input.prompt
+
+  return {
+    kind: 'request',
+    request: {
+      prompt,
+      routingProfile: input.routingProfile,
+      truncated,
+      tier: input.tier,
+      candidates: candidateCriteria
+    }
+  }
+}
+
+/* --- end of the #608 block ------------------------------------------------- */

@@ -165,9 +165,15 @@ const jevModelLabel = computed(() => {
   )
 })
 
+// #608: `confidence` is now absent when no part was answered at all (MIN
+// over only the parts actually 'answered' — never a discarded safe-default
+// part's own number). Minimal compile fix for the wire change; T3 owns
+// wording this honestly on the card — 0 here is only the pre-existing
+// "nothing to show yet" placeholder this computed already used for `null`.
 const jevConfidencePercent = computed(() => {
   const decision = jevDecision.value
-  return decision === null ? 0 : Math.round(decision.confidence * 100)
+  if (decision === null || decision.confidence === undefined) return 0
+  return Math.round(decision.confidence * 100)
 })
 
 /** The one sentence the card states Jev chose, provider/model/effort/confidence together. */
