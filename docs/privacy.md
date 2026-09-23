@@ -123,12 +123,14 @@ setting:
 
 **Markers and secrets:**
 
-| File                          | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `autostart-default-v1.marker` | Remembers that the packaged app already applied its one-time autostart default, so a tray opt-out is never overridden (`src/main/index.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `hooks-enabled.marker`        | Remembers that you opted into instant updates (`src/main/hooks/hookChannel.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `hook-token`                  | The per-install random secret that authenticates hook requests. It is embedded in the hook commands in your own Claude config and goes nowhere else (`src/main/hooks/hookToken.ts`).                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `jev-api-key-v1.json`         | The TypeSafe API key you type into Settings for Jev, holding only Electron `safeStorage` ciphertext — base64 in `{ "encrypted": "..." }` — never the plaintext key. Clearing the key rewrites the file to `{}`. There is no plaintext fallback: on a machine (typically Linux, with no real keyring behind it) where `safeStorage.isEncryptionAvailable()` reads false, nothing is ever written here and the option shows why it is off instead (`src/main/shell/jevApiKey.ts`, `src/main/adapters/safeStorageLike.ts`). See [What it transmits](#what-it-transmits) for what the key is used for. |
+| File                               | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `autostart-default-v1.marker`      | Remembers that the packaged app already applied its one-time autostart default, so a tray opt-out is never overridden (`src/main/index.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `hooks-enabled.marker`             | Remembers that you opted into instant updates (`src/main/hooks/hookChannel.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `hook-token`                       | The per-install random secret that authenticates hook requests, shared by the Claude hooks channel and the OpenCode permission relay below. It is embedded in the hook commands in your own Claude config and, when you opt into the relay, in the OpenCode plugin file too — goes nowhere else. Written owner-only (`0600` on macOS/Linux; a harmless no-op on Windows, whose per-user profile directory the OS already restricts) since #588 T6 (`src/main/hooks/hookToken.ts`, `src/main/hooks/hookFs.ts`'s `writeSecretText`).                                                                 |
+| `opencode-plugin-enabled.marker`   | Remembers that you opted into the OpenCode permission relay, exactly like `hooks-enabled.marker` above (`src/main/opencodePermissions/openCodePluginChannel.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `opencode-server-password-v1.json` | The optional OpenCode server password you type into Settings' OpenCode section, stored the same way as the Jev key below — Electron `safeStorage` ciphertext only, `{}` when cleared, no plaintext fallback where encryption is unavailable (`src/main/opencodePermissions/openCodeServerPassword.ts`). See [What it transmits](#what-it-transmits) for what it is used for.                                                                                                                                                                                                                       |
+| `jev-api-key-v1.json`              | The TypeSafe API key you type into Settings for Jev, holding only Electron `safeStorage` ciphertext — base64 in `{ "encrypted": "..." }` — never the plaintext key. Clearing the key rewrites the file to `{}`. There is no plaintext fallback: on a machine (typically Linux, with no real keyring behind it) where `safeStorage.isEncryptionAvailable()` reads false, nothing is ever written here and the option shows why it is off instead (`src/main/shell/jevApiKey.ts`, `src/main/adapters/safeStorageLike.ts`). See [What it transmits](#what-it-transmits) for what the key is used for. |
 
 **Read, never written:**
 
@@ -164,6 +166,22 @@ Outside that directory, and only if you opt into **Instant updates (Claude hooks
   (`src/main/hooks/hookInstaller.ts`);
 - a one-time pristine backup of each modified `settings.json`, saved beside it as
   `settings.json.dwarfai-backup` and never overwritten afterwards.
+
+And only if you opt into the **OpenCode permission relay**, in Settings' OpenCode section (#588 T6):
+
+- one file, `dwarfai-miners-permission.ts`, written into OpenCode's own **global** plugin
+  directory — `$XDG_CONFIG_HOME/opencode/plugin` when that variable is set to an absolute path,
+  else `~/.config/opencode/plugin`, the same rule on every platform since OpenCode itself resolves
+  it with no OS branch (`src/main/opencodePermissions/openCodePluginInstaller.ts`,
+  `openCodeGlobalPluginDir`);
+- that file carries, in plain text, the exact same per-install token the Claude hooks channel
+  trusts (see the `hook-token` row above) — a coupling Settings itself states before you turn the
+  relay on, not only here — and is written owner-only, the same as `hook-token`
+  (`installOpenCodePlugin`, `src/main/hooks/hookFs.ts`'s `writeSecretText`);
+- written only when you turn the relay on, rewritten in place if OpenCode's listening port or this
+  app's token has changed since, and removed the moment you turn it off — a file at that path this
+  app did not write is left untouched either way
+  (`src/main/opencodePermissions/openCodePluginChannel.ts`, `openCodePluginInstaller.ts`).
 
 When autostart is on, the platform's standard autostart entry also exists — the HKCU `Run`
 key, a LaunchAgents plist, or an XDG autostart desktop entry; the README's startup section
@@ -418,6 +436,58 @@ sets `routedByJev` on it, so the same gate has nothing to read a second time.
   registration is a global or project-local `mcp_config.json` file, never a per-invocation
   mechanism — and writing a server registration into a project's own file on your behalf was decided
   against.
+
+### The OpenCode permission relay
+
+Off by default, opt-in from Settings' OpenCode section (#588). With the plugin installed (see
+[What it stores](#what-it-stores-and-where)), any OpenCode session on this machine — one the panel
+launched, or one you started yourself at a terminal — has its permission dialog forwarded here
+instead of only ever appearing somewhere the panel cannot see it.
+
+**What the plugin sends, and to where.** The plugin subscribes to OpenCode's own `event` hook and
+forwards exactly two event types it sees fire — `permission.asked` and `permission.replied` —
+everything else a turn raises (dozens of events) is dropped before it ever reaches the network
+(`src/main/opencodePermissions/opencodePermissionPlugin.ts`). What is sent is that event, verbatim,
+plus the server's own `ctx.serverUrl`: the permission kind (e.g. `bash`), the command text and glob
+patterns when the blocked call carried them, that call's own id, and the session id — authenticated
+with the same per-install token the Claude hooks channel uses, sent as `x-dwarfai-token` rather than
+that channel's own `Authorization` header. It goes to exactly one place: this app's own loopback
+listener, shared with the Claude hooks channel but answering only the route this consent opened —
+turning the relay on never requires turning Claude's hooks on too, and vice versa
+(`src/main/hooks/hookListener.ts`, #588 T6 finding F5). A push the listener cannot reach — the app
+closed, or the relay switched off — fails silently; the plugin never throws into the session it is
+watching.
+
+**What reaches your screen.** Before an ask is drawn on its dwarf's card, its command/pattern summary
+is capped at 240 characters and passed through the same secret-redaction pass every other transcript
+line goes through (`permissionInputLine`, `src/main/domain/permissionSummary.ts`, read by
+`src/main/providers/opencode/opencodeProvider.ts`). The push itself, arriving over the loopback
+listener, carries the raw text — redaction happens once, at the boundary before the panel draws it.
+
+**Answering it.** Pressing Allow or Deny on that card sends one request —
+`POST {serverUrl}session/{id}/permissions/{id}` with `{"response":"once"}` or
+`{"response":"reject"}` — to the exact server address the push named, and nowhere else
+(`src/main/opencodePermissions/answerOpenCodePermission.ts`, #588 T5). OpenCode's own third answer,
+`always`, is never sent — the same restraint the Claude permission card already holds, since it
+writes a standing rule into the session rather than answering the one prompt in front of you.
+
+**The optional server password.** If you started OpenCode yourself with `OPENCODE_SERVER_PASSWORD`
+set, its server refuses an unauthenticated decision. Settings' OpenCode section offers an optional
+password field for exactly that case — read
+[`config-layering`](../skills/config-layering/SKILL.md) for why this is a secret rather than a
+setting, and why it is never read from this app's own environment (the terminal that started
+OpenCode owns that variable, not the desktop session this app launches from). Typed once, it is
+stored the same way the Jev API key is: Electron `safeStorage` ciphertext only, in its own tiny
+`userData` document, never plaintext, with no fallback where this machine offers no real encryption
+(`src/main/opencodePermissions/openCodeServerPassword.ts`). It is sent as HTTP Basic auth
+(`opencode:<password>`) on every answer, and only when the ask's own `serverUrl` names a loopback
+host — `127.0.0.1`, `localhost`, or `[::1]` — never to an address anywhere else, even one a
+compromised push tried to name. Leaving it blank sends no `Authorization` header at all, matching
+OpenCode's own default of taking no auth. **Stated as unverified, deliberately**: HTTP Basic auth
+against OpenCode's own server has never been exercised live against a real `401` — every server this
+project has measured so far ran with no password set — so this path is implemented and unit-tested
+against a fake connection, not yet watched succeed against a live one
+(`answerOpenCodePermission.ts`'s own module comment).
 
 ### Everything else stays local
 

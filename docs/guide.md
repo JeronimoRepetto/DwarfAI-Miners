@@ -21,6 +21,7 @@ install it, and what it runs on.
 - [Settings](#settings)
 - [Startup and tray behavior](#startup-and-tray-behavior)
 - [Instant updates (Claude hooks)](#instant-updates-claude-hooks)
+- [OpenCode permission relay](#opencode-permission-relay)
 - [Configuration reference](#configuration-reference)
 
 ## The bigger picture
@@ -501,7 +502,8 @@ its own when its session moves — a new row, or the store's event log advancing
 only when a poll catches it working. There is no per-session file either, so there is nothing for
 the terminal-focus fallback to tail; the message panel's own feed, paged from the store, is the
 whole reading surface. An OpenCode dwarf mines no ore: token counts sit in the store but are not
-read onto the wire in this release.
+read onto the wire in this release. A permission it asks for can be answered from its card too, once
+you opt into the relay in Settings — see [OpenCode permission relay](#opencode-permission-relay).
 `OPENCODE_CLI_PATH` documents a working binary for a broken PATH shim (a package-manager global
 install can skip the postinstall step that downloads the platform binary); `XDG_DATA_HOME` is
 deliberately not read, since the default store root is fixed rather than derived from the
@@ -688,6 +690,7 @@ application controls:
 | **Audio**          | **Music at startup** (on by default), plus a volume slider each for **Music**, **Ambience** and **Effects**. They start at 10%, 100% and 70%. See [Sound](#sound).                                                                                                       |
 | **Notifications**  | **System notifications** (on by default) — one switch, for the whole feature. See [Notifications](#notifications).                                                                                                                                                       |
 | **Jev**            | The TypeSafe API key, and — once a key is configured — the routing profile and the default launch. See [Jev](#jev).                                                                                                                                                      |
+| **OpenCode**       | **Permission requests** — the opt-in plugin that lets an OpenCode permission ask be answered from this panel — and an optional server password. See [OpenCode permission relay](#opencode-permission-relay).                                                             |
 | **Data Base**      | **Reset metrics** — the one irreversible action in the app. It wipes the material vault, behind a confirmation that makes you type `yes`.                                                                                                                                |
 | _Application_      | **Always on top**, **Hide panel**, and the running version.                                                                                                                                                                                                              |
 
@@ -771,6 +774,41 @@ Safety around `settings.json`, which is the user's own global Claude configurati
 **Turn the toggle off before uninstalling DwarfAI-Miners.** Nothing runs a hook-removal pass at
 uninstall time yet, so entries left behind would point at a listener that no longer exists —
 harmless (Claude Code treats a failed hook command as a non-blocking error) but untidy.
+
+## OpenCode permission relay
+
+Off by default, opt-in from **Settings' OpenCode section** — not the tray, unlike the Claude hooks
+channel above, because this is a per-provider choice and no provider here is ever a prerequisite for
+another's (#588). Turning on **Permission requests** does three things, and turning it off undoes
+all three:
+
+1. Opens the OpenCode route on the same loopback listener the Claude hooks channel uses — bound only
+   if nothing else already has it, released only once neither channel needs it any more. Turning this
+   on never requires turning Claude's hooks on too.
+2. Writes one plugin file, `dwarfai-miners-permission.ts`, into OpenCode's own **global** plugin
+   directory (`~/.config/opencode/plugin`, or wherever `XDG_CONFIG_HOME` names, on every platform
+   alike). It carries the same per-install token the Claude channel trusts, in plain text — stated in
+   Settings itself before you turn the switch on, since it widens which file on this machine holds
+   that secret.
+3. Records the choice in the same kind of marker file the Claude channel uses, so the relay comes
+   back on the next launch.
+
+With the plugin installed, any OpenCode session on this machine — one the panel launched, or one you
+started yourself at a terminal — has a permission dialog it raises forwarded here instead of only
+ever appearing where the panel cannot see it: the ask draws on that session's dwarf, with the command
+or glob patterns it names, and pressing **Allow** or **Deny** posts the decision straight back to
+that session's own local server. OpenCode's own third answer, "always", is not offered — the same
+restraint the Claude permission card already holds.
+
+**The optional server password.** Only needed if you started OpenCode yourself with
+`OPENCODE_SERVER_PASSWORD` set; leave it blank otherwise, since OpenCode takes no auth by default.
+It lives in Settings, not in this app's own environment — see
+[`skills/config-layering`](../skills/config-layering/SKILL.md) for why a secret like this one is
+never read from `.env` or the process environment — and is stored encrypted on this machine, sent
+only to the OpenCode server on this machine whose permission you are answering.
+
+What is sent, what is stored, and exactly which file gets the token are covered in full in
+[`docs/privacy.md`'s OpenCode permission relay section](privacy.md#the-opencode-permission-relay).
 
 ## Configuration reference
 
