@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { motion } from 'motion-v'
 import { computed } from 'vue'
 import {
   MUSIC_OFF_ICON_SRC,
@@ -7,6 +8,7 @@ import {
   TRAY_ICON_SRC,
   maskImageValue
 } from '../../lib/art'
+import { pressHoverVariants } from '../../lib/shell/presence'
 import { SHELL_NAV, type ShellArea } from '../../lib/shell/shellNav'
 
 /**
@@ -75,21 +77,36 @@ const musicIcon = computed(() =>
 <template>
   <nav class="shell-nav" aria-label="DwarfAI-Miners sections">
     <!--
+      Every control below answers a pointer through the shared vocabulary
+      (#566), each on its own button and never on this root. The root is the
+      strip the fold carries and names as its wall: `useShellFold` writes its
+      travel into this element's own inline `transform` and measures this
+      element's box. A child's transform lays nothing out and is not part of
+      that box, so a button growing under the cursor cannot move the strip or
+      change what the fold reads. None of them can refuse a press, so none needs
+      `pressHoverUnless`.
+
+      This note sits INSIDE the root on purpose: a comment beside it makes the
+      template a fragment, and `App.vue`'s `navEl.$el` then answers no element,
+      which is the fold losing its strip.
+    -->
+    <!--
       The app mark, and the control that takes the window away (#156) — the same
       action the global shortcut takes, which is why it says so in the tooltip:
       it is the one control a user who has forgotten the accelerator can find.
     -->
-    <button
+    <motion.button
       class="nav-mark"
       type="button"
       aria-label="Hide DwarfAI-Miners"
       title="Hide DwarfAI-Miners"
+      v-bind="pressHoverVariants"
       @click="emit('hide')"
     >
       <img class="nav-mark-art" :src="TRAY_ICON_SRC" alt="" draggable="false" />
-    </button>
+    </motion.button>
     <div class="nav-stack">
-      <button
+      <motion.button
         v-for="item in SHELL_NAV"
         :key="item.area"
         class="nav-button"
@@ -105,6 +122,7 @@ const musicIcon = computed(() =>
             ? 'Shortcut unavailable - click to change it'
             : item.label
         "
+        v-bind="pressHoverVariants"
         @click="emit('select', item.area)"
       >
         <!--
@@ -117,7 +135,7 @@ const musicIcon = computed(() =>
           :style="{ '--nav-icon': maskImageValue(SHELL_ICON_SRC[item.area]) }"
           aria-hidden="true"
         ></span>
-      </button>
+      </motion.button>
     </div>
     <!--
       The music button, at the BOTTOM of the column — which is the bottom of
@@ -129,16 +147,17 @@ const musicIcon = computed(() =>
       saying what a press would DO: the same split the pin control uses, so a
       screen reader is never told the control changed identity.
     -->
-    <button
+    <motion.button
       class="nav-music"
       type="button"
       aria-label="Background music"
       :aria-pressed="musicPlaying ? 'true' : 'false'"
       :title="musicPlaying ? 'Stop the background music' : 'Play the background music'"
+      v-bind="pressHoverVariants"
       @click="emit('toggle-music')"
     >
       <span class="music-icon" :style="{ '--music-icon': musicIcon }" aria-hidden="true"></span>
-    </button>
+    </motion.button>
   </nav>
 </template>
 

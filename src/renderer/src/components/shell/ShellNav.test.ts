@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import type { ShellArea } from '../../lib/shell/shellNav'
+import { motion } from 'motion-v'
+import { pressHoverVariants } from '../../lib/shell/presence'
+import { SHELL_NAV, type ShellArea } from '../../lib/shell/shellNav'
 import ShellNav from './ShellNav.vue'
 
 function mountNav(props: { area?: ShellArea; broken?: boolean; musicPlaying?: boolean } = {}) {
@@ -182,5 +184,78 @@ describe('ShellNav — the music button', () => {
     expect(nav.emitted('select')).toBeUndefined()
     // Still drawn as playing: the engine above owns whether it is.
     expect(nav.find('.nav-music').attributes('aria-pressed')).toBe('true')
+  })
+})
+
+/*
+ * ADDED for #566 (the follow-up #592 left for after #585): every control in the
+ * column answers a pointer through the shared vocabulary.
+ *
+ * The list is spelled out rather than counted, as #592's were: a control added
+ * later with no feedback is exactly what this catches, and a length check would
+ * let it through while the total agreed.
+ *
+ * The gesture sits on each BUTTON and never on the `<nav>` root, and that is
+ * load-bearing: the root is the strip the fold names and carries (`App.vue`
+ * hands `navEl.$el` to `useShellFold` as `strip` and in `carried`), writing its
+ * travel into the root's own inline `transform` and measuring the root's box.
+ * A transform on a child moves neither — it lays nothing out, and an element's
+ * `getBoundingClientRect` is its own box, not its children's overflow.
+ */
+describe('ShellNav press and hover feedback', () => {
+  const CONTROLS = ['nav-mark', ...SHELL_NAV.map(() => 'nav-button'), 'nav-music']
+
+  it('routes every control through motion.button carrying the shared variants', () => {
+    const controls = mountNav().findAllComponents(motion.button)
+
+    expect(controls.map((control) => control.classes()[0])).toEqual(CONTROLS)
+    for (const control of controls) {
+      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
+      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
+    }
+  })
+
+  /*
+   * Why the raw variants and not `pressHoverUnless`: none of these controls can
+   * refuse a press. A broken shortcut flags the settings button and still opens
+   * settings — that is how the failure gets fixed — and music stopped is a
+   * state, not a refusal. Pinned, so a control that later gains a disabled
+   * state fails here and gets the helper instead of a grow it cannot honour.
+   */
+  it('has no disabled control in any state, so every one carries the gesture', () => {
+    for (const props of [{ broken: true, musicPlaying: false }, { broken: false }]) {
+      for (const control of mountNav(props).findAllComponents(motion.button)) {
+        expect(control.attributes('disabled')).toBeUndefined()
+      }
+    }
+  })
+
+  it('leaves the root the plain navigation landmark the fold carries', () => {
+    const nav = mountNav()
+
+    expect(nav.element.tagName).toBe('NAV')
+    expect(nav.attributes('aria-label')).toBe('DwarfAI-Miners sections')
+  })
+
+  // Against the real engine: where motion-v writes its transform is a claim
+  // about the engine, and only running it says so.
+  it('grows a control under a hover and leaves the transform the fold wrote on the strip alone', async () => {
+    const nav = mount(ShellNav, {
+      props: { area: 'map', broken: false, musicPlaying: true },
+      attachTo: document.body
+    })
+    const root = nav.element as HTMLElement
+    const mark = nav.get('.nav-mark').element as HTMLElement
+    // What `useShellFold`'s `place` writes on a carried column mid-fold.
+    root.style.transform = 'translateX(-40px)'
+
+    mark.dispatchEvent(new window.PointerEvent('pointerenter'))
+    for (let frame = 0; frame < 20; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    }
+
+    expect(mark.style.transform).toBe(`scale(${pressHoverVariants.whileHover.scale})`)
+    expect(root.style.transform).toBe('translateX(-40px)')
+    nav.unmount()
   })
 })
