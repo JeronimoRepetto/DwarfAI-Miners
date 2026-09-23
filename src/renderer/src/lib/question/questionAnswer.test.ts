@@ -23,7 +23,18 @@ import {
   canSendToggles,
   toggleOption,
   toggleState,
-  toggledAnswer
+  toggledAnswer,
+  askAnswerValues,
+  canSubmit,
+  chooseAt,
+  chosenAt,
+  isAnsweredAt,
+  optionStateAt,
+  questionIndex,
+  questionStepLine,
+  stepQuestion,
+  togglesAt,
+  type AskAnswers
 } from './questionAnswer'
 
 /*
@@ -520,5 +531,193 @@ describe('textAnswerRequest (#481)', () => {
 
   it('repeats the words exactly, so main types what the person wrote', () => {
     expect(textAnswerRequest('d', question(), '  two  spaces  ').text).toBe('  two  spaces  ')
+  })
+})
+
+/* --- A call that asks several questions (#443) — one block, appended ------- */
+
+/*
+ * The card walks the call one question at a time and sends ONE answer for all
+ * of them. What is easy to get wrong in a template is pinned here instead: a
+ * choice belongs to one question of one ask, nothing is sendable with a gap,
+ * and the answer carries a key per question.
+ */
+function pair(overrides: Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel'>> = {}) {
+  return question({
+    ...overrides,
+    questions: [
+      {
+        question: 'Which database?',
+        header: 'Storage',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      },
+      {
+        question: 'Which regions?',
+        multiSelect: true,
+        options: [{ label: 'East' }, { label: 'West' }, { label: 'North' }]
+      }
+    ]
+  })
+}
+
+describe('questionIndex and stepQuestion (#443)', () => {
+  it('starts every ask on its first question', () => {
+    expect(questionIndex(null, pair())).toBe(0)
+  })
+
+  it('moves forward and back, and never past either end', () => {
+    const ask = pair()
+    const second = stepQuestion(null, ask, 1)
+    expect(questionIndex(second, ask)).toBe(1)
+    expect(questionIndex(stepQuestion(second, ask, 1), ask)).toBe(1)
+    expect(questionIndex(stepQuestion(second, ask, -1), ask)).toBe(0)
+    expect(questionIndex(stepQuestion(null, ask, -1), ask)).toBe(0)
+  })
+
+  it('starts a different ask on its first question, wherever the last one was', () => {
+    const moved = stepQuestion(null, pair(), 1)
+    expect(questionIndex(moved, pair({ toolUseId: 'toolu_02' }))).toBe(0)
+  })
+
+  it('says which question of how many, counted from one', () => {
+    expect(questionStepLine(0, 2)).toBe('Question 1 of 2')
+    expect(questionStepLine(3, 4)).toBe('Question 4 of 4')
+  })
+})
+
+describe('chooseAt and chosenAt (#443)', () => {
+  it('keeps a choice on the question it was made for, never on the next one', () => {
+    const answers = chooseAt(null, pair(), 0, 'Postgres')
+    expect(chosenAt(answers, 'toolu_01', 0)).toEqual(['Postgres'])
+    expect(chosenAt(answers, 'toolu_01', 1)).toEqual([])
+    expect(optionStateAt(answers, pair(), 1, 'East')).toBe('base')
+  })
+
+  it('keeps a choice on the ask it was made for, never on another one', () => {
+    const answers = chooseAt(null, pair(), 0, 'Postgres')
+    expect(chosenAt(answers, 'toolu_02', 0)).toEqual([])
+    expect(optionStateAt(answers, pair({ toolUseId: 'toolu_02' }), 0, 'SQLite')).toBe('base')
+  })
+
+  it('drops every choice of the last ask once another one is chosen for', () => {
+    const first = chooseAt(null, pair(), 0, 'Postgres')
+    const next = chooseAt(first, pair({ toolUseId: 'toolu_02' }), 1, 'East')
+    expect(chosenAt(next, 'toolu_01', 0)).toEqual([])
+    expect(chosenAt(next, 'toolu_02', 1)).toEqual(['East'])
+  })
+
+  it('replaces a single-select choice, and clears it on a second click', () => {
+    const ask = pair()
+    const once = chooseAt(null, ask, 0, 'Postgres')
+    const replaced = chooseAt(once, ask, 0, 'SQLite')
+    expect(chosenAt(replaced, 'toolu_01', 0)).toEqual(['SQLite'])
+    expect(optionStateAt(replaced, ask, 0, 'Postgres')).toBe('dimmed')
+    expect(chosenAt(chooseAt(replaced, ask, 0, 'SQLite'), 'toolu_01', 0)).toEqual([])
+  })
+
+  it('leaves a choice on one question untouched by a choice on another', () => {
+    const ask = pair()
+    const both = chooseAt(chooseAt(null, ask, 0, 'Postgres'), ask, 1, 'West')
+    expect(chosenAt(both, 'toolu_01', 0)).toEqual(['Postgres'])
+    expect(chosenAt(both, 'toolu_01', 1)).toEqual(['West'])
+  })
+
+  it('keeps a HELD multi-select question on the single-choice gesture', () => {
+    // The held channel takes one label per question, the rule answerRequest's
+    // own block pins: how the agent's picker joins several is unmeasured.
+    const ask = pair()
+    expect(togglesAt(ask, 1)).toBe(false)
+    const answers = chooseAt(chooseAt(null, ask, 1, 'East'), ask, 1, 'West')
+    expect(chosenAt(answers, 'toolu_01', 1)).toEqual(['West'])
+  })
+
+  it('toggles a multi-select question where the gesture is measured', () => {
+    const ask = pair({ channel: 'terminal' })
+    expect(togglesAt(ask, 0)).toBe(false)
+    expect(togglesAt(ask, 1)).toBe(true)
+    const answers = chooseAt(chooseAt(null, ask, 1, 'North'), ask, 1, 'East')
+    expect(chosenAt(answers, 'toolu_01', 1)).toEqual(['North', 'East'])
+    expect(optionStateAt(answers, ask, 1, 'West')).toBe('base')
+    expect(chosenAt(chooseAt(answers, ask, 1, 'North'), 'toolu_01', 1)).toEqual(['East'])
+  })
+})
+
+describe('isAnsweredAt and canSubmit (#443)', () => {
+  const ask = pair()
+
+  it('cannot submit before anything is chosen', () => {
+    expect(canSubmit(null, ask)).toBe(false)
+  })
+
+  it('cannot submit with any question unanswered, whichever one it is', () => {
+    const firstOnly = chooseAt(null, ask, 0, 'Postgres')
+    const secondOnly = chooseAt(null, ask, 1, 'East')
+    expect(isAnsweredAt(firstOnly, 'toolu_01', 0)).toBe(true)
+    expect(isAnsweredAt(firstOnly, 'toolu_01', 1)).toBe(false)
+    expect(canSubmit(firstOnly, ask)).toBe(false)
+    expect(canSubmit(secondOnly, ask)).toBe(false)
+  })
+
+  it('can submit once every question has an answer', () => {
+    const complete = chooseAt(chooseAt(null, ask, 0, 'SQLite'), ask, 1, 'East')
+    expect(canSubmit(complete, ask)).toBe(true)
+  })
+
+  it('cannot submit again once a choice was cleared', () => {
+    const complete = chooseAt(chooseAt(null, ask, 0, 'SQLite'), ask, 1, 'East')
+    expect(canSubmit(chooseAt(complete, ask, 1, 'East'), ask)).toBe(false)
+  })
+
+  it('counts a toggled question answered with one label on', () => {
+    const terminal = pair({ channel: 'terminal' })
+    const answers = chooseAt(chooseAt(null, terminal, 0, 'SQLite'), terminal, 1, 'West')
+    expect(canSubmit(answers, terminal)).toBe(true)
+  })
+
+  it('never counts answers given for another ask', () => {
+    const complete = chooseAt(chooseAt(null, ask, 0, 'SQLite'), ask, 1, 'East')
+    expect(canSubmit(complete, pair({ toolUseId: 'toolu_02' }))).toBe(false)
+  })
+})
+
+describe('askAnswerValues (#443)', () => {
+  it('has nothing to send while any question is unanswered', () => {
+    const ask = pair()
+    expect(askAnswerValues(null, ask)).toBeNull()
+    expect(askAnswerValues(chooseAt(null, ask, 0, 'Postgres'), ask)).toBeNull()
+  })
+
+  it('carries one value per question, in the call’s own order', () => {
+    const ask = pair()
+    const answers: AskAnswers | null = chooseAt(chooseAt(null, ask, 1, 'West'), ask, 0, 'Postgres')
+    expect(askAnswerValues(answers, ask)).toEqual(['Postgres', 'West'])
+  })
+
+  it('joins a toggled question’s labels in the ask’s option order, as toggledAnswer does', () => {
+    const ask = pair({ channel: 'terminal' })
+    const answers = chooseAt(
+      chooseAt(chooseAt(null, ask, 0, 'SQLite'), ask, 1, 'North'),
+      ask,
+      1,
+      'East'
+    )
+    expect(askAnswerValues(answers, ask)).toEqual(['SQLite', joinAnswerLabels(['East', 'North'])])
+  })
+})
+
+describe('answerRequest for several questions (#443)', () => {
+  it('fills one key per question text, each with its own answer', () => {
+    expect(answerRequest('claude:s1', pair(), ['Postgres', 'West'])).toEqual({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Which database?': 'Postgres', 'Which regions?': 'West' }
+    })
+  })
+
+  it('reads a lone label as the answer to a one-question call, exactly as before', () => {
+    expect(answerRequest('claude:s1', question(), ['SQLite'])).toEqual(
+      answerRequest('claude:s1', question(), 'SQLite')
+    )
   })
 })

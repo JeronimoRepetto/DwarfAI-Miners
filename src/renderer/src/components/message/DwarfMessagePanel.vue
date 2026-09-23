@@ -38,6 +38,7 @@ import {
 import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
 import { tailArrivals } from '../../lib/message/entryArrival'
 import { isOpenablePath } from '../../lib/message/openablePath'
+import type { AskAnswer } from '../../lib/question/questionAnswer'
 import { turnOutcomeLine } from '../../lib/message/turnOutcome'
 import { dwarfWorkplaceLabel } from '../../lib/worktree'
 import {
@@ -154,8 +155,12 @@ const emit = defineEmits<{
   send: [payload: { text: string; pressEnter: boolean; attachments?: readonly DwarfAttachment[] }]
   kick: []
   close: []
-  /** One of the agent's own option labels, once Enter confirmed it. */
-  answer: [label: string]
+  /**
+   * One of the agent's own option labels, once Enter confirmed it — or, for a
+   * call that asked several questions, one value per question once its Submit
+   * was pressed (#443, see AskAnswer).
+   */
+  answer: [answer: AskAnswer]
   /**
    * An answer in the person's own words, for the row the session's own picker
    * offers for exactly that (#481). A sibling of `answer` and not of `send`:

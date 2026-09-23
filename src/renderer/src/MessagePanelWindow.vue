@@ -15,6 +15,7 @@ import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
 import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from './lib/message/feedPages'
 import { messageSurfaceMotion } from './lib/message/surfaceMotion'
+import type { AskAnswer } from './lib/question/questionAnswer'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import {
   createBoundedMotion,
@@ -843,9 +844,11 @@ function kickDwarf(dwarf: Dwarf): void {
  *
  * The question itself is never touched here. It is drawn from the dwarf's own
  * `pendingQuestion` on the latest snapshot, and only main's next snapshot may
- * drop it — the panel's part ends at handing the choice over.
+ * drop it — the panel's part ends at handing the choice over. A call that
+ * asked several questions arrives as one value per question (#443), and still
+ * leaves as one answer.
  */
-function answerQuestion(dwarf: Dwarf, label: string): void {
+function answerQuestion(dwarf: Dwarf, label: AskAnswer): void {
   if (dwarf.pendingQuestion === undefined) return
   void answerDwarfQuestion(dwarf.id, dwarf.pendingQuestion, label)
 }
