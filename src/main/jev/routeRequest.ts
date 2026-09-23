@@ -7,6 +7,7 @@ import type {
   ModelTier
 } from '../domain/types'
 import type { ModelCapabilityEntry } from './capabilities/modelCapability'
+import { PROVIDER_TOOLING_MARKERS } from './capabilities/providerTooling'
 import type {
   JevChoiceCriteria,
   JevModelCandidateCriteria,
@@ -189,27 +190,40 @@ const HELD_TOOLING_NOTE: Readonly<Record<DwarfProvider, string>> = {
     'Runs detached — started and then let go of, better suited to a task you check back on than one you watch live; the panel can continue the same session afterward.'
 }
 
-/** Two examples per provider that lean on the held/detached difference above — the same product-default caveat. */
+/**
+ * Two examples per provider. The first still leans on the held/detached
+ * difference (`HELD_TOOLING_NOTE`'s own caveat). The second is #625's own
+ * fix, worked example for worked example: a prompt that NAMES the
+ * provider's own distinctive tool (`PROVIDER_TOOLING_MARKERS`,
+ * capabilities/providerTooling.ts), in the exact register of the prompt
+ * issue #625 was filed over ("Before proposing any plan, call the
+ * `request_user_input` tool ONCE with three questions…", routed to Claude at
+ * 0.68 confidence because nothing here named Codex's own tool). Antigravity
+ * keeps its old second example — no verified tooling markers exist for it
+ * yet (`providerTooling.ts`'s own comment says why), and inventing one here
+ * would be exactly the guess the evidence rule forbids.
+ */
 const PROVIDER_EXAMPLES: Readonly<Record<DwarfProvider, readonly [string, string]>> = {
   claude: [
     'Keep working on this while I watch and steer as you go.',
-    'Investigate this bug and talk me through what you find.'
+    'Before proposing any plan, call the AskUserQuestion tool once with three questions.'
   ],
   codex: [
     'Take care of this in the background — I will check back later.',
-    'Run this migration and report back once it is done.'
+    'Before proposing any plan, call the request_user_input tool once with three questions.'
   ],
   antigravity: [
     'Take care of this in the background — I will check back later.',
     'Run this migration and report back once it is done.'
   ],
-  // #547 (was: ['', ''], "Never launchable — never reached"). Two examples in
-  // the same detached register Codex's own pair already uses above — #534
-  // put OpenCode on identical tooling terms to Codex (started, let go of),
-  // so the same two prompts fit it for the same reason they fit Codex.
+  // AMENDED for #625 (was: the same two detached-register prompts Codex's own
+  // pair used, #547's own reasoning for putting OpenCode on identical tooling
+  // terms). The second example now names OpenCode's own distinctive `question`
+  // tool instead — the same fix the other two launchable providers get, and
+  // the reason the three no longer read byte-identical.
   opencode: [
     'Take care of this in the background — I will check back later.',
-    'Run this migration and report back once it is done.'
+    'Before proposing any plan, call the question tool once with three questions.'
   ]
 }
 
@@ -237,7 +251,84 @@ function hasAnyLaunchTarget(entries: Readonly<Record<string, ModelCapabilityEntr
   return Object.values(entries).some((entry) => entry.launchTarget)
 }
 
-/** One provider's own `provider` Choice option, built from PRODUCT_NAME and its capability table's own offered tiers — never from a model name (see this module's own top comment). */
+/**
+ * Every name `field` (`toolNames` or `instructionFiles`) carries for a
+ * provider OTHER than `provider`, across the WHOLE `PROVIDER_TOOLING_MARKERS`
+ * table (#625) — every provider this app knows about, not just whichever
+ * happen to be offered in one particular request, since a name's shared
+ * status is a fact about the evidence, not about who is asking this time.
+ * What makes a shared marker (`apply_patch`, `AGENTS.md`) computed rather
+ * than hand-flagged, so a future provider adding the same name can never
+ * leave a stale "exclusive" claim behind.
+ */
+function otherProvidersMarkerNames(
+  provider: DwarfProvider,
+  field: 'toolNames' | 'instructionFiles'
+): ReadonlySet<string> {
+  const names = (Object.keys(PROVIDER_TOOLING_MARKERS) as DwarfProvider[])
+    .filter((candidate) => candidate !== provider)
+    .flatMap((candidate) => PROVIDER_TOOLING_MARKERS[candidate]?.[field] ?? [])
+  return new Set(names)
+}
+
+/**
+ * `provider`'s own names in `field` that no OTHER provider's sourced table
+ * also carries (#625) — the shared-marker honesty rule the issue's own scope
+ * demands for `AGENTS.md`, made structural rather than prose someone has to
+ * remember to write correctly per provider. Exported for the tests that pin
+ * both halves of it: a distinctive name reaching the wire, and a shared one
+ * never being claimed exclusive.
+ */
+export function distinctiveToolingNames(
+  provider: DwarfProvider,
+  field: 'toolNames' | 'instructionFiles'
+): readonly string[] {
+  const others = otherProvidersMarkerNames(provider, field)
+  const own = PROVIDER_TOOLING_MARKERS[provider]?.[field] ?? []
+  return own.filter((name) => !others.has(name))
+}
+
+/** Renders one marker group (`toolNames` or `instructionFiles`) as a joined, backtick-quoted list — a shared name gets an honest "(shared with another provider offered here)" suffix instead of being presented as exclusive. */
+function describeMarkerNames(names: readonly string[], distinctive: ReadonlySet<string>): string {
+  return names
+    .map((name) =>
+      distinctive.has(name)
+        ? `\`${name}\``
+        : `\`${name}\` (shared with another provider offered here)`
+    )
+    .join(' and ')
+}
+
+/**
+ * One provider's SOURCED tooling markers (#625), rendered into
+ * `providerChoiceCriteria`'s own `what` sentence — the tool names and
+ * instruction files that let a prompt naming them (Codex's own
+ * `request_user_input`, Claude Code's own `AskUserQuestion`) route to the
+ * right provider, instead of session style alone (issue #625's own reported
+ * root cause). Empty string for a provider with no verified markers yet
+ * (Antigravity today — `providerTooling.ts`'s own top comment says why): the
+ * held/detached sentence above still names the provider without it, the same
+ * degrade-rather-than-invent rule the rest of this table already holds to.
+ */
+function describeToolingMarkers(provider: DwarfProvider): string {
+  const markers = PROVIDER_TOOLING_MARKERS[provider]
+  if (!markers) return ''
+  const toolNames = describeMarkerNames(
+    markers.toolNames,
+    new Set(distinctiveToolingNames(provider, 'toolNames'))
+  )
+  const instructionFiles = describeMarkerNames(
+    markers.instructionFiles,
+    new Set(distinctiveToolingNames(provider, 'instructionFiles'))
+  )
+  const toolsSentence = toolNames ? ` Its own tools include ${toolNames}.` : ''
+  const filesSentence = instructionFiles
+    ? ` It reads ${instructionFiles} for project instructions.`
+    : ''
+  return `${toolsSentence}${filesSentence}`
+}
+
+/** One provider's own `provider` Choice option, built from PRODUCT_NAME, its capability table's own offered tiers, and its sourced tooling markers — never from a model name (see this module's own top comment). */
 function providerChoiceCriteria(
   provider: DwarfProvider,
   capabilities: JevCapabilityTable
@@ -252,7 +343,7 @@ function providerChoiceCriteria(
     )
   )
   return {
-    what: `${PRODUCT_NAME[provider]} — ${HELD_TOOLING_NOTE[provider]} Offers ${describeTierList(offeredTiers)}.`,
+    what: `${PRODUCT_NAME[provider]} — ${HELD_TOOLING_NOTE[provider]} Offers ${describeTierList(offeredTiers)}.${describeToolingMarkers(provider)}`,
     examples: PROVIDER_EXAMPLES[provider]
   }
 }
