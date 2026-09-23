@@ -192,6 +192,16 @@ export function textAnswerRequest(
  * `ask` is `null` for a prompt that is not a question at all: a permission
  * dialog's y/n has no Other row, so there is nothing for a box there to reach.
  *
+ * - `'closed'` — an OpenCode permission dialog (#588 T5). No question has ever
+ *   reached this channel (only OpenCode's own permission asks stamp it), so
+ *   this is reached from the permission card alone. It is NOT the same
+ *   refusal as `'picker'`: there is no console reading stray keys here, so
+ *   `TYPED_HERE_REACHES_THE_PICKER` would be a claim about a picker that does
+ *   not exist (review finding F2). What is real, and measured
+ *   (docs/opencode-format.md Row 13), is that a message sent while this
+ *   dialog is open risks racing a second `opencode run --session` against the
+ *   turn that is still waiting — see OPENCODE_PERMISSION_ANSWERED_ABOVE.
+ *
  * Off the prompt's own `channel` and nothing weaker, exactly as the cards'
  * other terminal rules are: that field is main's own reading of where the
  * prompt is being drawn, and the renderer may not re-derive it (see
@@ -200,13 +210,14 @@ export function textAnswerRequest(
  * from, because a box a person may type into that main would then refuse is
  * the worse of the two failures available here.
  */
-export type FreeTextRoute = 'message' | 'answer' | 'picker'
+export type FreeTextRoute = 'message' | 'answer' | 'picker' | 'closed'
 
 export function freeTextRoute(
   channel: DwarfPromptChannel,
   ask: DwarfQuestion | null
 ): FreeTextRoute {
-  if (channel !== 'terminal') return 'message'
+  if (channel === 'held') return 'message'
+  if (channel === 'opencode-permission') return 'closed'
   return ask !== null && askHasAReachableOtherRow(ask) ? 'answer' : 'picker'
 }
 
@@ -381,6 +392,17 @@ export const PERMISSION_TYPED_LINE = 'Typed at the terminal — waiting for the 
 export const PERMISSION_ESCAPED_LINE =
   'Typed Esc at the terminal — if the prompt was already answered there, ' +
   'this interrupts the turn instead.'
+/**
+ * The OpenCode channel's own sentence (#588 T5) — weaker than the held
+ * channel's PERMISSION_RELEASED_LINE (this app posted to a server it does not
+ * own, not released a call through a stream it does), and different evidence
+ * from the terminal channel's typed-keystroke pair: OpenCode's own reply
+ * vocabulary ('once'/'reject') carries no second meaning the way Esc does, so
+ * one line serves both Allow and Deny rather than needing PERMISSION_ESCAPED_
+ * LINE's own warning.
+ */
+export const PERMISSION_SENT_TO_OPENCODE_LINE =
+  "Sent to OpenCode's own server — waiting for the session to act on it."
 
 /**
  * The line the panel shows under a released decision, or null when there is
@@ -398,6 +420,7 @@ export function permissionStatusLine(
 ): string | null {
   if (state?.phase !== 'answered') return null
   if (channel === 'held') return PERMISSION_RELEASED_LINE
+  if (channel === 'opencode-permission') return PERMISSION_SENT_TO_OPENCODE_LINE
   // Allow's wording is the fallback for a verdict carrying no decision, which
   // `decide` never produces: it claims a keypress and nothing about a turn,
   // so it is the one that cannot overstate.

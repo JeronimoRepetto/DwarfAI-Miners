@@ -3,6 +3,7 @@ import {
   HOOK_MARKER,
   HOOK_ROUTE,
   HOOK_TOKEN_HEADER,
+  OPENCODE_PUSH_ROUTE,
   buildHookCommand,
   curlBinaryFor,
   isOurHookCommand
@@ -97,5 +98,12 @@ describe('isOurHookCommand', () => {
 
   it.each([undefined, null, 42, {}, []])('treats the non-string %s as foreign', (value) => {
     expect(isOurHookCommand(value)).toBe(false)
+  })
+})
+
+describe('OPENCODE_PUSH_ROUTE', () => {
+  it('nests under the same marker as the Claude route, so one listener plainly serves both (#588 T3)', () => {
+    expect(OPENCODE_PUSH_ROUTE.startsWith(HOOK_ROUTE)).toBe(true)
+    expect(OPENCODE_PUSH_ROUTE).not.toBe(HOOK_ROUTE)
   })
 })

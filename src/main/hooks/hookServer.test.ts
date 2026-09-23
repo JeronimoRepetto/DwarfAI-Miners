@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { HOOK_ROUTE, HOOK_TOKEN_HEADER } from './hookCommand'
+import { HOOK_ROUTE, HOOK_TOKEN_HEADER, OPENCODE_PUSH_ROUTE } from './hookCommand'
 import type { HookEvent } from './hookPayload'
+import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
 import { MAX_HOOK_BODY_BYTES, HookServer } from './hookServer'
 
 const TOKEN = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
@@ -178,6 +179,148 @@ describe('HookServer', () => {
   })
 })
 
+describe('HookServer OpenCode push route (#588 T3)', () => {
+  let server: HookServer
+  let pushes: OpenCodePermissionPush[]
+
+  beforeEach(async () => {
+    pushes = []
+    server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: () => undefined,
+      onOpenCodePush: (push) => pushes.push(push)
+    })
+    await server.start()
+  })
+
+  afterEach(async () => {
+    await server.stop()
+  })
+
+  function url(path: string = OPENCODE_PUSH_ROUTE): string {
+    return `http://127.0.0.1:${server.port}${path}`
+  }
+
+  async function post(body: string, token: string | null = TOKEN): Promise<Response> {
+    const headers: Record<string, string> = {}
+    if (token !== null) headers[HOOK_TOKEN_HEADER] = token
+    return fetch(url(), { method: 'POST', headers, body })
+  }
+
+  const askedBody = JSON.stringify({
+    event: {
+      type: 'permission.asked',
+      properties: { id: 'per_1', sessionID: 'ses_1', permission: 'bash' }
+    },
+    serverUrl: 'http://127.0.0.1:63417/'
+  })
+
+  it('accepts a well-formed OpenCode push and answers 204 with an empty body', async () => {
+    const response = await post(askedBody)
+    expect(response.status).toBe(204)
+    expect(await response.text()).toBe('')
+    expect(pushes).toEqual([
+      {
+        provider: 'opencode',
+        kind: 'asked',
+        serverUrl: 'http://127.0.0.1:63417/',
+        sessionId: 'ses_1',
+        requestId: 'per_1',
+        permission: 'bash'
+      }
+    ])
+  })
+
+  it.each([
+    ['a wrong token', 'b1b2c3d4e5f60718293a4b5c6d7e8f90'],
+    ['a missing token', null]
+  ])(
+    'checks the same token the Claude route checks: rejects %s with 401',
+    async (_label, token) => {
+      const response = await post(askedBody, token)
+      expect(response.status).toBe(401)
+      expect(pushes).toEqual([])
+    }
+  )
+
+  it('answers 400 for a body the builder rejects, and raises no push', async () => {
+    const response = await post(
+      JSON.stringify({ event: { type: 'session.idle', properties: {} }, serverUrl: 'http://x/' })
+    )
+    expect(response.status).toBe(400)
+    expect(pushes).toEqual([])
+  })
+
+  it('answers 400 for a malformed serverUrl rather than throwing (#588 T3)', async () => {
+    const response = await post(
+      JSON.stringify({
+        event: {
+          type: 'permission.asked',
+          properties: { id: 'p', sessionID: 's', permission: 'bash' }
+        },
+        serverUrl: 'not-a-url'
+      })
+    )
+    expect(response.status).toBe(400)
+    expect(pushes).toEqual([])
+  })
+
+  it('never lets an onOpenCodePush callback failure reach the caller', async () => {
+    const throwing = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: () => undefined,
+      onOpenCodePush: () => {
+        throw new Error('registry exploded')
+      }
+    })
+    await throwing.start()
+    try {
+      const response = await fetch(`http://127.0.0.1:${throwing.port}${OPENCODE_PUSH_ROUTE}`, {
+        method: 'POST',
+        headers: { [HOOK_TOKEN_HEADER]: TOKEN },
+        body: askedBody
+      })
+      expect(response.status).toBe(204)
+    } finally {
+      await throwing.stop()
+    }
+  })
+
+  it('answers normally when no listener was given for it -- the push is simply not held', async () => {
+    const silent = new HookServer({ port: 0, token: TOKEN, onEvent: () => undefined })
+    await silent.start()
+    try {
+      const response = await fetch(`http://127.0.0.1:${silent.port}${OPENCODE_PUSH_ROUTE}`, {
+        method: 'POST',
+        headers: { [HOOK_TOKEN_HEADER]: TOKEN },
+        body: askedBody
+      })
+      expect(response.status).toBe(204)
+    } finally {
+      await silent.stop()
+    }
+  })
+
+  it('answers a GET on the Claude route with 404, same as before the OpenCode route existed (already covered by the GET/PUT/DELETE cases above; pinned again here so this describe block, which is what would catch the new route breaking it, keeps its own assertion)', async () => {
+    const response = await fetch(url(HOOK_ROUTE), { method: 'GET' })
+    expect(response.status).toBe(404)
+  })
+
+  it('rejects an unauthenticated request to an unknown path with 404, not 401 -- route rejection still happens before the token check now that readBody() is shared by two routes (#588 review D3)', async () => {
+    // Unlike the cases above, this sends NO token at all, to a path neither
+    // route recognises. The 401 branch lives inside readBody(), which
+    // handle() only ever reaches for a matched route -- so an unmatched path
+    // must 404 regardless of whether a token was sent, exactly as it did
+    // before this route was added. That ordering is what a later refactor
+    // sharing readBody() further could silently invert.
+    const response = await fetch(url('/not-a-real-route'), { method: 'POST', body: askedBody })
+    expect(response.status).toBe(404)
+    expect(pushes).toEqual([])
+  })
+})
+
 describe('HookServer bind failures', () => {
   it('rejects when the port is already taken, leaving nothing listening', async () => {
     const first = new HookServer({ port: 0, token: TOKEN, onEvent: () => undefined })
@@ -195,5 +338,90 @@ describe('HookServer bind failures', () => {
   it('refuses to start without a token rather than accepting every caller', async () => {
     const insecure = new HookServer({ port: 0, token: '', onEvent: () => undefined })
     await expect(insecure.start()).rejects.toThrow(/token/i)
+  })
+})
+
+describe('HookServer route gate (#588 T6, F5)', () => {
+  // Each route is served only while its own channel is on: one listener, two
+  // consents. A closed route answers exactly like a path that never existed
+  // (404, token or not), so a caller cannot even learn the route is there.
+  const stopBody = JSON.stringify({ session_id: 's', hook_event_name: 'Stop' })
+  const askedBody = JSON.stringify({
+    event: {
+      type: 'permission.asked',
+      properties: { id: 'per_1', sessionID: 'ses_1', permission: 'bash' }
+    },
+    serverUrl: 'http://127.0.0.1:63417/'
+  })
+
+  async function postTo(server: HookServer, path: string, body: string): Promise<Response> {
+    return fetch(`http://127.0.0.1:${server.port}${path}`, {
+      method: 'POST',
+      headers: { [HOOK_TOKEN_HEADER]: TOKEN },
+      body
+    })
+  }
+
+  it('answers a closed OpenCode route with 404 and holds no push, while the Claude route still works', async () => {
+    const events: HookEvent[] = []
+    const pushes: OpenCodePermissionPush[] = []
+    const server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: (event) => events.push(event),
+      onOpenCodePush: (push) => pushes.push(push),
+      isRouteOpen: (route) => route === 'claude'
+    })
+    await server.start()
+    try {
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(404)
+      expect(pushes).toEqual([])
+      expect((await postTo(server, HOOK_ROUTE, stopBody)).status).toBe(204)
+      expect(events).toHaveLength(1)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('answers a closed Claude route with 404 and raises no event, while the OpenCode route still works', async () => {
+    const events: HookEvent[] = []
+    const pushes: OpenCodePermissionPush[] = []
+    const server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: (event) => events.push(event),
+      onOpenCodePush: (push) => pushes.push(push),
+      isRouteOpen: (route) => route === 'opencode'
+    })
+    await server.start()
+    try {
+      expect((await postTo(server, HOOK_ROUTE, stopBody)).status).toBe(404)
+      expect(events).toEqual([])
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(204)
+      expect(pushes).toHaveLength(1)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('reads the gate on every request, so a route opened after start is served without a restart', async () => {
+    const open = new Set<string>()
+    const pushes: OpenCodePermissionPush[] = []
+    const server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: () => undefined,
+      onOpenCodePush: (push) => pushes.push(push),
+      isRouteOpen: (route) => open.has(route)
+    })
+    await server.start()
+    try {
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(404)
+      open.add('opencode')
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(204)
+      expect(pushes).toHaveLength(1)
+    } finally {
+      await server.stop()
+    }
   })
 })

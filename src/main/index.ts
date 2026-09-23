@@ -55,8 +55,11 @@ import type {
   JevRouteLaunchResult,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  JevSettings
+  JevSettings,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  OpenCodeSettings
+  /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -81,8 +84,11 @@ import {
   parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  parseJevPreferences
+  parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  parseOpenCodeServerPasswordInput
+  /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../shared/contracts'
 import { describeAttachments, type AttachmentFilePort } from './textDelivery/attachmentFiles'
 import type { AttachmentReader } from './textDelivery/attachmentDelivery'
@@ -108,6 +114,13 @@ import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { DelegationService } from './mcp/delegationService'
 import { delegationFailure } from './mcp/delegationServerProtocol'
+import { HookListener } from './hooks/hookListener'
+import type { HookEvent } from './hooks/hookPayload'
+import { OpenCodePluginChannel } from './opencodePermissions/openCodePluginChannel'
+import { openCodeGlobalPluginDir } from './opencodePermissions/openCodePluginInstaller'
+import { createOpenCodeServerPasswordStore } from './opencodePermissions/openCodeServerPassword'
+import { createOpenCodePermissionAnswerPort } from './opencodePermissions/answerOpenCodePermission'
+import type { OpenCodePermissionPush } from './opencodePermissions/permissionPushPayload'
 import { NodeFs } from './adapters/fsLike'
 import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
@@ -189,6 +202,13 @@ let hooks: HookChannel | null = null
  * through the closures the `delegation` option below hands it.
  */
 let delegationService: DelegationService | null = null
+/**
+ * The one loopback listener both push channels share (#588 T6, F5), and the
+ * OpenCode permission relay that opens its second route. Module scope for the
+ * same reason `hooks` is: the quit handler releases the port.
+ */
+let hookListener: HookListener | null = null
+let openCodePlugin: OpenCodePluginChannel | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
@@ -292,6 +312,12 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setNotificationsEnabled)
   ipcMain.removeAllListeners(IPC_CHANNELS.setOpenMine)
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  ipcMain.removeHandler(IPC_CHANNELS.getOpenCodeSettings)
+  ipcMain.removeHandler(IPC_CHANNELS.setOpenCodePluginEnabled)
+  ipcMain.removeHandler(IPC_CHANNELS.setOpenCodeServerPassword)
+  ipcMain.removeHandler(IPC_CHANNELS.clearOpenCodeServerPassword)
+  /* --- end of the #588 T6 block --------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   ipcMain.removeHandler(IPC_CHANNELS.getJevSettings)
   ipcMain.removeHandler(IPC_CHANNELS.setJevApiKey)
@@ -754,6 +780,19 @@ async function init(): Promise<void> {
   await jevApiKeyStore.load()
   /* --- end of the #509 block ------------------------------------------------ */
 
+  /* --- OpenCode permission relay: the server password (#588 T6, F1) — one block, appended --- */
+  // Primed here for the reason the Jev key is: the answer port below reads
+  // the decrypted password synchronously through readPassword(), and a
+  // permission can be answered before Settings is ever opened this session.
+  // Never read from this process's environment (see openCodeServerPassword.ts).
+  const openCodePasswordStore = createOpenCodeServerPasswordStore({
+    userDataDir: app.getPath('userData')
+  })
+  await openCodePasswordStore.load()
+  /** Why the OpenCode relay is not on when it was asked to be; see its IPC handlers below. */
+  let openCodePluginError: string | undefined
+  /* --- end of the #588 T6 block --------------------------------------------- */
+
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
   // Composed beside the key store rather than merged into it: two different
   // files on disk (a secret and a preference, `config-layering`'s own split),
@@ -1048,6 +1087,11 @@ async function init(): Promise<void> {
       waitEnded: (ticket) => delegationService?.waitEnded(ticket)
     },
     /* --- end of the #511 T4 block ---------------------------------------------- */
+    // #588 T6 (F1): the answer port reads the Settings password, on every
+    // answer, and sends it only to a loopback OpenCode server.
+    answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
+      readPassword: openCodePasswordStore.readPassword
+    }),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the
@@ -1163,34 +1207,70 @@ async function init(): Promise<void> {
     })
     .catch((error: unknown) => console.warn('[coal] Historical backfill failed:', error))
 
-  // Optional push channel. Nothing binds a port and nothing is written to the
-  // user's Claude configuration until they tick the tray item; restore() only
-  // brings back a choice they already made on a previous launch.
+  // Optional push channels. Nothing binds a port and nothing is written to the
+  // user's Claude or OpenCode configuration until they opt in — the Claude
+  // hooks from the tray, the OpenCode permission relay from Settings — and
+  // restore() only brings back a choice they already made on a previous
+  // launch. The two share ONE listener, and each opens only its own route on
+  // it (#588 T6, F5): neither provider is a prerequisite for the other.
+  const hookFs = new NodeHookFs()
+  const onHookEvent = (event: HookEvent): void => {
+    // The notification type is the whole point of reading it (issue #94):
+    // 'agent_needs_input' and 'idle_prompt' arrive as the same event name and
+    // mean opposite things, and the log is where that first becomes visible.
+    const kind = event.notificationType === undefined ? '' : ` (${event.notificationType})`
+    console.log(`[hooks] ${event.event}${kind}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`)
+    // Recorded before the rescan is asked for, so the poll it triggers is
+    // already the one that draws the mark (#203). What the runtime does with
+    // an event is its own business: this boundary reads the payload and
+    // hands it over whole.
+    runtime?.noteHookEvent(event)
+    runtime?.nudge()
+  }
+  // The OpenCode plugin's own push (#588 T3 carries the route, T4 is the
+  // first consumer): recorded on OpenCodePermissionRegistry the same way
+  // onHookEvent above records onto PermissionPromptRegistry, and nudged for
+  // the same reason — an ask should reach the panel as fast as Claude's own
+  // hook does, not wait for the next ordinary poll.
+  const onOpenCodePush = (push: OpenCodePermissionPush): void => {
+    runtime?.noteOpenCodePush(push)
+    runtime?.nudge()
+  }
+  hookListener = new HookListener({
+    fs: hookFs,
+    userDataDir: app.getPath('userData'),
+    port: config.hooksPort,
+    onEvent: onHookEvent,
+    onOpenCodePush,
+    log: (message) => console.log(message),
+    warn: warnWithOptionalCause
+  })
   hooks = new HookChannel({
-    fs: new NodeHookFs(),
+    fs: hookFs,
     roots: config.providers.claude.configDirs.map((path) => expandHomePath(path)),
     userDataDir: app.getPath('userData'),
     port: config.hooksPort,
     platform: process.platform,
-    onEvent: (event) => {
-      // The notification type is the whole point of reading it (issue #94):
-      // 'agent_needs_input' and 'idle_prompt' arrive as the same event name and
-      // mean opposite things, and the log is where that first becomes visible.
-      const kind = event.notificationType === undefined ? '' : ` (${event.notificationType})`
-      console.log(
-        `[hooks] ${event.event}${kind}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`
-      )
-      // Recorded before the rescan is asked for, so the poll it triggers is
-      // already the one that draws the mark (#203). What the runtime does with
-      // an event is its own business: this boundary reads the payload and
-      // hands it over whole.
-      runtime?.noteHookEvent(event)
-      runtime?.nudge()
-    },
+    onEvent: onHookEvent,
+    listener: hookListener,
     log: (message) => console.log(message),
     warn: warnWithOptionalCause
   })
   await hooks.restore()
+  openCodePlugin = new OpenCodePluginChannel({
+    fs: hookFs,
+    // OpenCode's own resolution rule, the same on every platform; only the
+    // path syntax differs, which is why the platform goes in as a value.
+    pluginDir: openCodeGlobalPluginDir(home, process.env, currentPlatform()),
+    userDataDir: app.getPath('userData'),
+    listener: hookListener,
+    log: (message) => console.log(message),
+    warn: warnWithOptionalCause
+  })
+  // A relay that could not come back keeps its opt-in (see restore()) and
+  // draws as off; this is the reason Settings shows beside it until the next
+  // press, rather than a console line nobody reads.
+  openCodePluginError = (await openCodePlugin.restore())?.error
 
   await createTray({ hooks })
 
@@ -1448,6 +1528,68 @@ async function init(): Promise<void> {
     return failure === undefined ? stored : { ...stored, preferencesError: failure }
   })
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+  /**
+   * Settings' OpenCode section. Every channel answers with the state IN FORCE
+   * — whether the relay's route is actually served, and whether a password
+   * is actually stored — never the request, and never the password: it
+   * arrives once on `setOpenCodeServerPassword`, goes into the encrypted
+   * store, and is never logged or answered. A refused relay carries its
+   * reason in `pluginError`, the field `JevSettings.preferencesError` set the
+   * pattern for.
+   */
+  async function openCodeSettings(): Promise<OpenCodeSettings> {
+    const password = await openCodePasswordStore.load()
+    return {
+      pluginEnabled: openCodePlugin?.isActive() ?? false,
+      ...(openCodePluginError === undefined ? {} : { pluginError: openCodePluginError }),
+      passwordConfigured: password.configured,
+      ...(password.unavailableReason === undefined
+        ? {}
+        : { passwordUnavailableReason: password.unavailableReason })
+    }
+  }
+  ipcMain.handle(IPC_CHANNELS.getOpenCodeSettings, () => openCodeSettings())
+  ipcMain.handle(IPC_CHANNELS.setOpenCodePluginEnabled, async (_event, payload: unknown) => {
+    if (typeof payload !== 'boolean' || openCodePlugin === null) return openCodeSettings()
+    try {
+      if (payload) {
+        const result = await openCodePlugin.enable()
+        openCodePluginError = result.enabled ? undefined : result.error
+        if (!result.enabled)
+          console.warn(`[opencode] Permission relay not enabled: ${result.error}`)
+      } else {
+        await openCodePlugin.disable()
+        openCodePluginError = undefined
+      }
+    } catch (error) {
+      openCodePluginError = error instanceof Error ? error.message : String(error)
+      console.warn('[opencode] Permission relay switch failed:', error)
+    }
+    return openCodeSettings()
+  })
+  ipcMain.handle(IPC_CHANNELS.setOpenCodeServerPassword, async (_event, payload: unknown) => {
+    try {
+      const result = await openCodePasswordStore.save(parseOpenCodeServerPasswordInput(payload))
+      if (!result.saved) console.warn(`[opencode] Server password not saved: ${result.reason}`)
+    } catch (error) {
+      // The shared parser's messages name the rule broken, never the value.
+      console.warn(
+        `[opencode] Refused to save a server password: ${error instanceof Error ? error.message : 'unknown'}`
+      )
+    }
+    return openCodeSettings()
+  })
+  ipcMain.handle(IPC_CHANNELS.clearOpenCodeServerPassword, async () => {
+    try {
+      await openCodePasswordStore.clear()
+    } catch (error) {
+      // Already gone from memory; only the next launch could still read it.
+      console.warn('[opencode] Failed to clear the stored server password:', error)
+    }
+    return openCodeSettings()
+  })
+  /* --- end of the #588 T6 block --------------------------------------------- */
   // The docked shell's own shape (#90). Both channels answer with what the
   // window IS after the move, never the request: main derives the rectangle
   // from the display, so a screen that could not hold the whole composition has
@@ -1918,6 +2060,13 @@ if (!app.requestSingleInstanceLock()) {
     // channel just above — nothing here is written to disk to bring back.
     void delegationService?.stop()
     delegationService = null
+    // Same for the OpenCode relay (#588 T6): the plugin file and its opt-in
+    // stay; a push while the app is closed just fails to connect, which the
+    // plugin already treats as silent. Then the shared port itself.
+    void openCodePlugin?.shutdown()
+    openCodePlugin = null
+    void hookListener?.shutdown()
+    hookListener = null
     // Drops the store's reference. It no longer closes the database — that file
     // is shared with the vault, whose forced final save is still in flight at
     // this point (see the composition block above). Whatever the last poll

@@ -57,8 +57,11 @@ import type {
   JevRouteLaunchResult,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  JevPreferences
+  JevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  OpenCodeSettings
+  /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -76,8 +79,11 @@ import {
   parseJevRouteLaunchRequest,
   /* --- end of the #509 block ------------------------------------------------ */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  parseJevPreferences
+  parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  parseOpenCodeServerPasswordInput
+  /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../shared/contracts'
 
 /**
@@ -573,6 +579,20 @@ export interface DwarfAiMinersApi {
    */
   setJevPreferences: (preferences: JevPreferences) => Promise<JevSettings>
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  /** The relay consent and whether a server password is stored — Settings' OpenCode section. */
+  getOpenCodeSettings: () => Promise<OpenCodeSettings>
+  /** Turn the relay on or off. Resolves with the state IN FORCE, and why when it is not the one asked for. */
+  setOpenCodePluginEnabled: (enabled: boolean) => Promise<OpenCodeSettings>
+  /**
+   * Store the server password. Parsed through the SAME shared parser main
+   * reads before it crosses, so a value main would refuse never reaches the
+   * bridge. Never trimmed. The password itself never comes back.
+   */
+  setOpenCodeServerPassword: (password: string) => Promise<OpenCodeSettings>
+  /** Forget the server password. Resolves with what main STORED. */
+  clearOpenCodeServerPassword: () => Promise<OpenCodeSettings>
+  /* --- end of the #588 T6 block --------------------------------------------- */
 }
 
 const api: DwarfAiMinersApi = {
@@ -985,8 +1005,26 @@ const api: DwarfAiMinersApi = {
   // setAudioPreferences carries: a document the store would degrade anyway
   // never reaches the bridge in a shape main has to fix up first.
   setJevPreferences: (preferences) =>
-    ipcRenderer.invoke(IPC_CHANNELS.setJevPreferences, parseJevPreferences(preferences))
+    ipcRenderer.invoke(IPC_CHANNELS.setJevPreferences, parseJevPreferences(preferences)),
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  getOpenCodeSettings: () => ipcRenderer.invoke(IPC_CHANNELS.getOpenCodeSettings),
+  setOpenCodePluginEnabled: (enabled) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setOpenCodePluginEnabled, enabled === true),
+  // Throws on a password the shared parser refuses, like setJevApiKey: a
+  // rejected promise is the honest end for a value that could not be sent.
+  setOpenCodeServerPassword: (password) => {
+    try {
+      return ipcRenderer.invoke(
+        IPC_CHANNELS.setOpenCodeServerPassword,
+        parseOpenCodeServerPasswordInput(password)
+      )
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  },
+  clearOpenCodeServerPassword: () => ipcRenderer.invoke(IPC_CHANNELS.clearOpenCodeServerPassword)
+  /* --- end of the #588 T6 block --------------------------------------------- */
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -43,7 +43,8 @@ export async function loadOrCreateHookToken(options: HookTokenOptions): Promise<
 
   const token = (options.generate ?? generateToken)()
   await options.fs.ensureDir(dirname(options.path))
-  await options.fs.writeText(options.path, token)
+  // Owner-only (#588 T6 security fix): this file IS the shared secret.
+  await options.fs.writeSecretText(options.path, token)
   return token
 }
 

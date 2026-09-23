@@ -27,6 +27,7 @@ import {
   ANSWER_OPTION_NOT_OFFERED,
   ASK_NO_LONGER_OPEN,
   NOTHING_TYPED_TO_ANSWER_WITH,
+  OPENCODE_PERMISSION_ANSWERED_ABOVE,
   OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
   TYPED_ANSWER_ONLY_AT_A_PICKER,
   TYPED_ANSWER_WOULD_STEER_THE_PICKER,
@@ -94,6 +95,14 @@ import {
 } from '../domain/aggregate'
 import type { HookEvent } from '../hooks/hookPayload'
 import { PermissionPromptRegistry, stampPermissionPrompts } from '../hooks/permissionPrompts'
+import { OpenCodePermissionRegistry } from '../opencodePermissions/openCodePermissionRegistry'
+import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
+import {
+  postOpenCodePermissionDecision,
+  type OpenCodePermissionAnswerFailureReason,
+  type OpenCodePermissionAnswerOutcome,
+  type OpenCodePermissionAnswerPort
+} from '../opencodePermissions/answerOpenCodePermission'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
@@ -390,6 +399,46 @@ const NO_LAUNCH_INBOX =
  */
 const CANNOT_REACH_TERMINAL = 'Could not reach that terminal. Answer the prompt there.'
 const PROMPT_NO_LONGER_OPEN = 'That permission request is no longer open.'
+/**
+ * The things main can say when a decision POSTed to OpenCode's own server
+ * does not end in `answered: true` (#588 T5) — one per
+ * OpenCodePermissionAnswerFailureReason, never a lie in either direction.
+ * Named for the SAME classification vocabulary typesafeJevRouter.ts's own
+ * classifyError uses ('unreachable', 'unauthorized', 'timeout') — it is the
+ * same kind of fact about a network call, and a second spelling of it here
+ * would be how the two come to disagree about what a timeout means.
+ *
+ * `'not-found'` (F3, review finding) reuses PROMPT_NO_LONGER_OPEN rather than
+ * a fifth sentence of its own: OpenCode's own PermissionNotFound means the
+ * prompt this app is about to decide is already gone — answered at the
+ * person's own terminal, or a second panel click racing this one — which is
+ * the exact fact the terminal channel's own PROMPT_NO_LONGER_OPEN already
+ * names above. OPENCODE_DECISION_REFUSED would understate it into "try
+ * again", when trying again cannot work.
+ */
+const OPENCODE_SERVER_UNREACHABLE =
+  "Could not reach OpenCode's own server. The session may have been closed."
+const OPENCODE_SERVER_UNAUTHORIZED =
+  "OpenCode's own server refused this app's credentials for that session."
+const OPENCODE_SERVER_TIMED_OUT =
+  "OpenCode's own server did not answer in time. The prompt may still be open there."
+const OPENCODE_DECISION_REFUSED = "OpenCode's own server did not accept that decision."
+
+/** `openCodePermissionRefusal`'s own switch, kept beside the sentences it chooses between. */
+function openCodePermissionRefusal(reason: OpenCodePermissionAnswerFailureReason): string {
+  switch (reason) {
+    case 'unreachable':
+      return OPENCODE_SERVER_UNREACHABLE
+    case 'unauthorized':
+      return OPENCODE_SERVER_UNAUTHORIZED
+    case 'timeout':
+      return OPENCODE_SERVER_TIMED_OUT
+    case 'refused':
+      return OPENCODE_DECISION_REFUSED
+    case 'not-found':
+      return PROMPT_NO_LONGER_OPEN
+  }
+}
 /**
  * The third, and the one that stands today: nobody has measured a keystroke
  * this dialog accepts on this build (see textDelivery/permissionKeys).
@@ -732,6 +781,17 @@ export interface RuntimeOptions {
    */
   permissionKeystroke?: (decision: DwarfPermissionDecision) => PermissionKeystroke | null
   /**
+   * Answers an OpenCode session's own permission dialog by POSTing the
+   * decision to that ask's own `serverUrl` (#588 T5) — see
+   * docs/opencode-format.md Row 15/16 for the measured endpoint. Injected for
+   * tests, which must never reach a real network; the default POSTs for
+   * real, over plain `fetch`. No per-OS branch, unlike `textDelivery` and
+   * `permissionKeystroke` beside it: the endpoint is an ordinary loopback
+   * HTTP address on every platform, so there is nothing here for
+   * `platformAdapters` to compose.
+   */
+  answerOpenCodePermission?: OpenCodePermissionAnswerPort
+  /**
    * Starts a NEW session in a folder (#86); injected for tests, which must
    * never spawn a real agent. The default drives Claude through its own
    * headless interface, over the binary CLI detection (#91) found.
@@ -975,6 +1035,8 @@ export class AgentRuntime {
   private readonly permissionKeystroke: (
     decision: DwarfPermissionDecision
   ) => PermissionKeystroke | null
+  /** POSTs an OpenCode permission decision to that ask's own server (#588 T5). */
+  private readonly answerOpenCodePermission: OpenCodePermissionAnswerPort
   private readonly launchSession: SessionLauncher
   /**
    * The delegation gate's live inputs and the loopback service's own port
@@ -1114,6 +1176,18 @@ export class AgentRuntime {
    * rules that close a prompt.
    */
   private readonly permissionPrompts: PermissionPromptRegistry
+  /**
+   * Which OpenCode sessions this app only OBSERVES have a permission ask open
+   * right now, as the OpenCode plugin's own push reports it (#588 T4).
+   *
+   * Beside `permissionPrompts` above and deliberately not folded into it:
+   * this one reads a different push shape (OpenCode's own plugin event, not
+   * a Claude Code hook) and its evidence already names the request whole —
+   * see `openCodePermissionRegistry.ts`'s own class doc. Fed by
+   * `noteOpenCodePush` and read once per poll, exactly the same split
+   * `permissionPrompts` holds.
+   */
+  private readonly openCodePermissions: OpenCodePermissionRegistry
   /** Which agent CLIs this machine has (#91), asked when the Add Panel opens. */
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
@@ -1297,6 +1371,7 @@ export class AgentRuntime {
       platform.platform
     )
     this.permissionPrompts = new PermissionPromptRegistry({ now: this.now })
+    this.openCodePermissions = new OpenCodePermissionRegistry({ now: this.now })
 
     // The development-only simulated valley (#42). Null in every ordinary run,
     // and null in EVERY packaged run whatever the environment says — the two
@@ -1341,7 +1416,13 @@ export class AgentRuntime {
           // transcript move takes away: answering the dialog writes the
           // `tool_result`, so the open call is gone on exactly the poll that
           // would otherwise still be reporting a stale prompt.
-          isPermissionPromptOpen: (sessionId) => this.permissionPrompts.isOpen(sessionId)
+          isPermissionPromptOpen: (sessionId) => this.permissionPrompts.isOpen(sessionId),
+          // The same seam for the OpenCode plugin's push (#588 T4). Read one
+          // poll behind observe() below, for the same harmless-lag reason
+          // isPermissionPromptOpen's own comment gives -- unlike Claude's
+          // hook, though, nothing here needs a second proof to close early;
+          // the registry's own note()/observe() are the whole lifecycle.
+          openCodePendingAsk: (sessionId) => this.openCodePermissions.askFor(sessionId)
         },
         options.providerRegistry ?? PROVIDER_REGISTRY
       )
@@ -1357,6 +1438,8 @@ export class AgentRuntime {
       ((dwarfName, transcriptPath) => platform.launchTranscriptViewer(dwarfName, transcriptPath))
     this.textDelivery = options.textDelivery ?? platform.textDelivery
     this.permissionKeystroke = options.permissionKeystroke ?? permissionKeystrokeFor
+    this.answerOpenCodePermission =
+      options.answerOpenCodePermission ?? postOpenCodePermissionDecision
     this.simulated = simulation !== null
     // Composed here rather than in platformAdapters: holding a session is the
     // same act on all three platforms, so there is no per-OS branch to own.
@@ -1854,6 +1937,12 @@ export class AgentRuntime {
         // that closed it. Both calls are plain synchronous lookups over the
         // board already in hand, so the poll's own budget is unchanged.
         this.permissionPrompts.observe(ranked)
+        // The OpenCode registry's own sweep (#588 T4), on the same poll chain
+        // as the Claude one above and for the same "bounded, never unbounded"
+        // reason -- see UNCLAIMED_ASK_GRACE_MS. No board to reconcile against:
+        // OpenCodeProvider reads this registry directly (registry.ts's
+        // openCodePendingAsk), so nothing here needs to stamp `ranked`.
+        this.openCodePermissions.observe()
         const published = stampPermissionPrompts(
           ranked,
           (sessionId) =>
@@ -1928,6 +2017,37 @@ export class AgentRuntime {
             mine.dwarfs.some((dwarf) => dwarf.id === state.hostedId)
           )
           if (!stillDrawn) this.hosted.forget(state.hostedId)
+        }
+        // A DRAWN OpenCode ask whose session has left the published board is
+        // forgotten as soon as `published` says so -- riding the SAME
+        // lifecycle grace window `hosted.forget` above already waits on,
+        // rather than the ask's own UNCLAIMED_ASK_GRACE_MS (#588 T4). The
+        // pattern is the hosted-process sweep just above, generalised to a
+        // session this app only OBSERVES rather than started: an observed
+        // session has no lifecycle event of its own to call forget() from
+        // (unlike a hosted process's own exit, or Claude's Stop/SessionEnd
+        // hook), so the published board is the only proof this registry gets
+        // that one has ended.
+        //
+        // AMENDED for #588 review F1: walks `drawnSessionIds()`, never
+        // `pendingSessionIds()`. Board-absence is positive proof of an ending
+        // only for an ask a dwarf has actually carried at least once -- a
+        // never-drawn ask can be absent from THIS poll's board for reasons
+        // that are not "the session ended" (the plugin's push beating the
+        // scan by more than one poll; opencode.db transiently locked, which
+        // empties the whole board via publishNothing()), and forgetting it
+        // on that alone is exactly the silent loss #588 review F1 found: the
+        // permission card never draws, the terminal sits blocked, and the
+        // plugin never re-sends. A never-drawn ask still has a bound -- see
+        // UNCLAIMED_ASK_GRACE_MS and the registry's own observe() above --
+        // it is just not THIS one.
+        for (const sessionId of this.openCodePermissions.drawnSessionIds()) {
+          const stillDrawn = published.some((mine) =>
+            mine.dwarfs.some(
+              (dwarf) => dwarf.provider === 'opencode' && dwarf.sessionId === sessionId
+            )
+          )
+          if (!stillDrawn) this.openCodePermissions.forget(sessionId)
         }
         // Throttled inside the ledger, and deliberately not awaited: the panel
         // must never wait on a disk write to see its dwarfs move.
@@ -2562,6 +2682,17 @@ export class AgentRuntime {
    */
   noteHookEvent(event: HookEvent): void {
     this.permissionPrompts.note(event)
+  }
+
+  /**
+   * Read one OpenCode plugin push for what it says about a session (#588
+   * T4), exactly as noteHookEvent above reads Claude's own hook events —
+   * kept separate from nudge() for the same reason: this records, and
+   * nudge() is what makes the poll republish sooner than its ordinary
+   * schedule.
+   */
+  noteOpenCodePush(push: OpenCodePermissionPush): void {
+    this.openCodePermissions.note(push)
   }
 
   /**
@@ -3961,10 +4092,13 @@ export class AgentRuntime {
    *   locally and at once. Unchanged.
    * - `'terminal'`: the dialog belongs to a console somebody else is running,
    *   so the decision is a keystroke into it — see typePermissionDecision.
+   * - `'opencode-permission'`: the dialog belongs to OpenCode's own HTTP
+   *   server, so the decision is a POST to it — see
+   *   answerOpenCodePermissionDialog (#588 T5).
    *
    * Asynchronous since the second channel existed. The held path is still the
-   * local handover it always was and resolves immediately; only a keystroke
-   * has a window to focus and a platform to ask.
+   * local handover it always was and resolves immediately; a keystroke has a
+   * window to focus and a platform to ask, and a POST has a network to cross.
    */
   async answerDwarfPermission(
     request: DwarfPermissionAnswerRequest
@@ -3976,6 +4110,9 @@ export class AgentRuntime {
 
     const pending = dwarf.pendingPermission
     if (pending?.channel === 'terminal') return this.typePermissionDecision(dwarf, pending, request)
+    if (pending?.channel === 'opencode-permission') {
+      return this.answerOpenCodePermissionDialog(dwarf, pending, request)
+    }
     // A dwarf the panel does not hold and is no longer carrying a prompt: the
     // card was pressed after main stopped naming one. Answered here rather
     // than left to the held registry, whose refusal for this dwarf would be
@@ -4117,6 +4254,97 @@ export class AgentRuntime {
   }
 
   /**
+   * Answer an OpenCode session's permission dialog by POSTing the decision to
+   * its own server (#588 T5) — docs/opencode-format.md Row 15/16 measured
+   * this endpoint live, twice: `POST
+   * {serverUrl}session/{sessionID}/permissions/{permissionID}` with
+   * `{"response":"once"|"always"|"reject"}` returns `200` and the body
+   * `true`, and the blocked tool call then moves `running` -> `completed`.
+   *
+   * ## Which answer OpenCode gets
+   *
+   * PERMISSION_OPTIONS offers only Allow and Deny (#203's own two, unchanged
+   * by this issue), so Allow maps to `'once'` and Deny to `'reject'`.
+   * OpenCode's own third answer, `'always'`, is never sent — the same reason
+   * PERMISSION_OPTIONS never grew Claude Code's own third button: it writes a
+   * standing rule into the session rather than answering this one prompt, and
+   * this app offers nothing that outlives the prompt (see PERMISSION_OPTIONS
+   * in questionAnswer.ts).
+   *
+   * ## Where the address comes from
+   *
+   * NOT the wire: `DwarfPermissionRequest` carries no `serverUrl`, on
+   * purpose, exactly as a terminal prompt's own pid never rides the wire
+   * either — see typePermissionDecision. The freshest copy is read back off
+   * `OpenCodePermissionRegistry`, keyed by the dwarf's own sessionId, and
+   * checked against the SAME requestId the card was drawn from: a registry
+   * entry that has since moved on to a NEWER ask (a fresh requestId replacing
+   * this one — see the registry's own "drawn lifecycle" doc) must never
+   * receive a decision the person made about the ask it replaced. That is the
+   * "unread digit at the NEXT picker" failure typePermissionDecision's own
+   * rescan guards against, read here off a push registry instead of a
+   * re-scanned board — the registry is already as fresh as an instant can be,
+   * since it is written by `noteOpenCodePush` rather than polled, so there is
+   * no board to rescan.
+   *
+   * ## What `answered: true` claims, and does not
+   *
+   * Exactly typePermissionDecision's own narrowness: OpenCode accepted the
+   * decision over HTTP, and nothing about what its session then does with it.
+   * The registry entry is NOT cleared here — it closes only when the
+   * plugin's own `permission.replied` event round-trips back through
+   * `noteOpenCodePush` (Row 16: a successful outside POST is followed by that
+   * very event), which is this channel's ✓✓, the same distinction the
+   * terminal channel draws between a typed key and the transcript's own
+   * `tool_result`.
+   */
+  private async answerOpenCodePermissionDialog(
+    dwarf: Dwarf,
+    pending: DwarfPermissionRequest,
+    request: DwarfPermissionAnswerRequest
+  ): Promise<DwarfQuestionAnswerResult> {
+    if (pending.toolUseId !== request.toolUseId) {
+      return { answered: false, error: PROMPT_NO_LONGER_OPEN }
+    }
+    const ask = this.openCodePermissions.askFor(dwarf.sessionId)
+    if (ask === undefined || ask.requestId !== request.toolUseId) {
+      return { answered: false, error: PROMPT_NO_LONGER_OPEN }
+    }
+
+    // F5 (review finding): `answerOpenCodePermission` is an INJECTED port —
+    // the shipped one never rejects (every throw inside it is already caught
+    // and turned into an outcome, see answerOpenCodePermission.ts), but the
+    // type only PROMISES a resolved `Promise<OpenCodePermissionAnswerOutcome>`,
+    // and nothing stops a custom or future port from breaking that promise.
+    // An unguarded await here would let a rejection escape past this method,
+    // past `ipcMain.handle`, into a lost-bridge failure the renderer cannot
+    // tell apart from a dropped IPC channel — when 'unreachable' is the
+    // honest, already-plumbed answer for exactly this fact: the decision
+    // never reached OpenCode's own server.
+    let outcome: OpenCodePermissionAnswerOutcome
+    try {
+      outcome = await this.answerOpenCodePermission({
+        serverUrl: ask.serverUrl,
+        sessionId: ask.sessionId,
+        requestId: ask.requestId,
+        response: request.decision === 'deny' ? 'reject' : 'once'
+      })
+    } catch (error) {
+      console.warn(`[permission] posting to OpenCode threw for ${dwarf.id}`, error)
+      outcome = { answered: false, reason: 'unreachable' }
+    }
+    // The DECISION, never the payload — exactly the terminal channel's own
+    // log line, and for the same reason: nothing here carries anything a
+    // person's own session put on screen.
+    console.log(
+      `[permission] posted ${request.decision} to OpenCode for ${dwarf.id}: ` +
+        `${outcome.answered ? 'delivered' : 'failed'}`
+    )
+    if (outcome.answered) return { answered: true }
+    return { answered: false, error: openCodePermissionRefusal(outcome.reason) }
+  }
+
+  /**
    * Rescan, and answer whether the prompt this decision names is STILL the
    * open one for that dwarf (#203).
    *
@@ -4190,6 +4418,21 @@ export class AgentRuntime {
     const prompt = dwarf.pendingQuestion ?? dwarf.pendingPermission
     if (prompt?.channel === 'terminal') {
       return { delivered: false, via: 'none', error: TYPED_HERE_REACHES_THE_PICKER }
+    }
+    /*
+     * The OpenCode twin of the guard above (#588 T5), and a DIFFERENT reason:
+     * this channel is never a picker — there is no console reading stray keys
+     * — so TYPED_HERE_REACHES_THE_PICKER would be a claim about a console
+     * this provider does not have (review finding F2). What is real, and
+     * measured (docs/opencode-format.md Row 13), is that a message sent now
+     * could start a second `opencode run --session` while the first is still
+     * in flight waiting on this very prompt, which OpenCode does not refuse —
+     * it RACES. The card already refuses its own free-text box for the same
+     * reason (freeTextRoute's 'closed' route); this is the same invariant
+     * held at the one other door a message can arrive through.
+     */
+    if (prompt?.channel === 'opencode-permission') {
+      return { delivered: false, via: 'none', error: OPENCODE_PERMISSION_ANSWERED_ABOVE }
     }
 
     /*

@@ -4,10 +4,15 @@ import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import {
   PERMISSION_ESCAPED_LINE,
+  PERMISSION_SENT_TO_OPENCODE_LINE,
   PERMISSION_TYPED_LINE,
   PRESS_ENTER_TO_SEND
 } from '../../lib/question/questionAnswer'
-import { TYPED_HERE_REACHES_THE_PICKER, type DwarfPermissionRequest } from '../../types'
+import {
+  OPENCODE_PERMISSION_ANSWERED_ABOVE,
+  TYPED_HERE_REACHES_THE_PICKER,
+  type DwarfPermissionRequest
+} from '../../types'
 import DwarfPermissionCard from './DwarfPermissionCard.vue'
 
 function permission(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {
@@ -353,5 +358,99 @@ describe('DwarfPermissionCard on the terminal channel (#203)', () => {
     await wrapper.findAll('.option-card')[0]!.trigger('click')
     pressEnter(wrapper.find('.permission-card').element)
     expect(wrapper.emitted('send-text')).toBeUndefined()
+  })
+})
+
+/**
+ * Issue #588 T5. The same card, for an OpenCode session's own permission
+ * dialog: the decision is answered over OpenCode's own HTTP server rather
+ * than a console, so this channel must NOT draw the terminal channel's
+ * console-shaped copy or its Jump-to-terminal button — that was review
+ * finding F2, and closing it is the point of this slice.
+ */
+describe('DwarfPermissionCard on the opencode-permission channel (#588 T5)', () => {
+  const opencode = (overrides: Partial<DwarfPermissionRequest> = {}) =>
+    permission({ channel: 'opencode-permission', ...overrides })
+
+  function opencodeCard(props: Record<string, unknown> = {}) {
+    return mount(DwarfPermissionCard, { props: { permission: opencode(), ...props } })
+  }
+
+  it('draws the prompt and both answers exactly as a held one', () => {
+    const wrapper = opencodeCard()
+    expect(wrapper.find('.permission-header').text()).toBe('Bash')
+    expect(wrapper.findAll('.option-card .option-label').map((node) => node.text())).toEqual([
+      'Allow',
+      'Deny'
+    ])
+  })
+
+  it('draws both choices enabled, because this channel genuinely answers now', () => {
+    // The bug F2 names: the card used to draw enabled buttons on the
+    // 'terminal' channel that failed AFTER the click. Enabled is honest here
+    // because runtime.ts's answerDwarfPermission now really POSTs this
+    // decision — see answerOpenCodePermissionDialog.
+    for (const option of opencodeCard().findAll('.option-card')) {
+      expect(option.attributes('disabled')).toBeUndefined()
+    }
+  })
+
+  it('emits "allow" and "deny" exactly as every other channel does', async () => {
+    const allowWrapper = opencodeCard()
+    await allowWrapper.findAll('.option-card')[0]!.trigger('click')
+    pressEnter(allowWrapper.find('.permission-card').element)
+    expect(allowWrapper.emitted('decide')).toEqual([['allow']])
+
+    const denyWrapper = opencodeCard()
+    await denyWrapper.findAll('.option-card')[1]!.trigger('click')
+    pressEnter(denyWrapper.find('.permission-card').element)
+    expect(denyWrapper.emitted('decide')).toEqual([['deny']])
+  })
+
+  it('says OpenCode was sent the decision, never that the call was released or typed at a terminal', () => {
+    const wrapper = opencodeCard({
+      answerState: { phase: 'answered', toolUseId: 'toolu_09', decision: 'allow' }
+    })
+    expect(wrapper.find('.answer-ok').text()).toBe(PERMISSION_SENT_TO_OPENCODE_LINE)
+    expect(wrapper.find('.answer-ok').text()).not.toMatch(/released|typed at the terminal/i)
+  })
+
+  it('says the same thing for a Deny, since OpenCode’s own "reject" carries no second meaning', () => {
+    const wrapper = opencodeCard({
+      answerState: { phase: 'answered', toolUseId: 'toolu_09', decision: 'deny' }
+    })
+    expect(wrapper.find('.answer-ok').text()).toBe(PERMISSION_SENT_TO_OPENCODE_LINE)
+    expect(wrapper.find('.answer-ok').text()).not.toBe(PERMISSION_ESCAPED_LINE)
+  })
+
+  it('shows main’s own refusal on a failed POST, with no Jump button — there is no terminal to jump to', () => {
+    const wrapper = opencodeCard({
+      answerState: {
+        phase: 'refused',
+        toolUseId: 'toolu_09',
+        decision: 'allow',
+        error: "Could not reach OpenCode's own server. The session may have been closed."
+      }
+    })
+    expect(wrapper.find('.answer-error').text()).toContain(
+      "Could not reach OpenCode's own server. The session may have been closed."
+    )
+    expect(wrapper.find('.answer-jump').exists()).toBe(false)
+  })
+
+  it('offers no free-text box, and says why in OpenCode’s own terms — never the picker/terminal wording', () => {
+    const wrapper = opencodeCard()
+    expect(wrapper.find('.freeform-input').exists()).toBe(false)
+    const text = wrapper.find('.freeform-refused').text()
+    expect(text).toBe(OPENCODE_PERMISSION_ANSWERED_ABOVE)
+    expect(text).not.toBe(TYPED_HERE_REACHES_THE_PICKER)
+    expect(text).not.toMatch(/picker|terminal/i)
+  })
+
+  it('offers no jump anywhere on the card — there is no console this channel could open', () => {
+    const wrapper = opencodeCard({
+      answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
+    })
+    expect(wrapper.findAll('.answer-jump')).toHaveLength(0)
   })
 })

@@ -33,6 +33,7 @@ import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
+import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
@@ -144,6 +145,23 @@ const {
   setPreferences: setJevPreferences
 } = useJevSettings()
 /* --- end of the #509 block ------------------------------------------------- */
+
+/* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+/**
+ * Settings' OpenCode section (#588 T6). A reading and never an authority:
+ * main owns the relay and the only copy of the password, so this draws only
+ * what main answered with — the password is handed to the preload and never
+ * kept here.
+ */
+const {
+  settings: openCodeSettings,
+  applying: openCodeApplying,
+  sync: syncOpenCodeSettings,
+  setPluginEnabled: setOpenCodePluginEnabled,
+  savePassword: saveOpenCodeServerPassword,
+  clearPassword: clearOpenCodeServerPassword
+} = useOpenCodeSettings()
+/* --- end of the #588 T6 block ------------------------------------------------ */
 
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 /**
@@ -914,6 +932,11 @@ onMounted(() => {
   // section — so there is no push to hear and nothing to release on unmount.
   void syncJevSettings()
   /* --- end of the #509 block ------------------------------------------------ */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  // Adopts the stored verdict, for the reason syncJevSettings gives: nothing
+  // outside this window changes it, so there is no push to hear.
+  void syncOpenCodeSettings()
+  /* --- end of the #588 T6 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -1055,6 +1078,8 @@ onBeforeUnmount(() => {
                 :jev-saving="jevSaving"
                 :jev-providers="jevProviders"
                 :jev-catalogs="jevCatalogs"
+                :open-code-settings="openCodeSettings"
+                :open-code-applying="openCodeApplying"
                 @start-recording="startShortcutRecording"
                 @stop-recording="stopShortcutRecording"
                 @record="recordShortcut"
@@ -1070,6 +1095,9 @@ onBeforeUnmount(() => {
                 @jev-save="saveJevApiKey"
                 @jev-clear="clearJevApiKey"
                 @jev-preferences-change="setJevPreferences"
+                @opencode-plugin-change="setOpenCodePluginEnabled"
+                @opencode-password-save="saveOpenCodeServerPassword"
+                @opencode-password-clear="clearOpenCodeServerPassword"
               />
             </PanelFrame>
 

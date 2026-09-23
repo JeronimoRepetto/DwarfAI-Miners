@@ -25,6 +25,7 @@ import {
   messageTooLongReason,
   NO_ANSWER_KEYSTROKE_TIER,
   NOTHING_TYPED_TO_ANSWER_WITH,
+  OPENCODE_PERMISSION_ANSWERED_ABOVE,
   OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
@@ -56,6 +57,10 @@ import type { OpenCodeModelCatalogPort } from '../providers/opencode/models'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { createCliDetector, type CliDetector } from '../platform/cliDetection'
+import { UNCLAIMED_ASK_GRACE_MS } from '../opencodePermissions/openCodePermissionRegistry'
+import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
+import type { OpenCodePermissionAnswerPort } from '../opencodePermissions/answerOpenCodePermission'
+import { PROVIDER_REGISTRY, type ProviderFactory } from '../providers/registry'
 import type { Provider } from '../providers/provider'
 import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
 import type { HeldSessionSubagentSignal } from '../sessionLaunch/heldCrew'
@@ -11854,6 +11859,250 @@ describe('AgentRuntime observed permission prompts (#203)', () => {
   })
 })
 
+describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
+  /**
+   * A provider narrow enough to prove runtime.ts's OWN wiring — construction,
+   * noteOpenCodePush, observe() on the poll chain, forget() on session end —
+   * without opencode.db: it reads sessions from a getter (mutable across
+   * scans, unlike a captured array) and stamps pendingPermission straight
+   * from the context seam runtime.ts is supposed to hand every provider,
+   * exactly as PROVIDER_REGISTRY.opencode's real row does (registry.ts).
+   */
+  function openCodeStub(getSessions: () => string[]): ProviderFactory {
+    return (ctx) => ({
+      kind: 'opencode',
+      scan: async () =>
+        getSessions().map((sessionId) => {
+          const ask = ctx.openCodePendingAsk(sessionId)
+          return {
+            provider: 'opencode' as const,
+            sessionId,
+            cwd: `C:\\X\\${sessionId}`,
+            status: ask === undefined ? ('idle' as const) : ('waiting' as const),
+            updatedAt: 7,
+            dwarfs: [
+              {
+                id: `opencode:${sessionId}`,
+                provider: 'opencode' as const,
+                role: 'foreman' as const,
+                name: sessionId,
+                status: 'waiting' as const,
+                sessionId,
+                ...(ask === undefined ? {} : { waitingReason: 'approval' as const })
+              }
+            ]
+          }
+        }),
+      feed: async () => []
+    })
+  }
+
+  function askPush(sessionId = 'ses_1', requestId = 'per_1'): OpenCodePermissionPush {
+    return {
+      provider: 'opencode',
+      kind: 'asked',
+      serverUrl: 'http://127.0.0.1:1/',
+      sessionId,
+      requestId,
+      permission: 'bash'
+    }
+  }
+
+  it("reaches OpenCodeProvider's own context seam from a pushed ask", async () => {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      platformAdapters: worktreePlatformAdapters(),
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+  })
+
+  // AMENDED for #588 review F1/F3 (was "sweeps an unclaimed ask past its grace
+  // window..."): the old body pushed the ask while `ses_1` was ALREADY on the
+  // board, so the very first refresh() drew the card -- that is a DRAWN ask,
+  // and the old assertion that it vanished a grace window later was pinning
+  // the F3 bug (a displayed card silently disappearing), not the unclaimed
+  // case its name claimed. A genuinely UNCLAIMED ask is one nothing has ever
+  // drawn, which is what this now sets up: `ses_1` stays off the board for
+  // the whole grace window, so askFor() is never called for it at all. The
+  // drawn case gets its own test below.
+  it('sweeps a NEVER-DRAWN ask past its grace window, exactly as before it could ever reach a dwarf (#588 review F1)', async () => {
+    let clock = 1_000
+    let sessions: string[] = []
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    // The session is not on the board yet -- the plugin's push beat the
+    // scan, F1's own concrete failure -- so askFor() is never reached and
+    // this ask is never drawn.
+    await runtime.refresh()
+    expect(runtime.getMines()).toHaveLength(0)
+
+    clock += UNCLAIMED_ASK_GRACE_MS
+    await runtime.refresh()
+
+    // Only now does the session appear on the board, with no fresh ask
+    // pushed. If the never-drawn entry had outlived its own grace window, it
+    // would show here.
+    sessions = ['ses_1']
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+  })
+
+  it('never forgets a NEVER-DRAWN ask merely for being absent from one poll board (#588 review F1)', async () => {
+    // The exact concrete failure F1 names: the plugin's push reaches the
+    // registry and nudges an immediate poll, but the session row is not
+    // readable yet on that first scan (a transient sqlite lock, or the write
+    // simply has not landed) -- so the very first poll's board has no dwarf
+    // for this session at all. Board-absence on ONE poll must never be read
+    // as the session having ended.
+    let clock = 1_000
+    let sessions: string[] = []
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    expect(runtime.getMines()).toHaveLength(0)
+
+    // The session is readable now, well inside the grace window -- the card
+    // must still show the ask nobody ever took away.
+    clock += 1_000
+    sessions = ['ses_1']
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+  })
+
+  it('keeps a DRAWN ask open past its own grace window while the session is still on the board (#588 review F3)', async () => {
+    let clock = 1_000
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    // Drawn: the provider attached this ask to a real dwarf on this poll.
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+
+    // Two minutes -- twice UNCLAIMED_ASK_GRACE_MS -- with the terminal's own
+    // dialog still open the whole time and the session still on the board.
+    // The window was written for an ask nobody has SEEN yet; it must not
+    // govern one that is actually displayed.
+    clock += UNCLAIMED_ASK_GRACE_MS * 2
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+  })
+
+  it('closes an ask the moment a matching reply is pushed', async () => {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      platformAdapters: worktreePlatformAdapters(),
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+
+    runtime.noteOpenCodePush({
+      provider: 'opencode',
+      kind: 'replied',
+      serverUrl: 'http://127.0.0.1:1/',
+      sessionId: 'ses_1',
+      requestId: 'per_1',
+      reply: 'once'
+    })
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+  })
+
+  it('forgets a session once its dwarf actually leaves the published board, well short of the ask grace window', async () => {
+    // Proves forget() fires from the board leaving, not from the ask's own
+    // clock: the dwarf lifecycle tracker keeps a vanished provider session
+    // drawn as 'leaving' for config.dwarfLeaveGraceS (20s default) before it
+    // truly drops off `published`, so the clock has to clear THAT grace
+    // window -- but 21s is still far short of UNCLAIMED_ASK_GRACE_MS (60s),
+    // so only forget() on the board leaving, never the time-based sweep,
+    // explains the ask being gone below.
+    //
+    // #588 review F1/F3: this is specifically the DRAWN-then-absent branch —
+    // the first refresh() below finds `ses_1` on the board and draws the
+    // card (askFor() returns the ask), so by the time the session leaves,
+    // this ask is exactly the kind board-absence is now allowed to end. The
+    // never-drawn branch, where board-absence must NOT forget it, is pinned
+    // by the two tests above.
+    let clock = 1_000
+    let sessions = ['ses_1']
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      platformAdapters: worktreePlatformAdapters(),
+      now: () => clock,
+      onMinesUpdated: vi.fn()
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs).toHaveLength(1)
+
+    sessions = []
+    // First poll after disappearing: the lifecycle tracker draws it 'leaving'
+    // rather than dropping it, so it is still on `published` and the ask must
+    // still stand.
+    clock += 1_000
+    await runtime.refresh()
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBe('approval')
+
+    // Clears config.dwarfLeaveGraceS (20s default) since the dwarf went
+    // missing, so THIS poll is the one where it truly drops off `published` —
+    // the moment forget() fires. Still 21s total, far short of
+    // UNCLAIMED_ASK_GRACE_MS (60s).
+    clock += 20_000
+    await runtime.refresh()
+
+    // The same session id returns with no fresh ask -- if the earlier one
+    // were still held, this dwarf would wrongly carry it again.
+    sessions = ['ses_1']
+    await runtime.refresh()
+    runtime.stop()
+
+    expect(runtime.getMines()[0]?.dwarfs[0]?.waitingReason).toBeUndefined()
+  })
+})
+
 /**
  * Issue #203. Deciding an OBSERVED session's permission prompt, which is the
  * one decision this app cannot hand over structurally: the dialog belongs to
@@ -12170,6 +12419,232 @@ describe('AgentRuntime.answerDwarfPermission at an observed terminal (#203)', ()
       error: PROMPT_CLOSED
     })
     expect(port.sendToConsole).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Issue #588 T5. Deciding an OpenCode session's own permission dialog, which
+ * this app answers over OpenCode's own HTTP server rather than a console —
+ * the OPPOSITE mechanism from the terminal channel just above, on the exact
+ * SAME two questions answerDwarfPermission always asks: which prompt, and
+ * whether it is still the open one.
+ */
+describe('AgentRuntime.answerDwarfPermission over OpenCode’s own server (#588 T5)', () => {
+  const SESSION_ID = 'ses_1'
+  const DWARF_ID = `opencode:${SESSION_ID}`
+  const REQUEST_ID = 'per_1'
+  const SERVER_URL = 'http://127.0.0.1:63417/'
+
+  const UNREACHABLE = "Could not reach OpenCode's own server. The session may have been closed."
+  const UNAUTHORIZED = "OpenCode's own server refused this app's credentials for that session."
+  const TIMED_OUT =
+    "OpenCode's own server did not answer in time. The prompt may still be open there."
+  const REFUSED = "OpenCode's own server did not accept that decision."
+  const PROMPT_CLOSED = 'That permission request is no longer open.'
+
+  /** Narrower than #588 T4's own openCodeStub: this suite decides prompts, never sweeps them. */
+  function openCodeStub(): ProviderFactory {
+    return (ctx) => ({
+      kind: 'opencode',
+      scan: async () => {
+        const ask = ctx.openCodePendingAsk(SESSION_ID)
+        return [
+          {
+            provider: 'opencode' as const,
+            sessionId: SESSION_ID,
+            cwd: 'C:\\X\\ses_1',
+            status: ask === undefined ? ('idle' as const) : ('waiting' as const),
+            updatedAt: 7,
+            dwarfs: [
+              {
+                id: DWARF_ID,
+                provider: 'opencode' as const,
+                role: 'foreman' as const,
+                name: SESSION_ID,
+                status: 'waiting' as const,
+                sessionId: SESSION_ID,
+                ...(ask === undefined
+                  ? {}
+                  : {
+                      waitingReason: 'approval' as const,
+                      pendingPermission: {
+                        toolUseId: ask.requestId,
+                        toolName: ask.permission,
+                        input: '',
+                        channel: 'opencode-permission' as const,
+                        askedAt: '2026-09-22T00:00:00.000Z'
+                      }
+                    })
+              }
+            ]
+          }
+        ]
+      },
+      feed: async () => []
+    })
+  }
+
+  function askPush(overrides: Partial<OpenCodePermissionPush> = {}): OpenCodePermissionPush {
+    return {
+      provider: 'opencode',
+      kind: 'asked',
+      serverUrl: SERVER_URL,
+      sessionId: SESSION_ID,
+      requestId: REQUEST_ID,
+      permission: 'bash',
+      ...overrides
+    } as OpenCodePermissionPush
+  }
+
+  async function runtimeWith(answer: OpenCodePermissionAnswerPort) {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      config: defaultConfig(),
+      providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub() },
+      platformAdapters: worktreePlatformAdapters(),
+      onMinesUpdated: vi.fn(),
+      answerOpenCodePermission: answer
+    })
+    runtime.noteOpenCodePush(askPush())
+    await runtime.refresh()
+    return runtime
+  }
+
+  function decide(runtime: AgentRuntime, decision: 'allow' | 'deny', toolUseId = REQUEST_ID) {
+    return runtime.answerDwarfPermission({ dwarfId: DWARF_ID, toolUseId, decision })
+  }
+
+  it('POSTs "once" for Allow, to the ask’s own server, session and request', async () => {
+    const answer = vi.fn<OpenCodePermissionAnswerPort>().mockResolvedValue({ answered: true })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({ answered: true })
+    expect(answer).toHaveBeenCalledWith({
+      serverUrl: SERVER_URL,
+      sessionId: SESSION_ID,
+      requestId: REQUEST_ID,
+      response: 'once'
+    })
+  })
+
+  it('POSTs "reject" for Deny — never OpenCode’s own third answer, "always"', async () => {
+    // PERMISSION_OPTIONS offers only Allow and Deny (#203's own two,
+    // unchanged by this issue): 'always' writes a standing rule into the
+    // session, and this app offers nothing that outlives one prompt.
+    const answer = vi.fn<OpenCodePermissionAnswerPort>().mockResolvedValue({ answered: true })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'deny')).resolves.toEqual({ answered: true })
+    expect(answer).toHaveBeenCalledWith(expect.objectContaining({ response: 'reject' }))
+  })
+
+  it('refuses honestly when the server is unreachable, never claiming answered', async () => {
+    const answer = vi
+      .fn<OpenCodePermissionAnswerPort>()
+      .mockResolvedValue({ answered: false, reason: 'unreachable' })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({ answered: false, error: UNREACHABLE })
+  })
+
+  it('names a 401 in its own words', async () => {
+    const answer = vi
+      .fn<OpenCodePermissionAnswerPort>()
+      .mockResolvedValue({ answered: false, reason: 'unauthorized' })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: UNAUTHORIZED
+    })
+  })
+
+  it('names a timeout in its own words, distinct from an unreachable server', async () => {
+    const answer = vi
+      .fn<OpenCodePermissionAnswerPort>()
+      .mockResolvedValue({ answered: false, reason: 'timeout' })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({ answered: false, error: TIMED_OUT })
+  })
+
+  it('names a plain refusal for any other shape the server sent back', async () => {
+    const answer = vi
+      .fn<OpenCodePermissionAnswerPort>()
+      .mockResolvedValue({ answered: false, reason: 'refused' })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({ answered: false, error: REFUSED })
+  })
+
+  /**
+   * F3 (review finding, #588 T5): a 404 (OpenCode's own PermissionNotFound)
+   * used to fold into the generic 'refused' reason and its sentence — "did
+   * not accept that decision" — which invites a re-click at a prompt that
+   * cannot be re-clicked because it is gone. The port now answers this
+   * reason as its own 'not-found' (see answerOpenCodePermission.test.ts);
+   * this pins that runtime.ts's own switch reads it as the existing
+   * PROMPT_NO_LONGER_OPEN sentence — the honest one, already used for the
+   * terminal channel's identical fact.
+   */
+  it('names a 404 as the prompt no longer being open, not the generic refusal (F3)', async () => {
+    const answer = vi
+      .fn<OpenCodePermissionAnswerPort>()
+      .mockResolvedValue({ answered: false, reason: 'not-found' })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+  })
+
+  /**
+   * F5 (review finding, #588 T5): `answerDwarfPermission` does an unguarded
+   * `await` on the injected port. The shipped port cannot reject — every
+   * throw inside it is already caught and turned into an outcome (see
+   * answerOpenCodePermission.ts) — so nothing is broken today; the renderer
+   * would simply catch the rejection and show LOST_BRIDGE. But the type
+   * promises a resolved `Promise<Outcome>`, and a custom or future port that
+   * rejects must not escape past `ipcMain.handle` as a lost bridge when
+   * 'unreachable' is the honest, already-plumbed answer for exactly this
+   * fact (the server could not be reached).
+   */
+  it('turns a rejecting port into the honest unreachable outcome, not a lost bridge (F5)', async () => {
+    const answer = vi.fn<OpenCodePermissionAnswerPort>().mockRejectedValue(new Error('ECONNRESET'))
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: UNREACHABLE
+    })
+  })
+
+  it('refuses a decision naming a prompt that has since closed, without ever posting', async () => {
+    const answer = vi.fn<OpenCodePermissionAnswerPort>().mockResolvedValue({ answered: true })
+    const runtime = await runtimeWith(answer)
+
+    await expect(decide(runtime, 'allow', 'toolu_stale')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+    expect(answer).not.toHaveBeenCalled()
+  })
+
+  it('refuses when the registry has already moved on to a newer ask for the same session', async () => {
+    // A key/click answers whatever is really open — same discipline
+    // typePermissionDecision's own rescan holds, read here off the push
+    // registry instead of a re-scanned board: a fresh requestId replacing
+    // this one means the person's click is about the ask it replaced.
+    const answer = vi.fn<OpenCodePermissionAnswerPort>().mockResolvedValue({ answered: true })
+    const runtime = await runtimeWith(answer)
+    runtime.noteOpenCodePush(askPush({ requestId: 'per_2' }))
+
+    await expect(decide(runtime, 'allow')).resolves.toEqual({
+      answered: false,
+      error: PROMPT_CLOSED
+    })
+    expect(answer).not.toHaveBeenCalled()
   })
 })
 
@@ -13281,5 +13756,27 @@ describe('AgentRuntime.sendDwarfText while a prompt stands at its terminal (#481
 
     await expect(send(runtime)).resolves.toEqual({ delivered: true, via: 'terminal' })
     expect(port.pasteToConsole).toHaveBeenCalled()
+  })
+
+  /*
+   * Issue #588 T5. An OpenCode permission dialog is never a picker — there is
+   * no console reading stray keys — so this is a DIFFERENT failure from the
+   * terminal channel's own guard above, refused for its own honest reason
+   * (OPENCODE_PERMISSION_ANSWERED_ABOVE: docs/opencode-format.md Row 13's
+   * measured race) rather than borrowing TYPED_HERE_REACHES_THE_PICKER's
+   * console-shaped copy.
+   */
+  it('refuses a message while an OpenCode permission stands open, for its own reason', async () => {
+    const { runtime, port } = await runtimeWith({
+      pendingPermission: promptFor({ channel: 'opencode-permission' })
+    })
+
+    await expect(send(runtime)).resolves.toEqual({
+      delivered: false,
+      via: 'none',
+      error: OPENCODE_PERMISSION_ANSWERED_ABOVE
+    })
+    expect(port.pasteToConsole).not.toHaveBeenCalled()
+    expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 })

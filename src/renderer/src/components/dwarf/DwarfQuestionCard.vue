@@ -299,9 +299,17 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       routes, and a cut at fifteen thousand characters of a one-line answer is
       a case nobody meets. Give the card a dwarf and this becomes the
       composer’s treatment.
+
+      Gated on the two routes that MAY take this box rather than on
+      `!== 'picker'` (F2, review finding, #588 T5): freeTextRoute grew a
+      fourth value, 'closed', for the OpenCode permission channel, and a
+      negative check lets any new union member through by default. This
+      union is closed here on purpose, so the NEXT value freeTextRoute ever
+      grows fails shut (no box) rather than open — see the sibling card's
+      own 'closed' arm, which this mirrors.
     -->
     <textarea
-      v-else-if="freeText !== 'picker'"
+      v-else-if="freeText === 'message' || freeText === 'answer'"
       v-model="freeform"
       class="freeform-input"
       rows="2"

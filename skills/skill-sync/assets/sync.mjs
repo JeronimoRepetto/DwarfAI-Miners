@@ -282,6 +282,8 @@ const MAIN_TREE_GLOSSES = {
   ledger: 'mined, persisted',
   mcp: 'the subtask-delegation gate, and the stdio MCP server itself',
   notifications: 'the OS notification centre, behind a port',
+  opencodePermissions:
+    'the OpenCode permission push payload builder, and the plugin artifact that feeds it (#588)',
   platform: 'composed once in `platformAdapters.ts`',
   projects: null,
   providers: 'one per agent CLI plus the simulated one',
