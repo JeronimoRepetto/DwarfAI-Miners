@@ -2,8 +2,6 @@
   <img src="docs/assets/logo.png" width="160" alt="DwarfAI-Miners logo — the gold mine mound on a dark circular badge">
 </p>
 
-<h1 align="center">DwarfAI-Miners</h1>
-
 <p align="center">
   Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
 </p>
