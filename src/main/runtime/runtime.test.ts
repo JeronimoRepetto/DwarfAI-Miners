@@ -7268,7 +7268,8 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
    * drive a held launch's own direct wait to its deadline.
    */
   describe('AgentRuntime held-parent push wiring (#601)', () => {
-    it('pushToHeldParent forwards to the held registry’s own sendToMine', async () => {
+    it('pushToHeldParent forwards to the held registry’s own sendToDelegationParent, keyed by the launch’s own token', async () => {
+      const fake = delegationFake()
       const engine = fakeHeldEngine()
       const runtime = new AgentRuntime({
         fs: new FakeFs(),
@@ -7277,15 +7278,60 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
         providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
         heldSessions: heldRegistryOver(engine.port),
         onMinesUpdated: vi.fn(),
-        appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' }
+        appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+        delegation: fake.options
       })
       await runtime.refresh()
       const mineId = runtime.getMines()[0]!.id
-      await runtime.launchHeldSession({ provider: 'claude', mineId, prompt: 'dig' })
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig',
+        routedByJev: true
+      })
 
-      expect(runtime.pushToHeldParent(mineId, 'delegated subtask finished')).toBe(true)
+      // Proves the whole thread end to end: resolveHeldDelegationInjection's
+      // own token reaches HeldSessionRegistry's record (`delegationToken`)
+      // and back out through pushToHeldParent — never the mine, which two
+      // held sessions can share (see the next test).
+      expect(runtime.pushToHeldParent('tok-0', 'delegated subtask finished')).toBe(true)
       expect(engine.sent).toEqual(['delegated subtask finished'])
-      expect(runtime.pushToHeldParent('mine-nobody', 'text')).toBe(false)
+      expect(runtime.pushToHeldParent('tok-never-issued', 'text')).toBe(false)
+    })
+
+    // THE DEFECT (#601 correction): `launchHeldSession` places no limit on
+    // how many held sessions share one mine — a push keyed by mine alone
+    // could reach whichever one happened to be found first.
+    it('reaches only the held session whose own token minted the ticket, even with a second one in the SAME mine', async () => {
+      const fake = delegationFake()
+      const engine = fakeHeldEngine()
+      const runtime = new AgentRuntime({
+        fs: new FakeFs(),
+        platformAdapters: worktreePlatformAdapters(),
+        config: defaultConfig(),
+        providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+        heldSessions: heldRegistryOver(engine.port),
+        onMinesUpdated: vi.fn(),
+        appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+        delegation: fake.options
+      })
+      await runtime.refresh()
+      const mineId = runtime.getMines()[0]!.id
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig A',
+        routedByJev: true
+      })
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig B',
+        routedByJev: true
+      })
+
+      expect(runtime.pushToHeldParent('tok-1', 'for B only')).toBe(true)
+      expect(engine.sent).toEqual(['for B only'])
     })
 
     it('reports a held ticket’s own wait giving up on its deadline through delegation.waitEnded', async () => {

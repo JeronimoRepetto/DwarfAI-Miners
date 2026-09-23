@@ -1127,7 +1127,7 @@ async function init(): Promise<void> {
     // #601: closes over the SAME module-level `runtime`, lazily, on the
     // identical terms `launch` just above already is — a settled ticket for
     // a held parent cannot exist before `runtime` does either.
-    deliverToHeldParent: (mineId, text) => runtime?.pushToHeldParent(mineId, text) ?? false
+    deliverToHeldParent: (token, text) => runtime?.pushToHeldParent(token, text) ?? false
   })
   await delegationService.start()
   /* --- end of the #511 T3 block ---------------------------------------------- */

@@ -3600,13 +3600,15 @@ export class AgentRuntime {
    * Deliver a delegated ticket's settled result to its HELD parent's live
    * conversation (#601) — the one bridge `DelegationService.deliverToHeldParent`
    * is bound to in `index.ts`, so that service never imports
-   * `HeldSessionRegistry` itself. Addressed by mine rather than session id —
-   * see `HeldSessionRegistry.sendToMine`'s own comment for why. False for a
-   * mine this panel no longer holds a session in, the exact "parent-ended"
-   * signal `DelegationService`'s own push decision reads.
+   * `HeldSessionRegistry` itself. Addressed by the launch's own delegation
+   * TOKEN, never a mine — see `HeldSessionRegistry.sendToDelegationParent`'s
+   * own comment for why: a mine can hold several live held sessions at
+   * once, so a mine-keyed push could reach the wrong one. False for a token
+   * whose held session has already ended (or never existed), the exact
+   * "parent-ended" signal `DelegationService`'s own push decision reads.
    */
-  pushToHeldParent(mineId: string, text: string): boolean {
-    return this.heldSessions.sendToMine(mineId, text)
+  pushToHeldParent(token: string, text: string): boolean {
+    return this.heldSessions.sendToDelegationParent(token, text)
   }
 
   /**
@@ -3670,6 +3672,12 @@ export class AgentRuntime {
           ? {}
           : {
               delegation: delegationIssue.delegation,
+              // #601: stored on the record so `sendToDelegationParent` can
+              // find it — the one correlator that survives two held
+              // sessions sharing this same mine, which a mine-keyed lookup
+              // could not (see `HeldSessionRegistry.sendToDelegationParent`'s
+              // own comment).
+              delegationToken: delegationIssue.token,
               // #511 T4: told exactly once when this held session ends,
               // however it ends (`HeldSessionRegistry`'s own `finish`/
               // `closeAll`) — never for a launch that never started, which is

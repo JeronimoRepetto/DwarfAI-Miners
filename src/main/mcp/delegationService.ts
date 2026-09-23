@@ -86,10 +86,14 @@ interface DelegationLaunchRequest {
  * lives in and the invariant that every ticket ever gets exactly one.
  */
 interface HeldTicketPushState {
-  /** Scopes `this.tickets.get` to the SAME owner `delegateDirect` already checked. */
+  /**
+   * Scopes `this.tickets.get` to the SAME owner `delegateDirect` already
+   * checked, AND is where to push (#601, corrected) — see
+   * `DelegationServiceOptions.deliverToHeldParent`'s own comment for why
+   * the launch's own token, never a mine, is the one correlator this class
+   * hands the delivery port.
+   */
   token: string
-  /** Where to push — see `DelegationServiceOptions.deliverToHeldParent`'s own comment for why this, not a session id. */
-  mineId: string
   /**
    * True from the instant a held ticket is created until its own direct
    * wait ends (`waitEnded`) — a wait ALWAYS begins immediately after
@@ -138,19 +142,25 @@ export interface DelegationServiceOptions {
   /**
    * Pushes a settled ticket's own result into its HELD parent's live
    * conversation (#601) — bound in `index.ts` to `AgentRuntime.pushToHeldParent`,
-   * which forwards to `HeldSessionRegistry.sendToMine`. Addressed by MINE
-   * rather than session id: the token this service tracks names only the
-   * mine a held launch started in (`DelegationParentContext.mineId`), and
-   * that identifier is stable from the instant the token is minted — unlike
-   * the CLI-reported session id, which can still be unset when a fast child
-   * settles (see `HeldSessionRegistry`'s own "why the id it is keyed by
-   * arrives late"). This class never imports `HeldSessionRegistry` itself;
-   * this closure is the one seam `maybePush` reaches through. Undefined for
-   * a build with no held-parent delivery wired (or any test that never
-   * exercises this path) — a held ticket then logs `not-held` rather than
-   * pretending a push landed.
+   * which forwards to `HeldSessionRegistry.sendToDelegationParent`.
+   * Addressed by the launch's own delegation TOKEN — never a mine, and
+   * never a session id. An earlier version of this port took the mine
+   * (`DelegationParentContext.mineId`), on the reasoning that it is stable
+   * from the instant the token is minted, unlike the CLI-reported session
+   * id (which can still be unset when a fast child settles — see
+   * `HeldSessionRegistry`'s own "why the id it is keyed by arrives late").
+   * That reasoning missed that a mine is not unique to one held session at
+   * all: `launchHeldSession` (runtime.ts) and the renderer's own Add Panel
+   * both allow several held sessions to share one mine, so a mine-keyed
+   * push could reach an unrelated sibling instead of the ticket's own
+   * parent. The token has neither gap — minted once per held launch, known
+   * from that instant, and never shared. This class never imports
+   * `HeldSessionRegistry` itself; this closure is the one seam `maybePush`
+   * reaches through. Undefined for a build with no held-parent delivery
+   * wired (or any test that never exercises this path) — a held ticket then
+   * logs `not-held` rather than pretending a push landed.
    */
-  deliverToHeldParent?: (mineId: string, text: string) => boolean
+  deliverToHeldParent?: (token: string, text: string) => boolean
 }
 
 /** One prompt for the delegated child: context first (sets the stage), then the task, exactly as the acceptance test fixes it. */
@@ -242,9 +252,25 @@ export class DelegationService {
     return { endpoint: `http://${BIND_HOST}:${this.boundPort}`, token }
   }
 
-  /** T4's own port: forget a token whose parent launch has ended. A no-op for one this service never issued. */
+  /**
+   * T4's own port: forget a token whose parent launch has ended. A no-op
+   * for one this service never issued.
+   *
+   * #601: also drops any still-tracked held ticket minted under this SAME
+   * token — a revoked parent can never receive a push again, so its own
+   * still-pending ticket (a genuinely slow child, still running after its
+   * own held session already ended) must not sit in `heldPushState` for
+   * however long that child takes to conclude. The eventual settle still
+   * answers correctly either way (`deliverToHeldParent` would find no
+   * matching held record once this token's own session is gone, and log
+   * `parent-ended`) — this is purely about not leaking the bookkeeping
+   * while waiting for that to happen.
+   */
   revoke(token: string): void {
     this.tokens.revoke(token)
+    for (const [ticketId, state] of this.heldPushState) {
+      if (state.token === token) this.heldPushState.delete(ticketId)
+    }
   }
 
   /**
@@ -515,7 +541,7 @@ export class DelegationService {
     // scope line). `mineId` alone cannot tell the two apart (both mint a
     // token through this same method); `parent.held` is the one field that
     // can, set only by `resolveHeldDelegationInjection` in runtime.ts.
-    if (parent.held === true) this.registerHeldTicket(state.ticketId, token, parent.mineId)
+    if (parent.held === true) this.registerHeldTicket(state.ticketId, token)
     if (state.pendingOutcome !== undefined) {
       this.tickets.resolveDone(state.ticketId, state.pendingOutcome)
       this.concurrency.release(token)
@@ -548,8 +574,8 @@ export class DelegationService {
   }
 
   /** Starts a held ticket's own push tracking — called once, right after `this.tickets.create` (#601). */
-  private registerHeldTicket(ticketId: string, token: string, mineId: string): void {
-    this.heldPushState.set(ticketId, { token, mineId, waiting: true })
+  private registerHeldTicket(ticketId: string, token: string): void {
+    this.heldPushState.set(ticketId, { token, waiting: true })
   }
 
   /**
@@ -598,7 +624,7 @@ export class DelegationService {
     const text =
       `Delegated subtask ${ticketId} finished (${settled.status}).\n\n` +
       formatDelegationResultText(settled)
-    if (!deliver(state.mineId, text)) {
+    if (!deliver(state.token, text)) {
       this.logPushSkip(ticketId, 'parent-ended')
       return
     }

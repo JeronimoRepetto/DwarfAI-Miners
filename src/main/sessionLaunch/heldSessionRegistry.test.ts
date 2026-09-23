@@ -1400,56 +1400,120 @@ describe('HeldSessionRegistry lifetime', () => {
   })
 
   /*
-   * #601: the delegation push port addresses a held session by its MINE, not
-   * its session id — a settled ticket's token names only the mine it was
-   * launched into (see DelegationParentContext), and that identifier is
-   * known from the moment the token is minted, unlike the CLI-reported
-   * session id `sendText` keys on (which can still be unset).
+   * #601, corrected: the delegation push port addresses a held session by
+   * its own per-launch TOKEN, never the mine — a mine holds no such
+   * uniqueness guarantee (`launchHeldSession` in runtime.ts and the
+   * renderer's own Add Panel both allow several held sessions in the SAME
+   * mine at once), so the mine-only lookup this replaces (`sendToMine`,
+   * removed here) could inject one session's own delegated result into a
+   * totally unrelated sibling holding the same mine. The token has no such
+   * gap: it is minted once per held launch and known from that instant,
+   * unlike the CLI-reported session id `sendText` keys on (which can still
+   * be unset when a fast child settles).
    */
-  describe('sendToMine (#601)', () => {
-    it('routes text to the held session running in that mine, with no session id reported yet', async () => {
+  describe('sendToDelegationParent (#601)', () => {
+    it('routes text to the held session that minted this token, with no session id reported yet', async () => {
       const port = new FakePort()
       const registry = registryOver(port)
-      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig',
+        delegationToken: 'tok-a'
+      })
       // Deliberately no port.reportSessionId(...) here — a delegated child can
       // settle before the parent's own CLI has reported which session it is.
 
-      expect(registry.sendToMine('mine-1', 'the delegated subtask finished')).toBe(true)
+      expect(registry.sendToDelegationParent('tok-a', 'the delegated subtask finished')).toBe(true)
       expect(port.sent).toEqual(['the delegated subtask finished'])
     })
 
-    it('answers false for a mine this panel holds no session in', async () => {
+    it('answers false for a token no held record carries', async () => {
       const port = new FakePort()
       const registry = registryOver(port)
-      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig',
+        delegationToken: 'tok-a'
+      })
 
-      expect(registry.sendToMine('mine-nobody', 'text')).toBe(false)
+      expect(registry.sendToDelegationParent('tok-never-issued', 'text')).toBe(false)
       expect(port.sent).toEqual([])
     })
 
-    it('addresses the right record among several held mines', async () => {
+    // THE DEFECT this correction fixes: two held sessions can share one
+    // mine, so a lookup keyed by mine alone reaches whichever record it
+    // happens to find first — which can be a totally unrelated sibling.
+    it('reaches only the record whose own token minted the ticket, even with a second held session in the SAME mine', async () => {
       const port = new FakePort()
       const registry = registryOver(port)
-      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
       await registry.launch({
-        mineId: 'mine-2',
+        mineId: 'mine-1',
         provider: 'claude',
-        minePath: '/home/j/code/forge',
-        prompt: 'dig'
+        minePath: MINE,
+        prompt: 'dig A',
+        delegationToken: 'tok-a'
+      })
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig B',
+        delegationToken: 'tok-b'
       })
 
-      expect(registry.sendToMine('mine-2', 'for mine two')).toBe(true)
-      expect(port.sent).toEqual(['for mine two'])
+      expect(registry.sendToDelegationParent('tok-b', 'for B only')).toBe(true)
+      expect(port.sent).toEqual(['for B only'])
+    })
+
+    // The defect's own reported scenario, in full: A delegates a ticket, A
+    // ends, B launches in the SAME mine, A's ticket finally settles. A's
+    // own token must find nothing — never B's live record, however well the
+    // mine matches.
+    it('a parent that already ended is never confused for a new held session started later in the same mine', async () => {
+      const port = new FakePort()
+      const registry = registryOver(port)
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig A',
+        delegationToken: 'tok-a'
+      })
+      port.end(0, 'the turn finished')
+      expect(registry.count()).toBe(0)
+
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig B',
+        delegationToken: 'tok-b'
+      })
+
+      expect(registry.sendToDelegationParent('tok-a', 'stale — must not reach B')).toBe(false)
+      expect(port.sent).toEqual([])
+      expect(registry.sendToDelegationParent('tok-b', 'for B')).toBe(true)
+      expect(port.sent).toEqual(['for B'])
     })
 
     it('records the pushed text into that session’s own conversation, same as sendText (#436)', async () => {
       const port = new FakePort()
       const registry = registryOver(port)
-      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+      await registry.launch({
+        mineId: 'mine-1',
+        provider: 'claude',
+        minePath: MINE,
+        prompt: 'dig',
+        delegationToken: 'tok-a'
+      })
       port.reportSessionId(0, 'sess-1')
       const before = registry.conversationState('sess-1')
 
-      registry.sendToMine('mine-1', 'the delegated subtask finished')
+      registry.sendToDelegationParent('tok-a', 'the delegated subtask finished')
 
       const after = registry.conversationState('sess-1')
       expect(after).toMatchObject({ held: true })

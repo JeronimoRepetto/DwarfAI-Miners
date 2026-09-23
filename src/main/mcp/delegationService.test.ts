@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentLaunchResult, DwarfProvider, TurnOutcome } from '../domain/types'
 import { NOT_LAUNCHABLE } from '../domain/launchProviders'
 import {
@@ -615,15 +615,22 @@ describe('DelegationService', () => {
    * conversation once it settles and its own `delegate_subtask` wait is no
    * longer there to hand the answer back on its own. `deliverToHeldParent`
    * is the one seam — bound in production to `AgentRuntime.pushToHeldParent`
-   * (which forwards to `HeldSessionRegistry.sendToMine`), a fake `vi.fn`
-   * here so this stays a hand-written fake, no real held session anywhere.
-   * `parent.held` (only ever set by `resolveHeldDelegationInjection` in
-   * runtime.ts) is what tells a held ticket apart from a detached one —
+   * (which forwards to `HeldSessionRegistry.sendToDelegationParent`), a fake
+   * `vi.fn` here so this stays a hand-written fake, no real held session
+   * anywhere. `parent.held` (only ever set by `resolveHeldDelegationInjection`
+   * in runtime.ts) is what tells a held ticket apart from a detached one —
    * `mineId` alone cannot, since both mint a token through the same
-   * `issueLaunchToken`.
+   * `issueLaunchToken`. The push itself is addressed by that SAME token,
+   * corrected here from an earlier version keyed by `mineId`: a mine is not
+   * unique to one held session (`launchHeldSession` in runtime.ts places no
+   * such limit), so a mine-keyed push could reach an unrelated sibling
+   * holding the same mine — `heldSessionRegistry.test.ts`'s own
+   * `sendToDelegationParent` block proves the registry side of that fix;
+   * this block only has to prove THIS class hands the token through, never
+   * the mine.
    */
   describe('held-parent push (#601)', () => {
-    let deliverToHeldParent: ReturnType<typeof vi.fn<(mineId: string, text: string) => boolean>>
+    let deliverToHeldParent: ReturnType<typeof vi.fn<(token: string, text: string) => boolean>>
     let log: ReturnType<typeof vi.fn<(message: string) => void>>
 
     function heldOptions(
@@ -632,12 +639,10 @@ describe('DelegationService', () => {
       return options({ deliverToHeldParent, log, ...overrides })
     }
 
-    afterEach(() => {
-      deliverToHeldParent = vi.fn<(mineId: string, text: string) => boolean>(() => true)
+    beforeEach(() => {
+      deliverToHeldParent = vi.fn<(token: string, text: string) => boolean>(() => true)
       log = vi.fn<(message: string) => void>()
     })
-    deliverToHeldParent = vi.fn<(mineId: string, text: string) => boolean>(() => true)
-    log = vi.fn<(message: string) => void>()
 
     it('never attempts a push for a detached parent, even after its ticket settles', async () => {
       service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
@@ -680,7 +685,7 @@ describe('DelegationService', () => {
 
       expect(deliverToHeldParent).toHaveBeenCalledTimes(1)
       expect(deliverToHeldParent).toHaveBeenCalledWith(
-        'mine:a',
+        token,
         `Delegated subtask t-1 finished (done).\n\n${JSON.stringify({
           status: 'done',
           outcome: CONCLUDED
@@ -776,7 +781,7 @@ describe('DelegationService', () => {
       onConcludedByMine.get('mine:a')!({ kind: 'errored', endedAt: 9, text: 'crashed' })
 
       expect(deliverToHeldParent).toHaveBeenCalledWith(
-        'mine:a',
+        token,
         expect.stringContaining('Delegated subtask t-1 finished (done).')
       )
     })
@@ -809,6 +814,23 @@ describe('DelegationService', () => {
       for (const call of log.mock.calls) {
         expect(call[0]).not.toContain(token)
       }
+    })
+
+    // #601 correction: a revoked parent's own still-pending ticket must never
+    // leak its push tracking for however long the child takes to conclude —
+    // `revoke` drops it right there rather than waiting for an eventual
+    // settle to discover the same thing the hard way.
+    it('revoke drops a still-pending ticket’s own push tracking, so its eventual settle attempts no delivery at all', async () => {
+      service = new DelegationService(heldOptions({ generateTicketId: () => 't-1' }))
+      await service.start()
+      const { token } = service.issueLaunchToken({ mineId: 'mine:a', held: true })
+      await service.delegateDirect(token, 'find the bug', undefined)
+      service.waitEnded('t-1') // still pending — logs, does not push
+
+      service.revoke(token)
+      onConcludedByMine.get('mine:a')!(CONCLUDED)
+
+      expect(deliverToHeldParent).not.toHaveBeenCalled()
     })
   })
 })
