@@ -37,23 +37,28 @@ const answered =
 
 describe('parseCodexPendingQuestion', () => {
   it('reads the question and its options from an unanswered request_user_input', () => {
+    // AMENDED for #362 (was: the same object without `questionCount`), and
+    // again for #443 (was: the question's fields flat beside `questionCount:
+    // 1`). The same values, inside the call's one-entry `questions` list.
     expect(parseCodexPendingQuestion(pending)).toEqual({
       toolUseId: 'call_9c052f81d6b44',
-      header: 'Scope',
-      question: "Should the rename cover the sample module's tests as well, or only its source?",
-      multiSelect: false,
-      // AMENDED for #362 (was: the same object without `questionCount`). One
-      // field added; the fixture's call asks one question, so it counts 1.
-      questionCount: 1,
       askedAt: '2026-08-24T12:37:01.545Z',
-      options: [
+      questions: [
         {
-          label: 'Source and tests',
-          description: 'Rename every occurrence, including the fixtures the tests read.'
-        },
-        {
-          label: 'Source only',
-          description: 'Leave the tests untouched so their failures stay readable.'
+          header: 'Scope',
+          question:
+            "Should the rename cover the sample module's tests as well, or only its source?",
+          multiSelect: false,
+          options: [
+            {
+              label: 'Source and tests',
+              description: 'Rename every occurrence, including the fixtures the tests read.'
+            },
+            {
+              label: 'Source only',
+              description: 'Leave the tests untouched so their failures stay readable.'
+            }
+          ]
         }
       ]
     })
@@ -80,5 +85,57 @@ describe('parseCodexPendingQuestion', () => {
       }
     })
     expect(parseCodexPendingQuestion(`${shell}\n`)).toBeUndefined()
+  })
+
+  /*
+   * Issue #443. The wire carries a call's questions as a list, and Codex's
+   * measured calls each asked one — so the list it emits has one entry, with the
+   * single-select flag Codex's argument shape implies.
+   */
+  it('emits the one question Codex asked as a one-element list', () => {
+    expect(parseCodexPendingQuestion(pending)?.questions).toEqual([
+      {
+        header: 'Scope',
+        question: "Should the rename cover the sample module's tests as well, or only its source?",
+        multiSelect: false,
+        options: [
+          {
+            label: 'Source and tests',
+            description: 'Rename every occurrence, including the fixtures the tests read.'
+          },
+          {
+            label: 'Source only',
+            description: 'Leave the tests untouched so their failures stay readable.'
+          }
+        ]
+      }
+    ])
+  })
+
+  it('carries a call that asked two things as two, so the card still says it cannot answer it', () => {
+    // Never observed, and the reason it is carried rather than narrowed: a
+    // list cut to its first entry would read as a one-question ask, and the
+    // card would offer an answer where it used to say this ask belongs to its
+    // terminal (#362, #443).
+    const call = JSON.stringify({
+      timestamp: '2026-08-24T12:37:01.545Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'request_user_input',
+        call_id: 'call_two',
+        arguments: JSON.stringify({
+          questions: [
+            { id: 'a', question: 'Which colour?', options: [{ label: 'Red' }] },
+            { id: 'b', question: 'Which shape?', options: [{ label: 'Round' }] }
+          ]
+        })
+      }
+    })
+    const asked = parseCodexPendingQuestion(`${call}\n`)
+    expect(asked?.questions.map((entry) => entry.question)).toEqual([
+      'Which colour?',
+      'Which shape?'
+    ])
   })
 })

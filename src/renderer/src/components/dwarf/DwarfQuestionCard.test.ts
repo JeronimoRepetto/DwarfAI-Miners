@@ -7,25 +7,51 @@ import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   TYPED_HERE_REACHES_THE_PICKER,
   joinAnswerLabels,
+  type DwarfAskQuestion,
   type DwarfQuestion
 } from '../../types'
 import DwarfQuestionCard from './DwarfQuestionCard.vue'
 
-function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+/*
+ * AMENDED for #443 (was: `Partial<DwarfQuestion>` spread over a flat ask with
+ * `questionCount: 1`). The call's own fields and its one question's fields are
+ * two levels now; an override may name either, and this puts each where it
+ * belongs. A case about a several-question call uses `several` below.
+ */
+type QuestionOverrides = Partial<DwarfAskQuestion> &
+  Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel' | 'questions'>>
+
+function question(overrides: QuestionOverrides = {}): DwarfQuestion {
+  const { toolUseId, channel, questions, ...asked } = overrides
   return {
-    toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
+    toolUseId: toolUseId ?? 'toolu_01',
     // The default is the answerable case every test below this fixture was
     // written against: a session the panel holds. #354 added the field.
-    channel: 'held',
-    multiSelect: false,
-    questionCount: 1,
-    options: [
-      { label: 'Postgres', description: 'The one the API already uses.' },
-      { label: 'SQLite' },
-      { label: 'Neither' }
-    ],
-    ...overrides
+    channel: channel ?? 'held',
+    questions: questions ?? [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [
+          { label: 'Postgres', description: 'The one the API already uses.' },
+          { label: 'SQLite' },
+          { label: 'Neither' }
+        ],
+        ...asked
+      }
+    ]
+  }
+}
+
+/** The same call with a second question behind the first — what `questionCount: 2` stood for. */
+function several(overrides: QuestionOverrides = {}): DwarfQuestion {
+  const one = question(overrides)
+  return {
+    ...one,
+    questions: [
+      ...one.questions,
+      { question: 'Which region?', multiSelect: false, options: [{ label: 'East' }] }
+    ]
   }
 }
 
@@ -243,7 +269,8 @@ describe('DwarfQuestionCard', () => {
   })
   /*
    * A question the panel can only SHOW (#354, #362). The card learns it from
-   * the ask's own `channel` and `questionCount`, which main derives from the
+   * the ask's own `channel` and its `questions` (`questionCount` before #443),
+   * which main derives from the
    * same evidence `answerDwarfQuestion` guards on — see DwarfPromptChannel.
    *
    * AMENDED for #362: `observed()` was a terminal-channel ask with ONE
@@ -253,10 +280,15 @@ describe('DwarfQuestionCard', () => {
    * call that asked SEVERAL questions, because only its first is on the wire.
    * Not one expectation in the block is weaker; the fixture names the case the
    * block was always describing.
+   *
+   * AMENDED again for #443 (was: `questionCount: 2` on a flat ask). The same
+   * call, with its second question carried now; it is still unanswerable here,
+   * for the unmeasured walk between the questions, and the card still draws
+   * the first. Every expectation below stands as it was.
    */
   describe('a question this panel cannot answer', () => {
-    function observed(overrides: Partial<DwarfQuestion> = {}) {
-      return card({ question: question({ channel: 'terminal', questionCount: 2, ...overrides }) })
+    function observed(overrides: QuestionOverrides = {}) {
+      return card({ question: several({ channel: 'terminal', ...overrides }) })
     }
 
     it('keeps the header, the question and every option on screen', () => {
@@ -356,12 +388,14 @@ describe('DwarfQuestionCard', () => {
 
 /*
  * A question the panel CAN answer at the session's own console (#362). The
- * card learns that from the ask's `channel` and `questionCount` — the same two
+ * card learns that from the ask's `channel` and how many `questions` it carries
+ * (`questionCount` before #443) — the same two
  * fields main's own guard reads — so what the card offers and what main will
  * accept cannot come apart.
  */
 describe('a question answered at the session’s own terminal', () => {
-  function observedSingle(overrides: Partial<DwarfQuestion> = {}) {
+  // AMENDED for #443 (was: `Partial<DwarfQuestion>`) — see QuestionOverrides.
+  function observedSingle(overrides: QuestionOverrides = {}) {
     return card({ question: question({ channel: 'terminal', ...overrides }) })
   }
 
@@ -537,7 +571,8 @@ describe('a question answered at the session’s own terminal', () => {
  * nothing may be typed into somebody's console until they say so.
  */
 describe('a multi-select question at the session’s own terminal', () => {
-  function multi(overrides: Partial<DwarfQuestion> = {}) {
+  // AMENDED for #443 (was: `Partial<DwarfQuestion>`) — see QuestionOverrides.
+  function multi(overrides: QuestionOverrides = {}) {
     return card({
       question: question({ channel: 'terminal', multiSelect: true, ...overrides })
     })

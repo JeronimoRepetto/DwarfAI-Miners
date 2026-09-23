@@ -33,6 +33,7 @@ import {
   TYPED_HERE_REACHES_THE_PICKER,
   joinAnswerLabels,
   type Dwarf,
+  type DwarfAskQuestion,
   type DwarfPermissionDecision,
   type DwarfPermissionRequest,
   type DwarfQuestion,
@@ -8624,13 +8625,11 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
 
   it("stamps a held session's live question on its foreman, superseding the tail's", async () => {
     const port = heldPort()
+    // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
     const stale: DwarfQuestion = {
       toolUseId: 'toolu_stale',
-      question: 'Which shape?',
       channel: 'terminal',
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Round' }]
+      questions: [{ question: 'Which shape?', multiSelect: false, options: [{ label: 'Round' }] }]
     }
     const runtime = heldRuntime({
       heldSessions: heldRegistry(port.port),
@@ -9157,14 +9156,17 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // now. What remains unanswerable is a call that asked SEVERAL questions,
     // because only its first is on the wire, so that is what this fixture is.
     // The refusal it asserts is the same shared constant, with #360's wording.
+    // AMENDED again for #443 (was: question 1 flat beside `questionCount: 2`):
+    // the same call with both questions carried, which is still refused —
+    // for the unmeasured walk between them now, not for a missing question.
     const port = heldPort()
     const ask: DwarfQuestion = {
       toolUseId: 'call_observed',
-      question: 'Which colour?',
       channel: 'terminal',
-      multiSelect: false,
-      questionCount: 2,
-      options: [{ label: 'Green' }]
+      questions: [
+        { question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] },
+        { question: 'Which shape?', multiSelect: false, options: [{ label: 'Round' }] }
+      ]
     }
     const runtime = heldRuntime({
       heldSessions: heldRegistry(port.port),
@@ -12482,21 +12484,60 @@ describe('AgentRuntime.declareMine — worktrees (#348)', () => {
  * picker to a question the panel does not know exists — refused before a key,
  * with the reason named.
  */
+/*
+ * Issue #443. What the two `askFor` helpers below used to spread over a flat
+ * ask: the call's own fields (`toolUseId`, `channel`) and its one question's
+ * fields side by side. They are two levels now, so this splits an override into
+ * the two and builds a one-question call — or takes `questions` whole, which is
+ * what a case about a several-question call passes in place of the retired
+ * `questionCount: 2`.
+ */
+type AskOverrides = Partial<DwarfAskQuestion> &
+  Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel' | 'questions'>>
+
+function askShaped(
+  base: { toolUseId: string } & DwarfAskQuestion,
+  overrides: AskOverrides
+): DwarfQuestion {
+  const { toolUseId, channel, questions, ...question } = overrides
+  const { toolUseId: baseId, ...baseQuestion } = base
+  return {
+    toolUseId: toolUseId ?? baseId,
+    channel: channel ?? 'terminal',
+    questions: questions ?? [{ ...baseQuestion, ...question }]
+  }
+}
+
+/** A second question for a call that asked two things. */
+const SECOND_QUESTION: DwarfAskQuestion = {
+  question: 'Which shape?',
+  multiSelect: false,
+  options: [{ label: 'Round' }]
+}
+
 describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () => {
   const FOREMAN_ID = 'claude:session-1'
   const TOOL_USE_ID = 'toolu_q1'
   const QUESTION = 'Which fruit?'
 
-  function askFor(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
-    return {
-      toolUseId: TOOL_USE_ID,
-      question: QUESTION,
-      channel: 'terminal',
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Fig' }, { label: 'Plum' }, { label: 'Pear' }, { label: 'Sloe' }],
-      ...overrides
-    }
+  // AMENDED for #443 (was: `Partial<DwarfQuestion>` over a flat ask with
+  // `questionCount: 1`) — see askShaped.
+  function askFor(overrides: AskOverrides = {}): DwarfQuestion {
+    return askShaped(
+      {
+        toolUseId: TOOL_USE_ID,
+        question: QUESTION,
+        multiSelect: false,
+        options: [{ label: 'Fig' }, { label: 'Plum' }, { label: 'Pear' }, { label: 'Sloe' }]
+      },
+      overrides
+    )
+  }
+
+  /** The same call with a second question behind the first — what `questionCount: 2` stood for. */
+  function severalFor(): DwarfQuestion {
+    const one = askFor()
+    return { ...one, questions: [...one.questions, SECOND_QUESTION] }
   }
 
   function fakePort(overrides: Partial<TextDeliveryPort> = {}) {
@@ -12605,10 +12646,12 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
   })
 
   it('refuses a call that asked more than one question, before any keystroke', async () => {
-    // THE refusal this route exists around. Only question 1 is on the wire, so
-    // a digit here walks the picker to a question nothing in the panel knows
-    // about and leaves the call half answered.
-    const { runtime, port } = await runtimeWith({ question: askFor({ questionCount: 2 }) })
+    // THE refusal this route exists around. How the picker walks from question
+    // 1 to question 2 is unmeasured, so a digit here moves it somewhere nobody
+    // has watched and can leave the call half answered. AMENDED for #443 (was:
+    // `questionCount: 2`, and "only question 1 is on the wire"): the same call,
+    // carried whole, refused for the reason that is still true.
+    const { runtime, port } = await runtimeWith({ question: severalFor() })
 
     await expect(answer(runtime, ['Fig'])).resolves.toEqual({
       answered: false,
@@ -12852,7 +12895,8 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
   })
 
   it('refuses a call that asked several questions, before any keystroke', async () => {
-    const { runtime, port } = await runtimeWith({ question: askFor({ questionCount: 2 }) })
+    // AMENDED for #443 (was: `questionCount: 2`): the same call, carried whole.
+    const { runtime, port } = await runtimeWith({ question: severalFor() })
 
     await expect(answerInWords(runtime, 'a quince')).resolves.toEqual({
       answered: false,
@@ -12991,16 +13035,18 @@ describe('AgentRuntime.answerDwarfQuestion at an observed terminal (#362)', () =
 describe('AgentRuntime.sendDwarfText while a prompt stands at its terminal (#481)', () => {
   const FOREMAN_ID = 'claude:session-1'
 
-  function askFor(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
-    return {
-      toolUseId: 'toolu_q1',
-      question: 'Which database should the importer write to?',
-      channel: 'terminal',
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Postgres' }, { label: 'SQLite' }],
-      ...overrides
-    }
+  // AMENDED for #443 (was: `Partial<DwarfQuestion>` over a flat ask with
+  // `questionCount: 1`) — see askShaped.
+  function askFor(overrides: AskOverrides = {}): DwarfQuestion {
+    return askShaped(
+      {
+        toolUseId: 'toolu_q1',
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      },
+      overrides
+    )
   }
 
   function promptFor(overrides: Partial<DwarfPermissionRequest> = {}): DwarfPermissionRequest {
@@ -13104,7 +13150,10 @@ describe('AgentRuntime.sendDwarfText while a prompt stands at its terminal (#481
   })
 
   it('refuses a several-question ask the same way, which no card can answer either', async () => {
-    const { runtime, port } = await runtimeWith({ pendingQuestion: askFor({ questionCount: 2 }) })
+    // AMENDED for #443 (was: `questionCount: 2`): the same call, carried whole.
+    const { runtime, port } = await runtimeWith({
+      pendingQuestion: askFor({ questions: [askFor().questions[0]!, SECOND_QUESTION] })
+    })
 
     await expect(send(runtime)).resolves.toMatchObject({
       delivered: false,

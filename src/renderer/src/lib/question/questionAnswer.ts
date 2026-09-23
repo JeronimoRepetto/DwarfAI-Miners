@@ -130,6 +130,10 @@ export function canSendAnswer(
  * joinAnswerLabels in contracts, which is the encoding both sides read. This
  * function is unchanged by it: what it takes is one answer VALUE, and it still
  * repeats it verbatim.
+ *
+ * Keyed by the call's FIRST question, because that is the one the card draws
+ * until it walks the rest (#443) — every question is on the wire, and filling a
+ * key per question is the step that follows, not something this guesses at.
  */
 export function answerRequest(
   dwarfId: string,
@@ -139,7 +143,7 @@ export function answerRequest(
   return {
     dwarfId,
     toolUseId: question.toolUseId,
-    answers: { [question.question]: label }
+    answers: { [question.questions[0]?.question ?? '']: label }
   }
 }
 
@@ -147,8 +151,8 @@ export function answerRequest(
  * The request that answers `question` in the person's OWN words (#481).
  *
  * `answerRequest`'s sibling and the other of the wire's two exclusive forms: no
- * record, because there is nothing for a key to distinguish — this answers the
- * one question on the wire, through the "Other" row that question's own picker
+ * record, because there is nothing for a key to distinguish — this answers a
+ * one-question call, through the "Other" row that question's own picker
  * offers. Main types it there (see questionFreeTextChunks); it is not a message
  * and never travels the message path.
  *
@@ -294,7 +298,8 @@ export function toggledAnswer(
   question: DwarfQuestion
 ): string | null {
   const toggled = togglesFor(current, question.toolUseId)
-  const labels = question.options
+  // The first question's options: the one the card draws until it walks the call (#443).
+  const labels = (question.questions[0]?.options ?? [])
     .map((option) => option.label)
     .filter((label) => toggled.includes(label))
   return labels.length === 0 ? null : joinAnswerLabels(labels)

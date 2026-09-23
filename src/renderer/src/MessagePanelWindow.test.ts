@@ -847,11 +847,17 @@ describe('reporting its own height', () => {
  * own blocked tool call over the answer channel.
  */
 describe('answering an agent question', () => {
+  // AMENDED for #443 (was: the question's fields flat on the ask): the wire
+  // shape carries the call's questions as a list.
   const PENDING_QUESTION = {
     toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
-    multiSelect: false,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ]
   }
 
   const ASKING_DWARF = {
@@ -921,7 +927,9 @@ describe('answering an agent question', () => {
       [
         {
           ...ASKING_DWARF,
-          pendingQuestion: { ...PENDING_QUESTION, channel: 'terminal', questionCount: 1 }
+          // AMENDED for #443 (was: `questionCount: 1` beside the channel): the
+          // fixture's one-entry `questions` list already says one question.
+          pendingQuestion: { ...PENDING_QUESTION, channel: 'terminal' }
         }
       ],
       'claude:s1',

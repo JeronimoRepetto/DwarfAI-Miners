@@ -916,24 +916,27 @@ export class CodexProvider implements Provider {
     // later must not ride across unredacted by being forgotten.
     const asked = rollout?.info.pendingQuestion
     if (asked !== undefined) {
-      const header = asked.header === undefined ? undefined : redactSecrets(asked.header)
       mainDwarf.pendingQuestion = {
         toolUseId: asked.toolUseId,
-        question: redactSecrets(asked.question),
-        ...(header === undefined ? {} : { header }),
         // No Codex thread is one this panel holds, and Codex offers a message
         // queue rather than an answer channel — a queued message is not an
         // answer to a blocked tool call. So the ask is shown and pointed at
         // its own terminal, never offered as answerable (#354).
         channel: 'terminal',
-        multiSelect: asked.multiSelect,
-        questionCount: asked.questionCount,
-        options: asked.options.map((option) => ({
-          label: redactSecrets(option.label),
-          ...(option.description === undefined
-            ? {}
-            : { description: redactSecrets(option.description) })
-        })),
+        questions: asked.questions.map((entry) => {
+          const header = entry.header === undefined ? undefined : redactSecrets(entry.header)
+          return {
+            question: redactSecrets(entry.question),
+            ...(header === undefined ? {} : { header }),
+            multiSelect: entry.multiSelect,
+            options: entry.options.map((option) => ({
+              label: redactSecrets(option.label),
+              ...(option.description === undefined
+                ? {}
+                : { description: redactSecrets(option.description) })
+            }))
+          }
+        }),
         ...(asked.askedAt === undefined ? {} : { askedAt: asked.askedAt })
       }
     }

@@ -47,11 +47,12 @@ import {
  * each one into a sentence for the person — these are different facts about
  * their own session, not one failure with several causes.
  *
- * `several-questions` is the load-bearing one. A call that asked two things has
- * only its first question on the wire (both writers say so), so typing an
- * answer walks the picker on to a question the panel does not know exists and
- * leaves the call half answered in a TUI nothing here can read. That ask
- * belongs to its own terminal until the wire carries every question of it.
+ * `several-questions` is the load-bearing one. Every question of a call is on
+ * the wire since #443, but how the picker walks from one to the next is not
+ * measured: the rounds above isolated one question per call, so keys typed for
+ * question 1 move the picker somewhere nobody has watched, and could leave the
+ * call half answered in a TUI nothing here can read. That ask belongs to its
+ * own terminal until a round records the walk (#443).
  *
  * `option-chosen-twice` exists because a digit TOGGLES: two identical digits
  * leave the option exactly as it started, so the answer sent would not be the
@@ -71,7 +72,7 @@ import {
 
 /** Why no keystroke could be derived — one reason per fact, never a bare null. */
 export type QuestionKeystrokeRefusal =
-  /** The call carried more than one question, and only its first is on the wire. */
+  /** The call carried more than one question, and the picker's walk between them is unmeasured. */
   | 'several-questions'
   /** Nothing was chosen, and a bare confirmation would accept an empty answer. */
   | 'nothing-chosen'
@@ -126,26 +127,28 @@ export function questionKeystrokesFor(
   question: DwarfQuestion,
   chosenLabels: readonly string[]
 ): QuestionKeystrokes {
-  if (question.questionCount > 1) return { ok: false, reason: 'several-questions' }
-  if (question.options.length > MAX_NUMBERED_OPTIONS) {
+  if (question.questions.length > 1) return { ok: false, reason: 'several-questions' }
+  // Never empty: a writer with no question to carry puts no ask on the wire.
+  const only = question.questions[0]!
+  if (only.options.length > MAX_NUMBERED_OPTIONS) {
     return { ok: false, reason: 'more-options-than-digits' }
   }
   if (chosenLabels.length === 0) return { ok: false, reason: 'nothing-chosen' }
-  if (!question.multiSelect && chosenLabels.length > 1) return { ok: false, reason: 'wrong-arity' }
+  if (!only.multiSelect && chosenLabels.length > 1) return { ok: false, reason: 'wrong-arity' }
   if (new Set(chosenLabels).size !== chosenLabels.length) {
     return { ok: false, reason: 'option-chosen-twice' }
   }
 
   const positions: number[] = []
   for (const label of chosenLabels) {
-    const index = question.options.findIndex((option) => option.label === label)
+    const index = only.options.findIndex((option) => option.label === label)
     if (index === -1) return { ok: false, reason: 'label-not-offered' }
     positions.push(index + 1)
   }
   return {
     ok: true,
     digits: positions.sort((left, right) => left - right).map(String),
-    submit: question.multiSelect
+    submit: only.multiSelect
   }
 }
 
@@ -220,7 +223,7 @@ const CONTROL_CHARACTER = /[ -]/
 
 /** Why no free-text keystrokes could be derived — one reason per fact (#481). */
 export type QuestionFreeTextRefusal =
-  /** The call carried more than one question, and only its first is on the wire. */
+  /** The call carried more than one question, and the picker's walk between them is unmeasured. */
   | 'several-questions'
   /** A shape whose Other row nobody has reached: multi-select, or too many options. */
   | 'other-row-not-measured'
@@ -287,12 +290,13 @@ export type QuestionFreeText =
  * chunk it always was.
  */
 export function questionFreeTextChunks(question: DwarfQuestion, text: string): QuestionFreeText {
-  if (question.questionCount > 1) return { ok: false, reason: 'several-questions' }
+  if (question.questions.length > 1) return { ok: false, reason: 'several-questions' }
   if (!askHasAReachableOtherRow(question)) return { ok: false, reason: 'other-row-not-measured' }
   if (text.trim() === '') return { ok: false, reason: 'nothing-typed' }
   if (CONTROL_CHARACTER.test(text)) return { ok: false, reason: 'text-would-steer-the-picker' }
 
-  const options = question.options.length
+  // askHasAReachableOtherRow above admits exactly one question.
+  const options = question.questions[0]!.options.length
   const reach =
     options < MAX_NUMBERED_OPTIONS
       ? [String(options + 1)]

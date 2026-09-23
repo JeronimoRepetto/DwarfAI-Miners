@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   joinAnswerLabels,
   type DwarfAnswerState,
+  type DwarfAskQuestion,
   type DwarfPermissionRequest,
   type DwarfQuestion
 } from '../../types'
@@ -25,15 +26,28 @@ import {
   toggledAnswer
 } from './questionAnswer'
 
-function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+/*
+ * AMENDED for #443 (was: `Partial<DwarfQuestion>` spread over a flat ask with
+ * `questionCount: 1`). The call's own fields and its one question's fields are
+ * two levels now; an override may name either, and this puts each where it
+ * belongs — or passes `questions` whole, for a case about several.
+ */
+type QuestionOverrides = Partial<DwarfAskQuestion> &
+  Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel' | 'questions'>>
+
+function question(overrides: QuestionOverrides = {}): DwarfQuestion {
+  const { toolUseId, channel, questions, ...asked } = overrides
   return {
-    toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
-    channel: 'held',
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }, { label: 'Neither' }],
-    ...overrides
+    toolUseId: toolUseId ?? 'toolu_01',
+    channel: channel ?? 'held',
+    questions: questions ?? [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }, { label: 'Neither' }],
+        ...asked
+      }
+    ]
   }
 }
 
@@ -467,10 +481,16 @@ describe('freeTextRoute', () => {
     // The message path on this channel writes into the session's own console,
     // and a session drawing a picker reads those keys as picker input — the
     // Enter behind them confirming an option nobody chose (#481).
-    const terminal = (overrides: Partial<DwarfQuestion>): DwarfQuestion =>
+    // AMENDED for #443 (was: `Partial<DwarfQuestion>`, and `questionCount: 2`
+    // for the several-question case): the same call, carried whole.
+    const terminal = (overrides: QuestionOverrides): DwarfQuestion =>
       question({ channel: 'terminal', ...overrides })
+    const several: DwarfAskQuestion[] = [
+      { question: 'Which store?', multiSelect: false, options: [{ label: 'Postgres' }] },
+      { question: 'Which region?', multiSelect: false, options: [{ label: 'East' }] }
+    ]
     expect(freeTextRoute('terminal', terminal({ multiSelect: true }))).toBe('picker')
-    expect(freeTextRoute('terminal', terminal({ questionCount: 2 }))).toBe('picker')
+    expect(freeTextRoute('terminal', terminal({ questions: several }))).toBe('picker')
     expect(freeTextRoute('terminal', terminal({ options: [] }))).toBe('picker')
   })
 

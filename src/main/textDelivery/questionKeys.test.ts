@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { askHasAReachableOtherRow, type DwarfQuestion } from '../domain/types'
+import {
+  askHasAReachableOtherRow,
+  type DwarfAskQuestion,
+  type DwarfQuestion
+} from '../domain/types'
 import {
   answerChunksPressable,
   questionAnswerChunks,
@@ -18,16 +22,36 @@ import {
  * digit toggles its option without moving the cursor, and {RIGHT} then {ENTER}
  * accepts the set.
  */
-function ask(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+/*
+ * AMENDED for #443 (was: `Partial<DwarfQuestion>` spread over a flat ask with
+ * `questionCount: 1`). The overrides are the ONE question's own fields now,
+ * because that is what every case here varies; a case about a call with more
+ * than one question passes `questions` whole — see `twoQuestions`.
+ */
+function ask(
+  overrides: Partial<DwarfAskQuestion> & { questions?: DwarfAskQuestion[] } = {}
+): DwarfQuestion {
+  const { questions, ...question } = overrides
   return {
     toolUseId: 'toolu_01',
-    question: 'Which fruit?',
     channel: 'terminal',
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Fig' }, { label: 'Plum' }, { label: 'Pear' }, { label: 'Sloe' }],
-    ...overrides
+    questions: questions ?? [
+      {
+        question: 'Which fruit?',
+        multiSelect: false,
+        options: [{ label: 'Fig' }, { label: 'Plum' }, { label: 'Pear' }, { label: 'Sloe' }],
+        ...question
+      }
+    ]
   }
+}
+
+/** A call that asked two things — what `questionCount: 2` stood for before #443. */
+function twoQuestions(): DwarfAskQuestion[] {
+  return [
+    { question: 'Which fruit?', multiSelect: false, options: [{ label: 'Fig' }] },
+    { question: 'Which shape?', multiSelect: false, options: [{ label: 'Round' }] }
+  ]
 }
 
 describe('questionKeystrokesFor (#362)', () => {
@@ -79,10 +103,12 @@ describe('questionKeystrokesFor (#362)', () => {
   })
 
   it('refuses an ask that carried more than one question', () => {
-    // Typing an answer to question 1 walks the picker on to question 2, which
-    // the wire does not carry — so a partial answer would be left behind in a
-    // TUI nobody here can see. That ask belongs to its own terminal.
-    expect(questionKeystrokesFor(ask({ questionCount: 2 }), ['Fig'])).toEqual({
+    // Typing an answer to question 1 moves the picker on in a way nobody has
+    // measured — so a partial answer could be left behind in a TUI nobody here
+    // can see. That ask belongs to its own terminal. AMENDED for #443 (was:
+    // `questionCount: 2`, with the reason "which the wire does not carry"):
+    // the same call, carried whole now, and refused for the unmeasured walk.
+    expect(questionKeystrokesFor(ask({ questions: twoQuestions() }), ['Fig'])).toEqual({
       ok: false,
       reason: 'several-questions'
     })
@@ -287,7 +313,8 @@ describe('questionFreeTextChunks (#481)', () => {
   })
 
   it('refuses an ask that carried more than one question', () => {
-    expect(questionFreeTextChunks(ask({ questionCount: 2 }), 'mine')).toEqual({
+    // AMENDED for #443 (was: `questionCount: 2`): the same call, carried whole.
+    expect(questionFreeTextChunks(ask({ questions: twoQuestions() }), 'mine')).toEqual({
       ok: false,
       reason: 'several-questions'
     })
@@ -363,7 +390,8 @@ describe('questionFreeTextChunks (#481)', () => {
     const shapes: DwarfQuestion[] = [
       ask(),
       ask({ multiSelect: true }),
-      ask({ questionCount: 2 }),
+      // AMENDED for #443 (was: `questionCount: 2`): the same call, carried whole.
+      ask({ questions: twoQuestions() }),
       ask({ options: [] }),
       ask({ options: labelled(9) }),
       ask({ options: labelled(10) })

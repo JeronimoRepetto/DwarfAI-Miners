@@ -12,6 +12,7 @@ import type {
   DwarfMcpServerStatus,
   DwarfPermissionRequest,
   DwarfProvider,
+  DwarfAskQuestion,
   DwarfQuestion,
   DwarfQuestionOption,
   DwarfSessionTuning,
@@ -61,13 +62,16 @@ import {
  * HeldSessionHandle.contextUsage and HeldSessionRegistry.refreshContextUsage.
  */
 
-/** One question inside an ask, exactly as the agent worded it — never redacted. */
-export interface HeldAskQuestion {
-  question: string
-  header?: string
-  multiSelect: boolean
-  options: DwarfQuestionOption[]
-}
+/**
+ * One question inside an ask, exactly as the agent worded it — never redacted.
+ *
+ * An alias of the wire's DwarfAskQuestion rather than a copy of its fields,
+ * because the two are the same shape and a copy is where they would drift
+ * (#443). What differs is the VALUES, not the type: this one holds the agent's
+ * own strings, which resolveAnswers has to hand back, and only
+ * askToWireQuestion's redacted copy of it may leave this process.
+ */
+export type HeldAskQuestion = DwarfAskQuestion
 
 /**
  * One `AskUserQuestion` tool call, waiting on an answer.
@@ -885,7 +889,7 @@ export function parseAskUserQuestion(
 }
 
 /**
- * The ask as the renderer sees it: redacted, and singular.
+ * The ask as the renderer sees it: redacted, every question of it.
  *
  * Redacted field by field rather than by spreading the parsed ask, so a field
  * added to HeldAskQuestion later cannot ride across unredacted by being
@@ -893,37 +897,38 @@ export function parseAskUserQuestion(
  * for the same reason: labels go through it too, because a leak the user has to
  * press is no better than one they only read (#59).
  *
- * Only the FIRST question travels, because `DwarfQuestion` is singular (#94
- * phase 1 took that decision and this does not reopen it). The consequence is
- * stated rather than hidden: a call that asked two things has its second
- * question dropped from the panel, and `resolveAnswers` therefore accepts a
- * partial answers record. Nothing is invented for the questions nobody saw.
+ * Every question travels, in the order the agent asked them (#443). Until then
+ * only the first did, because `DwarfQuestion` was singular, and a held card
+ * could release the blocked call on an answer to question 1 alone. The list is
+ * what lets the card walk the call and the answer cover all of it; that the
+ * card and resolveAnswers still accept a partial record is the part #443 closes
+ * next, not something this shape asks for.
  *
  * `askedAt` is passed in rather than read from a clock here: the SDK attaches
  * no timestamp to the callback, so the honest value is when this host received
  * it, and the caller owns the clock.
  */
 export function askToWireQuestion(ask: HeldAsk, askedAt: string): DwarfQuestion {
-  const first = ask.questions[0]!
-  const header = first.header === undefined ? undefined : redactSecrets(first.header)
   return {
     toolUseId: ask.toolUseId,
-    question: redactSecrets(first.question),
-    ...(header === undefined ? {} : { header }),
     // The panel HOLDS this session, so the answer goes back through the
     // stream: see DwarfPromptChannel, and permissionToWire below, which says
     // the same thing about the other prompt on the same session (#354).
     channel: 'held',
-    multiSelect: first.multiSelect,
-    // Every question the ask carried, not the one that travels: the terminal
-    // answer route has to refuse a call it can only half answer (#362).
-    questionCount: ask.questions.length,
-    options: first.options.map((option) => ({
-      label: redactSecrets(option.label),
-      ...(option.description === undefined
-        ? {}
-        : { description: redactSecrets(option.description) })
-    })),
+    questions: ask.questions.map((asked) => {
+      const header = asked.header === undefined ? undefined : redactSecrets(asked.header)
+      return {
+        question: redactSecrets(asked.question),
+        ...(header === undefined ? {} : { header }),
+        multiSelect: asked.multiSelect,
+        options: asked.options.map((option) => ({
+          label: redactSecrets(option.label),
+          ...(option.description === undefined
+            ? {}
+            : { description: redactSecrets(option.description) })
+        }))
+      }
+    }),
     askedAt
   }
 }

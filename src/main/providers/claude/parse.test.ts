@@ -1593,20 +1593,23 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
   const info = parseClaudeTranscriptTail(askUserQuestion)
 
   it('carries the ask that has no tool_result behind it in this tail', () => {
-    // AMENDED for #362 (was: the same object without `questionCount`). The
-    // expectation gains the field the wire now carries; nothing that was
-    // asserted here is weaker. The fixture's call asks ONE question, so the
-    // count is 1 — see the `questionCount` cases below for a call with more.
+    // AMENDED for #362 (was: the same object without `questionCount`), and
+    // again for #443 (was: the question's fields flat on the ask, beside
+    // `questionCount: 1`). The same fields, the same values, now inside the
+    // call's one-entry `questions` list; the list's length replaces the count.
     expect(info.pendingQuestion).toEqual({
       toolUseId: 'toolu_01AskPlaceholderPending',
-      question: 'Which materials should the vault chart?',
-      header: 'Materials',
-      multiSelect: true,
-      questionCount: 1,
-      options: [
-        { label: 'Copper', description: 'The starter material every mine yields.' },
-        { label: 'Silver', description: 'The second tier, once a mine is measured.' },
-        { label: 'Uranium', description: 'The rarest tier in the ladder.' }
+      questions: [
+        {
+          question: 'Which materials should the vault chart?',
+          header: 'Materials',
+          multiSelect: true,
+          options: [
+            { label: 'Copper', description: 'The starter material every mine yields.' },
+            { label: 'Silver', description: 'The second tier, once a mine is measured.' },
+            { label: 'Uranium', description: 'The rarest tier in the ladder.' }
+          ]
+        }
       ],
       askedAt: '2026-09-01T09:03:41.062Z'
     })
@@ -1648,7 +1651,9 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
   it('reports the latest of two asks that are both still open', () => {
     const tail =
       askLine('toolu_a', askInput('First question?')) + askLine('toolu_b', askInput('Second?'))
-    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.question).toBe('Second?')
+    // AMENDED for #443 (was: `.pendingQuestion?.question`): the question text
+    // moved into the call's `questions` list.
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questions[0]?.question).toBe('Second?')
   })
 
   it('carries no question at all for a tail that holds no ask', () => {
@@ -1696,31 +1701,35 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
         }
       ]
     })
-    // AMENDED for #362 (was: the same object without `questionCount`). One
-    // field added to the expectation; the malformed-option assertion it exists
-    // for is untouched.
+    // AMENDED for #362 (was: the same object without `questionCount`), and
+    // again for #443 (was: the question's fields flat beside `questionCount:
+    // 1`): the same question inside a one-entry list. The malformed-option
+    // assertion it exists for is untouched.
     expect(parseClaudeTranscriptTail(tail).pendingQuestion).toEqual({
       toolUseId: 'toolu_a',
-      question: 'Which approach?',
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Accumulate' }]
+      questions: [
+        { question: 'Which approach?', multiSelect: false, options: [{ label: 'Accumulate' }] }
+      ]
     })
   })
 
   /*
-   * Issue #362. Only the FIRST question of a call travels, which this parser
-   * has always said in its comment and never on the wire. The count is what
-   * makes the drop actionable: an answer typed into the console walks the
-   * picker on to question 2, so the runtime refuses a call with more than one
-   * rather than leaving it half answered.
+   * Issue #362. Only the FIRST question of a call used to travel, with a count
+   * beside it so the runtime could refuse a call with more than one. AMENDED
+   * for #443: every question travels now, so the list's own length is the
+   * count these cases pin — `questionCount` left the wire with the drop it
+   * existed to state.
    */
   it('counts one question for a call that asked one', () => {
+    // AMENDED for #443 (was: `.questionCount` toBe 1).
     const tail = askLine('toolu_c1', askInput('Which approach?'))
-    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questionCount).toBe(1)
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questions).toHaveLength(1)
   })
 
   it('counts every question a call carried, not the one it kept', () => {
+    // AMENDED for #443 (was: the first question's text, and `.questionCount`
+    // toBe 3). The first entry is still the first question; the count is the
+    // list's length, which is stronger than the old number: all three are there.
     const tail = askLine('toolu_c3', {
       questions: [
         { question: 'Which colour?', options: [{ label: 'Red' }] },
@@ -1729,18 +1738,106 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
       ]
     })
     const asked = parseClaudeTranscriptTail(tail).pendingQuestion
-    expect(asked?.question).toBe('Which colour?')
-    expect(asked?.questionCount).toBe(3)
+    expect(asked?.questions[0]?.question).toBe('Which colour?')
+    expect(asked?.questions).toHaveLength(3)
   })
 
-  it('counts the questions the call carried, including ones it could not read', () => {
-    // A malformed second question is still a question the picker will walk to,
-    // so it counts. Counting only the readable ones would let the runtime type
-    // an answer into a call it cannot finish.
+  it('refuses a call that carried a question it could not read, rather than counting it', () => {
+    // AMENDED for #443 (was: "counts the questions the call carried, including
+    // ones it could not read" — the ask carried with `questionCount` 2). The
+    // reasoning stands and is why the expectation went the way it did: a
+    // malformed second question is still one the picker will walk to, so an
+    // ask built from the readable ones would let the panel answer a call it
+    // cannot finish. With only the first on the wire, counting it was enough to
+    // refuse; with every question on the wire, the only honest shape left is
+    // no ask at all, because a list without it would claim the call asked less.
     const tail = askLine('toolu_c4', {
       questions: [{ question: 'Which colour?', options: [{ label: 'Red' }] }, { question: 7 }]
     })
-    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questionCount).toBe(2)
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  /*
+   * Issue #443. Every question of a call travels, in the agent's order, so a
+   * card can walk them and one answer can cover the whole call. The four here
+   * is the schema's own ceiling, and the ask the maintainer saw drawn inert on
+   * 2026-09-17 was exactly that size.
+   */
+  it('carries a four-question call whole, in order, each with its own header, flag and options', () => {
+    const tail = askLine('toolu_q4', {
+      questions: [
+        {
+          question: 'Which colour?',
+          header: 'Colour',
+          multiSelect: false,
+          options: [{ label: 'Red', description: 'The loud one.' }, { label: 'Green' }]
+        },
+        {
+          question: 'Which fruits?',
+          header: 'Fruit',
+          multiSelect: true,
+          options: [{ label: 'Fig' }, { label: 'Pear', description: 'The soft one.' }]
+        },
+        { question: 'Which shape?', multiSelect: false, options: [{ label: 'Round' }] },
+        {
+          question: 'Which sizes?',
+          header: 'Size',
+          multiSelect: true,
+          options: [{ label: 'Small' }, { label: 'Large' }]
+        }
+      ]
+    })
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion?.questions).toEqual([
+      {
+        question: 'Which colour?',
+        header: 'Colour',
+        multiSelect: false,
+        options: [{ label: 'Red', description: 'The loud one.' }, { label: 'Green' }]
+      },
+      {
+        question: 'Which fruits?',
+        header: 'Fruit',
+        multiSelect: true,
+        options: [{ label: 'Fig' }, { label: 'Pear', description: 'The soft one.' }]
+      },
+      { question: 'Which shape?', multiSelect: false, options: [{ label: 'Round' }] },
+      {
+        question: 'Which sizes?',
+        header: 'Size',
+        multiSelect: true,
+        options: [{ label: 'Small' }, { label: 'Large' }]
+      }
+    ])
+  })
+
+  it('refuses a call whole when its second question cannot be read, rather than half-carrying it', () => {
+    // A card that walked three of four questions would send an answer the
+    // agent's own picker never accepts, and a panel that silently dropped the
+    // unreadable one would claim the call asked less than it did. No
+    // pendingQuestion is a miss; a partial one is a false claim.
+    const tail = askLine('toolu_q2', {
+      questions: [
+        { question: 'Which colour?', options: [{ label: 'Red' }] },
+        { question: 7, options: [{ label: 'Fig' }] },
+        { question: 'Which shape?', options: [{ label: 'Round' }] }
+      ]
+    })
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
+  it('refuses a call whole when its last question cannot be read, not only its second', () => {
+    // The implementation loop returns on any position; the test pins that
+    // position does not matter. A four-question call with the fourth
+    // malformed must refuse the whole ask just like a malformed second does.
+    const tail = askLine('toolu_q4', {
+      questions: [
+        { question: 'Which colour?', options: [{ label: 'Red' }] },
+        { question: 'Which fruit?', options: [{ label: 'Fig' }] },
+        { question: 'Which shape?', options: [{ label: 'Round' }] },
+        { question: 7, options: [{ label: 'Large' }] }
+      ]
+    })
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
   })
 
   it('ignores an ask whose tool_use block carries no id to resolve it by', () => {

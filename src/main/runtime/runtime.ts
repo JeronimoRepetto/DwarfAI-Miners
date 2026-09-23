@@ -542,11 +542,13 @@ function combineFallbackErrors(
  * The labels a terminal-channel answer chose, or none at all (#362).
  *
  * `answers` is the record the agent's own tool takes — keyed by the question's
- * TEXT — and this route can only ever answer the ONE question on the wire, so a
+ * TEXT — and this route only ever types an answer to a ONE-question call (a
+ * call with more is refused before this is read, see typeQuestionAnswer), so a
  * record of any other shape is not an answer to this ask: a second key would be
- * an answer to a question that never travelled, and a different key an answer
- * to one this ask does not ask. Both come back as nothing chosen rather than
- * being searched for a usable entry, and `questionKeystrokesFor` refuses them.
+ * an answer to a question this route never types, and a different key an
+ * answer to one this ask does not ask. Both come back as nothing chosen rather
+ * than being searched for a usable entry, and `questionKeystrokesFor` refuses
+ * them.
  *
  * The value is split rather than read whole, because a multi-select carries
  * several labels in it — see joinAnswerLabels in contracts, which is the other
@@ -556,7 +558,7 @@ function chosenLabelsFor(question: DwarfQuestion, answers: Record<string, string
   const given = Object.entries(answers)
   if (given.length !== 1) return []
   const [questionText, value] = given[0]!
-  return questionText === question.question ? splitAnswerLabels(value) : []
+  return questionText === question.questions[0]?.question ? splitAnswerLabels(value) : []
 }
 
 /**
@@ -3789,11 +3791,12 @@ export class AgentRuntime {
    *
    * ## What is refused BEFORE anything is pressed, and in this order
    *
-   * `questionCount > 1` first, because it is the one refusal that is true of
-   * the ASK rather than of this machine: a call that asked several questions
-   * has only its first on the wire, so a digit answers question 1 and walks the
-   * picker on to a question this panel does not know exists — a half-answered
-   * call left in a TUI nothing here can read. That ask belongs to its own
+   * Several questions first, because it is the one refusal that is true of
+   * the ASK rather than of this machine: every question of the call is on the
+   * wire since #443, but how the picker walks from one to the next is not
+   * measured, so a digit answers question 1 and moves the picker somewhere
+   * nobody has watched — possibly a half-answered call left in a TUI nothing
+   * here can read. That ask belongs to its own
    * terminal, and the person is told so wherever they are standing, even on a
    * machine that could not have typed it anyway.
    *
@@ -3827,7 +3830,7 @@ export class AgentRuntime {
     if (pending.toolUseId !== request.toolUseId) {
       return { answered: false, error: ASK_NO_LONGER_OPEN }
     }
-    if (pending.questionCount > 1) return { answered: false, error: ANSWER_ONLY_WHERE_IT_RUNS }
+    if (pending.questions.length > 1) return { answered: false, error: ANSWER_ONLY_WHERE_IT_RUNS }
     const answerAtConsole = this.textDelivery.answerQuestionAtConsole
     if (answerAtConsole === undefined) {
       return { answered: false, error: NO_ANSWER_KEYSTROKE_TIER }
