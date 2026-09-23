@@ -139,7 +139,13 @@ describe('parseAskUserQuestion', () => {
 })
 
 describe('askToWireQuestion', () => {
-  it('carries the first question only — the wire shape is singular', () => {
+  it('carries the whole call — every question, in the order it was asked', () => {
+    // AMENDED for #443 (was: "carries the first question only — the wire shape
+    // is singular", pinning question 1 flat on the ask beside `questionCount:
+    // 2`). The decision that test pinned is the one #443 reverses: the wire
+    // carries the call's list now, so the same two-question ask is asserted
+    // whole. Nothing the old expectation held is lost — question 1 is still
+    // there, first, with its options — and question 2 is no longer dropped.
     const ask = parseAskUserQuestion('toolu_10', {
       questions: [
         { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
@@ -147,35 +153,32 @@ describe('askToWireQuestion', () => {
       ]
     })!
 
-    // AMENDED for #362 (was: the same object without `questionCount`). The
-    // singular wire shape is unchanged and still asserted; what is added is the
-    // count of what the call carried — 2 here, which is exactly the fact this
-    // test's own title is about.
     expect(askToWireQuestion(ask, ASKED_AT)).toEqual({
       toolUseId: 'toolu_10',
-      question: 'First?',
       channel: 'held',
-      multiSelect: false,
-      questionCount: 2,
-      options: [{ label: 'A' }, { label: 'B' }],
+      questions: [
+        { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'Second?', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ],
       askedAt: ASKED_AT
     })
   })
 
   /*
-   * Issue #362. The held writer drops every question after the first, exactly
-   * as the transcript parse does, and the count is what stops that omission
-   * being invisible: the terminal answer route refuses a call it can only half
-   * answer, and the card says so before anybody clicks.
+   * Issue #362. The held writer used to drop every question after the first
+   * and carry a count so the omission was visible. AMENDED for #443: nothing is
+   * dropped now, so the list's own length is the count these cases pin.
    */
   it('counts one question for a call that asked one', () => {
+    // AMENDED for #443 (was: `.questionCount` toBe 1).
     const ask = parseAskUserQuestion('toolu_14', {
       questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
     })!
-    expect(askToWireQuestion(ask, ASKED_AT).questionCount).toBe(1)
+    expect(askToWireQuestion(ask, ASKED_AT).questions).toHaveLength(1)
   })
 
   it('counts every question of a call that asked several', () => {
+    // AMENDED for #443 (was: `.questionCount` toBe 3).
     const ask = parseAskUserQuestion('toolu_15', {
       questions: [
         { question: 'First?', multiSelect: false, options: [{ label: 'A' }] },
@@ -183,7 +186,7 @@ describe('askToWireQuestion', () => {
         { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
       ]
     })!
-    expect(askToWireQuestion(ask, ASKED_AT).questionCount).toBe(3)
+    expect(askToWireQuestion(ask, ASKED_AT).questions).toHaveLength(3)
   })
 
   it('redacts the question, the header, every label and every description', () => {
@@ -202,7 +205,9 @@ describe('askToWireQuestion', () => {
       ]
     })!
 
-    const wire = askToWireQuestion(ask, ASKED_AT)
+    // AMENDED for #443 (was: the same four reads flat on the ask): the
+    // question now sits in the call's `questions` list.
+    const wire = askToWireQuestion(ask, ASKED_AT).questions[0]!
     expect(wire.question).toBe('Use [redacted]?')
     expect(wire.header).toBe('Key [redacted]')
     expect(wire.options[0]).toEqual({ label: 'Yes [redacted]', description: 'Send [redacted]' })
@@ -213,7 +218,8 @@ describe('askToWireQuestion', () => {
     const ask = parseAskUserQuestion('toolu_12', {
       questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
     })!
-    const wire = askToWireQuestion(ask, ASKED_AT)
+    // AMENDED for #443 (was: the same two reads flat on the ask).
+    const wire = askToWireQuestion(ask, ASKED_AT).questions[0]!
     expect('header' in wire).toBe(false)
     expect('description' in wire.options[0]!).toBe(false)
   })
@@ -227,6 +233,43 @@ describe('askToWireQuestion', () => {
       questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
     })!
     expect(askToWireQuestion(ask, ASKED_AT).channel).toBe('held')
+  })
+
+  /*
+   * Issue #443. Every question of the call travels, in order, each redacted
+   * exactly as the first always was: the card has to walk them, and a second
+   * question is transcript-grade text on its way into the same window.
+   */
+  it('carries every question of the call, in order, each redacted', () => {
+    const secret = 'sk-abcdefghijklmnopqrstuvwx'
+    const ask = parseAskUserQuestion('toolu_16', {
+      questions: [
+        { question: 'First?', header: 'One', multiSelect: false, options: [{ label: 'A' }] },
+        {
+          question: `Use ${secret}?`,
+          header: `Key ${secret}`,
+          multiSelect: true,
+          options: [
+            { label: `Yes ${secret}`, description: `Send ${secret}` },
+            { label: 'No', description: 'Stop' }
+          ]
+        },
+        { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+      ]
+    })!
+    expect(askToWireQuestion(ask, ASKED_AT).questions).toEqual([
+      { question: 'First?', header: 'One', multiSelect: false, options: [{ label: 'A' }] },
+      {
+        question: 'Use [redacted]?',
+        header: 'Key [redacted]',
+        multiSelect: true,
+        options: [
+          { label: 'Yes [redacted]', description: 'Send [redacted]' },
+          { label: 'No', description: 'Stop' }
+        ]
+      },
+      { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+    ])
   })
 })
 
@@ -326,13 +369,12 @@ describe('resolveAnswers', () => {
 })
 
 describe('stampHeldQuestions', () => {
+  // AMENDED for #443 (was: the question's fields flat beside `questionCount:
+  // 1`): the wire shape carries the call's questions as a list.
   const question = {
     toolUseId: 'toolu_30',
-    question: 'Which colour?',
     channel: 'held' as const,
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Green' }]
+    questions: [{ question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] }]
   }
 
   function board(): Mine[] {
@@ -1515,13 +1557,12 @@ describe('stampHeldQuestions permission (#203)', () => {
   })
 
   it('carries an open ask and an open permission side by side', () => {
+    // AMENDED for #443 (was: the question's fields flat beside `questionCount:
+    // 1`): the wire shape carries the call's questions as a list.
     const question = {
       toolUseId: 'toolu_30',
-      question: 'Which colour?',
       channel: 'held' as const,
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Green' }]
+      questions: [{ question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] }]
     }
     const stamped = stampHeldQuestions(board(), () => ({ held: true, question, permission }))
     expect(stamped[0]!.dwarfs[0]!.pendingQuestion).toEqual(question)

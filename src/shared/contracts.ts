@@ -790,12 +790,19 @@ export interface DwarfQuestionOption {
  * window. Truncation can only hide a question, never invent one — see
  * ClaudeTranscriptInfo.pendingQuestion for why that asymmetry holds — so a
  * missing field is a miss, never a false claim.
+ *
+ * `questions` is EVERY question the call carried, in the agent's order, and
+ * never a prefix of them (#443). A card has to walk them and an answer has to
+ * cover all of them — a picker that received an answer to question 1 moves on to
+ * question 2 — so a list cut short would let this panel answer a call it could
+ * only half see. That is why both writers refuse a call with any question they
+ * cannot read rather than carry the rest: a missing ask is a miss, a shortened
+ * one is a false claim about what the agent asked. No count travels beside the
+ * list, because a second reading of one fact is a place for the two to drift;
+ * `questions.length` IS the count.
  */
 export interface DwarfQuestion {
   toolUseId: string
-  question: string
-  /** The agent's own short title for the ask, when it wrote one. */
-  header?: string
   /**
    * Where this ask can be answered — the same reading DwarfPermissionRequest
    * carries, and deliberately the same type (#354).
@@ -810,29 +817,32 @@ export interface DwarfQuestion {
    * an answer main would refuse.
    */
   channel: DwarfPromptChannel
-  /** Whether the agent said it would accept more than one option. */
-  multiSelect: boolean
   /**
-   * How many questions the CALL that raised this ask carried — 1 for almost
-   * every ask, and more for the one shape this panel cannot answer (#362).
-   *
-   * Only the first question of a call travels, and both writers say so at
-   * length (askedQuestion in the Claude parse, askToWireQuestion for a held
-   * session). This is the fact that omission leaves behind, and it is on the
-   * wire because two surfaces have to act on it rather than guess: an answer
-   * typed at the console walks the picker ON to question 2, which the panel
-   * does not know exists, so a several-question ask is refused before a key is
-   * pressed and the card says why up front (see ANSWER_ONLY_WHERE_IT_RUNS).
-   *
-   * The COUNT and nothing else: it says how many were asked, never which — the
-   * same narrowness Claude's pendingBackgroundAgentCount holds. Required rather
-   * than optional, because every writer counts its own source's array and a
-   * missing value would be a third state a refusal cannot be based on.
+   * Every question the call carried, in the agent's order; one to four for
+   * Claude, one for Codex. Never empty — a writer with nothing to carry puts no
+   * DwarfQuestion on the wire at all.
    */
-  questionCount: number
-  options: DwarfQuestionOption[]
+  questions: DwarfAskQuestion[]
   /** When the ask was written, as the provider recorded it. */
   askedAt?: string
+}
+
+/**
+ * One question inside an ask, in the agent's own words (#443).
+ *
+ * Its own type rather than fields on DwarfQuestion because a call carries up to
+ * four of these under one `toolUseId`: the id, the channel and the time belong
+ * to the CALL, and the wording, the flag and the options to each question.
+ * Every string here is display text and passes redaction at whichever writer put
+ * it on the wire.
+ */
+export interface DwarfAskQuestion {
+  question: string
+  /** The agent's own short title for the question, when it wrote one. */
+  header?: string
+  /** Whether the agent said it would accept more than one option. */
+  multiSelect: boolean
+  options: DwarfQuestionOption[]
 }
 
 /**
@@ -898,11 +908,17 @@ export type DwarfPromptChannel = 'held' | 'terminal'
  * AMENDED again for #362 for what it is ABOUT. The terminal channel by itself
  * is no longer unanswerable: a one-question ask is typed into the session's own
  * console (see questionKeys.ts for the measurement). What is left is a call
- * carrying more than one question, because only its first reaches the wire and
- * an answer typed to it walks the picker on to one the panel cannot see. So
- * this sentence says which ask it is about, and still says the two things it
- * always said: the answer belongs to the session's own terminal, and the panel
- * is showing the ask rather than holding it.
+ * carrying more than one question. So this sentence says which ask it is about,
+ * and still says the two things it always said: the answer belongs to the
+ * session's own terminal, and the panel is showing the ask rather than holding
+ * it.
+ *
+ * AMENDED for #443 for WHY that ask is left. Every question of a call reaches
+ * the wire now, so the panel is no longer missing the rest; what is missing is
+ * a measurement of how the picker walks from one question to the next. Keys
+ * typed for question 1 move the picker somewhere nobody has watched, and a
+ * sequence nobody has seen work is not one this panel types. The sentence
+ * itself never named the old reason, so it stands unchanged.
  *
  * Phrased off the renderer's OPEN_TURN_NO_INTERRUPT_HINT deliberately: that is
  * the sentence this app already uses for the other thing that can only happen
@@ -1059,9 +1075,9 @@ export const MAX_PICKER_NUMBERED_ROWS = 9
  * typed text sends it. Each condition below is a shape that reading does NOT
  * cover, and each is a refusal rather than an attempt:
  *
- * - **Several questions in the call.** Only the first reaches the wire, so an
- *   answer walks the picker on to one the panel cannot see (see
- *   ANSWER_ONLY_WHERE_IT_RUNS).
+ * - **Several questions in the call.** How the picker walks from one question
+ *   to the next is unmeasured, so an answer to the first would move it
+ *   somewhere nobody has watched (see ANSWER_ONLY_WHERE_IT_RUNS, #443).
  * - **A multi-select ask.** Enter TOGGLES the row a multi-select cursor is on
  *   (#362, round 1), so what it does on that picker's Other row is a different
  *   gesture and nobody's finding.
@@ -1077,11 +1093,13 @@ export const MAX_PICKER_NUMBERED_ROWS = 9
  * it in here would give both of them a second reading of something they know.
  */
 export function askHasAReachableOtherRow(question: DwarfQuestion): boolean {
+  const [only] = question.questions
   return (
-    question.questionCount === 1 &&
-    !question.multiSelect &&
-    question.options.length >= 1 &&
-    question.options.length <= MAX_PICKER_NUMBERED_ROWS
+    question.questions.length === 1 &&
+    only !== undefined &&
+    !only.multiSelect &&
+    only.options.length >= 1 &&
+    only.options.length <= MAX_PICKER_NUMBERED_ROWS
   )
 }
 
@@ -3377,8 +3395,8 @@ export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
  * The answer written in the person's OWN words, for the picker's "Other" row
  * (#481).
  *
- * One string and no record, because it answers the one question on the wire and
- * there is nothing for a key to distinguish. It is not free text arriving
+ * One string and no record, because it only ever answers a ONE-question call
+ * (see askHasAReachableOtherRow) and there is nothing for a key to distinguish. It is not free text arriving
  * somewhere — it is an ANSWER, and main types it into the row the agent's own
  * picker offers for exactly this (see questionFreeTextChunks). The held channel
  * refuses it for now: `resolveAnswers` hands the SDK the labels the ask carried,

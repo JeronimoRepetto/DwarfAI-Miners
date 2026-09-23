@@ -68,6 +68,19 @@ export interface CodexQuestionOption {
  */
 export interface CodexPendingQuestion {
   toolUseId: string
+  /**
+   * Every question the call carried, in order — one in every call measured
+   * (#443). Mirrors ClaudePendingQuestion's own list for the reason the rest of
+   * this type does: both feed one DwarfQuestion, and the panel must not be able
+   * to tell which CLI asked.
+   */
+  questions: CodexAskQuestion[]
+  /** The asking record's own timestamp, when it carried one. */
+  askedAt?: string
+}
+
+/** One entry of a `request_user_input` call's `questions`. */
+export interface CodexAskQuestion {
   question: string
   header?: string
   /**
@@ -78,16 +91,7 @@ export interface CodexPendingQuestion {
    * this type stays assignable to the shared one.
    */
   multiSelect: boolean
-  /**
-   * How many questions the call carried, whatever this parser kept (#362).
-   * Mirrors ClaudePendingQuestion's own field for the reason the rest of this
-   * type does: both feed one DwarfQuestion, and the panel must not be able to
-   * tell which CLI asked.
-   */
-  questionCount: number
   options: CodexQuestionOption[]
-  /** The asking record's own timestamp, when it carried one. */
-  askedAt?: string
 }
 
 /** Model settings found in one or more `turn_context` records. */
@@ -327,9 +331,12 @@ function codexQuestionFrom(
  *
  * With several open, the LAST is the one reported — the same rule the Claude
  * transcript parse follows, and for the same reason: it is the one the person
- * is looking at. Within one call, only `questions[0]` travels; a call asking
- * more than one thing at once was never observed, and folding several into one
- * card would attribute options to a question that did not offer them.
+ * is looking at. Within one call, every entry of `questions` travels, or none
+ * does (#443). A call asking more than one thing at once was never observed,
+ * and it is carried as a list rather than narrowed to its first entry because a
+ * list of one would read as a one-question ask — and each entry keeps its own
+ * options, so none is attributed to a question that did not offer it. One
+ * unreadable entry refuses the call, for the reason the Claude parse gives.
  *
  * Reading a bounded tail is safe in the one direction that matters: an output
  * always follows its call, so a call outside the window cannot be reported as
@@ -356,15 +363,12 @@ export function parseCodexPendingQuestion(tailText: string): CodexPendingQuestio
       continue
     }
     if (!isRecord(parsed) || !Array.isArray(parsed.questions)) continue
-    const first = codexQuestionFrom(parsed.questions[0])
-    if (first === undefined) continue
+    const read = parsed.questions.map(codexQuestionFrom)
+    const questions = read.filter((entry) => entry !== undefined)
+    if (questions.length === 0 || questions.length !== read.length) continue
     open.set(callId, {
       toolUseId: callId,
-      question: first.question,
-      ...(first.header === undefined ? {} : { header: first.header }),
-      multiSelect: false,
-      questionCount: parsed.questions.length,
-      options: first.options,
+      questions: questions.map((entry) => ({ ...entry, multiSelect: false })),
       ...(record.timestamp === '' ? {} : { askedAt: record.timestamp })
     })
   }

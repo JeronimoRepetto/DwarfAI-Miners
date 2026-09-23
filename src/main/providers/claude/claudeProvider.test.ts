@@ -2212,17 +2212,20 @@ describe('ClaudeProvider', () => {
         42_000
       )
       const snapshots = await makeProvider().scan()
+      // AMENDED for #362 (was: the same object without `questionCount`), and
+      // again for #443 (was: the question's fields flat beside `questionCount:
+      // 1`). The same values, inside the call's one-entry `questions` list.
       expect(snapshots[0]!.dwarfs[0]!.pendingQuestion).toEqual({
         toolUseId: 'toolu_01Pending',
-        question: 'Which approach?',
-        header: 'Approach',
         channel: 'terminal',
-        multiSelect: false,
-        // AMENDED for #362 (was: the same object without `questionCount`). One
-        // field added to the expectation, carried through from the parse; this
-        // fixture's call asks one question, so it is 1.
-        questionCount: 1,
-        options: [{ label: 'Accumulate', description: 'Walk the tail once.' }],
+        questions: [
+          {
+            question: 'Which approach?',
+            header: 'Approach',
+            multiSelect: false,
+            options: [{ label: 'Accumulate', description: 'Walk the tail once.' }]
+          }
+        ],
         askedAt: '2026-09-01T09:03:41.062Z'
       })
     })
@@ -2262,7 +2265,9 @@ describe('ClaudeProvider', () => {
         42_000
       )
       const snapshots = await makeProvider().scan()
-      const question = snapshots[0]!.dwarfs[0]!.pendingQuestion!
+      // AMENDED for #443 (was: the same reads flat on the ask): the question
+      // now sits in the call's `questions` list.
+      const question = snapshots[0]!.dwarfs[0]!.pendingQuestion!.questions[0]!
       expect(question.question).toBe('Should I rotate [redacted]?')
       expect(question.options[0]!.description).toBe('Replace [redacted] first.')
       expect(JSON.stringify(snapshots)).not.toContain(FAKE_KEY)
@@ -2298,7 +2303,8 @@ describe('ClaudeProvider', () => {
         42_000
       )
       const snapshots = await makeProvider().scan()
-      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion!.options).toEqual([
+      // AMENDED for #443 (was: `.pendingQuestion!.options`).
+      expect(snapshots[0]!.dwarfs[0]!.pendingQuestion!.questions[0]!.options).toEqual([
         { label: 'Use [redacted]' }
       ])
     })

@@ -384,17 +384,20 @@ describe('HeldSessionRegistry questions', () => {
 
     expect(registry.questionState('sess-1')).toEqual({
       held: true,
+      // AMENDED for #362 (was: the same object without `questionCount`), and
+      // again for #443 (was: the question's fields flat beside `questionCount:
+      // 1`). The same values, inside the call's one-entry `questions` list.
       question: {
         toolUseId: 'toolu_01',
-        question: 'Which colour?',
-        header: 'Colour',
         channel: 'held',
-        multiSelect: false,
-        // AMENDED for #362 (was: the same object without `questionCount`). One
-        // field added to the expectation; the fake port's ask carries one
-        // question, so the count is 1.
-        questionCount: 1,
-        options: [{ label: 'Green', description: 'The calm one' }, { label: 'Red' }],
+        questions: [
+          {
+            question: 'Which colour?',
+            header: 'Colour',
+            multiSelect: false,
+            options: [{ label: 'Green', description: 'The calm one' }, { label: 'Red' }]
+          }
+        ],
         askedAt: '2023-11-14T22:13:20.000Z'
       }
     })

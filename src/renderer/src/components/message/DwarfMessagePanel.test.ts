@@ -1266,13 +1266,17 @@ describe('DwarfMessagePanel controls', () => {
  * above the input — and forwards both of its channels unchanged.
  */
 describe('DwarfMessagePanel question', () => {
+  // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
   const pendingQuestion = {
     toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
     channel: 'held' as const,
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ]
   }
 
   function asking(props: Record<string, unknown> = {}) {
@@ -1303,7 +1307,15 @@ describe('DwarfMessagePanel question', () => {
       dwarf: defaultDwarf({
         textDelivery: 'terminal',
 
-        pendingQuestion: { ...pendingQuestion, channel: 'terminal' as const, questionCount: 2 }
+        // AMENDED for #443 (was: `questionCount: 2`): the same call, carried whole.
+        pendingQuestion: {
+          ...pendingQuestion,
+          channel: 'terminal' as const,
+          questions: [
+            ...pendingQuestion.questions,
+            { question: 'Which region?', multiSelect: false, options: [{ label: 'East' }] }
+          ]
+        }
       })
     })
     await wrapper.find('.question-card .answer-jump').trigger('click')
@@ -1369,13 +1381,17 @@ describe('DwarfMessagePanel permission (#203)', () => {
     askedAt: '2026-09-05T09:00:00.000Z'
   }
 
+  // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
   const pendingQuestion = {
     toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
     channel: 'held' as const,
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ]
   }
 
   function withPermission(props: Record<string, unknown> = {}) {
@@ -1478,13 +1494,17 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
   })
 
   it('moves focus to the composer once a pending question clears', async () => {
+    // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
     const pendingQuestion = {
       toolUseId: 'toolu_01',
-      question: 'Which database should the importer write to?',
       channel: 'held' as const,
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      questions: [
+        {
+          question: 'Which database should the importer write to?',
+          multiSelect: false,
+          options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+        }
+      ]
     }
     const wrapper = attachedPanel({
       dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion })

@@ -35,9 +35,11 @@ import {
  * An ask on the terminal channel used to be drawn but not offered (#354). Since
  * #362 it is answered by keystroke at the console the session runs in, so what
  * is left unanswerable is narrower and the card still reads it off the wire
- * rather than deriving it: `questionCount > 1` on that channel, because only
- * the first question of a call travels and answering it walks the picker on to
- * one nothing here knows about. Then the header, the question and every option
+ * rather than deriving it: more than one entry in `questions` on that channel,
+ * because how the picker walks from one question to the next is unmeasured and
+ * answering the first would move it somewhere nobody has watched (#443). The
+ * card draws the call's FIRST question for now; walking the rest is #443's next
+ * step. Then the header, the question and every option
  * stay exactly where they are, the options go inert, and one jump to the
  * session's own terminal appears under main's own sentence — the same control,
  * in the same place, as the permission card's refused terminal decision. Both
@@ -113,17 +115,25 @@ const verdict = computed(() => answerStateForAsk(props.answerState, props.questi
  * An ask nothing here can answer, known before anybody clicks (#354, #362).
  * Off the wire rather than off the dwarf, because the wire is where main put
  * the two readings its own guard uses — see DwarfPromptChannel and
- * DwarfQuestion.questionCount.
+ * DwarfQuestion.questions.
  */
 const unanswerable = computed(
-  () => props.question.channel === 'terminal' && props.question.questionCount > 1
+  () => props.question.channel === 'terminal' && props.question.questions.length > 1
+)
+/*
+ * The question this card draws: the call's first, until the card walks them
+ * (#443). Never undefined on the wire — a writer with nothing to carry puts no
+ * ask there — so the fallback is only the type system's.
+ */
+const shown = computed(
+  () => props.question.questions[0] ?? { question: '', multiSelect: false, options: [] }
 )
 /*
  * Whether this ask's options are toggles rather than one choice (#362). The
  * channel, not just `multiSelect`: only the terminal gesture for several
  * answers has been measured — see the module comment.
  */
-const toggling = computed(() => props.question.channel === 'terminal' && props.question.multiSelect)
+const toggling = computed(() => props.question.channel === 'terminal' && shown.value.multiSelect)
 const answerable = computed(
   () => !unanswerable.value && isAnswerable(props.answerState, props.question.toolUseId)
 )
@@ -253,12 +263,12 @@ function onFreeformKeydown(event: KeyboardEvent): void {
 
 <template>
   <div class="question-card" @keydown="onKeydown">
-    <p v-if="question.header" class="question-header">{{ question.header }}</p>
-    <p class="question-text">{{ question.question }}</p>
+    <p v-if="shown.header" class="question-header">{{ shown.header }}</p>
+    <p class="question-text">{{ shown.question }}</p>
 
     <div class="options" role="group" aria-label="Answers this agent offered">
       <button
-        v-for="option in question.options"
+        v-for="option in shown.options"
         :key="option.label"
         class="option-card"
         :class="cardClass(option.label)"

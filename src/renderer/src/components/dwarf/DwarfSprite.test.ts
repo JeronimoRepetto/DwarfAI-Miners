@@ -389,13 +389,11 @@ describe('DwarfSprite', () => {
   describe('the design’s status icons', () => {
     const asking = defaultDwarf({
       status: 'waiting',
+      // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
       pendingQuestion: {
         toolUseId: 'tool-1',
-        question: 'Which branch?',
         channel: 'held',
-        multiSelect: false,
-        questionCount: 1,
-        options: [{ label: 'main' }]
+        questions: [{ question: 'Which branch?', multiSelect: false, options: [{ label: 'main' }] }]
       }
     })
 

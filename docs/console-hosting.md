@@ -449,8 +449,11 @@ now, because that is what the picker reads; the digits are unchanged. They are r
 `questionKeys.ts` and sent under the discipline row four's keys already hold: the kick's delivery
 route, the console-input capability, and the board re-read with the ask re-matched immediately
 before anything is written. Two things stay refused rather than guessed. A call carrying **more than
-one question** is refused with its reason, because only its first question reaches the wire —
-answering that one walks the picker on to a question the panel does not know exists. And **Other**
+one question** is refused with its reason, because how the picker walks from one question to the
+next has not been measured — the rounds above isolated one question per call, so keys typed for the
+first would move the picker somewhere nobody has watched. (This used to say the refusal was because
+only the first question reached the wire; since #443 every question does, and the unmeasured walk
+is what is left.) And **Other**
 is left inert, because a free-text answer is a payload the panel would be putting in the person's
 mouth.
 

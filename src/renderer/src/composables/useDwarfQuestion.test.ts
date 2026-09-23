@@ -39,14 +39,19 @@ function deferred<T>() {
   return { promise, release }
 }
 
+// AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
+// Every override below names a call field, which the new shape still spreads.
 function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
   return {
     toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
     channel: 'held',
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }],
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ],
     ...overrides
   }
 }

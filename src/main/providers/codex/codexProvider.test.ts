@@ -1487,24 +1487,29 @@ describe('CodexProvider pendingQuestion', () => {
   }
 
   it('carries the unanswered question and the answers the model offered', async () => {
+    // AMENDED for #362 (was: the same object without `questionCount`), and
+    // again for #443 (was: the question's fields flat beside `questionCount:
+    // 1`). The same values, inside the call's one-entry `questions` list.
     expect((await dwarfFor(asking))?.pendingQuestion).toEqual({
       toolUseId: 'call_9c052f81d6b44',
-      header: 'Scope',
-      question: "Should the rename cover the sample module's tests as well, or only its source?",
       channel: 'terminal',
-      multiSelect: false,
-      // AMENDED for #362 (was: the same object without `questionCount`). One
-      // field added to the expectation; this call asks one question, so it is 1.
-      questionCount: 1,
       askedAt: '2026-08-24T12:37:01.545Z',
-      options: [
+      questions: [
         {
-          label: 'Source and tests',
-          description: 'Rename every occurrence, including the fixtures the tests read.'
-        },
-        {
-          label: 'Source only',
-          description: 'Leave the tests untouched so their failures stay readable.'
+          header: 'Scope',
+          question:
+            "Should the rename cover the sample module's tests as well, or only its source?",
+          multiSelect: false,
+          options: [
+            {
+              label: 'Source and tests',
+              description: 'Rename every occurrence, including the fixtures the tests read.'
+            },
+            {
+              label: 'Source only',
+              description: 'Leave the tests untouched so their failures stay readable.'
+            }
+          ]
         }
       ]
     })
