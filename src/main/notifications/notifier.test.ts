@@ -79,13 +79,11 @@ const ASKING = mine('m1', 'Forge', [
     id: 'd1',
     role: 'foreman',
     status: 'waiting',
+    // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
     pendingQuestion: {
       toolUseId: 'ask-1',
-      question: 'Which branch?',
       channel: 'held',
-      multiSelect: false,
-      questionCount: 1,
-      options: []
+      questions: [{ question: 'Which branch?', multiSelect: false, options: [] }]
     }
   })
 ])

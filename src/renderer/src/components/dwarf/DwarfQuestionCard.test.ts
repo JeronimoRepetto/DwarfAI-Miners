@@ -2,30 +2,60 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
-import { PRESS_ENTER_TO_SEND, SEND_ANSWER_NAME } from '../../lib/question/questionAnswer'
+import {
+  PRESS_ENTER_TO_SEND,
+  SEND_ANSWER_NAME,
+  SUBMIT_ANSWERS_NAME
+} from '../../lib/question/questionAnswer'
 import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   TYPED_HERE_REACHES_THE_PICKER,
   joinAnswerLabels,
+  type DwarfAskQuestion,
   type DwarfQuestion
 } from '../../types'
 import DwarfQuestionCard from './DwarfQuestionCard.vue'
 
-function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+/*
+ * AMENDED for #443 (was: `Partial<DwarfQuestion>` spread over a flat ask with
+ * `questionCount: 1`). The call's own fields and its one question's fields are
+ * two levels now; an override may name either, and this puts each where it
+ * belongs. A case about a several-question call uses `several` below.
+ */
+type QuestionOverrides = Partial<DwarfAskQuestion> &
+  Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel' | 'questions'>>
+
+function question(overrides: QuestionOverrides = {}): DwarfQuestion {
+  const { toolUseId, channel, questions, ...asked } = overrides
   return {
-    toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
+    toolUseId: toolUseId ?? 'toolu_01',
     // The default is the answerable case every test below this fixture was
     // written against: a session the panel holds. #354 added the field.
-    channel: 'held',
-    multiSelect: false,
-    questionCount: 1,
-    options: [
-      { label: 'Postgres', description: 'The one the API already uses.' },
-      { label: 'SQLite' },
-      { label: 'Neither' }
-    ],
-    ...overrides
+    channel: channel ?? 'held',
+    questions: questions ?? [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [
+          { label: 'Postgres', description: 'The one the API already uses.' },
+          { label: 'SQLite' },
+          { label: 'Neither' }
+        ],
+        ...asked
+      }
+    ]
+  }
+}
+
+/** The same call with a second question behind the first — what `questionCount: 2` stood for. */
+function several(overrides: QuestionOverrides = {}): DwarfQuestion {
+  const one = question(overrides)
+  return {
+    ...one,
+    questions: [
+      ...one.questions,
+      { question: 'Which region?', multiSelect: false, options: [{ label: 'East' }] }
+    ]
   }
 }
 
@@ -243,7 +273,8 @@ describe('DwarfQuestionCard', () => {
   })
   /*
    * A question the panel can only SHOW (#354, #362). The card learns it from
-   * the ask's own `channel` and `questionCount`, which main derives from the
+   * the ask's own `channel` and its `questions` (`questionCount` before #443),
+   * which main derives from the
    * same evidence `answerDwarfQuestion` guards on — see DwarfPromptChannel.
    *
    * AMENDED for #362: `observed()` was a terminal-channel ask with ONE
@@ -253,10 +284,15 @@ describe('DwarfQuestionCard', () => {
    * call that asked SEVERAL questions, because only its first is on the wire.
    * Not one expectation in the block is weaker; the fixture names the case the
    * block was always describing.
+   *
+   * AMENDED again for #443 (was: `questionCount: 2` on a flat ask). The same
+   * call, with its second question carried now; it is still unanswerable here,
+   * for the unmeasured walk between the questions, and the card still draws
+   * the first. Every expectation below stands as it was.
    */
   describe('a question this panel cannot answer', () => {
-    function observed(overrides: Partial<DwarfQuestion> = {}) {
-      return card({ question: question({ channel: 'terminal', questionCount: 2, ...overrides }) })
+    function observed(overrides: QuestionOverrides = {}) {
+      return card({ question: several({ channel: 'terminal', ...overrides }) })
     }
 
     it('keeps the header, the question and every option on screen', () => {
@@ -356,12 +392,14 @@ describe('DwarfQuestionCard', () => {
 
 /*
  * A question the panel CAN answer at the session's own console (#362). The
- * card learns that from the ask's `channel` and `questionCount` — the same two
+ * card learns that from the ask's `channel` and how many `questions` it carries
+ * (`questionCount` before #443) — the same two
  * fields main's own guard reads — so what the card offers and what main will
  * accept cannot come apart.
  */
 describe('a question answered at the session’s own terminal', () => {
-  function observedSingle(overrides: Partial<DwarfQuestion> = {}) {
+  // AMENDED for #443 (was: `Partial<DwarfQuestion>`) — see QuestionOverrides.
+  function observedSingle(overrides: QuestionOverrides = {}) {
     return card({ question: question({ channel: 'terminal', ...overrides }) })
   }
 
@@ -537,7 +575,8 @@ describe('a question answered at the session’s own terminal', () => {
  * nothing may be typed into somebody's console until they say so.
  */
 describe('a multi-select question at the session’s own terminal', () => {
-  function multi(overrides: Partial<DwarfQuestion> = {}) {
+  // AMENDED for #443 (was: `Partial<DwarfQuestion>`) — see QuestionOverrides.
+  function multi(overrides: QuestionOverrides = {}) {
     return card({
       question: question({ channel: 'terminal', multiSelect: true, ...overrides })
     })
@@ -661,18 +700,239 @@ describe('a multi-select question at the session’s own terminal', () => {
     expect(wrapper.find('.freeform-input').exists()).toBe(false)
   })
 
-  it('keeps a HELD multi-select ask on the single-choice gesture it always had', async () => {
-    // Deliberately not toggles. The terminal gesture is measured — one digit
-    // per option — where the agent's own picker's join for several labels is
-    // not, so the held channel still takes a single label per question (see
-    // resolveAnswers in main). Same card, and the channel decides the gesture
-    // because the EVIDENCE differs, not because the ask does.
+  /*
+   * AMENDED for #443 T3b (was: "keeps a HELD multi-select ask on the
+   * single-choice gesture it always had" — the held channel took one label
+   * per question, on the strength of an unmeasured picker separator.
+   * `@anthropic-ai/claude-agent-sdk` 0.3.258's own `sdk-tools.d.ts` now
+   * documents `AskUserQuestionOutput.answers` as "question text -> answer
+   * string; multi-select answers are comma-separated", and `resolveAnswers`
+   * (main, heldSession.ts) already accepts several labels for a `multiSelect`
+   * question on the strength of that measurement — so the card stops
+   * singling the held channel out too, and this ask toggles like the
+   * terminal one, sending through the same explicit Answer control.
+   */
+  it('toggles a HELD multi-select ask and sends every toggle through the Answer control', async () => {
     const wrapper = card({ question: question({ multiSelect: true }) })
     await wrapper.findAll('.option-card')[0]!.trigger('click')
     await wrapper.findAll('.option-card')[1]!.trigger('click')
-    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-dimmed')
+    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-selected')
+    expect(wrapper.findAll('.option-card')[1]!.classes()).toContain('is-selected')
+    expect(wrapper.find('.answer-send').exists()).toBe(true)
+    await wrapper.find('.answer-send').trigger('click')
+    expect(wrapper.emitted('answer')).toEqual([[joinAnswerLabels(['Postgres', 'SQLite'])]])
+  })
+
+  it('sends nothing on a HELD multi-select ask with zero toggles', () => {
+    const wrapper = card({ question: question({ multiSelect: true }) })
     expect(wrapper.find('.answer-send').exists()).toBe(false)
-    pressEnter(wrapper.find('.question-card').element)
-    expect(wrapper.emitted('answer')).toEqual([['SQLite']])
+    const event = pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(event.defaultPrevented).toBe(false)
+  })
+})
+
+/*
+ * A call that asked SEVERAL questions (#443). The card shows one at a time,
+ * Back and Next walk between them, and ONE Submit on the last sends every
+ * answer — only once each question has one. A held session is answered that
+ * way end to end; a terminal one can be walked to read, and nothing more, until
+ * the picker's own walk between questions is measured.
+ */
+describe('a call that asks several questions (#443)', () => {
+  function pair(overrides: Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel'>> = {}) {
+    return question({
+      ...overrides,
+      questions: [
+        {
+          question: 'Which database?',
+          header: 'Storage',
+          multiSelect: false,
+          options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+        },
+        {
+          question: 'Which regions?',
+          header: 'Regions',
+          multiSelect: true,
+          options: [{ label: 'East' }, { label: 'West' }, { label: 'North' }]
+        }
+      ]
+    })
+  }
+
+  function walk(overrides: Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel'>> = {}) {
+    return card({ question: pair(overrides) })
+  }
+
+  async function next(wrapper: ReturnType<typeof card>) {
+    await wrapper.find('.question-next').trigger('click')
+  }
+
+  async function back(wrapper: ReturnType<typeof card>) {
+    await wrapper.find('.question-back').trigger('click')
+  }
+
+  it('draws none of the walk for a one-question call', () => {
+    const wrapper = card()
+    expect(wrapper.find('.question-step').exists()).toBe(false)
+    expect(wrapper.find('.question-back').exists()).toBe(false)
+    expect(wrapper.find('.question-next').exists()).toBe(false)
+    expect(wrapper.find('.answer-submit').exists()).toBe(false)
+  })
+
+  it('shows question 1 of n first, with its own header and options', () => {
+    const wrapper = walk()
+    expect(wrapper.find('.question-step').text()).toBe('Question 1 of 2')
+    expect(wrapper.find('.question-header').text()).toBe('Storage')
+    expect(wrapper.find('.question-text').text()).toBe('Which database?')
+    expect(wrapper.findAll('.option-card .option-label').map((node) => node.text())).toEqual([
+      'Postgres',
+      'SQLite'
+    ])
+  })
+
+  it('moves to the next question and back again', async () => {
+    const wrapper = walk()
+    await next(wrapper)
+    expect(wrapper.find('.question-step').text()).toBe('Question 2 of 2')
+    expect(wrapper.find('.question-header').text()).toBe('Regions')
+    expect(wrapper.find('.question-text').text()).toBe('Which regions?')
+    expect(wrapper.findAll('.option-card')).toHaveLength(3)
+    await back(wrapper)
+    expect(wrapper.find('.question-text').text()).toBe('Which database?')
+  })
+
+  it('offers no Back on the first question and no Next on the last', async () => {
+    const wrapper = walk()
+    expect(wrapper.find('.question-back').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.question-next').attributes('disabled')).toBeUndefined()
+    await next(wrapper)
+    expect(wrapper.find('.question-back').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.question-next').attributes('disabled')).toBeDefined()
+  })
+
+  it('draws the Submit only on the last question', async () => {
+    const wrapper = walk()
+    expect(wrapper.find('.answer-submit').exists()).toBe(false)
+    await next(wrapper)
+    expect(wrapper.find('.answer-submit').text()).toBe(SUBMIT_ANSWERS_NAME)
+  })
+
+  it('cannot submit while any question is unanswered', async () => {
+    const wrapper = walk()
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    const submit = wrapper.find('.answer-submit')
+    expect(submit.attributes('disabled')).toBeDefined()
+    await submit.trigger('click')
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it('never shows a choice made on question 1 on question 2', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.classes()).toContain('is-base')
+      expect(option.attributes('aria-pressed')).toBe('false')
+    }
+  })
+
+  it('keeps a choice on its own question when the walk comes back to it', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    await next(wrapper)
+    await back(wrapper)
+    expect(wrapper.findAll('.option-card')[1]!.classes()).toContain('is-selected')
+    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-dimmed')
+  })
+
+  it('starts another ask on its first question with nothing chosen', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.setProps({ question: pair({ toolUseId: 'toolu_02' }) })
+    expect(wrapper.find('.question-step').text()).toBe('Question 1 of 2')
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.classes()).toContain('is-base')
+    }
+  })
+
+  /*
+   * AMENDED for #443 T3b (was: "A held call, one single-select and one
+   * multi-select question. The held channel takes one label per question, so
+   * the multi-select one keeps the single-choice gesture the one-question
+   * card gives it" — the two clicks below replaced one choice with the
+   * other). The held channel now toggles a multi-select question exactly as
+   * the terminal one does (see togglesAt, questionAnswer.ts, and the SDK
+   * evidence there), so both clicks stay toggled and Submit carries both,
+   * joined in the ask's own option order.
+   */
+  it('sends one answer with every question’s value when Submit is pressed, toggling a held multi-select question', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[2]!.trigger('click')
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    const submit = wrapper.find('.answer-submit')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    await submit.trigger('click')
+    expect(wrapper.emitted('answer')).toEqual([[['Postgres', joinAnswerLabels(['West', 'North'])]]])
+  })
+
+  it('sends nothing on Enter: the walk has a Submit of its own', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    const event = pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(event.defaultPrevented).toBe(false)
+    expect(wrapper.find('.enter-prompt').exists()).toBe(false)
+  })
+
+  it('takes no Submit while an answer is already in flight', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.setProps({ answerState: { phase: 'answering', toolUseId: 'toolu_01' } })
+    const submit = wrapper.find('.answer-submit')
+    expect(submit.attributes('disabled')).toBeDefined()
+    await submit.trigger('click')
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  describe('at a terminal, where the walk between questions is unmeasured', () => {
+    it('can be walked to read every question', async () => {
+      const wrapper = walk({ channel: 'terminal' })
+      expect(wrapper.find('.question-next').attributes('disabled')).toBeUndefined()
+      await next(wrapper)
+      expect(wrapper.find('.question-text').text()).toBe('Which regions?')
+      await back(wrapper)
+      expect(wrapper.find('.question-text').text()).toBe('Which database?')
+    })
+
+    it('makes nothing selectable on any question, and offers no Submit', async () => {
+      const wrapper = walk({ channel: 'terminal' })
+      for (const step of [0, 1]) {
+        if (step === 1) await next(wrapper)
+        for (const option of wrapper.findAll('.option-card')) {
+          expect(option.attributes('disabled')).toBeDefined()
+          await option.trigger('click')
+          expect(option.classes()).toContain('is-base')
+        }
+      }
+      expect(wrapper.find('.answer-submit').exists()).toBe(false)
+      expect(wrapper.find('.answer-send').exists()).toBe(false)
+      expect(wrapper.emitted('answer')).toBeUndefined()
+    })
+
+    it('keeps the one refusal and the one jump on every question', async () => {
+      const wrapper = walk({ channel: 'terminal' })
+      await next(wrapper)
+      expect(wrapper.find('.answer-error').text()).toContain(ANSWER_ONLY_WHERE_IT_RUNS)
+      expect(wrapper.findAll('.answer-jump')).toHaveLength(1)
+    })
   })
 })

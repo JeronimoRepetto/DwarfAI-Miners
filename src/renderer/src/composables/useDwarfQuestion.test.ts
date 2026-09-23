@@ -39,14 +39,19 @@ function deferred<T>() {
   return { promise, release }
 }
 
+// AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
+// Every override below names a call field, which the new shape still spreads.
 function question(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
   return {
     toolUseId: 'toolu_01',
-    question: 'Which database should the importer write to?',
     channel: 'held',
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }],
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ],
     ...overrides
   }
 }
@@ -231,6 +236,58 @@ describe('useDwarfQuestion', () => {
 
     const first = answer('claude:s1', question(), 'SQLite')
     await answerWithText('claude:s1', question(), 'put it in Redis')
+    expect(sent).toHaveBeenCalledTimes(1)
+
+    pending.release({ answered: true })
+    await first
+  })
+
+  /* --- A call that asks several questions (#443) — one block, appended ----- */
+
+  function pair(): DwarfQuestion {
+    return question({
+      questions: [
+        {
+          question: 'Which database?',
+          multiSelect: false,
+          options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+        },
+        {
+          question: 'Which regions?',
+          multiSelect: true,
+          options: [{ label: 'East' }, { label: 'West' }]
+        }
+      ]
+    })
+  }
+
+  it('sends one request whose answers carry every question of the call', async () => {
+    const sent = vi.fn<(request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>>(
+      () => Promise.resolve({ answered: true })
+    )
+    stubApi(sent)
+    const { answer, stateFor } = useDwarfQuestion()
+
+    await answer('claude:s1', pair(), ['Postgres', 'West'])
+    expect(sent).toHaveBeenCalledTimes(1)
+    expect(sent).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Which database?': 'Postgres', 'Which regions?': 'West' }
+    })
+    expect(stateFor('claude:s1')).toEqual({ phase: 'answered', toolUseId: 'toolu_01' })
+  })
+
+  it('keeps the in-flight guard for a several-question answer too', async () => {
+    const pending = deferred<DwarfQuestionAnswerResult>()
+    const sent = vi.fn<(request: DwarfQuestionAnswerRequest) => Promise<DwarfQuestionAnswerResult>>(
+      () => pending.promise
+    )
+    stubApi(sent)
+    const { answer } = useDwarfQuestion()
+
+    const first = answer('claude:s1', pair(), ['Postgres', 'West'])
+    await answer('claude:s1', pair(), ['SQLite', 'East'])
     expect(sent).toHaveBeenCalledTimes(1)
 
     pending.release({ answered: true })

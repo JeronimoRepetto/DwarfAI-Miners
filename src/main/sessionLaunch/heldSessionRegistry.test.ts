@@ -384,17 +384,20 @@ describe('HeldSessionRegistry questions', () => {
 
     expect(registry.questionState('sess-1')).toEqual({
       held: true,
+      // AMENDED for #362 (was: the same object without `questionCount`), and
+      // again for #443 (was: the question's fields flat beside `questionCount:
+      // 1`). The same values, inside the call's one-entry `questions` list.
       question: {
         toolUseId: 'toolu_01',
-        question: 'Which colour?',
-        header: 'Colour',
         channel: 'held',
-        multiSelect: false,
-        // AMENDED for #362 (was: the same object without `questionCount`). One
-        // field added to the expectation; the fake port's ask carries one
-        // question, so the count is 1.
-        questionCount: 1,
-        options: [{ label: 'Green', description: 'The calm one' }, { label: 'Red' }],
+        questions: [
+          {
+            question: 'Which colour?',
+            header: 'Colour',
+            multiSelect: false,
+            options: [{ label: 'Green', description: 'The calm one' }, { label: 'Red' }]
+          }
+        ],
         askedAt: '2023-11-14T22:13:20.000Z'
       }
     })
@@ -1343,6 +1346,85 @@ describe('HeldSessionRegistry.answer', () => {
     expect(result.answered).toBe(false)
     expect(port.answered).toHaveLength(0)
     expect(registry.questionState('sess-1')).toMatchObject({ question: { toolUseId: 'toolu_01' } })
+  })
+})
+
+/*
+ * Issue #443 T3. Every question of a several-question call now reaches the
+ * wire and the card, and `resolveAnswers` refuses a record that does not name
+ * all of them (see heldSession.test.ts for the unit-level pin) — these two
+ * pin the same rule end to end, through the registry's own `answer`, the way
+ * a real several-question card release actually happens.
+ */
+describe('HeldSessionRegistry.answer — a several-question ask (#443 T3)', () => {
+  /** Two well-formed questions, as the SDK would hand them to canUseTool. */
+  function twoQuestionInput(): Record<string, unknown> {
+    return {
+      questions: [
+        {
+          question: 'First?',
+          header: 'One',
+          multiSelect: false,
+          options: [{ label: 'A' }, { label: 'B' }]
+        },
+        {
+          question: 'Second?',
+          header: 'Two',
+          multiSelect: false,
+          options: [{ label: 'C' }, { label: 'D' }]
+        }
+      ]
+    }
+  }
+
+  it('leaves the ask open and refuses a record missing one of its two answers', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    void port.ask(0, 'toolu_01', twoQuestionInput())
+    await Promise.resolve()
+
+    const result = registry.answer({
+      sessionId: 'sess-1',
+      toolUseId: 'toolu_01',
+      answers: { 'First?': 'A' }
+    })
+    expect(result).toEqual({ answered: false, error: expect.stringContaining('unanswered') })
+    // The call stays BLOCKED: nothing released it, and the ask is still open
+    // for the person to complete rather than having spent its one release on
+    // a reason.
+    expect(port.answered).toHaveLength(0)
+    expect(registry.questionState('sess-1')).toMatchObject({ question: { toolUseId: 'toolu_01' } })
+  })
+
+  it('releases the ask only once a record names both of its questions', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+    const asked = port.ask(0, 'toolu_02', twoQuestionInput())
+    await Promise.resolve()
+
+    expect(
+      registry.answer({ sessionId: 'sess-1', toolUseId: 'toolu_02', answers: { 'First?': 'A' } })
+        .answered
+    ).toBe(false)
+
+    expect(
+      registry.answer({
+        sessionId: 'sess-1',
+        toolUseId: 'toolu_02',
+        answers: { 'First?': 'A', 'Second?': 'D' }
+      })
+    ).toEqual({ answered: true })
+
+    await expect(asked).resolves.toEqual({
+      answered: true,
+      answers: { 'First?': 'A', 'Second?': 'D' }
+    })
+    // Answered means gone, the same rule the one-question case already holds.
+    expect(registry.questionState('sess-1')).toEqual({ held: true })
   })
 })
 

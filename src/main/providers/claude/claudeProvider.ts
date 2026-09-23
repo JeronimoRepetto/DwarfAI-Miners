@@ -334,25 +334,30 @@ function pendingQuestionField(question: ClaudePendingQuestion | undefined): {
   pendingQuestion?: DwarfQuestion
 } {
   if (question === undefined) return {}
-  const header = question.header === undefined ? undefined : redactSecrets(question.header)
   return {
     pendingQuestion: {
       toolUseId: question.toolUseId,
-      question: redactSecrets(question.question),
-      ...(header === undefined ? {} : { header }),
       // Read out of a transcript this panel does not own, so the ask can only
       // be answered where the session runs (#354). A session the panel DOES
       // hold never keeps this value: stampHeldQuestions supersedes the whole
       // field with the registry's own, which says 'held'.
       channel: 'terminal',
-      multiSelect: question.multiSelect,
-      questionCount: question.questionCount,
-      options: question.options.map((option) => ({
-        label: redactSecrets(option.label),
-        ...(option.description === undefined
-          ? {}
-          : { description: redactSecrets(option.description) })
-      })),
+      // Every question, each through the same gate the first always passed
+      // (#443): the second is transcript text on its way into the same window.
+      questions: question.questions.map((asked) => {
+        const header = asked.header === undefined ? undefined : redactSecrets(asked.header)
+        return {
+          question: redactSecrets(asked.question),
+          ...(header === undefined ? {} : { header }),
+          multiSelect: asked.multiSelect,
+          options: asked.options.map((option) => ({
+            label: redactSecrets(option.label),
+            ...(option.description === undefined
+              ? {}
+              : { description: redactSecrets(option.description) })
+          }))
+        }
+      }),
       ...(question.askedAt === undefined ? {} : { askedAt: question.askedAt })
     }
   }

@@ -22,6 +22,7 @@ export type {
   AudioPreferences,
   Dwarf,
   DwarfActivation,
+  DwarfAskQuestion,
   DwarfAttachment,
   DwarfAttachmentKind,
   DwarfAttachmentPick,

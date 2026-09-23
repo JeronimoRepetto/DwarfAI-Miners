@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type {
+  DwarfAskQuestion,
   DwarfAttachment,
   DwarfAttendance,
   DwarfProvider,
@@ -1055,15 +1056,26 @@ describe('a 40,000-character message', () => {
  * 2026-09-18 — see main's textDelivery/questionKeys.ts for the gestures and
  * docs/console-hosting.md §6 for the register entry.
  */
-function otherRowAsk(overrides: Partial<DwarfQuestion> = {}): DwarfQuestion {
+/*
+ * AMENDED for #443 (was: `Partial<DwarfQuestion>` over a flat ask with
+ * `questionCount: 1`). The overrides are the one question's own fields, plus
+ * the call's channel, or the call's `questions` whole for a case about several.
+ */
+function otherRowAsk(
+  overrides: Partial<DwarfAskQuestion> & Partial<Pick<DwarfQuestion, 'channel' | 'questions'>> = {}
+): DwarfQuestion {
+  const { channel, questions, ...question } = overrides
   return {
     toolUseId: 'toolu_other',
-    question: 'Which store?',
-    channel: 'terminal',
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }],
-    ...overrides
+    channel: channel ?? 'terminal',
+    questions: questions ?? [
+      {
+        question: 'Which store?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }],
+        ...question
+      }
+    ]
   }
 }
 
@@ -1079,7 +1091,12 @@ describe('askHasAReachableOtherRow (#481)', () => {
   })
 
   it('refuses a call that carried several questions', () => {
-    expect(askHasAReachableOtherRow(otherRowAsk({ questionCount: 2 }))).toBe(false)
+    // AMENDED for #443 (was: `questionCount: 2`): the same call, carried whole.
+    const several = [
+      { question: 'Which store?', multiSelect: false, options: [{ label: 'Postgres' }] },
+      { question: 'Which region?', multiSelect: false, options: [{ label: 'East' }] }
+    ]
+    expect(askHasAReachableOtherRow(otherRowAsk({ questions: several }))).toBe(false)
   })
 
   it('accepts an ask with as many options as the picker numbers rows', () => {

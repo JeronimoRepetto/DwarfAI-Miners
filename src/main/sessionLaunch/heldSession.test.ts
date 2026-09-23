@@ -5,6 +5,7 @@ import {
   HELD_CONVERSATION_LIMIT,
   defaultDwarf,
   defaultMine,
+  joinAnswerLabels,
   type DwarfPermissionRequest,
   type FeedMessage,
   type Mine
@@ -136,10 +137,51 @@ describe('parseAskUserQuestion', () => {
     })
     expect(ask?.questions[0]?.multiSelect).toBe(false)
   })
+
+  it('refuses the whole call when one question of several is unreadable, not only that entry', () => {
+    // #443 T3. Before this the second question's malformed `options` cost
+    // only itself: the call carried First and Third, silently dropping
+    // Second. The picker still walks to Second whether or not this parser
+    // could read it, so that two-item list claimed the agent asked less than
+    // it did — the same false claim `askedQuestion` (providers/claude/parse.ts)
+    // and the Codex writer already refuse whole for.
+    expect(
+      parseAskUserQuestion('toolu_09', {
+        questions: [
+          { question: 'First?', multiSelect: false, options: [{ label: 'A' }] },
+          { question: 'Second?', multiSelect: false, options: 'not a list' },
+          { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+        ]
+      })
+    ).toBeNull()
+  })
+
+  it('refuses a call whole when two of its questions are worded the same, because the SDK keys answers by text', () => {
+    // #443, finding 2 of an independent verifier's review of T3. The SDK's
+    // own `answers` record for AskUserQuestion is keyed by question TEXT (see
+    // resolveAnswers below), so two questions worded the same could never be
+    // addressed separately by an answer naming either of them — the same
+    // refuse-whole rule this file already applies to a question it cannot
+    // even read (see the test above).
+    expect(
+      parseAskUserQuestion('toolu_32', {
+        questions: [
+          { question: 'Which?', multiSelect: false, options: [{ label: 'A' }] },
+          { question: 'Which?', multiSelect: false, options: [{ label: 'B' }] }
+        ]
+      })
+    ).toBeNull()
+  })
 })
 
 describe('askToWireQuestion', () => {
-  it('carries the first question only — the wire shape is singular', () => {
+  it('carries the whole call — every question, in the order it was asked', () => {
+    // AMENDED for #443 (was: "carries the first question only — the wire shape
+    // is singular", pinning question 1 flat on the ask beside `questionCount:
+    // 2`). The decision that test pinned is the one #443 reverses: the wire
+    // carries the call's list now, so the same two-question ask is asserted
+    // whole. Nothing the old expectation held is lost — question 1 is still
+    // there, first, with its options — and question 2 is no longer dropped.
     const ask = parseAskUserQuestion('toolu_10', {
       questions: [
         { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
@@ -147,35 +189,32 @@ describe('askToWireQuestion', () => {
       ]
     })!
 
-    // AMENDED for #362 (was: the same object without `questionCount`). The
-    // singular wire shape is unchanged and still asserted; what is added is the
-    // count of what the call carried — 2 here, which is exactly the fact this
-    // test's own title is about.
     expect(askToWireQuestion(ask, ASKED_AT)).toEqual({
       toolUseId: 'toolu_10',
-      question: 'First?',
       channel: 'held',
-      multiSelect: false,
-      questionCount: 2,
-      options: [{ label: 'A' }, { label: 'B' }],
+      questions: [
+        { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'Second?', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ],
       askedAt: ASKED_AT
     })
   })
 
   /*
-   * Issue #362. The held writer drops every question after the first, exactly
-   * as the transcript parse does, and the count is what stops that omission
-   * being invisible: the terminal answer route refuses a call it can only half
-   * answer, and the card says so before anybody clicks.
+   * Issue #362. The held writer used to drop every question after the first
+   * and carry a count so the omission was visible. AMENDED for #443: nothing is
+   * dropped now, so the list's own length is the count these cases pin.
    */
   it('counts one question for a call that asked one', () => {
+    // AMENDED for #443 (was: `.questionCount` toBe 1).
     const ask = parseAskUserQuestion('toolu_14', {
       questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
     })!
-    expect(askToWireQuestion(ask, ASKED_AT).questionCount).toBe(1)
+    expect(askToWireQuestion(ask, ASKED_AT).questions).toHaveLength(1)
   })
 
   it('counts every question of a call that asked several', () => {
+    // AMENDED for #443 (was: `.questionCount` toBe 3).
     const ask = parseAskUserQuestion('toolu_15', {
       questions: [
         { question: 'First?', multiSelect: false, options: [{ label: 'A' }] },
@@ -183,7 +222,7 @@ describe('askToWireQuestion', () => {
         { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
       ]
     })!
-    expect(askToWireQuestion(ask, ASKED_AT).questionCount).toBe(3)
+    expect(askToWireQuestion(ask, ASKED_AT).questions).toHaveLength(3)
   })
 
   it('redacts the question, the header, every label and every description', () => {
@@ -202,7 +241,9 @@ describe('askToWireQuestion', () => {
       ]
     })!
 
-    const wire = askToWireQuestion(ask, ASKED_AT)
+    // AMENDED for #443 (was: the same four reads flat on the ask): the
+    // question now sits in the call's `questions` list.
+    const wire = askToWireQuestion(ask, ASKED_AT).questions[0]!
     expect(wire.question).toBe('Use [redacted]?')
     expect(wire.header).toBe('Key [redacted]')
     expect(wire.options[0]).toEqual({ label: 'Yes [redacted]', description: 'Send [redacted]' })
@@ -213,7 +254,8 @@ describe('askToWireQuestion', () => {
     const ask = parseAskUserQuestion('toolu_12', {
       questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
     })!
-    const wire = askToWireQuestion(ask, ASKED_AT)
+    // AMENDED for #443 (was: the same two reads flat on the ask).
+    const wire = askToWireQuestion(ask, ASKED_AT).questions[0]!
     expect('header' in wire).toBe(false)
     expect('description' in wire.options[0]!).toBe(false)
   })
@@ -227,6 +269,43 @@ describe('askToWireQuestion', () => {
       questions: [{ question: 'Which?', multiSelect: false, options: [{ label: 'A' }] }]
     })!
     expect(askToWireQuestion(ask, ASKED_AT).channel).toBe('held')
+  })
+
+  /*
+   * Issue #443. Every question of the call travels, in order, each redacted
+   * exactly as the first always was: the card has to walk them, and a second
+   * question is transcript-grade text on its way into the same window.
+   */
+  it('carries every question of the call, in order, each redacted', () => {
+    const secret = 'sk-abcdefghijklmnopqrstuvwx'
+    const ask = parseAskUserQuestion('toolu_16', {
+      questions: [
+        { question: 'First?', header: 'One', multiSelect: false, options: [{ label: 'A' }] },
+        {
+          question: `Use ${secret}?`,
+          header: `Key ${secret}`,
+          multiSelect: true,
+          options: [
+            { label: `Yes ${secret}`, description: `Send ${secret}` },
+            { label: 'No', description: 'Stop' }
+          ]
+        },
+        { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+      ]
+    })!
+    expect(askToWireQuestion(ask, ASKED_AT).questions).toEqual([
+      { question: 'First?', header: 'One', multiSelect: false, options: [{ label: 'A' }] },
+      {
+        question: 'Use [redacted]?',
+        header: 'Key [redacted]',
+        multiSelect: true,
+        options: [
+          { label: 'Yes [redacted]', description: 'Send [redacted]' },
+          { label: 'No', description: 'Stop' }
+        ]
+      },
+      { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+    ])
   })
 })
 
@@ -277,15 +356,44 @@ describe('resolveAnswers', () => {
     expect(resolved.ok ? '' : resolved.reason).toContain('option')
   })
 
-  it('refuses two labels joined into one value, even where the ask was multi-select', () => {
-    // Answering more than one option is unproven against a live agent, so the
-    // engine sends exactly one label rather than a separator it guessed.
+  it('accepts several labels for a multi-select question, joined by the SDK-documented separator', () => {
+    // AMENDED for #443 T3 (was: "refuses two labels joined into one value,
+    // even where the ask was multi-select", expecting `resolveAnswers(ask, {
+    // 'Which?': 'A, B' }).ok` to be false — the comment reasoned the picker's
+    // own separator was unproven, so the engine sent exactly one label rather
+    // than guess one). `@anthropic-ai/claude-agent-sdk` 0.3.258's own
+    // `AskUserQuestionOutput` type (its `sdk-tools` export, sdk-tools.d.ts)
+    // documents it now: "question text -> answer string; multi-select answers
+    // are comma-separated". The value arriving here carries the WIRE's own
+    // joined encoding (joinAnswerLabels/ANSWER_LABEL_SEPARATOR); resolveAnswers
+    // reads that back out and rejoins the matched labels with the SDK's comma.
     const ask = parseAskUserQuestion('toolu_25', {
       questions: [
         { question: 'Which?', multiSelect: true, options: [{ label: 'A' }, { label: 'B' }] }
       ]
     })!
-    expect(resolveAnswers(ask, { 'Which?': 'A, B' }).ok).toBe(false)
+    const resolved = resolveAnswers(ask, { 'Which?': joinAnswerLabels(['A', 'B']) })
+    expect(resolved).toEqual({ ok: true, answers: { 'Which?': 'A,B' } })
+  })
+
+  it('refuses several labels for a single-select question, even joined by the wire’s own encoding', () => {
+    // #443 T3. A single-select question offers one choice at a time; several
+    // labels for it is not a smaller mistake than an unoffered option, it is a
+    // claim that a mutually-exclusive question was answered two ways at once.
+    //
+    // AMENDED (verifier finding, #443): was `expect(resolved.ok).toBe(false)`
+    // alone. Against the parent commit this exact input already failed —
+    // with UNKNOWN_OPTION, because the joined string matched no option — so
+    // asserting only `.ok` never proved the TOO_MANY_LABELS branch below is
+    // what refuses it. Pinning the reason is what tells the two apart.
+    const ask = parseAskUserQuestion('toolu_29', {
+      questions: [
+        { question: 'Which?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }
+      ]
+    })!
+    const resolved = resolveAnswers(ask, { 'Which?': joinAnswerLabels(['A', 'B']) })
+    expect(resolved.ok).toBe(false)
+    expect(resolved.ok ? '' : resolved.reason).toContain('only takes one')
   })
 
   it('refuses more answers than the ask has questions', () => {
@@ -295,11 +403,19 @@ describe('resolveAnswers', () => {
     )
   })
 
-  it('refuses an answer to two questions that redact to the same text', () => {
-    // Redaction is lossy on purpose, so it can collapse two distinct questions
-    // into one string. Guessing which of them was answered is how the agent
-    // would come to read an answer nobody gave.
-    const ask = parseAskUserQuestion('toolu_28', {
+  it('refuses an answer to two questions that redact to the same text, for a HeldAsk built by hand', () => {
+    // AMENDED for #443, finding 2 (was: built via `parseAskUserQuestion`, whose
+    // premise this fix closes). Redaction is lossy on purpose, so it can
+    // collapse two distinct questions into one string — but
+    // `parseAskUserQuestion` now refuses such a call whole, at parse time, on
+    // the same redacted-text comparison `byRedactedQuestion` makes below (see
+    // the parseAskUserQuestion test with the same premise), so this ask can no
+    // longer reach resolveAnswers through the parser at all. AMBIGUOUS_QUESTION
+    // still guards a HeldAsk built by hand, as here, rather than parsed:
+    // guessing which question an answer was meant for is how the agent would
+    // come to read an answer nobody gave.
+    const ask: HeldAsk = {
+      toolUseId: 'toolu_28',
       questions: [
         { question: `Use ${secret}?`, multiSelect: false, options: [{ label: 'A' }] },
         {
@@ -308,31 +424,54 @@ describe('resolveAnswers', () => {
           options: [{ label: 'B' }]
         }
       ]
-    })!
+    }
     const resolved = resolveAnswers(ask, { 'Use [redacted]?': 'A' })
     expect(resolved.ok).toBe(false)
     expect(resolved.ok ? '' : resolved.reason).toContain('same')
   })
 
-  it('accepts a partial record, because the wire only ever showed the first question', () => {
+  it('refuses a record missing the second question, now that every question reaches the card', () => {
+    // AMENDED for #443 T3 (was: "accepts a partial record, because the wire
+    // only ever showed the first question", expecting `{ ok: true, answers: {
+    // 'First?': 'A' } }`). That was true when `DwarfQuestion` was singular and
+    // a held card could never have shown, let alone answered, a second
+    // question. #443 T1 put every question on the wire and #443 T2 made the
+    // card walk them all with one Submit gated on every one having a choice —
+    // so a record naming only the first is no longer a partial answer still
+    // arriving, it is main being asked to release a call the person never
+    // finished, and that must be refused rather than honoured.
     const ask = parseAskUserQuestion('toolu_27', {
       questions: [
         { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
         { question: 'Second?', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
       ]
     })!
-    expect(resolveAnswers(ask, { 'First?': 'A' })).toEqual({ ok: true, answers: { 'First?': 'A' } })
+    const resolved = resolveAnswers(ask, { 'First?': 'A' })
+    expect(resolved.ok).toBe(false)
+    expect(resolved.ok ? '' : resolved.reason).toContain('unanswered')
+  })
+
+  it('answers with both questions of a complete two-question record', () => {
+    const ask = parseAskUserQuestion('toolu_31', {
+      questions: [
+        { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'Second?', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    })!
+    expect(resolveAnswers(ask, { 'First?': 'A', 'Second?': 'D' })).toEqual({
+      ok: true,
+      answers: { 'First?': 'A', 'Second?': 'D' }
+    })
   })
 })
 
 describe('stampHeldQuestions', () => {
+  // AMENDED for #443 (was: the question's fields flat beside `questionCount:
+  // 1`): the wire shape carries the call's questions as a list.
   const question = {
     toolUseId: 'toolu_30',
-    question: 'Which colour?',
     channel: 'held' as const,
-    multiSelect: false,
-    questionCount: 1,
-    options: [{ label: 'Green' }]
+    questions: [{ question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] }]
   }
 
   function board(): Mine[] {
@@ -1515,13 +1654,12 @@ describe('stampHeldQuestions permission (#203)', () => {
   })
 
   it('carries an open ask and an open permission side by side', () => {
+    // AMENDED for #443 (was: the question's fields flat beside `questionCount:
+    // 1`): the wire shape carries the call's questions as a list.
     const question = {
       toolUseId: 'toolu_30',
-      question: 'Which colour?',
       channel: 'held' as const,
-      multiSelect: false,
-      questionCount: 1,
-      options: [{ label: 'Green' }]
+      questions: [{ question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] }]
     }
     const stamped = stampHeldQuestions(board(), () => ({ held: true, question, permission }))
     expect(stamped[0]!.dwarfs[0]!.pendingQuestion).toEqual(question)
