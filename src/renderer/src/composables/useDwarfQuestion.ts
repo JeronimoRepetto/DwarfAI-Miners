@@ -1,5 +1,10 @@
 import { reactive } from 'vue'
-import { answerRequest, permissionRequest, textAnswerRequest } from '../lib/question/questionAnswer'
+import {
+  answerRequest,
+  permissionRequest,
+  textAnswerRequest,
+  type AskAnswer
+} from '../lib/question/questionAnswer'
 import {
   defaultDwarfQuestionState,
   type DwarfAnswerState,
@@ -47,8 +52,13 @@ export function useDwarfQuestion() {
    * Answer `question` with the option `label`. A second call while one is still
    * in flight for the same dwarf is ignored: a double press must never release
    * the same tool call twice.
+   *
+   * AMENDED for #443: `label` may be one value per question of a call that
+   * asked several, and it still leaves as ONE request — the card's single
+   * Submit — under the same guard, since every question belongs to the one
+   * blocked tool call.
    */
-  async function answer(dwarfId: string, question: DwarfQuestion, label: string): Promise<void> {
+  async function answer(dwarfId: string, question: DwarfQuestion, label: AskAnswer): Promise<void> {
     await release(dwarfId, question, answerRequest(dwarfId, question, label))
   }
 

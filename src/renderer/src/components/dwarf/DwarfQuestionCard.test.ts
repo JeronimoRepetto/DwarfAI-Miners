@@ -2,7 +2,11 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
-import { PRESS_ENTER_TO_SEND, SEND_ANSWER_NAME } from '../../lib/question/questionAnswer'
+import {
+  PRESS_ENTER_TO_SEND,
+  SEND_ANSWER_NAME,
+  SUBMIT_ANSWERS_NAME
+} from '../../lib/question/questionAnswer'
 import {
   ANSWER_ONLY_WHERE_IT_RUNS,
   TYPED_HERE_REACHES_THE_PICKER,
@@ -691,5 +695,203 @@ describe('a multi-select question at the session’s own terminal', () => {
     expect(wrapper.find('.answer-send').exists()).toBe(false)
     pressEnter(wrapper.find('.question-card').element)
     expect(wrapper.emitted('answer')).toEqual([['SQLite']])
+  })
+})
+
+/*
+ * A call that asked SEVERAL questions (#443). The card shows one at a time,
+ * Back and Next walk between them, and ONE Submit on the last sends every
+ * answer — only once each question has one. A held session is answered that
+ * way end to end; a terminal one can be walked to read, and nothing more, until
+ * the picker's own walk between questions is measured.
+ */
+describe('a call that asks several questions (#443)', () => {
+  function pair(overrides: Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel'>> = {}) {
+    return question({
+      ...overrides,
+      questions: [
+        {
+          question: 'Which database?',
+          header: 'Storage',
+          multiSelect: false,
+          options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+        },
+        {
+          question: 'Which regions?',
+          header: 'Regions',
+          multiSelect: true,
+          options: [{ label: 'East' }, { label: 'West' }, { label: 'North' }]
+        }
+      ]
+    })
+  }
+
+  function walk(overrides: Partial<Pick<DwarfQuestion, 'toolUseId' | 'channel'>> = {}) {
+    return card({ question: pair(overrides) })
+  }
+
+  async function next(wrapper: ReturnType<typeof card>) {
+    await wrapper.find('.question-next').trigger('click')
+  }
+
+  async function back(wrapper: ReturnType<typeof card>) {
+    await wrapper.find('.question-back').trigger('click')
+  }
+
+  it('draws none of the walk for a one-question call', () => {
+    const wrapper = card()
+    expect(wrapper.find('.question-step').exists()).toBe(false)
+    expect(wrapper.find('.question-back').exists()).toBe(false)
+    expect(wrapper.find('.question-next').exists()).toBe(false)
+    expect(wrapper.find('.answer-submit').exists()).toBe(false)
+  })
+
+  it('shows question 1 of n first, with its own header and options', () => {
+    const wrapper = walk()
+    expect(wrapper.find('.question-step').text()).toBe('Question 1 of 2')
+    expect(wrapper.find('.question-header').text()).toBe('Storage')
+    expect(wrapper.find('.question-text').text()).toBe('Which database?')
+    expect(wrapper.findAll('.option-card .option-label').map((node) => node.text())).toEqual([
+      'Postgres',
+      'SQLite'
+    ])
+  })
+
+  it('moves to the next question and back again', async () => {
+    const wrapper = walk()
+    await next(wrapper)
+    expect(wrapper.find('.question-step').text()).toBe('Question 2 of 2')
+    expect(wrapper.find('.question-header').text()).toBe('Regions')
+    expect(wrapper.find('.question-text').text()).toBe('Which regions?')
+    expect(wrapper.findAll('.option-card')).toHaveLength(3)
+    await back(wrapper)
+    expect(wrapper.find('.question-text').text()).toBe('Which database?')
+  })
+
+  it('offers no Back on the first question and no Next on the last', async () => {
+    const wrapper = walk()
+    expect(wrapper.find('.question-back').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.question-next').attributes('disabled')).toBeUndefined()
+    await next(wrapper)
+    expect(wrapper.find('.question-back').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.question-next').attributes('disabled')).toBeDefined()
+  })
+
+  it('draws the Submit only on the last question', async () => {
+    const wrapper = walk()
+    expect(wrapper.find('.answer-submit').exists()).toBe(false)
+    await next(wrapper)
+    expect(wrapper.find('.answer-submit').text()).toBe(SUBMIT_ANSWERS_NAME)
+  })
+
+  it('cannot submit while any question is unanswered', async () => {
+    const wrapper = walk()
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    const submit = wrapper.find('.answer-submit')
+    expect(submit.attributes('disabled')).toBeDefined()
+    await submit.trigger('click')
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  it('never shows a choice made on question 1 on question 2', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.classes()).toContain('is-base')
+      expect(option.attributes('aria-pressed')).toBe('false')
+    }
+  })
+
+  it('keeps a choice on its own question when the walk comes back to it', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    await next(wrapper)
+    await back(wrapper)
+    expect(wrapper.findAll('.option-card')[1]!.classes()).toContain('is-selected')
+    expect(wrapper.findAll('.option-card')[0]!.classes()).toContain('is-dimmed')
+  })
+
+  it('starts another ask on its first question with nothing chosen', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.setProps({ question: pair({ toolUseId: 'toolu_02' }) })
+    expect(wrapper.find('.question-step').text()).toBe('Question 1 of 2')
+    for (const option of wrapper.findAll('.option-card')) {
+      expect(option.classes()).toContain('is-base')
+    }
+  })
+
+  it('sends one answer with every question’s value when Submit is pressed', async () => {
+    // A held call, one single-select and one multi-select question. The held
+    // channel takes one label per question, so the multi-select one keeps the
+    // single-choice gesture the one-question card gives it.
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[2]!.trigger('click')
+    await wrapper.findAll('.option-card')[1]!.trigger('click')
+    const submit = wrapper.find('.answer-submit')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    await submit.trigger('click')
+    expect(wrapper.emitted('answer')).toEqual([[['Postgres', 'West']]])
+  })
+
+  it('sends nothing on Enter: the walk has a Submit of its own', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    const event = pressEnter(wrapper.find('.question-card').element)
+    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(event.defaultPrevented).toBe(false)
+    expect(wrapper.find('.enter-prompt').exists()).toBe(false)
+  })
+
+  it('takes no Submit while an answer is already in flight', async () => {
+    const wrapper = walk()
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await next(wrapper)
+    await wrapper.findAll('.option-card')[0]!.trigger('click')
+    await wrapper.setProps({ answerState: { phase: 'answering', toolUseId: 'toolu_01' } })
+    const submit = wrapper.find('.answer-submit')
+    expect(submit.attributes('disabled')).toBeDefined()
+    await submit.trigger('click')
+    expect(wrapper.emitted('answer')).toBeUndefined()
+  })
+
+  describe('at a terminal, where the walk between questions is unmeasured', () => {
+    it('can be walked to read every question', async () => {
+      const wrapper = walk({ channel: 'terminal' })
+      expect(wrapper.find('.question-next').attributes('disabled')).toBeUndefined()
+      await next(wrapper)
+      expect(wrapper.find('.question-text').text()).toBe('Which regions?')
+      await back(wrapper)
+      expect(wrapper.find('.question-text').text()).toBe('Which database?')
+    })
+
+    it('makes nothing selectable on any question, and offers no Submit', async () => {
+      const wrapper = walk({ channel: 'terminal' })
+      for (const step of [0, 1]) {
+        if (step === 1) await next(wrapper)
+        for (const option of wrapper.findAll('.option-card')) {
+          expect(option.attributes('disabled')).toBeDefined()
+          await option.trigger('click')
+          expect(option.classes()).toContain('is-base')
+        }
+      }
+      expect(wrapper.find('.answer-submit').exists()).toBe(false)
+      expect(wrapper.find('.answer-send').exists()).toBe(false)
+      expect(wrapper.emitted('answer')).toBeUndefined()
+    })
+
+    it('keeps the one refusal and the one jump on every question', async () => {
+      const wrapper = walk({ channel: 'terminal' })
+      await next(wrapper)
+      expect(wrapper.find('.answer-error').text()).toContain(ANSWER_ONLY_WHERE_IT_RUNS)
+      expect(wrapper.findAll('.answer-jump')).toHaveLength(1)
+    })
   })
 })

@@ -112,7 +112,7 @@ export function canSendAnswer(
 }
 
 /**
- * The request that answers `question` with `label`.
+ * The request that answers `question` with `answer`.
  *
  * Keyed by the question's TEXT and valued by the option's LABEL, exactly as the
  * agent's own tool takes it, and both repeated verbatim: main matches them
@@ -124,28 +124,42 @@ export function canSendAnswer(
  * own picker joins several answers is unmeasured, and inventing a separator
  * would make it read an answer nobody gave (see resolveAnswers in main).
  *
- * On the terminal channel `label` may be several labels joined, because there
+ * On the terminal channel a value may be several labels joined, because there
  * the answer is a measured keystroke per option rather than a record handed to
  * a tool — see toggledAnswer, which is what builds that value, and
  * joinAnswerLabels in contracts, which is the encoding both sides read. This
  * function is unchanged by it: what it takes is one answer VALUE, and it still
  * repeats it verbatim.
  *
- * Keyed by the call's FIRST question, because that is the one the card draws
- * until it walks the rest (#443) — every question is on the wire, and filling a
- * key per question is the step that follows, not something this guesses at.
+ * AMENDED for #443: `answer` is either one value — the answer to a
+ * ONE-question call, keyed by its only question exactly as before — or a list
+ * of values, one per question in the call's own order, which fills a key per
+ * question text. The list is what `askAnswerValues` builds, and that returns
+ * nothing until every question has an answer, so a list shorter than the call
+ * is not something the card can produce; were one passed anyway, the keys it
+ * does not cover are left out rather than filled with a guess, and main is
+ * where an incomplete record is refused.
  */
 export function answerRequest(
   dwarfId: string,
   question: DwarfQuestion,
-  label: string
+  answer: AskAnswer
 ): DwarfQuestionLabelAnswer {
-  return {
-    dwarfId,
-    toolUseId: question.toolUseId,
-    answers: { [question.questions[0]?.question ?? '']: label }
-  }
+  const values = typeof answer === 'string' ? [answer] : answer
+  const answers: Record<string, string> = {}
+  question.questions.forEach((asked, index) => {
+    const value = values[index]
+    if (value !== undefined) answers[asked.question] = value
+  })
+  return { dwarfId, toolUseId: question.toolUseId, answers }
 }
+
+/**
+ * What the card hands up when it sends (#443): one value for a one-question
+ * call — the shape every caller has used since #125 — or one value per
+ * question, in the call's order, for a call that asked several.
+ */
+export type AskAnswer = string | readonly string[]
 
 /**
  * The request that answers `question` in the person's OWN words (#481).
@@ -298,11 +312,187 @@ export function toggledAnswer(
   question: DwarfQuestion
 ): string | null {
   const toggled = togglesFor(current, question.toolUseId)
-  // The first question's options: the one the card draws until it walks the call (#443).
+  // The first question's options: this is the one-question value. A walked
+  // call's values, one per question, are askAnswerValues' (#443).
   const labels = (question.questions[0]?.options ?? [])
     .map((option) => option.label)
     .filter((label) => toggled.includes(label))
   return labels.length === 0 ? null : joinAnswerLabels(labels)
+}
+
+/* --- A call that asks several questions (#443) ------------------------------ */
+
+/**
+ * Which question of the call the card is showing, and which ask it is showing
+ * it for (#443).
+ *
+ * The id travels with the index for the reason it travels with a selection: a
+ * card left on question 3 of one ask must not open the next ask on its third
+ * question, which the person would reach without having read the first two.
+ */
+export interface QuestionCursor {
+  toolUseId: string
+  index: number
+}
+
+/** The question the card shows: the one the cursor names, or the first. */
+export function questionIndex(cursor: QuestionCursor | null, question: DwarfQuestion): number {
+  if (cursor === null || cursor.toolUseId !== question.toolUseId) return 0
+  return Math.min(Math.max(cursor.index, 0), Math.max(question.questions.length - 1, 0))
+}
+
+/** Back (`-1`) or Next (`1`), stopping at either end rather than wrapping. */
+export function stepQuestion(
+  cursor: QuestionCursor | null,
+  question: DwarfQuestion,
+  delta: number
+): QuestionCursor {
+  const index = questionIndex(
+    { toolUseId: question.toolUseId, index: questionIndex(cursor, question) + delta },
+    question
+  )
+  return { toolUseId: question.toolUseId, index }
+}
+
+/** The k-of-n line a walked call shows above its question, counted from one. */
+export function questionStepLine(index: number, count: number): string {
+  return `Question ${index + 1} of ${count}`
+}
+
+/** The controls that walk a call, and the one that sends every answer in it. */
+export const PREVIOUS_QUESTION_NAME = 'Back'
+export const NEXT_QUESTION_NAME = 'Next'
+export const SUBMIT_ANSWERS_NAME = 'Submit'
+
+/**
+ * What has been chosen on each question of ONE ask (#443).
+ *
+ * Keyed by the ask's id AND the question's index, which is QuestionSelection's
+ * rule taken one level down: a choice made against text nobody read never
+ * carries over, whether the text it would land on is the next ask's or the
+ * next question's. A choice for a different ask replaces the whole record, so
+ * nothing of the last ask survives into this one.
+ *
+ * Every question holds a list of labels, one gesture or the other: a
+ * single-select question holds at most one, a toggling one any number (see
+ * togglesAt). One shape for both so that "is question k answered" is the same
+ * reading everywhere — at least one label.
+ */
+export interface AskAnswers {
+  toolUseId: string
+  chosen: Readonly<Record<number, readonly string[]>>
+}
+
+/**
+ * Whether question `index` of this ask takes toggles rather than one choice.
+ *
+ * The card's existing rule, per question: the channel AND the question's own
+ * `multiSelect`, because only the terminal gesture for several labels is
+ * measured. A held multi-select question keeps the single choice, since the
+ * held channel takes one label per question (see resolveAnswers in main).
+ */
+export function togglesAt(question: DwarfQuestion, index: number): boolean {
+  return question.channel === 'terminal' && question.questions[index]?.multiSelect === true
+}
+
+/** The labels chosen on question `index` of the ask `toolUseId` names. */
+export function chosenAt(
+  answers: AskAnswers | null,
+  toolUseId: string,
+  index: number
+): readonly string[] {
+  if (answers === null || answers.toolUseId !== toolUseId) return []
+  return answers.chosen[index] ?? []
+}
+
+/**
+ * Apply a click on `label` of question `index`, with that question's own
+ * gesture: a toggle flips one label, a single choice replaces the last and a
+ * second click on it clears it — the same undo selectOption and toggleOption
+ * each offer.
+ */
+export function chooseAt(
+  answers: AskAnswers | null,
+  question: DwarfQuestion,
+  index: number,
+  label: string
+): AskAnswers {
+  const toolUseId = question.toolUseId
+  const current = chosenAt(answers, toolUseId, index)
+  const next = togglesAt(question, index)
+    ? current.includes(label)
+      ? current.filter((entry) => entry !== label)
+      : [...current, label]
+    : current.includes(label)
+      ? []
+      : [label]
+  const kept = answers !== null && answers.toolUseId === toolUseId ? answers.chosen : {}
+  return { toolUseId, chosen: { ...kept, [index]: next } }
+}
+
+/**
+ * How one option of question `index` is drawn — the three states selectOption
+ * and toggleState draw, by the same rule: a toggle nobody reached for is in its
+ * base state, a single-select option passed over is dimmed.
+ */
+export function optionStateAt(
+  answers: AskAnswers | null,
+  question: DwarfQuestion,
+  index: number,
+  label: string
+): OptionState {
+  const chosen = chosenAt(answers, question.toolUseId, index)
+  if (chosen.includes(label)) return 'selected'
+  return chosen.length > 0 && !togglesAt(question, index) ? 'dimmed' : 'base'
+}
+
+/** Whether question `index` has an answer: at least one label, whichever gesture. */
+export function isAnsweredAt(
+  answers: AskAnswers | null,
+  toolUseId: string,
+  index: number
+): boolean {
+  return chosenAt(answers, toolUseId, index).length > 0
+}
+
+/**
+ * Whether EVERY question of this ask has an answer — the one condition under
+ * which the card's single Submit may send. A picker handed an answer to some
+ * of its questions is left waiting on the rest, so a gap anywhere is nothing
+ * to send rather than a partial answer.
+ */
+export function canSubmit(answers: AskAnswers | null, question: DwarfQuestion): boolean {
+  return (
+    question.questions.length > 0 &&
+    question.questions.every((_, index) => isAnsweredAt(answers, question.toolUseId, index))
+  )
+}
+
+/**
+ * One answer value per question, in the call's order, or null while any
+ * question is unanswered.
+ *
+ * Each value is what the one-question path sends for that question's gesture,
+ * so the encoding does not fork: a single choice is its label, and a toggled
+ * question's labels are joined in the ask's OWN option order — toggledAnswer's
+ * rule, for its reason (main presses a digit per option position). A label the
+ * question does not offer is dropped, as there.
+ */
+export function askAnswerValues(
+  answers: AskAnswers | null,
+  question: DwarfQuestion
+): string[] | null {
+  if (!canSubmit(answers, question)) return null
+  const values: string[] = []
+  for (const [index, asked] of question.questions.entries()) {
+    const chosen = chosenAt(answers, question.toolUseId, index)
+    const labels = asked.options
+      .map((option) => option.label)
+      .filter((label) => chosen.includes(label))
+    if (labels.length === 0) return null
+    values.push(togglesAt(question, index) ? joinAnswerLabels(labels) : (labels[0] ?? ''))
+  }
+  return values
 }
 
 /**
