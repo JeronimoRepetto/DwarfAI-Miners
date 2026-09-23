@@ -240,7 +240,9 @@ channel beside the detached `agent:launch`, not a replacement.
   and **the redacted spellings map back**: the panel is only ever shown the redacted question and
   labels (#59), which the agent's own tool would not recognise, so the match runs against the
   redacted forms and **what is sent is the original**, two questions redacting alike refusing rather
-  than guessing [#113].
+  than guessing [#113]. Since #443 that refusal moves to parse time: `parseAskUserQuestion` denies
+  the whole call the moment two of its questions redact alike, because the SDK's own `answers` record
+  is keyed by question text and a duplicate can never be addressed by name.
 - Three rules #113 states at length and this page only names: **an open ask dissolves** rather than
   being answered for the user; **a permission prompt parks exactly like an ask and reaches the panel**
   as `Dwarf.pendingPermission`, decided through `agent:answerPermission` — a prompt still open when the
@@ -2059,11 +2061,21 @@ and Linux, and nobody has watched it.
   — **unused**, because every session the panel starts passes `pathToClaudeCodeExecutable` and drives
   the CLI the user already installed and logged into. Excluding it needs a real installer build to
   verify, so #113 left it to whoever cuts the next release rather than changing it blind [#113].
-- **A multi-question ask is answerable only for its first question**, and a multi-select answer sends
-  exactly one label — how a picker joins several is unmeasured, and inventing a separator is how an
-  agent comes to read an answer nobody gave [#113]. **The buttons shipped:** `DwarfQuestionCard.vue`
-  and `DwarfPermissionCard.vue` render both prompts and answer them, closing #90/#105, with the
-  approval surface at #96.
+- **A multi-question ask is answerable only for its first question on the TERMINAL channel** — how
+  the picker walks from one question to the next is still unmeasured, so a call with several stays
+  refused with its reason rather than typed blind [#113]. (This used to say the same of the HELD
+  channel too; #443 closed it there instead: every question now reaches the wire and the card
+  (T1/T2), and `resolveAnswers` refuses a record naming fewer than all of them rather than releasing
+  the call on an answer to the first alone (T3) — no picker keystrokes are involved on that channel,
+  so nothing needed measuring first.) A multi-select question's several chosen labels join with a
+  comma on their way into the tool's own `answers` record — `@anthropic-ai/claude-agent-sdk`
+  0.3.258's own `AskUserQuestionOutput.answers` field documents the encoding now (`sdk-tools.d.ts`:
+  "multi-select answers are comma-separated"), where before this was unmeasured and a held
+  multi-select question was kept single-choice on the strength of that gap. The card still does keep
+  it single-choice (`togglesAt`, questionAnswer.ts) — this is a capability `resolveAnswers` now has,
+  not a behaviour shipped yet — and the terminal picker's own multi-select separator remains
+  unmeasured regardless. **The buttons shipped:** `DwarfQuestionCard.vue` and `DwarfPermissionCard.vue`
+  render both prompts and answer them, closing #90/#105, with the approval surface at #96.
 
 **No test file is touched by this document**, and none should be: it records decisions already pinned
 by tests in #110, #112 and #113.
