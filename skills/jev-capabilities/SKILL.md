@@ -149,6 +149,22 @@ facts, template `what`/`notFor`/`examples` from those facts, and cite the exact 
 catalogue's own source (`OPENCODE_CATALOGUE_SOURCES`). **Never invent per-model prose** — no
 maintainer reviews a guess before it ships on the next install.
 
+**Per-model, not just per-tier (#608 T1).** A tier-keyed template alone gives every model in a
+tier byte-identical `notFor`/`examples` — the exact near-identical-option failure the "What Jev
+never receives" section documents (0.38 confidence over eleven options). `templatedWhat` composes
+`what` from THIS model's own `limit.output`, `cost.cacheRead` and `effortLevels`, on top of the
+reasoning/context/cost facts `what` already carried — every one already parsed off the same
+`--verbose` block, no new I/O added. `notFor` keeps the tier's shared sentence and appends this
+model's own output ceiling. `examples` stays tier-keyed: the catalogue names costs and limits, not
+worked prompts, so a per-model example would be invented prose, not a derived fact — the same
+evidence rule forbids it. Exclude a catalogue field the same way `id`/`name` are excluded whenever
+it is a lineage label rather than a capability: `family` is in the raw block
+(`docs/opencode-format.md` Row 6) but reads as a second name to a matcher that must never see one,
+so it is never rendered. Only render a field this catalogue has actually been observed to carry —
+Row 6 names OpenCode's FULL top-level key set, and `capabilities` has only ever been measured to
+hold `reasoning`; a `tool_call`/`attachment`/`temperature` sub-field with no measurement backing it
+stays unwritten rather than guessed.
+
 **Known limitation, pinned in `routeDecision.test.ts`:** the table carries cost _bands_, not
 prices, so a free OpenCode model and a low-band curated model both land in `'low'` and tie;
 `cheapestLaunchableProviderFor` cannot see $0 beat $1 and falls back to the contract's provider
