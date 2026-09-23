@@ -4648,15 +4648,65 @@ export interface JevRouteNoulPart {
 }
 
 /**
- * Every part behind one routing decision (jev-routing-profiles T3) — what
- * the renderer reads to say WHICH part was unsure, rather than only the
- * single overall `confidence` on `JevRouteLaunchResult`.
+ * Why the model step fell back to the local cost/profile pick among
+ * `candidatesAtTier`'s own candidates (`cheapestOrPriciestCandidate`,
+ * finalized the same way `finalizeModel` always does), instead of a winner
+ * from #608's second Jev request. Reuses `JevFallbackReason`'s closed
+ * vocabulary for every way the SECOND request itself can fail — timeout,
+ * unreachable, rate-limited, unauthorized, invalid-response and
+ * budget-exceeded all mean the same thing here they do for request 1, just
+ * for this call. `'no-live-model'` is the one reason that predates #608
+ * entirely: no launchable, catalogued model exists at ANY tier step for the
+ * resolved provider, so there was never a candidate to ask about, and never
+ * a second request either.
+ */
+export type JevModelFallbackReason = JevFallbackReason | 'no-live-model'
+
+/**
+ * The model step behind one routing decision (#608): unlike `provider`/
+ * `tier`, this is never a `JevRouteAnsweredPart` — Jev answers it with a
+ * Noul per candidate plus a tie-breaking Choice, not a single Choice with a
+ * `confidence`, so its own shape has to say that honestly rather than reuse
+ * a vocabulary built for something else.
+ */
+export interface JevRouteModelPart {
+  /**
+   * The chosen model's own id. Absent only when `applied` is
+   * `'safe-default'` with reason `'no-live-model'` — no launchable,
+   * catalogued model exists at any tier step for the resolved provider, so
+   * there was nothing to choose.
+   */
+  value?: string
+  /**
+   * `'answered'` when the winning candidate came from #608's second
+   * request — the highest Noul, or the Choice on a tie. `'only-candidate'`
+   * when exactly one candidate existed, so no second request was ever sent
+   * (never `'safe-default'`: nothing was defaulted to, it was the only
+   * option). `'safe-default'` when the second request could not be sent,
+   * failed, or its answer could not be acted on, and the local cost/profile
+   * choice among `candidatesAtTier`'s own candidates was used instead.
+   */
+  applied: 'answered' | 'safe-default' | 'only-candidate'
+  /** The winning candidate's own Noul probability — present only when `applied === 'answered'`. */
+  probability?: number
+  /** The Choice's own probability for the winner — present only when the 0.02 tie band made the Choice decide it. */
+  choiceProbability?: number
+  /** Why request 2 was not used, or not acted on — present only when `applied === 'safe-default'`. */
+  reason?: JevModelFallbackReason
+}
+
+/**
+ * Every part behind one routing decision (jev-routing-profiles T3, extended
+ * #608) — what the renderer reads to say WHICH part was unsure, rather than
+ * only the single overall `confidence` on `JevRouteLaunchResult`.
  */
 export interface JevRouteParts {
   provider: JevRouteAnsweredPart<DwarfProvider>
   tier: JevRouteAnsweredPart<ModelTier>
   trivial: JevRouteNoulPart
   largeContext: JevRouteNoulPart
+  /** #608: which model was chosen, and how — see `JevRouteModelPart`. */
+  model: JevRouteModelPart
 }
 
 /**
@@ -4686,8 +4736,18 @@ export type JevRouteLaunchResult =
       provider: DwarfProvider
       model?: string
       effort?: string
-      /** The MIN of the applied parts' (provider, tier) own confidences — the function-calling cookbook's own rule for a multi-part answer. */
-      confidence: number
+      /**
+       * The MIN of every part's own confidence (provider/tier's `confidence`,
+       * model's `probability`) OVER THE PARTS ACTUALLY `applied: 'answered'`
+       * — the function-calling cookbook's own rule for a multi-part answer,
+       * amended by #608: a part that fell back to a safe default was never
+       * really confident OR unconfident, it was never asked, so its number
+       * must not drag this one down (or up) either way. A `'only-candidate'`
+       * model is excluded the same way `'safe-default'` is: nothing was
+       * answered about it. Absent, rather than a misleading number, when NO
+       * part was answered at all.
+       */
+      confidence?: number
       /** Whether the prompt sent to Jev was shortened to fit its own token budget. */
       truncated: boolean
       /** The tier the local decision actually landed on, after every floor and profile rule — see ModelTier. */

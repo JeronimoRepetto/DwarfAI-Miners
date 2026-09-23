@@ -235,24 +235,29 @@ The application code contains exactly one outbound HTTP client, and it exists fo
 reason: Jev, an optional launch assist that asks TypeSafe's API to pick a provider, model and
 effort for a prompt before you launch it (#509). Outside of Jev there is still no telemetry, no
 analytics, no crash reporting, and no auto-updater — session data, transcripts, and project paths
-are never sent anywhere by DwarfAI-Miners. What follows says exactly what that one call carries,
-then the boundaries that keep everything else local.
+are never sent anywhere by DwarfAI-Miners. What follows says exactly what that one client's own
+traffic carries — one request always, a second sometimes (#608) — then the boundaries that keep
+everything else local.
 
-### Jev: the one outbound call
+### Jev: the outbound calls
 
 Jev fires only when both are true: you have entered your own TypeSafe key in Settings, and turned
-on **Let Jev choose** in the Add Panel. With both true, pressing Enter on the composer sends
-**one** request to `https://api.typesafe.ai/v1/systemone`, over TypeSafe's own `@typesafe-ai/sdk`
+on **Let Jev choose** in the Add Panel. With both true, pressing Enter on the composer sends **one
+or two** requests to `https://api.typesafe.ai/v1/systemone`, over TypeSafe's own `@typesafe-ai/sdk`
 (`createTypesafeJevRouter`, `src/main/jev/typesafeJevRouter.ts`; the exact URL is pinned in
 `typesafeJevRouter.test.ts`), before the launch itself goes out
-(`submit`, `src/renderer/src/composables/useAgentLaunch.ts`).
+(`submit`, `src/renderer/src/composables/useAgentLaunch.ts`). The first request is always sent when
+Jev fires at all; the second is sent only when the first resolves a provider and tier with two or
+more live, launchable candidate models to choose between (#608) — see "Request 2" below for exactly
+when and what it sends.
 
-**What leaves, in that one request (request v2, jev-routing-profiles #509 follow-up):** the `state`
-object is now exactly `{ prompt, routing_profile }` — the prompt as typed, and the routing profile
-you chose in Settings (`economy`, `balanced` or `premium`, one of those three words and nothing else
-about this machine). Jev no longer receives any model name at all. Instead it answers **five fixed
-questions about the prompt**, asked in one request, with criteria written by this project rather than
-read off any model's own description (`buildJevRouteRequest`, `src/main/jev/routeRequest.ts`):
+### Request 1: five questions about the prompt
+
+**What leaves:** the `state` object is exactly `{ prompt, routing_profile }` — the prompt as typed,
+and the routing profile you chose in Settings (`economy`, `balanced` or `premium`, one of those
+three words and nothing else about this machine). Jev answers **five fixed questions about the
+prompt**, asked in one request, with criteria written by this project rather than read off any
+model's own description (`buildJevRouteRequest`, `src/main/jev/routeRequest.ts`):
 
 - **`is_trivial`** — is this small talk or a one-line factual question, or a real request to write,
   read, debug, explain or change code.
@@ -265,32 +270,84 @@ read off any model's own description (`buildJevRouteRequest`, `src/main/jev/rout
 - **`effort`** — a fixed four-level difficulty rubric, asked the same way regardless of which
   provider ends up chosen (`EFFORT_RUBRIC`, `src/main/jev/routeRequest.ts`).
 
-The concrete model is never asked for and never sent — it is decided **locally**, after Jev answers,
-by matching the five answers against a maintained, source-verified model capability table
-(`src/main/jev/capabilities/`, `src/main/jev/routeDecision.ts`; see the
-[`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for how an entry earns its place in
-that table and what evidence it needs).
+No model id or name is ever asked for or sent in this request. Which live, launchable models this
+provider and tier actually resolve to is worked out afterward, locally, and — since #608 — sometimes
+asked about in a second request; see the next section.
 
 **What comes back, in that one response:** five answers — a probability for each of the two yes/no
 questions, a choice and Jev's own confidence for `provider` and `model_tier`, and a score for
 `effort` — never a model name, since none was ever offered as an option
 (`JevRouteAnswers`, `src/main/jev/jevRouterPort.ts`).
 
-**The TypeSafe API key** rides the same request as its bearer token — read from the encrypted store
-at call time and never logged (`createTypesafeJevRouter`, `src/main/jev/typesafeJevRouter.ts`).
+**Request size, as observed.** TypeSafe publishes no fixed per-request token count, so this is a
+measurement from the maintainer's own `JEV_DEBUG` traces on this machine, not a guarantee: a live
+request 1 ran **about 1,550–1,650 input tokens**, observed 2026-09-21, before #608 added request 2.
+A future change to the question set, the criteria copy, or the launchable-provider count will move
+this figure; re-measure from a live trace rather than trusting this number to stay current. This
+figure is for request 1 only — request 2's own size has not been separately measured here; see its
+own token-budget discipline below.
 
-**What never leaves:** project paths, session data, transcripts, usernames, model names, or anything
-else about this machine beyond the prompt's own text and the three-word routing profile.
+### Request 2: choosing the model among the tier's candidates (#608)
+
+Request 1 never asks about a concrete model, and never did. What changed in #608 is what decides
+one: once request 1 resolves a provider and a tier, this app looks up that provider's own live,
+launchable, catalogued models at that tier — stepping down toward `balanced` then `fast-cheap` when
+the resolved tier has none (`candidatesAtTier`, `src/main/jev/routeDecision.ts`). What happens next
+depends on how many candidates that step-down walk finds:
+
+- **Zero candidates.** Nothing to choose between — the launch falls back to your own configured
+  default or the pickers' current values, the same as any other Jev fallback.
+- **Exactly one candidate.** It is used directly, with no second request sent at all — there is
+  nothing to ask Jev about (`resolveModelPart`, `src/main/jev/routeLaunch.ts`).
+- **Two or more candidates.** A second request is sent, over those candidates only, sharing the
+  15-second total launch budget request 1 already had — it is skipped, never sent, once nothing is
+  left of that shared budget (`DEFAULT_TOTAL_BUDGET_MS`, `src/main/jev/routeLaunch.ts`).
+
+**What leaves, in the second request:** the exact same `state` object as request 1 — the same prompt
+(or its own truncated form, independently trimmed to the same token budget) and the same routing
+profile — plus, for each candidate, its own capability text: **`what`**, **`notFor`**, **`examples`**,
+its **`tier`**, its **`relativeCost`** band, and its **`contextWindowTokens`** when known
+(`candidateCapabilityFacts`, `src/main/jev/routeRequest.ts`). Candidates are keyed by index (`'0'`,
+`'1'`, …) in both questions the request asks — one yes/no "does this fit" question per candidate,
+plus one Choice over the same set — never by the candidate's own model id
+(`buildJevModelRouteRequest`, `src/main/jev/routeRequest.ts`; `JevModelRouteRequest`,
+`src/main/jev/jevRouterPort.ts`; pinned by `routeRequest.test.ts`'s own `'carries what/notFor/examples
+plus tier, relativeCost and contextWindowTokens — never the model id'` and `'keys every candidate by
+index — never by its own model id — in both the fits and the choice questions'`).
+**The model's own id, name, alias or family is never sent** — every candidate's description is the
+same sourced capability text the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill's
+evidence rule already governs for request 1's own criteria, never a label a matcher could read as a
+name. That skill's own "What Jev never receives" section says why: the first live run that asked Jev
+to choose among model names directly returned 0.38 confidence over eleven near-identical options.
+
+**What comes back, in that response:** one "fits" probability per candidate, and the tie-breaking
+Choice's own winning index plus its full probability distribution over the same candidates — never a
+model name, since none was ever offered as one (`JevModelRouteAnswers`,
+`src/main/jev/jevRouterPort.ts`). The winner is the candidate with the highest fit probability,
+unless one or more others land within `MODEL_TIE_BAND` (0.02) of it — indistinguishable from the
+measured run-to-run Noul noise the consistency cookbook documents — in which case the Choice's own
+probabilities break the tie among that group, and a cost/profile rule breaks it again on an exact
+Choice tie too (`selectModelWinner`, `src/main/jev/routeDecision.ts`).
+
+**When request 2 cannot be used** — no key, unreachable, rate-limited, unauthorized, timed out, an
+unusable answer, too large for TypeSafe's own budget, or simply no time left in the shared 15-second
+launch budget — the launch falls back to the identical local cost/profile pick the local decision
+always had (`candidatesAtTier` plus `cheapestOrPriciestCandidate`, `src/main/jev/routeDecision.ts`),
+and the launch card says so by name rather than crediting Jev with a choice it did not make — see
+"What comes back from the local decision" just below, and the [guide](guide.md#jev) for how the card
+reads.
+
+**The TypeSafe API key** rides every request as its bearer token — read from the encrypted store at
+call time and never logged, for either request (`createTypesafeJevRouter`,
+`src/main/jev/typesafeJevRouter.ts`).
+
+**What never leaves, in either request:** project paths, session data, transcripts, usernames, model
+names or ids, or anything else about this machine beyond the prompt's own text, the three-word
+routing profile, and — in request 2 only — the sourced capability text above.
 `routeRequest.test.ts` pins exactly that for the prompt: a test builds a request from a prompt
 containing a fake local path and asserts the path appears in the prompt state and nowhere else in
 the request (`'carries nothing about this machine but the prompt itself'`,
 `src/main/jev/routeRequest.test.ts`).
-
-**Request size, as observed.** TypeSafe publishes no fixed per-request token count, so this is a
-measurement from the maintainer's own `JEV_DEBUG` traces on this machine, not a guarantee: a live
-route request under request v2 ran **about 1,550–1,650 input tokens**, observed 2026-09-21. A future
-change to the question set, the criteria copy, or the launchable-provider count will move this
-figure; re-measure from a live trace rather than trusting this number to stay current.
 
 **What comes back from the local decision, and what is done with it:** one decision on the wire — a
 provider, an optional model, an optional effort level, the tier the local decision landed on, and a
@@ -300,13 +357,19 @@ configured default launch when one is set (`JevRouteLaunchResult`, `src/shared/c
 that answer ever reaches the renderer, main checks it against the same gate every launch goes through
 (`parseLaunchTuning`) — nothing crosses that `agent:launch` could not itself carry out
 (`createJevLaunchRouter`, `src/main/jev/routeLaunch.ts`; `decideLaunch`,
-`src/main/jev/routeDecision.ts`). The decision is then shown in a card that states the chosen
-provider, model and effort with the overall confidence, then says part by part what Jev answered and
-what fell to a safe value, with Jev's own reported confidence for each, and whether the prompt was
-treated as trivial or a large-context model was preferred (`jevDecisionSummary`, `jevPartsSummary`,
-`src/renderer/src/components/launch/AddPanel.vue`). It is applied to the pickers, and can be
-overridden or dismissed; it is never a launch by itself; pressing Launch again is what actually starts
-the session (`src/renderer/src/composables/useAgentLaunch.ts`).
+`src/main/jev/routeDecision.ts`). The decision is then shown in a card that states the plain fact of
+what is about to launch (provider, model, effort) and, only when a part actually has one, Jev's own
+least certain confidence — never crediting Jev with a part it did not answer (`jevDecisionSummary`,
+`src/renderer/src/components/launch/AddPanel.vue`). Below that, the card says part by part what Jev
+answered and what fell to a safe value for the provider and the tier, and — since #608 — its own
+sentence for the model step: which candidate Jev's second request picked and its fit percentage (plus
+any Choice tiebreak), that only one candidate existed so no second question was asked, or which
+reason the second request could not be used and that the local pick was used instead
+(`jevPartsSummary`, `jevModelPartSentence`, `src/renderer/src/components/launch/AddPanel.vue`). The
+card also notes whether the prompt was treated as trivial or a large-context model was preferred. It
+is applied to the pickers, and can be overridden or dismissed; it is never a launch by itself;
+pressing Launch again is what actually starts the session
+(`src/renderer/src/composables/useAgentLaunch.ts`).
 
 **When it does not happen:** no key is configured, the toggle is off, or the option is hidden
 outright (no key) or shown disabled with the reason (this machine has no encrypted place to keep
@@ -408,7 +471,7 @@ never in your own Claude configuration, and never in the project. OpenCode's own
 
 **What data moves.** The subtask's own text — a `task` string, and an optional `context` — is sent
 to TypeSafe's Jev API to decide a provider, model and effort for it: the exact same
-[Jev disclosure](#jev-the-one-outbound-call) above, for a routing call this app makes on the
+[Jev disclosure](#jev-the-outbound-calls) above, for a routing call this app makes on the
 subtask's behalf rather than on your own typed prompt. Once routed, the delegated child is an
 ordinary session of whichever provider was chosen, so its own provider traffic is that provider's,
 exactly as any launch's already is. Nothing else new leaves the machine: the loopback listener

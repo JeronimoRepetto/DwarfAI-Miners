@@ -98,6 +98,15 @@ function serviceWith(options: {
 }
 
 describe('createJevLaunchRouter', () => {
+  /*
+   * AMENDED for #608 (was: no `parts.model` — the field did not exist).
+   * `CLAUDE_CATALOGS` names only 'sonnet' as live, so the balanced tier
+   * resolves to exactly ONE candidate — no second request, `applied:
+   * 'only-candidate'` — see the dedicated request-2 describe block below for
+   * the two-or-more-candidate path. `modelRequestsSeen()` stays empty:
+   * asserted directly so a regression that fires request 2 unconditionally
+   * would fail THIS test rather than only a request-2-specific one.
+   */
   it("returns decideLaunch's own decision, with truncated attached", async () => {
     const fake = new FakeJevRouter()
     fake.queueOutcome(answers())
@@ -117,9 +126,11 @@ describe('createJevLaunchRouter', () => {
         provider: { value: 'claude', confidence: 0.91, applied: 'answered' },
         tier: { value: 'balanced', confidence: 0.91, applied: 'answered' },
         trivial: { value: false, probability: 0.05 },
-        largeContext: { value: false, probability: 0.05 }
+        largeContext: { value: false, probability: 0.05 },
+        model: { value: 'sonnet', applied: 'only-candidate' }
       }
     })
+    expect(fake.modelRequestsSeen()).toHaveLength(0)
   })
 
   it('asks for the live provider list, model list and preferences on every call, not once at construction', async () => {
@@ -257,7 +268,9 @@ describe('createJevLaunchRouter', () => {
 
   it('falls back to timeout rather than waiting past its own total budget', async () => {
     const neverResolves: JevRouterPort = {
-      route: () => new Promise<JevRouteOutcome>(() => {})
+      route: () => new Promise<JevRouteOutcome>(() => {}),
+      // #608: never reached — request 1 itself is what times out here.
+      routeModel: () => Promise.reject(new Error('routeModel should not be called'))
     }
     const service = serviceWith({ router: neverResolves, totalBudgetMs: 5 })
 
@@ -268,7 +281,9 @@ describe('createJevLaunchRouter', () => {
 
   it('never throws, even when the router itself does; unexpected errors fall back to invalid-response', async () => {
     const throwing: JevRouterPort = {
-      route: () => Promise.reject(new Error('boom'))
+      route: () => Promise.reject(new Error('boom')),
+      // #608: never reached — request 1 itself throws here.
+      routeModel: () => Promise.reject(new Error('routeModel should not be called'))
     }
     const service = serviceWith({ router: throwing })
 
@@ -285,6 +300,191 @@ describe('createJevLaunchRouter', () => {
     const result = await service.route({ prompt: 'THE-SECRET-PROMPT-TEXT' })
 
     expect(JSON.stringify(result)).not.toContain('THE-SECRET-PROMPT-TEXT')
+  })
+})
+
+/*
+ * #608: the second request, over the tier's own candidate models.
+ * `CLAUDE_MODEL_CAPABILITIES` (capabilities/claude.ts) declares 'default'
+ * BEFORE 'sonnet', both 'balanced'/launchTarget — so when both are LIVE,
+ * `candidatesAtTier`'s own Object.entries walk yields options in that same
+ * order: index '0' is 'default' (unverified cost), index '1' is 'sonnet'
+ * (medium cost, 1M context). Asserted directly below rather than assumed.
+ */
+describe('createJevLaunchRouter — the second (model) request (#608)', () => {
+  const TWO_CANDIDATE_CATALOGS = [
+    catalog({ provider: 'claude', models: [{ value: 'default' }, { value: 'sonnet' }] })
+  ]
+
+  it('sends a second request keyed by index over every live candidate — never a model id or name — and applies the winner', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    fake.queueModelOutcome({
+      kind: 'answers',
+      fits: { '0': 0.2, '1': 0.9 },
+      choice: { choice: '1', probabilities: { '0': 0.1, '1': 0.9 } },
+      usage: { inputTokens: 300 }
+    })
+    const service = serviceWith({ router: fake, models: TWO_CANDIDATE_CATALOGS })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    expect(fake.modelRequestsSeen()).toHaveLength(1)
+    const sent = fake.modelRequestsSeen()[0]!
+    expect(Object.keys(sent.candidates)).toEqual(['0', '1'])
+    expect(sent.candidates['1']!.relativeCost).toBe('medium') // confirms index '1' is 'sonnet'
+    expect(JSON.stringify(sent)).not.toMatch(/sonnet|default/)
+
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBe('sonnet')
+    expect(result.effort).toBe('high')
+    expect(result.parts.model).toEqual({ value: 'sonnet', applied: 'answered', probability: 0.9 })
+  })
+
+  /*
+   * Verifier fix (#608): the missing route()-level test for ZERO live
+   * candidates — distinct from the single- and multi-candidate paths above.
+   * `models: []` means nothing is live for claude at ANY tier step, so
+   * `candidatesAtTier` finds nothing at all (`decided.model` stays
+   * undefined, exactly as it already did before #608), and there is no
+   * candidate to ask about — no second request, ever.
+   */
+  it('sends no second request, and marks the model as no-live-model, when nothing is live for the chosen provider at any tier', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    const service = serviceWith({
+      router: fake,
+      models: [catalog({ provider: 'claude', models: [] })]
+    })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    expect(fake.modelRequestsSeen()).toHaveLength(0)
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBeUndefined()
+    expect(result.effort).toBeUndefined()
+    expect(result.parts.model).toEqual({ applied: 'safe-default', reason: 'no-live-model' })
+  })
+
+  it.each([
+    ['timeout' as const],
+    ['unreachable' as const],
+    ['rate-limited' as const],
+    ['invalid-response' as const]
+  ])(
+    'falls back to the local cost/profile safe default, and says why, when request 2 fails with %s',
+    async (reason) => {
+      const fake = new FakeJevRouter()
+      fake.queueOutcome(answers())
+      fake.queueModelOutcome({ kind: 'fallback', reason })
+      const service = serviceWith({ router: fake, models: TWO_CANDIDATE_CATALOGS })
+
+      const result = await service.route({ prompt: 'add a field to this form' })
+
+      if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+      // cheapestOrPriciestCandidate's own safe pick between 'default'
+      // (unverified) and 'sonnet' (medium) is the cheaper, verified one —
+      // 'sonnet' — exactly as it was before #608 ever asked a second question.
+      expect(result.model).toBe('sonnet')
+      expect(result.parts.model).toEqual({ value: 'sonnet', applied: 'safe-default', reason })
+    }
+  )
+
+  it('skips request 2 entirely, and falls back without sending it, once the shared 15s budget is already spent', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    // Never queues a model outcome — routeModel must not be called at all.
+    let now = 0
+    const service = serviceWith({
+      router: fake,
+      models: TWO_CANDIDATE_CATALOGS,
+      // Jumps far past any totalBudgetMs on every call, so "how much of the
+      // shared budget is left" reads <= 0 by the time request 2 is considered.
+      now: () => {
+        now += 100_000
+        return now
+      }
+    })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    expect(fake.modelRequestsSeen()).toHaveLength(0)
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBe('sonnet')
+    expect(result.parts.model).toEqual({
+      value: 'sonnet',
+      applied: 'safe-default',
+      reason: 'budget-exceeded'
+    })
+  })
+
+  /*
+   * Verifier fix (#608): the remaining budget for request 2 must be measured
+   * from the instant the shared abort timer was actually armed (right
+   * before request 1 is sent), never from `route()`'s own earlier
+   * `startedAt` — which is read BEFORE the provider/model/preferences
+   * listing. The old formula silently double-charged request 2 for
+   * whatever the listing itself took.
+   *
+   * `now()` is scripted to a fixed sequence rather than a running clock:
+   * call 1 (`route()`'s `startedAt`, before listing) reads 0; every later
+   * call reads 1500 — i.e., listing "took" 1500ms, and everything from the
+   * moment the timer is armed onward is instant.
+   *
+   * totalBudgetMs is 1000: under the OLD (buggy) formula, remaining would
+   * read `1000 - (1500 - 0) = -500` — wrongly exhausted — while the correct
+   * one reads `1000 - (1500 - 1500) = 1000`, still full, because none of
+   * that 1500ms happened AFTER the timer was armed.
+   */
+  it('measures the remaining budget from when the abort timer was armed, not from before the provider/model listing', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(answers())
+    fake.queueModelOutcome({
+      kind: 'answers',
+      fits: { '0': 0.2, '1': 0.9 },
+      choice: { choice: '1', probabilities: { '0': 0.1, '1': 0.9 } },
+      usage: { inputTokens: 300 }
+    })
+    const timestamps = [0, 1500, 1500, 1500, 1500, 1500]
+    let call = 0
+    const service = serviceWith({
+      router: fake,
+      models: TWO_CANDIDATE_CATALOGS,
+      totalBudgetMs: 1000,
+      now: () => timestamps[Math.min(call++, timestamps.length - 1)]!
+    })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    expect(fake.modelRequestsSeen()).toHaveLength(1)
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.model).toBe('sonnet')
+    expect(result.parts.model.applied).toBe('answered')
+  })
+
+  it('folds the model part into the overall confidence, alongside provider and tier — ignoring a safe-default provider (#608 card bug)', async () => {
+    const fake = new FakeJevRouter()
+    fake.queueOutcome(
+      answers({
+        provider: { choice: 'claude', confidence: 0.19 }, // below the floor — safe-default, excluded
+        tier: { choice: 'balanced', confidence: 0.91 }
+      })
+    )
+    fake.queueModelOutcome({
+      kind: 'answers',
+      fits: { '0': 0.1, '1': 0.8 },
+      choice: { choice: '1', probabilities: { '0': 0.2, '1': 0.8 } },
+      usage: { inputTokens: 300 }
+    })
+    const service = serviceWith({ router: fake, models: TWO_CANDIDATE_CATALOGS })
+
+    const result = await service.route({ prompt: 'add a field to this form' })
+
+    if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
+    expect(result.parts.provider.applied).toBe('safe-default')
+    // MIN(tier 0.91, model 0.8) — the discarded 0.19 provider confidence
+    // never enters the calculation.
+    expect(result.confidence).toBe(0.8)
   })
 })
 

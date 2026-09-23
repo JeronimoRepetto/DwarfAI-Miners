@@ -1,4 +1,5 @@
-import type { JevFallbackReason, JevRoutingProfile } from '../domain/types'
+import type { JevFallbackReason, JevRoutingProfile, ModelTier } from '../domain/types'
+import type { ModelCapabilityEntry } from './capabilities/modelCapability'
 
 /**
  * The Jev routing port (issue #509; request v2, jev-routing-profiles T3):
@@ -105,10 +106,70 @@ export interface JevRouteFallback {
 
 export type JevRouteOutcome = JevRouteAnswers | JevRouteFallback
 
+/* --- #608: the second request, over the tier's own candidate models ------- */
+
+/**
+ * One candidate's own capability facts, in the same shape a Choice option's
+ * criteria already takes (`JevChoiceCriteria`), plus the facts beyond
+ * `what`/`notFor`/`examples` that tell two same-tier candidates apart —
+ * `tier`, `relativeCost` and `contextWindowTokens`, straight off
+ * `ModelCapabilityEntry` (see `routeRequest.ts`'s `candidateCapabilityFacts`).
+ * Never the model's own id, name or family — see this module's own top
+ * comment and the jev-capabilities skill's evidence rule.
+ */
+export interface JevModelCandidateCriteria extends JevChoiceCriteria {
+  tier: ModelTier
+  relativeCost: ModelCapabilityEntry['relativeCost']
+  contextWindowTokens?: number
+}
+
+/**
+ * #608's second System One request: one Noul per candidate ("does this
+ * model fit the prompt, given the tier the task needs?") plus one Choice
+ * over the same candidates, all keyed by INDEX — `'0'`, `'1'`, … — never by
+ * the candidate's own model id, so nothing about a model's identity ever
+ * reaches Jev twice over (see `routeRequest.ts`'s own `buildJevModelRouteRequest`).
+ * Only ever built when there are two or more candidates — see this file's
+ * own `buildJevModelRouteRequest` comment for the single-candidate skip.
+ */
+export interface JevModelRouteRequest {
+  prompt: string
+  routingProfile: JevRoutingProfile
+  truncated: boolean
+  /** The tier the task needs — read into the Noul question's own instructions, never used to filter `candidates` again (that already happened). */
+  tier: ModelTier
+  /** One entry per candidate, keyed by index. */
+  candidates: Readonly<Record<string, JevModelCandidateCriteria>>
+}
+
+/**
+ * Jev's own answer to the second request — RAW, never yet resolved onto a
+ * winner (`routeDecision.ts`'s `selectModelWinner` does that): every
+ * candidate's own Noul "does it fit" probability, keyed the same way as
+ * `candidates` above, plus the tie-breaking Choice's own choice and full
+ * probability distribution (needed to read the TIED candidates' own shares,
+ * not just the winner's).
+ */
+export interface JevModelRouteAnswers {
+  kind: 'answers'
+  fits: Readonly<Record<string, number>>
+  choice: { choice: string; probabilities: Readonly<Record<string, number>> }
+  usage: { inputTokens: number }
+}
+
+export type JevModelRouteOutcome = JevModelRouteAnswers | JevRouteFallback
+
+/* --- end of the #608 block ------------------------------------------------- */
+
 /**
  * What a launch asks of Jev. One implementation talks to TypeSafe's SDK
  * (typesafeJevRouter.ts); a scripted one answers tests (fakeJevRouter.ts).
  */
 export interface JevRouterPort {
   route(request: JevRouteRequest, options: { signal?: AbortSignal }): Promise<JevRouteOutcome>
+  /** #608's second request — see `JevModelRouteRequest`'s own comment. */
+  routeModel(
+    request: JevModelRouteRequest,
+    options: { signal?: AbortSignal }
+  ): Promise<JevModelRouteOutcome>
 }

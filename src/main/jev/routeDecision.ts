@@ -14,6 +14,34 @@ import type { JevRouteAnswers } from './jevRouterPort'
 import { TIER_CHOICE_TO_MODEL_TIER, mapEffortScore } from './routeRequest'
 
 /**
+ * #608: the same run-to-run Noul probability SPREAD TypeSafe's own
+ * consistency cookbook measured (`consistency_noul_cookbook.md`: mean
+ * per-question probability standard deviation `0.0102` across 15 repeats of
+ * the identical question) — doubled into a TIE BAND, so two candidates whose
+ * Noul answers differ by less than roughly two standard deviations of that
+ * measured noise are treated as indistinguishable rather than as a clear
+ * winner. Below this gap, `selectModelWinner` lets the Choice's own
+ * probabilities decide among the tied candidates instead.
+ */
+export const MODEL_TIE_BAND = 0.02
+
+/**
+ * The function-calling cookbook's own rule for a multi-part answer,
+ * generalized to any number of parts: the MIN over whichever were actually
+ * given, ignoring `undefined` (a part that was never answered, or fell back
+ * to a safe default) rather than letting its number drag the result down.
+ * `undefined` when nothing was given at all — the honest "no part was
+ * answered" case #608's own bug report named (a discarded 0.19 provider
+ * confidence dragging the whole card down), rather than a misleading
+ * number. Used by `decideLaunch`'s own `confidence` (provider/tier) and by
+ * `routeLaunch.ts`'s final wire confidence (provider/tier/model together).
+ */
+export function minOfAnswered(...values: (number | undefined)[]): number | undefined {
+  const defined = values.filter((value): value is number => value !== undefined)
+  return defined.length === 0 ? undefined : Math.min(...defined)
+}
+
+/**
  * The LOCAL routing decision (jev-routing-profiles T3): pure, no network —
  * takes Jev's already-answered five questions plus the routing profile, the
  * live launchable providers and catalogues, the capability table, and the
@@ -83,13 +111,31 @@ export type JevDecideResult =
       provider: DwarfProvider
       model?: string
       effort?: string
-      confidence: number
+      /** MIN over the {provider, tier} parts actually `applied: 'answered'` — see `minOfAnswered`. `undefined` when neither was. */
+      confidence?: number
       tier: ModelTier
       parts: {
         provider: { value: DwarfProvider; confidence: number; applied: 'answered' | 'safe-default' }
         tier: { value: ModelTier; confidence: number; applied: 'answered' | 'safe-default' }
         trivial: { value: boolean; probability: number }
         largeContext: { value: boolean; probability: number }
+      }
+      /**
+       * #608: every live, launchable candidate at the tier `candidatesAtTier`
+       * actually landed on for the chosen provider, after its own step-down
+       * walk — `routeLaunch.ts`'s own input for the second Jev request.
+       * `tier` here is the STEP actually used, which can read lower than
+       * `tier` above when the routing decision's own tier had no live entry
+       * (the same honest distinction `candidatesAtTier`'s own doc comment
+       * already draws) — the fit question must ask about the tier a
+       * candidate genuinely occupies, not the one nothing at is live.
+       * `options` is empty, at the originally resolved `tier`, when nothing
+       * lives at any step — the same case that already leaves `model`
+       * undefined above.
+       */
+      modelCandidates: {
+        tier: ModelTier
+        options: readonly { id: string; entry: ModelCapabilityEntry }[]
       }
     }
   | { kind: 'fallback'; reason: 'invalid-response' }
@@ -133,21 +179,25 @@ function cheapestLaunchableProviderFor(
 }
 
 /**
- * The concrete model for one provider, stepping down from `tier` toward
- * `balanced`/`fast-cheap` until a launchable, LIVE-CATALOGUED entry is
- * found. Within one step, `needsLargeContext` narrows to entries with a
- * documented ≥1,000,000-token window (or tagged `'long-context'` outright);
- * if that narrowing finds nothing, the ordinary candidates at that same
- * step are used instead — large context is a PREFERENCE within the tier,
- * never a reason to step past it.
+ * Every live, launchable candidate at the FIRST non-empty step of `tier`'s
+ * own `TIER_STEP_DOWN` chain — the step-down walk `decideLaunch`'s own local
+ * model pick and its `modelCandidates` (#608) both need, written once so a
+ * future change to the walk cannot make the two disagree about what "the
+ * tier's own candidates" means. Within one step, `needsLargeContext`
+ * narrows to entries with a documented ≥1,000,000-token window (or tagged
+ * `'long-context'` outright); if that narrowing finds nothing, the ordinary
+ * candidates at that same step are returned instead — large context is a
+ * PREFERENCE within the tier, never a reason to step past it. `undefined`
+ * when every step is empty.
  */
-function pickModel(options: {
+function candidatesAtTier(options: {
   table: Readonly<Record<string, ModelCapabilityEntry>>
   tier: RoutingTier
-  profile: JevRoutingProfile
   needsLargeContext: boolean
   liveModelIds: ReadonlySet<string>
-}): { id: string; entry: ModelCapabilityEntry } | undefined {
+}):
+  | { tier: RoutingTier; options: readonly { id: string; entry: ModelCapabilityEntry }[] }
+  | undefined {
   for (const stepTier of TIER_STEP_DOWN[options.tier]) {
     const atTier = Object.entries(options.table).filter(
       ([, capEntry]) => capEntry.launchTarget && capEntry.tier === stepTier
@@ -162,13 +212,29 @@ function pickModel(options: {
     }
     const live = candidates.filter(([id]) => options.liveModelIds.has(id))
     if (live.length === 0) continue
-    const sorted = [...live].sort(
-      ([, a], [, b]) => COST_RANK[a.relativeCost] - COST_RANK[b.relativeCost]
-    )
-    const [id, capEntry] = options.profile === 'premium' ? sorted[sorted.length - 1]! : sorted[0]!
-    return { id, entry: capEntry }
+    return { tier: stepTier, options: live.map(([id, capEntry]) => ({ id, entry: capEntry })) }
   }
   return undefined
+}
+
+/**
+ * The cheapest candidate for `'economy'`/`'balanced'`, or the priciest for
+ * `'premium'` — the same cost/profile rule `decideLaunch`'s own local model
+ * pick has always applied to choose ONE model out of a tier's own
+ * candidates. Exported so #608's
+ * `selectModelWinner` can apply the identical, already-reviewed rule as its
+ * OWN final tiebreak (when even the Choice ties exactly) rather than
+ * re-deriving a second "which one is the safe pick" order that could drift
+ * from this one. Never called with an empty array.
+ */
+export function cheapestOrPriciestCandidate(
+  candidates: readonly { id: string; entry: ModelCapabilityEntry }[],
+  profile: JevRoutingProfile
+): { id: string; entry: ModelCapabilityEntry } {
+  const sorted = [...candidates].sort(
+    (a, b) => COST_RANK[a.entry.relativeCost] - COST_RANK[b.entry.relativeCost]
+  )
+  return profile === 'premium' ? sorted[sorted.length - 1]! : sorted[0]!
 }
 
 /**
@@ -202,6 +268,132 @@ function narrowEffort(
     }
   }
   return nearest
+}
+
+/** `finalizeModel`'s own result — `model` is always the picked candidate's own id once `parseLaunchTuning` accepts the pairing. */
+export interface FinalizedModel {
+  model: string
+  effort?: string
+}
+
+/**
+ * The shared tail end of "pick a model" (#608): maps the effort rubric
+ * score onto `provider`'s own ladder, narrows it to the picked ENTRY's own
+ * accepted levels, then validates the whole (model, effort) pairing through
+ * the same launch gate every launch goes through (`parseLaunchTuning`) —
+ * belt and braces, the same discipline `decideLaunch` has always held for
+ * its OWN local model choice. Written once so `decideLaunch`'s local pick
+ * and #608's request-2 winner can never silently disagree about what a
+ * valid pairing is. `undefined` when `parseLaunchTuning` refuses the
+ * pairing — not reachable through either caller's own derivation today
+ * (`id` is always a trimmed catalogue id, `effort` always a member of
+ * `PROVIDER_EFFORT_LEVELS[provider]` or absent), kept for the day a
+ * capability entry's own id or a future ladder change makes it so.
+ */
+export function finalizeModel(
+  provider: DwarfProvider,
+  id: string,
+  entry: ModelCapabilityEntry,
+  effortScore: number
+): FinalizedModel | undefined {
+  const providerEffort = mapEffortScore(provider, effortScore, PROVIDER_EFFORT_LEVELS)
+  const effort =
+    providerEffort === undefined
+      ? undefined
+      : narrowEffort(PROVIDER_EFFORT_LEVELS[provider], entry.effortLevels, providerEffort)
+  const tuning = parseLaunchTuning(provider, {
+    model: id,
+    ...(effort === undefined ? {} : { effort })
+  })
+  if (tuning === null || tuning.model === undefined) return undefined
+  return { model: tuning.model, ...(tuning.effort === undefined ? {} : { effort: tuning.effort }) }
+}
+
+/** One #608 request-2 candidate, as `selectModelWinner` reads it — `key` is the index string it was sent under (`'0'`, `'1'`, …), matching `fits`/`choice.probabilities`' own keys. */
+export interface ModelSelectionCandidate {
+  key: string
+  id: string
+  entry: ModelCapabilityEntry
+}
+
+/** `selectModelWinner`'s own result — `choiceProbability` is present only when the tie band made the Choice decide (or fail to, falling to `cheapestOrPriciestCandidate`). */
+export interface ModelSelection {
+  candidate: ModelSelectionCandidate
+  /** The winning candidate's own Noul "does it fit" probability. */
+  probability: number
+  choiceProbability?: number
+}
+
+/**
+ * #608's own selection rule, over one request-2 answer:
+ *
+ * 1. The candidate with the highest Noul `fits` probability wins outright,
+ *    UNLESS one or more other candidates land within `MODEL_TIE_BAND` of it
+ *    — indistinguishable from run-to-run noise (see that constant's own
+ *    comment), not a real signal to act on alone.
+ * 2. Among a tied group, the Choice's own `probabilities` (never just its
+ *    single reported `choice`, which need not even be one of the tied
+ *    candidates) decide: the tied candidate with the highest Choice share
+ *    wins.
+ * 3. If the Choice ALSO ties exactly among them, `cheapestOrPriciestCandidate`
+ *    — the identical cost/profile order `decideLaunch`'s own local model
+ *    pick already applies — decides, deterministically rather than
+ *    arbitrarily (e.g. array order).
+ *
+ * `undefined` only for an empty candidate list — `routeLaunch.ts` never
+ * calls this with fewer than two (see `buildJevModelRouteRequest`'s own
+ * comment).
+ */
+export function selectModelWinner(
+  candidates: readonly ModelSelectionCandidate[],
+  fits: Readonly<Record<string, number>>,
+  choice: { choice: string; probabilities: Readonly<Record<string, number>> },
+  profile: JevRoutingProfile
+): ModelSelection | undefined {
+  if (candidates.length === 0) return undefined
+
+  const probabilityOf = (candidate: ModelSelectionCandidate): number => fits[candidate.key] ?? 0
+  const maxProbability = Math.max(...candidates.map(probabilityOf))
+  const tied = candidates.filter(
+    (candidate) => maxProbability - probabilityOf(candidate) <= MODEL_TIE_BAND
+  )
+  // Defense in depth (#608 verifier fix): a malformed `fits` value (NaN —
+  // `typesafeJevRouter.ts`'s own `isValidProbability` keeps this out of a
+  // real wire answer, but this is a pure function any caller can reach
+  // directly) makes every `<=` comparison above false, emptying `tied`
+  // entirely. `cheapestOrPriciestCandidate` must never be called with an
+  // empty array — undefined here is the same honest "cannot pick" this
+  // function already reports for an empty CANDIDATE list.
+  if (tied.length === 0) return undefined
+  if (tied.length === 1) {
+    return { candidate: tied[0]!, probability: probabilityOf(tied[0]!) }
+  }
+
+  const choiceShareOf = (candidate: ModelSelectionCandidate): number =>
+    choice.probabilities[candidate.key] ?? 0
+  const maxChoiceShare = Math.max(...tied.map(choiceShareOf))
+  const choiceTied = tied.filter((candidate) => choiceShareOf(candidate) === maxChoiceShare)
+  // Same defense, for a malformed Choice `probabilities` value.
+  if (choiceTied.length === 0) return undefined
+  if (choiceTied.length === 1) {
+    const winner = choiceTied[0]!
+    return {
+      candidate: winner,
+      probability: probabilityOf(winner),
+      choiceProbability: maxChoiceShare
+    }
+  }
+
+  const picked = cheapestOrPriciestCandidate(
+    choiceTied.map((candidate) => ({ id: candidate.id, entry: candidate.entry })),
+    profile
+  )
+  const winner = choiceTied.find((candidate) => candidate.id === picked.id)!
+  return {
+    candidate: winner,
+    probability: probabilityOf(winner),
+    choiceProbability: maxChoiceShare
+  }
 }
 
 /** The local decision — see this module's own comment. */
@@ -242,8 +434,8 @@ export function decideLaunch(input: DecideLaunchInput): JevDecideResult {
     // Economy never reaches above balanced — long-context is left uncapped
     // here on purpose: no capability table currently tags anything
     // `'long-context'`, so it already steps down to balanced/fast-cheap in
-    // pickModel regardless of profile, and capping it too would be a rule
-    // with no observable effect today, dressed up as a decision.
+    // the local model pick regardless of profile, and capping it too would
+    // be a rule with no observable effect today, dressed up as a decision.
     if (profile === 'economy' && tier === 'frontier') {
       tier = 'balanced'
       tierOverridden = true
@@ -286,55 +478,60 @@ export function decideLaunch(input: DecideLaunchInput): JevDecideResult {
     }
   }
 
-  // --- concrete model: step down from `tier` until a launchable, live-
-  // catalogued entry is found for the chosen provider.
+  // --- concrete model: candidatesAtTier's own step-down walk, once — both
+  // the local default choice AND #608's own modelCandidates (below) read
+  // off this SAME call, so they can never disagree about which step's
+  // candidates are "the tier's own".
   const liveModelIds = new Set(
     (catalogs.find((catalog) => catalog.provider === provider)?.models ?? []).map(
       (model) => model.value
     )
   )
-  const picked = pickModel({
+  const found = candidatesAtTier({
     table: capabilities[provider] ?? {},
     tier,
-    profile,
     needsLargeContext: largeContextValue,
     liveModelIds
   })
+  const picked =
+    found === undefined ? undefined : cheapestOrPriciestCandidate(found.options, profile)
 
-  // --- effort: the rubric score onto the provider's own ladder, then
-  // narrowed to the picked model's own accepted levels. No model, no effort
-  // either — the CLI keeps its own default for both, the same "absent
-  // degrades" rule LaunchTuning already holds to.
-  const providerEffort = mapEffortScore(provider, answers.effort.score, PROVIDER_EFFORT_LEVELS)
-  const effort =
-    picked === undefined || providerEffort === undefined
-      ? undefined
-      : narrowEffort(PROVIDER_EFFORT_LEVELS[provider], picked.entry.effortLevels, providerEffort)
-
-  const tuning = parseLaunchTuning(provider, {
-    ...(picked === undefined ? {} : { model: picked.id }),
-    ...(effort === undefined ? {} : { effort })
-  })
-  if (tuning === null) {
-    // Belt and braces, the same discipline the old routeLaunch.ts already
-    // held for a raw Jev answer: a derived model/effort pairing this app's
-    // own launch gate would refuse is never carried out. Not reachable
-    // through this function's own derivation today (`model` is always a
-    // trimmed catalogue id or absent; `effort` is always a member of
-    // PROVIDER_EFFORT_LEVELS[provider] or absent) — kept for the day a
-    // capability entry's own id or a future ladder change makes it so.
-    return { kind: 'fallback', reason: 'invalid-response' }
+  // --- effort + the belt-and-braces launch-gate check: `finalizeModel`
+  // (this module, below) is the shared tail end #608 also gives the
+  // request-2 winner — no model, no effort or tuning check either, the same
+  // "absent degrades" rule LaunchTuning already holds to.
+  let model: string | undefined
+  let effort: string | undefined
+  if (picked !== undefined) {
+    const finalized = finalizeModel(provider, picked.id, picked.entry, answers.effort.score)
+    if (finalized === undefined) {
+      // Belt and braces, the same discipline the old routeLaunch.ts already
+      // held for a raw Jev answer: a derived model/effort pairing this app's
+      // own launch gate would refuse is never carried out. Not reachable
+      // through this function's own derivation today — see finalizeModel's
+      // own comment for why — kept for the day a capability entry's own id
+      // or a future ladder change makes it so.
+      return { kind: 'fallback', reason: 'invalid-response' }
+    }
+    model = finalized.model
+    effort = finalized.effort
   }
 
   return {
     kind: 'decision',
     provider,
-    ...(tuning.model === undefined ? {} : { model: tuning.model }),
-    ...(tuning.effort === undefined ? {} : { effort: tuning.effort }),
-    // The function-calling cookbook's own rule for a multi-part answer: the
-    // MIN of the applied parts' confidences, using each part's RAW reported
-    // confidence even when a floor or a profile rule overrode its value.
-    confidence: Math.min(answers.provider.confidence, answers.tier.confidence),
+    ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
+    // The function-calling cookbook's own rule for a multi-part answer,
+    // amended by #608: the MIN of the applied parts' confidences, but ONLY
+    // over the parts actually `applied: 'answered'` — a part that fell back
+    // to a safe default was never really confident either way, so its raw
+    // number must not drag this one down (or up). `undefined` when NEITHER
+    // part was answered, rather than a misleading number.
+    confidence: minOfAnswered(
+      providerOverridden ? undefined : answers.provider.confidence,
+      tierOverridden ? undefined : answers.tier.confidence
+    ),
     tier,
     parts: {
       provider: {
@@ -349,6 +546,7 @@ export function decideLaunch(input: DecideLaunchInput): JevDecideResult {
       },
       trivial: { value: trivialValue, probability: answers.trivial.probability },
       largeContext: { value: largeContextValue, probability: answers.largeContext.probability }
-    }
+    },
+    modelCandidates: found === undefined ? { tier, options: [] } : found
   }
 }

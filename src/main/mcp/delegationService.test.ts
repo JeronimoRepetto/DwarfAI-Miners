@@ -34,6 +34,10 @@ import {
 const ROUTING: DelegationRouting = { provider: 'claude', model: 'sonnet' }
 const CONCLUDED: TurnOutcome = { kind: 'concluded', text: 'done', endedAt: 1 }
 
+// #608: `parts` gained a `model` field — mechanical fixture update, this
+// suite's own `route` fake feeds `resolveDelegationRouting` (pure over
+// `provider`/`model`/`effort` only), so an 'answered' placeholder matching
+// the fixture's own `model: 'sonnet'` keeps every existing case unaffected.
 function decisionResult(provider: DwarfProvider = 'claude') {
   return {
     kind: 'decision' as const,
@@ -46,7 +50,8 @@ function decisionResult(provider: DwarfProvider = 'claude') {
       provider: { value: provider, confidence: 0.9, applied: 'answered' as const },
       tier: { value: 'balanced' as const, confidence: 0.9, applied: 'answered' as const },
       trivial: { value: false, probability: 0.1 },
-      largeContext: { value: false, probability: 0.1 }
+      largeContext: { value: false, probability: 0.1 },
+      model: { value: 'sonnet', applied: 'answered' as const, probability: 0.9 }
     }
   }
 }

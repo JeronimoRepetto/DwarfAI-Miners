@@ -254,4 +254,103 @@ describe('deriveOpenCodeCapabilities', () => {
   it('returns an empty table for an empty catalogue, never throwing', () => {
     expect(deriveOpenCodeCapabilities([], VERIFIED_ON)).toEqual({})
   })
+
+  it('states cached-input pricing in `what` when the catalogue provides one, and omits it when free', () => {
+    // kimi-k3's own block above carries "cache": { "read": 0.3 } — glm-5.1
+    // carries "cache": { "read": 0.26 }; big-pickle is free, so its "no
+    // per-token cost" branch never reaches the cache clause at all.
+    expect(derived['opencode-go/kimi-k3']!.what).toContain('cached input')
+    expect(derived['opencode-go/glm-5.1']!.what).toContain('cached input')
+    expect(derived['opencode/big-pickle']!.what).not.toContain('cached input')
+  })
+})
+
+/*
+ * #608 T1. Precondition (issue's own words): "Two models in the same tier
+ * are near-identical text... and differ only in cost and context numbers."
+ * TWIN_VERBOSE below is built to PROVE that precondition first — twin-a and
+ * twin-b share reasoning, cost.input, cost.output and limit.context exactly,
+ * so the OLD `templatedWhat` (reasoning + context + cost only) and the
+ * tier-keyed `notFor`/`examples` would have produced byte-identical text for
+ * both. Only `limit.output` and `variants` (→ effortLevels) differ — the two
+ * facts this task adds to the template specifically so a pair like this
+ * stops being indistinguishable to Jev's second request (the Noul-per-
+ * candidate ask #608 adds elsewhere).
+ */
+const TWIN_VERBOSE = [
+  'opencode/twin-a',
+  '{',
+  '  "id": "twin-a",',
+  '  "providerID": "opencode",',
+  '  "name": "Twin A",',
+  '  "status": "active",',
+  '  "cost": { "input": 0, "output": 0, "cache": { "read": 0, "write": 0 } },',
+  '  "limit": { "context": 200000, "output": 8192 },',
+  '  "capabilities": { "reasoning": true },',
+  '  "release_date": "2026-01-01",',
+  '  "variants": {}',
+  '}',
+  'opencode/twin-b',
+  '{',
+  '  "id": "twin-b",',
+  '  "providerID": "opencode",',
+  '  "name": "Twin B",',
+  '  "status": "active",',
+  '  "cost": { "input": 0, "output": 0, "cache": { "read": 0, "write": 0 } },',
+  '  "limit": { "context": 200000, "output": 32000 },',
+  '  "capabilities": { "reasoning": true },',
+  '  "release_date": "2026-02-01",',
+  '  "variants": { "low": {}, "high": {}, "max": {} }',
+  '}',
+  ''
+].join('\n')
+
+const TWIN_MODELS = parseOpenCodeModelsOutput(TWIN_VERBOSE)
+
+describe('deriveOpenCodeCapabilities — per-model differentiation within one tier (#608 T1)', () => {
+  const twinDerived = deriveOpenCodeCapabilities(TWIN_MODELS, VERIFIED_ON)
+
+  it('lands both twins in the same tier — the precondition the differentiation has to survive', () => {
+    expect(twinDerived['opencode/twin-a']!.tier).toBe('fast-cheap')
+    expect(twinDerived['opencode/twin-b']!.tier).toBe('fast-cheap')
+  })
+
+  it('gives same-tier twins that differ only in output cap and effort ladder different `what` text', () => {
+    expect(twinDerived['opencode/twin-a']!.what).not.toBe(twinDerived['opencode/twin-b']!.what)
+  })
+
+  it("states each twin's own output ceiling in `what`, traceable to limit.output", () => {
+    expect(twinDerived['opencode/twin-a']!.what).toContain('8,192')
+    expect(twinDerived['opencode/twin-b']!.what).toContain('32,000')
+  })
+
+  it("states each twin's own effort ladder in `what`, traceable to its variants keys", () => {
+    expect(twinDerived['opencode/twin-a']!.what).toMatch(/no ladder|single fixed effort level/)
+    expect(twinDerived['opencode/twin-b']!.what).toContain('low/high/max')
+  })
+
+  it('carries the output ceiling into `notFor` too, so same-tier twins differ there as well', () => {
+    expect(twinDerived['opencode/twin-a']!.notFor).not.toBe(twinDerived['opencode/twin-b']!.notFor)
+    expect(twinDerived['opencode/twin-a']!.notFor).toContain('8,192')
+    expect(twinDerived['opencode/twin-b']!.notFor).toContain('32,000')
+  })
+
+  it('still shares the tier-keyed base sentence in `notFor` — the tier rule itself is unchanged', () => {
+    const sharedSentence = 'sustained reasoning across several files'
+    expect(twinDerived['opencode/twin-a']!.notFor).toContain(sharedSentence)
+    expect(twinDerived['opencode/twin-b']!.notFor).toContain(sharedSentence)
+  })
+
+  it('keeps `examples` tier-generic and therefore identical for the twins — no invented per-model prompts', () => {
+    expect(twinDerived['opencode/twin-a']!.examples).toEqual(
+      twinDerived['opencode/twin-b']!.examples
+    )
+  })
+
+  it("never puts a twin's own id, name or family fragment in its `what` text", () => {
+    for (const [id, entry] of Object.entries(twinDerived)) {
+      expect(entry.what).not.toContain(id)
+      expect(entry.what.toLowerCase()).not.toContain('twin')
+    }
+  })
 })

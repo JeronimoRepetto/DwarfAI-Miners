@@ -18,10 +18,23 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # A model Jev can route to needs a sourced capability entry
 
-Jev never sees a model name. It answers five questions about the prompt (`src/main/jev/routeRequest.ts`)
-and the local decision (`src/main/jev/routeDecision.ts`) resolves those answers to a concrete model
-through `src/main/jev/capabilities/`. A catalogue id with no entry there is an id `decideLaunch` cannot
-route — and the exhaustiveness suite (`capabilities.test.ts`) fails, naming it, before that ever ships.
+Jev never sees a model name — that still holds, but since #608 the model step is no longer purely
+local. Request 1 answers five questions about the prompt (`src/main/jev/routeRequest.ts`) and
+resolves a provider and a tier; `decideLaunch` (`src/main/jev/routeDecision.ts`) then narrows that
+provider's own table down to its live, launchable candidates at that tier (`candidatesAtTier`). With
+two or more candidates, request 2 asks Jev to pick among them directly — one Noul "does it fit"
+question per candidate plus a tie-breaking Choice, over the SAME sourced capability text this table
+already carries (`what`/`notFor`/`examples`/`tier`/`relativeCost`/`contextWindowTokens`), never the
+model's own id, name, alias or family (`buildJevModelRouteRequest`, `MODEL_TIE_BAND`,
+`selectModelWinner`, `src/main/jev/routeDecision.ts`). With one candidate, or whenever request 2
+cannot be sent, fails, or comes back unusable, the model is picked locally instead — what used to be
+one `pickModel` function is now three, doing that same job: `candidatesAtTier` (the tier's own live
+candidates), `cheapestOrPriciestCandidate` (the cost/profile pick among them, and request 2's own
+tiebreak of last resort), and `finalizeModel` (the shared tail end — effort narrowing plus the launch
+gate check — that both the local pick and request 2's own winner go through). Either path still ends
+at `src/main/jev/capabilities/`: a catalogue id with no entry there is an id neither path can
+route — and the exhaustiveness suite (`capabilities.test.ts`) fails, naming it, before that ever
+ships.
 
 ## The rule
 
@@ -149,6 +162,22 @@ facts, template `what`/`notFor`/`examples` from those facts, and cite the exact 
 catalogue's own source (`OPENCODE_CATALOGUE_SOURCES`). **Never invent per-model prose** — no
 maintainer reviews a guess before it ships on the next install.
 
+**Per-model, not just per-tier (#608 T1).** A tier-keyed template alone gives every model in a
+tier byte-identical `notFor`/`examples` — the exact near-identical-option failure the "What Jev
+never receives" section documents (0.38 confidence over eleven options). `templatedWhat` composes
+`what` from THIS model's own `limit.output`, `cost.cacheRead` and `effortLevels`, on top of the
+reasoning/context/cost facts `what` already carried — every one already parsed off the same
+`--verbose` block, no new I/O added. `notFor` keeps the tier's shared sentence and appends this
+model's own output ceiling. `examples` stays tier-keyed: the catalogue names costs and limits, not
+worked prompts, so a per-model example would be invented prose, not a derived fact — the same
+evidence rule forbids it. Exclude a catalogue field the same way `id`/`name` are excluded whenever
+it is a lineage label rather than a capability: `family` is in the raw block
+(`docs/opencode-format.md` Row 6) but reads as a second name to a matcher that must never see one,
+so it is never rendered. Only render a field this catalogue has actually been observed to carry —
+Row 6 names OpenCode's FULL top-level key set, and `capabilities` has only ever been measured to
+hold `reasoning`; a `tool_call`/`attachment`/`temperature` sub-field with no measurement backing it
+stays unwritten rather than guessed.
+
 **Known limitation, pinned in `routeDecision.test.ts`:** the table carries cost _bands_, not
 prices, so a free OpenCode model and a low-band curated model both land in `'low'` and tie;
 `cheapestLaunchableProviderFor` cannot see $0 beat $1 and falls back to the contract's provider
@@ -169,7 +198,9 @@ Jev names OpenCode directly, or OpenCode is the person's configured default prov
 
 - [`src/main/jev/capabilities/modelCapability.ts`](../../src/main/jev/capabilities/modelCapability.ts) — `ModelCapabilityEntry`, `MODEL_CAPABILITIES`, `lookupModelCapability`
 - [`src/main/jev/capabilities/capabilities.test.ts`](../../src/main/jev/capabilities/capabilities.test.ts) — the exhaustiveness suite
-- [`src/main/jev/routeDecision.ts`](../../src/main/jev/routeDecision.ts) — the profile/tier rule that reads `tier`
+- [`src/main/jev/routeDecision.ts`](../../src/main/jev/routeDecision.ts) — the profile/tier rule that reads `tier`, plus #608's `candidatesAtTier`, `cheapestOrPriciestCandidate`, `finalizeModel`, `MODEL_TIE_BAND` and `selectModelWinner`
+- [`src/main/jev/routeRequest.ts`](../../src/main/jev/routeRequest.ts) — `buildJevModelRouteRequest` and `candidateCapabilityFacts`, request 2's own builder
+- [`src/main/jev/jevRouterPort.ts`](../../src/main/jev/jevRouterPort.ts) — `JevModelRouteRequest`/`JevModelRouteAnswers`, request 2's own wire shape
 - [`src/main/jev/capabilities/opencodeDerived.ts`](../../src/main/jev/capabilities/opencodeDerived.ts) — the cost bands, tier rule and template OpenCode's derived table is built from
 - [`src/main/jev/capabilities/opencode.ts`](../../src/main/jev/capabilities/opencode.ts) — the curated overlay, and the merge that lets it win per id
 - [`src/main/jev/routeDecision.test.ts`](../../src/main/jev/routeDecision.test.ts) — the pinned cost-band tie between a free OpenCode model and a low-band curated one

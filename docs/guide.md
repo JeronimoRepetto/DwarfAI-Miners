@@ -528,18 +528,57 @@ machine has no encrypted place to keep one. Turn it on and press Enter on the co
 for a provider, model and effort for what you typed; **Auto-accept Jev's choice** beside it collapses
 that into a single Enter once the toggle is on.
 
-While Jev is deciding, the composer says **Asking Jev…**. Once it answers, a card states what it
-chose — provider, model and effort together with its confidence — and then says, part by part,
-what Jev answered and what fell to a safe value: "Jev chose the balanced tier (85% sure) and Claude
-Code (88% sure)", or "Jev was unsure about the provider (37%); the safe value Claude Code was used".
+**How the model gets chosen.** Provider and tier come back from one request to Jev — five questions
+about the prompt, never naming a single model. If Jev's own provider answer is confident enough
+(above 60%), that is the provider; otherwise your own configured default provider is used instead,
+and only when no default is set does the cheapest launchable provider at the resolved tier stand in.
+That provider and tier then narrow this app's own model capability table down to its **live,
+launchable candidates** at that tier — the models this machine can actually reach right now. What
+happens next depends on how many there are:
+
+- **Two or more candidates:** a second request asks Jev which one fits the prompt, given the tier
+  the task needs — one yes/no answer per candidate, plus a single ranking over all of them together.
+  The candidate with the highest "fits" answer wins, unless the top two land within about two points
+  of each other — close enough to be run-to-run noise rather than a real signal — in which case the
+  ranking's own share for each breaks the tie.
+- **Exactly one candidate:** it is used directly, and no second question is ever asked — there is
+  nothing to choose between.
+- **No live candidate at all, or the second request cannot be sent, fails, times out, or comes back
+  unusable:** the same cost-and-profile rule this app always used locally (the cheapest candidate by
+  cost band, or the priciest on the premium profile) picks the model instead, and the card says so
+  rather than crediting Jev with a choice it did not make. Both requests share the same 15-second
+  launch budget, so the second is skipped once nothing is left of it.
+
+While Jev is deciding, the composer says **Asking Jev…**. Once it answers, the card's headline states
+the plain fact of what is about to launch — "Launching Claude Code, Sonnet, medium effort." — and,
+only once at least one part actually has an answer to show, Jev's own least certain confidence after
+it: "…medium effort. Jev's least certain answer was 61%." The headline never says "Jev chose" for a
+part Jev did not itself answer.
+
+Below the headline, a second line reads part by part. For the **provider** and the **tier**: "Jev
+chose the balanced tier (85% sure) and Claude Code (88% sure)." when both were answered, or "Jev was
+unsure about the provider (37%); the safe value Claude Code was used." when a confidence floor or a
+profile rule substituted a safe value instead. The **model** step gets its own sentence appended to
+the same line, since it does not share the provider/tier's "chose" or "unsure" wording — it has a
+third state neither one fits:
+
+- **Jev's second request answered:** "Jev picked the model (92% fit)." — and, only when the tie band
+  made the ranking decide it, a second sentence: "Tie broken by Jev's ranking (61%)."
+- **Only one candidate existed:** "Only one model fits that tier, so no second question was asked."
+- **The second request could not be used:** "Jev could not pick the model (Jev took too long); the
+  closest local choice was used." — naming the same kind of reason the provider/tier line would.
+
 The card also notes when the prompt was treated as trivial, when a large-context model was
 preferred, and when the prompt was trimmed to fit Jev's own request budget. The pickers above are
 already set to that choice; change them, or press Launch again to start the session as shown.
 **Dismiss** puts the pickers back without undoing anything already launched.
 
-Jev can fail to decide in several distinct, named ways — unreachable, rate-limited, unauthorized,
-timed out, an unusable answer, no launchable provider, or a request too large for its own budget.
-What happens next depends on Settings' Jev section. With a **default launch** configured there (a
+Jev can fail to decide the **whole** launch, in several distinct, named ways — unreachable,
+rate-limited, unauthorized, timed out, an unusable answer, no launchable provider, or a request too
+large for its own budget — and this is separate from the model step alone falling back while the
+provider and tier still stood, which the per-part line above already covers on its own. What happens
+next, when the whole launch has nothing to show, depends on Settings' Jev section. With a
+**default launch** configured there (a
 provider, model and effort meant for exactly this case), the panel sets the pickers to that default
 exactly as it would to a decision and says so — "Jev could not decide (Jev took too long). Your
 default, Codex CLI · gpt-5.6-terra · high, is set below — press Launch again or change it" — with

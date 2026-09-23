@@ -16,6 +16,8 @@ import {
 } from '@typesafe-ai/sdk'
 import type {
   JevFallbackReason,
+  JevModelRouteOutcome,
+  JevModelRouteRequest,
   JevRouteOutcome,
   JevRouteRequest,
   JevRouterPort
@@ -30,7 +32,9 @@ import {
   NEEDS_LARGE_CONTEXT_CRITERIA,
   NEEDS_LARGE_CONTEXT_INSTRUCTIONS,
   PROVIDER_QUESTION_INSTRUCTIONS,
-  TIER_CHOICE_KEYS
+  TIER_CHOICE_KEYS,
+  modelChoiceInstructions,
+  modelFitInstructions
 } from './routeRequest'
 
 /**
@@ -121,6 +125,21 @@ function asNoulCriteria(value: unknown): NoulQuestion['criteria'] {
   return value as NoulQuestion['criteria']
 }
 
+/**
+ * Whether `value` is a real probability — verifier fix (#608): `typeof
+ * value === 'number'` alone accepts `Infinity`, `-Infinity`, and anything
+ * outside `0..1`, and would accept `NaN` too were it not already lossy
+ * through `JSON.stringify`/`JSON.parse` (which turns a literal `NaN` into
+ * `null`, itself caught by the `typeof` check). Used to validate every
+ * Noul `noul` and every Choice `probabilities` entry `routeModel` reads,
+ * so a malformed value from the wire degrades this ONE request to
+ * `invalid-response` — never reaches `selectModelWinner`'s own
+ * `Math.max`/tie-band arithmetic (routeDecision.ts) unnoticed.
+ */
+function isValidProbability(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+}
+
 export interface CreateTypesafeJevRouterOptions {
   /** Reads the configured TypeSafe API key; undefined when none is set. */
   readKey: () => string | undefined
@@ -140,6 +159,39 @@ export interface CreateTypesafeJevRouterOptions {
   debugLog?: (line: string) => void
 }
 
+/**
+ * The `[jev:debug]` header+payload emitter (#525), and the clock behind
+ * `elapsedMs` in every `fallback` line — factored out so `route` and #608's
+ * `routeModel` build the IDENTICAL trace shape from one place rather than
+ * two copies that could drift. An absent `debugLog` means zero output AND
+ * zero clock reads, the same no-op-when-off shape perf.ts holds to.
+ */
+function createEmitter(debugLog: ((line: string) => void) | undefined): {
+  elapsedMs: () => number
+  emit: (header: string, payload: Record<string, unknown>) => void
+} {
+  const startedAt = debugLog === undefined ? undefined : Date.now()
+  return {
+    elapsedMs: () => (startedAt === undefined ? 0 : Date.now() - startedAt),
+    emit: (header, payload) => {
+      if (debugLog === undefined) return
+      debugLog(`[jev:debug] ${header}`)
+      debugLog(JSON.stringify(payload, null, 2))
+    }
+  }
+}
+
+/** The SDK client both `route` and `routeModel` talk through — one place decides its config. */
+function createClient(apiKey: string, fetchOverride: typeof fetch | undefined): TypeSafeClient {
+  return new TypeSafeClient({
+    apiKey,
+    ...(fetchOverride === undefined ? {} : { fetch: fetchOverride }),
+    logger: SILENT_LOGGER,
+    logLevel: 'off',
+    retry: { maxRetries: DEFAULT_MAX_RETRIES }
+  })
+}
+
 /** The SDK adapter for JevRouterPort — see this module's own comment. */
 export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions): JevRouterPort {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -152,9 +204,8 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
       if (apiKey === undefined) return { kind: 'fallback', reason: 'no-key' }
 
       // #525: the opt-in trace. Everything it says goes through `debugLog`
-      // and nowhere else, so an absent sink means zero output AND zero clock
-      // reads — the same no-op-when-off shape perf.ts holds to. The key is
-      // read above and names no payload below: it must never be logged.
+      // and nowhere else. The key is read above and names no payload below:
+      // it must never be logged.
       //
       // AMENDED for jev-routing-profiles T4: one HEADER line (still single-
       // line and greppable — `grep '\[jev:debug\]'` finds one per event)
@@ -165,22 +216,8 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
       // The prompt is safe to print at either verbosity: this trace is
       // opt-in and dev-only (JEV_DEBUG), and the sink never receives the key
       // or the Authorization header — read above, named in no payload below.
-      const debugLog = options.debugLog
-      const startedAt = debugLog === undefined ? undefined : Date.now()
-      const elapsedMs = (): number => (startedAt === undefined ? 0 : Date.now() - startedAt)
-      const emit = (header: string, payload: Record<string, unknown>): void => {
-        if (debugLog === undefined) return
-        debugLog(`[jev:debug] ${header}`)
-        debugLog(JSON.stringify(payload, null, 2))
-      }
-
-      const client = new TypeSafeClient({
-        apiKey,
-        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-        logger: SILENT_LOGGER,
-        logLevel: 'off',
-        retry: { maxRetries: DEFAULT_MAX_RETRIES }
-      })
+      const { elapsedMs, emit } = createEmitter(options.debugLog)
+      const client = createClient(apiKey, options.fetch)
 
       emit('request →', {
         state: { prompt: request.prompt, routing_profile: request.routingProfile },
@@ -254,6 +291,96 @@ export function createTypesafeJevRouter(options: CreateTypesafeJevRouterOptions)
           trivial: { probability: result.answers.is_trivial.noul },
           largeContext: { probability: result.answers.needs_large_context.noul },
           effort: { score: result.answers.effort.score },
+          usage: { inputTokens: result.usage.input_tokens }
+        }
+      } catch (error) {
+        const reason = classifyError(error)
+        emit('fallback', { reason, elapsedMs: elapsedMs() })
+        return { kind: 'fallback', reason }
+      }
+    },
+
+    /** #608's second request — see `JevModelRouteRequest`'s own comment in jevRouterPort.ts. */
+    async routeModel(request: JevModelRouteRequest, { signal }): Promise<JevModelRouteOutcome> {
+      const apiKey = options.readKey()
+      if (apiKey === undefined) return { kind: 'fallback', reason: 'no-key' }
+
+      const { elapsedMs, emit } = createEmitter(options.debugLog)
+      const client = createClient(apiKey, options.fetch)
+
+      const candidateKeys = Object.keys(request.candidates)
+      const questions: Record<string, unknown> = {
+        which: choice(
+          asEntryType(modelChoiceInstructions(request.tier)),
+          asChoiceCriteria(request.candidates)
+        )
+      }
+      for (const key of candidateKeys) {
+        questions[`fits::${key}`] = noul(
+          asEntryType(modelFitInstructions(request.tier, request.candidates[key]!))
+        )
+      }
+
+      emit('request →', {
+        state: { prompt: request.prompt, routing_profile: request.routingProfile },
+        truncated: request.truncated,
+        questions
+      })
+
+      try {
+        const result = await client.systemOne(
+          {
+            state: { prompt: request.prompt, routing_profile: request.routingProfile },
+            model: 'jev-latest',
+            // The SDK types `questions` against a fixed shape; #608's own
+            // question set is built dynamically (one Noul per candidate), so
+            // it is widened the same way `asEntryType`/`asChoiceCriteria`
+            // already widen a single question's own instructions/criteria —
+            // never a reshape, every value here is plain JSON `noul()`/
+            // `choice()` already accept.
+            questions: questions as never
+          },
+          { signal, timeout: timeoutMs }
+        )
+
+        const answers = result.answers as unknown as Record<
+          string,
+          { type: string; choice?: string; probabilities?: Record<string, number>; noul?: number }
+        >
+        const whichAnswer = answers.which
+        // The wire is never trusted on its own word: a choice that fails to
+        // match one of the candidates THIS request sent is an answer this
+        // launch cannot act on, however it happened — the same discipline
+        // `route`'s own provider/tier check already holds to.
+        if (whichAnswer === undefined || !candidateKeys.includes(whichAnswer.choice ?? '')) {
+          emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
+          return { kind: 'fallback', reason: 'invalid-response' }
+        }
+
+        const fits: Record<string, number> = {}
+        for (const key of candidateKeys) {
+          const fitAnswer = answers[`fits::${key}`]
+          if (fitAnswer === undefined || !isValidProbability(fitAnswer.noul)) {
+            emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
+            return { kind: 'fallback', reason: 'invalid-response' }
+          }
+          fits[key] = fitAnswer.noul
+        }
+
+        // Every reported Choice probability, not only the winner's own —
+        // `selectModelWinner` reads the tied candidates' own shares too.
+        const choiceProbabilities = whichAnswer.probabilities ?? {}
+        if (!Object.values(choiceProbabilities).every(isValidProbability)) {
+          emit('fallback', { reason: 'invalid-response', elapsedMs: elapsedMs() })
+          return { kind: 'fallback', reason: 'invalid-response' }
+        }
+
+        emit('answers ←', { ...answers, inputTokens: result.usage.input_tokens })
+
+        return {
+          kind: 'answers',
+          fits,
+          choice: { choice: whichAnswer.choice!, probabilities: choiceProbabilities },
           usage: { inputTokens: result.usage.input_tokens }
         }
       } catch (error) {
