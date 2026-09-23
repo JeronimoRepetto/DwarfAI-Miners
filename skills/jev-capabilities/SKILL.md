@@ -124,6 +124,51 @@ model.` versus `... "Haiku" ...` — the consistency cookbook's own documented f
 - **Anything about the machine.** No path, hostname or username — only the prompt's own text and the
   three-word routing profile ever cross the wire.
 
+## Provider tooling markers (#625)
+
+Model ids are not the only thing that needs a sourced entry. The `provider` question's own criteria
+(`providerChoiceCriteria`, `routeRequest.ts`) used to describe a provider ONLY by held-vs-detached
+session style — true, but it gave Jev nothing to connect a prompt naming a CLI's own tool to that
+CLI. A live prompt that named Codex's own `request_user_input` tool ("Before proposing any plan,
+call the `request_user_input` tool ONCE with three questions…") routed to Claude at 0.68 confidence
+instead — issue #625's own reported root cause, from a live `JEV_DEBUG` trace.
+
+**What a marker is.** `PROVIDER_TOOLING_MARKERS`
+(`src/main/jev/capabilities/providerTooling.ts`) — the `provider`-level sibling of
+`MODEL_CAPABILITIES`, one `ProviderToolingMarkers` entry per provider:
+
+- **`toolNames`** — names the CLI's own tool schema actually defines and hands to its model (Claude
+  Code's `AskUserQuestion`, Codex's `request_user_input`, OpenCode's `question`).
+- **`instructionFiles`** — instruction/config file names the CLI reads for project context
+  (`CLAUDE.md`, `AGENTS.md`).
+- **`sources`** / **`verifiedOn`** — the same evidence rule as `ModelCapabilityEntry` above: an
+  official docs URL, or a GitHub source-file URL into the CLI's own open-source repository when it
+  has one (`codex-rs`, `sst/opencode`) — never a third-party summary.
+
+`routeRequest.ts`'s `providerChoiceCriteria` renders a provider's markers into its `what` sentence
+and one of its two `examples` (the one that names the tool directly, in the same register as #625's
+own reported prompt) — driven from this one constant, never restated as a second, hand-typed copy.
+
+**Shared-marker honesty.** A marker is not always exclusive to one provider — `AGENTS.md` is read by
+Claude Code, Codex and OpenCode alike (each CLI's own docs say so); `apply_patch` is a real tool name
+in both Codex's and OpenCode's own source. Record the marker for every provider it is true for —
+never omit it to make a provider's table look more distinctive than it is — and never phrase the
+rendered text as if it were exclusive. `distinctiveToolingNames` (`routeRequest.ts`) computes which
+of a provider's own markers no OTHER provider's table also carries, over the WHOLE table rather than
+just whichever providers happen to be offered in one request; `describeMarkerNames` renders a
+non-distinctive one with an explicit "(shared with another provider offered here)" suffix instead of
+leaving the shared status for a reader to assume. Never hand-flag a marker `exclusive: true` —
+distinctiveness is computed, so a future provider that turns out to share a name can never leave a
+stale claim behind.
+
+**A name you cannot find in a primary source is not added.** Antigravity has no entry today:
+`antigravity.google/docs/cli/*` documents slash-commands and a `settings.json` shape, never the
+literal tool-call names its model is given, and `agy` is not installed on the machine this table was
+verified from — the same gap `antigravity.ts`'s own top comment already names for model ids.
+`describeToolingMarkers` (`routeRequest.ts`) treats a provider with no entry the same
+degrade-rather-than-invent way `lookupModelCapability` treats an unknown model id: nothing rendered,
+the held/detached sentence still names the provider on its own.
+
 ## Adding a provider
 
 1. A new file under `src/main/jev/capabilities/` (`claude.ts`, `codex.ts`, `antigravity.ts` are the
@@ -134,6 +179,10 @@ model.` versus `... "Haiku" ...` — the consistency cookbook's own documented f
 4. Add every id to that provider's fixture list in `capabilities.test.ts`
    (`CLAUDE_FIXTURE_IDS`/`CODEX_FIXTURE_IDS`/`ANTIGRAVITY_FIXTURE_IDS` are the pattern) so the
    exhaustiveness suite actually runs the real catalogue builder over them.
+5. Add the provider's own `ProviderToolingMarkers` entry to `PROVIDER_TOOLING_MARKERS`
+   (`providerTooling.ts`), sourced per the evidence rule in "Provider tooling markers" above — or
+   leave it out, with a comment saying why, exactly as `providerTooling.ts` does for Antigravity
+   today, when nothing verifiable was found.
 
 ## A provider with a live catalogue: derive, do not curate (#547)
 
@@ -193,11 +242,16 @@ Jev names OpenCode directly, or OpenCode is the person's configured default prov
   a criterion to Jev either.
 - **Guessing a `relativeCost` or `contextWindowTokens` to avoid an `'unverified'`/absent field.** The
   evidence rule exists because a guess dressed as a checked fact is worse than an honest gap.
+- **Hand-flagging a marker "shared" or "exclusive" instead of letting `distinctiveToolingNames`
+  compute it.** A hand-written flag goes stale the moment another provider's table gains the same
+  name; the computed version cannot (#625).
 
 ## References
 
 - [`src/main/jev/capabilities/modelCapability.ts`](../../src/main/jev/capabilities/modelCapability.ts) — `ModelCapabilityEntry`, `MODEL_CAPABILITIES`, `lookupModelCapability`
 - [`src/main/jev/capabilities/capabilities.test.ts`](../../src/main/jev/capabilities/capabilities.test.ts) — the exhaustiveness suite
+- [`src/main/jev/capabilities/providerTooling.ts`](../../src/main/jev/capabilities/providerTooling.ts) — `ProviderToolingMarkers`, `PROVIDER_TOOLING_MARKERS`, the provider-level evidence table (#625)
+- [`src/main/jev/capabilities/providerTooling.test.ts`](../../src/main/jev/capabilities/providerTooling.test.ts) — its own evidence-rule suite
 - [`src/main/jev/routeDecision.ts`](../../src/main/jev/routeDecision.ts) — the profile/tier rule that reads `tier`, plus #608's `candidatesAtTier`, `cheapestOrPriciestCandidate`, `finalizeModel`, `MODEL_TIE_BAND` and `selectModelWinner`
 - [`src/main/jev/routeRequest.ts`](../../src/main/jev/routeRequest.ts) — `buildJevModelRouteRequest` and `candidateCapabilityFacts`, request 2's own builder
 - [`src/main/jev/jevRouterPort.ts`](../../src/main/jev/jevRouterPort.ts) — `JevModelRouteRequest`/`JevModelRouteAnswers`, request 2's own wire shape

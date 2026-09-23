@@ -529,7 +529,14 @@ for a provider, model and effort for what you typed; **Auto-accept Jev's choice*
 that into a single Enter once the toggle is on.
 
 **How the model gets chosen.** Provider and tier come back from one request to Jev — five questions
-about the prompt, never naming a single model. If Jev's own provider answer is confident enough
+about the prompt, never naming a single model. The `provider` question is judged on tooling and
+ecosystem fit alone, never cost: each launchable CLI's own criteria name its own tool names and
+instruction files where they are known and sourced — Claude Code's own `AskUserQuestion` tool and
+`CLAUDE.md`, Codex's own `request_user_input` tool and `AGENTS.md`, OpenCode's own `question` tool —
+so a prompt that names one of them (#625) has something to route on besides session style alone. A
+name shared by more than one CLI (`AGENTS.md` is read by all three above) is never presented as
+exclusive to one; see the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for the
+full sourced list and its evidence rule. If Jev's own provider answer is confident enough
 (above 60%), that is the provider; otherwise your own configured default provider is used instead,
 and only when no default is set does the cheapest launchable provider at the resolved tier stand in.
 That provider and tier then narrow this app's own model capability table down to its **live,
