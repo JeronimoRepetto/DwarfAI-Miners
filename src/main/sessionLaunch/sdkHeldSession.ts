@@ -8,6 +8,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
+import { DELEGATION_ALLOWED_TOOLS, claudeHeldMcpServers } from '../mcp/delegationInjection'
 import { resultTurnOutcome } from './claudeTurnOutcome'
 import type { HeldSessionSubagentSignal, HeldTaskEndStatus } from './heldCrew'
 import {
@@ -320,6 +321,29 @@ export function createSdkHeldSession(): HeldSessionPort {
         // the SDK's shapes and decides nothing about them.
         ...(request.effort === undefined ? {} : { effort: request.effort as EffortLevel }),
         ...(request.maxTurns === undefined ? {} : { maxTurns: request.maxTurns }),
+        /*
+         * MCP subtask delegation (#511 T4). `mcpServers` registers the
+         * per-launch stdio server this launch's own gate check already
+         * approved (`delegationGate.ts`, evaluated in `runtime.ts`); absent
+         * entirely for a launch the gate declined, which is what keeps every
+         * OTHER held session's `query()` options byte for byte what they
+         * were before this issue.
+         *
+         * `allowedTools` names exactly `DELEGATION_ALLOWED_TOOLS`
+         * (`delegate_subtask`/`subtask_result`) — the minimal, honest grant:
+         * per `sdk.d.ts`'s own documented precedence, an allow rule here is
+         * checked BEFORE `canUseTool` runs, so these two tools skip the
+         * interactive permission prompt below without widening what any
+         * OTHER tool call may do. Nothing else is pre-approved; every other
+         * tool this session's own model reaches for still stops at
+         * `canUseTool` exactly as it always has.
+         */
+        ...(request.delegation === undefined
+          ? {}
+          : {
+              mcpServers: claudeHeldMcpServers(request.delegation),
+              allowedTools: [...DELEGATION_ALLOWED_TOOLS]
+            }),
         canUseTool: async (toolName, toolInput, extras): Promise<PermissionResult> => {
           if (toolName !== ASK_USER_QUESTION) {
             const verdict = await request.onPermission({

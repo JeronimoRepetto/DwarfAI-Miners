@@ -11,6 +11,7 @@ import {
   TUNING_UNSUPPORTED
 } from './heldSessionRegistry'
 import { HELD_CONTEXT_USAGE_TIMEOUT_MS, HELD_TUNING_TIMEOUT_MS } from './heldSession'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
 import type {
   HeldAnswer,
   HeldPermission,
@@ -2202,5 +2203,119 @@ describe('HeldSessionRegistry.routedByJevState', () => {
 
     expect(registry.routedByJevState('sess-routed')).toEqual({ held: true, routedByJev: true })
     expect(registry.routedByJevState('sess-plain')).toEqual({ held: true, routedByJev: false })
+  })
+})
+
+/*
+ * MCP subtask delegation, injection (#511 T4). The gate check and the token
+ * lifecycle both live in `runtime.ts`'s `launchAgent`/`launchHeldSession` —
+ * this registry only has to forward whatever `DelegationInjectionContext`
+ * it was handed straight to the engine (so `sdkHeldSession.ts` can put it on
+ * the SDK's own `mcpServers`/`allowedTools` options), and call `onEnded`
+ * EXACTLY ONCE when this held session's own lifetime ends, however it ends —
+ * never for a launch that never started, and never twice for one that both
+ * reports its own `onEnd` and is later swept by `closeAll`.
+ */
+describe('HeldSessionRegistry delegation injection (#511 T4)', () => {
+  function delegation(): DelegationInjectionContext {
+    return {
+      serverCommand: '/opt/DwarfAI-Miners/DwarfAI-Miners',
+      serverArgs: ['/opt/DwarfAI-Miners/resources/app.asar.unpacked/out/main/jevMcpServer.js'],
+      endpoint: 'http://127.0.0.1:54321',
+      token: 'tok-abc123'
+    }
+  }
+
+  it("forwards the injection context to the engine's own start request untouched", async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    const injection = delegation()
+
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      delegation: injection
+    })
+
+    expect(port.started[0]!.delegation).toEqual(injection)
+  })
+
+  it('leaves delegation entirely absent for a launch the gate declined', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+
+    expect('delegation' in port.started[0]!).toBe(false)
+  })
+
+  it('calls onEnded exactly once when the session ends on its own', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    const onEnded = vi.fn()
+
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      delegation: delegation(),
+      onEnded
+    })
+    expect(onEnded).not.toHaveBeenCalled()
+
+    port.end(0)
+
+    expect(onEnded).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onEnded exactly once when the app quits with the session still open', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    const onEnded = vi.fn()
+
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      delegation: delegation(),
+      onEnded
+    })
+
+    registry.closeAll()
+
+    expect(onEnded).toHaveBeenCalledTimes(1)
+  })
+
+  it('never calls onEnded for a launch that was refused before it started', async () => {
+    const port = new FakePort()
+    port.failWith = new Error('the CLI refused')
+    const registry = registryOver(port)
+    const onEnded = vi.fn()
+
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      delegation: delegation(),
+      onEnded
+    })
+
+    expect(onEnded).not.toHaveBeenCalled()
+  })
+
+  it('behaves exactly as an ordinary launch when neither delegation nor onEnded is given', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+
+    await expect(
+      registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    ).resolves.toEqual({ launched: true })
+    expect(() => port.end(0)).not.toThrow()
+    expect(() => registry.closeAll()).not.toThrow()
   })
 })

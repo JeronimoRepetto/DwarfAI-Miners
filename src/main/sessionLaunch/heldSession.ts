@@ -1,4 +1,5 @@
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
 import { permissionInputLine, toolActivityLine } from '../domain/permissionSummary'
 import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
@@ -461,6 +462,15 @@ export interface HeldSessionStartRequest {
   permissionMode?: string
   /** A ceiling on agent turns, or undefined for the CLI's own default. */
   maxTurns?: number
+  /**
+   * The MCP delegation server this held launch's own gate check approved,
+   * or absent when it declined or was never asked (#511 T4) — read only by
+   * `sdkHeldSession.ts`'s Claude engine, which puts it on the Agent SDK's
+   * own `mcpServers`/`allowedTools` `query()` options; `antigravityHeldSession.ts`
+   * has no held delegation route (Antigravity is excluded from
+   * `DELEGATION_CAPABLE_PROVIDERS`) and simply never reads this field.
+   */
+  delegation?: DelegationInjectionContext
   /**
    * This host's own clock (#510) — the same one `HeldSessionRegistry` stamps
    * every other timestamp with (see `appendMessage`'s "this host's clock"

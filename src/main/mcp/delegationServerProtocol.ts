@@ -37,6 +37,22 @@ export const DELEGATE_ROUTE = '/delegate'
 export const RESULT_ROUTE_PREFIX = '/result/'
 export const DELEGATION_TOKEN_HEADER = 'x-dwarfai-token'
 /**
+ * Added for #511 T4: `delegationInjection.ts` (main-only — it builds what a
+ * launched CLI's own MCP config needs, never reachable from
+ * `jevMcpServer.ts`'s graph) needs these five runtime values too, and
+ * importing them from `delegationProtocol.ts` directly reproduced the exact
+ * regression this file's own top comment describes — observed firsthand
+ * while wiring T4: `pnpm build` grew a fresh `out/main/chunks/delegationProtocol-*.js`
+ * that `jevMcpServer.js` then imported, the instant `delegationInjection.ts`
+ * pulled a runtime value from the canonical module. Local copies here, on
+ * the same terms as every constant above.
+ */
+export const DELEGATE_SUBTASK_TOOL_NAME = 'delegate_subtask'
+export const SUBTASK_RESULT_TOOL_NAME = 'subtask_result'
+export const DELEGATION_ENDPOINT_ENV = 'DWARFAI_DELEGATION_ENDPOINT'
+export const DELEGATION_TOKEN_ENV = 'DWARFAI_DELEGATION_TOKEN'
+export const DELEGATION_WAIT_MS_ENV = 'DWARFAI_DELEGATION_WAIT_MS'
+/**
  * Mirrors `MAX_HOOK_BODY_BYTES`'s own cap-before-parse style
  * (`hooks/hookServer.ts`), sized to fit the actual worst case rather than a
  * round guess (#511 LOW-9). Neither the zod schema (`jevMcpServerCore.ts`)

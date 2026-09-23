@@ -146,6 +146,12 @@ import {
   runLaunchProcess,
   type SessionLauncher
 } from '../sessionLaunch/launchRunner'
+import { delegationEnabledFor } from '../mcp/delegationGate'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
+import {
+  resolveDelegationServerCommand,
+  type DelegationServerCommand
+} from '../mcp/delegationServerCommand'
 import type { Provider } from '../providers/provider'
 import { trimFeed } from '../providers/feedWindow'
 import { PROVIDER_REGISTRY, createProviders, type ProviderRegistry } from '../providers/registry'
@@ -728,6 +734,40 @@ export interface RuntimeOptions {
    */
   launchSession?: SessionLauncher
   /**
+   * The delegation gate's live inputs and the loopback service's own port
+   * (#511 T4) — OMITTED disables delegation injection entirely, which is
+   * what keeps every existing test and every existing launch byte for byte
+   * unchanged: no gate check runs, and `launchAgent`/`launchHeldSession`
+   * never add a `delegation` field to what they hand `launchSession`/
+   * `heldSessions.launch`. The composition root (`index.ts`) is the only
+   * caller that wires this, closing over the module-level `delegationService`
+   * exactly as the service's own `launch` option already closes over
+   * `runtime` — both are still null at the point `AgentRuntime` is
+   * constructed, so `issueLaunchToken` reads it lazily, at call time.
+   */
+  delegation?: {
+    /** A TypeSafe key is actually configured (`delegationGate.ts`'s own first level). */
+    keyConfigured: () => boolean
+    /** Settings' own checkbox, read live — never cached at token-issue time. */
+    delegationAllowed: () => Promise<boolean>
+    /**
+     * Mints this launch's own token, or `undefined` when the delegation
+     * service is not running yet (never observed in production — it starts
+     * before any window can send a launch IPC — but a test seam nobody
+     * should have to prove is unreachable). `undefined` degrades to an
+     * ORDINARY, uninjected launch rather than refusing it: a launch must
+     * never fail merely because the delegation side-channel could not be
+     * armed.
+     */
+    issueLaunchToken: (context: {
+      mineId: string
+    }) => { endpoint: string; token: string } | undefined
+    /** Forgets a token whose launch has ended; a no-op for one never issued. */
+    revoke: (token: string) => void
+    /** Overrides the server's own default answer-by deadline for this build; absent leaves it. */
+    waitMs?: number
+  }
+  /**
    * Sessions the panel STARTS and HOLDS over the Agent SDK (#86, #94) —
    * injected already composed, exactly as the ledger and the tier service are,
    * so no test can reach the SDK. The default drives the real one over the
@@ -905,6 +945,19 @@ export class AgentRuntime {
     decision: DwarfPermissionDecision
   ) => PermissionKeystroke | null
   private readonly launchSession: SessionLauncher
+  /**
+   * The delegation gate's live inputs and the loopback service's own port
+   * (#511 T4), or undefined when this build never wired one — see
+   * `RuntimeOptions.delegation`'s own comment for what undefined means.
+   */
+  private readonly delegation: RuntimeOptions['delegation']
+  /**
+   * How a launched CLI should spawn `jevMcpServer.js` (#511 T4) — resolved
+   * ONCE, here, from the same `appPaths`/`platform` every other per-OS path
+   * in this constructor already reads, never per launch: the answer cannot
+   * change while this process runs.
+   */
+  private readonly delegationServerCommand: DelegationServerCommand
   /** One attached image's bytes, for a held session's content block (#408). */
   private readonly readAttachment: AttachmentReader
   /** Sessions this panel started and still holds (#86, #94). */
@@ -1186,6 +1239,17 @@ export class AgentRuntime {
     const platform = options.platformAdapters
 
     this.now = options.now ?? Date.now
+    // #511 T4: stored as given (possibly undefined) — see
+    // `RuntimeOptions.delegation`'s own comment. Resolved from the SAME
+    // `appPaths`/`platform` every other per-OS path above already reads, so
+    // dev vs. packaged and the three OS path styles are covered by
+    // `delegationServerCommand.test.ts` rather than re-proven here.
+    this.delegation = options.delegation
+    this.delegationServerCommand = resolveDelegationServerCommand(
+      appPaths,
+      process.execPath,
+      platform.platform
+    )
     this.permissionPrompts = new PermissionPromptRegistry({ now: this.now })
 
     // The development-only simulated valley (#42). Null in every ordinary run,
@@ -1375,6 +1439,10 @@ export class AgentRuntime {
           // keeps an untuned launch byte for byte what it was before #239.
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),
+          // #511 T4: forwarded exactly as model/effort above are; absent
+          // stays absent, which is what keeps an ordinary launch byte for
+          // byte what it was before this issue.
+          ...(request.delegation === undefined ? {} : { delegation: request.delegation }),
           detector: platform.cliDetector,
           env: process.env,
           platform: platform.platform,
@@ -3353,6 +3421,50 @@ export class AgentRuntime {
   }
 
   /**
+   * The MCP subtask-delegation gate (#511 T4), evaluated HERE — inside
+   * `launchAgent`/`launchHeldSession`, at the moment of each real launch —
+   * rather than trusted from anything the wire request claims. This is what
+   * makes depth 1 structural rather than conventional: `delegationService.ts`'s
+   * own child launches never set `routedByJev` on the request they build
+   * (pinned by that file's own LOW-7 test), so a delegated child can never
+   * pass `delegationEnabledFor` even once it reaches this exact code path a
+   * second time — no depth counter needed anywhere.
+   *
+   * Returns undefined for every reason a launch stays uninjected: no
+   * `RuntimeOptions.delegation` wired at all, the gate declined, or the
+   * service could not mint a token yet (`issueLaunchToken` answering
+   * undefined) — never a thrown error, because none of these should ever
+   * turn an otherwise-good launch into a refusal.
+   */
+  private async resolveDelegationInjection(
+    provider: DwarfProvider,
+    routedByJev: boolean,
+    mineId: string
+  ): Promise<{ token: string; injection: DelegationInjectionContext } | undefined> {
+    const delegation = this.delegation
+    if (delegation === undefined) return undefined
+    const enabled = delegationEnabledFor({
+      keyConfigured: delegation.keyConfigured(),
+      delegation: await delegation.delegationAllowed(),
+      routedByJev,
+      provider
+    })
+    if (!enabled) return undefined
+    const issued = delegation.issueLaunchToken({ mineId })
+    if (issued === undefined) return undefined
+    return {
+      token: issued.token,
+      injection: {
+        endpoint: issued.endpoint,
+        token: issued.token,
+        serverCommand: this.delegationServerCommand.command,
+        serverArgs: this.delegationServerCommand.args,
+        ...(delegation.waitMs === undefined ? {} : { waitMs: delegation.waitMs })
+      }
+    }
+  }
+
+  /**
    * Start a session the panel HOLDS, in a mine's folder (#86, #94).
    *
    * The request names a mine and the folder is resolved HERE, from the board
@@ -3384,7 +3496,19 @@ export class AgentRuntime {
     const mine = this.mines.find((item) => item.id === request.mineId)
     if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
 
-    return this.heldSessions.launch({
+    // #511 T4: issued BEFORE the launch itself is attempted — see
+    // `resolveDelegationInjection`'s own comment. A launch that goes on to
+    // refuse (an empty prompt, above all) never reaches the engine, so the
+    // explicit revoke below is what keeps that token from leaking rather
+    // than relying on `onEnded`, which only ever fires for a session that
+    // actually started.
+    const delegationIssue = await this.resolveDelegationInjection(
+      request.provider,
+      request.routedByJev === true,
+      mine.id
+    )
+
+    const result = await this.heldSessions.launch({
       mineId: mine.id,
       provider: request.provider,
       minePath: mine.path,
@@ -3395,8 +3519,22 @@ export class AgentRuntime {
       // #511: same rule as launchAgent's own retain() call — carried onto
       // the held record so routedByJevState (and this session's own dwarf)
       // can answer it later.
-      ...(request.routedByJev === true ? { routedByJev: true } : {})
+      ...(request.routedByJev === true ? { routedByJev: true } : {}),
+      ...(delegationIssue === undefined
+        ? {}
+        : {
+            delegation: delegationIssue.injection,
+            // #511 T4: told exactly once when this held session ends,
+            // however it ends (`HeldSessionRegistry`'s own `finish`/
+            // `closeAll`) — never for a launch that never started, which is
+            // exactly why the explicit revoke below exists for that case.
+            onEnded: () => this.delegation?.revoke(delegationIssue.token)
+          })
     })
+    if (delegationIssue !== undefined && !result.launched) {
+      this.delegation?.revoke(delegationIssue.token)
+    }
+    return result
   }
 
   /**
@@ -4352,6 +4490,15 @@ export class AgentRuntime {
     const prompt = prepareLaunchPrompt(request.prompt)
     if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
 
+    // #511 T4: evaluated per launch, at the moment of this real launch — see
+    // `resolveDelegationInjection`'s own comment on why that is what makes
+    // depth 1 structural.
+    const delegationIssue = await this.resolveDelegationInjection(
+      request.provider,
+      request.routedByJev === true,
+      mine.id
+    )
+
     const timer = createStageTimer(this.now)
     try {
       const { retained, ...verdict } = await timer.measure('total', () =>
@@ -4360,7 +4507,8 @@ export class AgentRuntime {
           minePath: mine.path,
           prompt,
           ...(request.model === undefined ? {} : { model: request.model }),
-          ...(request.effort === undefined ? {} : { effort: request.effort })
+          ...(request.effort === undefined ? {} : { effort: request.effort }),
+          ...(delegationIssue === undefined ? {} : { delegation: delegationIssue.injection })
         })
       )
       // The receipt this launch will be recognised by (#191). Opened for every
@@ -4444,6 +4592,20 @@ export class AgentRuntime {
         // that asked to be told is still owed a definite answer.
         hooks.onConcluded({ kind: 'interrupted', endedAt: this.now() })
       }
+      // #511 T4: no leaked tokens. `retained.onExit` is this launch's own
+      // real end — the same signal `LaunchedSessionRegistry.retain` above
+      // already subscribes for its own reasons, registered independently
+      // here so this revoke fires whether or not a pid was ever retained
+      // for bookkeeping. Every OTHER outcome (never started, or started
+      // with nothing to hold onto) has no later "ended" to wait for, so the
+      // token is revoked right here instead.
+      if (delegationIssue !== undefined) {
+        if (retained !== undefined && result.launched) {
+          retained.onExit(() => this.delegation?.revoke(delegationIssue.token))
+        } else {
+          this.delegation?.revoke(delegationIssue.token)
+        }
+      }
       console.log(
         `[runtime] Launch of ${request.provider} in ${mine.id}: ` +
           `${result.launched ? 'started' : 'failed'} ` +
@@ -4451,6 +4613,8 @@ export class AgentRuntime {
       )
       return result
     } catch (error) {
+      // #511 T4: the launch never resolved at all — still owed its revoke.
+      if (delegationIssue !== undefined) this.delegation?.revoke(delegationIssue.token)
       console.warn(`[runtime] Launch in ${request.mineId} threw`, error)
       // The provider that was ASKED for, not a favourite: a verdict naming the
       // wrong CLI would have the panel report a failure against a chip nobody

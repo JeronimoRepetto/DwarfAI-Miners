@@ -182,7 +182,11 @@ import { createNotifier, type Notifier } from './notifications/notifier'
 
 let runtime: AgentRuntime | null = null
 let hooks: HookChannel | null = null
-/** The MCP subtask-delegation loopback listener (#511 T3). Issues no tokens yet — T4 wires injection. */
+/**
+ * The MCP subtask-delegation loopback listener (#511 T3). `issueLaunchToken`/
+ * `revoke` are called from `AgentRuntime`'s own gate check now (#511 T4),
+ * through the closures the `delegation` option below hands it.
+ */
 let delegationService: DelegationService | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
@@ -994,6 +998,23 @@ async function init(): Promise<void> {
     platformAdapters,
     chooseDirectory: () => chooseProjectDirectory(mainWindow),
     readAttachment,
+    /* --- MCP subtask delegation: the gate's live inputs and the service's own port (#511 T4) — one block, appended --- */
+    // `keyConfigured`/`delegationAllowed` read exactly the same two stores
+    // the loopback service's own options do, below — the "ask fresh, never
+    // cache" discipline that whole block already states applies here too.
+    // `issueLaunchToken`/`revoke` close over the module-level
+    // `delegationService`, which is still null at THIS point in startup
+    // (constructed after `runtime.start()`, further down): reading it
+    // lazily, inside these two closures, is what lets a launch made after
+    // startup see the real instance — the identical trick
+    // `delegationService`'s own `launch` option already plays on `runtime`.
+    delegation: {
+      keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
+      delegationAllowed: async () => (await jevPreferenceStore.load()).delegation,
+      issueLaunchToken: (context) => delegationService?.issueLaunchToken(context),
+      revoke: (token) => delegationService?.revoke(token)
+    },
+    /* --- end of the #511 T4 block ---------------------------------------------- */
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
       // reasons the shell does — the open dwarf's own status and words, the

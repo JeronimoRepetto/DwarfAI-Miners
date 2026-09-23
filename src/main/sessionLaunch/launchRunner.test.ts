@@ -19,6 +19,7 @@ import {
   createNodeStdoutFile,
   launchClaudeSession,
   runLaunchProcess,
+  type DelegationConfigFile,
   type LaunchChild,
   type LaunchInvocation,
   type LaunchRunner,
@@ -26,6 +27,7 @@ import {
   type StderrFile,
   type StdoutFile
 } from './launchRunner'
+import type { DelegationInjectionContext } from '../mcp/delegationInjection'
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
 const CODEX_PATH = '/home/j/.local/bin/codex'
@@ -130,6 +132,10 @@ function launch(options: {
    * test proving the generator itself overrides it.
    */
   codexOutputPath?: () => string
+  /** #511 T4: the gate's own approved injection, or absent for an ordinary launch. */
+  delegation?: DelegationInjectionContext
+  /** #511 T4: the `--mcp-config` temp-file port; defaults to a deterministic in-memory fake. */
+  delegationConfigFile?: DelegationConfigFile
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -144,8 +150,37 @@ function launch(options: {
       fs: options.fs ?? new FakeFs(),
       run,
       codexOutputPath: options.codexOutputPath ?? (() => CODEX_OUTPUT_PATH),
+      ...(options.delegation === undefined ? {} : { delegation: options.delegation }),
+      ...(options.delegationConfigFile === undefined
+        ? {}
+        : { delegationConfigFile: options.delegationConfigFile }),
       ...(options.tuning === undefined ? {} : options.tuning)
     })
+  }
+}
+
+/**
+ * A deterministic in-memory `DelegationConfigFile` (#511 T4), on the same
+ * terms `fakeStderrFile`/`fakeStdoutFile` below are: a real launch writes a
+ * real temp JSON file for Claude's own `--mcp-config <file>`, and this suite
+ * never touches disk for it.
+ */
+function fakeDelegationConfigFile(): DelegationConfigFile & {
+  writtenAt: (path: string) => string | undefined
+  removedPaths: () => string[]
+} {
+  const contents = new Map<string, string>()
+  const removed: string[] = []
+  let next = 0
+  return {
+    path: () => `fake-mcp-config-${next++}.json`,
+    write: (path, text) => contents.set(path, text),
+    remove: (path) => {
+      contents.delete(path)
+      removed.push(path)
+    },
+    writtenAt: (path) => contents.get(path),
+    removedPaths: () => removed
   }
 }
 
@@ -669,6 +704,165 @@ describe('launching OpenCode (#534)', () => {
 
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     expect(invocation.stdoutIsTurnText).toBe(true)
+  })
+})
+
+/*
+ * MCP subtask delegation, detached injection (#511 T4). The gate check and
+ * the token's own lifecycle live in `runtime.ts` — this only has to prove
+ * that a `delegation` context, once handed to `launchClaudeSession`, reaches
+ * the right provider's own per-invocation mechanism, and that an ORDINARY
+ * launch (no `delegation` at all) stays byte for byte what it always was.
+ */
+describe('detached delegation injection (#511 T4)', () => {
+  function context(
+    overrides: Partial<DelegationInjectionContext> = {}
+  ): DelegationInjectionContext {
+    return {
+      serverCommand: '/opt/DwarfAI-Miners/DwarfAI-Miners',
+      serverArgs: ['/opt/DwarfAI-Miners/resources/app.asar.unpacked/out/main/jevMcpServer.js'],
+      endpoint: 'http://127.0.0.1:54321',
+      token: 'tok-abc123',
+      ...overrides
+    }
+  }
+
+  it('writes the mcp-config file and appends --mcp-config/--allowedTools for a detached Claude launch', async () => {
+    const configFile = fakeDelegationConfigFile()
+    const { run, result } = launch({
+      provider: 'claude',
+      delegation: context(),
+      delegationConfigFile: configFile
+    })
+    await result
+
+    const invocation = argvOf(run)
+    const configIndex = invocation.indexOf('--mcp-config')
+    expect(configIndex).toBeGreaterThanOrEqual(0)
+    const configPath = invocation[configIndex + 1]!
+    expect(invocation.slice(configIndex + 2)).toEqual([
+      '--allowedTools',
+      'mcp__jev__delegate_subtask',
+      'mcp__jev__subtask_result'
+    ])
+    expect(JSON.parse(configFile.writtenAt(configPath)!)).toEqual({
+      mcpServers: {
+        jev: {
+          type: 'stdio',
+          command: context().serverCommand,
+          args: context().serverArgs,
+          env: {
+            ELECTRON_RUN_AS_NODE: '1',
+            DWARFAI_DELEGATION_ENDPOINT: context().endpoint,
+            DWARFAI_DELEGATION_TOKEN: context().token
+          }
+        }
+      }
+    })
+  })
+
+  it('never passes --strict-mcp-config, so the user’s own MCP servers are never dropped', async () => {
+    const { run, result } = launch({
+      provider: 'claude',
+      delegation: context(),
+      delegationConfigFile: fakeDelegationConfigFile()
+    })
+    await result
+
+    expect(argvOf(run)).not.toContain('--strict-mcp-config')
+  })
+
+  it('leaves a Claude launch with no delegation byte for byte what it always was', async () => {
+    const { run, result } = launch({ provider: 'claude' })
+    await result
+
+    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
+  })
+
+  it('carries LaunchInvocation.delegationConfigFile so the runner can remove it on exit', async () => {
+    const configFile = fakeDelegationConfigFile()
+    const { run, result } = launch({
+      provider: 'claude',
+      delegation: context(),
+      delegationConfigFile: configFile
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.delegationConfigFile).toBeDefined()
+    expect(configFile.writtenAt(invocation.delegationConfigFile!)).not.toBeUndefined()
+  })
+
+  it('merges the delegation server into OPENCODE_CONFIG_CONTENT and touches no argv', async () => {
+    const { run, result } = launch({
+      provider: 'opencode',
+      cli: installedOpenCode(),
+      delegation: context(),
+      env: { PATH: '/usr/bin' }
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect(invocation.args).toEqual(['run', '--format', 'json'])
+    const configContent: unknown = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT!)
+    expect(configContent).toEqual({
+      mcp: {
+        jev: {
+          type: 'local',
+          command: [context().serverCommand, ...context().serverArgs],
+          environment: {
+            ELECTRON_RUN_AS_NODE: '1',
+            DWARFAI_DELEGATION_ENDPOINT: context().endpoint,
+            DWARFAI_DELEGATION_TOKEN: context().token
+          },
+          enabled: true
+        }
+      }
+    })
+  })
+
+  it("merges into the launch's own existing OPENCODE_CONFIG_CONTENT rather than clobbering it", async () => {
+    const existing = JSON.stringify({
+      mcp: { other: { type: 'local', command: ['x'], enabled: true } }
+    })
+    const { run, result } = launch({
+      provider: 'opencode',
+      cli: installedOpenCode(),
+      delegation: context(),
+      env: { PATH: '/usr/bin', OPENCODE_CONFIG_CONTENT: existing }
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    const configContent: unknown = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT!)
+    expect(configContent).toMatchObject({
+      mcp: { other: { type: 'local', command: ['x'], enabled: true }, jev: { enabled: true } }
+    })
+  })
+
+  it('leaves an OpenCode launch with no delegation byte for byte what it always was', async () => {
+    const { run, result } = launch({
+      provider: 'opencode',
+      cli: installedOpenCode(),
+      env: { PATH: '/usr/bin' }
+    })
+    await result
+
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect('OPENCODE_CONFIG_CONTENT' in invocation.env).toBe(false)
+  })
+
+  it('never touches Codex argv or env, even when a delegation context is somehow present', async () => {
+    const { run, result } = launch({
+      provider: 'codex',
+      cli: installedCodex(),
+      delegation: context()
+    })
+    await result
+
+    expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
+    const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
+    expect('OPENCODE_CONFIG_CONTENT' in invocation.env).toBe(false)
   })
 })
 
@@ -1520,6 +1714,30 @@ describe('onTurnOutcome (#510)', () => {
       text: 'the stdout tail answer',
       endedAt: NOW
     })
+  })
+
+  /*
+   * #511 T4: the `--mcp-config` temp file `launchClaudeSession` writes for a
+   * delegating Claude launch is removed on exit through the SAME `StdoutFile`
+   * port as the piped stdout capture and Codex's own `-o` file — it is just
+   * another path this app owns and must not leave behind, never a fourth
+   * kind of file with its own lifecycle.
+   */
+  it('removes the mcp-config file on exit, same as the stdout capture and the Codex output file', async () => {
+    const spawn = fakeSpawn()
+    const outFiles = fakeStdoutFile()
+    const configPath = 'fake-mcp-config-1.json'
+    await runLaunchProcess(
+      invocation({ delegationConfigFile: configPath }),
+      spawn.spawnProcess,
+      fakeStderrFile(),
+      outFiles,
+      () => NOW
+    )
+
+    spawn.exit(0)
+
+    expect(outFiles.removedPaths()).toContain(configPath)
   })
 
   it('removes the stdout capture file on exit, same as stderr already does', async () => {

@@ -19,6 +19,9 @@
       "out/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "out/main/jevMcpServer.js"
+    ],
     "extraResources": [
       {
         "from": "resources",

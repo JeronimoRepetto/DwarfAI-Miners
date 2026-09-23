@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest'
 import * as canonical from './delegationProtocol'
 import {
   DELEGATE_ROUTE,
+  DELEGATE_SUBTASK_TOOL_NAME,
+  DELEGATION_ENDPOINT_ENV,
+  DELEGATION_TOKEN_ENV,
   DELEGATION_TOKEN_HEADER,
+  DELEGATION_WAIT_MS_ENV,
   MAX_DELEGATION_BODY_BYTES,
   MAX_DELEGATION_CONTEXT_CHARS,
   MAX_DELEGATION_TASK_CHARS,
   NATIVE_SUBAGENT_FALLBACK_SENTENCE,
   RESULT_ROUTE_PREFIX,
+  SUBTASK_RESULT_TOOL_NAME,
   delegationFailure,
   parseDelegateRequestBody
 } from './delegationServerProtocol'
@@ -50,6 +55,29 @@ describe('delegationServerProtocol drift guard', () => {
     expect(delegationFailure('jev-unreachable', 'reason')).toEqual(
       canonical.delegationFailure('jev-unreachable', 'reason')
     )
+  })
+
+  // #511 T4: delegationInjection.ts's own five, added when importing them
+  // from delegationProtocol.ts directly regressed jevMcpServer.js's
+  // self-containment — see this file's own top comment.
+  it('DELEGATE_SUBTASK_TOOL_NAME matches the canonical constant', () => {
+    expect(DELEGATE_SUBTASK_TOOL_NAME).toBe(canonical.DELEGATE_SUBTASK_TOOL_NAME)
+  })
+
+  it('SUBTASK_RESULT_TOOL_NAME matches the canonical constant', () => {
+    expect(SUBTASK_RESULT_TOOL_NAME).toBe(canonical.SUBTASK_RESULT_TOOL_NAME)
+  })
+
+  it('DELEGATION_ENDPOINT_ENV matches the canonical constant', () => {
+    expect(DELEGATION_ENDPOINT_ENV).toBe(canonical.DELEGATION_ENDPOINT_ENV)
+  })
+
+  it('DELEGATION_TOKEN_ENV matches the canonical constant', () => {
+    expect(DELEGATION_TOKEN_ENV).toBe(canonical.DELEGATION_TOKEN_ENV)
+  })
+
+  it('DELEGATION_WAIT_MS_ENV matches the canonical constant', () => {
+    expect(DELEGATION_WAIT_MS_ENV).toBe(canonical.DELEGATION_WAIT_MS_ENV)
   })
 })
 
