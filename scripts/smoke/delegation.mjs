@@ -142,9 +142,17 @@ const ALLOWED_TOOLS = [
 
 /** How long one provider's whole turn may run before this script gives up on it. */
 const PER_PROVIDER_TIMEOUT_MS = 45_000
-/** The one instruction every provider is given, verbatim. */
+/**
+ * The one instruction every provider is given, verbatim.
+ *
+ * It names the tool as an MCP tool on purpose. Measured on 2026-09-23 with
+ * codex-cli 0.153.4: a direct run with this exact wording called the tool,
+ * while "Call the delegate_subtask tool …" with everything else identical
+ * made no tool call at all. So a FAIL here would otherwise measure the
+ * prompt, not whether the tool reached the model.
+ */
 const PROMPT =
-  'Call the delegate_subtask tool right now with task set to "say hello" and ' +
+  'Call the MCP tool delegate_subtask right now with task set to "say hello" and ' +
   'nothing else in context. Do not do anything else, and do not explain ' +
   'yourself — just make the one tool call and stop.'
 
