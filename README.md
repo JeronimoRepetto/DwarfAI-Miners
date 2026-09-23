@@ -377,3 +377,7 @@ nothing in the app is, or will be, gated on it.
 [MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
 copyright and covered separately by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be
 reused without prior written authorization.
+
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+</a>
