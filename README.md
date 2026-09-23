@@ -128,16 +128,14 @@ processed.
 - **Autostart and tray** — starts at login, lives in the tray, and hides instead of closing.
 
 Every screen and control is described in the [user guide](docs/guide.md).
+
+## Install
 <p align="left">
   <img src="docs/media/hero01.gif" width="210" alt="Worker2">
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="docs/media/hero.gif" width="100" paddin="10" alt="Foreman">
    &nbsp;&nbsp;
 </p>
-
-
-## Install
-
 Download the installer for your OS from the
 [latest release](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest):
 
@@ -366,23 +364,18 @@ DwarfAI-Miners' code is free and MIT-licensed. The artwork remains the creator's
 not separately reusable without authorization. If the project has earned a spot on your desktop,
 you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
 nothing in the app is, or will be, gated on it.
-
+<p align="right">
+  <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/media/hero02.gif" width="210" alt="Worker">
+</p>
 ## License
 
 [MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
 copyright and covered separately by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be
 reused without prior written authorization.
 
-<p align="center">
-  <p align="right">
-    <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
-    &nbsp;&nbsp;&nbsp;&nbsp;
-    <img src="docs/media/hero02.gif" width="210" alt="Worker">
-  </p>
-  <p align="left">
-    <a href="https://github.com/Gentleman-Programming/gentle-ai">
-      <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
-    </a>
-  </p>
-</p>
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+</a>
 
