@@ -18,6 +18,12 @@ export const MAX_HOOK_BODY_BYTES = 4096
 /** Loopback only. Never 0.0.0.0: this listener must not be reachable off-box. */
 const BIND_HOST = '127.0.0.1'
 
+/**
+ * The two routes this one listener carries, each behind its own consent
+ * (#588 T6, F5): Claude Code's hooks, and the OpenCode permission plugin.
+ */
+export type HookRouteName = 'claude' | 'opencode'
+
 export interface HookServerOptions {
   /** 0 asks the OS for a free port; tests rely on that. */
   port: number
@@ -31,6 +37,15 @@ export interface HookServerOptions {
    * is wired to Claude's PermissionPromptRegistry.
    */
   onOpenCodePush?: (push: OpenCodePermissionPush) => void
+  /**
+   * Whether a route's own channel is on right now, read on every request
+   * (#588 T6, F5). One listener serves two independent consents, so a route
+   * whose channel is off must answer exactly like a path that never existed:
+   * 404, before the token is even read. Absent means every route is open,
+   * which is this file's own tests' and nothing else's default --
+   * `HookListener` always supplies it.
+   */
+  isRouteOpen?: (route: HookRouteName) => boolean
   log?: (message: string) => void
 }
 
@@ -109,15 +124,19 @@ export class HookServer {
       this.reply(request, response, 404)
       return
     }
-    if (request.url === HOOK_ROUTE) {
+    if (request.url === HOOK_ROUTE && this.routeOpen('claude')) {
       this.readBody(request, response, (body) => this.finishClaudeHook(body, response))
       return
     }
-    if (request.url === OPENCODE_PUSH_ROUTE) {
+    if (request.url === OPENCODE_PUSH_ROUTE && this.routeOpen('opencode')) {
       this.readBody(request, response, (body) => this.finishOpenCodePush(body, response))
       return
     }
     this.reply(request, response, 404)
+  }
+
+  private routeOpen(route: HookRouteName): boolean {
+    return this.options.isRouteOpen?.(route) ?? true
   }
 
   /**

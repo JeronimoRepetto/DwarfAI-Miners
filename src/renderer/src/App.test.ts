@@ -279,6 +279,26 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .mockImplementation((preferences: unknown) =>
         Promise.resolve({ configured: true, preferences })
       ),
+    /*
+     * AMENDED for #588 T6 (was: absent). The shell adopts the stored OpenCode
+     * section verdict on mount, so the four members exist even in tests that
+     * never open Settings; each write answers with a stored verdict, as main
+     * does. No existing assertion changed.
+     */
+    getOpenCodeSettings: vi
+      .fn()
+      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
+    setOpenCodePluginEnabled: vi
+      .fn()
+      .mockImplementation((enabled: boolean) =>
+        Promise.resolve({ pluginEnabled: enabled, passwordConfigured: false })
+      ),
+    setOpenCodeServerPassword: vi
+      .fn()
+      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: true }),
+    clearOpenCodeServerPassword: vi
+      .fn()
+      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2743,5 +2763,52 @@ describe('App MotionConfig root (#566 T3)', () => {
     const config = wrapper.findComponent(MotionConfig)
     expect(config.props('reducedMotion')).toBe('always')
     expect(config.props('transition')).toEqual(REDUCED_MOTION_TRANSITION)
+  })
+})
+
+/**
+ * OpenCode permission relay: consent and server password (#588 T6) —
+ * APPENDED, nothing above changed.
+ *
+ * The round trip a person walks in Settings: the stored verdict is adopted on
+ * mount, the switch and the password each ask main, and what main answered —
+ * never the password — is what the section draws.
+ */
+describe('OpenCode settings (#588 T6)', () => {
+  it('adopts the stored settings on mount and draws them in Settings', async () => {
+    const { wrapper } = await mountOpenApp({
+      getOpenCodeSettings: vi
+        .fn()
+        .mockResolvedValue({ pluginEnabled: true, passwordConfigured: true })
+    })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.password-stored').exists()).toBe(true)
+  })
+
+  it('asks main to turn the relay on, and draws a refusal as off with its reason', async () => {
+    const setOpenCodePluginEnabled = vi.fn().mockResolvedValue({
+      pluginEnabled: false,
+      pluginError: 'Port 47821 could not be opened: EADDRINUSE',
+      passwordConfigured: false
+    })
+    const { wrapper, api } = await mountOpenApp({ setOpenCodePluginEnabled })
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.opencode-plugin-enabled').trigger('click')
+    await flushPromises()
+    expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(true)
+    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('.plugin-error').text()).toContain('EADDRINUSE')
+  })
+
+  it('hands the typed password to main and then shows only that one is stored', async () => {
+    const { wrapper, api } = await mountOpenApp()
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await wrapper.find('.opencode-password-input').setValue('hunter2')
+    await wrapper.find('.opencode-password-save').trigger('click')
+    await flushPromises()
+    expect(api.setOpenCodeServerPassword).toHaveBeenCalledWith('hunter2')
+    expect(wrapper.find('.password-stored').exists()).toBe(true)
+    expect(wrapper.html()).not.toContain('hunter2')
   })
 })

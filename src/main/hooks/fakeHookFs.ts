@@ -18,9 +18,20 @@ function normalize(path: string): string {
 export class FakeHookFs implements HookFsLike {
   private readonly files = new Map<string, string>()
   private readonly dirs = new Set<string>()
+  /**
+   * The mode `writeSecretText` recorded for a path (#588 T6 security fix), so
+   * a test can assert a secret was asked to be written owner-only without a
+   * real filesystem. `writeText` clears any entry, so an ordinary file is
+   * never left reading as forced-restrictive from an earlier secret write to
+   * the same path.
+   */
+  private readonly modes = new Map<string, number>()
 
   /** Set by a test to make the next write of a given path fail. */
   failWrite?: (path: string) => Error | null
+
+  /** Set by a test to make a file removal fail (#588 T6). */
+  failRemove?: (path: string) => Error | null
 
   addFile(path: string, content: string): void {
     this.files.set(normalize(path), content)
@@ -46,6 +57,19 @@ export class FakeHookFs implements HookFsLike {
     const failure = this.failWrite?.(path)
     if (failure) throw failure
     this.files.set(normalize(path), content)
+    this.modes.delete(normalize(path))
+  }
+
+  async writeSecretText(path: string, content: string): Promise<void> {
+    const failure = this.failWrite?.(path)
+    if (failure) throw failure
+    this.files.set(normalize(path), content)
+    this.modes.set(normalize(path), 0o600)
+  }
+
+  /** The mode `writeSecretText` recorded for `path`, or undefined when nothing forced one. */
+  modeOf(path: string): number | undefined {
+    return this.modes.get(normalize(path))
   }
 
   async exists(path: string): Promise<boolean> {
@@ -60,10 +84,21 @@ export class FakeHookFs implements HookFsLike {
   }
 
   async remove(path: string): Promise<void> {
+    const failure = this.failRemove?.(path)
+    if (failure) throw failure
     this.files.delete(normalize(path))
   }
 
   async ensureDir(path: string): Promise<void> {
     this.dirs.add(normalize(path))
+  }
+
+  async removeEmptyDir(path: string): Promise<void> {
+    const key = normalize(path)
+    const prefix = `${key}\\`
+    const occupied =
+      [...this.files.keys()].some((file) => file.startsWith(prefix)) ||
+      [...this.dirs].some((dir) => dir.startsWith(prefix))
+    if (!occupied) this.dirs.delete(key)
   }
 }

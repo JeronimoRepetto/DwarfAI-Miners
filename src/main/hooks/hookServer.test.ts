@@ -340,3 +340,88 @@ describe('HookServer bind failures', () => {
     await expect(insecure.start()).rejects.toThrow(/token/i)
   })
 })
+
+describe('HookServer route gate (#588 T6, F5)', () => {
+  // Each route is served only while its own channel is on: one listener, two
+  // consents. A closed route answers exactly like a path that never existed
+  // (404, token or not), so a caller cannot even learn the route is there.
+  const stopBody = JSON.stringify({ session_id: 's', hook_event_name: 'Stop' })
+  const askedBody = JSON.stringify({
+    event: {
+      type: 'permission.asked',
+      properties: { id: 'per_1', sessionID: 'ses_1', permission: 'bash' }
+    },
+    serverUrl: 'http://127.0.0.1:63417/'
+  })
+
+  async function postTo(server: HookServer, path: string, body: string): Promise<Response> {
+    return fetch(`http://127.0.0.1:${server.port}${path}`, {
+      method: 'POST',
+      headers: { [HOOK_TOKEN_HEADER]: TOKEN },
+      body
+    })
+  }
+
+  it('answers a closed OpenCode route with 404 and holds no push, while the Claude route still works', async () => {
+    const events: HookEvent[] = []
+    const pushes: OpenCodePermissionPush[] = []
+    const server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: (event) => events.push(event),
+      onOpenCodePush: (push) => pushes.push(push),
+      isRouteOpen: (route) => route === 'claude'
+    })
+    await server.start()
+    try {
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(404)
+      expect(pushes).toEqual([])
+      expect((await postTo(server, HOOK_ROUTE, stopBody)).status).toBe(204)
+      expect(events).toHaveLength(1)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('answers a closed Claude route with 404 and raises no event, while the OpenCode route still works', async () => {
+    const events: HookEvent[] = []
+    const pushes: OpenCodePermissionPush[] = []
+    const server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: (event) => events.push(event),
+      onOpenCodePush: (push) => pushes.push(push),
+      isRouteOpen: (route) => route === 'opencode'
+    })
+    await server.start()
+    try {
+      expect((await postTo(server, HOOK_ROUTE, stopBody)).status).toBe(404)
+      expect(events).toEqual([])
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(204)
+      expect(pushes).toHaveLength(1)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('reads the gate on every request, so a route opened after start is served without a restart', async () => {
+    const open = new Set<string>()
+    const pushes: OpenCodePermissionPush[] = []
+    const server = new HookServer({
+      port: 0,
+      token: TOKEN,
+      onEvent: () => undefined,
+      onOpenCodePush: (push) => pushes.push(push),
+      isRouteOpen: (route) => open.has(route)
+    })
+    await server.start()
+    try {
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(404)
+      open.add('opencode')
+      expect((await postTo(server, OPENCODE_PUSH_ROUTE, askedBody)).status).toBe(204)
+      expect(pushes).toHaveLength(1)
+    } finally {
+      await server.stop()
+    }
+  })
+})

@@ -1,5 +1,3 @@
-import type { ConfigEnv } from '../config/config'
-
 /**
  * Answering an OpenCode permission dialog over its own HTTP server, rather
  * than a console this app could ever type into (#588 T5).
@@ -16,25 +14,30 @@ import type { ConfigEnv } from '../config/config'
  *
  * ## The one thing this file never proves
  *
- * HTTP Basic auth — `Authorization: Basic base64(username:password)`, from
- * `OPENCODE_SERVER_USERNAME` (default `opencode`) and
- * `OPENCODE_SERVER_PASSWORD` — is documented only by the strings inside the
- * compiled `opencode` binary and was NEVER exercised live: every server this
+ * HTTP Basic auth — `Authorization: Basic base64(opencode:password)` — is
+ * documented only by the strings inside the compiled `opencode` binary
+ * (`OPENCODE_SERVER_PASSWORD`, username `OPENCODE_SERVER_USERNAME` defaulting
+ * to `opencode`) and was NEVER exercised live: every server this
  * investigation measured (Row 15, Row 16) ran with no password set, so this
- * app has never sent this header against a real 401. Implemented anyway,
- * because a password an operator DOES set must not silently go
- * unauthenticated — and read off THIS process's own environment, which is
- * the only copy of those two names this app could ever have: the OpenCode
- * server that actually checks them runs in a DIFFERENT process, almost
- * always the person's own terminal, and nothing on this wire ever hands
- * either value across that boundary (permissionPushPayload.ts's
- * `OpenCodePermissionAskedPush` carries no credential of any kind). So this
- * only ever authenticates when the SAME two variables happen to be set in
- * the environment this app itself launched from — the same reading
- * `RuntimeOptions.simulationEnv`'s own comment (runtime.ts) gives a raw
- * environment read that belongs to nobody's settings screen, applied here to
- * a name this app does not own either. UNVERIFIED, stated loudly: nobody has
- * watched this header answer a real 401 yet.
+ * app has never sent this header against a real 401. UNVERIFIED, stated
+ * loudly.
+ *
+ * ## Where the password comes from (#588 T6, F1)
+ *
+ * From Settings, through `openCodeServerPassword.ts`'s encrypted store, and
+ * from nowhere else. It used to be read off THIS process's environment, which
+ * fails essentially always: the server that checks it runs in the person's own
+ * terminal, which is where the variable is set, and this app launches from
+ * the desktop session. The maintainer rejected that source outright, so the
+ * port takes a reader and never touches `process.env`. Empty — nothing stored
+ * — sends no header at all, matching the server's own gate: with no password
+ * set it takes no auth, which is OpenCode's default. The username is always
+ * OpenCode's own default, `opencode`; Settings carries no username field.
+ *
+ * The password only ever goes to a LOOPBACK `serverUrl`. The address comes
+ * from the push itself, and anything holding the listener token can push, so
+ * an address off this machine is answered without the credential rather than
+ * trusted with it.
  */
 
 export type OpenCodePermissionAnswerFailureReason =
@@ -101,29 +104,47 @@ export type OpenCodePermissionFetch = (
 export const OPENCODE_PERMISSION_POST_TIMEOUT_MS = 5_000
 
 /**
- * Build the answer port over an injected fetch and environment, so a test can
- * pin every branch below without reaching a real network or a live CLI. The
- * shipped default (`postOpenCodePermissionDecision`) closes over the real
- * `fetch` and `process.env`.
+ * Where the answer port reads the Settings password, on every answer so a
+ * change applies without a restart. Absent means no password is ever sent.
+ */
+export interface OpenCodeServerCredentials {
+  readPassword?: () => string | undefined
+}
+
+/** OpenCode's own default Basic username; Settings carries only the password. */
+const OPENCODE_SERVER_USERNAME = 'opencode'
+
+/**
+ * Hosts the Settings password may be sent to. `URL.hostname` keeps IPv6
+ * brackets, hence `[::1]`.
+ */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+/**
+ * Build the answer port over an injected fetch and credential reader, so a
+ * test can pin every branch below without reaching a real network or a live
+ * CLI. main/index.ts composes the real one over `globalThis.fetch` and the
+ * Settings password store.
  */
 export function createOpenCodePermissionAnswerPort(
   fetchLike: OpenCodePermissionFetch,
-  env: ConfigEnv
+  credentials: OpenCodeServerCredentials
 ): OpenCodePermissionAnswerPort {
   return async (request) => {
-    const url = new URL(
+    const target = new URL(
       `session/${encodeURIComponent(request.sessionId)}/permissions/${encodeURIComponent(request.requestId)}`,
       request.serverUrl
-    ).href
+    )
+    const url = target.href
 
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     // See the module comment above: UNVERIFIED, sent only when a password is
-    // actually configured — matching the server's own gate ("when no
-    // password is set the server takes no auth", docs/opencode-format.md).
-    const password = env.OPENCODE_SERVER_PASSWORD
-    if (password !== undefined && password !== '') {
-      const username = env.OPENCODE_SERVER_USERNAME ?? 'opencode'
-      headers.authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+    // actually stored — matching the server's own gate ("when no password is
+    // set the server takes no auth", docs/opencode-format.md) — and only to
+    // a server on this machine.
+    const password = credentials.readPassword?.()
+    if (password !== undefined && password !== '' && LOOPBACK_HOSTS.has(target.hostname)) {
+      headers.authorization = `Basic ${Buffer.from(`${OPENCODE_SERVER_USERNAME}:${password}`).toString('base64')}`
     }
 
     let response: Awaited<ReturnType<OpenCodePermissionFetch>>
@@ -177,6 +198,11 @@ export function createOpenCodePermissionAnswerPort(
   }
 }
 
-/** The real port: the real network, the real environment (#588 T5). */
+/**
+ * The real network with no credential: `AgentRuntime`'s default when nothing
+ * is injected. main/index.ts injects the Settings-backed port instead
+ * (#588 T6); this default exists so a runtime built without one still answers
+ * an unsecured server, OpenCode's own default, rather than none.
+ */
 export const postOpenCodePermissionDecision: OpenCodePermissionAnswerPort =
-  createOpenCodePermissionAnswerPort(globalThis.fetch, process.env)
+  createOpenCodePermissionAnswerPort(globalThis.fetch, {})

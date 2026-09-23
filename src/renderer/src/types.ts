@@ -134,8 +134,12 @@ export type {
   /* --- end of the jev-routing-profiles T3 block ------------------------------ */
   /* --- Turn outcome (#510) — one block, appended ---------------------------- */
   TurnOutcome,
-  TurnOutcomeKind
+  TurnOutcomeKind,
   /* --- end of the #510 block ------------------------------------------------- */
+  /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+  OpenCodePasswordUnavailableReason,
+  OpenCodeSettings
+  /* --- end of the #588 T6 block ------------------------------------------------ */
 } from '../../shared/contracts'
 
 /**
@@ -233,8 +237,13 @@ export {
   parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- Turn outcome (#510) — one block, appended ---------------------------- */
-  boundTurnText
+  boundTurnText,
   /* --- end of the #510 block ------------------------------------------------- */
+  /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+  DEFAULT_OPENCODE_SETTINGS,
+  MAX_OPENCODE_SERVER_PASSWORD_CHARS,
+  parseOpenCodeServerPasswordInput
+  /* --- end of the #588 T6 block ------------------------------------------------ */
 } from '../../shared/contracts'
 
 /** Root state for the mines store. */

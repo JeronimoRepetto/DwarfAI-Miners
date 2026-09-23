@@ -5,6 +5,7 @@ import { HOOK_MARKER } from './hookCommand'
 import { applyHookToggle, HookChannel, HOOKS_ENABLED_MARKER, isCurlAvailable } from './hookChannel'
 import type { HookServerLike, HookToggleTarget } from './hookChannel'
 import { SETTINGS_FILE } from './hookInstaller'
+import { HookListener } from './hookListener'
 import { HOOK_TOKEN_FILE } from './hookToken'
 
 const USER_DATA = 'C:/Users/j/AppData/Roaming/DwarfAI-Miners'
@@ -368,5 +369,65 @@ describe('HookChannel OpenCode push relay (#588 T3)', () => {
     }
     captured!(push)
     expect(onOpenCodePush).toHaveBeenCalledWith(push)
+  })
+})
+
+describe('HookChannel on a shared listener (#588 T6, F5)', () => {
+  // The Claude channel is one of two consents on one listener. Turning it on
+  // or off must never decide whether the OpenCode route is served.
+  function sharedHarness(): {
+    fs: FakeHookFs
+    server: FakeServer
+    listener: HookListener
+    channel: HookChannel
+  } {
+    const fs = new FakeHookFs()
+    fs.addDir(USER_DATA)
+    fs.addDir(ROOT)
+    const server = new FakeServer()
+    const listener = new HookListener({
+      fs,
+      userDataDir: USER_DATA,
+      port: 47821,
+      onEvent: () => undefined,
+      createServer: () => server
+    })
+    const channel = new HookChannel({
+      fs,
+      roots: [ROOT],
+      userDataDir: USER_DATA,
+      port: 47821,
+      platform: 'win32',
+      onEvent: () => undefined,
+      listener,
+      curlAvailable: async () => true
+    })
+    return { fs, server, listener, channel }
+  }
+
+  it('does not start a second server when the OpenCode route already holds the port', async () => {
+    const { server, listener, channel } = sharedHarness()
+    await listener.open('opencode')
+    expect(await channel.enable()).toEqual({ enabled: true })
+    expect(server.started).toBe(1)
+    expect(listener.isOpen('claude')).toBe(true)
+  })
+
+  it('leaves the OpenCode route listening when the Claude channel is turned off', async () => {
+    const { server, listener, channel } = sharedHarness()
+    await listener.open('opencode')
+    await channel.enable()
+    await channel.disable()
+    expect(server.stopped).toBe(0)
+    expect(listener.isOpen('opencode')).toBe(true)
+    expect(listener.isOpen('claude')).toBe(false)
+    expect(channel.isActive()).toBe(false)
+  })
+
+  it('never opens the OpenCode route itself -- a Claude-only user serves Claude alone', async () => {
+    const { listener, channel } = sharedHarness()
+    await channel.enable()
+    expect(listener.isOpen('claude')).toBe(true)
+    expect(listener.isOpen('opencode')).toBe(false)
   })
 })

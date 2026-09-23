@@ -51,23 +51,26 @@ describe('createOpenCodePermissionAnswerPort', () => {
     expect(init.headers.authorization).toBeUndefined()
   })
 
-  it('sends HTTP Basic from OPENCODE_SERVER_USERNAME/PASSWORD when a password is set (unverified live, #588 T5)', async () => {
+  // AMENDED for #588 T6 (F1): was "sends HTTP Basic from
+  // OPENCODE_SERVER_USERNAME/PASSWORD", read off THIS app's environment. The
+  // maintainer rejected that source -- the password lives in the terminal
+  // that started OpenCode, never in this app's environment -- so the
+  // password now comes from Settings, and the username is OpenCode's own
+  // default (see the next case). Same assertion shape, new source.
+  it('sends HTTP Basic with the password Settings stored (unverified live, #588 T5/T6)', async () => {
     const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
-    const port = createOpenCodePermissionAnswerPort(fetch, {
-      OPENCODE_SERVER_USERNAME: 'jero',
-      OPENCODE_SERVER_PASSWORD: 'hunter2'
-    })
+    const port = createOpenCodePermissionAnswerPort(fetch, { readPassword: () => 'hunter2' })
 
     await port(REQUEST)
     const [, init] = fetch.mock.calls[0]!
     expect(init.headers.authorization).toBe(
-      `Basic ${Buffer.from('jero:hunter2').toString('base64')}`
+      `Basic ${Buffer.from('opencode:hunter2').toString('base64')}`
     )
   })
 
   it('defaults the Basic username to "opencode", the measured default, when only a password is set', async () => {
     const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
-    const port = createOpenCodePermissionAnswerPort(fetch, { OPENCODE_SERVER_PASSWORD: 'x' })
+    const port = createOpenCodePermissionAnswerPort(fetch, { readPassword: () => 'x' })
 
     await port(REQUEST)
     const [, init] = fetch.mock.calls[0]!
@@ -76,7 +79,7 @@ describe('createOpenCodePermissionAnswerPort', () => {
 
   it('treats a blank password the same as an unset one — no header sent', async () => {
     const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
-    const port = createOpenCodePermissionAnswerPort(fetch, { OPENCODE_SERVER_PASSWORD: '' })
+    const port = createOpenCodePermissionAnswerPort(fetch, { readPassword: () => '' })
 
     await port(REQUEST)
     const [, init] = fetch.mock.calls[0]!
@@ -222,5 +225,56 @@ describe('createOpenCodePermissionAnswerPort', () => {
     const [, init] = fetch.mock.calls[0]!
     expect(init.signal).toBeInstanceOf(AbortSignal)
     expect(OPENCODE_PERMISSION_POST_TIMEOUT_MS).toBeGreaterThan(0)
+  })
+})
+
+describe('createOpenCodePermissionAnswerPort -- the Settings password (#588 T6, F1)', () => {
+  it('never reads a password from this app’s own environment', async () => {
+    vi.stubEnv('OPENCODE_SERVER_PASSWORD', 'from-the-environment')
+    try {
+      const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
+      const port = createOpenCodePermissionAnswerPort(fetch, {})
+      await port(REQUEST)
+      const [, init] = fetch.mock.calls[0]!
+      expect(init.headers.authorization).toBeUndefined()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('reads the password on every answer, so a Settings change applies without a restart', async () => {
+    const settings: { password?: string } = {}
+    const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
+    const port = createOpenCodePermissionAnswerPort(fetch, {
+      readPassword: () => settings.password
+    })
+
+    await port(REQUEST)
+    settings.password = 'later'
+    await port(REQUEST)
+    expect(fetch.mock.calls[0]![1].headers.authorization).toBeUndefined()
+    expect(fetch.mock.calls[1]![1].headers.authorization).toBe(
+      `Basic ${Buffer.from('opencode:later').toString('base64')}`
+    )
+  })
+
+  it.each(['http://127.0.0.1:4096/', 'http://localhost:4096/', 'http://[::1]:4096/'])(
+    'sends the password to a loopback server (%s)',
+    async (serverUrl) => {
+      const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
+      const port = createOpenCodePermissionAnswerPort(fetch, { readPassword: () => 'x' })
+      await port({ ...REQUEST, serverUrl })
+      expect(fetch.mock.calls[0]![1].headers.authorization).toBeDefined()
+    }
+  )
+
+  it('never sends the stored password to an address off this machine, whatever a push claims', async () => {
+    // A push carries its own serverUrl; anything holding the listener token
+    // could name any address there. The password is only ever for the
+    // OpenCode server on this machine.
+    const fetch = vi.fn().mockResolvedValue({ status: 200, json: async () => true })
+    const port = createOpenCodePermissionAnswerPort(fetch, { readPassword: () => 'x' })
+    await port({ ...REQUEST, serverUrl: 'http://203.0.113.7:4096/' })
+    expect(fetch.mock.calls[0]![1].headers.authorization).toBeUndefined()
   })
 })

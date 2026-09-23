@@ -4687,6 +4687,80 @@ export type JevRouteLaunchResult =
 
 /* --- end of the #509 block ------------------------------------------------- */
 
+/* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+
+/**
+ * Why the OpenCode server password field cannot be set here. The same single
+ * reason `JevUnavailableReason` names, for the same rule: a secret is stored
+ * encrypted or not at all (see `openCodeServerPassword.ts`).
+ */
+export type OpenCodePasswordUnavailableReason = 'encryption-unavailable'
+
+/**
+ * What Settings' OpenCode section reads, and all it may ever read (#588 T6).
+ *
+ * Two independent facts on one shape, because they are one section: whether
+ * the permission plugin is installed and its route served, and whether a
+ * server password is stored. Deliberately never the password itself — it is
+ * typed into Settings, crosses this boundary once towards main, and never
+ * comes back; main's `readPassword()` is the only place it can be read.
+ *
+ * `pluginEnabled` is the state IN FORCE, never the request: a switch that
+ * could not be turned on answers `false` with `pluginError` saying why, the
+ * way `JevSettings.preferencesError` carries a refused write to the one place
+ * a person can see it.
+ */
+export interface OpenCodeSettings {
+  pluginEnabled: boolean
+  /** Why the last attempt to turn the plugin on did not take; absent when it did. */
+  pluginError?: string
+  passwordConfigured: boolean
+  passwordUnavailableReason?: OpenCodePasswordUnavailableReason
+}
+
+/**
+ * What Settings' OpenCode section draws before main has answered: off, and no
+ * password — the true state of any install that has never touched it, and no
+ * claim about this machine's encryption that main has not checked.
+ */
+export const DEFAULT_OPENCODE_SETTINGS: OpenCodeSettings = {
+  pluginEnabled: false,
+  passwordConfigured: false
+}
+
+/** Far past any password a person types; the cap exists to refuse an accidental paste of a file. */
+export const MAX_OPENCODE_SERVER_PASSWORD_CHARS = 1024
+
+/**
+ * Boundary parser for the OpenCode server password (#588 T6), read by the
+ * preload before the value crosses and by main again on arrival. THROWS,
+ * with the same "a legible value that cannot be carried out fails fast"
+ * asymmetry `parseJevApiKeyInput` holds — but never trims: a password is
+ * exactly what the person set `OPENCODE_SERVER_PASSWORD` to, and spaces are
+ * part of it. Control characters are refused because the value ends up
+ * inside an HTTP header, where one would break the request rather than
+ * authenticate it. The error message never quotes the value.
+ */
+export function parseOpenCodeServerPasswordInput(payload: unknown): string {
+  if (typeof payload !== 'string') {
+    throw new Error(`OpenCode server password must be a string, received ${typeof payload}`)
+  }
+  if (payload === '') {
+    throw new Error('OpenCode server password must not be empty')
+  }
+  if (payload.length > MAX_OPENCODE_SERVER_PASSWORD_CHARS) {
+    throw new Error(
+      `OpenCode server password must be at most ${MAX_OPENCODE_SERVER_PASSWORD_CHARS} characters`
+    )
+  }
+  if (/[\x00-\x1F\x7F]/.test(payload)) {
+    throw new Error('OpenCode server password must not contain control characters')
+  }
+  return payload
+}
+
+/* --- end of the #588 T6 block ------------------------------------------------ */
+
 export const IPC_CHANNELS = {
   hidePanel: 'panel:hide',
   /**
@@ -5180,6 +5254,18 @@ export const IPC_CHANNELS = {
    * too — and only the WRITE gets a channel of its own, the same split
    * `setJevApiKey`/`clearJevApiKey` already hold beside `getJevSettings`.
    */
-  setJevPreferences: 'jev:preferences:set'
+  setJevPreferences: 'jev:preferences:set',
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+  /**
+   * Settings' OpenCode section. Every write answers with the STORED
+   * `OpenCodeSettings`, the discipline every preference channel here holds;
+   * the password crosses once, towards main, on `setOpenCodeServerPassword`,
+   * and never comes back on any of the four.
+   */
+  getOpenCodeSettings: 'opencode:settings:get',
+  setOpenCodePluginEnabled: 'opencode:plugin:set',
+  setOpenCodeServerPassword: 'opencode:password:set',
+  clearOpenCodeServerPassword: 'opencode:password:clear'
+  /* --- end of the #588 T6 block ------------------------------------------------ */
 } as const

@@ -3,8 +3,8 @@ import { buildHookCommand, curlBinaryFor } from './hookCommand'
 import type { HookFsLike } from './hookFs'
 import { installClaudeHooks, uninstallClaudeHooks, type HookInstallReport } from './hookInstaller'
 import type { HookEvent } from './hookPayload'
-import { HookServer, type HookServerOptions } from './hookServer'
-import { HOOK_TOKEN_FILE, loadOrCreateHookToken } from './hookToken'
+import { HookListener } from './hookListener'
+import type { HookServerOptions } from './hookServer'
 import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
 
 /**
@@ -42,6 +42,15 @@ export interface HookChannelOptions {
   /** Threaded straight to HookServer's own option of the same name (#588 T3). */
   onOpenCodePush?: (push: OpenCodePermissionPush) => void
   createServer?: (options: HookServerOptions) => HookServerLike
+  /**
+   * The listener shared with the OpenCode plugin channel (#588 T6, F5). When
+   * given, this channel only opens and closes the Claude route on it, and
+   * `port`/`onEvent`/`onOpenCodePush`/`createServer` above are the listener's
+   * business, not this channel's. When absent, this channel builds a private
+   * one from those same options, which is what every test written before the
+   * listener was shared still constructs.
+   */
+  listener?: HookListener
   curlAvailable?: () => Promise<boolean>
   log?: (message: string) => void
   warn?: (message: string, error?: unknown) => void
@@ -86,18 +95,32 @@ function messageOf(error: unknown): string {
 export class HookChannel {
   private readonly options: HookChannelOptions
   private readonly markerPath: string
-  private readonly tokenPath: string
-  private server: HookServerLike | null = null
+  private readonly listener: HookListener
 
   constructor(options: HookChannelOptions) {
     this.options = options
     this.markerPath = join(options.userDataDir, HOOKS_ENABLED_MARKER)
-    this.tokenPath = join(options.userDataDir, HOOK_TOKEN_FILE)
+    this.listener =
+      options.listener ??
+      new HookListener({
+        fs: options.fs,
+        userDataDir: options.userDataDir,
+        port: options.port,
+        onEvent: options.onEvent,
+        onOpenCodePush: options.onOpenCodePush,
+        createServer: options.createServer,
+        log: options.log,
+        warn: options.warn
+      })
   }
 
-  /** Whether the listener is up right now, which is what the tray should show. */
+  /**
+   * Whether the Claude route is being served right now, which is what the
+   * tray should show. The listener itself may be up for the OpenCode plugin
+   * alone; that is not this channel being on (#588 T6, F5).
+   */
   isActive(): boolean {
-    return this.server !== null
+    return this.listener.isOpen('claude')
   }
 
   /** Whether the user opted in, regardless of whether the listener came up. */
@@ -132,7 +155,7 @@ export class HookChannel {
   }
 
   private async turnOn(options: { remember: boolean }): Promise<HookToggleResult> {
-    if (this.server !== null) return { enabled: true }
+    if (this.isActive()) return { enabled: true }
 
     const curlAvailable =
       this.options.curlAvailable ??
@@ -146,35 +169,26 @@ export class HookChannel {
       }
     }
 
-    let token: string
+    // The same secret on both sides: the listener requires it, and the
+    // command Claude Code runs carries it.
+    const opened = await this.listener.open('claude')
+    if (!opened.opened) return { enabled: false, error: opened.error }
+
     let command: string
     try {
-      token = await loadOrCreateHookToken({ fs: this.options.fs, path: this.tokenPath })
       command = buildHookCommand({
-        port: this.options.port,
-        token,
+        port: this.listener.port,
+        token: opened.token,
         platform: this.options.platform
       })
     } catch (error) {
+      await this.listener.close('claude')
       return { enabled: false, error: messageOf(error) }
     }
 
-    // The same secret on both sides: embedded in the command Claude Code runs,
-    // and required by the listener that command posts to.
-    const server = (this.options.createServer ?? ((o) => new HookServer(o)))({
-      port: this.options.port,
-      token,
-      onEvent: this.options.onEvent,
-      onOpenCodePush: this.options.onOpenCodePush,
-      log: this.options.log
-    })
-    const started = await this.startServer(server)
-    if (started !== null) return { enabled: false, error: started }
-    this.server = server
-
     const installed = await this.installInto(command)
     if (installed !== null) {
-      await this.stopServer()
+      await this.listener.close('claude')
       return { enabled: false, error: installed }
     }
 
@@ -188,15 +202,6 @@ export class HookChannel {
     }
     this.options.log?.(`[hooks] Instant updates listening on 127.0.0.1:${this.options.port}`)
     return { enabled: true }
-  }
-
-  private async startServer(server: HookServerLike): Promise<string | null> {
-    try {
-      await server.start()
-      return null
-    } catch (error) {
-      return `Port ${this.options.port} could not be opened: ${messageOf(error)}`
-    }
   }
 
   /** Write the hooks; null on success, an explained message when no root took them. */
@@ -231,7 +236,7 @@ export class HookChannel {
 
   /** Turn the channel off: listener down, hooks removed, choice forgotten. */
   async disable(): Promise<void> {
-    await this.stopServer()
+    await this.listener.close('claude')
     try {
       this.warnAboutFailures(
         await uninstallClaudeHooks({ fs: this.options.fs, roots: this.options.roots })
@@ -253,18 +258,7 @@ export class HookChannel {
    * treats as a non-blocking error.
    */
   async shutdown(): Promise<void> {
-    await this.stopServer()
-  }
-
-  private async stopServer(): Promise<void> {
-    const server = this.server
-    this.server = null
-    if (server === null) return
-    try {
-      await server.stop()
-    } catch (error) {
-      this.options.warn?.('[hooks] Listener did not stop cleanly', error)
-    }
+    await this.listener.close('claude')
   }
 }
 
