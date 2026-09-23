@@ -58,7 +58,7 @@ export function opencodeCostBand(
   return 'very-high'
 }
 
-/** The context window `routeDecision.ts`'s own `needsLargeContext` narrowing already treats as "large" (`pickModel`'s `>= 1_000_000` check) — the same number, not a second one. */
+/** The context window `routeDecision.ts`'s own `needsLargeContext` narrowing already treats as "large" (`candidatesAtTier`'s `>= 1_000_000` check) — the same number, not a second one. */
 const LONG_CONTEXT_TOKENS = 1_000_000
 
 /** The facts `opencodeTier` reads — a subset of `OpenCodeCatalogueModel`, so a caller building a synthetic case for a test need not fill in `value`/`displayName`/`status`/etc. */
@@ -70,8 +70,8 @@ export type OpencodeTierFacts = Pick<OpenCodeCatalogueModel, 'cost' | 'limit' | 
  * 1. Reasoning AND the most expensive band (`'very-high'`) → `'frontier'`.
  * 2. The cheapest band (`'low'`, free included) → `'fast-cheap'` — checked
  *    AHEAD of the context check below, so a free model with a huge context
- *    window still reads as the cheap, fast option it is: `pickModel`'s own
- *    tier-down walk never looks ABOVE the tier it was asked for, so a free
+ *    window still reads as the cheap, fast option it is: `candidatesAtTier`'s
+ *    own tier-down walk never looks ABOVE the tier it was asked for, so a free
  *    model landing anywhere but `'fast-cheap'` would make every trivial
  *    prompt miss it.
  * 3. A documented context of at least `LONG_CONTEXT_TOKENS`, neither of the
@@ -251,8 +251,8 @@ export const OPENCODE_CATALOGUE_SOURCES = [
  *
  * Keyed by the exact `provider/model` id the catalogue printed (`model.value`,
  * the same id `ModelOption.value` already carries), so `decideLaunch`'s own
- * live-catalogue id check (`pickModel`'s `liveModelIds`) lines up without
- * translation.
+ * live-catalogue id check (`candidatesAtTier`'s `liveModelIds`) lines up
+ * without translation.
  */
 export function deriveOpenCodeCapabilities(
   models: readonly OpenCodeCatalogueModel[],

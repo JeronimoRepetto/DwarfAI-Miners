@@ -56,11 +56,12 @@ async function resolveModelPart(input: {
 }): Promise<{ model?: string; effort?: string; part: JevRouteModelPart }> {
   const { decided } = input
   const candidates = decided.modelCandidates.options
-  // decideLaunch's own pickModel/finalizeModel choice — already resolved,
-  // and reused as the fallback value whenever request 2 is skipped, fails,
-  // or its answer cannot be acted on. Guaranteed defined whenever
-  // `candidates.length >= 1` (decideLaunch would have refused the whole
-  // decision with 'invalid-response' otherwise — see its own comment).
+  // decideLaunch's own candidatesAtTier/cheapestOrPriciestCandidate/
+  // finalizeModel choice — already resolved, and reused as the fallback
+  // value whenever request 2 is skipped, fails, or its answer cannot be
+  // acted on. Guaranteed defined whenever `candidates.length >= 1`
+  // (decideLaunch would have refused the whole decision with
+  // 'invalid-response' otherwise — see its own comment).
   const safeDefault = { model: decided.model, effort: decided.effort }
   const safeDefaultPart = (reason: JevModelFallbackReason): JevRouteModelPart => ({
     ...(decided.model === undefined ? {} : { value: decided.model }),

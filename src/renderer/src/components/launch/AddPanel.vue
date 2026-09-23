@@ -269,7 +269,7 @@ const jevPartsSummary = computed(() => {
 
 /**
  * Fixed English words for every way the model step's own second request
- * (#608) fell back to `pickModel`'s local choice instead of a winner —
+ * (#608) fell back to the local cost/profile choice instead of a winner —
  * `Record<JevModelFallbackReason, string>` is exhaustive over the union on
  * purpose, so a fallback reason added to the wire fails typecheck here
  * rather than rendering silently as nothing. The first nine reuse

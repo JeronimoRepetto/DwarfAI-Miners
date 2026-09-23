@@ -372,7 +372,7 @@ describe('createJevLaunchRouter — the second (model) request (#608)', () => {
     ['rate-limited' as const],
     ['invalid-response' as const]
   ])(
-    'falls back to pickModel’s own safe default, and says why, when request 2 fails with %s',
+    'falls back to the local cost/profile safe default, and says why, when request 2 fails with %s',
     async (reason) => {
       const fake = new FakeJevRouter()
       fake.queueOutcome(answers())
@@ -382,9 +382,9 @@ describe('createJevLaunchRouter — the second (model) request (#608)', () => {
       const result = await service.route({ prompt: 'add a field to this form' })
 
       if (result.kind !== 'decision') throw new Error(`expected a decision, got ${result.reason}`)
-      // pickModel's own safe pick between 'default' (unverified) and 'sonnet'
-      // (medium) is the cheaper, verified one — 'sonnet' — exactly as it was
-      // before #608 ever asked a second question.
+      // cheapestOrPriciestCandidate's own safe pick between 'default'
+      // (unverified) and 'sonnet' (medium) is the cheaper, verified one —
+      // 'sonnet' — exactly as it was before #608 ever asked a second question.
       expect(result.model).toBe('sonnet')
       expect(result.parts.model).toEqual({ value: 'sonnet', applied: 'safe-default', reason })
     }

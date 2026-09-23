@@ -4648,8 +4648,10 @@ export interface JevRouteNoulPart {
 }
 
 /**
- * Why the model step fell back to `pickModel`'s own choice, instead of a
- * winner from #608's second Jev request. Reuses `JevFallbackReason`'s closed
+ * Why the model step fell back to the local cost/profile pick among
+ * `candidatesAtTier`'s own candidates (`cheapestOrPriciestCandidate`,
+ * finalized the same way `finalizeModel` always does), instead of a winner
+ * from #608's second Jev request. Reuses `JevFallbackReason`'s closed
  * vocabulary for every way the SECOND request itself can fail — timeout,
  * unreachable, rate-limited, unauthorized, invalid-response and
  * budget-exceeded all mean the same thing here they do for request 1, just
@@ -4681,8 +4683,8 @@ export interface JevRouteModelPart {
    * when exactly one candidate existed, so no second request was ever sent
    * (never `'safe-default'`: nothing was defaulted to, it was the only
    * option). `'safe-default'` when the second request could not be sent,
-   * failed, or its answer could not be acted on, and `pickModel`'s own
-   * cost/profile choice was used instead.
+   * failed, or its answer could not be acted on, and the local cost/profile
+   * choice among `candidatesAtTier`'s own candidates was used instead.
    */
   applied: 'answered' | 'safe-default' | 'only-candidate'
   /** The winning candidate's own Noul probability — present only when `applied === 'answered'`. */
