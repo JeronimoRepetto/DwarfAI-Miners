@@ -1825,6 +1825,21 @@ describe('parseClaudeTranscriptTail pending question (issue #94)', () => {
     expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
   })
 
+  it('refuses a call whole when its last question cannot be read, not only its second', () => {
+    // The implementation loop returns on any position; the test pins that
+    // position does not matter. A four-question call with the fourth
+    // malformed must refuse the whole ask just like a malformed second does.
+    const tail = askLine('toolu_q4', {
+      questions: [
+        { question: 'Which colour?', options: [{ label: 'Red' }] },
+        { question: 'Which fruit?', options: [{ label: 'Fig' }] },
+        { question: 'Which shape?', options: [{ label: 'Round' }] },
+        { question: 7, options: [{ label: 'Large' }] }
+      ]
+    })
+    expect(parseClaudeTranscriptTail(tail).pendingQuestion).toBeUndefined()
+  })
+
   it('ignores an ask whose tool_use block carries no id to resolve it by', () => {
     // Without an id nothing could ever mark it answered, so it would sit on the
     // panel forever. Absent evidence, not a question.
