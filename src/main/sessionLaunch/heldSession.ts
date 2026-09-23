@@ -5,7 +5,7 @@ import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
 // shared/heldSessionText.ts for why this cannot stay a local constant.
 import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
-import { HELD_CONVERSATION_LIMIT, isMcpConnectionStatus } from '../domain/types'
+import { HELD_CONVERSATION_LIMIT, isMcpConnectionStatus, splitAnswerLabels } from '../domain/types'
 import type {
   Dwarf,
   DwarfContextUsage,
@@ -814,6 +814,19 @@ const TOO_MANY_ANSWERS = 'That is more answers than the agent asked for.'
 const UNKNOWN_QUESTION = 'The agent did not ask that question.'
 const AMBIGUOUS_QUESTION = 'Two of the questions read the same, so that answer cannot be matched.'
 const UNKNOWN_OPTION = 'The agent did not offer that option.'
+/**
+ * The card cannot Submit until every question of the call has a choice
+ * (#443 T2), so a record that leaves one out is never a partial answer still
+ * in flight — it is refused rather than released, the same way every other
+ * malformed record here is (#443 T3).
+ */
+const MISSING_ANSWER = 'That leaves a question the agent asked unanswered.'
+/**
+ * A single-select question offers one choice at a time; a value naming
+ * several is not a smaller mistake than an unoffered option, it is a claim
+ * that a mutually-exclusive question was answered two ways at once (#443 T3).
+ */
+const TOO_MANY_LABELS = 'That is more than one choice for a question that only takes one.'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -842,7 +855,13 @@ function parseOption(value: unknown): DwarfQuestionOption | undefined {
   }
 }
 
-/** One question, or undefined when the block is not the shape the schema promises. */
+/**
+ * One question, or undefined when the block is not the shape the schema
+ * promises. An individual malformed OPTION is still dropped on its own (see
+ * parseOption) — only a question the schema itself does not recognise is
+ * refused whole, and it is `parseAskUserQuestion` below that turns one of
+ * these into refusing the entire call (#443 T3).
+ */
 function parseQuestion(value: unknown): HeldAskQuestion | undefined {
   if (!isRecord(value)) return undefined
   if (typeof value.question !== 'string' || value.question === '') return undefined
@@ -875,16 +894,30 @@ function parseQuestion(value: unknown): HeldAskQuestion | undefined {
  * exactly as a payload arriving over IPC is: a malformed ask becomes a refusal
  * the port can state, never a main-process throw inside a permission callback
  * the agent is blocked on.
+ *
+ * Every entry of `questions` is carried, in order, or none is (#443 T3).
+ * AMENDED (was: `.map(parseQuestion).filter((q) => q !== undefined)`, which
+ * dropped one unreadable question silently and carried whatever the rest of
+ * the call parsed). This now matches `askedQuestion` in
+ * providers/claude/parse.ts and Codex's writer: the picker still walks to the
+ * question this parser could not read, whether or not this app carries it, so
+ * a card built from the rest would answer a call it cannot finish, and a
+ * shortened list would claim the agent asked less than it did. The absence is
+ * the miss this file already accepted (see parseQuestion); the half is a
+ * false claim it must not make.
  */
 export function parseAskUserQuestion(
   toolUseId: string,
   input: Record<string, unknown>
 ): HeldAsk | null {
   if (!isRecord(input) || !Array.isArray(input.questions)) return null
-  const questions = input.questions
-    .map(parseQuestion)
-    .filter((question): question is HeldAskQuestion => question !== undefined)
-  if (questions.length === 0) return null
+  if (input.questions.length === 0) return null
+  const questions: HeldAskQuestion[] = []
+  for (const entry of input.questions) {
+    const question = parseQuestion(entry)
+    if (question === undefined) return null
+    questions.push(question)
+  }
   return { toolUseId, questions }
 }
 
@@ -900,9 +933,9 @@ export function parseAskUserQuestion(
  * Every question travels, in the order the agent asked them (#443). Until then
  * only the first did, because `DwarfQuestion` was singular, and a held card
  * could release the blocked call on an answer to question 1 alone. The list is
- * what lets the card walk the call and the answer cover all of it; that the
- * card and resolveAnswers still accept a partial record is the part #443 closes
- * next, not something this shape asks for.
+ * what lets the card walk the call and the answer cover all of it; `resolveAnswers`
+ * now refuses a record that does not (#443 T3), closing the gap this shape
+ * made possible rather than requiring.
  *
  * `askedAt` is passed in rather than read from a clock here: the SDK attaches
  * no timestamp to the callback, so the honest value is when this host received
@@ -968,9 +1001,30 @@ export function permissionToWire(prompt: HeldPermission, askedAt: string): Dwarf
 }
 
 /**
+ * How several chosen labels of ONE multi-select question ride in the single
+ * string value the tool's own `answers` record takes (#443 T3).
+ *
+ * A comma, per `@anthropic-ai/claude-agent-sdk` 0.3.258's own
+ * `AskUserQuestionOutput` type — `@anthropic-ai/claude-agent-sdk/sdk-tools`,
+ * a documented public export, not an internal file — whose `answers` field
+ * comment reads verbatim: "question text -> answer string; multi-select
+ * answers are comma-separated." That is a measurement this app did not have
+ * when `ANSWER_LABEL_SEPARATOR`'s own comment in contracts.ts was written: it
+ * called the picker's separator unmeasured and kept a held multi-select
+ * question single-choice on the strength of that gap (`togglesAt` in the
+ * renderer's questionAnswer.ts still does, until that gap is closed there
+ * too — this only prepares what resolveAnswers does with the answer once it
+ * is). No worked example in the SDK's own file gives the surrounding
+ * whitespace, so this is the plain, literal reading of "comma-separated" —
+ * the delimiter is sourced, not guessed; the whitespace around it is not
+ * settled by anything read.
+ */
+const SDK_MULTI_SELECT_SEPARATOR = ','
+
+/**
  * Turn the panel's answer into the record the tool takes, or refuse it.
  *
- * Two properties make this safe to hand to a live agent:
+ * Three properties make this safe to hand to a live agent:
  *
  * 1. **Nothing in it is free text.** Every key must be a question the call
  *    actually asked and every value a label it actually offered, so an answer
@@ -983,10 +1037,24 @@ export function permissionToWire(prompt: HeldPermission, askedAt: string): Dwarf
  *    recognise those — so the match is made against the redacted forms and what
  *    is sent is the original. Where two questions redact to the same text the
  *    answer is refused instead of guessed.
+ * 3. **Every question is answered, or none is sent (#443 T3).** The card
+ *    cannot Submit until every question of the call has a choice (#443 T2),
+ *    so a record missing one is not a partial answer still in flight to top
+ *    up later — it is a stale or malformed request, and releasing the call on
+ *    it would make the agent believe the person was asked, and answered,
+ *    less than the call actually carried. AMENDED (was: accepted, from when
+ *    `DwarfQuestion` was singular and a record naming the one question that
+ *    ever reached the wire was the whole of what the panel could send).
  *
- * A single label per question, even where the ask was multi-select: how a
- * picker joins several is unmeasured, and inventing a separator is exactly the
- * kind of guess that would make the agent read an answer nobody gave.
+ * A single label per question where the ask was single-select, refused
+ * otherwise. A `multiSelect` question may answer with several, matched
+ * individually against its own options and rejoined with the SDK's own
+ * documented separator — see SDK_MULTI_SELECT_SEPARATOR. The value arriving
+ * here may itself already carry several labels joined by the WIRE's own
+ * encoding (`splitAnswerLabels`/`ANSWER_LABEL_SEPARATOR`, contracts.ts) —
+ * that is the one both processes agree on for "several labels in one string",
+ * whichever channel produced it — and this is where they are read back out
+ * and re-joined into what the tool call itself expects.
  */
 export function resolveAnswers(ask: HeldAsk, answers: unknown): AnswerResolution {
   if (!isRecord(answers)) return { ok: false, reason: NOTHING_ANSWERED }
@@ -1003,14 +1071,30 @@ export function resolveAnswers(ask: HeldAsk, answers: unknown): AnswerResolution
   }
 
   const resolved: AnswerRecord = {}
-  for (const [questionText, label] of given) {
+  const answeredQuestions = new Set<HeldAskQuestion>()
+  for (const [questionText, value] of given) {
     const question = byRedactedQuestion.get(questionText)
     if (question === undefined) return { ok: false, reason: UNKNOWN_QUESTION }
     if (question === 'ambiguous') return { ok: false, reason: AMBIGUOUS_QUESTION }
-    if (typeof label !== 'string') return { ok: false, reason: UNKNOWN_OPTION }
-    const option = question.options.find((entry) => redactSecrets(entry.label) === label)
-    if (option === undefined) return { ok: false, reason: UNKNOWN_OPTION }
-    resolved[question.question] = option.label
+    if (typeof value !== 'string') return { ok: false, reason: UNKNOWN_OPTION }
+    const chosenLabels = splitAnswerLabels(value)
+    if (chosenLabels.length === 0) return { ok: false, reason: UNKNOWN_OPTION }
+    if (chosenLabels.length > 1 && !question.multiSelect) {
+      return { ok: false, reason: TOO_MANY_LABELS }
+    }
+    const matched: string[] = []
+    for (const label of chosenLabels) {
+      const option = question.options.find((entry) => redactSecrets(entry.label) === label)
+      if (option === undefined) return { ok: false, reason: UNKNOWN_OPTION }
+      matched.push(option.label)
+    }
+    // A lone label joins to itself unchanged, so a single-select answer is
+    // still byte for byte what it was before this function read several.
+    resolved[question.question] = matched.join(SDK_MULTI_SELECT_SEPARATOR)
+    answeredQuestions.add(question)
+  }
+  if (answeredQuestions.size !== ask.questions.length) {
+    return { ok: false, reason: MISSING_ANSWER }
   }
   return { ok: true, answers: resolved }
 }

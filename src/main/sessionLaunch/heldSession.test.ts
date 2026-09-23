@@ -5,6 +5,7 @@ import {
   HELD_CONVERSATION_LIMIT,
   defaultDwarf,
   defaultMine,
+  joinAnswerLabels,
   type DwarfPermissionRequest,
   type FeedMessage,
   type Mine
@@ -135,6 +136,24 @@ describe('parseAskUserQuestion', () => {
       questions: [{ question: 'Which colour?', options: [{ label: 'Green' }, { label: 'Red' }] }]
     })
     expect(ask?.questions[0]?.multiSelect).toBe(false)
+  })
+
+  it('refuses the whole call when one question of several is unreadable, not only that entry', () => {
+    // #443 T3. Before this the second question's malformed `options` cost
+    // only itself: the call carried First and Third, silently dropping
+    // Second. The picker still walks to Second whether or not this parser
+    // could read it, so that two-item list claimed the agent asked less than
+    // it did — the same false claim `askedQuestion` (providers/claude/parse.ts)
+    // and the Codex writer already refuse whole for.
+    expect(
+      parseAskUserQuestion('toolu_09', {
+        questions: [
+          { question: 'First?', multiSelect: false, options: [{ label: 'A' }] },
+          { question: 'Second?', multiSelect: false, options: 'not a list' },
+          { question: 'Third?', multiSelect: false, options: [{ label: 'C' }] }
+        ]
+      })
+    ).toBeNull()
   })
 })
 
@@ -320,15 +339,37 @@ describe('resolveAnswers', () => {
     expect(resolved.ok ? '' : resolved.reason).toContain('option')
   })
 
-  it('refuses two labels joined into one value, even where the ask was multi-select', () => {
-    // Answering more than one option is unproven against a live agent, so the
-    // engine sends exactly one label rather than a separator it guessed.
+  it('accepts several labels for a multi-select question, joined by the SDK-documented separator', () => {
+    // AMENDED for #443 T3 (was: "refuses two labels joined into one value,
+    // even where the ask was multi-select", expecting `resolveAnswers(ask, {
+    // 'Which?': 'A, B' }).ok` to be false — the comment reasoned the picker's
+    // own separator was unproven, so the engine sent exactly one label rather
+    // than guess one). `@anthropic-ai/claude-agent-sdk` 0.3.258's own
+    // `AskUserQuestionOutput` type (its `sdk-tools` export, sdk-tools.d.ts)
+    // documents it now: "question text -> answer string; multi-select answers
+    // are comma-separated". The value arriving here carries the WIRE's own
+    // joined encoding (joinAnswerLabels/ANSWER_LABEL_SEPARATOR); resolveAnswers
+    // reads that back out and rejoins the matched labels with the SDK's comma.
     const ask = parseAskUserQuestion('toolu_25', {
       questions: [
         { question: 'Which?', multiSelect: true, options: [{ label: 'A' }, { label: 'B' }] }
       ]
     })!
-    expect(resolveAnswers(ask, { 'Which?': 'A, B' }).ok).toBe(false)
+    const resolved = resolveAnswers(ask, { 'Which?': joinAnswerLabels(['A', 'B']) })
+    expect(resolved).toEqual({ ok: true, answers: { 'Which?': 'A,B' } })
+  })
+
+  it('refuses several labels for a single-select question, even joined by the wire’s own encoding', () => {
+    // #443 T3. A single-select question offers one choice at a time; several
+    // labels for it is not a smaller mistake than an unoffered option, it is a
+    // claim that a mutually-exclusive question was answered two ways at once.
+    const ask = parseAskUserQuestion('toolu_29', {
+      questions: [
+        { question: 'Which?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }
+      ]
+    })!
+    const resolved = resolveAnswers(ask, { 'Which?': joinAnswerLabels(['A', 'B']) })
+    expect(resolved.ok).toBe(false)
   })
 
   it('refuses more answers than the ask has questions', () => {
@@ -357,14 +398,38 @@ describe('resolveAnswers', () => {
     expect(resolved.ok ? '' : resolved.reason).toContain('same')
   })
 
-  it('accepts a partial record, because the wire only ever showed the first question', () => {
+  it('refuses a record missing the second question, now that every question reaches the card', () => {
+    // AMENDED for #443 T3 (was: "accepts a partial record, because the wire
+    // only ever showed the first question", expecting `{ ok: true, answers: {
+    // 'First?': 'A' } }`). That was true when `DwarfQuestion` was singular and
+    // a held card could never have shown, let alone answered, a second
+    // question. #443 T1 put every question on the wire and #443 T2 made the
+    // card walk them all with one Submit gated on every one having a choice —
+    // so a record naming only the first is no longer a partial answer still
+    // arriving, it is main being asked to release a call the person never
+    // finished, and that must be refused rather than honoured.
     const ask = parseAskUserQuestion('toolu_27', {
       questions: [
         { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
         { question: 'Second?', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
       ]
     })!
-    expect(resolveAnswers(ask, { 'First?': 'A' })).toEqual({ ok: true, answers: { 'First?': 'A' } })
+    const resolved = resolveAnswers(ask, { 'First?': 'A' })
+    expect(resolved.ok).toBe(false)
+    expect(resolved.ok ? '' : resolved.reason).toContain('unanswered')
+  })
+
+  it('answers with both questions of a complete two-question record', () => {
+    const ask = parseAskUserQuestion('toolu_31', {
+      questions: [
+        { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'Second?', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    })!
+    expect(resolveAnswers(ask, { 'First?': 'A', 'Second?': 'D' })).toEqual({
+      ok: true,
+      answers: { 'First?': 'A', 'Second?': 'D' }
+    })
   })
 })
 
