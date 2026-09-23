@@ -1,7 +1,8 @@
 import type {
   DelegateRequestBody,
   DelegationFailure,
-  DelegationFailureKind
+  DelegationFailureKind,
+  DelegationToolResult
 } from './delegationProtocol'
 
 /**
@@ -83,6 +84,20 @@ export const NATIVE_SUBAGENT_FALLBACK_SENTENCE =
 /** Local twin of `delegationProtocol.ts`'s own function of the same name — see this file's own top comment for why. */
 export function delegationFailure(kind: DelegationFailureKind, reason: string): DelegationFailure {
   return { kind, detail: `${reason} ${NATIVE_SUBAGENT_FALLBACK_SENTENCE}` }
+}
+
+/**
+ * The ONE place either MCP tool's own result text is built (#601) —
+ * `delegationHeldServer.ts`'s own `toCallToolResult` calls this for
+ * `content[0].text`, and `DelegationService`'s own push to a settled
+ * ticket's HELD parent calls it again for the same ticket's same settled
+ * state, so the agent reads byte-identical JSON whichever path hands it the
+ * answer. Deliberately trivial (plain `JSON.stringify`) — the whole point of
+ * a shared function is that a future change to this shape can only happen
+ * once, not once per caller that forgot the other one existed.
+ */
+export function formatDelegationResultText(result: DelegationToolResult): string {
+  return JSON.stringify(result)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

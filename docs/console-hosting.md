@@ -364,12 +364,13 @@ launched session being a foreman by construction.
 
 Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
 
-| Channel                                      | Question form                                                                                                                             | Available while open?                                                                                     | Answer path                                                                                         |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `AskUserQuestion` in an **observed TUI**     | structured — written to the transcript at **resolve**, backdated, on the 2026-09-02 build; written **when asked**, unresolved, on 2.1.273 | **no** as measured here; **yes** as re-measured 2026-09-16 — see `docs/question-capture-evaluation.md` §9 | keys into that session's own console → **answered from the panel, built (#362, by pid since #402)** |
-| **Cross-session message bus**                | **prose**, options embedded as text                                                                                                       | yes, instantly                                                                                            | prose reply; the peer's human may interpose                                                         |
-| **SDK-held session** (panel-launched)        | structured `tool_use`, streams live                                                                                                       | yes                                                                                                       | **full structured loop**, ~6s round trip                                                            |
-| **Permission prompt** in an **observed TUI** | structured — the `tool_use` is written BEFORE the dialog opens                                                                            | **yes**, and so is what it asks                                                                           | keystrokes at that TUI → **answered from the panel, built (#203)**                                  |
+| Channel                                         | Question form                                                                                                                             | Available while open?                                                                                                                                        | Answer path                                                                                         |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `AskUserQuestion` in an **observed TUI**        | structured — written to the transcript at **resolve**, backdated, on the 2026-09-02 build; written **when asked**, unresolved, on 2.1.273 | **no** as measured here; **yes** as re-measured 2026-09-16 — see `docs/question-capture-evaluation.md` §9                                                    | keys into that session's own console → **answered from the panel, built (#362, by pid since #402)** |
+| **Cross-session message bus**                   | **prose**, options embedded as text                                                                                                       | yes, instantly                                                                                                                                               | prose reply; the peer's human may interpose                                                         |
+| **SDK-held session** (panel-launched)           | structured `tool_use`, streams live                                                                                                       | yes                                                                                                                                                          | **full structured loop**, ~6s round trip                                                            |
+| **Permission prompt** in an **observed TUI**    | structured — the `tool_use` is written BEFORE the dialog opens                                                                            | **yes**, and so is what it asks                                                                                                                              | keystrokes at that TUI → **answered from the panel, built (#203)**                                  |
+| **OpenCode permission ask**, via its own plugin | structured — the plugin forwards OpenCode's own `permission.asked` event verbatim, no transcript read at all                              | **yes** — undrawn, it waits out its own grace window; once drawn on a card it stops aging and ends only on a matching reply or the session leaving the board | `POST` to the session's own HTTP server → **answered from the panel, built (#588)**                 |
 
 - **Row one revised an assumption three earlier phases were built on — and has since been revised
   itself.** A menu left open ~5.5 minutes, transcript scanned twice: **zero `AskUserQuestion` blocks
@@ -418,6 +419,15 @@ Every row measured — #94's three phase-5 experiments, 2026-09-02 [V, #94]:
   character in the session's idle input and a late `Esc` interrupts the running turn — accepted, and
   said out loud in the panel's status line under a deny. Row one was unbuilt when this was written
   and is not any more: §4c holds its keys, and #402 the write that carries them.
+
+- **Row five is not #94's, and is not a TUI channel at all** — a plugin running inside OpenCode's own
+  server process is what makes it possible, not a transcript this app reads. It is the fix for the one
+  case rows one and four both leave uncovered: an OpenCode session's permission ask lives only in that
+  server's in-memory deferreds, never on disk, so no amount of `opencode.db` polling could ever see it
+  ([`privacy.md`'s OpenCode permission relay section](privacy.md#the-opencode-permission-relay)
+  states what crosses the wire). Off by default; the plugin and the answer both fail silently
+  when the relay is switched off, so an unconsented OpenCode session is exactly as unreachable as it
+  was before #588.
 
 ### 4c. The AskUserQuestion picker's own keys — measured 2026-09-10 (#362)
 

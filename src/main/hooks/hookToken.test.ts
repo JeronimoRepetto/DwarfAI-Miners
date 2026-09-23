@@ -50,6 +50,12 @@ describe('loadOrCreateHookToken', () => {
     expect(await fs.exists('C:/Users/j/AppData/Roaming/DwarfAI-Miners')).toBe(true)
   })
 
+  it('stores the token owner-only (#588 T6 security fix): a bare writeText would leave it 0644 under a 022 umask, readable by every local account', async () => {
+    const fs = new FakeHookFs()
+    await loadOrCreateHookToken({ fs, path: PATH, generate: () => VALID })
+    expect(fs.modeOf(PATH)).toBe(0o600)
+  })
+
   it('produces a distinct 32-hex-character token per install by default', async () => {
     const fs = new FakeHookFs()
     const first = await loadOrCreateHookToken({ fs, path: PATH })

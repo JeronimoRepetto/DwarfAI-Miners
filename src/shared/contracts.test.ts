@@ -8,6 +8,9 @@ import type {
   DwarfRole
 } from './contracts'
 import {
+  DEFAULT_OPENCODE_SETTINGS,
+  MAX_OPENCODE_SERVER_PASSWORD_CHARS,
+  parseOpenCodeServerPasswordInput,
   DEFAULT_AUDIO_PREFERENCES,
   DWARF_PROVIDERS,
   DWARF_SILENCE_WINDOW_MS,
@@ -1380,3 +1383,32 @@ describe('JevPreferences.delegation and parseJevPreferences', () => {
   )
 })
 /* --- end of the #511 block ---------------------------------------------------- */
+
+/* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
+describe('parseOpenCodeServerPasswordInput (#588 T6, F1)', () => {
+  it('returns the password exactly as typed, spaces included', () => {
+    expect(parseOpenCodeServerPasswordInput(' pass word ')).toBe(' pass word ')
+  })
+
+  it.each([
+    ['a non-string', 42, /string/],
+    ['an empty string', '', /empty/],
+    ['an over-long paste', 'x'.repeat(MAX_OPENCODE_SERVER_PASSWORD_CHARS + 1), /at most/],
+    ['a newline, which would break the HTTP header it lands in', 'a\nb', /control/]
+  ])('refuses %s', (_label, payload, message) => {
+    expect(() => parseOpenCodeServerPasswordInput(payload)).toThrow(message)
+  })
+
+  it('never quotes the refused value back in its error', () => {
+    expect(() => parseOpenCodeServerPasswordInput('secret\n')).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('secret') })
+    )
+  })
+})
+
+describe('DEFAULT_OPENCODE_SETTINGS (#588 T6)', () => {
+  it('draws the relay off and no password before main answers', () => {
+    expect(DEFAULT_OPENCODE_SETTINGS).toEqual({ pluginEnabled: false, passwordConfigured: false })
+  })
+})
+/* --- end of the #588 T6 block ------------------------------------------------ */

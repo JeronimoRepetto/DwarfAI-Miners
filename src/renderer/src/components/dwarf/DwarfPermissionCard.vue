@@ -16,6 +16,7 @@ import {
 } from '../../lib/question/questionAnswer'
 import {
   MAX_DWARF_TEXT_CHARS,
+  OPENCODE_PERMISSION_ANSWERED_ABOVE,
   TYPED_HERE_REACHES_THE_PICKER,
   type DwarfAnswerState,
   type DwarfPermissionDecision,
@@ -108,8 +109,16 @@ const freeText = computed(() => freeTextRoute(props.permission.channel, null))
 /*
  * ONE jump per card, never two: the refusal row below already carries it
  * wherever a refused decision is showing.
+ *
+ * Scoped to 'terminal' explicitly (#588 T5), not merely `!showJump`: an
+ * OpenCode permission's box is refused too (`freeText === 'closed'`), but
+ * that branch is handled in its own template arm below and never reaches
+ * this one — this guard is what keeps it that way if the arms above it ever
+ * change, rather than relying on freeTextRoute never returning 'picker' for
+ * that channel. There is no console for that channel to jump to at all
+ * (review finding F2).
  */
-const showPickerJump = computed(() => !showJump.value)
+const showPickerJump = computed(() => props.permission.channel === 'terminal' && !showJump.value)
 
 function cardClass(label: string): string {
   return `is-${optionState(selection.value, props.permission.toolUseId, label)}`
@@ -206,6 +215,15 @@ function onFreeformKeydown(event: KeyboardEvent): void {
       aria-label="Tell this agent something instead of deciding"
       @keydown="onFreeformKeydown"
     ></textarea>
+    <!--
+      OpenCode's own dialog (#588 T5): refused for a real reason of its own —
+      the race docs/opencode-format.md Row 13 measured — never the console
+      copy below, which would claim a picker and a terminal this channel does
+      not have (review finding F2). No jump: there is no console to open.
+    -->
+    <p v-else-if="freeText === 'closed'" class="freeform-refused" role="note">
+      <span>{{ OPENCODE_PERMISSION_ANSWERED_ABOVE }}</span>
+    </p>
     <!--
       The box refused, in its own place, because the console it would be written
       into is drawing this dialog (#481) — the question card's own treatment,

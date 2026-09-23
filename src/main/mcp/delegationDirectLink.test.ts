@@ -116,4 +116,58 @@ describe('createDirectDelegationLink (#511 M1a)', () => {
       failure: { kind: 'unknown-ticket', detail: 'gone' }
     })
   })
+
+  /*
+   * #601: the other half of the settle race `DelegationService.maybePush`
+   * closes — see that method's own comment. `onWaitEnded` is this wait's own
+   * signal that its own deadline elapsed with nothing to show for it, which
+   * is the one moment a settle landing later needs to know a push is safe.
+   */
+  describe('onWaitEnded (#601)', () => {
+    it('is called once the deadline elapses with the ticket still pending', async () => {
+      const clock = fakeClock()
+      const onWaitEnded = vi.fn<(ticket: string) => void>()
+      const link = createDirectDelegationLink({
+        delegate: async () => ({ ticket: 'ticket-1', routing: ROUTING }),
+        result: () => ({ status: 'pending', routing: ROUTING }),
+        onWaitEnded,
+        ...clock
+      })
+
+      await link.delegate('find the bug', undefined, { waitMs: 2_000 })
+
+      expect(onWaitEnded).toHaveBeenCalledTimes(1)
+      expect(onWaitEnded).toHaveBeenCalledWith('ticket-1')
+    })
+
+    it('is never called when a poll finds a settled result before the deadline', async () => {
+      const clock = fakeClock()
+      const onWaitEnded = vi.fn<(ticket: string) => void>()
+      const link = createDirectDelegationLink({
+        delegate: async () => ({ ticket: 'ticket-1', routing: ROUTING }),
+        result: () => ({ status: 'done', outcome: { kind: 'concluded', endedAt: 1 } }),
+        onWaitEnded,
+        ...clock
+      })
+
+      await link.delegate('find the bug', undefined, { waitMs: 10_000 })
+
+      expect(onWaitEnded).not.toHaveBeenCalled()
+    })
+
+    it('is never called on a subtask_result-style result() lookup — only the wait itself carries this signal', async () => {
+      const clock = fakeClock()
+      const onWaitEnded = vi.fn<(ticket: string) => void>()
+      const link = createDirectDelegationLink({
+        delegate: async () => ({ ticket: 'ticket-1', routing: ROUTING }),
+        result: () => ({ status: 'pending', routing: ROUTING }),
+        onWaitEnded,
+        ...clock
+      })
+
+      await link.result('ticket-1')
+
+      expect(onWaitEnded).not.toHaveBeenCalled()
+    })
+  })
 })

@@ -8,8 +8,16 @@
  */
 export const HOOK_MARKER = 'dwarfai-miners-hook'
 
-/** The only path the listener answers on. */
+/** The path the listener answers Claude's own hook events on. */
 export const HOOK_ROUTE = `/${HOOK_MARKER}`
+
+/**
+ * The OpenCode plugin's own push route, nested under the same marker so one
+ * listener plainly serves both channels (#588 T3) -- HookServer routes on
+ * this exact string, and it is what the installer (T6, unstarted) will bake
+ * into the plugin's PUSH_URL placeholder alongside the port.
+ */
+export const OPENCODE_PUSH_ROUTE = `${HOOK_ROUTE}/opencode`
 
 /** Per-install shared secret header. Lowercase: Node lowercases incoming header names. */
 export const HOOK_TOKEN_HEADER = 'x-dwarfai-token'

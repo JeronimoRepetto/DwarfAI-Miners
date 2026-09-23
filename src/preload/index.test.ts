@@ -1431,3 +1431,46 @@ describe('preload Jev preferences contract (#509 follow-up)', () => {
     ).resolves.toEqual(stored)
   })
 })
+
+/**
+ * OpenCode permission relay: consent and server password (#588 T6) —
+ * APPENDED, nothing above changed.
+ *
+ * Four members; none ever answers with the password. `setOpenCodeServerPassword`
+ * parses through the SAME shared parser main reads, so a password main would
+ * refuse never reaches the bridge — and, unlike the Jev key, is never trimmed.
+ */
+describe('preload OpenCode settings contract (#588 T6)', () => {
+  it('asks for the stored settings on opencode:settings:get with no payload', async () => {
+    invoke.mockResolvedValueOnce({ pluginEnabled: true, passwordConfigured: false })
+    await expect(api.getOpenCodeSettings()).resolves.toEqual({
+      pluginEnabled: true,
+      passwordConfigured: false
+    })
+    expect(invoke).toHaveBeenLastCalledWith('opencode:settings:get')
+  })
+
+  it('sends the relay switch as a strict boolean', async () => {
+    invoke.mockResolvedValueOnce({ pluginEnabled: false, passwordConfigured: false })
+    await api.setOpenCodePluginEnabled('yes' as unknown as boolean)
+    expect(invoke).toHaveBeenLastCalledWith('opencode:plugin:set', false)
+  })
+
+  it('carries the password exactly as typed, untrimmed', async () => {
+    invoke.mockResolvedValueOnce({ pluginEnabled: false, passwordConfigured: true })
+    await api.setOpenCodeServerPassword(' pass word ')
+    expect(invoke).toHaveBeenLastCalledWith('opencode:password:set', ' pass word ')
+  })
+
+  it('refuses locally, before the bridge, a password the shared parser would refuse anyway', async () => {
+    const callsBefore = invoke.mock.calls.length
+    await expect(api.setOpenCodeServerPassword('')).rejects.toThrow()
+    expect(invoke.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('clears on opencode:password:clear with no payload at all', async () => {
+    invoke.mockResolvedValueOnce({ pluginEnabled: false, passwordConfigured: false })
+    await api.clearOpenCodeServerPassword()
+    expect(invoke).toHaveBeenLastCalledWith('opencode:password:clear')
+  })
+})

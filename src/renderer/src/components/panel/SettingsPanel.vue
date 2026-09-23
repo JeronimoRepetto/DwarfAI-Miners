@@ -7,6 +7,7 @@ import type {
   AudioPreferences,
   JevPreferences,
   JevSettings as JevSettingsType,
+  OpenCodeSettings as OpenCodeSettingsType,
   PanelEdge,
   ShortcutState,
   TypographyPreferences
@@ -16,6 +17,7 @@ import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
 import JevSettings from './JevSettings.vue'
 import NotificationSettings from './NotificationSettings.vue'
+import OpenCodeSettings from './OpenCodeSettings.vue'
 import PositionSettings from './PositionSettings.vue'
 import ResetMetricsModal from './ResetMetricsModal.vue'
 import ShortcutSettings from './ShortcutSettings.vue'
@@ -45,7 +47,8 @@ import PanelTransition from '../shell/PanelTransition.vue'
  * names it as joining there. TYPOGRAPHY (#370) is the third, and the only one
  * whose place the source states outright: after Position and before Audio.
  * JEV (#509) is the fourth, and lands right after Notifications — the same
- * gap, one section further in.
+ * gap, one section further in. OPENCODE (#588 T6) is the fifth, right after
+ * Jev, and the same UNSPECIFIED placement.
  *
  * The "Application" section (pin, hide panel, version) is an UNSPECIFIED
  * placement decision (#138): the design draws no home for any of the three,
@@ -94,6 +97,12 @@ defineProps<{
   /** What each provider can start on — for the default-launch model/effort pickers. */
   jevCatalogs: AgentModelCatalog[]
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  /** The relay consent and whether a server password is stored — main's verdict. */
+  openCodeSettings: OpenCodeSettingsType
+  /** True while a request the OpenCode section made is in flight. */
+  openCodeApplying: boolean
+  /* --- end of the #588 T6 block --------------------------------------------- */
 }>()
 
 const emit = defineEmits<{
@@ -126,6 +135,14 @@ const emit = defineEmits<{
   /** The routing profile and/or the default launch should become this whole document. */
   'jev-preferences-change': [preferences: JevPreferences]
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  /** The OpenCode permission relay should take this state. */
+  'opencode-plugin-change': [enabled: boolean]
+  /** Store this OpenCode server password. */
+  'opencode-password-save': [password: string]
+  /** Forget the stored OpenCode server password. */
+  'opencode-password-clear': []
+  /* --- end of the #588 T6 block --------------------------------------------- */
 }>()
 
 const resetModalOpen = ref(false)
@@ -199,6 +216,16 @@ const resetModalOpen = ref(false)
       @save="emit('jev-save', $event)"
       @clear="emit('jev-clear')"
       @preferences-change="emit('jev-preferences-change', $event)"
+    />
+
+    <div class="group-divider" role="presentation"></div>
+
+    <OpenCodeSettings
+      :settings="openCodeSettings"
+      :applying="openCodeApplying"
+      @plugin-change="emit('opencode-plugin-change', $event)"
+      @password-save="emit('opencode-password-save', $event)"
+      @password-clear="emit('opencode-password-clear')"
     />
 
     <div class="group-divider" role="presentation"></div>

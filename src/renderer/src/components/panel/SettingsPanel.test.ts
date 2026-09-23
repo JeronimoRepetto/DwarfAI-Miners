@@ -12,8 +12,11 @@ import {
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  DEFAULT_JEV_PREFERENCES
+  DEFAULT_JEV_PREFERENCES,
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+  DEFAULT_OPENCODE_SETTINGS
+  /* --- end of the #588 T6 block --------------------------------------------- */
 } from '../../types'
 import PanelTransition from '../shell/PanelTransition.vue'
 import SettingsPanel from './SettingsPanel.vue'
@@ -74,6 +77,11 @@ function render(props: Record<string, unknown> = {}) {
       // draw from. No existing prop or assertion changed.
       jevProviders: [],
       jevCatalogs: [],
+      // AMENDED for #588 T6: two more required props, the OpenCode section's
+      // verdict and whether a request is in flight. No existing prop or
+      // assertion changed.
+      openCodeSettings: { ...DEFAULT_OPENCODE_SETTINGS },
+      openCodeApplying: false,
       ...props
     }
   })
@@ -406,6 +414,10 @@ describe('SettingsPanel section grouping', () => {
       '---',
       'Jev',
       '---',
+      // AMENDED for #588 T6: the OpenCode section joins after Jev, in its own
+      // group. Every other entry and its order is unchanged.
+      'OpenCode',
+      '---',
       'Data Base',
       'Application'
     ])
@@ -474,3 +486,43 @@ describe('SettingsPanel press and hover feedback', () => {
     expect(wrapper.emitted('hide-panel')).toHaveLength(1)
   })
 })
+
+/* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
+describe('SettingsPanel — the OpenCode section (#588 T6)', () => {
+  it('draws OpenCode after Jev and before Data Base', () => {
+    const sections = render()
+      .findAll('section')
+      .map((section) => section.classes()[0])
+    expect(sections.indexOf('opencode-settings')).toBeGreaterThan(sections.indexOf('jev-settings'))
+    expect(sections.indexOf('opencode-settings')).toBeLessThan(
+      sections.indexOf('data-base-settings')
+    )
+  })
+
+  it('mounts the section with the settings it was given', () => {
+    const wrapper = render({
+      openCodeSettings: { ...DEFAULT_OPENCODE_SETTINGS, pluginEnabled: true }
+    })
+    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('forwards the relay switch as opencode-plugin-change', async () => {
+    const wrapper = render()
+    await wrapper.find('.opencode-plugin-enabled').trigger('click')
+    expect(wrapper.emitted('opencode-plugin-change')).toEqual([[true]])
+  })
+
+  it('forwards a password save as opencode-password-save, and a clear as opencode-password-clear', async () => {
+    const wrapper = render()
+    await wrapper.find('.opencode-password-input').setValue('hunter2')
+    await wrapper.find('.opencode-password-save').trigger('click')
+    expect(wrapper.emitted('opencode-password-save')).toEqual([['hunter2']])
+
+    const stored = render({
+      openCodeSettings: { ...DEFAULT_OPENCODE_SETTINGS, passwordConfigured: true }
+    })
+    await stored.find('.opencode-password-clear').trigger('click')
+    expect(stored.emitted('opencode-password-clear')).toHaveLength(1)
+  })
+})
+/* --- end of the #588 T6 block --------------------------------------------- */
