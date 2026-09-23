@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.png" width="160" alt="DwarfAI-Miners logo — the gold mine mound on a dark circular badge">
+  <img src="docs/assets/logo.png"  width="100%" alt="DwarfAI-Miners logo — the gold mine mound on a dark circular badge">
 </p>
 
 <p align="center">
