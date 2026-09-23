@@ -13,6 +13,8 @@ install it, and what it runs on.
   - [Focusing a session's terminal](#focusing-a-sessions-terminal)
   - [Git worktrees](#git-worktrees)
 - [Providers in depth](#providers-in-depth)
+- [Jev](#jev)
+- [Delegation](#delegation)
 - [Sound](#sound)
 - [Notifications](#notifications)
 - [Typography](#typography)
@@ -548,6 +550,48 @@ economy, balanced or premium; see [Configuration](../README.md#configuration) fo
 means, and the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for how a model earns
 a place in the table the profile routes through. `JEV_DEBUG=1` traces every routing call to the
 terminal — see [Diagnostic switches](#diagnostic-switches).
+
+## Delegation
+
+An agent running in a mine can hand a subtask back to the panel instead of reaching for its own
+built-in subagent mechanism: the panel asks Jev which provider, model and effort suit the subtask,
+runs it as its own session, and returns what it concluded to the agent that asked (#511). It rides
+on top of [Jev](#jev) rather than opening a separate assist — see
+[Privacy](privacy.md#subtask-delegation) for exactly what stays on this machine and what does not.
+
+**Turning it on** takes three separate switches, all off by default:
+
+1. Enter your own TypeSafe key in Settings' Jev section — see [Jev](#jev).
+2. Turn on **Let Jev choose** for the launch itself, in the Add Panel.
+3. Turn on Settings' own **Let Jev choose subagents by subtask complexity** checkbox, in the Jev
+   section — shown only once a key is configured, and separate from the toggle above it.
+
+A session started any other way — Jev off, or merely available but not the thing that actually chose
+this particular launch — is never handed the tool, whatever the checkbox says.
+
+**What the agent sees.** Two tools, `delegate_subtask` and `subtask_result`. `delegate_subtask`
+blocks until the delegated session concludes or a wait budget runs out; once it does, the tool
+answers `pending` together with a `ticket`, and the agent calls `subtask_result` with that ticket
+later to fetch the real answer — which may itself still say `pending` if the child has not finished.
+A concluded delegation answers with the child's own turn outcome (concluded, capped, errored,
+interrupted) or with one of this app's own typed failures — Jev unreachable, or unsure with no
+default configured; the chosen provider not launchable; the concurrency limit already reached; or
+the launch attempt itself failing — never a hang, and never a bare error string. Every failure
+carries an instruction telling the agent to fall back to its own native subagent mechanism instead.
+**Depth is 1**: a delegated child is launched without the server at all, so it cannot delegate again
+in turn. **Limits are 2 concurrent delegations per launching session and 4 across the whole app** —
+a safety rail against fanning out an unbounded number of real CLI processes at once, not a
+throughput target.
+
+**Providers.** Claude (a held session, and a detached `claude -p` launch) and OpenCode today. Codex
+and Antigravity are not reachable this way yet — see [Privacy](privacy.md#subtask-delegation) for
+why each is where it is.
+
+**Where the delegated child appears.** In the same mine as the session that delegated it, as its own
+ordinary dwarf on the board — visible, and kickable exactly like any other session this panel
+launched. **Known follow-up:** a delegation that gets stuck holds its concurrency slot until its own
+session actually exits, whether that is an ordinary conclusion or a Kick — nothing frees the slot on
+a timer of its own.
 
 ## Sound
 

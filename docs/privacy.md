@@ -327,6 +327,86 @@ for a System One request, so this document does not claim one. TypeSafe's
 for enterprise customers, reachable at `privacy@typesafe.ai`; this app makes no claim about which
 tier its own requests fall under, and you would need to arrange that directly with TypeSafe.
 
+### Subtask delegation
+
+A session this app launches can hand a subtask back to the panel, which asks Jev which provider,
+model and effort suit it, runs the subtask as its own session in the same mine, and returns what it
+concluded (#511). It is off by default and stays off until three separate things are all true —
+each is necessary and none is sufficient alone:
+
+1. **A TypeSafe key is configured**, in Settings' Jev section.
+2. **This launch was itself routed by an applied Jev decision** — "Let Jev choose" was on and Jev's
+   choice was actually used, never a fallback onto a default (`AgentLaunchRequest.routedByJev`).
+3. **Settings' own checkbox**, "Let Jev choose subagents by subtask complexity" — off by default,
+   shown only once a key is configured (`JevSettings.vue`).
+
+All three are re-checked at the moment of each real launch, never once per app session
+(`delegationGate.ts`, `delegationEnabledFor`) — a session started on your own pickers, with Jev
+merely available, is never handed the tool. Today this reaches Claude (held, and detached `claude
+-p`) and OpenCode; Codex and Antigravity are not yet in the list — see **Known limits** below.
+
+**What runs locally.** With the gate open, this app's main process starts a SECOND loopback HTTP
+listener — `127.0.0.1` only, an ephemeral port, never reachable from the network — separate from
+the hooks channel described below, with its own token minted per launch rather than the one shared,
+per-install token the hooks channel uses (`DelegationService`, `src/main/mcp/delegationService.ts`).
+How a launched session actually reaches it differs by how that session runs:
+
+- **A detached `claude -p` or OpenCode launch** gets a stdio MCP server child, started by the CLI
+  itself through a documented per-invocation mechanism — Claude Code's own `--mcp-config` (a temp
+  file, see below) and OpenCode's own `OPENCODE_CONFIG_CONTENT` environment variable — never a file
+  this app writes into your own Claude or OpenCode configuration. That child is this app's own
+  executable, restarted as plain Node (`ELECTRON_RUN_AS_NODE=1` on the child's own env, never on the
+  CLI's) rather than a separately installed `node` this build cannot assume exists
+  (`delegationServerCommand.ts`), and it reaches the loopback listener the same way any other local
+  MCP server would.
+- **A held Claude session** — one this app keeps open through the Agent SDK — never spawns a second
+  process for this at all: its two delegation tools run in-process, inside this app's own main
+  process (`createSdkMcpServer`, `delegationHeldServer.ts`), with no loopback call and no token on
+  any command line. This is a fix, not a shortcut taken loosely: an earlier draft handed a held
+  session's endpoint and token to the classic `claude` process's own `--mcp-config`, which the Agent
+  SDK turns into that process's own `--mcp-config` argv — visible in `ps`/Task Manager to any other
+  local account on the machine. The in-process server exists specifically so a held session's token
+  never leaves this process and is never serialized to any child's argv or environment.
+
+**What is written to disk.** Only a detached `claude -p` launch writes a file for this: a temporary
+`--mcp-config` JSON document, created with mode `0600` and an exclusive-create flag so it can never
+silently overwrite a colliding name (`createNodeDelegationConfigFile`, `launchRunner.ts`). It is
+removed the moment that launch ends, on every exit path — a clean exit, an early failure, or a spawn
+that never started at all — through the same temp-file cleanup the launch's own stdout/stderr
+capture files already use. It lives under the OS temp directory, the same place those capture files
+do (see [What it stores](#what-it-stores-and-where)), never in this app's own user-data directory,
+never in your own Claude configuration, and never in the project. OpenCode's own
+`OPENCODE_CONFIG_CONTENT` and a held session's in-process server write no file at all.
+
+**What data moves.** The subtask's own text — a `task` string, and an optional `context` — is sent
+to TypeSafe's Jev API to decide a provider, model and effort for it: the exact same
+[Jev disclosure](#jev-the-one-outbound-call) above, for a routing call this app makes on the
+subtask's behalf rather than on your own typed prompt. Once routed, the delegated child is an
+ordinary session of whichever provider was chosen, so its own provider traffic is that provider's,
+exactly as any launch's already is. Nothing else new leaves the machine: the loopback listener
+itself is unreachable from the network, and delegation depth is 1 — a delegated child is launched
+without the server at all, so it cannot delegate again. That holds structurally rather than by
+convention: `delegationService.ts` builds a delegated child's own launch request in main and never
+sets `routedByJev` on it, so the same gate has nothing to read a second time.
+
+**Known limits, stated rather than left implicit:**
+
+- **OpenCode.** `OPENCODE_CONFIG_CONTENT` is an environment variable, and an environment variable is
+  inherited by the WHOLE process it is set on, not only the one child this app means it for. An
+  OpenCode parent's own subprocesses inherit it too, and could in principle delegate again within the
+  same per-parent (2) and global (4) concurrency caps until that parent launch itself ends — no
+  narrower, documented OpenCode mechanism was found that would keep this env off the CLI's own
+  process without also keeping it off the server process that needs it. The token involved is still
+  scoped to, and lives only as long as, that one launch.
+- **Codex.** Not yet enabled. A per-invocation `-c mcp_servers.jev...` override does register a
+  server in Codex's own resolved configuration, measured against the installed CLI — but whether
+  `codex exec` actually exposes that server's tools to the model, rather than merely listing it, is
+  unmeasured. Codex stays out of the provider list until a real-CLI check settles that.
+- **Antigravity.** Excluded outright, and not waiting on a measurement. Its documented MCP
+  registration is a global or project-local `mcp_config.json` file, never a per-invocation
+  mechanism — and writing a server registration into a project's own file on your behalf was decided
+  against.
+
 ### Everything else stays local
 
 Three boundaries keep the rest of this app from opening a socket of its own:
