@@ -360,15 +360,17 @@ walked the support matrix on real hardware — including "it all worked". See
 
 <h2>
   Support the project
-  <img align="right" src="docs/media/hero02.gif" width="210" alt="Worker">
-  <img align="right" src="docs/media/hero03.gif" width="100" alt="Foreman">
 </h2>
+
+<img align="right" src="docs/media/hero02.gif" width="210" alt="Worker">
+<img align="right" src="docs/media/hero03.gif" width="100" alt="Foreman">
 
 DwarfAI-Miners' code is free and MIT-licensed. The artwork remains the creator's property and is
 not separately reusable without authorization. If the project has earned a spot on your desktop,
 you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
 nothing in the app is, or will be, gated on it.
 
+<br clear="right">
 ## License
 
 [MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
