@@ -29,10 +29,42 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  * the future. `pnpm build` runs both (see `package.json`'s own `build`
  * script); `jevMcpServer.ts`'s own module comment and that config's own
  * comment carry the rest of the reasoning.
+ *
+ * AMENDED for #511 T5: `main.build.emptyOutDir` is now explicitly `false`.
+ * electron-vite's own `main` preset
+ * (`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:292-301`,
+ * `electronMainConfigPresetPlugin`) sets `build.outDir` but never sets
+ * `build.emptyOutDir`, so it fell through to Vite's own default — `null`
+ * (`node_modules/vite/dist/node/chunks/config.js:33444`), resolved to `true`
+ * whenever `outDir` sits inside the project root
+ * (`config.js:16759-16766`, `resolveEmptyOutDir`) — and Vite's build then
+ * empties the WHOLE directory once, before writing anything
+ * (`config.js:33401-33409`, `prepareOutDir`/`emptyDir`; gated to run exactly
+ * once per build via `prepareOutDirPlugin`'s own `rendered` set,
+ * `config.js:33379-33399`, so a `-w` watch rebuild does not repeat it).
+ * `electron-vite dev` (`package.json`'s own `dev` script) runs precisely that
+ * one-shot `main` build through `doBuild`
+ * (`node_modules/electron-vite/dist/chunks/lib-7y7CgM8M.js:36` calling
+ * `build(config)` at `:100`) BEFORE Electron is ever started — which used to
+ * empty `out/main` first and only ever write `index.js` into it, silently
+ * deleting an already-built `jevMcpServer.mjs` the instant `pnpm dev` ran
+ * (`jevMcpServer.ts` is not part of THIS config's own entry at all; see
+ * `electron.vite.jevMcpServer.config.ts`, a wholly separate build). `false`
+ * here is the other half of the fix, alongside `package.json`'s new
+ * `build:mcp-server` step running BEFORE `electron-vite dev`: without it,
+ * that prebuilt script would simply be wiped the moment `dev` started its
+ * own main build. `pnpm build`'s own first step is unaffected in practice —
+ * `main`'s only output is the single `index.js` lib entry (no hashed asset
+ * chunks observed; verified with `out/main/index.js` + `jevMcpServer.mjs`,
+ * no `out/main/chunks/`), so there is nothing this build ever produced that
+ * skipping the empty step could leave stale.
  */
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      emptyOutDir: false
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

@@ -978,6 +978,20 @@ export class AgentRuntime {
    * change while this process runs.
    */
   private readonly delegationServerCommand: DelegationServerCommand
+  /**
+   * The same `FsLike` port every other disk read in this runtime already
+   * uses (#511 T5) — kept as a field so `resolveDelegationInjection` can
+   * check whether `delegationServerCommand`'s own script is actually THERE
+   * before minting a token for it, per launch, without a real disk read in a
+   * unit test (`FakeFs` in every test above this comment).
+   */
+  private readonly fs: FsLike
+  /**
+   * Whether the "jevMcpServer.mjs is missing" warning has already fired
+   * once (#511 T5) — a repeated launch attempt while the server stays
+   * unbuilt must not flood the log with the same line every time.
+   */
+  private loggedMissingDelegationServer = false
   /** One attached image's bytes, for a held session's content block (#408). */
   private readonly readAttachment: AttachmentReader
   /** Sessions this panel started and still holds (#86, #94). */
@@ -1259,6 +1273,7 @@ export class AgentRuntime {
     const platform = options.platformAdapters
 
     this.now = options.now ?? Date.now
+    this.fs = fs
     // #511 T4: stored as given (possibly undefined) — see
     // `RuntimeOptions.delegation`'s own comment. Resolved from the SAME
     // `appPaths`/`platform` every other per-OS path above already reads, so
@@ -3473,6 +3488,31 @@ export class AgentRuntime {
       provider
     })
     if (!enabled) return undefined
+    // #511 T5: `pnpm dev` (package.json) can start Electron before
+    // `jevMcpServer.mjs` exists on disk — see `electron.vite.config.ts`'s own
+    // top comment for why `dev` now builds it first, and the cases this
+    // guards for whenever it still does not (a fresh checkout before its
+    // first build, a failed prebuild step, or `electron-vite dev -w` invoked
+    // directly rather than through `pnpm dev`). Handing a CLI a
+    // `--mcp-config`/`OPENCODE_CONFIG_CONTENT` that names a script which is
+    // not there is worse than no delegation at all: the CLI's own MCP client
+    // would fail to start the server and the tool would simply never be
+    // there, with nothing in this app's own log to explain why. Checked here,
+    // per launch attempt, rather than once at startup — the answer can change
+    // while this process runs (a build finishing, `out/` being cleared) —
+    // and BEFORE `issueLaunchToken`, so a missing script costs neither a
+    // token nor a slot against `DelegationService`'s own concurrency caps.
+    const scriptPath = this.delegationServerCommand.args[0]
+    if (scriptPath !== undefined && !(await this.fs.exists(scriptPath))) {
+      if (!this.loggedMissingDelegationServer) {
+        this.loggedMissingDelegationServer = true
+        console.warn(
+          `[delegation] ${scriptPath} does not exist — skipping delegation injection until it is ` +
+            "built ('pnpm build', or 'pnpm dev', which builds it first)."
+        )
+      }
+      return undefined
+    }
     const issued = delegation.issueLaunchToken({ mineId })
     if (issued === undefined) return undefined
     return {

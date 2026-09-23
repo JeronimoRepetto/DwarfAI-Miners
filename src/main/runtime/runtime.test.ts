@@ -46,6 +46,7 @@ import {
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
 import type { SessionLauncher } from '../sessionLaunch/launchRunner'
+import { resolveDelegationServerScriptPath } from '../mcp/delegationServerCommand'
 import {
   MODEL_CATALOG_TIMEOUT_MS,
   type ClaudeModelCatalogPort
@@ -6814,18 +6815,40 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
     }
   }
 
+  const DELEGATION_APP_PATHS = {
+    isPackaged: false,
+    resourcesPath: '',
+    appPath: 'C:\\DwarfAI-Miners'
+  } as const
+
+  /**
+   * A `FakeFs` with `jevMcpServer.mjs` already registered at the exact path
+   * `resolveDelegationServerCommand` resolves for `DELEGATION_APP_PATHS` on
+   * `win32` (#511 T5) — the ordinary, built-and-present case every test in
+   * this block asserted before the exists check below existed. Built through
+   * the SAME `resolveDelegationServerScriptPath` production code calls,
+   * never a hand-typed path, so a future change to the resolver cannot make
+   * this fixture silently stop matching what `AgentRuntime` itself checks.
+   */
+  function fsWithDelegationServer(): FsLike {
+    const fs = new FakeFs()
+    fs.addFile(resolveDelegationServerScriptPath(DELEGATION_APP_PATHS, 'win32'), '// stub\n')
+    return fs
+  }
+
   async function runtimeWith(
     launchSession: SessionLauncher,
-    delegation?: DelegationFake['options']
+    delegation?: DelegationFake['options'],
+    fs: FsLike = fsWithDelegationServer()
   ): Promise<{ runtime: AgentRuntime; mineId: string }> {
     const runtime = new AgentRuntime({
-      fs: new FakeFs(),
+      fs,
       platformAdapters: worktreePlatformAdapters(),
       config: defaultConfig(),
       providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
       launchSession,
       onMinesUpdated: vi.fn(),
-      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+      appPaths: DELEGATION_APP_PATHS,
       ...(delegation === undefined ? {} : { delegation })
     })
     await runtime.refresh()
@@ -6973,6 +6996,61 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
       false
     )
     expect(fake.revoked).toEqual([])
+  })
+
+  /*
+   * #511 T5: `pnpm dev`'s own gap (see `electron.vite.config.ts`'s own top
+   * comment) — `jevMcpServer.mjs` can be absent from disk (a fresh checkout
+   * before its first build, a failed prebuild step, or `electron-vite dev -w`
+   * run directly rather than through `pnpm dev`). Handing a CLI a
+   * `--mcp-config`/`OPENCODE_CONFIG_CONTENT` naming a script that does not
+   * exist is worse than no delegation: the CLI's own MCP client would fail to
+   * start the server and the tool would simply never be there, with nothing
+   * in this app's own log to say why. This checks the SAME path
+   * `serverArgs[0]` would otherwise name, through the injected `FsLike.exists`
+   * port `fsWithDelegationServer`'s absence below stands in for — never the
+   * real filesystem.
+   */
+  it('skips injection and logs once when jevMcpServer.mjs does not exist on disk', async () => {
+    const fake = delegationFake()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'claude' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { runtime, mineId } = await runtimeWith(launchSession, fake.options, new FakeFs())
+
+      const first = await runtime.launchAgent({
+        mineId,
+        provider: 'claude',
+        prompt: 'dig',
+        routedByJev: true
+      })
+      const second = await runtime.launchAgent({
+        mineId,
+        provider: 'claude',
+        prompt: 'dig again',
+        routedByJev: true
+      })
+
+      // Never issued, never revoked — the launch degrades to ordinary and
+      // uninjected, exactly like every other gate failure above, rather than
+      // minting a token this launch will never use.
+      expect(fake.issued).toEqual([])
+      expect(fake.revoked).toEqual([])
+      expect(first.launched).toBe(true)
+      expect(second.launched).toBe(true)
+      const calls = (launchSession as ReturnType<typeof vi.fn>).mock.calls
+      expect('delegation' in calls[0]![0]).toBe(false)
+      expect('delegation' in calls[1]![0]).toBe(false)
+      // Logged once, not once per launch.
+      const delegationWarnings = warn.mock.calls.filter(([message]) =>
+        String(message).includes('[delegation]')
+      )
+      expect(delegationWarnings).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   /**

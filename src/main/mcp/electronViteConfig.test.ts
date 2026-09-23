@@ -48,6 +48,31 @@ describe('electron.vite.config (app build)', () => {
     // `node_modules` for `index.js`, exactly like every other dependency.
     expect(mainConfig.main?.plugins).toBeDefined()
   })
+
+  /*
+   * #511 T5: electron-vite's own `electronMainConfigPresetPlugin`
+   * (node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:292-301) sets
+   * `build.outDir` for `main` but never sets `build.emptyOutDir`, so it falls
+   * through to Vite's own default (`node_modules/vite/dist/node/chunks/
+   * config.js:33444`, `emptyOutDir: null`) — resolved to `true` whenever the
+   * outDir sits inside the project root
+   * (`node_modules/vite/dist/node/chunks/config.js:16759-16766`,
+   * `resolveEmptyOutDir`), which empties the WHOLE directory once per build
+   * (`config.js:33401-33409`, `prepareOutDir`/`emptyDir`) before writing
+   * `index.js`. `electron-vite dev` (package.json's own `dev` script) runs
+   * exactly that same one-shot `vite build()` call for `main`
+   * (node_modules/electron-vite/dist/chunks/lib-7y7CgM8M.js:36 and :100,
+   * `doBuild`), which is what would silently delete an already-built
+   * `jevMcpServer.mjs` the instant `pnpm dev` starts, before ever writing
+   * it back — `jevMcpServer.mjs` is not part of THIS config's own entry at
+   * all (see `electron.vite.jevMcpServer.config.ts`, a wholly separate
+   * build). `false` here is what lets `pnpm dev`'s own prebuild step
+   * (package.json's `build:mcp-server`, run before `electron-vite dev`)
+   * survive that first main build.
+   */
+  it('never empties out/main either (#511 T5) — dev must not wipe jevMcpServer.mjs before it ever starts Electron', () => {
+    expect(mainConfig.main?.build?.emptyOutDir).toBe(false)
+  })
 })
 
 describe('electron.vite.jevMcpServer.config (standalone server build, #511 M1a/L2)', () => {
