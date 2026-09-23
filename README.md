@@ -271,12 +271,6 @@ Notes on the three honest gaps:
 
 </details>
 
-<p align="right">
-  <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/media/hero02.gif" width="210" alt="Worker">
-</p>
-
 ## Provider support
 
 Three questions get three separate answers, because they are three different bars: can this app
@@ -379,6 +373,16 @@ nothing in the app is, or will be, gated on it.
 copyright and covered separately by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be
 reused without prior written authorization.
 
-<a href="https://github.com/Gentleman-Programming/gentle-ai">
-  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
-</a>
+<p align="center">
+  <p align="right">
+    <img src="docs/media/hero03.gif" width="100" alt="Foreman2">
+    &nbsp;&nbsp;&nbsp;&nbsp;
+    <img src="docs/media/hero02.gif" width="210" alt="Worker">
+  </p>
+  <p align="left">
+    <a href="https://github.com/Gentleman-Programming/gentle-ai">
+      <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+    </a>
+  </p>
+</p>
+
