@@ -343,7 +343,7 @@ each is necessary and none is sufficient alone:
 All three are re-checked at the moment of each real launch, never once per app session
 (`delegationGate.ts`, `delegationEnabledFor`) — a session started on your own pickers, with Jev
 merely available, is never handed the tool. Today this reaches Claude (held, and detached `claude
--p`) and OpenCode; Codex and Antigravity are not yet in the list — see **Known limits** below.
+-p`), OpenCode and Codex; Antigravity is not in the list — see **Known limits** below.
 
 **What runs locally.** With the gate open, this app's main process starts a SECOND loopback HTTP
 listener — `127.0.0.1` only, an ephemeral port, never reachable from the network — separate from
@@ -359,6 +359,16 @@ How a launched session actually reaches it differs by how that session runs:
   CLI's) rather than a separately installed `node` this build cannot assume exists
   (`delegationServerCommand.ts`), and it reaches the loopback listener the same way any other local
   MCP server would.
+- **A detached `codex exec` launch** gets the same server through Codex's own documented
+  per-invocation mechanism instead: `-c mcp_servers.jev.<key>=<value>` overrides on Codex's own
+  command line, never a file written into your Codex configuration. Measured end to end (2026-09-23,
+  codex-cli 0.153.4): this registration reaches the model's own tool list, not merely Codex's
+  resolved configuration — but the call itself was refused by Codex's own approval policy until this
+  app also overrode the approval mode for exactly the two delegation tools,
+  `mcp_servers.jev.tools.delegate_subtask.approval_mode="approve"` and the same key for
+  `subtask_result` (`codexDelegationConfigArgs`, `src/main/mcp/delegationInjection.ts`). Per tool
+  rather than server-wide, so nothing here pre-approves a tool this server does not have today; every
+  other tool call a delegated Codex turn makes still follows your own ordinary Codex approval policy.
 - **A held Claude session** — one this app keeps open through the Agent SDK — never spawns a second
   process for this at all: its two delegation tools run in-process, inside this app's own main
   process (`createSdkMcpServer`, `delegationHeldServer.ts`), with no loopback call and no token on
@@ -398,10 +408,12 @@ sets `routedByJev` on it, so the same gate has nothing to read a second time.
   narrower, documented OpenCode mechanism was found that would keep this env off the CLI's own
   process without also keeping it off the server process that needs it. The token involved is still
   scoped to, and lives only as long as, that one launch.
-- **Codex.** Not yet enabled. A per-invocation `-c mcp_servers.jev...` override does register a
-  server in Codex's own resolved configuration, measured against the installed CLI — but whether
-  `codex exec` actually exposes that server's tools to the model, rather than merely listing it, is
-  unmeasured. Codex stays out of the provider list until a real-CLI check settles that.
+- **Codex.** Enabled (2026-09-23 measurement, codex-cli 0.153.4). The per-invocation
+  `-c mcp_servers.jev...` override was measured exposing the server's tools to the model, not merely
+  listing it — the fact `codex … mcp list` alone cannot answer — but the tool call itself needed the
+  two per-tool approval overrides described above before it went through end to end. Those two
+  overrides are the only approval this app grants on your behalf; nothing else about your Codex
+  configuration or approval policy is changed.
 - **Antigravity.** Excluded outright, and not waiting on a measurement. Its documented MCP
   registration is a global or project-local `mcp_config.json` file, never a per-invocation
   mechanism — and writing a server registration into a project's own file on your behalf was decided

@@ -171,8 +171,24 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * temp path `launchClaudeSession` mints per launch, unrelated to tuning) and
  * it goes before the trailing `-` for the same reason the two tuning flags
  * do — a flag after the prompt positional would be read as its argument.
+ *
+ * ## The delegation config args, and why they are a fourth parameter (#511 T4)
+ *
+ * `codexDelegationConfigArgs` (delegationInjection.ts) builds the `-c
+ * mcp_servers.jev...` triples a delegating launch needs. They cannot be
+ * appended the way `launchRunner.ts` already appends Claude's own
+ * `--mcp-config`/`--allowedTools` after this function's return value: Codex's
+ * usage is `codex exec [OPTIONS] [PROMPT]`, and this argv's last element is
+ * the `-` prompt positional, so anything appended after it would be read as
+ * that positional's own argument rather than as a flag — the exact ordering
+ * rule the output path above already follows. So they arrive here, as a
+ * fourth parameter, and are placed before the trailing `-` on the same terms.
  */
-export function buildCodexLaunchArgs(tuning: LaunchTuning = {}, outputPath?: string): string[] {
+export function buildCodexLaunchArgs(
+  tuning: LaunchTuning = {},
+  outputPath?: string,
+  delegationConfigArgs?: readonly string[]
+): string[] {
   // The two tuning flags above come from `codexTuningArgs` (#462), the one
   // builder this and `buildCodexResumeArgs` both delegate to, so the
   // `model_reasoning_effort` key is spelled in exactly one place rather than
@@ -181,6 +197,7 @@ export function buildCodexLaunchArgs(tuning: LaunchTuning = {}, outputPath?: str
     'exec',
     ...codexTuningArgs(tuning),
     ...(outputPath === undefined ? [] : ['-o', outputPath]),
+    ...(delegationConfigArgs ?? []),
     '-'
   ]
 }
@@ -327,18 +344,23 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * `codexOutputPath` (#510) is dispatched the same conservative way: it is
  * Codex's own `-o` file and nothing else, so every other provider's builder
  * simply never sees the parameter — never a shared "output path" concept
- * applied to a CLI that has no such flag.
+ * applied to a CLI that has no such flag. `codexDelegationConfigArgs` (#511
+ * T4) is dispatched on the same terms, for the same reason: it is Codex's
+ * own `-c mcp_servers.jev...` argv, placed before the trailing `-` by
+ * `buildCodexLaunchArgs` itself (see that function's own comment), and no
+ * other provider's builder ever sees it.
  */
 export function buildLaunchArgs(
   provider: DwarfProvider,
   tuning: LaunchTuning = {},
-  codexOutputPath?: string
+  codexOutputPath?: string,
+  codexDelegationConfigArgs?: readonly string[]
 ): string[] {
   switch (provider) {
     case 'claude':
       return buildClaudeLaunchArgs(tuning)
     case 'codex':
-      return buildCodexLaunchArgs(tuning, codexOutputPath)
+      return buildCodexLaunchArgs(tuning, codexOutputPath, codexDelegationConfigArgs)
     case 'antigravity':
       // AMENDED for #282 (was: called buildAntigravityLaunchArgs() with no
       // argument, dropping `tuning` on the floor — #237, step 4 gave

@@ -6883,14 +6883,21 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
     )
   })
 
+  // AMENDED for #511 (Codex smoke measurement, 2026-09-23): was
+  // `provider: 'codex'` — Codex joined `DELEGATION_CAPABLE_PROVIDERS`
+  // (`delegationGate.ts`) once a real launch was measured exposing its
+  // `-c`-registered server's tools to the model, so this test now needs a
+  // provider genuinely OUTSIDE the capable list. Antigravity is the one
+  // that remains, on documented-mechanism grounds unrelated to this
+  // measurement (see `delegationGate.ts`'s own comment).
   it('never injects for a provider outside DELEGATION_CAPABLE_PROVIDERS, even when routed', async () => {
     const fake = delegationFake()
     const launchSession: SessionLauncher = vi
       .fn()
-      .mockResolvedValue({ launched: true, provider: 'codex' })
+      .mockResolvedValue({ launched: true, provider: 'antigravity' })
     const { runtime, mineId } = await runtimeWith(launchSession, fake.options)
 
-    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig', routedByJev: true })
+    await runtime.launchAgent({ mineId, provider: 'antigravity', prompt: 'dig', routedByJev: true })
 
     expect(fake.issued).toEqual([])
   })

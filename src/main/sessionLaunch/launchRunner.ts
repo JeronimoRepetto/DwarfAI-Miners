@@ -23,6 +23,7 @@ import { buildRelayEnv } from '../textDelivery/relay'
 import {
   claudeDetachedExtraArgs,
   claudeMcpConfigJson,
+  codexDelegationConfigArgs,
   mergeOpenCodeConfigContent,
   type DelegationInjectionContext
 } from '../mcp/delegationInjection'
@@ -578,7 +579,8 @@ export type SessionLauncher = (
      * The MCP delegation server this launch's own gate check
      * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
      * absent when it declined (#511 T4) — read only by `launchClaudeSession`
-     * for `claude`/`opencode`; every other provider's builder never sees it.
+     * for `claude`/`opencode`/`codex`; `antigravity`'s own builder never
+     * sees it.
      */
     delegation?: DelegationInjectionContext
   } & LaunchTuning
@@ -944,8 +946,9 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
    * The MCP delegation server this launch's own gate check
    * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
    * absent when it declined (#511 T4) — read only for `claude` (a temp
-   * `--mcp-config` file) and `opencode` (`OPENCODE_CONFIG_CONTENT`); every
-   * other provider's own builder simply never sees it, on the same
+   * `--mcp-config` file), `opencode` (`OPENCODE_CONFIG_CONTENT`) and `codex`
+   * (its own `-c mcp_servers.jev...` argv, placed before the trailing `-`);
+   * `antigravity`'s own builder simply never sees it, on the same
    * exhaustive-dispatch discipline `buildLaunchArgs` already holds for argv.
    */
   delegation?: DelegationInjectionContext
@@ -973,10 +976,18 @@ function defaultCodexOutputPath(): string {
  * given the gate's own approved injection context (#511 T4) — the ONE place
  * this function's caller (`launchClaudeSession`) has to branch on provider
  * for delegation, mirroring the exhaustive-dispatch discipline
- * `buildLaunchArgs` (launch.ts) already holds for argv: `codex` and
- * `antigravity` are never reached with a `delegation` context at all today
- * (`delegationGate.ts`'s own `DELEGATION_CAPABLE_PROVIDERS`), and simply
- * fall through unchanged if they ever were.
+ * `buildLaunchArgs` (launch.ts) already holds for argv. `antigravity` is
+ * never reached with a `delegation` context at all (`delegationGate.ts`'s
+ * own `DELEGATION_CAPABLE_PROVIDERS` excludes it outright) and simply falls
+ * through unchanged if it ever were. `codex` joined the capable list once a
+ * real launch was measured exposing its `-c`-registered server's tools to
+ * the model (see `delegationGate.ts`'s own comment) — its own argv is
+ * returned as `codexDelegationArgs` rather than `extraArgs`, because it has
+ * to land BEFORE Codex's trailing `-` prompt positional, never after it
+ * (`buildCodexLaunchArgs`'s own comment); Codex needs no env change and
+ * writes no config file, since its delegation env travels inside the `-c
+ * mcp_servers.jev.env=…` TOML value itself, applied by Codex to the SPAWNED
+ * SERVER only, never to Codex's own process.
  *
  * The side effect (writing the temp file) lives here rather than in
  * `delegationInjection.ts`, which stays pure — this function is the one
@@ -988,12 +999,20 @@ function delegationInjectionFor(
   delegation: DelegationInjectionContext | undefined,
   env: NodeJS.ProcessEnv,
   configFile: DelegationConfigFile
-): { extraArgs: string[]; env: NodeJS.ProcessEnv; delegationConfigFile?: string } {
+): {
+  extraArgs: string[]
+  env: NodeJS.ProcessEnv
+  delegationConfigFile?: string
+  codexDelegationArgs?: string[]
+} {
   if (delegation === undefined) return { extraArgs: [], env }
   if (provider === 'claude') {
     const path = configFile.path()
     configFile.write(path, claudeMcpConfigJson(delegation))
     return { extraArgs: claudeDetachedExtraArgs(path), env, delegationConfigFile: path }
+  }
+  if (provider === 'codex') {
+    return { extraArgs: [], env, codexDelegationArgs: codexDelegationConfigArgs(delegation) }
   }
   if (provider === 'opencode') {
     // #511 L3: this env is inherited by the CLI process itself (never only
@@ -1090,10 +1109,12 @@ export async function launchClaudeSession(
         ? (options.codexOutputPath ?? defaultCodexOutputPath)()
         : undefined
     // #511 T4: the gate's own approved injection, or a no-op for an ordinary
-    // launch — see `delegationInjectionFor`'s own comment. Computed AFTER
-    // `buildLaunchArgs` decides argv is out of scope for it (delegation adds
-    // to that argv, never replaces it), and BEFORE `options.run` so both the
-    // extra argv and the possibly-merged env reach the same spawn call.
+    // launch — see `delegationInjectionFor`'s own comment. Computed BEFORE
+    // `buildLaunchArgs` is called below, because Codex needs its own
+    // delegation `-c` args threaded INTO that call (`codexDelegationArgs`,
+    // placed before the trailing `-` by `buildCodexLaunchArgs` itself)
+    // rather than appended after it the way Claude's and OpenCode's own
+    // injection is.
     const injection = delegationInjectionFor(
       options.provider,
       options.delegation,
@@ -1105,9 +1126,15 @@ export async function launchClaudeSession(
       // The tuning belongs to the CLI's own argv, so it lands AFTER a shim's
       // node entry (#239): in front of it, `--model` would be an argument to
       // node rather than to the program node is about to run. Delegation's
-      // own extra argv (#511 T4) lands last: `claudeDetachedExtraArgs`
-      // documents why `--strict-mcp-config` is never among it, so nothing
-      // here narrows what the CLI's OWN config already grants this session.
+      // own extra argv (#511 T4) lands LAST for Claude and OpenCode:
+      // `claudeDetachedExtraArgs` documents why `--strict-mcp-config` is
+      // never among it, so nothing here narrows what the CLI's OWN config
+      // already grants this session. Codex is the one exception: its own
+      // `-c` args cannot land after `buildLaunchArgs`'s trailing `-` prompt
+      // positional (they would be read as that positional's own argument),
+      // so they are threaded INTO the call instead (`codexDelegationArgs`;
+      // `injection.extraArgs` stays `[]` for Codex — see
+      // `delegationInjectionFor`'s own comment).
       args: [
         ...program.args,
         ...buildLaunchArgs(
@@ -1116,7 +1143,8 @@ export async function launchClaudeSession(
             ...(options.model === undefined ? {} : { model: options.model }),
             ...(options.effort === undefined ? {} : { effort: options.effort })
           },
-          codexOutputPath
+          codexOutputPath,
+          injection.codexDelegationArgs
         ),
         ...injection.extraArgs
       ],

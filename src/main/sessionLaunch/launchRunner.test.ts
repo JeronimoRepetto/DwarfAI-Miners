@@ -28,7 +28,10 @@ import {
   type StderrFile,
   type StdoutFile
 } from './launchRunner'
-import type { DelegationInjectionContext } from '../mcp/delegationInjection'
+import {
+  codexDelegationConfigArgs,
+  type DelegationInjectionContext
+} from '../mcp/delegationInjection'
 
 const CLAUDE_PATH = '/home/j/.local/bin/claude'
 const CODEX_PATH = '/home/j/.local/bin/codex'
@@ -876,7 +879,23 @@ describe('detached delegation injection (#511 T4)', () => {
     expect(invocation.args).toEqual(['run', '--format', 'json'])
   })
 
-  it('never touches Codex argv or env, even when a delegation context is somehow present', async () => {
+  /*
+   * AMENDED for #511 (Codex smoke measurement, 2026-09-23): was "never
+   * touches Codex argv or env, even when a delegation context is somehow
+   * present", asserting argv stayed exactly `['exec', '-o', CODEX_OUTPUT_PATH,
+   * '-']` — true only while Codex sat outside `DELEGATION_CAPABLE_PROVIDERS`.
+   * A real `codex exec` launch has since been measured registering the
+   * `-c`-configured `jev` server AND exposing its tools to the model, so
+   * Codex joined the capable list (`delegationGate.ts`) and this function now
+   * has to wire its own per-invocation mechanism, the same way it already
+   * does for `claude` and `opencode`. Codex carries no env change (its own
+   * delegation env rides inside the `-c mcp_servers.jev.env=…` TOML value,
+   * applied by Codex to the SPAWNED SERVER only, never to Codex's own
+   * process) and writes no config file — only extra argv, inserted before
+   * the trailing "-" by `buildCodexLaunchArgs` (see launch.test.ts's own
+   * #511 T4 coverage for that placement rule).
+   */
+  it('inserts codexDelegationConfigArgs before the trailing "-" for a delegating Codex launch', async () => {
     const { run, result } = launch({
       provider: 'codex',
       cli: installedCodex(),
@@ -884,9 +903,23 @@ describe('detached delegation injection (#511 T4)', () => {
     })
     await result
 
-    expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
+    expect(argvOf(run)).toEqual([
+      'exec',
+      '-o',
+      CODEX_OUTPUT_PATH,
+      ...codexDelegationConfigArgs(context()),
+      '-'
+    ])
     const invocation = (run as ReturnType<typeof vi.fn>).mock.calls[0]![0] as LaunchInvocation
     expect('OPENCODE_CONFIG_CONTENT' in invocation.env).toBe(false)
+    expect(invocation.delegationConfigFile).toBeUndefined()
+  })
+
+  it('leaves a Codex launch with no delegation byte for byte what it always was', async () => {
+    const { run, result } = launch({ provider: 'codex', cli: installedCodex() })
+    await result
+
+    expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
   })
 })
 

@@ -583,9 +583,8 @@ in turn. **Limits are 2 concurrent delegations per launching session and 4 acros
 a safety rail against fanning out an unbounded number of real CLI processes at once, not a
 throughput target.
 
-**Providers.** Claude (a held session, and a detached `claude -p` launch) and OpenCode today. Codex
-and Antigravity are not reachable this way yet — see [Privacy](privacy.md#subtask-delegation) for
-why each is where it is.
+**Providers.** Claude (a held session, and a detached `claude -p` launch), OpenCode and Codex today.
+Antigravity is not reachable this way — see [Privacy](privacy.md#subtask-delegation) for why.
 
 **Where the delegated child appears.** In the same mine as the session that delegated it, as its own
 ordinary dwarf on the board — visible, and kickable exactly like any other session this panel

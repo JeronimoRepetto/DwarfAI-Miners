@@ -251,28 +251,48 @@ function tomlInlineTable(entries: Record<string, string>): string {
 
 /**
  * The `-c mcp_servers.jev.<key>=<TOML value>` triple Codex's own `--help`
- * documents (#511 T4) — built and table-tested even though Codex stays OUT
- * of `DELEGATION_CAPABLE_PROVIDERS` (`delegationGate.ts`) today: whether
- * `codex exec` actually exposes a `-c`-registered server's TOOLS to the
- * model, as opposed to merely listing it under `codex … mcp list`, is
- * unmeasured (feature document, 2026-09-23) — this app's own opt-in smoke
- * script (`scripts/smoke/delegation.mjs`) decides that. Enabling Codex once
- * it passes is then a one-line change to `DELEGATION_CAPABLE_PROVIDERS`,
- * never a second builder to write.
+ * documents (#511 T4), NOW measured end to end: a real `codex exec` launch,
+ * spawned with no shell and this exact argv, registered the `jev` server AND
+ * exposed its tools to the model — the fact `codex … mcp list` alone could
+ * not answer, and the reason Codex joined `DELEGATION_CAPABLE_PROVIDERS`
+ * (`delegationGate.ts`, 2026-09-23 measurement). See that constant's own
+ * comment for the fuller evidence trail.
  *
  * Each `-c` and its value are separate argv elements, matching the measured
  * shape in the feature document (`-c 'mcp_servers.jevprobe.command="node"'`
  * is ONE shell-quoted argument, i.e. `-c` then the key=value pair as the
  * next argv element) — never `-c=value`, which Codex's own `--help` does not
  * document.
+ *
+ * ## The two trailing overrides, and why they are per-tool
+ *
+ * A bare `-c mcp_servers.jev...` registration alone was measured reaching
+ * the model's tool list but refusing the actual call: `MCP tool call
+ * requires approval, but approval policy is never`. Codex's own source
+ * (`openai/codex`, `codex-rs/config/src/mcp_types.rs`) declares
+ * `McpServerConfig.tools: HashMap<String, McpServerToolConfig { approval_mode:
+ * AppToolApproval }>` — `auto | prompt | writes | approve` — alongside a
+ * server-wide `default_tools_approval_mode`, and
+ * `codex-rs/codex-mcp/src/mcp/mod.rs`'s `mcp_permission_prompt_is_auto_approved`
+ * treats `approve` as auto-approved even under the CLI's own `never` policy.
+ * Overriding PER TOOL (`mcp_servers.jev.tools.<name>.approval_mode`) rather
+ * than the server-wide default keeps this grant as narrow as Claude's own
+ * `--allowedTools` above: exactly `delegate_subtask` and `subtask_result` are
+ * pre-approved, never every tool a `jev` server might one day add.
  */
 export function codexDelegationConfigArgs(context: DelegationInjectionContext): string[] {
+  const toolApproval = (tool: string): string[] => [
+    '-c',
+    `mcp_servers.${DELEGATION_SERVER_NAME}.tools.${tool}.approval_mode=${tomlString('approve')}`
+  ]
   return [
     '-c',
     `mcp_servers.${DELEGATION_SERVER_NAME}.command=${tomlString(context.serverCommand)}`,
     '-c',
     `mcp_servers.${DELEGATION_SERVER_NAME}.args=${tomlStringArray(context.serverArgs)}`,
     '-c',
-    `mcp_servers.${DELEGATION_SERVER_NAME}.env=${tomlInlineTable(delegationEnv(context))}`
+    `mcp_servers.${DELEGATION_SERVER_NAME}.env=${tomlInlineTable(delegationEnv(context))}`,
+    ...toolApproval(DELEGATE_SUBTASK_TOOL_NAME),
+    ...toolApproval(SUBTASK_RESULT_TOOL_NAME)
   ]
 }
