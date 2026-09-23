@@ -128,8 +128,6 @@ processed.
 - **Autostart and tray** — starts at login, lives in the tray, and hides instead of closing.
 
 Every screen and control is described in the [user guide](docs/guide.md).
-
-## Install
 <p align="left">
   <img src="docs/media/hero01.gif" width="210" alt="Worker2">
   &nbsp;&nbsp;&nbsp;&nbsp;
@@ -138,6 +136,8 @@ Every screen and control is described in the [user guide](docs/guide.md).
   <img align="right" src="docs/media/hero02.gif" width="210" alt="Worker">
   <img align="right" src="docs/media/hero03.gif" width="100" alt="Foreman">
 </p>
+## Install
+
 Download the installer for your OS from the
 [latest release](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest):
 
