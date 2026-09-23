@@ -2,10 +2,6 @@
   <img src="docs/assets/logo.png"  width="100%" alt="DwarfAI-Miners logo — the gold mine mound on a dark circular badge">
 </p>
 
-<p align="center">
-  Your AI coding sessions as a tiny isometric mining colony, floating on your desktop.
-</p>
-
 <div align="center">
 
 [![CI](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml/badge.svg)](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/workflows/ci.yml)
