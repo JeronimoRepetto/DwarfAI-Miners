@@ -6764,8 +6764,10 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
 
   interface DelegationFake {
     options: NonNullable<ConstructorParameters<typeof AgentRuntime>[0]['delegation']>
-    issued: Array<{ mineId: string }>
+    issued: Array<{ mineId: string; held?: true }>
     revoked: string[]
+    /** #601: every ticket id `resolveHeldDelegationInjection`'s own direct wait reported as ended, in order. */
+    waitEnded: string[]
   }
 
   function delegationFake(
@@ -6775,8 +6777,9 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
       tokenUnavailable?: boolean
     } = {}
   ): DelegationFake {
-    const issued: Array<{ mineId: string }> = []
+    const issued: Array<{ mineId: string; held?: true }> = []
     const revoked: string[] = []
+    const waitEnded: string[] = []
     let nextToken = 0
     return {
       options: {
@@ -6795,10 +6798,14 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
         // asserted for SHAPE by the held-session tests below, so a fixed,
         // harmless answer is enough here.
         delegate: async () => ({ ticket: 'fake-ticket', routing: { provider: 'claude' as const } }),
-        result: () => ({ status: 'pending' as const, routing: { provider: 'claude' as const } })
+        result: () => ({ status: 'pending' as const, routing: { provider: 'claude' as const } }),
+        // #601: `DelegationService.waitEnded` bound in production — only the
+        // held path ever wires this into `createDirectDelegationLink`.
+        waitEnded: (ticket: string) => waitEnded.push(ticket)
       },
       issued,
-      revoked
+      revoked,
+      waitEnded
     }
   }
 
@@ -7067,13 +7074,26 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
    * them, for every dwarf) stay answered exactly as they are for any other
    * held-session test in this file (see `heldPort`/`heldRegistry` above).
    */
-  function fakeHeldEngine(): { port: HeldSessionPort; started: HeldSessionStartRequest[] } {
+  function fakeHeldEngine(): {
+    port: HeldSessionPort
+    started: HeldSessionStartRequest[]
+    /** #601: every text this fake's own `send` accepted, in order. */
+    sent: string[]
+  } {
     const started: HeldSessionStartRequest[] = []
+    const sent: string[] = []
     return {
       started,
+      sent,
       port: async (request) => {
         started.push(request)
-        return { close: () => {}, send: () => true }
+        return {
+          close: () => {},
+          send: (text: string) => {
+            sent.push(text)
+            return true
+          }
+        }
       }
     }
   }
@@ -7119,7 +7139,10 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
       routedByJev: true
     })
 
-    expect(fake.issued).toEqual([{ mineId }])
+    // #601: `held: true` is what lets `DelegationService` tell a held
+    // parent's own token apart from a detached one — `mineId` alone cannot,
+    // since both mint a token through this same `issueLaunchToken`.
+    expect(fake.issued).toEqual([{ mineId, held: true }])
     // #511 M1a: a held launch's own delegation is an in-process
     // DelegationLink + waitMs now, never the endpoint/token shape a
     // detached launch's own stdio server needs — see
@@ -7232,8 +7255,124 @@ describe('AgentRuntime injecting the delegation server into an eligible launch (
       runtime.launchHeldSession({ provider: 'claude', mineId, prompt: 'dig', routedByJev: true })
     ).rejects.toThrow('disk read failed')
 
-    expect(fake.issued).toEqual([{ mineId }])
+    expect(fake.issued).toEqual([{ mineId, held: true }])
     expect(fake.revoked).toEqual(['tok-0'])
+  })
+
+  /*
+   * #601: the held-parent push feature's own two seams on `AgentRuntime` —
+   * `pushToHeldParent` (the port `DelegationService.deliverToHeldParent` is
+   * bound to in `index.ts`) and the `onWaitEnded` wiring inside
+   * `resolveHeldDelegationInjection`'s own `createDirectDelegationLink`
+   * call. Neither is exercised by the injection tests above, which never
+   * drive a held launch's own direct wait to its deadline.
+   */
+  describe('AgentRuntime held-parent push wiring (#601)', () => {
+    it('pushToHeldParent forwards to the held registry’s own sendToDelegationParent, keyed by the launch’s own token', async () => {
+      const fake = delegationFake()
+      const engine = fakeHeldEngine()
+      const runtime = new AgentRuntime({
+        fs: new FakeFs(),
+        platformAdapters: worktreePlatformAdapters(),
+        config: defaultConfig(),
+        providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+        heldSessions: heldRegistryOver(engine.port),
+        onMinesUpdated: vi.fn(),
+        appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+        delegation: fake.options
+      })
+      await runtime.refresh()
+      const mineId = runtime.getMines()[0]!.id
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig',
+        routedByJev: true
+      })
+
+      // Proves the whole thread end to end: resolveHeldDelegationInjection's
+      // own token reaches HeldSessionRegistry's record (`delegationToken`)
+      // and back out through pushToHeldParent — never the mine, which two
+      // held sessions can share (see the next test).
+      expect(runtime.pushToHeldParent('tok-0', 'delegated subtask finished')).toBe(true)
+      expect(engine.sent).toEqual(['delegated subtask finished'])
+      expect(runtime.pushToHeldParent('tok-never-issued', 'text')).toBe(false)
+    })
+
+    // THE DEFECT (#601 correction): `launchHeldSession` places no limit on
+    // how many held sessions share one mine — a push keyed by mine alone
+    // could reach whichever one happened to be found first.
+    it('reaches only the held session whose own token minted the ticket, even with a second one in the SAME mine', async () => {
+      const fake = delegationFake()
+      const engine = fakeHeldEngine()
+      const runtime = new AgentRuntime({
+        fs: new FakeFs(),
+        platformAdapters: worktreePlatformAdapters(),
+        config: defaultConfig(),
+        providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+        heldSessions: heldRegistryOver(engine.port),
+        onMinesUpdated: vi.fn(),
+        appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+        delegation: fake.options
+      })
+      await runtime.refresh()
+      const mineId = runtime.getMines()[0]!.id
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig A',
+        routedByJev: true
+      })
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig B',
+        routedByJev: true
+      })
+
+      expect(runtime.pushToHeldParent('tok-1', 'for B only')).toBe(true)
+      expect(engine.sent).toEqual(['for B only'])
+    })
+
+    it('reports a held ticket’s own wait giving up on its deadline through delegation.waitEnded', async () => {
+      vi.useFakeTimers()
+      try {
+        const fake = delegationFake()
+        const engine = fakeHeldEngine()
+        const runtime = new AgentRuntime({
+          fs: new FakeFs(),
+          platformAdapters: worktreePlatformAdapters(),
+          config: defaultConfig(),
+          providers: [{ kind: 'codex', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+          heldSessions: heldRegistryOver(engine.port),
+          onMinesUpdated: vi.fn(),
+          appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\DwarfAI-Miners' },
+          delegation: fake.options
+        })
+        await runtime.refresh()
+        const mineId = runtime.getMines()[0]!.id
+        await runtime.launchHeldSession({
+          provider: 'claude',
+          mineId,
+          prompt: 'dig',
+          routedByJev: true
+        })
+        // #601: `delegation.result` is fixed at `status: 'pending'` in this
+        // block's own fixture — the wait's own poll never finds an answer,
+        // so its deadline is what ends it.
+        const waitMs = engine.started[0]!.delegation!.waitMs
+
+        const outcome = engine.started[0]!.delegation!.link.delegate('subtask', undefined, {
+          waitMs
+        })
+        await vi.advanceTimersByTimeAsync(waitMs)
+        await outcome
+
+        expect(fake.waitEnded).toEqual(['fake-ticket'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })
 

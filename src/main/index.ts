@@ -1040,7 +1040,12 @@ async function init(): Promise<void> {
                 'The delegation service is not running.'
               )
             }
-          : delegationService.resultDirect(token, ticket)
+          : delegationService.resultDirect(token, ticket),
+      // #601: `waitEnded` closes over the SAME module-level `delegationService`,
+      // lazily, on the identical terms `delegate`/`result` above already
+      // are — read only by a held launch's own direct wait giving up on its
+      // deadline, which cannot happen before `delegationService` exists.
+      waitEnded: (ticket) => delegationService?.waitEnded(ticket)
     },
     /* --- end of the #511 T4 block ---------------------------------------------- */
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
@@ -1118,7 +1123,11 @@ async function init(): Promise<void> {
       }),
     route: jevLaunchRouter.route,
     keyConfigured: () => jevApiKeyStore.readKey() !== undefined,
-    delegationAllowed: async () => (await jevPreferenceStore.load()).delegation
+    delegationAllowed: async () => (await jevPreferenceStore.load()).delegation,
+    // #601: closes over the SAME module-level `runtime`, lazily, on the
+    // identical terms `launch` just above already is — a settled ticket for
+    // a held parent cannot exist before `runtime` does either.
+    deliverToHeldParent: (token, text) => runtime?.pushToHeldParent(token, text) ?? false
   })
   await delegationService.start()
   /* --- end of the #511 T3 block ---------------------------------------------- */
