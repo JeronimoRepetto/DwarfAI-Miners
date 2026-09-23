@@ -200,11 +200,11 @@ describe('answerRequest', () => {
   })
 
   it('carries one label even where the agent said it would take several', () => {
-    // AMENDED for #362 (comment only; the expectation is unchanged). multiSelect
-    // still changes nothing HERE: the fixture is a held ask, and that channel
-    // takes a single label per question because how the agent's own picker
-    // joins several is unmeasured. The terminal channel's joined value is built
-    // by toggledAnswer and asserted in its own block below.
+    // AMENDED for #362 and again for #443 (comment only; the expectation is
+    // unchanged). multiSelect changes nothing HERE because answerRequest is a
+    // repeater: it carries whatever value it is handed, one label or a joined
+    // list. The joined value for a multi-select question, on either channel
+    // since #443, is built by askAnswerValues and asserted in its own block.
     const request = answerRequest('claude:s1', question({ multiSelect: true }), 'Neither')
     expect(Object.values(request.answers)).toEqual(['Neither'])
   })

@@ -3420,10 +3420,10 @@ export type DwarfQuestionAnswerRequest = DwarfQuestionLabelAnswer | DwarfQuestio
  * How several chosen labels ride in the ONE string an answer's value is
  * (#362).
  *
- * The held channel takes a single label per question and will keep taking
- * exactly that: how the agent's own picker joins several answers is
- * unmeasured, and inventing a separator for it would make the agent read an
- * answer nobody gave (see resolveAnswers). The terminal channel is the
+ * The held channel takes several labels for a multi-select question and one
+ * for a single-select: the answer value is split on ANSWER_LABEL_SEPARATOR,
+ * each label matched against the question's options, and the result rejoined
+ * with the SDK's own separator for the tool call (see resolveAnswers). The terminal channel is the
  * opposite case — its multi-select gesture IS measured, one digit per chosen
  * option — so several labels do have to cross the wire, and `answers` stays
  * `Record<string, string>` rather than growing a second shape for them.
