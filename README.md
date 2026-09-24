@@ -365,6 +365,10 @@ not separately reusable without authorization. If the project has earned a spot 
 you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
 nothing in the app is, or will be, gated on it.
 
+<a href="https://ko-fi.com/jeronimorepetto" target="_blank" rel="noopener noreferrer">
+  <img height="36" src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" />
+</a>
+
 ## License
 
 [MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
