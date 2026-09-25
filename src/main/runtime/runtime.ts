@@ -806,10 +806,12 @@ export interface RuntimeOptions {
    */
   answerOpenCodePermission?: OpenCodePermissionAnswerPort
   /**
-   * Checked ONCE per OpenCode launch that names a model, before `launchSession`
-   * ever runs (#597 T3) — composes T1's control server with T2's reader and
-   * decision; see `launchCredentialGate.ts`'s own module doc for the FAIL-OPEN
-   * rule every `'check-failed'` outcome follows.
+   * Checked ONCE per OpenCode launch, before `launchSession` ever runs (#597
+   * T3, extended T3b to every launch rather than only one naming a model) —
+   * composes T1's control server with T2's reader and decision, and T3b's own
+   * `GET /config` read for a launch that names none; see
+   * `launchCredentialGate.ts`'s own module doc for the FAIL-OPEN rule every
+   * `'check-failed'` outcome follows.
    *
    * OMITTED disables the check entirely — an OpenCode launch spawns exactly as
    * it did before this issue, which is what keeps every existing test (none of
@@ -4933,19 +4935,19 @@ export class AgentRuntime {
     const prompt = prepareLaunchPrompt(request.prompt)
     if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
 
-    // #597 T3: checked before anything else commits to this launch — no
-    // delegation token minted, nothing retained — so a held credential never
-    // has cleanup to undo. Only for OpenCode, and only with a model actually
-    // named: no model is the CLI's own default (nothing to check), and every
-    // other provider's launch is untouched. A build with no gate wired
-    // (RuntimeOptions.openCodeCredentialGate absent — every test but this
-    // issue's own) skips this whole block, byte for byte as before.
-    if (
-      request.provider === 'opencode' &&
-      request.model !== undefined &&
-      this.openCodeCredentialGate !== undefined
-    ) {
-      const gate = await this.openCodeCredentialGate(request.model)
+    // #597 T3, extended T3b: checked before anything else commits to this
+    // launch — no delegation token minted, nothing retained — so a held
+    // credential never has cleanup to undo. Only for OpenCode; every other
+    // provider's launch is untouched. Runs for EVERY OpenCode launch, named
+    // model or not (T3b): a launch with no model is not nothing to check —
+    // `opencode run` still starts on the model OpenCode's own config resolves
+    // for `mine.path`, so the gate reads that folder's default when
+    // `request.model` is absent (`launchCredentialGate.ts`'s own module doc).
+    // A build with no gate wired (RuntimeOptions.openCodeCredentialGate absent
+    // — every test but this issue's own) skips this whole block, byte for
+    // byte as before.
+    if (request.provider === 'opencode' && this.openCodeCredentialGate !== undefined) {
+      const gate = await this.openCodeCredentialGate(request.model, mine.path)
       if (gate.kind === 'credential-missing') {
         return {
           launched: false,

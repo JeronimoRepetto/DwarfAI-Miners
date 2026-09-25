@@ -158,6 +158,83 @@ export function readConnectedProviders(
   })()
 }
 
+export type ReadConfiguredModelFailureReason =
+  'unreachable' | 'unauthorized' | 'timeout' | 'malformed'
+
+export type ReadConfiguredModelResult =
+  { ok: true; model: string | undefined } | { ok: false; reason: ReadConfiguredModelFailureReason }
+
+/**
+ * `GET /config`'s own measured shape (#597 T3b, OpenCode 1.18.32): only
+ * `model` is ever read off the body. Everything else — including
+ * `provider.*.options.apiKey`, confirmed present in OpenCode's own live
+ * OpenAPI schema (`GET /doc`) — is discarded here and never reaches a caller.
+ * A missing or non-string `model` is `undefined`, the same "nothing
+ * configured" reading an absent chosen model already gets from
+ * `decideOpenCodeCredential`, never a parse failure.
+ */
+function configuredModelOf(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined
+  const model = (body as { model?: unknown }).model
+  return typeof model === 'string' ? model : undefined
+}
+
+/**
+ * `GET {serverUrl}/config?directory=<directory>` with Basic auth, read for
+ * its `model` field alone (#597 T3b) — resolved for `directory` because a
+ * project's own `opencode.json` there can set a different model than the
+ * rest of the machine, exactly what `opencode run` would pick for a launch
+ * with no model chosen. `directory` is OpenCode's own query parameter for
+ * this, named `config.get` in its live OpenAPI doc (`GET /doc`) and verified
+ * live against a real server: a project directory with its own
+ * `opencode.json` answered its own model, and the default (no `directory`)
+ * answered the global one.
+ *
+ * Never rejects, on the same discipline as `readConnectedProviders`. A
+ * missing `model` in an otherwise-valid answer is `ok: true, model:
+ * undefined` — the CLI's own free default is not a failure to report.
+ */
+export function readConfiguredModel(
+  fetchLike: OpenCodeConnectedFetch,
+  serverUrl: string,
+  password: string,
+  directory: string
+): Promise<ReadConfiguredModelResult> {
+  return (async (): Promise<ReadConfiguredModelResult> => {
+    const url = new URL('/config', serverUrl)
+    url.searchParams.set('directory', directory)
+    const headers: Record<string, string> = {
+      authorization: `Basic ${Buffer.from(`${OPENCODE_SERVER_USERNAME}:${password}`).toString('base64')}`
+    }
+
+    let response: Awaited<ReturnType<OpenCodeConnectedFetch>>
+    try {
+      response = await fetchLike(url.href, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(OPENCODE_CREDENTIAL_CHECK_TIMEOUT_MS)
+      })
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError'
+      return { ok: false, reason: timedOut ? 'timeout' : 'unreachable' }
+    }
+
+    if (response.status !== 200) {
+      await response.body?.cancel()
+      return { ok: false, reason: response.status === 401 ? 'unauthorized' : 'unreachable' }
+    }
+
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      return { ok: false, reason: 'malformed' }
+    }
+    // `body` is discarded the instant this returns — only `model` survives.
+    return { ok: true, model: configuredModelOf(body) }
+  })()
+}
+
 /** Whether a launch may proceed, or which provider it is missing a credential for. */
 export type OpenCodeCredentialDecision =
   { kind: 'ready' } | { kind: 'credential-missing'; providerId: string; model: string }

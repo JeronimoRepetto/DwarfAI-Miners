@@ -569,6 +569,15 @@ any other part of its credential store, and never runs `opencode providers login
 run — OpenCode missing, its server slow to start — the launch proceeds exactly as it did before
 this check existed, and one line naming the failure (never a secret) goes to the app's log.
 
+**A launch with no model chosen is checked too.** Naming no model does not mean nothing runs:
+OpenCode itself picks one from its own configuration in that case, so the check asks the same
+server `GET /config`, resolved for the mine's own folder — a project's `opencode.json` there can
+name a different model than the rest of the machine. Exactly one field of that answer is ever
+read, `model`; everything else in the response — which can include provider settings such as API
+keys — is discarded unread and never logged, stored or returned. No model configured there either
+means OpenCode falls back to its own free default, and the launch proceeds without asking anyone
+anything.
+
 **The server that answers is one this app starts for itself.** No OpenCode server is reachable
 before a session exists, so the check starts your own `opencode` binary as
 `opencode serve --pure`, listening on `127.0.0.1` only (`src/main/opencodeLogin/controlServer.ts`).
