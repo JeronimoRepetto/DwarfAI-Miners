@@ -3183,6 +3183,20 @@ export interface AgentLaunchResult {
    * conversation it was seeded with).
    */
   launchId?: string
+  /**
+   * Present only when `launched` is false because the chosen OpenCode model's
+   * provider has no credential (#597 T3) — named apart from `error` (a free
+   * sentence, present on every other refusal too) so a dialog can address the
+   * exact provider and model without parsing that sentence back apart. Every
+   * other refusal, and every other provider, leaves this absent.
+   */
+  credentialMissing?: OpenCodeCredentialMissing
+}
+
+/** See `AgentLaunchResult.credentialMissing`'s own comment for what this names and why. */
+export interface OpenCodeCredentialMissing {
+  providerId: string
+  model: string
 }
 
 /**

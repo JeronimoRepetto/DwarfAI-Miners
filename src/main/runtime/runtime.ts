@@ -103,6 +103,7 @@ import {
   type OpenCodePermissionAnswerOutcome,
   type OpenCodePermissionAnswerPort
 } from '../opencodePermissions/answerOpenCodePermission'
+import type { OpenCodeLaunchCredentialGate } from '../opencodeLogin/launchCredentialGate'
 import { nullLedgerStore } from '../ledger/ledgerStore'
 import { MaterialLedger } from '../ledger/materialLedger'
 import { pollProfiler } from './perf'
@@ -502,6 +503,17 @@ const EMPTY_PROMPT = 'Type a prompt first.'
 const LAUNCH_FAILED = 'The agent could not be started.'
 
 /**
+ * Names both the model and the provider (#597 T3), because the temporary
+ * surface this reaches (`submitRefused`'s free-text line, until T5's own
+ * dialog replaces it) has no other way to say which login is missing. The
+ * typed `credentialMissing` field on `AgentLaunchResult` carries the same two
+ * facts structurally, for T5 to read instead of parsing this sentence apart.
+ */
+function openCodeCredentialMissingMessage(providerId: string, model: string): string {
+  return `${model} needs OpenCode's "${providerId}" provider to be signed in first.`
+}
+
+/**
  * Refusals for adding and removing a mine (#85), phrased for the panel.
  *
  * Every one of them is stated rather than swallowed: the control that triggers
@@ -794,6 +806,19 @@ export interface RuntimeOptions {
    */
   answerOpenCodePermission?: OpenCodePermissionAnswerPort
   /**
+   * Checked ONCE per OpenCode launch that names a model, before `launchSession`
+   * ever runs (#597 T3) — composes T1's control server with T2's reader and
+   * decision; see `launchCredentialGate.ts`'s own module doc for the FAIL-OPEN
+   * rule every `'check-failed'` outcome follows.
+   *
+   * OMITTED disables the check entirely — an OpenCode launch spawns exactly as
+   * it did before this issue, which is what keeps every existing test (none of
+   * which wires this) byte for byte unchanged. The composition root
+   * (`index.ts`) is the only caller that wires the real one, over the control
+   * server it also stops on quit.
+   */
+  openCodeCredentialGate?: OpenCodeLaunchCredentialGate
+  /**
    * Starts a NEW session in a folder (#86); injected for tests, which must
    * never spawn a real agent. The default drives Claude through its own
    * headless interface, over the binary CLI detection (#91) found.
@@ -1039,6 +1064,8 @@ export class AgentRuntime {
   ) => PermissionKeystroke | null
   /** POSTs an OpenCode permission decision to that ask's own server (#588 T5). */
   private readonly answerOpenCodePermission: OpenCodePermissionAnswerPort
+  /** Checked before an OpenCode launch spawns (#597 T3); undefined disables the check — see RuntimeOptions. */
+  private readonly openCodeCredentialGate: OpenCodeLaunchCredentialGate | undefined
   private readonly launchSession: SessionLauncher
   /**
    * The delegation gate's live inputs and the loopback service's own port
@@ -1442,6 +1469,10 @@ export class AgentRuntime {
     this.permissionKeystroke = options.permissionKeystroke ?? permissionKeystrokeFor
     this.answerOpenCodePermission =
       options.answerOpenCodePermission ?? postOpenCodePermissionDecision
+    // No default the way answerOpenCodePermission above has one: undefined is
+    // itself a valid, deliberate configuration (see RuntimeOptions) rather than
+    // a gap this constructor should paper over with a real network call.
+    this.openCodeCredentialGate = options.openCodeCredentialGate
     this.simulated = simulation !== null
     // Composed here rather than in platformAdapters: holding a session is the
     // same act on all three platforms, so there is no per-OS branch to own.
@@ -4901,6 +4932,35 @@ export class AgentRuntime {
 
     const prompt = prepareLaunchPrompt(request.prompt)
     if (prompt === '') return { launched: false, provider: 'none', error: EMPTY_PROMPT }
+
+    // #597 T3: checked before anything else commits to this launch — no
+    // delegation token minted, nothing retained — so a held credential never
+    // has cleanup to undo. Only for OpenCode, and only with a model actually
+    // named: no model is the CLI's own default (nothing to check), and every
+    // other provider's launch is untouched. A build with no gate wired
+    // (RuntimeOptions.openCodeCredentialGate absent — every test but this
+    // issue's own) skips this whole block, byte for byte as before.
+    if (
+      request.provider === 'opencode' &&
+      request.model !== undefined &&
+      this.openCodeCredentialGate !== undefined
+    ) {
+      const gate = await this.openCodeCredentialGate(request.model)
+      if (gate.kind === 'credential-missing') {
+        return {
+          launched: false,
+          provider: request.provider,
+          error: openCodeCredentialMissingMessage(gate.providerId, gate.model),
+          credentialMissing: { providerId: gate.providerId, model: gate.model }
+        }
+      }
+      if (gate.kind === 'check-failed') {
+        // FAILS OPEN (launchCredentialGate.ts's own rule): logged once, for
+        // whoever reads this log, and never surfaced to the person — they
+        // asked to launch a session, not to read a connectivity report.
+        console.warn(`[opencode] credential check failed, launching anyway: ${gate.detail}`)
+      }
+    }
 
     // #511 T4: evaluated per launch, at the moment of this real launch — see
     // `resolveDelegationInjection`'s own comment on why that is what makes

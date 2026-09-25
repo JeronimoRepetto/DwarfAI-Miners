@@ -144,8 +144,11 @@ export type {
   /* --- end of the #510 block ------------------------------------------------- */
   /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
   OpenCodePasswordUnavailableReason,
-  OpenCodeSettings
+  OpenCodeSettings,
   /* --- end of the #588 T6 block ------------------------------------------------ */
+  /* --- OpenCode credential check before launch (#597 T3) — one block, appended --- */
+  OpenCodeCredentialMissing
+  /* --- end of the #597 T3 block -------------------------------------------------- */
 } from '../../shared/contracts'
 
 /**

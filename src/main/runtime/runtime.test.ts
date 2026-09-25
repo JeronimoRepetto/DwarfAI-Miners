@@ -61,6 +61,7 @@ import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import { UNCLAIMED_ASK_GRACE_MS } from '../opencodePermissions/openCodePermissionRegistry'
 import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
 import type { OpenCodePermissionAnswerPort } from '../opencodePermissions/answerOpenCodePermission'
+import type { OpenCodeLaunchCredentialGate } from '../opencodeLogin/launchCredentialGate'
 import { PROVIDER_REGISTRY, type ProviderFactory } from '../providers/registry'
 import type { Provider } from '../providers/provider'
 import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
@@ -6425,6 +6426,166 @@ describe('AgentRuntime.launchAgent (#86)', () => {
       error: 'OpenCode is not installed on this machine.'
     })
     expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
+  })
+})
+
+/*
+ * #597 T3. Before an OpenCode launch spawns, the runtime asks an injected
+ * gate whether the chosen model's provider has a credential — composed in
+ * production from T1's control server and T2's reader/decision
+ * (launchCredentialGate.ts), but a bare mock here: this suite is about the
+ * WIRING (when the gate is asked, and what each of its outcomes does to a
+ * launch), not the HTTP the gate itself already owns its own tests for.
+ */
+describe('AgentRuntime.launchAgent — OpenCode credential gate (#597 T3)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'claude:session-1',
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  async function runtimeWith(
+    launchSession: SessionLauncher,
+    openCodeCredentialGate?: OpenCodeLaunchCredentialGate
+  ) {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      ...(openCodeCredentialGate === undefined ? {} : { openCodeCredentialGate })
+    })
+    await runtime.refresh()
+    return { runtime, mineId: runtime.getMines()[0]!.id }
+  }
+
+  it('(a) holds the launch and never spawns when the gate reports credential-missing', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({
+      kind: 'credential-missing',
+      providerId: 'anthropic',
+      model: 'anthropic/claude-3-5'
+    })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    const result = await runtime.launchAgent({
+      mineId,
+      provider: 'opencode',
+      prompt: 'go',
+      model: 'anthropic/claude-3-5'
+    })
+
+    expect(result.launched).toBe(false)
+    expect(result.provider).toBe('opencode')
+    expect(result.credentialMissing).toEqual({
+      providerId: 'anthropic',
+      model: 'anthropic/claude-3-5'
+    })
+    expect(result.error).toContain('anthropic')
+    expect(result.error).toContain('anthropic/claude-3-5')
+    expect(launchSession).not.toHaveBeenCalled()
+    expect(gate).toHaveBeenCalledWith('anthropic/claude-3-5')
+  })
+
+  it('(b) spawns exactly as before once the gate reports ready', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({ kind: 'ready' })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'opencode',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'opencode' })
+    expect(launchSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('(c) fails open — a check-failed gate still launches, and logs the detail once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi
+      .fn<OpenCodeLaunchCredentialGate>()
+      .mockResolvedValue({ kind: 'check-failed', detail: 'control server: not-installed' })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'opencode',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'opencode' })
+    expect(launchSession).toHaveBeenCalledTimes(1)
+    const lines = warn.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('control server: not-installed')
+    warn.mockRestore()
+  })
+
+  it('(d) never asks the gate at all when no model was chosen', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({ kind: 'ready' })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
+
+    expect(gate).not.toHaveBeenCalled()
+    expect(launchSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('(e) never asks the gate for a non-OpenCode provider, whatever the gate would answer', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({
+      kind: 'credential-missing',
+      providerId: 'anthropic',
+      model: 'anthropic/claude-3-5'
+    })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'claude',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'claude' })
+    expect(gate).not.toHaveBeenCalled()
+  })
+
+  it('spawns exactly as before when no gate is wired at all, the shape every existing test is in', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'opencode',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'opencode' })
   })
 })
 

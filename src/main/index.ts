@@ -121,6 +121,11 @@ import { openCodeGlobalPluginDir } from './opencodePermissions/openCodePluginIns
 import { createOpenCodeServerPasswordStore } from './opencodePermissions/openCodeServerPassword'
 import { createOpenCodePermissionAnswerPort } from './opencodePermissions/answerOpenCodePermission'
 import type { OpenCodePermissionPush } from './opencodePermissions/permissionPushPayload'
+import {
+  createOpenCodeControlServer,
+  type OpenCodeControlServerPort
+} from './opencodeLogin/controlServer'
+import { createOpenCodeLaunchCredentialGate } from './opencodeLogin/launchCredentialGate'
 import { NodeFs } from './adapters/fsLike'
 import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
@@ -209,6 +214,13 @@ let delegationService: DelegationService | null = null
  */
 let hookListener: HookListener | null = null
 let openCodePlugin: OpenCodePluginChannel | null = null
+/**
+ * The loopback `opencode serve --pure` this app starts for itself (#597 T1),
+ * shared by every credential check a launch makes. Module scope for the same
+ * reason `delegationService` is: the quit handler releases the port and its
+ * whole process tree.
+ */
+let openCodeControlServer: OpenCodeControlServerPort | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
@@ -1026,6 +1038,19 @@ async function init(): Promise<void> {
       : {})
   })
 
+  // #597 T1/T3: one control server for this process's whole lifetime, shared
+  // by every credential check a launch makes — `ensure()` starts it on first
+  // use and reuses it after, `stop()` runs on quit below. Resolved through the
+  // same CLI detection every other OpenCode spawn already uses (#91), fresh on
+  // every start attempt so an install made after this app started is found.
+  openCodeControlServer = createOpenCodeControlServer({
+    resolveBinaryPath: async () => {
+      const detection = await platformAdapters.cliDetector.detect('opencode')
+      return detection.installed ? detection.path : undefined
+    },
+    env: process.env
+  })
+
   runtime = new AgentRuntime({
     config,
     ledger,
@@ -1091,6 +1116,14 @@ async function init(): Promise<void> {
     // answer, and sends it only to a loopback OpenCode server.
     answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
       readPassword: openCodePasswordStore.readPassword
+    }),
+    // #597 T3: the same control server constructed just above, over plain
+    // `fetch` — no Settings password to read here, unlike the permission
+    // answerer above: the control server mints its own per-start password
+    // (controlServer.ts), so `ensure()`'s own `readPassword()` is enough.
+    openCodeCredentialGate: createOpenCodeLaunchCredentialGate({
+      controlServer: openCodeControlServer,
+      fetch: globalThis.fetch
     }),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
@@ -2060,6 +2093,11 @@ if (!app.requestSingleInstanceLock()) {
     // channel just above — nothing here is written to disk to bring back.
     void delegationService?.stop()
     delegationService = null
+    // #597 T1/T3: kills the control server's whole process tree, same
+    // fire-and-forget terms as delegationService's own loopback listener above
+    // — nothing this server holds is written to disk to bring back either.
+    void openCodeControlServer?.stop()
+    openCodeControlServer = null
     // Same for the OpenCode relay (#588 T6): the plugin file and its opt-in
     // stay; a push while the app is closed just fails to connect, which the
     // plugin already treats as silent. Then the shared port itself.
