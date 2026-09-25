@@ -1,6 +1,7 @@
 import type { SpawnOptions } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
+import type { DirEntry, FileStat, FsLike } from '../adapters/fsLike'
 import type { ProcessEndPort } from '../platform/processEnd'
 import {
   buildControlServerSpawn,
@@ -180,6 +181,39 @@ function fakeSpawn(children: readonly FakeChild[]): {
  */
 async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve))
+}
+
+/** A real `NodeJS.ErrnoException`-shaped error, the way Node's own fs calls actually throw one. */
+function errnoError(code: string, message: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(message), { code })
+}
+
+/**
+ * An `FsLike` whose `readTextHead` fails the way the real adapter does when a
+ * detected shim stops existing before this app reads it back — uninstalled or
+ * moved between detection and a start attempt. Every other method is unused
+ * by `resolveProgram`'s shim-reading path and throws if that ever changes.
+ */
+class UnreadableFs implements FsLike {
+  constructor(private readonly error: Error) {}
+  async readTextTail(): Promise<string> {
+    throw new Error('UnreadableFs: readTextTail unused by this suite')
+  }
+  async readTextHead(): Promise<string> {
+    throw this.error
+  }
+  async readJson(): Promise<unknown> {
+    throw new Error('UnreadableFs: readJson unused by this suite')
+  }
+  async listDir(): Promise<DirEntry[]> {
+    return []
+  }
+  async stat(): Promise<FileStat | null> {
+    return null
+  }
+  async exists(): Promise<boolean> {
+    return false
+  }
 }
 
 function fakeProcessEnd(): { port: ProcessEndPort; endedPids: number[] } {
@@ -434,5 +468,68 @@ describe('createOpenCodeControlServer', () => {
       url: 'http://127.0.0.1:5151',
       readPassword: expect.any(Function)
     })
+  })
+
+  /*
+   * A detected shim can stop existing before this app ever reads it back —
+   * opencode uninstalled or moved between detection and a start attempt.
+   * `resolveProgram`'s own `fs.readTextHead` throws in that case (a real
+   * ENOENT, not a refusal shape), and `ensure()` promises a typed result to
+   * every caller — never an unhandled rejection.
+   */
+  it('reports not-installed, never rejects, when the resolved binary cannot be read', async () => {
+    const enoent = errnoError(
+      'ENOENT',
+      "ENOENT: no such file or directory, open 'C:\\opencode.cmd'"
+    )
+    const { server, calls } = makeServer({
+      resolveBinaryPath: async () => 'C:\\opencode.cmd',
+      fs: new UnreadableFs(enoent)
+    })
+
+    await expect(server.ensure()).resolves.toEqual({
+      ok: false,
+      reason: 'not-installed',
+      detail: 'ENOENT'
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('does not poison later ensure() calls after an unreadable-binary failure', async () => {
+    const enoent = errnoError(
+      'ENOENT',
+      "ENOENT: no such file or directory, open 'C:\\opencode.cmd'"
+    )
+    const childB = new FakeChild(9000)
+    let attempt = 0
+    const { server, calls } = makeServer(
+      {
+        resolveBinaryPath: async () => {
+          attempt += 1
+          // First attempt: the shim path that no longer exists. Second
+          // attempt: opencode is present again, at a plain (non-shim) path.
+          return attempt === 1 ? 'C:\\opencode.cmd' : '/usr/local/bin/opencode'
+        },
+        fs: new UnreadableFs(enoent)
+      },
+      [childB]
+    )
+
+    await expect(server.ensure()).resolves.toEqual({
+      ok: false,
+      reason: 'not-installed',
+      detail: 'ENOENT'
+    })
+
+    const second = server.ensure()
+    await flushAsync()
+    childB.emitStdout('opencode server listening on http://127.0.0.1:4096\n')
+
+    await expect(second).resolves.toEqual({
+      ok: true,
+      url: 'http://127.0.0.1:4096',
+      readPassword: expect.any(Function)
+    })
+    expect(calls).toHaveLength(1)
   })
 })

@@ -191,98 +191,127 @@ export function createOpenCodeControlServer(
   async function killRunning(): Promise<void> {
     const pid = running?.pid
     running = null
-    if (pid !== undefined) await processEnd.endProcessTree(pid)
+    if (pid === undefined) return
+    try {
+      await processEnd.endProcessTree(pid)
+    } catch {
+      // Best-effort: stop() and the idle shutdown's fire-and-forget void
+      // stop() must not reject over a kill that failed to run.
+    }
   }
 
   function startOnce(): Promise<ControlServerStartResult> {
     return new Promise((resolve) => {
+      let settled = false
+      let child: ControlServerChild
+      // Declared before `finish` and initialised, never left in the
+      // temporal dead zone a bare `let timer: T` would put it in — `finish`
+      // must be safe to call from the outer catch below, which can run
+      // before a child (and its timer) ever exists.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (result: ControlServerStartResult): void => {
+        if (settled) return
+        settled = true
+        if (timer !== undefined) clearTimeout(timer)
+        resolve(result)
+      }
+
       void (async () => {
-        const binaryPath = await options.resolveBinaryPath()
-        if (binaryPath === undefined) {
-          resolve({ ok: false, reason: 'not-installed', detail: NOT_INSTALLED })
-          return
-        }
-        const program = await resolveProgram(binaryPath, fs)
-        if ('kind' in program) {
-          resolve({ ok: false, reason: 'not-installed', detail: describeShimRefusal(program) })
-          return
-        }
-
-        const password = generatePassword()
-        const call = buildControlServerSpawn(
-          { command: program.command, args: program.args },
-          { password, env: options.env }
-        )
-
-        let settled = false
-        let child: ControlServerChild
-        const finish = (result: ControlServerStartResult): void => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          resolve(result)
-        }
-
-        const timer = setTimeout(() => {
-          // Never announced within the window: kill the whole tree rather than
-          // leave a half-started server nobody can reach behind.
-          void (async () => {
-            const pid = child.pid
-            if (pid !== undefined) await processEnd.endProcessTree(pid)
-            finish({ ok: false, reason: 'timed-out' })
-          })()
-        }, readyTimeoutMs)
-        timer.unref?.()
-
         try {
-          child = spawnProcess(call.command, call.args, call.options)
-        } catch (error) {
-          clearTimeout(timer)
-          resolve({ ok: false, reason: 'spawn-failed', detail: describeProgramFailure(error) })
-          return
-        }
-
-        child.once('error', (error) => {
-          finish({ ok: false, reason: 'spawn-failed', detail: describeProgramFailure(error) })
-        })
-
-        let buffer = ''
-        const onData = (chunk: Buffer | string): void => {
-          if (settled) return
-          buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-          if (buffer.length > MAX_ANNOUNCEMENT_CHARS) {
-            buffer = buffer.slice(-MAX_ANNOUNCEMENT_CHARS)
-          }
-          const url = parseControlServerUrl(buffer)
-          if (url === undefined) return
-          running = { pid: child.pid, url, password }
-          scheduleIdleShutdown()
-          finish({ ok: true, url, readPassword: () => password })
-        }
-        child.stdout?.on('data', onData)
-        child.stderr?.on('data', onData)
-
-        child.once('exit', (code, signal) => {
-          if (!settled) {
-            finish({
-              ok: false,
-              reason: 'exited-before-ready',
-              detail:
-                signal !== null
-                  ? `stopped by signal ${signal} before it announced its url`
-                  : `exited (${code ?? 'unknown'}) before it announced its url`
-            })
+          const binaryPath = await options.resolveBinaryPath()
+          if (binaryPath === undefined) {
+            finish({ ok: false, reason: 'not-installed', detail: NOT_INSTALLED })
             return
           }
-          // Ready before this: the server ended on its own after being handed
-          // out (crash, an external kill). Clear the held state so the next
-          // ensure() starts a fresh one instead of handing back a url nobody
-          // is listening on any more.
-          if (running !== null && running.pid === child.pid) {
-            running = null
-            clearIdleTimer()
+          const program = await resolveProgram(binaryPath, fs)
+          if ('kind' in program) {
+            finish({ ok: false, reason: 'not-installed', detail: describeShimRefusal(program) })
+            return
           }
-        })
+
+          const password = generatePassword()
+          const call = buildControlServerSpawn(
+            { command: program.command, args: program.args },
+            { password, env: options.env }
+          )
+
+          timer = setTimeout(() => {
+            // Never announced within the window: kill the whole tree rather
+            // than leave a half-started server nobody can reach behind.
+            void (async () => {
+              const pid = child.pid
+              if (pid !== undefined) {
+                try {
+                  await processEnd.endProcessTree(pid)
+                } catch {
+                  // Best-effort: the timeout verdict below stands regardless
+                  // of whether the kill itself could run.
+                }
+              }
+              finish({ ok: false, reason: 'timed-out' })
+            })()
+          }, readyTimeoutMs)
+          timer.unref?.()
+
+          child = spawnProcess(call.command, call.args, call.options)
+
+          child.once('error', (error) => {
+            finish({ ok: false, reason: 'spawn-failed', detail: describeProgramFailure(error) })
+          })
+
+          let buffer = ''
+          const onData = (chunk: Buffer | string): void => {
+            if (settled) return
+            buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+            if (buffer.length > MAX_ANNOUNCEMENT_CHARS) {
+              buffer = buffer.slice(-MAX_ANNOUNCEMENT_CHARS)
+            }
+            const url = parseControlServerUrl(buffer)
+            if (url === undefined) return
+            running = { pid: child.pid, url, password }
+            scheduleIdleShutdown()
+            finish({ ok: true, url, readPassword: () => password })
+          }
+          child.stdout?.on('data', onData)
+          child.stderr?.on('data', onData)
+
+          child.once('exit', (code, signal) => {
+            if (!settled) {
+              finish({
+                ok: false,
+                reason: 'exited-before-ready',
+                detail:
+                  signal !== null
+                    ? `stopped by signal ${signal} before it announced its url`
+                    : `exited (${code ?? 'unknown'}) before it announced its url`
+              })
+              return
+            }
+            // Ready before this: the server ended on its own after being
+            // handed out (crash, an external kill). Clear the held state so
+            // the next ensure() starts a fresh one instead of handing back a
+            // url nobody is listening on any more.
+            if (running !== null && running.pid === child.pid) {
+              running = null
+              clearIdleTimer()
+            }
+          })
+        } catch (error) {
+          // Everything above this catch can throw instead of resolving: a
+          // shim `resolveProgram` must read back can stop existing between
+          // detection and this start attempt (uninstalled, moved), and
+          // `spawn` itself can throw synchronously. Either way this is a
+          // FACT about the binary or the attempt, never an unhandled
+          // rejection — `ensure()` promises every caller a typed result, the
+          // same contract `resolveBinaryPath()` returning undefined already
+          // keeps.
+          const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined
+          finish({
+            ok: false,
+            reason: code === 'ENOENT' ? 'not-installed' : 'spawn-failed',
+            detail: describeProgramFailure(error)
+          })
+        }
       })()
     })
   }
