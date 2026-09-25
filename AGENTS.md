@@ -213,11 +213,12 @@ adding a file. This is the index — one line per group, so you can tell what a 
   the type barrel), `history`, `hooks` (the opt-in Claude push channel), `jev` (asking the TypeSafe
   Jev model which provider, model and effort to launch with), `ledger` (mined, persisted), `mcp`
   (the subtask-delegation gate, and the stdio MCP server itself), `notifications` (the OS
-  notification centre, behind a port), `opencodePermissions` (the OpenCode permission push payload
-  builder, and the plugin artifact that feeds it (#588)), `platform` (composed once in
-  `platformAdapters.ts`), `projects`, `providers` (one per agent CLI plus the simulated one),
-  `runtime` (the poll loop), `sessionLaunch` (starting a session and holding one), `shell` (window,
-  tray, autostart, shortcuts), `textDelivery`, `tier`.
+  notification centre, behind a port), `opencodeLogin` (the loopback control server this app starts
+  for itself to check and set OpenCode credentials (#597)), `opencodePermissions` (the OpenCode
+  permission push payload builder, and the plugin artifact that feeds it (#588)), `platform`
+  (composed once in `platformAdapters.ts`), `projects`, `providers` (one per agent CLI plus the
+  simulated one), `runtime` (the poll loop), `sessionLaunch` (starting a session and holding one),
+  `shell` (window, tray, autostart, shortcuts), `textDelivery`, `tier`.
 
 <!-- END GENERATED: main-tree -->
 
