@@ -1,0 +1,257 @@
+{
+  "about": "README art for DwarfAI-Miners, rendered from the interface design's own prototype components, tokens and art with sample data only. Generated: do not edit these files by hand.",
+  "regenerate": "node tools/readme-art.js --out <app repository>/docs/readme (in the DwarfAI-Miners design repository)",
+  "scale": 2,
+  "scaling": "Composed at 1x in art pixels, captured at 1x, then scaled up by exactly 2 with nearest-neighbour sampling. width and height below are CSS pixels; show a piece at that width for a pixel-exact picture on a 2x screen.",
+  "renderer": "Edg/153.0.4234.48",
+  "assets": [
+    {
+      "id": "hero",
+      "file": "hero.png",
+      "width": 644,
+      "height": 324,
+      "type": "image/png",
+      "pixels": [1288, 648],
+      "bytes": 368459,
+      "sources": [
+        "prototype/assets/map/map-bg-day.jpg (at half size, nearest-neighbour)",
+        "atoms/icon (mark)",
+        "atoms/marker",
+        "atoms/badge (pill)",
+        "molecules/vault-strip",
+        "atoms/sprite (worker/working, foreman/idle, worker2/idle, frame 0)",
+        "foundations/materials",
+        "foundations/type"
+      ]
+    },
+    {
+      "id": "card-column",
+      "file": "cards/mine-interior.png",
+      "width": 320,
+      "height": 836,
+      "type": "image/png",
+      "pixels": [640, 1672],
+      "bytes": 446016,
+      "sources": [
+        "organisms/mine-column (dwarfai-miners)",
+        "molecules/crew-roster",
+        "molecules/vault-strip",
+        "atoms/sprite"
+      ]
+    },
+    {
+      "id": "card-mines",
+      "file": "cards/mines.png",
+      "width": 384,
+      "height": 368,
+      "type": "image/png",
+      "pixels": [768, 736],
+      "bytes": 95712,
+      "sources": ["molecules/mine-card (dwarfai-miners, deep-vault)"]
+    },
+    {
+      "id": "card-ask",
+      "file": "cards/question.png",
+      "width": 384,
+      "height": 468,
+      "type": "image/png",
+      "pixels": [768, 936],
+      "bytes": 56966,
+      "sources": ["molecules/chat-bubble", "organisms/question-card (dwarfai-54)"]
+    },
+    {
+      "id": "crew",
+      "file": "crew.svg",
+      "width": 644,
+      "height": 228,
+      "type": "image/svg+xml",
+      "animated": [
+        {
+          "sheet": "worker/working",
+          "src": "art/v3/export/dwarf-worker-working-v3-Sheet.png",
+          "frames": 13,
+          "cycleMs": 1460
+        },
+        {
+          "sheet": "worker2/working",
+          "src": "art/v3/export/dwarf-worker2-working-v3-Sheet.png",
+          "frames": 10,
+          "cycleMs": 1160
+        },
+        {
+          "sheet": "foreman/idle",
+          "src": "art/v3/export/dwarf-foreman-long-idle-v3-Sheet.png",
+          "frames": 28,
+          "cycleMs": 5230
+        },
+        {
+          "sheet": "foreman/sleeping",
+          "src": "art/v3/export/dwarf-foreman-sleeping-v3-Sheet.png",
+          "frames": 12,
+          "cycleMs": 2560
+        }
+      ],
+      "bytes": 250952,
+      "sources": [
+        "atoms/sprite sheets from art/v3/export/ with their JSON sidecar durations (worker/working, worker2/working, foreman/idle, foreman/sleeping)",
+        "foundations/materials",
+        "foundations/type"
+      ]
+    },
+    {
+      "id": "plate-feature-tour",
+      "file": "plates/feature-tour.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 4877,
+      "sources": [
+        "atoms/icon (map)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-highlights",
+      "file": "plates/highlights.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5090,
+      "sources": [
+        "atoms/icon (mines)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-install",
+      "file": "plates/install.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 4432,
+      "sources": [
+        "atoms/icon (add)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-run-from-source",
+      "file": "plates/run-from-source.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5164,
+      "sources": [
+        "atoms/icon (console)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-platform-support",
+      "file": "plates/platform-support.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5296,
+      "sources": [
+        "atoms/icon (check)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-provider-support",
+      "file": "plates/provider-support.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5322,
+      "sources": [
+        "atoms/icon (send)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-configuration",
+      "file": "plates/configuration.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5091,
+      "sources": [
+        "atoms/icon (settings)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-reporting-a-problem",
+      "file": "plates/reporting-a-problem.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5513,
+      "sources": [
+        "atoms/icon (warning)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-documentation",
+      "file": "plates/documentation.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 4893,
+      "sources": [
+        "atoms/icon (history)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-support-the-project",
+      "file": "plates/support-the-project.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 5489,
+      "sources": [
+        "atoms/icon (mark)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    },
+    {
+      "id": "plate-license",
+      "file": "plates/license.png",
+      "width": 644,
+      "height": 48,
+      "type": "image/png",
+      "pixels": [1288, 96],
+      "bytes": 4576,
+      "sources": [
+        "atoms/icon (info)",
+        "foundations/materials (wood, brass trim, rivets, rule)",
+        "foundations/type (display role)"
+      ]
+    }
+  ],
+  "totalBytes": 1273848
+}

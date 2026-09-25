@@ -1,5 +1,7 @@
+<!-- The art under docs/readme/ is generated from the interface design's own components; see docs/readme/manifest.json before changing or replacing any of it. -->
+
 <p align="center">
-  <img src="docs/assets/logo.png"  width="100%" alt="DwarfAI-Miners logo — the gold mine mound on a dark circular badge">
+  <img src="docs/readme/hero.png" width="644" alt="DwarfAI-Miners: a wooden plate with the pickaxe mark, the title and the line 'A floating desktop panel that turns active AI coding sessions into mines and dwarfs', over the painted world map with three mine markers, an ore counter and three dwarfs on a ledge">
 </p>
 
 <div align="center">
@@ -29,6 +31,8 @@ files to, kick from and read history in; terminal focus with a transcript fallba
 music, mine ambience and dwarf voices; autostart; and packaging are all implemented. Windows is
 the platform verified end to end; macOS and Linux have been run on real hardware with lighter
 coverage — the [support matrix](#platform-support) says which is which.
+
+<p align="center"><img src="docs/readme/plates/feature-tour.png" width="644" alt="Section plate: Feature tour"></p>
 
 ## Feature tour
 
@@ -75,7 +79,22 @@ the mine answers **what each agent is doing**.
 The [art pipeline](docs/architecture.md#art-pipeline) explains how the shipped assets are
 processed.
 
+<p align="center"><img src="docs/readme/plates/highlights.png" width="644" alt="Section plate: Highlights"></p>
+
 ## Highlights
+
+<table>
+  <tr>
+    <td rowspan="2" align="center" valign="top"><img src="docs/readme/cards/mine-interior.png" width="320" alt="A mine interior: the DwarfAI-Miners mine's painted shaft with four dwarfs at work, one named dwarfai-53, one asking a question, one asleep, over the crew's portraits, the mine's ore and a + Dwarf button"><br><strong>Mine interior</strong><br>The crew at work, one asking, one asleep.</td>
+    <td align="center" valign="top"><img src="docs/readme/cards/mines.png" width="384" alt="Two mine cards: DwarfAI-Miners, Silver tier, outlined because a dwarf needs you, with its ore and progress to Gold; and deep-vault at Uranium, the maximum tier"><br><strong>Mines</strong><br>Every project is a mine, with its tier, crew and ore.</td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/readme/cards/question.png" width="384" alt="A conversation and a question card: your message with its double-tick mark, the dwarf asking for three decisions, and the first question, Which database should the migration target, with four numbered options"><br><strong>Questions</strong><br>Answer a blocked agent straight from the panel.</td>
+  </tr>
+</table>
+
+<sub>These pictures are drawn with the redesigned interface's own components and sample data; the
+[feature tour](#feature-tour) above shows the app as it ships today.</sub>
 
 - **Live session detection** — Claude Code, Codex, Antigravity and OpenCode sessions become dwarfs
   the moment they appear, no configuration required.
@@ -124,14 +143,13 @@ processed.
 - **Autostart and tray** — starts at login, lives in the tray, and hides instead of closing.
 
 Every screen and control is described in the [user guide](docs/guide.md).
-<p align="left">
-  <img src="docs/media/hero01.gif" width="210" alt="Worker2">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/media/hero.gif" width="100" paddin="10" alt="Foreman">
-   &nbsp;&nbsp;
-  <img align="right" src="docs/media/hero02.gif" width="210" alt="Worker">
-  <img align="right" src="docs/media/hero03.gif" width="100" alt="Foreman">
+
+<p align="center">
+  <img src="docs/readme/crew.svg" width="644" alt="The crew, animated: two workers swinging their pickaxes, a foreman standing idle and a foreman asleep, each on a wooden board above a name plate">
 </p>
+
+<p align="center"><img src="docs/readme/plates/install.png" width="644" alt="Section plate: Install"></p>
+
 ## Install
 
 Download the installer for your OS from the
@@ -180,6 +198,8 @@ Three things worth knowing on that first run:
   coal pile with the tokens you burned before installing this. It is bounded, resumable, and
   described in full in [`docs/privacy.md`](docs/privacy.md#the-one-time-history-scan).
 
+<p align="center"><img src="docs/readme/plates/run-from-source.png" width="644" alt="Section plate: Run from source"></p>
+
 ## Run from source
 
 ```bash
@@ -197,6 +217,8 @@ re-claimed, and the settings panel says so rather than showing a shortcut that d
 
 The checks CI runs, the testing philosophy and the rest of the contribution workflow are in
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+<p align="center"><img src="docs/readme/plates/platform-support.png" width="644" alt="Section plate: Platform support"></p>
 
 ## Platform support
 
@@ -267,6 +289,8 @@ Notes on the three honest gaps:
 
 </details>
 
+<p align="center"><img src="docs/readme/plates/provider-support.png" width="644" alt="Section plate: Provider support"></p>
+
 ## Provider support
 
 Three questions get three separate answers, because they are three different bars: can this app
@@ -282,6 +306,8 @@ arrive live.
 
 Each provider's limits, effort levels and how foremen and workers are told apart are in the
 [user guide](docs/guide.md#providers-in-depth).
+
+<p align="center"><img src="docs/readme/plates/configuration.png" width="644" alt="Section plate: Configuration"></p>
 
 ## Configuration
 
@@ -319,6 +345,8 @@ an ordinary untuned launch. Neither is ever a guess this app makes for you — s
 [`jev-capabilities`](skills/jev-capabilities/SKILL.md) skill for how a model earns a place in the
 table the profile routes through.
 
+<p align="center"><img src="docs/readme/plates/reporting-a-problem.png" width="644" alt="Section plate: Reporting a problem"></p>
+
 ## Reporting a problem
 
 - **Bugs, features and roadmap** → [GitHub issues](https://github.com/JeronimoRepetto/DwarfAI-Miners/issues).
@@ -333,6 +361,8 @@ table the profile routes through.
 If you run macOS or Linux, the single most useful thing you can file is what happened when you
 walked the support matrix on real hardware — including "it all worked". See
 [CONTRIBUTING.md](CONTRIBUTING.md#platform-validation--help-wanted).
+
+<p align="center"><img src="docs/readme/plates/documentation.png" width="644" alt="Section plate: Documentation"></p>
 
 ## Documentation
 
@@ -356,6 +386,8 @@ walked the support matrix on real hardware — including "it all worked". See
 - [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
   audio assets.
 
+<p align="center"><img src="docs/readme/plates/support-the-project.png" width="644" alt="Section plate: Support the project"></p>
+
 <h2>
   Support the project
 </h2>
@@ -368,6 +400,8 @@ nothing in the app is, or will be, gated on it.
 <a href="https://ko-fi.com/jeronimorepetto" target="_blank" rel="noopener noreferrer">
   <img height="36" src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi" />
 </a>
+
+<p align="center"><img src="docs/readme/plates/license.png" width="644" alt="Section plate: License"></p>
 
 ## License
 
