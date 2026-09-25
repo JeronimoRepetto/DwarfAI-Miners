@@ -13,6 +13,7 @@ export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
+  AgentLaunchRequest,
   AgentModelCatalog,
   AgentModelCatalogList,
   AgentModelSource,

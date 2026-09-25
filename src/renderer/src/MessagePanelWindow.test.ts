@@ -2943,3 +2943,120 @@ describe('MessagePanelWindow MotionConfig root (#566 T3)', () => {
     expect(config.props('transition')).toEqual(REDUCED_MOTION_TRANSITION)
   })
 })
+
+/*
+ * ADDED for #597 T5 — the wiring end to end: a detached OpenCode launch main
+ * held back for a missing login opens the login dialog over the Add Panel, and
+ * a login that takes relaunches the same request with no further input.
+ * Everything the dialog decides is pinned in its own suites; this is only
+ * where the press goes.
+ */
+describe('a launch held back for a missing OpenCode login (#597)', () => {
+  const HELD_BACK = {
+    launched: false,
+    provider: 'opencode',
+    error: 'OpenCode has no login for anthropic.',
+    credentialMissing: { providerId: 'anthropic', model: 'anthropic/claude-sonnet-4' }
+  }
+
+  function openCodeApi(overrides: Record<string, unknown> = {}) {
+    return {
+      listAgentProviders: vi.fn().mockResolvedValue({
+        providers: [{ provider: 'opencode', installed: true, launchable: true }]
+      }),
+      launchAgent: vi
+        .fn()
+        .mockResolvedValueOnce(HELD_BACK)
+        .mockResolvedValue({ launched: true, provider: 'opencode', launchId: 'receipt:7' }),
+      openCodeAuthMethods: vi.fn().mockResolvedValue({ ok: true, methods: [] }),
+      openCodeSubmitApiKey: vi.fn().mockResolvedValue({ ok: true, connected: true }),
+      openCodeStartOAuth: vi.fn().mockResolvedValue({
+        ok: true,
+        url: 'https://auth.example.test/device',
+        method: 'auto',
+        instructions: ''
+      }),
+      openCodeCompleteOAuth: vi.fn().mockReturnValue(new Promise(() => {})),
+      openCodeCancelOAuth: vi.fn(),
+      ...overrides
+    }
+  }
+
+  async function heldBack(overrides: Record<string, unknown> = {}) {
+    // The spies are returned beside `api` because `stubApi`'s own type does
+    // not carry these members; asserting through them keeps the type honest.
+    const spies = openCodeApi(overrides)
+    const opened = await mountPanel({ surface: 'launch', mineId: MINE.id, dwarfId: '' }, spies)
+    await opened.wrapper.findAll('.provider-chip')[0]!.trigger('click')
+    await opened.wrapper.find('.launch-input').setValue('dig the east gallery')
+    await opened.wrapper.find('.launch-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    return { ...opened, spies }
+  }
+
+  it('opens the login dialog over the Add Panel, naming the provider and the model', async () => {
+    const { wrapper, spies } = await heldBack()
+
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain('anthropic')
+    expect(dialog.text()).toContain('anthropic/claude-sonnet-4')
+    expect(spies.openCodeAuthMethods).toHaveBeenCalledWith('anthropic')
+    // The Add Panel stays, under it and out of reach, with main's sentence.
+    expect(wrapper.get('.add-panel').attributes('inert')).toBeDefined()
+    expect(wrapper.get('.launch-alert').text()).toBe('OpenCode has no login for anthropic.')
+  })
+
+  it('leaves every other refusal on the alert line alone, with no dialog', async () => {
+    const { wrapper } = await heldBack({
+      launchAgent: vi.fn().mockResolvedValue({
+        launched: false,
+        provider: 'opencode',
+        error: 'OpenCode is not installed.'
+      })
+    })
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.get('.launch-alert').text()).toBe('OpenCode is not installed.')
+  })
+
+  it('relaunches the same request once a key makes the provider connected', async () => {
+    const { wrapper, spies } = await heldBack()
+
+    await wrapper.get('.login-key').setValue('sk-test-not-a-real-key')
+    await wrapper.get('.login-key-form').trigger('submit')
+    await flushPromises()
+
+    expect(spies.openCodeSubmitApiKey).toHaveBeenCalledWith('anthropic', 'sk-test-not-a-real-key')
+    expect(spies.launchAgent).toHaveBeenCalledTimes(2)
+    expect(spies.launchAgent.mock.calls[1]![0]).toEqual(spies.launchAgent.mock.calls[0]![0])
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.get('.add-panel').attributes('inert')).toBeUndefined()
+  })
+
+  it('closes on Escape and relaunches nothing', async () => {
+    const { wrapper, spies } = await heldBack()
+
+    await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(spies.launchAgent).toHaveBeenCalledOnce()
+  })
+
+  it('cancels a browser wait when the Add Panel goes away under it', async () => {
+    const { wrapper, api, spies } = await heldBack({
+      openCodeAuthMethods: vi
+        .fn()
+        .mockResolvedValue({ ok: true, methods: [{ type: 'oauth', label: 'Browser' }] })
+    })
+    await wrapper.get('.login-method').trigger('click')
+    await flushPromises()
+    expect(spies.openCodeCompleteOAuth).toHaveBeenCalled()
+
+    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
+    push(CLOSED)
+    await flushPromises()
+
+    expect(spies.openCodeCancelOAuth).toHaveBeenCalledOnce()
+  })
+})

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { MotionConfig } from 'motion-v'
 import AddPanel from './components/launch/AddPanel.vue'
+import OpenCodeLoginDialog from './components/launch/OpenCodeLoginDialog.vue'
 import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
@@ -10,6 +11,7 @@ import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
+import { useOpenCodeLogin } from './composables/useOpenCodeLogin'
 import { useTypography } from './composables/useTypography'
 import { shouldHidePanelAfterActivation } from './lib/delivery/activation'
 import { feedMessagesOf } from './lib/message/conversation'
@@ -170,8 +172,36 @@ const {
   dismissJevDecision: dismissLaunchJevDecision,
   submit: submitLaunch,
   observe: observeLaunch,
-  listenFailures: listenLaunchFailures
+  listenFailures: listenLaunchFailures,
+  credentialMissing: launchCredentialMissing,
+  relaunch: relaunchLaunch
 } = useAgentLaunch()
+
+/**
+ * The OpenCode login dialog (#597 T5), over the Add Panel it was raised from.
+ * Held here beside the launch for the reason the launch is: this window owns
+ * the dock the dialog covers, and the one relaunch it ends in.
+ */
+const login = useOpenCodeLogin()
+const loginOpen = computed(() => login.view.value.step !== 'closed')
+
+/**
+ * Submit, and when main held the launch back for a missing OpenCode login,
+ * ask for it. Read off the launch's own verdict right after the press rather
+ * than watched: a watcher is a handover that can be missed, and this is the one
+ * moment the answer exists. A relaunch goes through here too, so a login that
+ * still does not satisfy the gate asks again rather than falling silent.
+ */
+async function launchAskingForLogin(send: () => Promise<void>): Promise<void> {
+  await send()
+  const missing = launchCredentialMissing.value
+  if (missing === null) return
+  await login.open(missing, () => launchAskingForLogin(relaunchLaunch))
+}
+
+function submitLaunchAskingForLogin(): void {
+  void launchAskingForLogin(submitLaunch)
+}
 
 const error = ref<string | null>(null)
 
@@ -488,6 +518,8 @@ watch(
     // Anything else closes the launch: a dwarf was selected instead, the mine
     // went away, or the window was closed. The session itself is untouched
     // either way — closing the panel only lets go of the handover.
+    // #597 T5: the login dialog goes with it, cancelling any browser wait.
+    login.close()
     if (launchPhase.value !== 'closed') closeLaunchPanel()
   },
   { immediate: true }
@@ -1363,6 +1395,8 @@ onBeforeUnmount(() => {
   unlistenPanel?.()
   unlistenLaunchFailures?.()
   unlistenHeldMessages?.()
+  // #597 T5: a browser wait must not outlive the window that was waiting.
+  login.close()
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   unlistenTypography?.()
   /* --- end of the #370 block ----------------------------------------------- */
@@ -1395,33 +1429,55 @@ onBeforeUnmount(() => {
       <div ref="surfaceRef" class="message-surface">
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
 
-        <AddPanel
-          v-if="launchOpen"
-          :chips="launchChips"
-          :phase="launchPhase"
-          :enabled="launchEnabled"
-          :placeholder="launchPlaceholder"
-          :command="launchState.command"
-          :prompt="launchState.prompt"
-          :refusal="launchRefusal"
-          :error="launchState.error"
-          :model-picker="launchModelPicker"
-          :effort-picker="launchEffortPicker"
-          :permissions-visible="launchPermissionsVisible"
-          :jev="launchJev"
-          @choose="chooseProvider"
-          @command="setLaunchCommand"
-          @commit="commitLaunchCommand"
-          @prompt="setLaunchPrompt"
-          @model="setLaunchModel"
-          @effort="setLaunchEffort"
-          @permission-mode="setLaunchPermissionMode"
-          @toggle-jev="toggleLaunchJev"
-          @toggle-jev-auto="toggleLaunchJevAutoAccept"
-          @dismiss-jev="dismissLaunchJevDecision"
-          @submit="submitLaunch"
-          @close="close"
-        />
+        <!--
+          #597 T5: the login dialog is STACKED over the Add Panel in one grid
+          cell rather than positioned over it, because this window is sized
+          from what it measures — a dialog taller than the panel must grow the
+          window, not be clipped by it. The panel under it is inert meanwhile.
+        -->
+        <div v-if="launchOpen" class="launch-slot">
+          <AddPanel
+            :inert="loginOpen || undefined"
+            :chips="launchChips"
+            :phase="launchPhase"
+            :enabled="launchEnabled"
+            :placeholder="launchPlaceholder"
+            :command="launchState.command"
+            :prompt="launchState.prompt"
+            :refusal="launchRefusal"
+            :error="launchState.error"
+            :model-picker="launchModelPicker"
+            :effort-picker="launchEffortPicker"
+            :permissions-visible="launchPermissionsVisible"
+            :jev="launchJev"
+            @choose="chooseProvider"
+            @command="setLaunchCommand"
+            @commit="commitLaunchCommand"
+            @prompt="setLaunchPrompt"
+            @model="setLaunchModel"
+            @effort="setLaunchEffort"
+            @permission-mode="setLaunchPermissionMode"
+            @toggle-jev="toggleLaunchJev"
+            @toggle-jev-auto="toggleLaunchJevAutoAccept"
+            @dismiss-jev="dismissLaunchJevDecision"
+            @submit="submitLaunchAskingForLogin"
+            @close="close"
+          />
+          <OpenCodeLoginDialog
+            v-if="loginOpen"
+            :view="login.view.value"
+            @close="login.close"
+            @retry="login.retry"
+            @submit-key="login.submitKey"
+            @choose-oauth="login.chooseOAuth"
+            @answer="login.answer"
+            @continue="login.continueOAuth"
+            @back="login.back"
+            @submit-code="login.submitCode"
+            @cancel-wait="login.cancelWait"
+            @open-link="login.openLink"
+          />
+        </div>
 
         <!--
         Keyed by dwarf, so opening it on another one is a fresh panel: its
@@ -1501,6 +1557,14 @@ onBeforeUnmount(() => {
  * What main measures the window against, so it is content-height and must
  * never be stretched: its own height IS the answer to how tall the window is.
  */
+/* #597 T5: one cell, so the login dialog stacks over the Add Panel in flow. */
+.launch-slot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.launch-slot > * {
+  grid-area: 1 / 1;
+}
 .message-surface {
   display: flex;
   flex: 1;

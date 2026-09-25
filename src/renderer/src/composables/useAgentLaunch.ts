@@ -51,13 +51,15 @@ import {
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
 import { DEFAULT_JEV_SETTINGS, HELDABLE_PROVIDERS } from '../types'
 import type {
+  AgentLaunchRequest,
   AgentModelCatalog,
   AgentProviderOption,
   HeldPermissionMode,
   JevRouteLaunchResult,
   JevSettings,
   LaunchFailedPush,
-  Mine
+  Mine,
+  OpenCodeCredentialMissing
 } from '../types'
 
 /**
@@ -121,6 +123,15 @@ const mineId = ref<string | null>(null)
 const providers = ref<AgentProviderOption[]>([])
 /** What each provider can start on, live (#239) — asked once per open, beside `providers`. */
 const catalogs = ref<AgentModelCatalog[]>([])
+/**
+ * The provider and model main held the last detached launch back for, because
+ * OpenCode has no login for that provider yet (#597 T5) — or null. The login
+ * dialog opens on this; `heldBackRequest` beside it is the request itself, kept
+ * so `relaunch` sends exactly what was refused rather than rebuilding it from
+ * pickers that could have moved.
+ */
+const credentialMissing = ref<OpenCodeCredentialMissing | null>(null)
+let heldBackRequest: AgentLaunchRequest | null = null
 
 const LOST_BRIDGE = 'The panel lost contact with the app.'
 const NOT_LAUNCHED = 'The agent could not be started.'
@@ -144,6 +155,14 @@ export interface AgentLaunch {
   permissionsVisible: ComputedRef<boolean>
   /** The Add Panel's Jev option (#509) — availability, the person's toggle, and the routing card/line. */
   jev: ComputedRef<JevState>
+  /** Who the last launch needs an OpenCode login for (#597 T5), or null. */
+  credentialMissing: Ref<OpenCodeCredentialMissing | null>
+  /**
+   * Send the launch `credentialMissing` was raised for again, byte for byte,
+   * once the login dialog reports the provider connected (#597 T5). A no-op
+   * when nothing was held back or the panel has since closed or moved on.
+   */
+  relaunch: () => Promise<void>
   open: (mine: string) => Promise<void>
   close: () => void
   choose: (choice: LaunchChoice) => void
@@ -236,6 +255,59 @@ export function useAgentLaunch(): AgentLaunch {
     mineId.value = null
     providers.value = []
     catalogs.value = []
+    forgetHeldBack()
+  }
+
+  function forgetHeldBack(): void {
+    credentialMissing.value = null
+    heldBackRequest = null
+  }
+
+  /**
+   * The detached channel, for `submit` and `relaunch` alike — one place that
+   * reads main's verdict, so a relaunch is handled exactly as the first try.
+   */
+  async function launchDetached(request: AgentLaunchRequest): Promise<void> {
+    forgetHeldBack()
+    const result = await window.api.launchAgent(request)
+    if (!result.launched) {
+      // #597 T5: the sentence still goes on the error line, so a person who
+      // closes the login dialog is left with the reason, not a silent panel.
+      if (result.credentialMissing !== undefined) {
+        credentialMissing.value = { ...result.credentialMissing }
+        heldBackRequest = request
+      }
+      state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
+      return
+    }
+    // A detached session carries no conversation at all — that belongs to a
+    // stream this panel holds — so it is recognised by the receipt main
+    // opened here instead, which main stamps on the dwarf it proves from the
+    // session's own opening prompt (#191).
+    const launchId = result.launchId ?? null
+    state.value = startedDetached(state.value, launchId)
+    // #263. Only a receipted launch gets a timer. A launch main opened no
+    // receipt for is already the terminal `started-detached` #168 gives
+    // it — "the session started, and nothing can prove which dwarf it
+    // became" — and that reading is not reopened here: there is nothing
+    // for a later receipt or failure to correlate against, so there is
+    // nothing a timeout would honestly add.
+    if (launchId !== null) {
+      setTimeout(() => {
+        state.value = detachedTimedOut(state.value, launchId)
+      }, DETACHED_TIMEOUT_MS)
+    }
+  }
+
+  async function relaunch(): Promise<void> {
+    const request = heldBackRequest
+    if (request === null || request.mineId !== mineId.value || !canSubmit(state.value)) return
+    state.value = submitStarted(state.value)
+    try {
+      await launchDetached(request)
+    } catch {
+      state.value = submitRefused(state.value, LOST_BRIDGE)
+    }
   }
 
   function choose(choice: LaunchChoice): void {
@@ -434,7 +506,7 @@ export function useAgentLaunch(): AgentLaunch {
         return
       }
 
-      const result = await window.api.launchAgent({
+      await launchDetached({
         mineId: mineId.value,
         provider: choice,
         prompt,
@@ -442,27 +514,6 @@ export function useAgentLaunch(): AgentLaunch {
         // Same rule and same reason as the held channel's own (#511).
         ...(routedByJev(state.value) ? { routedByJev: true } : {})
       })
-      if (!result.launched) {
-        state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
-        return
-      }
-      // A detached session carries no conversation at all — that belongs to a
-      // stream this panel holds — so it is recognised by the receipt main
-      // opened here instead, which main stamps on the dwarf it proves from the
-      // session's own opening prompt (#191).
-      const launchId = result.launchId ?? null
-      state.value = startedDetached(state.value, launchId)
-      // #263. Only a receipted launch gets a timer. A launch main opened no
-      // receipt for is already the terminal `started-detached` #168 gives
-      // it — "the session started, and nothing can prove which dwarf it
-      // became" — and that reading is not reopened here: there is nothing
-      // for a later receipt or failure to correlate against, so there is
-      // nothing a timeout would honestly add.
-      if (launchId !== null) {
-        setTimeout(() => {
-          state.value = detachedTimedOut(state.value, launchId)
-        }, DETACHED_TIMEOUT_MS)
-      }
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }
@@ -517,6 +568,8 @@ export function useAgentLaunch(): AgentLaunch {
     effortPicker: computed(() => effortPicker(catalogs.value, state.value.choice)),
     permissionsVisible: computed(() => permissionsVisible(state.value.choice)),
     jev,
+    credentialMissing,
+    relaunch,
     open,
     close,
     choose,
