@@ -7,7 +7,7 @@ description: >
 license: MIT
 metadata:
   author: JeronimoRepetto
-  version: '2.0'
+  version: '2.1'
   scope: [root]
   auto_invoke:
     - 'implementing a screen, panel or component of the redesigned UI'
@@ -57,8 +57,9 @@ as history only, and nothing here reads them.
 Every rule in the docs carries one. **Decided** is binding. **Proposal** is the design system's
 recommendation awaiting a ruling. **Question** and **Verify** are open. **Missing** is an asset
 that does not exist yet. Implement what is Decided; for anything else, implement nothing silently
-— surface it in the PR or issue. `foundations.md` adds that where it and the product disagree,
-the product's code wins until the difference is ruled on.
+— surface it in the PR or issue. Where the docs and today's code disagree, **the docs win**: the
+decision log is binding for the redesign, and today's code is the baseline only where the docs
+say nothing.
 
 ## Decisions already resolved — do not reopen them in code
 
@@ -66,9 +67,8 @@ Each is recorded in `foundations.md` or `decisions.md`.
 
 - Tier order is **Bronze, Copper, Silver, Gold, Uranium** — the canonical order of the tier
   tokens.
-- **`Copper` is the UI label** for the second tier, by maintainer ruling (#165, 2026-09-03). The
-  generated docs still list "Cropper" as an open question inherited from the retired source; the
-  app, the prototype and the `--tier-copper` token all say `Copper`. Never restore `Cropper`.
+- **`Copper` is the UI label** for the second tier, by maintainer ruling (#165). The retired v4
+  source said `Cropper`; never restore it.
 - **Stepped pixel corners replace the smooth 12px radius.** No `border-radius` anywhere: the
   corner is drawn with box-shadows so focus rings and drop shadows stay whole.
 - **Type is four roles**: Jacquard 12 for titles only, Tiny5 for labels and never below label
@@ -79,7 +79,23 @@ Each is recorded in `foundations.md` or `decisions.md`.
   stacked nav slots and vertical tabs; 32px minimum targets, 40px navigation.
 - **Attention ladder** has three levels — in the world, a sound once, an OS notification — and
   each is used only when the one below it cannot be seen.
-- A permission offers exactly **Allow and Deny**, in that order. UI copy is English.
+- A permission's only decisions are **Allow and Deny**, in that order; "Other thing…" sends free
+  text as an ordinary message on held sessions only, and the request renders in the code face.
+  UI copy is English.
+- **Motion** animates only `transform` and `opacity`, never a window's bounds, and every awaited
+  motion goes through the app's bounded runner (`boundedMotion.ts`). Pass the anti-flicker
+  checklist in `motion.md` before review; its transitions table gives each sequence, duration
+  and easing.
+- **Sprites** are 36×38 and play **per-action frame times** read from the Aseprite JSON sidecar,
+  never a flat 100ms. Under reduced motion the dwarfs keep moving at 200ms a frame while the
+  shell's own motion stops. The art sources and their tag names are in `art-bible.md`.
+
+## The prototype is the visual reference
+
+The design repository also holds the clickable prototype and the UI kit the docs were generated
+from: how every component looks, every state, and how every transition moves. When a doc leaves
+you guessing, ask the maintainer for access and replicate the prototype's behaviour — never
+eyeball a screenshot. A gap the docs do not cover is reported in the PR or issue, not filled.
 
 ## Boundaries the rebuild does not get to break
 
@@ -94,6 +110,9 @@ Each is recorded in `foundations.md` or `decisions.md`.
   and px literals scattered per component.
 - Verify layout under many sessions with the `simulated-valley` skill before claiming a screen
   works at scale.
+- **Parity with today's behaviour comes from the code.** Settings rows, labels, hints and
+  behaviour are copied from reading today's Vue component for that feature, never from a summary
+  or an inventory: built from summaries, the prototype lost Settings rows twice.
 
 ## Getting it wrong
 
@@ -103,8 +122,8 @@ Each is recorded in `foundations.md` or `decisions.md`.
   They are gone from the generated docs; building from the archived v4 source ships decisions the
   redesign has since replaced, 12px radius first among them.
 - Shipping a **Proposal** value as if it were Decided because it has a hex code beside it.
-- "Restoring" `Cropper` in copy, tests or fixtures because the generated docs still list it as a
-  question (#165).
+- "Restoring" `Cropper` in copy, tests or fixtures because the retired v4 source used it (#165).
+- Keeping the uniform 100ms sprite timing, or freezing the dwarfs under reduced motion.
 - Hardcoding `#d19831` and friends inline across components, so a palette correction becomes a
   repo-wide hunt instead of one token edit.
 
