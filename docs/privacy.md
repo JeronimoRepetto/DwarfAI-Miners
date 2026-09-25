@@ -552,6 +552,54 @@ project has measured so far ran with no password set — so this path is impleme
 against a fake connection, not yet watched succeed against a live one
 (`answerOpenCodePermission.ts`'s own module comment).
 
+### Signing in to an OpenCode provider
+
+An OpenCode model belongs to a provider — the part of its id before the `/`, `opencode-go` in
+`opencode-go/kimi-k2`. When a launch names a model whose provider has no credential, the session
+could never have worked, so the panel asks for the login before it starts anything (#597).
+
+**Knowing a credential is missing, without reading one.** Before an OpenCode launch that names a
+model, this app asks OpenCode's own server `GET /provider` and reads one field of the answer,
+`connected`: the list of provider **ids** that have a usable credential. It is a list of names and
+nothing else — no key, no token, no account. The launch goes ahead when the model's provider is in
+it; the free built-in `opencode` provider always is, so a person using only free `opencode/*`
+models is never asked anything. This app never opens OpenCode's credential file (`auth.json`) or
+any other part of its credential store, and never runs `opencode providers login`
+(`src/main/opencodeLogin/credentialCheck.ts`, `launchCredentialGate.ts`). If the check itself cannot
+run — OpenCode missing, its server slow to start — the launch proceeds exactly as it did before
+this check existed, and one line naming the failure (never a secret) goes to the app's log.
+
+**The server that answers is one this app starts for itself.** No OpenCode server is reachable
+before a session exists, so the check starts your own `opencode` binary as
+`opencode serve --pure`, listening on `127.0.0.1` only (`src/main/opencodeLogin/controlServer.ts`).
+`--pure` means no external plugin loads into it — not this app's permission relay, not any
+third-party plugin you installed. Each start is locked with a fresh random password, handed to that
+process through its environment (never its command line, where other programs could read it),
+held only in memory, and sent as HTTP Basic auth on this app's own requests. The server is stopped,
+with every process it started, after five minutes unused and when the app quits.
+
+**Completing the login in the panel.** The dialog lists the login methods OpenCode's server offers
+for that provider (`GET /provider/auth`) and does one of two things, both over the same local
+server (`src/main/opencodeLogin/loginService.ts`):
+
+- **An API key.** Typed into a password field, it crosses from the panel to the main process once,
+  straight into one request, `PUT /auth/{provider}` with `{"type":"api","key":…}`. OpenCode then
+  stores it in its own credential store, exactly where `opencode providers login` would have put
+  it. This app does not log it, write it anywhere of its own, keep it after the request, or return
+  it in any answer the panel sees; the field is cleared the moment it is sent.
+- **A browser sign-in (OAuth).** OpenCode's server hands back the sign-in address and its
+  instructions (`POST /provider/{provider}/oauth/authorize`); the address opens in your system
+  browser under the same `http:`/`https:` rule every other link here follows, checked by the
+  renderer and again by main (`src/shared/externalLink.ts`). The sign-in itself happens between
+  your browser, OpenCode and that provider — this app never sees your password there. A code the
+  provider asks you to paste back is handled like the key: once, into
+  `POST /provider/{provider}/oauth/callback`, never kept. A wait for the browser gives up after five
+  minutes, and closing the dialog cancels it.
+
+A provider id is accepted only in the shape OpenCode's own model ids use (letters, digits, `.`, `_`,
+`-`, and never `.` or `..` alone), so no value from the panel can steer one of these requests to a
+different route on that server.
+
 ### Everything else stays local
 
 Three boundaries keep the rest of this app from opening a socket of its own:
@@ -591,7 +639,9 @@ Three boundaries keep the rest of this app from opening a socket of its own:
   `codex-exec-resume`, spawns `codex exec resume <id> -` on the identical terms — the model's
   reply, in both cases, is read back from the CLI's own local store on the next poll, the same way
   every other session's reply already is; neither process is a second network connection this app
-  opens.
+  opens. The one OpenCode process this app starts without a session — `opencode serve --pure`, for
+  the credential check and the login dialog above — listens on `127.0.0.1` only; any connection to a
+  model provider it makes during a sign-in is OpenCode's, as it would be from your terminal.
 - **An attached image, on a held session, leaves inside that same turn.** A session this app holds
   runs on the Agent SDK, driving the `claude` binary you already installed and logged into, exactly
   as the relay's turn does. Since #408 an attachment's image bytes ride along as one more content
