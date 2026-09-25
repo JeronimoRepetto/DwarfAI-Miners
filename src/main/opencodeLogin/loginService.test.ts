@@ -590,3 +590,80 @@ describe('createOpenCodeLoginService.completeOAuth', () => {
     })
   })
 })
+
+/**
+ * #597 T4 correction: a provider id of `.` or `..` escapes the route each
+ * write builds by interpolating it after a fixed segment. `encodeURIComponent`
+ * leaves both unescaped, and `URL` resolves the dot segment before the
+ * request ever leaves — so `submitApiKey('..', key)` would PUT the key's own
+ * body to `/` instead of `/auth/..`, and the two OAuth routes lose their
+ * `/oauth/...` tail the same way. Refused here, before any fetch, regardless
+ * of what the IPC boundary in index.ts already checked (defense in depth).
+ */
+describe('createOpenCodeLoginService — provider id shape guard', () => {
+  const BAD_IDS = ['..', '.', 'a/b', 'a b', '%2e%2e']
+
+  describe.each(BAD_IDS)('providerId %j', (badId) => {
+    it('refuses submitApiKey without ever calling fetch', async () => {
+      const controlServer = readyServer()
+      const fetch = jsonFetch(200, true)
+      const service = createOpenCodeLoginService({ controlServer, fetch })
+
+      await expect(service.submitApiKey(badId, 'sk-x')).resolves.toEqual({
+        ok: false,
+        reason: 'refused'
+      })
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('refuses startOAuth without ever calling fetch', async () => {
+      const controlServer = readyServer()
+      const fetch = jsonFetch(200, { url: 'https://x', method: 'auto', instructions: 'x' })
+      const service = createOpenCodeLoginService({ controlServer, fetch })
+
+      await expect(service.startOAuth(badId, 0)).resolves.toEqual({
+        ok: false,
+        reason: 'refused'
+      })
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('refuses completeOAuth without ever calling fetch', async () => {
+      const controlServer = readyServer()
+      const fetch = jsonFetch(200, true)
+      const service = createOpenCodeLoginService({ controlServer, fetch })
+
+      await expect(service.completeOAuth(badId, 0)).resolves.toEqual({
+        ok: false,
+        reason: 'refused'
+      })
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('refuses listAuthMethods without ever calling fetch', async () => {
+      const controlServer = readyServer()
+      const fetch = jsonFetch(200, {})
+      const service = createOpenCodeLoginService({ controlServer, fetch })
+
+      await expect(service.listAuthMethods(badId)).resolves.toEqual({
+        ok: false,
+        reason: 'refused'
+      })
+      expect(fetch).not.toHaveBeenCalled()
+    })
+  })
+
+  it('still builds exactly /auth/opencode-go for a real, hyphenated provider id', async () => {
+    const controlServer = readyServer('http://127.0.0.1:4096', 'hunter2')
+    const fetch: OpenCodeLoginFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/auth/opencode-go')) return { status: 200, json: async () => true }
+      return { status: 200, json: async () => ({ connected: ['opencode-go'] }) }
+    })
+    const service = createOpenCodeLoginService({ controlServer, fetch })
+
+    await service.submitApiKey('opencode-go', 'sk-real-key')
+
+    const [putUrl] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]!
+    expect(putUrl).toBe('http://127.0.0.1:4096/auth/opencode-go')
+  })
+})

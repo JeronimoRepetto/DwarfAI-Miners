@@ -46,6 +46,29 @@ export function providerIdOf(model: string): string | undefined {
   return model.slice(0, slash)
 }
 
+/** The provider half's own character class, exactly as `ID_LINE` (providers/opencode/models.ts) allows it. */
+const PROVIDER_ID_CHARS = /^[a-zA-Z0-9_.-]+$/
+
+/**
+ * Whether `value` could ever be a real OpenCode provider id (#597 T4
+ * correction) — `ID_LINE`'s own character class, minus the two strings a URL
+ * path resolves as navigation rather than a literal segment.
+ *
+ * `loginService.ts`'s three write routes each build a path by interpolating
+ * a provider id after a fixed segment (`/auth/{id}`,
+ * `/provider/{id}/oauth/...`). `encodeURIComponent` leaves `.` and `..`
+ * unescaped, and `URL` resolves a dot segment before the request ever
+ * leaves — so a provider id of exactly `.` or `..` sends the request (an API
+ * key in its body, for `submitApiKey`) to the WRONG route instead of the one
+ * this app asked for. Shared by `loginService.ts` and `index.ts`'s own IPC
+ * boundary check, so both AGREE on what a provider id may even look like
+ * rather than one trusting the other's refusal.
+ */
+export function isOpenCodeProviderIdShape(value: string): boolean {
+  if (value === '.' || value === '..') return false
+  return PROVIDER_ID_CHARS.test(value)
+}
+
 /**
  * The narrow slice of the global `fetch`/`Response` surface this module
  * reads — mirrors `answerOpenCodePermission.ts`'s own `OpenCodePermissionFetch`

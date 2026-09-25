@@ -135,6 +135,7 @@ import {
   type OpenCodeControlServerPort
 } from './opencodeLogin/controlServer'
 import { createOpenCodeLaunchCredentialGate } from './opencodeLogin/launchCredentialGate'
+import { isOpenCodeProviderIdShape } from './opencodeLogin/credentialCheck'
 import {
   createOpenCodeLoginService,
   type OpenCodeLoginServicePort
@@ -472,6 +473,11 @@ const MAX_OPENCODE_OAUTH_INPUT_VALUE_LENGTH = 4_096
 function parseOpenCodeProviderId(value: unknown): string | null {
   if (typeof value !== 'string' || value === '') return null
   if (value.length > MAX_OPENCODE_PROVIDER_ID_LENGTH) return null
+  // Same shape `loginService.ts` itself refuses to build a route from
+  // (#597 T4 correction) — checked again here so a malformed id never even
+  // reaches the service, agreeing with its own defense in depth rather than
+  // relying on it alone.
+  if (!isOpenCodeProviderIdShape(value)) return null
   return value
 }
 

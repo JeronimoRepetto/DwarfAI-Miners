@@ -9,7 +9,11 @@ import type {
   OpenCodeOAuthStartResult
 } from '../domain/types'
 import type { OpenCodeControlServerPort } from './controlServer'
-import { readConnectedProviders, type OpenCodeConnectedFetch } from './credentialCheck'
+import {
+  isOpenCodeProviderIdShape,
+  readConnectedProviders,
+  type OpenCodeConnectedFetch
+} from './credentialCheck'
 
 /**
  * Completing an OpenCode login without a terminal (#597 T4) — the four
@@ -214,6 +218,12 @@ export function createOpenCodeLoginService(
     return { ok: false, reason: response.status === 401 ? 'unauthorized' : 'refused' }
   }
 
+  /** The one refusal every route below answers with for a provider id that fails `isOpenCodeProviderIdShape`. */
+  const INVALID_PROVIDER_ID: { ok: false; reason: OpenCodeLoginFailureReason } = {
+    ok: false,
+    reason: 'refused'
+  }
+
   /**
    * `GET /provider`'s own `connected` set, read again right after a write
    * succeeds — reusing T2's `readConnectedProviders` rather than a second
@@ -230,6 +240,9 @@ export function createOpenCodeLoginService(
   }
 
   async function listAuthMethods(providerId: string): Promise<OpenCodeAuthMethodsResult> {
+    // Checked before ensureServer() even runs: no route here needs to touch
+    // the control server for an id this app already knows cannot be real.
+    if (!isOpenCodeProviderIdShape(providerId)) return INVALID_PROVIDER_ID
     const server = await ensureServer()
     if (!server.ok) return server
     const url = new URL('/provider/auth', server.url).href
@@ -269,6 +282,10 @@ export function createOpenCodeLoginService(
   }
 
   async function submitApiKey(providerId: string, key: string): Promise<OpenCodeLoginResult> {
+    // A `.` or `..` id would otherwise resolve as a dot segment and send the
+    // key's own body to the WRONG route — refused before any fetch, and
+    // before the control server is even started for it.
+    if (!isOpenCodeProviderIdShape(providerId)) return INVALID_PROVIDER_ID
     const server = await ensureServer()
     if (!server.ok) return server
     const url = new URL(`/auth/${encodeURIComponent(providerId)}`, server.url).href
@@ -308,6 +325,9 @@ export function createOpenCodeLoginService(
     method: number,
     inputs?: Record<string, string>
   ): Promise<OpenCodeOAuthStartResult> {
+    // Same escape as submitApiKey's: a `.`/`..` id would lose the
+    // `/oauth/authorize` tail entirely once `URL` resolves the dot segment.
+    if (!isOpenCodeProviderIdShape(providerId)) return INVALID_PROVIDER_ID
     const server = await ensureServer()
     if (!server.ok) return server
     const url = new URL(`/provider/${encodeURIComponent(providerId)}/oauth/authorize`, server.url)
@@ -351,6 +371,8 @@ export function createOpenCodeLoginService(
     method: number,
     code?: string
   ): Promise<OpenCodeLoginResult> {
+    // Same escape as submitApiKey's and startOAuth's.
+    if (!isOpenCodeProviderIdShape(providerId)) return INVALID_PROVIDER_ID
     const server = await ensureServer()
     if (!server.ok) return server
     const url = new URL(`/provider/${encodeURIComponent(providerId)}/oauth/callback`, server.url)
