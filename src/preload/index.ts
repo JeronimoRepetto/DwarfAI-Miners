@@ -60,8 +60,15 @@ import type {
   JevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  OpenCodeSettings
+  OpenCodeSettings,
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  OpenCodeAuthMethodsResult,
+  OpenCodeCompleteOAuthRequest,
+  OpenCodeLoginResult,
+  OpenCodeOAuthStartResult,
+  OpenCodeStartOAuthRequest
+  /* --- end of the #597 T4 block --- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -593,6 +600,34 @@ export interface DwarfAiMinersApi {
   /** Forget the server password. Resolves with what main STORED. */
   clearOpenCodeServerPassword: () => Promise<OpenCodeSettings>
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  /** Completing a login the T3 gate found missing (#597), without a terminal — `GET /provider/auth`, filtered to one provider. */
+  openCodeAuthMethods: (providerId: string) => Promise<OpenCodeAuthMethodsResult>
+  /**
+   * Submit an API key for one provider. The key crosses exactly once, here,
+   * straight into main's own PUT to OpenCode's server — never stored,
+   * logged or echoed back on this side either. Resolves with whether the
+   * provider now reads as connected, re-checked right after the write.
+   */
+  openCodeSubmitApiKey: (providerId: string, key: string) => Promise<OpenCodeLoginResult>
+  /** Start an OAuth method's own flow. Resolves with where to send the person and which callback shape follows. */
+  openCodeStartOAuth: (request: OpenCodeStartOAuthRequest) => Promise<OpenCodeOAuthStartResult>
+  /**
+   * Complete an OAuth flow — a pasted code for a `'code'` method, nothing for
+   * an `'auto'` one, which blocks in OpenCode's own server until the person
+   * finishes in their browser or `openCodeCancelOAuth` ends it early. The
+   * code crosses exactly once, on the same terms `openCodeSubmitApiKey`'s key
+   * does.
+   */
+  openCodeCompleteOAuth: (request: OpenCodeCompleteOAuthRequest) => Promise<OpenCodeLoginResult>
+  /**
+   * Give up on an `openCodeCompleteOAuth` call still blocked in an `'auto'`
+   * flow. One-way, like `retireDwarf`: only one login dialog is ever open, so
+   * there is nothing to name and no verdict to wait for — the blocked call
+   * itself resolves with `{ok:false, reason:'cancelled'}`.
+   */
+  openCodeCancelOAuth: () => void
+  /* --- end of the #597 T4 block --- */
 }
 
 const api: DwarfAiMinersApi = {
@@ -1023,8 +1058,49 @@ const api: DwarfAiMinersApi = {
       return Promise.reject(error)
     }
   },
-  clearOpenCodeServerPassword: () => ipcRenderer.invoke(IPC_CHANNELS.clearOpenCodeServerPassword)
+  clearOpenCodeServerPassword: () => ipcRenderer.invoke(IPC_CHANNELS.clearOpenCodeServerPassword),
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  openCodeAuthMethods: (providerId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeAuthMethods, {
+      providerId: typeof providerId === 'string' ? providerId : ''
+    }),
+  // Field by field, the same discipline setOpenCodeServerPassword holds for
+  // its own secret: the key crosses typed and uncoerced into its own field,
+  // never folded into an object the renderer built, so main's own boundary
+  // is the only place that ever decides whether it is usable.
+  openCodeSubmitApiKey: (providerId, key) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeSubmitApiKey, {
+      providerId: typeof providerId === 'string' ? providerId : '',
+      key: typeof key === 'string' ? key : ''
+    }),
+  openCodeStartOAuth: (request) => {
+    // Same discipline as answerDwarfQuestion's own record answer: rebuilt
+    // entry by entry, a non-string value dropped rather than coerced, so
+    // main's boundary check reasons about strings alone.
+    const inputs: Record<string, string> = {}
+    for (const [key, value] of Object.entries(request?.inputs ?? {})) {
+      if (typeof value === 'string') inputs[key] = value
+    }
+    return ipcRenderer.invoke(IPC_CHANNELS.openCodeStartOAuth, {
+      providerId: typeof request?.providerId === 'string' ? request.providerId : '',
+      method: typeof request?.method === 'number' ? request.method : -1,
+      ...(Object.keys(inputs).length > 0 ? { inputs } : {})
+    })
+  },
+  // Same discipline as openCodeSubmitApiKey's key: the pasted code crosses
+  // typed and uncoerced, and absent stays absent — main reads that as the
+  // 'auto' method's own shape, never as an empty code somebody typed.
+  openCodeCompleteOAuth: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openCodeCompleteOAuth, {
+      providerId: typeof request?.providerId === 'string' ? request.providerId : '',
+      method: typeof request?.method === 'number' ? request.method : -1,
+      ...(typeof request?.code === 'string' ? { code: request.code } : {})
+    }),
+  // One-way, like retireDwarf: no payload to coerce, and no verdict to wait
+  // for — the blocked openCodeCompleteOAuth call resolves on its own.
+  openCodeCancelOAuth: () => ipcRenderer.send(IPC_CHANNELS.openCodeCancelOAuth)
+  /* --- end of the #597 T4 block --- */
 }
 
 contextBridge.exposeInMainWorld('api', api)

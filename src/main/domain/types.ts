@@ -147,8 +147,24 @@ export type {
   OpenCodeSettings,
   /* --- end of the #588 T6 block ------------------------------------------------ */
   /* --- OpenCode credential check before launch (#597 T3) — one block, appended --- */
-  OpenCodeCredentialMissing
+  OpenCodeCredentialMissing,
   /* --- end of the #597 T3 block -------------------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  OpenCodeAuthMethod,
+  OpenCodeAuthMethodsRequest,
+  OpenCodeAuthMethodsResult,
+  OpenCodeAuthPrompt,
+  OpenCodeAuthPromptWhen,
+  OpenCodeAuthSelectOption,
+  OpenCodeAuthSelectPrompt,
+  OpenCodeAuthTextPrompt,
+  OpenCodeCompleteOAuthRequest,
+  OpenCodeLoginFailureReason,
+  OpenCodeLoginResult,
+  OpenCodeOAuthStartResult,
+  OpenCodeStartOAuthRequest,
+  OpenCodeSubmitApiKeyRequest
+  /* --- end of the #597 T4 block --- */
 } from '../../shared/contracts'
 
 /**
