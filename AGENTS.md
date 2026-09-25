@@ -20,19 +20,19 @@ does not — mostly things that have already gone wrong at least once.
 
 <!-- BEGIN GENERATED: skill-catalogue -->
 
-| Skill                                                  | What it covers                                                                                                                                                  |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`config-layering`](skills/config-layering/SKILL.md)   | The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value                                |
-| [`jev-capabilities`](skills/jev-capabilities/SKILL.md) | How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet                                                        |
-| [`platform-ports`](skills/platform-ports/SKILL.md)     | How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host                                                          |
-| [`privacy-guard`](skills/privacy-guard/SKILL.md)       | Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in                                                |
-| [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building                                        |
-| [`simulated-valley`](skills/simulated-valley/SKILL.md) | The development-only simulated provider, for seeing the panel under load without launching real agent sessions                                                  |
-| [`skill-creator`](skills/skill-creator/SKILL.md)       | How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all                                                      |
-| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating AGENTS.md's three generated regions — the skill catalogue, the auto-invoke table, and the main/ tree bullet                                        |
-| [`tdd`](skills/tdd/SKILL.md)                           | The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here                                                    |
-| [`test-safety`](skills/test-safety/SKILL.md)           | Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud                             |
-| [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             | The local design source behind the interface rebuild, the reading route through it, and the source corrections already resolved there that code must not reopen |
+| Skill                                                  | What it covers                                                                                                                                                |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`config-layering`](skills/config-layering/SKILL.md)   | The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value                              |
+| [`jev-capabilities`](skills/jev-capabilities/SKILL.md) | How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet                                                      |
+| [`platform-ports`](skills/platform-ports/SKILL.md)     | How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host                                                        |
+| [`privacy-guard`](skills/privacy-guard/SKILL.md)       | Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in                                              |
+| [`release`](skills/release/SKILL.md)                   | How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building                                      |
+| [`simulated-valley`](skills/simulated-valley/SKILL.md) | The development-only simulated provider, for seeing the panel under load without launching real agent sessions                                                |
+| [`skill-creator`](skills/skill-creator/SKILL.md)       | How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all                                                    |
+| [`skill-sync`](skills/skill-sync/SKILL.md)             | Regenerating AGENTS.md's three generated regions — the skill catalogue, the auto-invoke table, and the main/ tree bullet                                      |
+| [`tdd`](skills/tdd/SKILL.md)                           | The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here                                                  |
+| [`test-safety`](skills/test-safety/SKILL.md)           | Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud                           |
+| [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             | The generated, read-only design docs behind the interface rebuild, the reading route through them, and the decisions resolved there that code must not reopen |
 
 <!-- END GENERATED: skill-catalogue -->
 
