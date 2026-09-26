@@ -632,5 +632,18 @@ export const RENDERS: Record<string, Render> = {
   'atoms/marker#tiers': markers,
   'atoms/marker#hover-pressed-open': markers,
   'atoms/marker#needs-you': markers,
-  'atoms/marker#focus-visible': markers
+  'atoms/marker#focus-visible': markers,
+
+  // The sprite atom's sheets at 1x, 2x and 2x mirrored, and the still option. No view yet: the
+  // atom and its shared frame clock arrive with the sprite player slice of #635.
+  'atoms/sprite#worker-working': unbuilt,
+  'atoms/sprite#worker-idle': unbuilt,
+  'atoms/sprite#worker-start-working': unbuilt,
+  'atoms/sprite#worker2-working': unbuilt,
+  'atoms/sprite#worker2-start-working': unbuilt,
+  'atoms/sprite#worker2-idle': unbuilt,
+  'atoms/sprite#foreman-idle': unbuilt,
+  'atoms/sprite#foreman-sleeping': unbuilt,
+  'atoms/sprite#base-idle': unbuilt,
+  'atoms/sprite#still': unbuilt
 }

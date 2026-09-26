@@ -213,5 +213,45 @@
   },
   {
     "key": "atoms/marker#focus-visible"
+  },
+  {
+    "key": "atoms/sprite#worker-working",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#worker-idle",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#worker-start-working",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#worker2-working",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#worker2-start-working",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#worker2-idle",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#foreman-idle",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#foreman-sleeping",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#base-idle",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
+  },
+  {
+    "key": "atoms/sprite#still",
+    "red": "the sprite atom and its shared frame clock are rebuilt in the sprite player slice of #635"
   }
 ]
