@@ -4,58 +4,49 @@
     "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
   },
   {
-    "key": "foundations/colour#materials",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/colour#materials"
   },
   {
-    "key": "foundations/colour#text",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/colour#text"
   },
   {
-    "key": "foundations/colour#semantic",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/colour#semantic"
   },
   {
-    "key": "foundations/colour#tiers",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/colour#tiers"
   },
   {
-    "key": "foundations/materials#surfaces",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/materials#surfaces"
   },
   {
-    "key": "foundations/materials#trims",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/materials#trims"
   },
   {
-    "key": "foundations/materials#raised",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/materials#raised"
   },
   {
     "key": "foundations/materials#focus-visible",
-    "red": "the focus ring ports with the base rules in the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "red": "the focus ring ports with the base rules in the atoms slice of #635 (design lead ruling, tokens-port question 7)"
   },
   {
     "key": "foundations/materials#rules"
   },
   {
-    "key": "foundations/motion#tokens",
-    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/motion#tokens"
   },
   {
     "key": "foundations/motion#enter",
-    "red": "draws the redesigned button, which it waits for (design lead ruling, tokens-port question 5); #635"
+    "red": "draws the redesigned button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
   },
   {
     "key": "foundations/motion#press",
-    "red": "draws the redesigned primary button, which it waits for (design lead ruling, tokens-port question 5); #635"
+    "red": "draws the redesigned primary button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
   },
   {
-    "key": "foundations/type#scale",
-    "red": "text inherits the page ink from body { color: --ink } and paragraphs need p { margin: 0 }, base rules that port with the atoms slice (design lead ruling, tokens-port question 7); #635"
+    "key": "foundations/type#scale"
   },
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
-    "red": "draws the page header, mine card and bubbles in each preset, none rebuilt yet; #635"
+    "red": "draws the page header, mine card and bubbles in each preset, which the Panel slice of #635 rebuilds (design lead ruling, tokens-port question 11)"
   }
 ]

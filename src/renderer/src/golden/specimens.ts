@@ -15,6 +15,7 @@
  * as `texts`, in tree order (question 2).
  */
 import { defineComponent, h, type PropType } from 'vue'
+import './specimenBaseShim.css'
 
 /** One text of a state's anatomy tree: plain text, or content the tree gives as HTML. */
 export interface GoldenText {
@@ -35,6 +36,10 @@ const readout = (name: string): string =>
 const content = (entry: GoldenText | undefined): Record<string, unknown> =>
   entry?.html !== undefined ? { innerHTML: entry.html } : { textContent: entry?.text ?? '' }
 
+// Every specimen root carries the base shim's class: the kit's page context, until the atoms
+// slice ports base.css and deletes it (specimenBaseShim.css).
+const SHIM = 'golden-specimen'
+
 // One chip, name and value per token name, in order.
 export const SwatchSheet = defineComponent({
   props: { names },
@@ -42,7 +47,7 @@ export const SwatchSheet = defineComponent({
     return () =>
       h(
         'div',
-        { class: 'kit-swatches' },
+        { class: ['kit-swatches', SHIM] },
         props.names.map((name) =>
           h('div', { class: 'kit-swatch' }, [
             h('span', { class: 'kit-swatch__chip', style: { background: 'var(--' + name + ')' } }),
@@ -61,7 +66,7 @@ export const TokenList = defineComponent({
     return () =>
       h(
         'div',
-        { class: 'kit-tokens' },
+        { class: ['kit-tokens', SHIM] },
         props.names.map((name) =>
           h('div', { class: 'kit-token' }, [
             h('b', { class: 't-meta' }, '--' + name),
@@ -79,7 +84,7 @@ export const PlateRow = defineComponent({
     return () =>
       h(
         'div',
-        { class: 'kit-row' },
+        { class: ['kit-row', SHIM] },
         props.plates.map((classes, i) =>
           h('div', { class: 'kit-plate m-mat ' + classes }, [
             h('span', { class: 't-meta', ...content(props.texts[i]) })
@@ -95,7 +100,7 @@ export const RuleFrame = defineComponent({
   props: { texts },
   setup(props) {
     return () =>
-      h('div', { style: { width: '240px', display: 'grid', gap: '10px' } }, [
+      h('div', { class: SHIM, style: { width: '240px', display: 'grid', gap: '10px' } }, [
         h('hr', { class: 'm-rule' }),
         h('span', { class: 't-meta t-faint', ...content(props.texts[0]) })
       ])
@@ -118,7 +123,7 @@ export const TypeScale = defineComponent({
     return () =>
       h(
         'div',
-        { style: { display: 'grid', gap: '10px' } },
+        { class: SHIM, style: { display: 'grid', gap: '10px' } },
         props.lines.map((line, i) =>
           h('p', {
             class: line.classes,
@@ -133,6 +138,6 @@ export const TypeScale = defineComponent({
 // A specimen not built yet: one empty box, so the state is mounted and graded, and fails.
 export const Unbuilt = defineComponent({
   setup() {
-    return () => h('div')
+    return () => h('div', { class: SHIM })
   }
 })
