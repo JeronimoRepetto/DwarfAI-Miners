@@ -104,9 +104,9 @@ describe('the redesign base rules in base.css', () => {
   })
 
   /*
-   * The one place the product departs from the design's base.css, on purpose: the prototype's
-   * page is a browser page on the rock, and the product's page is a frameless transparent window
-   * on the desktop. Painting it would violate the rule the shell's fold exists to keep — the
+   * The one place the product departs from the design's base.css, on purpose: the rock is the
+   * prototype's drawn desk, which foundations.md and handoff.md mark prototype only, and the
+   * product's page is a frameless transparent window on the real desktop. Painting it would violate the rule the shell's fold exists to keep — the
    * window only ever adds or removes pixels that are already transparent (#388, useShellFold) —
    * and would frame the message panel's own window in rock (#162).
    */

@@ -11,12 +11,13 @@
 }
 
 /*
- * The one departure from the design, on purpose. The prototype's page is a browser page painted
- * rock; the product's page is a frameless transparent window on the desktop, and the .panel
- * element paints the visible surface. Painting the window would break the rule the shell's fold
- * keeps — the window only ever adds or removes pixels that are already transparent (#388) — and
- * would frame the message panel's window in rock (#162). The same window must never scroll as a
- * page, so it clips instead.
+ * Where the product differs from the design's base.css on purpose. The design paints html and
+ * body rock, but that rock is the prototype's page: foundations.md lists `--desk` as "the drawn
+ * desktop around the panel; not product UI", and handoff.md lists the drawn desk as prototype
+ * only. Around the product's panel the real desktop shows, so the frameless window stays
+ * transparent and the .panel element paints the visible surface. It has to: the shell's fold only
+ * ever adds or removes pixels that are already transparent (#388), and the message panel's window
+ * must not be framed in rock (#162). The same window must never scroll as a page, so it clips.
  */
 html,
 body {
@@ -31,8 +32,10 @@ body {
 }
 
 /*
- * The page ink and the small-text role, which every part inherits unless it takes another. The
- * user-select rule is the app's own: the panel is a desktop control, not a document.
+ * The page ink and the small-text role, which every part inherits unless it takes another. Until
+ * the Panel slice migrates today's Settings "Interface" font choice to a preset, that choice
+ * reaches only elements that name `--font-pixel` themselves: inherited text takes the `--f-meta`
+ * role. The user-select rule is the app's own: the panel is a desktop control, not a document.
  */
 body {
   color: var(--ink);
