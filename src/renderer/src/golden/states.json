@@ -182,20 +182,16 @@
     "key": "atoms/portrait#sizes"
   },
   {
-    "key": "atoms/progress#toward-gold",
-    "red": "the redesigned tier progress is not built yet (#635)"
+    "key": "atoms/progress#toward-gold"
   },
   {
-    "key": "atoms/progress#toward-copper",
-    "red": "the redesigned tier progress is not built yet (#635)"
+    "key": "atoms/progress#toward-copper"
   },
   {
-    "key": "atoms/progress#measuring",
-    "red": "the redesigned tier progress is not built yet (#635)"
+    "key": "atoms/progress#measuring"
   },
   {
-    "key": "atoms/progress#max-tier",
-    "red": "the redesigned tier progress is not built yet (#635)"
+    "key": "atoms/progress#max-tier"
   },
   {
     "key": "atoms/ore#every-material",

@@ -607,3 +607,21 @@
     transform: translateY(-2px);
   }
 }
+/* The measuring band sweeps the track in eight steps. */
+@keyframes dm-scan {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+/*
+ * Under reduced motion these loops stop outright, as foundations/motion stops them: the scan band
+ * holds still (#635). Each atom's own looping part joins this list as it is built.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .dm-progress__scan {
+    animation: none !important;
+  }
+}

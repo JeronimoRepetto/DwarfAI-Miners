@@ -15,6 +15,7 @@
  */
 import type { Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
+import TierProgress from '../components/browse/TierProgress.vue'
 import ChoiceChip from '../components/controls/ChoiceChip.vue'
 import FieldHint from '../components/controls/FieldHint.vue'
 import InputField from '../components/controls/InputField.vue'
@@ -323,6 +324,34 @@ const portraits = (roles: DwarfRole[]): Render =>
       }))
   )
 
+/*
+ * The tier progress the tree prints, in the kit's width frame: toward the tier its root names,
+ * value and maximum read from the bar's own aria values; measuring where the root is a status;
+ * the top tier where it carries --max, its value the number it shows.
+ */
+const progress: Render = framed((texts, attributes) => {
+  const root = attributes.find((entry) => entry.element.startsWith('div.dm-progress'))!
+  const bar = attributes.find((entry) => entry.attributes.role === 'progressbar')?.attributes
+  if (root.attributes.role === 'status')
+    return [{ component: TierProgress, props: { measuring: true } }]
+  if (root.element.includes('dm-progress--max')) {
+    const shown = texts.at(-1)?.text ?? ''
+    return [
+      { component: TierProgress, props: { maxTier: true, value: Number(shown.replace(/,/g, '')) } }
+    ]
+  }
+  return [
+    {
+      component: TierProgress,
+      props: {
+        nextTier: root.attributes['data-tier'] as MineTier,
+        value: Number(bar?.['aria-valuenow']),
+        max: Number(bar?.['aria-valuemax'])
+      }
+    }
+  ]
+})
+
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
@@ -533,15 +562,17 @@ export const RENDERS: Record<string, Render> = {
   'atoms/portrait#interaction': portraits(['worker', 'worker', 'worker', 'worker']),
   'atoms/portrait#sizes': portraits(['foreman', 'foreman', 'foreman']),
 
+  // The tier progress toward Gold and toward Copper, measuring, and at the top tier.
+  'atoms/progress#toward-gold': progress,
+  'atoms/progress#toward-copper': progress,
+  'atoms/progress#measuring': progress,
+  'atoms/progress#max-tier': progress,
+
   // The remaining atoms, not built yet (#635): each state mounts an empty box and fails.
   // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
   'atoms/badge#badges': badges,
   'atoms/badge#crew-state-pills': pills(),
   'atoms/badge#semantic-pills': pills(['check']),
-  'atoms/progress#toward-gold': unbuilt,
-  'atoms/progress#toward-copper': unbuilt,
-  'atoms/progress#measuring': unbuilt,
-  'atoms/progress#max-tier': unbuilt,
   'atoms/ore#every-material': unbuilt,
   'atoms/ore#large': unbuilt,
   'atoms/ore#zero': unbuilt,
