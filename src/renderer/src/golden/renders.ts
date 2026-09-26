@@ -32,6 +32,7 @@ import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import NavSlot from '../components/shell/NavSlot.vue'
 import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
+import UnavailablePanel from '../components/shell/UnavailablePanel.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
@@ -436,6 +437,17 @@ const spriteAlone: Render = (_sample, _texts, attributes) => {
 
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
+// One guild page in the frame its tree's root prints.
+const guildPage =
+  (feature: 'lab' | 'market' | 'laboral-union'): Render =>
+  (_sample, _texts, attributes) => ({
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: [{ component: UnavailablePanel, props: { feature } }]
+    }
+  })
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav on the Mines page with the music playing; whether the shortcut failed is the
   // sample configuration's.
@@ -443,6 +455,23 @@ export const RENDERS: Record<string, Render> = {
     component: ShellNav,
     props: { area: 'mines', broken: sample.config.shortcutFailed, musicPlaying: true }
   }),
+  // The nav's other states, drawn by today's nav until the redesigned one replaces it.
+  'organisms/nav#guild-revealed': () => ({
+    component: ShellNav,
+    props: { area: 'map', broken: false, musicPlaying: false }
+  }),
+  'organisms/nav#shortcut-failed': () => ({
+    component: ShellNav,
+    props: { area: 'settings', broken: true, musicPlaying: false }
+  }),
+  'organisms/nav#in-valle': () => ({
+    component: ShellNav,
+    props: { area: 'mines', broken: false, musicPlaying: true }
+  }),
+  // The guild pages in the kit's frame, drawn by today's unavailable panel until they are rebuilt.
+  'organisms/guild-page#lab': guildPage('lab'),
+  'organisms/guild-page#market': guildPage('market'),
+  'organisms/guild-page#laboral-union': guildPage('laboral-union'),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),

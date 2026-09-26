@@ -4,6 +4,30 @@
     "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
   },
   {
+    "key": "organisms/nav#guild-revealed",
+    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+  },
+  {
+    "key": "organisms/nav#shortcut-failed",
+    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+  },
+  {
+    "key": "organisms/nav#in-valle",
+    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+  },
+  {
+    "key": "organisms/guild-page#lab",
+    "red": "UnavailablePanel predates the redesign; the guild pages are rebuilt in #635"
+  },
+  {
+    "key": "organisms/guild-page#market",
+    "red": "UnavailablePanel predates the redesign; the guild pages are rebuilt in #635"
+  },
+  {
+    "key": "organisms/guild-page#laboral-union",
+    "red": "UnavailablePanel predates the redesign; the guild pages are rebuilt in #635"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {
