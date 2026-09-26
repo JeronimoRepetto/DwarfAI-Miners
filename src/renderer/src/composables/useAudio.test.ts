@@ -165,7 +165,9 @@ describe('useAudio', () => {
     await surface.sync()
 
     surface.setScene('mine-a')
-    expect(player.live().some((clip) => clip.src.includes('silence'))).toBe(true)
+    // AMENDED for #637: the room tone's file is `mine-inside-room-tone` now,
+    // renamed with its replacement; it read `silence`, the old file's name.
+    expect(player.live().some((clip) => clip.src.includes('room-tone'))).toBe(true)
     expect(player.live().some((clip) => clip.src.includes('mine-inside-working'))).toBe(false)
     surface.dispose()
   })
@@ -252,11 +254,13 @@ describe('useAudio', () => {
     const surface = audio(player)
     await surface.sync()
 
+    // AMENDED for #637: `button_sound` and `open_sound` were renamed `ui-click`
+    // and `panel-open-close` with their replacements; the claim is unchanged.
     surface.playSfx('click')
-    expect(player.live().some((clip) => clip.src.includes('button_sound'))).toBe(true)
+    expect(player.live().some((clip) => clip.src.includes('ui-click'))).toBe(true)
 
     surface.playSfx('panel')
-    expect(player.live().some((clip) => clip.src.includes('open_sound'))).toBe(true)
+    expect(player.live().some((clip) => clip.src.includes('panel-open-close'))).toBe(true)
     surface.dispose()
   })
 
@@ -267,11 +271,12 @@ describe('useAudio', () => {
     await surface.sync()
     surface.setCollapsed(true)
 
+    // AMENDED for #637: the two interface files were renamed, as above.
     surface.playSfx('click')
-    expect(player.live().some((clip) => clip.src.includes('button_sound'))).toBe(false)
+    expect(player.live().some((clip) => clip.src.includes('ui-click'))).toBe(false)
 
     surface.playSfx('panel')
-    expect(player.live().some((clip) => clip.src.includes('open_sound'))).toBe(true)
+    expect(player.live().some((clip) => clip.src.includes('panel-open-close'))).toBe(true)
     surface.dispose()
   })
 

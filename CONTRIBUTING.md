@@ -223,13 +223,16 @@ in all four corners), and dwarf animations come as pose pairs (two working swing
 resting poses, two walking poses). Open an issue with a sample before producing a full set,
 so style fit gets settled cheaply.
 
-**Audio is not processed by that pipeline.** The six music tracks, the two mine ambience beds and
-the three dwarf voices are committed exactly as delivered — the music as `.ogg` under
-`src/renderer/src/assets/audio/music/` because Electron's bundled Chromium decodes it natively, and
-the beds and voices as `.mp3` filed beside the art they belong to. Every one is imported explicitly
+**Audio is not processed by that pipeline.** The eight music tracks and the three dwarf voices are
+committed exactly as delivered — the music as `.ogg` under `src/renderer/src/assets/audio/music/`
+because Electron's bundled Chromium decodes it natively, and the voices as `.mp3` filed beside the
+art they belong to. The sound effects and the mine's room tone are CC0 `.mp3` files re-levelled and
+stripped of metadata as their README describes (`src/renderer/src/assets/audio/sfx/README.md`),
+each with its source in [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md). Every one is imported explicitly
 in `src/renderer/src/lib/audio/audioAssets.ts` rather than globbed, so a renamed or missing file
-fails the build instead of quietly shortening the playlist or silencing a rank. Add a file there
-when you add a sound.
+fails the build instead of quietly shortening the playlist or silencing a rank, and
+`bundledAudio.test.ts` fails for a file nothing imports or one carrying a copyright frame. Add a
+file there, and a credit, when you add a sound.
 
 **Inbound terms.** Artwork is not an open contribution surface by default. Please discuss an art
 contribution with the maintainer before opening a pull request. Any accepted artwork must have

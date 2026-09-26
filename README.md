@@ -355,6 +355,8 @@ walked the support matrix on real hardware — including "it all worked". See
 - [`LICENSE`](LICENSE) — MIT license for the code.
 - [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
   audio assets.
+- [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) — where every bundled sound comes from; the sound
+  effects are CC0.
 
 <h2>
   Support the project
