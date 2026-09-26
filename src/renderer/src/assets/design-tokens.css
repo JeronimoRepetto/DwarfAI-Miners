@@ -11,7 +11,103 @@
  * left of the ORIGINAL interface's palette (--bg-panel, --ink, --lantern and the
  * per-tier mineral colours) and declares nothing that appears here; the same
  * test fails if any custom property is declared in both.
+ *
+ * AMENDED for #635: the redesign's foundations land in the first block below,
+ * under the names the redesign gives them. Where an older app name meant the
+ * same value (the handoff's token mapping), it now reads the redesign's token
+ * rather than repeating the hex, so a correction stays one edit while callers
+ * still ask for the old name; each caller moves in its own rebuild slice.
  */
+:root {
+  /*
+   * The palette: each base tone with a light and a shadow step, lit from the
+   * top left. Old gold carries two extra steps because a selected chip, tab or
+   * row puts text on it, and that pair has to reach its contrast floor.
+   */
+  --rock-hi: #221b13;
+  --rock: #14100b;
+  --rock-lo: #0a0805;
+  --wood-hi: #3d2f23;
+  --wood: #2b2119;
+  --wood-lo: #1c150f;
+  --control-hi: #3a2f20;
+  --control: #272015;
+  --control-lo: #17120b;
+  --gold-hi: #e8b451;
+  --gold: #d19831;
+  --gold-lo: #9a6c1f;
+  --gold-select: #865e1b;
+  --gold-deep: #6e4c14;
+  --brass-hi: #ffd27a;
+  --brass: #f6b644;
+  --brass-lo: #b9832a;
+  --parch-hi: #fff1d6;
+  --parchment: #fae2b6;
+  --parch-lo: #d9bd8c;
+  --steel-hi: #c9ced3;
+  --steel: #9aa0a6;
+  --steel-lo: #5d6369;
+
+  /*
+   * Text. `--ink` and `--ink-faint` replace theme.css's older values of the
+   * same names, which were removed rather than renamed: one name, one answer.
+   */
+  --ink: #f3dcb2;
+  --ink-soft: #c9b08a;
+  --ink-faint: #ad9674;
+  --ink-on-light: #2b2119;
+  --ink-on-light-soft: #443629;
+
+  /*
+   * Semantic marks and their grounds. The redesign's `--danger-ink` (red text
+   * on parchment) is NOT here yet: theme.css still declares that name for a
+   * light red on dark grounds, read by ten rules, and porting the redesign's
+   * dark red under it would make every one of them unreadable. It waits on a
+   * ruling for where those callers move (#635).
+   */
+  --ok: #8fbf5a;
+  --ok-lo: #2e3a1f;
+  --warn: #e0a33a;
+  --warn-lo: #3a2c14;
+  --danger: #d0583c;
+  --danger-hi: #e98a70;
+  --danger-lo: #3a1c15;
+  --danger-badge: #b74d35;
+  --info: #6fb3c4;
+  --info-lo: #1d3036;
+
+  /* Tiers, in canonical order: the measured markers and their chip grounds. */
+  --tier-bronze: #5ce1e6;
+  --tier-bronze-lo: #173d3f;
+  --tier-copper: #ba6336;
+  --tier-copper-lo: #45230f;
+  --tier-silver: #c7c7c7;
+  --tier-silver-lo: #3b3d40;
+  --tier-gold: #ffde59;
+  --tier-gold-lo: #4d3f0e;
+  --tier-uranium: #00bf63;
+  --tier-uranium-lo: #0a3520;
+
+  /*
+   * Translucent layers: one token per overlay rather than a colour and an
+   * opacity spelled at each use.
+   */
+  --shadow-drop: rgba(0, 0, 0, 0.45);
+  --scrim: rgba(10, 8, 5, 0.72);
+  --veil: rgba(0, 0, 0, 0.5);
+  --glow-brass: rgba(246, 182, 68, 0.35);
+  --glow-parch: rgba(250, 226, 182, 0.18);
+  --hover-wash: rgba(250, 226, 182, 0.06);
+
+  /*
+   * One art pixel of chrome. The material frames below are drawn in whole art
+   * pixels, so an edge never lands between screen pixels at 1x.
+   */
+  --px: 2px;
+  /* The material recipe's extra ring when a state adds none. */
+  --ring-none: 0 0 0 0 transparent;
+}
+
 :root {
   /*
    * Typography. The source names `Tiny5` as the Pixel UI family and leaves the
@@ -62,15 +158,15 @@
   --font-code: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
 
   /* Closed edge rail. */
-  --color-rail: #f6b644;
+  --color-rail: var(--brass);
   /* Selected navigation icon, borders, primary light text, modal border. */
-  --color-cream: #fae2b6;
+  --color-cream: var(--parchment);
   /* Unselected shell navigation icons. */
   --color-nav-idle: #110c07;
   /* Settings/popup base background and disabled control background. */
-  --color-panel-deep: #14100b;
+  --color-panel-deep: var(--rock);
   /* Mine cards, mine tooltip, message panel. */
-  --color-panel: #2b2119;
+  --color-panel: var(--wood);
   /*
    * Enabled control background. `foundations.md` gives this one token a second
    * and third job too — "and unselected chip border/text" — and those two are
@@ -80,7 +176,7 @@
    * control was invisible. The value is unchanged, because 18 surfaces are
    * painted with it and as a background it is right. See --color-control-idle.
    */
-  --color-control: #272015;
+  --color-control: var(--control);
   /*
    * The foreground of a control that is not chosen but could be: an unselected
    * chip's label and outline, a profile option the person is about to pick.
@@ -111,7 +207,7 @@
    */
   --color-control-disabled: #7a6a50;
   /* Titles, dividers, active borders, selected question background. */
-  --color-accent: #d19831;
+  --color-accent: var(--gold);
   /* Mine tooltip copy. */
   --color-tooltip-text: #f7dcaf;
   /* Message input surface and foreman message icon. */
@@ -135,11 +231,11 @@
    * tier `Copper` (#165), which is UI copy (see presentation.ts) and not an
    * identifier the type system knows.
    */
-  --color-marker-bronze: #5ce1e6;
-  --color-marker-copper: #ba6336;
-  --color-marker-silver: #c7c7c7;
-  --color-marker-gold: #ffde59;
-  --color-marker-uranium: #00bf63;
+  --color-marker-bronze: var(--tier-bronze);
+  --color-marker-copper: var(--tier-copper);
+  --color-marker-silver: var(--tier-silver);
+  --color-marker-gold: var(--tier-gold);
+  --color-marker-uranium: var(--tier-uranium);
 
   /*
    * Every rung raised 2px over the source table (#198, maintainer ruling
@@ -227,4 +323,121 @@
    * `--color-panel-deep` and `--color-accent` rather than a new hex pair.
    */
   --size-scrollbar-width: 8px;
+}
+
+/*
+ * The material recipe (#635). A material only sets the frame's variables and
+ * `.m-mat` turns them into the notched frame, so a state changes one variable
+ * instead of restating the shadow list. The corner pixel is never painted:
+ * four outer shadows, each offset one art pixel on one axis, draw the stepped
+ * corner that replaces a radius, and doing it with shadows rather than a clip
+ * keeps focus rings and drop shadows whole. Nothing here rounds a corner.
+ */
+.m-mat {
+  --mat-fill: var(--wood);
+  --mat-hi: var(--wood-hi);
+  --mat-lo: var(--wood-lo);
+  --mat-edge: var(--rock-lo);
+  --mat-extra: var(--ring-none);
+  background-color: var(--mat-fill);
+  box-shadow:
+    0 calc(var(--px) * -1) 0 0 var(--mat-edge),
+    0 var(--px) 0 0 var(--mat-edge),
+    calc(var(--px) * -1) 0 0 0 var(--mat-edge),
+    var(--px) 0 0 0 var(--mat-edge),
+    inset var(--px) var(--px) 0 0 var(--mat-hi),
+    inset calc(var(--px) * -1) calc(var(--px) * -1) 0 0 var(--mat-lo),
+    var(--mat-extra);
+}
+.m-wood {
+  --mat-fill: var(--wood);
+  --mat-hi: var(--wood-hi);
+  --mat-lo: var(--wood-lo);
+}
+.m-control {
+  --mat-fill: var(--control);
+  --mat-hi: var(--control-hi);
+  --mat-lo: var(--control-lo);
+}
+.m-rock {
+  --mat-fill: var(--rock);
+  --mat-hi: var(--rock-hi);
+  --mat-lo: var(--rock-lo);
+}
+/* Sunken: the light swaps to the far lip, so a well reads as cut into the plate. */
+.m-well {
+  --mat-fill: var(--rock);
+  --mat-hi: var(--rock-lo);
+  --mat-lo: var(--rock-hi);
+  --mat-edge: var(--wood-lo);
+}
+.m-parchment {
+  --mat-fill: var(--parchment);
+  --mat-hi: var(--parch-hi);
+  --mat-lo: var(--parch-lo);
+  --mat-edge: var(--rock-lo);
+  color: var(--ink-on-light);
+}
+.m-parchment-well {
+  --mat-fill: var(--parch-hi);
+  --mat-hi: var(--parch-lo);
+  --mat-lo: var(--parch-hi);
+  --mat-edge: var(--wood-lo);
+  color: var(--ink-on-light);
+}
+.m-brass {
+  --mat-fill: var(--brass);
+  --mat-hi: var(--brass-hi);
+  --mat-lo: var(--brass-lo);
+  --mat-edge: var(--rock-lo);
+  color: var(--ink-on-light);
+}
+.m-gold {
+  --mat-fill: var(--gold-lo);
+  --mat-hi: var(--gold);
+  --mat-lo: var(--gold-deep);
+  --mat-edge: var(--brass-hi);
+}
+.m-trim {
+  --mat-edge: var(--brass-lo);
+}
+.m-trim-lit {
+  --mat-edge: var(--brass);
+}
+/* A hard pixel shadow that follows the notch, never a blur. */
+.m-raised {
+  filter: drop-shadow(4px 4px 0 var(--shadow-drop));
+}
+.m-rule {
+  height: var(--px);
+  background: var(--wood-lo);
+  box-shadow: 0 var(--px) 0 0 var(--wood-hi);
+  border: 0;
+  margin: 0;
+}
+.m-rule-v {
+  width: var(--px);
+  align-self: stretch;
+  background: var(--wood-lo);
+  box-shadow: var(--px) 0 0 0 var(--wood-hi);
+}
+.m-rivets {
+  position: relative;
+}
+.m-rivets::before,
+.m-rivets::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  width: var(--px);
+  height: var(--px);
+  background: var(--brass-lo);
+  box-shadow: 0 var(--px) 0 0 var(--rock-lo);
+  pointer-events: none;
+}
+.m-rivets::before {
+  left: 4px;
+}
+.m-rivets::after {
+  right: 4px;
 }
