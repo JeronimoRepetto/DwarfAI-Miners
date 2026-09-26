@@ -132,6 +132,49 @@
   --z-menu: 60;
   --z-dialog: 80;
   --z-toast: 90;
+
+  /*
+   * Motion. Only transform and opacity ever animate, and every awaited motion
+   * goes through the bounded runner (lib/shell/boundedMotion.ts), which is to
+   * take these durations and easings instead of motion-v's defaults. Entries
+   * ease out, exits ease in; pixel states step.
+   */
+  --dur-press: 60ms;
+  --dur-fast: 90ms;
+  --dur-base: 140ms;
+  --dur-panel: 180ms;
+  --dur-tip-delay: 300ms;
+  --dur-pulse: 1600ms;
+  /*
+   * Only the fallback for a sprite sheet with no Aseprite sidecar: sprites play
+   * each frame's own duration from the sidecar, on the sprite slice's clock.
+   */
+  --frame-ms: 100ms;
+  --ease-step: steps(2, end);
+  --ease-out: cubic-bezier(0.2, 0.7, 0.1, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.9, 0.3);
+  /* How far an overlay travels as it appears. */
+  --rise: 6px;
+}
+
+/*
+ * Reduced motion stops the shell's own motion: every duration reads 0ms, so a
+ * switch lands in one frame, and an overlay appears in place. Sprites are the
+ * exception and keep playing, every frame a flat 200ms (replaced, not scaled).
+ * theme.css's global reset still stops the components' own animations until
+ * each one reads these tokens; the two say the same thing.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-press: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-panel: 0ms;
+    --dur-tip-delay: 0ms;
+    --dur-pulse: 0ms;
+    --frame-ms: 200ms;
+    --rise: 0px;
+  }
 }
 
 :root {

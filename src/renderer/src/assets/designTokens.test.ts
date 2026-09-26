@@ -35,14 +35,26 @@ interface Declaration {
  * no nesting or at-rule-scoped custom properties, and a real CSS parser would be
  * a dependency bought to read four files.
  */
+/*
+ * AMENDED for #635: one at-rule now scopes custom properties — the reduced-motion block redeclares
+ * the duration tokens on `:root` — so the selector is keyed with its enclosing at-rules. A value
+ * inside `@media` is that block's own answer, not a second declaration in the same block.
+ */
 function declarationsIn(file: string): Declaration[] {
   const css = readFileSync(join(ASSETS_DIR, file), 'utf8')
   const found: Declaration[] = []
   let selector = ''
+  const open: string[] = []
   for (const raw of css.split('\n')) {
     const line = raw.trim()
     if (line.endsWith('{')) {
-      selector = line.slice(0, -1).trim()
+      open.push(line.slice(0, -1).trim())
+      selector = open.join(' ')
+      continue
+    }
+    if (line === '}') {
+      open.pop()
+      selector = open.join(' ')
       continue
     }
     const declaration = /^(--[a-z0-9-]+)\s*:/i.exec(line)
@@ -888,5 +900,71 @@ describe('design-tokens.css spacing, hit targets and layers (#635)', () => {
     const value = rootToken(name)
     expect(value).toBeTruthy()
     expect(pixelsIn(value!).some((px) => px % 2 !== 0)).toBe(true)
+  })
+})
+
+describe('design-tokens.css motion tokens (#635)', () => {
+  const REDUCED = '@media (prefers-reduced-motion: reduce)'
+
+  it.each([
+    ['--dur-press', '60ms'],
+    ['--dur-fast', '90ms'],
+    ['--dur-base', '140ms'],
+    ['--dur-panel', '180ms'],
+    ['--dur-tip-delay', '300ms'],
+    ['--dur-pulse', '1600ms'],
+    ['--frame-ms', '100ms'],
+    ['--ease-step', 'steps(2, end)'],
+    ['--ease-out', 'cubic-bezier(0.2, 0.7, 0.1, 1)'],
+    ['--ease-in', 'cubic-bezier(0.5, 0, 0.9, 0.3)'],
+    ['--rise', '6px']
+  ])('carries the motion token %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  // Every duration token, so a new one cannot land without its reduced-motion answer.
+  const durations = () =>
+    rulesIn('design-tokens.css')
+      .filter((rule) => rule.selector === ':root' && rule.atRule === '')
+      .flatMap((rule) => [...rule.declarations.keys()])
+      .filter((name) => name.startsWith('--dur-'))
+
+  it('reads every duration token as 0ms under reduced motion, so each switch lands in one frame', () => {
+    expect(durations().length).toBe(6)
+    for (const name of durations()) {
+      expect([name, declared('design-tokens.css', ':root', name, REDUCED)]).toEqual([name, '0ms'])
+    }
+  })
+
+  it('stops an overlay travelling under reduced motion: it appears in place', () => {
+    expect(declared('design-tokens.css', ':root', '--rise', REDUCED)).toBe('0px')
+  })
+
+  /*
+   * The one token that does not go to zero. Sprites keep playing under reduced motion, every frame
+   * a flat 200ms; only the shell's own motion stops. The frame clock that reads per-frame
+   * durations from each sheet is the sprite slice's; this is only the fallback's reduced value.
+   */
+  it('slows the fallback sprite frame to 200ms under reduced motion rather than stopping it', () => {
+    expect(declared('design-tokens.css', ':root', '--frame-ms', REDUCED)).toBe('200ms')
+  })
+
+  it('leaves the easings alone under reduced motion: with no duration they have nothing to shape', () => {
+    for (const name of ['--ease-step', '--ease-out', '--ease-in']) {
+      expect(declared('design-tokens.css', ':root', name, REDUCED)).toBeUndefined()
+    }
+  })
+
+  /*
+   * theme.css's global reset is what stops every component's own scoped animations under reduced
+   * motion today, and the tokens do not replace it until each motion reads them. Both must agree
+   * that reduced motion means no shell motion, so the reset has to stay.
+   */
+  it('keeps the global reduced-motion reset beside the zeroed tokens', () => {
+    const reset = rulesIn('theme.css').find(
+      (rule) => rule.atRule === REDUCED && rule.selector.startsWith('*')
+    )
+    expect(reset?.declarations.get('animation-duration')).toBe('0.01ms !important')
+    expect(reset?.declarations.get('transition-duration')).toBe('0.01ms !important')
   })
 })
