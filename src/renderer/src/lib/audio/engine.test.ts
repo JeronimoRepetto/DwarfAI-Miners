@@ -603,6 +603,33 @@ describe('createAudioEngine — the crew (#330)', () => {
     expect(crewClips()[0]!.volume).toBeCloseTo(0.5 * 0.05)
   })
 
+  it('loops the footsteps for as long as the dwarf walks (#637)', () => {
+    // The walk is one short seamless loop now, not a recording longer than any
+    // crossing: reaching its end is the loop wrapping, never the walk ending.
+    engine.playCrew(cue({ dwarfId: 'd1', cue: 'walk', gain: 0.05 }))
+    const steps = crewClips()[0]!
+    expect(steps.loop).toBe(true)
+
+    steps.end()
+    steps.end()
+    expect(steps.stopped).toBe(false)
+    expect(steps.playing).toBe(true)
+    expect(crewClips()).toEqual([steps])
+
+    // Only the dwarf stopping stops it, over the release as before.
+    engine.playCrew(cue({ dwarfId: 'd1', cue: 'walk', ending: true }))
+    expect(steps.ramp).toEqual({ to: 0, ms: CREW_RELEASE_MS })
+    time.now += CREW_RELEASE_MS
+    engine.tick()
+    expect(steps.stopped).toBe(true)
+  })
+
+  it('plays a strike and a grind once each, never looped (#637)', () => {
+    engine.playCrew(cue({ dwarfId: 'd1' }))
+    engine.playCrew(cue({ role: 'worker2', dwarfId: 'd2', cue: 'shift' }))
+    for (const clip of crewClips()) expect(clip.loop, clip.src).toBe(false)
+  })
+
   it('gives a dwarf the same footsteps every time it walks', () => {
     // It walks in on one pair of boots and it leaves in the same pair.
     const walked: string[] = []

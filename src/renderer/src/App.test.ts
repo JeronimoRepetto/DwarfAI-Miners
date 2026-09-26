@@ -2246,8 +2246,11 @@ describe('App audio (#174, #173)', () => {
      * were at the rock — and the crew makes the mine's noise itself now, cue
      * by cue off the frames each sprite draws. What is left for an interior to
      * open is the room tone, which is what this asserts.
+     *
+     * AMENDED for #637: the room tone's file was renamed with its replacement,
+     * `mine-inside-silence` to `mine-inside-room-tone`; the claim is unchanged.
      */
-    expect(opened.some((src) => src.includes('mine-inside-silence'))).toBe(true)
+    expect(opened.some((src) => src.includes('mine-inside-room-tone'))).toBe(true)
     expect(opened.some((src) => src.includes('mine-inside-working'))).toBe(false)
 
     await wrapper.find('.close-mine').trigger('click')
@@ -2307,7 +2310,8 @@ describe('App audio (#174, #173)', () => {
       const before = opened.length
       await button.trigger('click')
       await flushPromises()
-      expect(opened.slice(before).filter((src) => src.includes('button_sound'))).toHaveLength(1)
+      // AMENDED for #637: `button_sound` was renamed `ui-click` with its replacement.
+      expect(opened.slice(before).filter((src) => src.includes('ui-click'))).toHaveLength(1)
     }
   })
 
@@ -2317,15 +2321,17 @@ describe('App audio (#174, #173)', () => {
     // with the shell already collapsed — the one exception a rail is allowed.
     const { wrapper } = await audioApp()
 
+    // AMENDED for #637: `open_sound` was renamed `panel-open-close` with its
+    // replacement; the claim is unchanged.
     const before = opened.length
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    expect(opened.slice(before).filter((src) => src.includes('open_sound'))).toHaveLength(1)
+    expect(opened.slice(before).filter((src) => src.includes('panel-open-close'))).toHaveLength(1)
 
     const between = opened.length
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    expect(opened.slice(between).filter((src) => src.includes('open_sound'))).toHaveLength(1)
+    expect(opened.slice(between).filter((src) => src.includes('panel-open-close'))).toHaveLength(1)
   })
 
   it('leaves the music button silent, because it is not an interface press (#323)', async () => {
@@ -2333,9 +2339,10 @@ describe('App audio (#174, #173)', () => {
     const before = opened.length
     await wrapper.find('.nav-music').trigger('click')
     await flushPromises()
+    // AMENDED for #637: both interface files were renamed with their replacements.
     const sfx = opened
       .slice(before)
-      .filter((src) => src.includes('button_sound') || src.includes('open_sound'))
+      .filter((src) => src.includes('ui-click') || src.includes('panel-open-close'))
     expect(sfx).toHaveLength(0)
   })
 

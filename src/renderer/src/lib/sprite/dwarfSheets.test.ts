@@ -373,7 +373,7 @@ describe('DWARF_CREW (#330)', () => {
 
   it('lands the end of the grind three frames into the set-down', () => {
     // The whole arithmetic, read off the sheets rather than restated. The cue
-    // leaves 0.2s of pick-up, then eight 1.0s swings — and `hands-sfx.mp3` is
+    // leaves 0.2s of pick-up, then eight 1.0s swings — and `worker2-grind.mp3` is
     // 8.53s, so its tail runs 0.33s past the last swing: three frames into
     // end-working, which is where the arms stop in the art.
     const GRIND_MS = 8530

@@ -246,7 +246,7 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
  *
  * ## Where the worker2's numbers come from
  *
- * `hands-sfx.mp3` is 8.53 s of the whole grind — the arms winding up, biting
+ * `worker2-grind.mp3` is 8.53 s of the whole grind — the arms winding up, biting
  * the rock and stopping — so the shift has to be as long as the recording
  * rather than the recording as long as the shift. The maintainer's own ruling
  * fixes both ends: it starts "just before the working begins", 200 ms out,
@@ -260,7 +260,7 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
  * MAINTAINER'S AND ARE JUDGED BY EAR: do not retune either by eye.
  *
  * The worker's stays at two, which is what #325 read as a shift, and its
- * cycle at 3 + 26 + 6 = 35 frames, 3.5 s. Its strike is 0.57 s against a
+ * cycle at 3 + 26 + 6 = 35 frames, 3.5 s. Its strike is 0.32 s against a
  * 1.3 s swing, so a pick lands and is over well before the next one.
  */
 export const DWARF_CREW: Record<DwarfRole, DwarfCrewSet> = {

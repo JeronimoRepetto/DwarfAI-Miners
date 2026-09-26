@@ -43,8 +43,8 @@ describe('UI_SFX_SRC', () => {
 describe('the other two inventories', () => {
   /*
    * AMENDED for #330: it asserted two beds. The `working` bed is retired — the
-   * crew makes the mine's noise itself now — so there is one room tone, and
-   * `mine-inside-working.mp3` is left on disk unimported. The claim is
+   * crew makes the mine's noise itself now — so there is one room tone. The
+   * retired file stayed on disk unimported until #637 deleted it; the claim is
    * unchanged in kind: every declared bed resolves to a file of its own.
    */
   it('keeps a bed for each state and a voice for each rank, all distinct', () => {
@@ -80,22 +80,32 @@ describe('CREW_SFX_SRC (#330)', () => {
     expect(CREW_SFX_SRC.worker.strike![0]).not.toBe(CREW_SFX_SRC.worker2.shift![0])
   })
 
-  it('offers two footstep recordings, shared by every rank that walks', () => {
-    // One of the two per dwarf, stable for its life (see crewVariantIndex) —
-    // so the pair has to be a pair, and the same pair for the whole crew.
-    expect(CREW_SFX_SRC.worker.walk).toHaveLength(2)
-    expect(new Set(CREW_SFX_SRC.worker.walk).size).toBe(2)
+  /*
+   * AMENDED for #637. This was `offers two footstep recordings, shared by every
+   * rank that walks` and expected a PAIR: two long walk recordings, one worn per
+   * dwarf. Both carried a third-party copyright tag and are gone; the walk is one
+   * seamless loop now, played for as long as the dwarf walks (see the looping
+   * cases in engine.test.ts). The claim that survives is the sharing: one walk,
+   * the same for the whole crew.
+   */
+  it('offers one footstep loop, shared by every rank that walks', () => {
+    expect(CREW_SFX_SRC.worker.walk).toHaveLength(1)
     for (const role of ['worker2', 'foreman'] as const) {
       expect(CREW_SFX_SRC[role].walk, role).toEqual(CREW_SFX_SRC.worker.walk)
     }
   })
 
+  /*
+   * AMENDED for #637: it counted four files, the two walks among them. With the
+   * walk a single loop there are three — one per cue — and the claim is
+   * unchanged: no recording answers two different cues.
+   */
   it('shares no recording between two different cues', () => {
-    // Four files for three cues across three ranks; hearing a pick where the
+    // Three files for three cues across three ranks; hearing a pick where the
     // footsteps should be is the failure an explicit import cannot catch.
     const all = Object.values(CREW_SFX_SRC).flatMap((byCue) =>
       Object.values(byCue).flatMap((variants) => [...(variants ?? [])])
     )
-    expect(new Set(all).size).toBe(4)
+    expect(new Set(all).size).toBe(3)
   })
 })

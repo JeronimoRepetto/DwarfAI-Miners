@@ -35,7 +35,13 @@ import {
   type AmbienceBed,
   type AmbienceStanding
 } from './ambience'
-import { CREW_POLYPHONY, CREW_RELEASE_MS, crewVariantIndex, type CrewSoundEvent } from './crew'
+import {
+  CREW_LOOPED_CUES,
+  CREW_POLYPHONY,
+  CREW_RELEASE_MS,
+  crewVariantIndex,
+  type CrewSoundEvent
+} from './crew'
 import { musicTimeline, MUSIC_GAP_MS } from './musicTimeline'
 import type { AudioClip, AudioPlayer } from './player'
 import { createPlaylist, type Playlist } from './playlist'
@@ -500,6 +506,9 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       if (volume <= 0) return
       const clip = player.open(src, {
         volume,
+        // A looped walk never reaches `onEnded`; its slot comes back through
+        // the release its dwarf's `ending` asks for, like a grind's does.
+        loop: CREW_LOOPED_CUES.has(event.cue),
         onEnded: () => {
           clip.stop()
           const at = crew.findIndex((sounding) => sounding.clip === clip)

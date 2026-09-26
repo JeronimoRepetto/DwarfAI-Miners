@@ -3,8 +3,9 @@
  *
  * Beside `lib/art.ts` rather than inside it, and the split is on purpose: that
  * file's whole contract is "every file here is produced by `pnpm art:build`",
- * and none of these are — they are the maintainer's own recordings, committed
- * as delivered. The shell's two music ICONS are art and do live over there.
+ * and none of these are — they are committed as delivered, and where each one
+ * comes from and under what licence is in `assets/audio/CREDITS.md`. The
+ * shell's two music ICONS are art and do live over there.
  *
  * Imports are explicit rather than an `import.meta.glob`, for the reason art.ts
  * gives: a missing or renamed file has to fail the build instead of shortening
@@ -24,15 +25,14 @@ import trackWhimsicalChamberOrchestra from '../../assets/audio/music/whimsical-c
 import trackWhimsicalMedievalFolk from '../../assets/audio/music/whimsical-medieval-folk.ogg'
 import trackWhimsicalTheatricalCircus from '../../assets/audio/music/whimsical-theatrical-circus.ogg'
 
-import sfxClick from '../../assets/audio/sfx/button_sound.mp3'
-import sfxPanel from '../../assets/audio/sfx/open_sound.mp3'
+import sfxClick from '../../assets/audio/sfx/ui-click.mp3'
+import sfxPanel from '../../assets/audio/sfx/panel-open-close.mp3'
 
-import sfxPickaxe from '../../assets/audio/sfx/pickaxe-sfx.mp3'
-import sfxHands from '../../assets/audio/sfx/hands-sfx.mp3'
-import sfxSteps from '../../assets/audio/sfx/steps-sfx.mp3'
-import sfxSteps2 from '../../assets/audio/sfx/steps2-sfx.mp3'
+import sfxPickaxe from '../../assets/audio/sfx/pickaxe-strike.mp3'
+import sfxGrind from '../../assets/audio/sfx/worker2-grind.mp3'
+import sfxWalk from '../../assets/audio/sfx/walk-loop.mp3'
 
-import bedSilence from '../../assets/art/inside-mines/sfx/mine-inside-silence.mp3'
+import bedRoomTone from '../../assets/art/inside-mines/sfx/mine-inside-room-tone.mp3'
 
 import foremanVoice from '../../assets/art/dwarf-foreman/voce/dwarf-foreman-voice.mp3'
 import workerVoice from '../../assets/art/dwarf-worker/voice/dwarf-worker-voice.mp3'
@@ -65,14 +65,15 @@ export const MUSIC_TRACK_SRC: readonly string[] = [
  * the five interior paintings it belongs to — the path is the artist's
  * filing, exactly as `worker2`'s sheets sitting in the worker's directory is.
  *
- * There were two. `mine-inside-working.mp3` was one recording of "a mine being
- * worked", the same whether one worker or nine were at the rock, and #330
- * retires it in favour of the crew's own clips below. IT IS STILL ON DISK AND
- * DELIBERATELY NOT IMPORTED HERE — the maintainer's to delete or keep, and a
- * renamed or removed file must not break a build that no longer plays it.
+ * A 90 s seamless loop since #637; the engine's crossfade covers the seam
+ * exactly as it did for the recording it replaced.
+ *
+ * There were two beds. The `working` one was one recording of "a mine being
+ * worked", the same whether one worker or nine were at the rock; #330 retired
+ * it in favour of the crew's own clips below, and #637 deleted the file.
  */
 export const AMBIENCE_SRC = {
-  silence: bedSilence
+  silence: bedRoomTone
 } satisfies Record<AmbienceBed, string>
 
 /**
@@ -95,9 +96,8 @@ export const DWARF_VOICE_SRC = {
  * rather than under the art tree the mine beds live in: these answer a press on
  * the shell's own chrome, and nothing about them belongs to a mine.
  *
- * `.mp3`, as delivered — the same container the beds and the voices already
- * use, decoded natively by Electron's Chromium, so nothing is transcoded here
- * either. They are kilobytes rather than megabytes: a press has to sound the
+ * `.mp3` — the same container the beds and the voices already use, decoded
+ * natively by Electron's Chromium, so nothing is transcoded here either. They are kilobytes rather than megabytes: a press has to sound the
  * moment it is pressed, and a long recording could not.
  */
 export const UI_SFX_SRC = {
@@ -106,22 +106,22 @@ export const UI_SFX_SRC = {
 } satisfies Record<UiSfx, string>
 
 /**
- * The two footstep recordings (#330), which every rank shares.
+ * The footsteps (#330, #637), which every rank shares.
  *
- * A PAIR because a crew walking in on one recording is nine copies of the same
- * gait; each dwarf wears one of the two for its whole life, picked from its own
- * id (see `crewVariantIndex`). Far longer than any walk in the panel — 17.96 s
- * and 13.06 s against a crossing measured in seconds — so they play from their
- * start and are never looped: a walk that outlasted one would simply go quiet,
- * which is the right failure.
+ * ONE SEAMLESS LOOP of twelve steps, 6.7 s, played for as long as the dwarf
+ * walks (see `CREW_LOOPED_CUES`) rather than a recording longer than any
+ * crossing. It replaced a pair of long walk recordings that carried a
+ * third-party copyright tag; the pair existed so a crew would not march in
+ * step, and one loop started at each dwarf's own moment of setting off keeps
+ * them out of phase without it. Its first and last samples are silence, so the
+ * wrap falls between two footfalls.
  */
-const CREW_WALK_SRC: readonly string[] = [sfxSteps, sfxSteps2]
+const CREW_WALK_SRC: readonly string[] = [sfxWalk]
 
 /**
  * What each rank sounds like, cue by cue (#330), under `assets/audio/sfx/`
  * beside the interface sounds rather than under the art tree the room tone
- * lives in: these are the maintainer's own recordings of a crew, not an
- * interior's furniture.
+ * lives in: these are the sounds of a crew, not an interior's furniture.
  *
  * WHEN each of these plays is not here — it is declared on the rank's sheets
  * (`DWARF_CREW` in lib/sprite/dwarfSheets.ts), because a cue is a claim about
@@ -134,12 +134,12 @@ const CREW_WALK_SRC: readonly string[] = [sfxSteps, sfxSteps2]
  * picked the same way — `crewVariantIndex` answers 0 for a single-element list
  * without anything special being written for it.
  *
- * `.mp3`, as delivered, decoded natively by Electron's Chromium exactly as the
- * beds and the voices already are.
+ * `.mp3`, decoded natively by Electron's Chromium exactly as the beds and the
+ * voices already are.
  */
 export const CREW_SFX_SRC = {
   worker: { strike: [sfxPickaxe], walk: CREW_WALK_SRC },
-  worker2: { shift: [sfxHands], walk: CREW_WALK_SRC },
+  worker2: { shift: [sfxGrind], walk: CREW_WALK_SRC },
   // No strike and no shift: a foreman's `working` is a session producing
   // tokens rather than a pick on a rock (#173's own example), and he has no
   // working art for a frame cue to be read off. He walks, so he has boots.
