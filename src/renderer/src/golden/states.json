@@ -2,5 +2,65 @@
   {
     "key": "organisms/nav#default",
     "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+  },
+  {
+    "key": "foundations/colour#materials",
+    "red": "tokens not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/colour#text",
+    "red": "tokens not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/colour#semantic",
+    "red": "tokens not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/colour#tiers",
+    "red": "tokens not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/materials#surfaces",
+    "red": "material classes not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/materials#trims",
+    "red": "material classes not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/materials#raised",
+    "red": "material classes not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/materials#focus-visible",
+    "red": "material classes and focus ring not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/materials#rules",
+    "red": "the rule material is not ported yet; slice 1 of #635"
+  },
+  {
+    "key": "foundations/motion#tokens",
+    "red": "motion tokens not ported yet and the value readout is not drawn; slice 1 of #635"
+  },
+  {
+    "key": "foundations/motion#enter",
+    "red": "specimen not built: it draws the redesigned button, not rebuilt yet; #635"
+  },
+  {
+    "key": "foundations/motion#press",
+    "red": "specimen not built: it draws the redesigned primary button, not rebuilt yet; #635"
+  },
+  {
+    "key": "foundations/type#scale",
+    "red": "type roles and scale not ported yet, specimen not built; slice 1 of #635"
+  },
+  {
+    "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
+    "red": "presets not ported, and it draws page header, mine card and bubbles not rebuilt yet; #635"
+  },
+  {
+    "key": "foundations/type-lab#current-choice",
+    "red": "specimen not built; whether the prototype-only type lab is graded awaits a design ruling; #635"
   }
 ]
