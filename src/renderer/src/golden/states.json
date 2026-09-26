@@ -203,19 +203,15 @@
     "key": "atoms/ore#zero"
   },
   {
-    "key": "atoms/marker#tiers",
-    "red": "the redesigned map marker is not built yet (#635)"
+    "key": "atoms/marker#tiers"
   },
   {
-    "key": "atoms/marker#hover-pressed-open",
-    "red": "the redesigned map marker is not built yet (#635)"
+    "key": "atoms/marker#hover-pressed-open"
   },
   {
-    "key": "atoms/marker#needs-you",
-    "red": "the redesigned map marker is not built yet (#635)"
+    "key": "atoms/marker#needs-you"
   },
   {
-    "key": "atoms/marker#focus-visible",
-    "red": "the redesigned map marker is not built yet (#635)"
+    "key": "atoms/marker#focus-visible"
   }
 ]

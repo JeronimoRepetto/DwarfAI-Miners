@@ -16,6 +16,7 @@
 import type { Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
 import TierProgress from '../components/browse/TierProgress.vue'
+import TierMarker from '../components/map/TierMarker.vue'
 import ChoiceChip from '../components/controls/ChoiceChip.vue'
 import FieldHint from '../components/controls/FieldHint.vue'
 import InputField from '../components/controls/InputField.vue'
@@ -373,6 +374,35 @@ const oreAlone: Render = (_sample, _texts, attributes) => ({
   props: capsule(capsules(attributes)[0]!)
 })
 
+/*
+ * The markers of the tree, each inside the one-pixel point the kit places it on (a plain div
+ * with the style the tree prints), all in the kit's frame: tiered, named, open, asking and
+ * forced as each prints. The marker centres itself on its point.
+ */
+const markers: Render = (_sample, _texts, attributes) => {
+  const points: FramedPart[] = []
+  for (const { element, attributes: a } of attributes.slice(1)) {
+    if (element === 'div') {
+      points.push({ component: KitFrame, props: { style: a.style ?? '', parts: [] } })
+    } else if (element.startsWith('button.dm-marker')) {
+      ;(points.at(-1)!.props.parts as FramedPart[]).push({
+        component: TierMarker,
+        props: {
+          tier: a['data-tier'] as MineTier,
+          label: a['aria-label'],
+          selected: a['aria-pressed'] === 'true',
+          asking: element.split('.').includes('dm-marker--ask'),
+          state: forcedOf(element)
+        }
+      })
+    }
+  }
+  return {
+    component: KitFrame,
+    props: { style: attributes[0]?.attributes.style ?? '', parts: points }
+  }
+}
+
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
@@ -594,13 +624,13 @@ export const RENDERS: Record<string, Render> = {
   'atoms/ore#large': oreAlone,
   'atoms/ore#zero': oreAlone,
 
-  // The remaining atoms, not built yet (#635): each state mounts an empty box and fails.
+  // The map markers on their points: every tier; hovered, pressed and open; asking; focused.
   // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
   'atoms/badge#badges': badges,
   'atoms/badge#crew-state-pills': pills(),
   'atoms/badge#semantic-pills': pills(['check']),
-  'atoms/marker#tiers': unbuilt,
-  'atoms/marker#hover-pressed-open': unbuilt,
-  'atoms/marker#needs-you': unbuilt,
-  'atoms/marker#focus-visible': unbuilt
+  'atoms/marker#tiers': markers,
+  'atoms/marker#hover-pressed-open': markers,
+  'atoms/marker#needs-you': markers,
+  'atoms/marker#focus-visible': markers
 }

@@ -607,6 +607,17 @@
     transform: translateY(-2px);
   }
 }
+/* The map marker's halo swells and fades in six steps. */
+@keyframes dm-pulse {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
 /* The measuring band sweeps the track in eight steps. */
 @keyframes dm-scan {
   from {
@@ -618,9 +629,11 @@
 }
 /*
  * Under reduced motion these loops stop outright, as foundations/motion stops them: the scan band
- * holds still (#635). Each atom's own looping part joins this list as it is built.
+ * holds still, and so does the map marker's pulse (#635). Each atom's own looping part joins this
+ * list as it is built.
  */
 @media (prefers-reduced-motion: reduce) {
+  .dm-marker__pulse,
   .dm-progress__scan {
     animation: none !important;
   }
