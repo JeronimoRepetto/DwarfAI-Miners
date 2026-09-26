@@ -5,6 +5,7 @@ import type {
   AgentModelCatalogList,
   AgentProviderList,
   AppBuild,
+  FeatureFlags,
   AudioPreferences,
   DwarfActivation,
   DwarfAttachmentPick,
@@ -405,6 +406,8 @@ export interface DwarfAiMinersApi {
    * the panel's version the one Electron reports for the running process.
    */
   getAppBuild: () => Promise<AppBuild>
+  /** The features that ship hidden, as main resolved them from configuration (#635). */
+  getFeatureFlags: () => Promise<FeatureFlags>
   /**
    * Ask main to open the OS folder picker and adopt the chosen folder as a
    * mine (#85).
@@ -831,6 +834,7 @@ const api: DwarfAiMinersApi = {
   retireDwarf: (dwarfId) =>
     ipcRenderer.send(IPC_CHANNELS.retireDwarf, typeof dwarfId === 'string' ? dwarfId : ''),
   getAppBuild: () => ipcRenderer.invoke(IPC_CHANNELS.getAppBuild),
+  getFeatureFlags: () => ipcRenderer.invoke(IPC_CHANNELS.getFeatureFlags),
   declareMine: () => ipcRenderer.invoke(IPC_CHANNELS.declareMine),
   // No payload to coerce: main is holding the project this answers about.
   declareMainProject: () => ipcRenderer.invoke(IPC_CHANNELS.declareMainProject),

@@ -19,6 +19,7 @@ import type {
   AgentProviderList,
   AgentLaunchResult,
   AppBuild,
+  FeatureFlags,
   DwarfFeedPage,
   DwarfFeedResult,
   DwarfKickRequest,
@@ -291,6 +292,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
+  ipcMain.removeHandler(IPC_CHANNELS.getFeatureFlags)
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.declareMainProject)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
@@ -1297,6 +1299,11 @@ async function init(): Promise<void> {
   // plausible-looking number that answers a different question.
   const appBuild: AppBuild = { version: app.getVersion(), packaged: app.isPackaged }
   ipcMain.handle(IPC_CHANNELS.getAppBuild, () => appBuild)
+
+  // The features that ship hidden (#635), read off the configuration this
+  // process already resolved; the renderer never reads a flag of its own.
+  const featureFlags: FeatureFlags = { guildAreasEnabled: config.guildAreasEnabled }
+  ipcMain.handle(IPC_CHANNELS.getFeatureFlags, () => featureFlags)
 
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   /** A dwarf this process cannot read at all — never "it has said nothing". */
