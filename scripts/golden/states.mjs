@@ -1,7 +1,8 @@
 /*
  * The golden states contract (#634). `src/renderer/src/golden/states.json` lists every state a
- * golden covers: its manifest key, its UI kit cell, and, while the app has not rebuilt it yet, a
- * `red` reason. `renders.ts` beside it draws the real component for each key.
+ * golden covers: its manifest key and, while the app has not rebuilt it yet, a `red` reason.
+ * `renders.ts` beside it draws the real component for each key. Where the stage sits and how wide
+ * it is come from the key's manifest row alone, so a cell the design resizes needs no edit here.
  *
  * A red state is an expected failure that must flip: it passes the run while its verdict fails,
  * reporting why, and FAILS the run the moment its verdict passes, so a rebuilt state cannot stay
@@ -13,7 +14,7 @@
  * than placed by guess. Pure; the golden test reads the files and calls these.
  */
 
-export const CELL_WIDTHS = { standard: 404, wide: 822, full: 1240 }
+const STATE_FIELDS = new Set(['key', 'red'])
 
 export function checkStates(states, manifest) {
   const problems = []
@@ -31,20 +32,9 @@ export function checkStates(states, manifest) {
       problems.push(state.key + ' is not in the manifest')
       continue
     }
-    const width = CELL_WIDTHS[state.cell]
-    if (width === undefined) {
-      problems.push(state.key + ' has an unknown cell ' + JSON.stringify(state.cell))
-    } else if (!row.widened && row.width !== width) {
-      problems.push(
-        state.key +
-          ' is ' +
-          row.width +
-          'px wide in the manifest, not a ' +
-          state.cell +
-          ' cell (' +
-          width +
-          'px)'
-      )
+    const unused = Object.keys(state).filter((f) => !STATE_FIELDS.has(f))
+    if (unused.length) {
+      problems.push(state.key + ' has a field states.json does not use: ' + unused.join(', '))
     }
     if ('red' in state && !(typeof state.red === 'string' && state.red.trim())) {
       problems.push(state.key + ' is marked red without a reason')
@@ -54,9 +44,9 @@ export function checkStates(states, manifest) {
 }
 
 // A widened stage was let out to its content's width (the design's "Widened"): null asks the page
-// for max-content instead of a cell width.
-export function stageWidth(state, row) {
-  return row.widened ? null : CELL_WIDTHS[state.cell]
+// for max-content instead of the width the row records.
+export function stageWidth(row) {
+  return row.widened ? null : row.width
 }
 
 export function componentOf(key) {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  CELL_WIDTHS,
   accept,
   anatomyRoot,
   checkFraming,
@@ -32,51 +31,52 @@ const manifest = {
 }
 
 describe('checkStates', () => {
-  it('accepts states that name a manifest key and its cell', () => {
+  it('accepts states that name a manifest key, red or not', () => {
     expect(
       checkStates(
         [
-          { key: 'atoms/lamp#lit', cell: 'standard' },
-          { key: 'organisms/wall#tall', cell: 'wide', red: 'not rebuilt yet' },
-          { key: 'organisms/wall#spill', cell: 'standard' }
+          { key: 'atoms/lamp#lit' },
+          { key: 'organisms/wall#tall', red: 'not rebuilt yet' },
+          { key: 'organisms/wall#spill' }
         ],
         manifest
       )
     ).toEqual([])
   })
 
-  it('names a key the manifest lacks, a cell that disagrees with it, and a duplicate', () => {
+  it('names a key the manifest lacks and a duplicate', () => {
     expect(
       checkStates(
         [
-          { key: 'atoms/lamp#dark', cell: 'standard' },
-          { key: 'organisms/wall#tall', cell: 'standard' },
-          { key: 'atoms/lamp#lit', cell: 'hall' },
-          { key: 'atoms/lamp#lit', cell: 'standard' },
-          { key: 'atoms/lamp#lit', cell: 'standard' }
+          { key: 'atoms/lamp#dark' },
+          { key: 'atoms/lamp#lit' },
+          { key: 'atoms/lamp#lit' },
+          { key: 'atoms/lamp#lit' }
         ],
         manifest
       )
-    ).toEqual([
-      'atoms/lamp#dark is not in the manifest',
-      'organisms/wall#tall is 822px wide in the manifest, not a standard cell (404px)',
-      'atoms/lamp#lit has an unknown cell "hall"',
-      'atoms/lamp#lit is listed more than once'
-    ])
+    ).toEqual(['atoms/lamp#dark is not in the manifest', 'atoms/lamp#lit is listed more than once'])
   })
 
   it('wants a red state to say why it is red', () => {
-    expect(checkStates([{ key: 'atoms/lamp#lit', cell: 'standard', red: '' }], manifest)).toEqual([
+    expect(checkStates([{ key: 'atoms/lamp#lit', red: '' }], manifest)).toEqual([
       'atoms/lamp#lit is marked red without a reason'
+    ])
+  })
+
+  it('names a field it does not read, so a width chosen in states.json cannot linger', () => {
+    // The stage width is the manifest's alone; a cell written beside it would be a second source.
+    expect(checkStates([{ key: 'atoms/lamp#lit', cell: 'standard' }], manifest)).toEqual([
+      'atoms/lamp#lit has a field states.json does not use: cell'
     ])
   })
 })
 
 describe('stageWidth', () => {
-  it('is the cell width, or max-content (null) for a stage the capture widened', () => {
-    expect(CELL_WIDTHS).toEqual({ standard: 404, wide: 822, full: 1240 })
-    expect(stageWidth({ cell: 'wide' }, manifest['organisms/wall#tall'])).toBe(822)
-    expect(stageWidth({ cell: 'standard' }, manifest['organisms/wall#spill'])).toBeNull()
+  it("is the manifest row's width, or max-content (null) for a stage the capture widened", () => {
+    expect(stageWidth(manifest['atoms/lamp#lit'])).toBe(404)
+    expect(stageWidth(manifest['organisms/wall#tall'])).toBe(822)
+    expect(stageWidth(manifest['organisms/wall#spill'])).toBeNull()
   })
 })
 

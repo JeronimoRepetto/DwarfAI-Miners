@@ -54,9 +54,6 @@ const states = JSON.parse(
 const COVERED = new Set(states.map((s) => s.key))
 // A visible (never held-out) kit reference with no scaled art: the loopback image.
 const LOOPBACK_STATE = 'foundations/colour#materials'
-// A standard UI kit cell's stage width, padding included (the design's "How a reference image is
-// framed").
-const STANDARD_STAGE_WIDTH = 404
 
 describe.runIf(runnable)('golden harness', () => {
   let server
@@ -102,11 +99,12 @@ describe.runIf(runnable)('golden harness', () => {
   })
 
   it('frames a stage from the design CSS at the page position of every reference', async () => {
-    const { x, y } = manifest[LOOPBACK_STATE]
-    const frame = { css: readStageCss(location.root), x, y, width: STANDARD_STAGE_WIDTH }
+    // The width, padding included, is the manifest row's, never a cell width written here.
+    const { x, y, width } = manifest[LOOPBACK_STATE]
+    const frame = { css: readStageCss(location.root), x, y, width }
     const box = await page.evaluate('window.golden.frameStage(' + JSON.stringify(frame) + ')')
     // An empty stage is its minimum height, 96px.
-    expect(box).toEqual({ x, y, width: STANDARD_STAGE_WIDTH, height: 96 })
+    expect(box).toEqual({ x, y, width, height: 96 })
     expect(page.errors).toEqual([])
   })
 
@@ -121,7 +119,7 @@ describe.runIf(runnable)('golden harness', () => {
     expect(page.errors).toEqual([])
   })
 
-  it('lists only states the manifest has, in the cell it records', () => {
+  it('lists only states the manifest has, each at most once', () => {
     expect(checkStates(states, manifest)).toEqual([])
   })
 
@@ -140,7 +138,7 @@ describe.runIf(runnable)('golden harness', () => {
         css: readStageCss(location.root),
         x: row.x,
         y: row.y,
-        width: stageWidth(state, row),
+        width: stageWidth(row),
         framing: framing.map((r) => r.declarations)
       }
       await page.evaluate('window.golden.mountState(' + JSON.stringify(frame) + ')')

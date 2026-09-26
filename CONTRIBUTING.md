@@ -138,8 +138,9 @@ pnpm test:golden
 - **The renderer is the recorded one.** The run fails when the browser differs from the build in
   the design's `docs/reference/capture.json`, naming both. `GOLDEN_BROWSER=<path>` pins a browser
   executable.
-- **Adding a state: red first, then flip.** Add its manifest key and UI kit cell to
-  `src/renderer/src/golden/states.json` with a `red` reason, and an entry in `renders.ts` beside
+- **Adding a state: red first, then flip.** Add its manifest key to
+  `src/renderer/src/golden/states.json` with a `red` reason (the stage's position and width come
+  from its manifest row), and an entry in `renders.ts` beside
   it that draws the real component with props built from the sample data (the page loads the
   design's `prototype/data/sample-data.js` at run time and `sample.ts` adapts it to the contract
   types). Run the goldens: the state fails as expected and prints its numbers. Build the state

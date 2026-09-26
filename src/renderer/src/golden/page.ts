@@ -41,7 +41,7 @@ export interface StateFrame {
   css: string
   x: number
   y: number
-  /** The cell's stage width, or null for a stage let out to its content (the design's "Widened"). */
+  /** The manifest row's stage width, or null for a stage let out to its content ("Widened"). */
   width: number | null
   /** The component's UI kit framing declarations, applied to its root element. */
   framing: string[]
