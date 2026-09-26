@@ -9,6 +9,7 @@ import { startGoldenServer } from './server.mjs'
 import { readStageCss } from './stage.mjs'
 import {
   accept,
+  anatomyAttributes,
   anatomyRoot,
   anatomyTexts,
   checkFraming,
@@ -142,7 +143,9 @@ describe.runIf(runnable)('golden harness', () => {
         width: stageWidth(row),
         framing: framing.map((r) => r.declarations),
         // The texts its tree shows, for a specimen's captions: read here, never committed.
-        texts: anatomyTexts(readDesign('docs', 'anatomy.md'), row.file)
+        texts: anatomyTexts(readDesign('docs', 'anatomy.md'), row.file),
+        // The attributes its tree prints, for a form control's design text: the same.
+        attributes: anatomyAttributes(readDesign('docs', 'anatomy.md'), row.file)
       }
       await page.evaluate('window.golden.mountState(' + JSON.stringify(frame) + ')')
       await page.settle()

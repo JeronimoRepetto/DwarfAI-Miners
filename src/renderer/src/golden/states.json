@@ -78,5 +78,65 @@
   },
   {
     "key": "atoms/icon#tones"
+  },
+  {
+    "key": "atoms/input#text"
+  },
+  {
+    "key": "atoms/input#hover"
+  },
+  {
+    "key": "atoms/input#focus"
+  },
+  {
+    "key": "atoms/input#search"
+  },
+  {
+    "key": "atoms/input#invalid"
+  },
+  {
+    "key": "atoms/input#disabled"
+  },
+  {
+    "key": "atoms/input#textarea"
+  },
+  {
+    "key": "atoms/select#default-hover-focus"
+  },
+  {
+    "key": "atoms/select#disabled"
+  },
+  {
+    "key": "atoms/toggle#off-on"
+  },
+  {
+    "key": "atoms/toggle#hover-pressed-focus"
+  },
+  {
+    "key": "atoms/toggle#disabled"
+  },
+  {
+    "key": "atoms/slider#default"
+  },
+  {
+    "key": "atoms/slider#hover"
+  },
+  {
+    "key": "atoms/slider#muted-full"
+  },
+  {
+    "key": "atoms/slider#disabled"
+  },
+  {
+    "key": "atoms/chip#choice-chip"
+  },
+  {
+    "key": "atoms/chip#tier-filter-chips"
+  },
+  {
+    "key": "atoms/chip#tier-chips"
+  },
+  {
+    "key": "atoms/chip#meta-chips"
   }
 ]

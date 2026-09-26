@@ -86,7 +86,7 @@ src/
     │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
     │                  typography/ the chosen faces: a stored identifier, the token that draws it, its name
-    │                  controls/  the redesign's shared controls: what a button's options decide, its classes, glyph scale and native attributes
+    │                  controls/  the redesign's shared controls: what the options of a button, input, select, toggle, slider or chip decide — classes, native attributes, readouts
     │                  icon/      every glyph the panel shows: the provisional 16x16 set and the one registry a drawn icon replaces it through
     │                  art.ts · presentation.ts · placement.ts — see rule 3
     └── testing/     factories for tests
