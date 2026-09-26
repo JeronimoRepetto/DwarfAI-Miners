@@ -7,12 +7,13 @@ description: >
 license: MIT
 metadata:
   author: JeronimoRepetto
-  version: '2.2'
+  version: '2.3'
   scope: [root]
   auto_invoke:
     - 'implementing a screen, panel or component of the redesigned UI'
     - 'styling renderer UI with colors, typography, spacing or borders'
     - 'adding art, icons or sprite assets for the new interface'
+    - 'writing or running a golden UI test'
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
@@ -82,6 +83,19 @@ fails acceptance even at a perfect pixel score.
 App issue #634's golden UI tests apply this rule in code, but run only on the maintainer's
 machine, against the private references — CI never runs them, because the references never leave
 the design repository.
+
+## Golden first
+
+App issue #634's goldens (`pnpm test:golden`, `scripts/golden/`) apply that rule in code. For a
+state you rebuild: add its golden first and watch it fail, build it from the Markdown, then watch it
+pass — never tune the component or the stage until the pixels agree. The harness only counts once
+its loopback passes: a reference shown as a plain image must capture back at 0%, with the recorded
+browser build. Nothing of the design enters this repository to make a golden work — no image, no
+sample data, no kit CSS; the run reads them from the design repository, and state ids such as
+`organisms/nav#default` are the only design text a test may carry. In a worktree, run
+`pnpm golden:design` first for a real copy in `.design/`; never link one in. Goldens are one
+renderer's pixel baseline: they say nothing about macOS or Linux behaviour. `CONTRIBUTING.md`
+("Golden UI tests") has the fail-versus-skip rule and where output goes.
 
 ## Decisions already resolved — do not reopen them in code
 

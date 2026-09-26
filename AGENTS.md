@@ -73,6 +73,7 @@ This table is the imperative form, and it is the one that binds.
 | verifying visual or performance behaviour at scale              | [`simulated-valley`](skills/simulated-valley/SKILL.md) |
 | writing a path, hostname or username into a tracked file        | [`privacy-guard`](skills/privacy-guard/SKILL.md)       |
 | writing down a rule an agent keeps getting wrong                | [`skill-creator`](skills/skill-creator/SKILL.md)       |
+| writing or running a golden UI test                             | [`ui-rebuild`](skills/ui-rebuild/SKILL.md)             |
 
 <!-- END GENERATED: auto-invoke -->
 

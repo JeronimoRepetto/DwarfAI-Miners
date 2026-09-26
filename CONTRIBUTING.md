@@ -111,6 +111,40 @@ exposed to the model — `PASS`, `FAIL`, or `SKIPPED` for a CLI not on this mach
 hand when you want to know whether a real CLI still honours its own documented MCP mechanism; the
 script's own top comment says exactly what it proves and what it does not.
 
+### Golden UI tests (maintainer machine only)
+
+`pnpm test:golden` (#634) captures pieces of the redesigned interface and grades them against the
+design's reference images, with the PO's acceptance rule: the same size, under 1% of pixels
+differing, no 3×3 cluster. The references, the capture tools and the stage CSS live only in the
+private design repository and are read from it at run time; nothing of the design is ever
+committed here. So the goldens are not one of the seven checks above, and CI never runs them —
+only their pure parts (`scripts/golden/*.test.mjs`) run in `pnpm test`, on all three OSes.
+
+```bash
+pnpm golden:design   # in a worktree: copy the design repository into .design/
+pnpm test:golden
+```
+
+- **Where the design is found**, first match wins: `DWARFAI_DESIGN_REPO` (the design repository's
+  root); `.design/` in the checkout; the main checkout's `docs/dwarfai-miners-design` junction.
+  `DWARFAI_DESIGN_REPO` is a tooling variable, not an app setting: only the golden scripts read it,
+  it never enters the configuration layers, and a blank value counts as unset.
+- **Worktrees get a real copy.** `pnpm golden:design` creates or refreshes `.design/`, a
+  gitignored copy of the docs, references, tools and sample data, found through
+  `DWARFAI_DESIGN_REPO` or the main checkout's junction. It is plain files and never a link —
+  `git worktree remove --force` follows a junction and empties its target.
+- **Fail, not skip.** Locally, a missing design is a failure naming the command above, and so is a
+  configured location with the wrong shape. Only CI skips, with one line.
+- **The renderer is the recorded one.** The run fails when the browser differs from the build in
+  the design's `docs/reference/capture.json`, naming both. `GOLDEN_BROWSER=<path>` pins a browser
+  executable.
+- **Output stays out of the tree.** Captures and diffs go to `dwarfai-golden/` under the system
+  temp directory. They picture the private references: never commit one, and never paste an image
+  or an output path into an issue or a pull request.
+- **One renderer, not three platforms.** Goldens are a single-renderer pixel baseline: they check
+  appearance, not platform behaviour. macOS and Linux parity stays with the suite CI runs on all
+  three OSes and with #635's platform-verification slice.
+
 ## Testing philosophy
 
 - **Tests come with the change.** New behavior arrives with the test that pins it — write the
