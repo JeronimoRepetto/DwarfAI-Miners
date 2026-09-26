@@ -34,12 +34,10 @@
     "key": "foundations/motion#tokens"
   },
   {
-    "key": "foundations/motion#enter",
-    "red": "draws the redesigned button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
+    "key": "foundations/motion#enter"
   },
   {
-    "key": "foundations/motion#press",
-    "red": "draws the redesigned primary button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
+    "key": "foundations/motion#press"
   },
   {
     "key": "foundations/type#scale"
@@ -49,35 +47,31 @@
     "red": "draws the page header, mine card and bubbles in each preset, which the Panel slice of #635 rebuilds (design lead ruling, tokens-port question 11)"
   },
   {
-    "key": "atoms/button#secondary",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "key": "atoms/button#secondary"
   },
   {
     "key": "atoms/button#primary",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
   },
   {
-    "key": "atoms/button#danger",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "key": "atoms/button#danger"
   },
   {
     "key": "atoms/button#disabled",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
   },
   {
     "key": "atoms/button#toggle",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
   },
   {
     "key": "atoms/button#icon-only",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
   },
   {
-    "key": "atoms/button#large-primary",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "key": "atoms/button#large-primary"
   },
   {
-    "key": "atoms/button#link",
-    "red": "the redesigned button is built in the atoms slice of #635"
+    "key": "atoms/button#link"
   }
 ]

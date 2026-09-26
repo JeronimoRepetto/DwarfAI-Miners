@@ -18,6 +18,7 @@ import ActionButton from '../components/controls/ActionButton.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { GoldenSample } from './sample'
 import {
+  EnterFrame,
   KitRow,
   PlateRow,
   RuleFrame,
@@ -165,11 +166,12 @@ export const RENDERS: Record<string, Render> = {
       texts
     }
   }),
-  // Specimens with no view yet. The two motion states draw the redesigned button, which they
-  // wait for (design lead ruling, tokens-port question 5). The presets draw the page header, the
-  // mine card and two bubbles in each preset, none rebuilt yet.
-  'foundations/motion#enter': unbuilt,
-  'foundations/motion#press': unbuilt,
+  // The two motion states draw the redesigned button (design lead ruling, tokens-port question
+  // 5): Enter beside the overlay plate it replays, Press as the primary button alone.
+  'foundations/motion#enter': (_sample, texts) => ({ component: EnterFrame, props: { texts } }),
+  'foundations/motion#press': button({ labelled: true, variant: 'primary' }),
+  // Specimens with no view yet. The presets draw the page header, the mine card and two bubbles
+  // in each preset, none rebuilt yet.
   'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt,
 
   // The button's states, each in the kit's row frame; `state` forces the look a pointer or the

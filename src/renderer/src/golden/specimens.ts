@@ -15,6 +15,7 @@
  * as `texts`, in tree order (question 2).
  */
 import { defineComponent, h, type Component, type PropType } from 'vue'
+import ActionButton from '../components/controls/ActionButton.vue'
 
 /** One text of a state's anatomy tree: plain text, or content the tree gives as HTML. */
 export interface GoldenText {
@@ -149,6 +150,22 @@ export const KitRow = defineComponent({
         { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
         props.parts.map((part) => h(part.component, part.props))
       )
+  }
+})
+
+// The motion Enter state: the kit's grid frame around the app's button and the overlay plate the
+// button replays. Graded at rest, after the entry has played; the replay itself is the kit's
+// demo, and the specimen does not wire it.
+export const EnterFrame = defineComponent({
+  props: { texts },
+  setup(props) {
+    return () =>
+      h('div', { style: { display: 'grid', gap: '10px', justifyItems: 'start' } }, [
+        h(ActionButton, { label: props.texts[0]?.text ?? '' }),
+        h('div', { class: 'kit-plate m-mat m-wood' }, [
+          h('span', { class: 't-meta', ...content(props.texts[1]) })
+        ])
+      ])
   }
 })
 
