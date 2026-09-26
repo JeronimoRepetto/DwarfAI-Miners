@@ -177,6 +177,31 @@ export function sequenceCycle(clips: readonly SpriteClip[]): SequenceCycle | und
 }
 
 /**
+ * The hold every frame of every sheet takes under reduced motion: the per-frame durations are
+ * replaced by this flat value, not scaled (motion.md, Reduced motion; decision log, PO ruling
+ * 2026-09-25). The dwarfs keep moving; only the shell's own motion stops.
+ */
+export const REDUCED_MOTION_FRAME_MS = 200
+
+/**
+ * How long one frame of a sheet is held: `flatMs` where it is given (reduced motion), else the
+ * frame's own duration from the sidecar, else the sheet's `frameMs` fallback (#635).
+ */
+export function frameDurationMs(sheet: SpriteSheet, index: number, flatMs?: number): number {
+  const hold = flatMs ?? sheet.durations?.[index] ?? sheet.frameMs
+  return hold > 0 ? hold : 0
+}
+
+/** How long one clip takes to play through once. */
+function clipDurationMs(clip: SpriteClip, flatMs: number | undefined): number {
+  let total = 0
+  for (let frame = 0; frame < clip.sheet.frames; frame++) {
+    total += frameDurationMs(clip.sheet, frame, flatMs)
+  }
+  return total
+}
+
+/**
  * How long a sequence plays before it settles on its looping tail. Zero for a
  * sequence that opens on a loop, which is every sequence with no transition.
  *
@@ -186,52 +211,95 @@ export function sequenceCycle(clips: readonly SpriteClip[]): SequenceCycle | und
  * one — so the answer for the four-clip working cycle is zero, exactly as it is
  * for a lone idle loop.
  */
-export function sequenceDurationMs(clips: readonly SpriteClip[]): number {
+export function sequenceDurationMs(clips: readonly SpriteClip[], flatMs?: number): number {
   let total = 0
   for (const clip of clips) {
     if (clip.playback === 'loop') break
-    total += clip.sheet.frames * clip.sheet.frameMs
+    total += clipDurationMs(clip, flatMs)
   }
   return total
 }
 
-/** How long one clip takes to play through once. */
-function clipDurationMs(clip: SpriteClip): number {
-  return clip.sheet.frames * clip.sheet.frameMs
+/**
+ * Where a clip's playhead is, `within` milliseconds into it: the frame, and how long that frame
+ * still holds. A time past the clip's end is its last frame with nothing left to hold.
+ */
+function frameWithin(
+  clip: SpriteClip,
+  within: number,
+  flatMs: number | undefined
+): { frame: number; left: number } {
+  const { sheet } = clip
+  let start = 0
+  for (let frame = 0; frame < sheet.frames; frame++) {
+    const hold = frameDurationMs(sheet, frame, flatMs)
+    if (within < start + hold) return { frame, left: start + hold - within }
+    start += hold
+  }
+  return { frame: Math.max(0, sheet.frames - 1), left: 0 }
 }
 
 /**
- * Where inside a settled cycle the drawing is, this far into the cycle.
+ * Where the drawing is, this far into the sequence, and how long until it changes — `undefined`
+ * where it never will. The one walk both public answers below read, so the frame showing and the
+ * moment it next changes can never disagree.
  *
- * The cycle's length is its clips' holds added up, so the position within one
- * lap picks the clip as much as the frame — which is the whole of #325's model
- * change. A cycle with no time in it at all (a zero-frame sheet, or one held
- * for nothing) has no position to compute and answers its own head rather than
- * dividing by its length.
+ * A `loop` clip hands the rest of the answer to the CYCLE it belongs to (#325), so a run of loops
+ * is one repeating movement and the clips behind that run stay unreachable. The cycle's length is
+ * its clips' holds added up, so the position within one lap picks the clip as much as the frame. A
+ * cycle with no time in it at all has no position to compute and answers its own head.
  */
-function cycleFrameAt(
+function locate(
   clips: readonly SpriteClip[],
-  cycle: SequenceCycle,
-  elapsedMs: number
-): SequencePosition {
-  let total = 0
-  for (let index = cycle.first; index <= cycle.last; index++) {
-    total += clipDurationMs(clips[index]!)
-  }
-  if (total <= 0) return { clip: cycle.first, frame: 0 }
+  elapsedMs: number,
+  flatMs: number | undefined
+): { position: SequencePosition; next: number | undefined } {
+  if (clips.length === 0) return { position: START, next: undefined }
+  const cycle = sequenceCycle(clips)
+  let remaining = Math.max(0, elapsedMs)
 
-  let within = elapsedMs % total
-  for (let index = cycle.first; index <= cycle.last; index++) {
+  for (let index = 0; index < clips.length; index++) {
     const clip = clips[index]!
-    const duration = clipDurationMs(clip)
-    if (within < duration) {
-      const { frames, frameMs } = clip.sheet
-      const frame = frameMs > 0 ? Math.floor(within / frameMs) : 0
-      return { clip: index, frame: Math.min(frame, frames - 1) }
+    if (index === cycle?.first) {
+      let total = 0
+      let cells = 0
+      for (let at = cycle.first; at <= cycle.last; at++) {
+        total += clipDurationMs(clips[at]!, flatMs)
+        cells += clips[at]!.sheet.frames
+      }
+      if (total <= 0) return { position: { clip: cycle.first, frame: 0 }, next: undefined }
+      // A cycle of one cell shows one picture for ever: nothing ever changes on screen.
+      const moves = cells > 1
+      let within = remaining % total
+      for (let at = cycle.first; at <= cycle.last; at++) {
+        const inCycle = clips[at]!
+        const duration = clipDurationMs(inCycle, flatMs)
+        if (within < duration) {
+          const { frame, left } = frameWithin(inCycle, within, flatMs)
+          return { position: { clip: at, frame }, next: moves ? left : undefined }
+        }
+        within -= duration
+      }
+      return { position: { clip: cycle.first, frame: 0 }, next: moves ? total : undefined }
     }
-    within -= duration
+
+    const duration = clipDurationMs(clip, flatMs)
+    const isLast = index === clips.length - 1
+    if (remaining < duration) {
+      const { frame, left } = frameWithin(clip, remaining, flatMs)
+      // The last frame of the last clip of a sequence that never loops holds for ever.
+      const settles = isLast && frame === clip.sheet.frames - 1
+      return { position: { clip: index, frame }, next: settles ? undefined : left }
+    }
+    if (isLast)
+      return {
+        position: { clip: index, frame: Math.max(0, clip.sheet.frames - 1) },
+        next: undefined
+      }
+    remaining -= duration
   }
-  return { clip: cycle.first, frame: 0 }
+
+  return { position: START, next: undefined }
 }
 
 /**
@@ -239,32 +307,54 @@ function cycleFrameAt(
  *
  * Time before the start is the start, an empty sequence is the start, and a
  * trailing `once` clip holds its last frame — none of the three is a state the
- * caller has to guard against.
+ * caller has to guard against. `flatMs` is the reduced-motion hold, replacing every
+ * frame's own duration (#635).
  *
  * A `loop` clip hands the rest of the answer to the CYCLE it belongs to (#325),
  * so a run of loops is one repeating movement and the clips behind that run
  * stay unreachable, exactly as the clips behind a single looping strip always
  * were.
  */
-export function sequenceFrameAt(clips: readonly SpriteClip[], elapsedMs: number): SequencePosition {
-  if (clips.length === 0) return START
-  const cycle = sequenceCycle(clips)
-  let remaining = Math.max(0, elapsedMs)
+export function sequenceFrameAt(
+  clips: readonly SpriteClip[],
+  elapsedMs: number,
+  flatMs?: number
+): SequencePosition {
+  return locate(clips, elapsedMs, flatMs).position
+}
 
-  for (let index = 0; index < clips.length; index++) {
-    const clip = clips[index]
-    if (clip === undefined) break
-    // The cycle begins at the first `loop` clip, so reaching it is reaching
-    // the settled state and the cycle answers the rest.
-    if (index === cycle?.first) return cycleFrameAt(clips, cycle, remaining)
+/**
+ * How long until the drawing next changes, this far into the sequence, or `undefined` where it
+ * never will again: a still sequence, or one that has settled on a held last frame (#635). This is
+ * what lets the shared frame clock set one timer to the earliest change among every sprite rather
+ * than ticking at a fixed rate.
+ */
+export function sequenceNextChangeMs(
+  clips: readonly SpriteClip[],
+  elapsedMs: number,
+  flatMs?: number
+): number | undefined {
+  return locate(clips, elapsedMs, flatMs).next
+}
 
-    const { frames, frameMs } = clip.sheet
-    const played = frameMs > 0 ? Math.floor(remaining / frameMs) : 0
-    const isLast = index === clips.length - 1
-    if (played < frames) return { clip: index, frame: played }
-    if (isLast) return { clip: index, frame: Math.max(0, frames - 1) }
-    remaining -= frames * frameMs
+/**
+ * When a position starts: the holds of every frame before it (#635). How a sprite begins on its
+ * phase frame, and how it keeps the frame it is on when the timing switches between the sidecar's
+ * durations and the reduced-motion hold.
+ */
+export function sequenceOffsetMs(
+  clips: readonly SpriteClip[],
+  position: SequencePosition,
+  flatMs?: number
+): number {
+  let total = 0
+  for (let index = 0; index < position.clip && index < clips.length; index++) {
+    total += clipDurationMs(clips[index]!, flatMs)
   }
-
-  return START
+  const sheet = clips[position.clip]?.sheet
+  if (sheet === undefined) return total
+  for (let frame = 0; frame < position.frame && frame < sheet.frames; frame++) {
+    total += frameDurationMs(sheet, frame, flatMs)
+  }
+  return total
 }
