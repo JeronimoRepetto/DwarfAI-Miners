@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   accept,
   anatomyRoot,
+  anatomyTexts,
   checkFraming,
   checkStates,
   componentOf,
@@ -207,5 +208,50 @@ describe('expectation', () => {
     const flipped = expectation(red, pass)
     expect(flipped.ok).toBe(false)
     expect(flipped.message).toMatch(/passes.*remove "red"/)
+  })
+})
+
+// APPENDED for #635: the specimen captions, read from the anatomy at run time (the design lead's
+// ruling on the tokens-port questions) so no caption is committed here. Stand-in text only.
+const TEXTS = `
+**Row** · [reference image](reference/foundations/lamp/row.png), 404 × 100px, standard cell
+
+\`\`\`text
+div [style="display: grid; gap: 4px"]
+  div.kit-plate.m-mat.m-wood [data-x="a]b"]
+    span.t-meta "lamp one"
+  span.t-meta.t-faint
+  p.t-talk (innerHTML "Lamp <strong>two</strong> \\"lit\\"")
+  span.t-meta
+    "Next: "
+    b "Brass"
+  i.t-meta "same" ×2
+\`\`\`
+
+**Other** · [reference image](reference/foundations/lamp/other.png), 404 × 96px, standard cell
+
+\`\`\`text
+span.t-meta "not this one"
+\`\`\`
+`
+
+describe('anatomyTexts', () => {
+  it("lists every text of the state's tree in DOM order, HTML content kept as HTML", () => {
+    expect(anatomyTexts(TEXTS, 'foundations/lamp/row.png')).toEqual([
+      { text: 'lamp one' },
+      { html: 'Lamp <strong>two</strong> "lit"' },
+      { text: 'Next: ' },
+      { text: 'Brass' },
+      { text: 'same' },
+      { text: 'same' }
+    ])
+  })
+
+  it('stops at the end of its own tree', () => {
+    expect(anatomyTexts(TEXTS, 'foundations/lamp/other.png')).toEqual([{ text: 'not this one' }])
+  })
+
+  it('fails when no tree names that image', () => {
+    expect(() => anatomyTexts(TEXTS, 'foundations/lamp/none.png')).toThrow(/none\.png/)
   })
 })

@@ -5,62 +5,57 @@
   },
   {
     "key": "foundations/colour#materials",
-    "red": "tokens not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/colour#text",
-    "red": "tokens not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/colour#semantic",
-    "red": "tokens not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/colour#tiers",
-    "red": "tokens not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/materials#surfaces",
-    "red": "material classes not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/materials#trims",
-    "red": "material classes not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/materials#raised",
-    "red": "material classes not ported yet; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/materials#focus-visible",
-    "red": "material classes and focus ring not ported yet; slice 1 of #635"
+    "red": "the focus ring ports with the base rules in the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
-    "key": "foundations/materials#rules",
-    "red": "the rule material is not ported yet; slice 1 of #635"
+    "key": "foundations/materials#rules"
   },
   {
     "key": "foundations/motion#tokens",
-    "red": "motion tokens not ported yet and the value readout is not drawn; slice 1 of #635"
+    "red": "text inherits the page ink from the base rule body { color: --ink }, which ports with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/motion#enter",
-    "red": "specimen not built: it draws the redesigned button, not rebuilt yet; #635"
+    "red": "draws the redesigned button, which it waits for (design lead ruling, tokens-port question 5); #635"
   },
   {
     "key": "foundations/motion#press",
-    "red": "specimen not built: it draws the redesigned primary button, not rebuilt yet; #635"
+    "red": "draws the redesigned primary button, which it waits for (design lead ruling, tokens-port question 5); #635"
   },
   {
     "key": "foundations/type#scale",
-    "red": "type roles and scale not ported yet, specimen not built; slice 1 of #635"
+    "red": "text inherits the page ink from body { color: --ink } and paragraphs need p { margin: 0 }, base rules that port with the atoms slice (design lead ruling, tokens-port question 7); #635"
   },
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
-    "red": "presets not ported, and it draws page header, mine card and bubbles not rebuilt yet; #635"
-  },
-  {
-    "key": "foundations/type-lab#current-choice",
-    "red": "specimen not built; whether the prototype-only type lab is graded awaits a design ruling; #635"
+    "red": "draws the page header, mine card and bubbles in each preset, none rebuilt yet; #635"
   }
 ]

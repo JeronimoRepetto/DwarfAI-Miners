@@ -5,19 +5,37 @@
  * renders.ts.
  *
  * A specimen reads every value through `var(--token)` and the app's own classes (`.m-mat`,
- * `.t-meta`…), never a literal, so it grades what the app paints: a token the app has not ported
- * yet paints nothing, and the state stays red for that reason. The `kit-*` classes are the UI
+ * `.t-meta`…), never a literal, so it grades what the app paints. The `kit-*` classes are the UI
  * kit's framing, styled by the stage CSS the harness reads from the design at run time.
  *
- * The captions and value readouts the anatomy shows are not drawn yet. Their text is design text,
- * which this repository does not carry until the design repository rules on it (TOKENS-QUESTIONS),
- * and a missing caption only keeps a red state red.
+ * Two kinds of text, and neither is committed here. A value readout is the app's own token read
+ * back from the document root, trimmed, which is how the design computes it (design lead ruling,
+ * tokens-port question 1): a token the app never ported reads empty and keeps its state red.
+ * Captions are design text: the harness reads them from the anatomy at run time and hands them in
+ * as `texts`, in tree order (question 2).
  */
 import { defineComponent, h, type PropType } from 'vue'
 
-const names = { type: Array as PropType<readonly string[]>, required: true } as const
+/** One text of a state's anatomy tree: plain text, or content the tree gives as HTML. */
+export interface GoldenText {
+  text?: string
+  html?: string
+}
 
-// One chip, name and value per token name, in order (the value readout is not drawn yet).
+const names = { type: Array as PropType<readonly string[]>, required: true } as const
+const texts = { type: Array as PropType<readonly GoldenText[]>, default: () => [] } as const
+
+// The token exactly as the app's stylesheets author it, trimmed.
+const readout = (name: string): string =>
+  getComputedStyle(document.documentElement)
+    .getPropertyValue('--' + name)
+    .trim()
+
+// A caption's content: its HTML set as HTML, else its text as text.
+const content = (entry: GoldenText | undefined): Record<string, unknown> =>
+  entry?.html !== undefined ? { innerHTML: entry.html } : { textContent: entry?.text ?? '' }
+
+// One chip, name and value per token name, in order.
 export const SwatchSheet = defineComponent({
   props: { names },
   setup(props) {
@@ -29,14 +47,14 @@ export const SwatchSheet = defineComponent({
           h('div', { class: 'kit-swatch' }, [
             h('span', { class: 'kit-swatch__chip', style: { background: 'var(--' + name + ')' } }),
             h('b', { class: 't-meta' }, '--' + name),
-            h('span', { class: 't-meta t-faint' })
+            h('span', { class: 't-meta t-faint' }, readout(name))
           ])
         )
       )
   }
 })
 
-// Each name with its value, no chip (the value readout is not drawn yet).
+// Each name with its value, no chip.
 export const TokenList = defineComponent({
   props: { names },
   setup(props) {
@@ -47,23 +65,66 @@ export const TokenList = defineComponent({
         props.names.map((name) =>
           h('div', { class: 'kit-token' }, [
             h('b', { class: 't-meta' }, '--' + name),
-            h('span', { class: 't-meta t-faint' })
+            h('span', { class: 't-meta t-faint' }, readout(name))
           ])
         )
       )
   }
 })
 
-// A row of material plates, `.kit-plate.m-mat` plus each entry's classes (caption not drawn yet).
+// A row of material plates, `.kit-plate.m-mat` plus each entry's classes, each with its caption.
 export const PlateRow = defineComponent({
-  props: { plates: names },
+  props: { plates: names, texts },
   setup(props) {
     return () =>
       h(
         'div',
         { class: 'kit-row' },
-        props.plates.map((classes) =>
-          h('div', { class: 'kit-plate m-mat ' + classes }, [h('span', { class: 't-meta' })])
+        props.plates.map((classes, i) =>
+          h('div', { class: 'kit-plate m-mat ' + classes }, [
+            h('span', { class: 't-meta', ...content(props.texts[i]) })
+          ])
+        )
+      )
+  }
+})
+
+// The UI kit's own frame for the Rules state: a plain div with an inline style (README, "Frames
+// that are not the component"), around the app's rule and its caption.
+export const RuleFrame = defineComponent({
+  props: { texts },
+  setup(props) {
+    return () =>
+      h('div', { style: { width: '240px', display: 'grid', gap: '10px' } }, [
+        h('hr', { class: 'm-rule' }),
+        h('span', { class: 't-meta t-faint', ...content(props.texts[0]) })
+      ])
+  }
+})
+
+/** One line of the type scale: its role classes and the kit's inline colour, if any. */
+export interface ScaleLine {
+  classes: string
+  color?: string
+}
+
+// The type scale: one paragraph per role, in the kit's grid frame, each with its caption.
+export const TypeScale = defineComponent({
+  props: {
+    lines: { type: Array as PropType<readonly ScaleLine[]>, required: true },
+    texts
+  },
+  setup(props) {
+    return () =>
+      h(
+        'div',
+        { style: { display: 'grid', gap: '10px' } },
+        props.lines.map((line, i) =>
+          h('p', {
+            class: line.classes,
+            style: line.color === undefined ? undefined : { color: 'var(--' + line.color + ')' },
+            ...content(props.texts[i])
+          })
         )
       )
   }

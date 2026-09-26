@@ -10,13 +10,23 @@
  *
  * The `foundations/*` states are specimens of the tokens rather than components: they draw the
  * golden-only views in specimens.ts, with the token and class lists the design's anatomy gives
- * each state. A specimen still marked `Unbuilt` has no view yet, so it fails as it should.
+ * each state, and the captions its tree shows, which the harness reads at run time and hands in as
+ * `texts`. A specimen still marked `Unbuilt` has no view yet, so it fails as it should.
  */
 import type { Component } from 'vue'
-import { defineComponent, h } from 'vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { GoldenSample } from './sample'
-import { PlateRow, SwatchSheet, TokenList, Unbuilt } from './specimens'
+import {
+  PlateRow,
+  RuleFrame,
+  SwatchSheet,
+  TokenList,
+  TypeScale,
+  Unbuilt,
+  type GoldenText
+} from './specimens'
+
+export type { GoldenText }
 
 export interface GoldenRender {
   component: Component
@@ -27,26 +37,19 @@ const swatches = (names: string[]) => (): GoldenRender => ({
   component: SwatchSheet,
   props: { names }
 })
-const plates = (classes: string[]) => (): GoldenRender => ({
-  component: PlateRow,
-  props: { plates: classes }
-})
+const plates =
+  (classes: string[]) =>
+  (_sample: GoldenSample, texts: GoldenText[]): GoldenRender => ({
+    component: PlateRow,
+    props: { plates: classes, texts }
+  })
 const unbuilt = (): GoldenRender => ({ component: Unbuilt, props: {} })
-
-// The UI kit's own frame for the Rules state: a plain div with an inline style (README,
-// "Frames that are not the component"), around the app's rule.
-const RuleFrame = defineComponent({
-  setup() {
-    return () =>
-      h('div', { style: { width: '240px', display: 'grid', gap: '10px' } }, [
-        h('hr', { class: 'm-rule' })
-      ])
-  }
-})
 
 const ramp = (name: string) => [name + '-hi', name, name + '-lo']
 
-export const RENDERS: Record<string, (sample: GoldenSample) => GoldenRender> = {
+type Render = (sample: GoldenSample, texts: GoldenText[]) => GoldenRender
+
+export const RENDERS: Record<string, Render> = {
   // The Panel's nav on the Mines page with the music playing; whether the shortcut failed is the
   // sample configuration's.
   'organisms/nav#default': (sample) => ({
@@ -95,7 +98,7 @@ export const RENDERS: Record<string, (sample: GoldenSample) => GoldenRender> = {
   'foundations/materials#trims': plates(['m-wood', 'm-wood m-trim', 'm-wood m-trim-lit']),
   'foundations/materials#raised': plates(['m-wood m-raised', 'm-wood m-rivets']),
   'foundations/materials#focus-visible': plates(['m-wood is-focus']),
-  'foundations/materials#rules': () => ({ component: RuleFrame, props: {} }),
+  'foundations/materials#rules': (_sample, texts) => ({ component: RuleFrame, props: { texts } }),
   'foundations/motion#tokens': () => ({
     component: TokenList,
     props: {
@@ -113,11 +116,27 @@ export const RENDERS: Record<string, (sample: GoldenSample) => GoldenRender> = {
       ]
     }
   }),
-  // Specimens with no view yet: the type scale, the two motion states (they draw the redesigned
-  // button, not rebuilt yet), the presets (real components in each preset) and the type lab.
+  // One paragraph per role, in the anatomy's order, with the kit's inline colour on the two
+  // display lines.
+  'foundations/type#scale': (_sample, texts) => ({
+    component: TypeScale,
+    props: {
+      lines: [
+        { classes: 't-headline', color: 'gold' },
+        { classes: 't-title', color: 'parchment' },
+        { classes: 't-section' },
+        { classes: 't-meta' },
+        { classes: 't-label t-faint' },
+        { classes: 't-talk' },
+        { classes: 't-code t-soft' }
+      ],
+      texts
+    }
+  }),
+  // Specimens with no view yet. The two motion states draw the redesigned button, which they
+  // wait for (design lead ruling, tokens-port question 5). The presets draw the page header, the
+  // mine card and two bubbles in each preset, none rebuilt yet.
   'foundations/motion#enter': unbuilt,
   'foundations/motion#press': unbuilt,
-  'foundations/type#scale': unbuilt,
-  'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt,
-  'foundations/type-lab#current-choice': unbuilt
+  'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt
 }
