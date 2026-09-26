@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { motion } from 'motion-v'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { fadeVariants } from '../../lib/shell/presence'
-import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
+import { DWARF_CREW, DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { dwarfClips } from '../../lib/sprite/dwarfSequence'
 import { SPRITE_FRAME_SIZE, loopOf, type SpriteSheet } from '../../lib/sprite/spriteSheet'
@@ -63,7 +63,7 @@ function firstStrikeMs(): number {
   const swing = DWARF_SHEETS.worker.working!
   return lengthOf(DWARF_SHEETS.worker['start-working']) + startOf(swing, swing.impactFrames![0]!)
 }
-/** The moment a worker2's pick-up is on its last frame, past the grind's declared frame 14. */
+/** The moment a worker2's pick-up is on its last frame, well past where its grind opens. */
 function pastGrindCueMs(): number {
   const pickUp = DWARF_SHEETS.worker2['start-working']!
   return startOf(pickUp, pickUp.frames - 1)
@@ -1972,7 +1972,9 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // exactly this — a grind that silently did not start is a worker2 miming
     // its whole shift.
     // AMENDED by #635: advanced to the pick-up's last frame by the sidecar's durations (1630ms),
-    // where 1500ms reached it at the v2 sheets' 100ms.
+    // where 1500ms reached it at the v2 sheets' 100ms. Since the design lead ruling 2026-09-26
+    // (SPRITE-QUESTIONS.md, question 2) the declared frame is the pick-up's first, so the grind
+    // has opened on the shift's first frame already; what stays pinned is that it opens once.
     const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
     vi.advanceTimersByTime(pastGrindCueMs())
     await wrapper.vm.$nextTick()
@@ -1988,9 +1990,10 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // Stepped frame by frame here (the async advance lets the watcher run
     // between ticks) rather than coalesced, because what is under test is the
     // cycle coming round: 113 frames, and the pick-up crosses its declared
-    // frame early in each of them. AMENDED by #635: under the sidecar's
-    // durations a cycle is 12.86s and frame 14 starts 1.53s in, so the second
-    // crossing is at 14.39s, where the v2 timing put it at 12.7s.
+    // frame early in each of them. AMENDED by #635: on the design lead ruling
+    // 2026-09-26 (SPRITE-QUESTIONS.md, question 2) the grind opens as each shift
+    // starts and a shift is five swings, 9.38s under the sidecars, so 14.4s
+    // holds the first shift's grind and the second's.
     const { cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
     await vi.advanceTimersByTimeAsync(14_400)
     expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift' }])
@@ -2116,6 +2119,42 @@ describe('DwarfSprite crew sounds (#330)', () => {
       { cue: 'walk', gain: 0.05 },
       { cue: 'walk', ending: true }
     ])
+  })
+
+  /*
+   * ADDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one
+   * grind per shift, starting when the shift starts, and silence for the rest of the shift once
+   * the recording is over. So the grind opens on the very first frame of the shift — however the
+   * worker2 came to be at the rock — and not again until the next shift begins.
+   */
+  it('opens the grind the moment a worker2 at the rock starts its shift', () => {
+    const { cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    expect(cues).toEqual([{ cue: 'shift' }])
+  })
+
+  it('opens the grind when a worker2 is put to work, from the same frame of another sheet', async () => {
+    // Idle and pick-up both begin on clip 0, frame 0: the swap has to read as a new shift,
+    // not as a sprite that never moved. From 'leaving' rather than 'waiting': leaving rest plays
+    // the way out of rest before any work (dwarfSequence.ts).
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'leaving' }))
+    expect(cues).toEqual([])
+    await wrapper.setProps({ dwarf: defaultDwarf({ role: 'worker2', status: 'working' }) })
+    expect(cues).toEqual([{ cue: 'shift' }])
+  })
+
+  it('opens exactly one grind per shift, the next as the next shift starts', async () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    const sheets = DWARF_SHEETS.worker2
+    const shift =
+      lengthOf(sheets['start-working']) +
+      DWARF_CREW.worker2.swings! * lengthOf(sheets.working) +
+      lengthOf(sheets['end-working'])
+    await vi.advanceTimersByTimeAsync(shift - 1)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }])
+    await vi.advanceTimersByTimeAsync(1)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift' }])
   })
 
   it('ends nothing on unmount for a dwarf that was neither walking nor at work', () => {

@@ -767,13 +767,15 @@ describe('states that no longer have a drawing of their own', () => {
  * has to be as long as the recording rather than the other way round.
  */
 describe('the shift swings as many times as the rank declares (#330)', () => {
-  it('takes the worker2 through eight swings, not the two the worker takes', () => {
+  // AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts: the worker2's shift is as many swings as fit inside
+  // its grind, five under the v3 timing (dwarfSheets.test.ts pins the arithmetic), not eight.
+  it('takes the worker2 through five swings, not the two the worker takes', () => {
     const swings = (role: 'worker' | 'worker2'): number =>
       dwarfClips(role, false, false, true, false).filter(
         (clip) => clip.sheet.src === DWARF_SHEETS[role].working!.src
       ).length
     expect(swings('worker')).toBe(2)
-    expect(swings('worker2')).toBe(8)
+    expect(swings('worker2')).toBe(5)
   })
 
   it('reads the count off the declaration rather than a literal of its own', () => {
@@ -788,18 +790,19 @@ describe('the shift swings as many times as the rank declares (#330)', () => {
   })
 
   /*
-   * AMENDED by #635: 113 frames was 11.3s a turn at the v2 sheets' 100ms. The v3 sidecars make the
-   * same 16 + (8 x 10) + 17 frames 1830 + 8 x 1160 + 1750 = 12_860ms.
+   * AMENDED by #635: 113 frames was 11.3s a turn at the v2 sheets' 100ms, and eight swings. On the
+   * design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts, the shift is five swings: 16 + (5 x 10) + 17 = 83 frames, 1830 + 5 x 1160 + 1750 =
+   * 9380ms under the v3 sidecars.
    */
-  it('runs the worker2 through 113 frames of shift, 12.86s a turn under the v3 timing', () => {
-    // 16 + (8 x 10) + 17. The worker's 35 are pinned in the block above and
+  it('runs the worker2 through 83 frames of shift, 9.38s a turn under the v3 timing', () => {
+    // 16 + (5 x 10) + 17. The worker's 35 are pinned in the block above and
     // are untouched: only the count between the two transitions moved.
     const clips = dwarfClips('worker2', false, false, true, false)
     const start = lengthOf(WORKER2['start-working'])
     const swing = lengthOf(WORKER2.working)
     const end = lengthOf(WORKER2['end-working'])
     const cycle = start + swing * DWARF_CREW.worker2.swings! + end
-    expect(cycle).toBe(12_860)
+    expect(cycle).toBe(9380)
     // Round it goes: the frame after the set-down's last is the pick-up again.
     expect(sequenceFrameAt(clips, cycle)).toEqual({ clip: 0, frame: 0 })
     expect(sequenceFrameAt(clips, cycle - WORKER2['end-working']!.durations!.at(-1)!)).toEqual({
@@ -808,7 +811,8 @@ describe('the shift swings as many times as the rank declares (#330)', () => {
     })
   })
 
-  it('reaches the last of the eight swings, so none of them is unreachable', () => {
+  // AMENDED by #635: the last swing is the fifth now (the ruling above), read off the declaration.
+  it('reaches the last of the declared swings, so none of them is unreachable', () => {
     // A cycle is one movement whose position picks the clip (see
     // `sequenceCycle`), so an eighth swing that could never be drawn would be
     // a declaration the model quietly ignored.
@@ -816,9 +820,10 @@ describe('the shift swings as many times as the rank declares (#330)', () => {
     const clips = dwarfClips('worker2', false, false, true, false)
     const start = lengthOf(WORKER2['start-working'])
     const swing = lengthOf(WORKER2.working)
-    const eighth = sequenceFrameAt(clips, start + swing * 7)
-    expect(eighth).toEqual({ clip: 8, frame: 0 })
-    expect(clips[eighth.clip]?.sheet.src).toBe(WORKER2.working!.src)
+    const swings = DWARF_CREW.worker2.swings!
+    const last = sequenceFrameAt(clips, start + swing * (swings - 1))
+    expect(last).toEqual({ clip: swings, frame: 0 })
+    expect(clips[last.clip]?.sheet.src).toBe(WORKER2.working!.src)
   })
 
   it('still holds a swinging frame for reduced motion, eight swings or two', () => {

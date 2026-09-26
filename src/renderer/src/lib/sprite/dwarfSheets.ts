@@ -174,8 +174,9 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
      * 4-5 are the two brightest frames the artist drew, and the sprite lights
      * only those beside the art's own sparks. The frames after them disperse
      * and fade — the art carries that alone. The v3 export keeps those frames
-     * and their order, so the glow stays where it was; the design gives no glow
-     * frames of its own, which is an open question on #635.
+     * and their order, so the glow stays where it was: the impact frame and
+     * the one before it (design lead ruling 2026-09-26, SPRITE-QUESTIONS.md
+     * question 3).
      */
     working: sheet('worker', 'working', { impactFrames: [5], glowFrames: [4, 5] }),
     'end-working': sheet('worker', 'end-working')
@@ -234,13 +235,6 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
 /**
  * Each rank's shift and its own sounds (issues #325, #330).
  *
- * THE ARITHMETIC BELOW IS THE V2 ONE (#635). It was worked at the v2 sheets'
- * uniform 100ms. Under the v3 sidecars the cue at frame 14 opens the grind
- * 300ms before the first swing (frame 15 is held 200ms), a worker2 swing
- * lasts 1.16 s, and eight of them outlast the 8.53 s recording by 1.05 s. The
- * counts and the cue stay the maintainer's until he retunes them by ear; the
- * question is open on #635, and `dwarfSheets.test.ts` pins the v3 figures.
- *
  * BESIDE THE STRIPS RATHER THAN INSIDE THEM. Every value in a `DwarfSheetSet`
  * is a claim about bytes on disk that `dwarfSheets.test.ts` reads the PNG
  * headers to check; these are claims about the READING of that art, and a
@@ -249,34 +243,67 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
  *
  * ## Where the worker2's numbers come from
  *
- * `worker2-grind.mp3` is 8.53 s of the whole grind — the arms winding up, biting
- * the rock and stopping — so the shift has to be as long as the recording
- * rather than the recording as long as the shift. The maintainer's own ruling
- * fixes both ends: it starts "just before the working begins", 200 ms out,
- * and must die away as the arms do, about three frames into the set-down.
- * With 16 frames of pick-up at 100 ms that puts the cue at frame 14, and
- *
- *     0.2 s + 8 x 1.0 s + 0.3 s = 8.5 s
- *
- * leaves eight swings as the only count that fits between the two. The cycle
- * is then 16 + 80 + 17 = 113 frames, 11.3 s a shift. THE NUMBERS ARE THE
- * MAINTAINER'S AND ARE JUDGED BY EAR: do not retune either by eye.
+ * One grind per shift, starting when the shift starts, and the shift as many
+ * swings as fit inside the grind; the time left until the next shift is
+ * silence (design lead ruling 2026-09-26, SPRITE-QUESTIONS.md question 2, the
+ * prototype's "one grind per lap, with its rest"). So the cue is the pick-up's
+ * first frame and the count is `WORKER2_SHIFT_SWINGS` below, worked from the
+ * v3 sidecars rather than written down. It replaced #330's eight swings and
+ * frame-14 cue, which were worked at the v2 sheets' uniform 100ms and which
+ * the v3 timing outgrew by 1.05 s. THE PO JUDGES THE COUNT BY EAR (#330):
+ * retune it there, in one place, never by eye.
  *
  * The worker's stays at two, which is what #325 read as a shift, and its
  * cycle at 3 + 26 + 6 = 35 frames, 3.5 s. Its strike is 0.32 s against a
  * 1.3 s swing, so a pick lands and is over well before the next one.
  */
+/** The worker2's grind recording, `worker2-grind.mp3`: 8.53 s of one whole shift. */
+export const WORKER2_GRIND_MS = 8530
+
+/**
+ * How many swings a worker2's shift takes: as many as fit, with the pick-up
+ * before them, inside one grind (the ruling above). From the v3 sidecars:
+ *
+ *     8530 - 1830 (pick-up) = 6700 ms for swings
+ *     6700 / 1160 (one swing) = 5.78, so 5 swings (a sixth would end at 8790 ms)
+ *     the swings end at 1830 + 5 x 1160 = 7630 ms, 900 ms before the grind does
+ *     the grind dies 900 ms into the 1750 ms set-down; the shift lasts 9380 ms,
+ *     so the last 850 ms before the next shift's grind are silence
+ *
+ * Derived rather than typed so a re-export of either strip moves the count with
+ * it; the PO judges the result by ear (#330).
+ */
+export const WORKER2_SHIFT_SWINGS = swingsInside(
+  WORKER2_GRIND_MS,
+  DWARF_SHEETS.worker2['start-working'],
+  DWARF_SHEETS.worker2.working
+)
+
+/** Whole swings that fit inside `budgetMs` after the pick-up, never fewer than one. */
+function swingsInside(
+  budgetMs: number,
+  pickUp: SpriteSheet | undefined,
+  swing: SpriteSheet | undefined
+): number {
+  const length = (sheet: SpriteSheet | undefined): number =>
+    (sheet?.durations ?? []).reduce((total, hold) => total + hold, 0)
+  const each = length(swing)
+  if (each <= 0) return 1
+  return Math.max(1, Math.floor((budgetMs - length(pickUp)) / each))
+}
+
 export const DWARF_CREW: Record<DwarfRole, DwarfCrewSet> = {
   worker: {
     swings: 2,
     sound: { strike: { on: 'impactFrames', gain: STRIKE_GAIN }, walk: { gain: WALK_GAIN } }
   },
   worker2: {
-    swings: 8,
+    swings: WORKER2_SHIFT_SWINGS,
     // No strike, and there is no frame for one to point at: the worker2
     // carries no pick and its strips declare no impact (see the note on this
     // rank above, and #211). Its whole shift is the sound instead of the hit.
-    sound: { shift: { sheet: 'start-working', frame: 14 }, walk: { gain: WALK_GAIN } }
+    // The grind opens as the shift does, on the pick-up's first frame (the ruling above).
+    sound: { shift: { sheet: 'start-working', frame: 0 }, walk: { gain: WALK_GAIN } }
   },
   foreman: {
     // No swing count, because no swing is drawn — `dwarfSequence` never builds

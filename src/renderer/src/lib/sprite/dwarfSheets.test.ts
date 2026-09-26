@@ -2,7 +2,14 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole } from '../../types'
-import { DWARF_CREW, DWARF_SHEETS, SPRITE_SHEETS, type SpriteSheetKey } from './dwarfSheets'
+import {
+  DWARF_CREW,
+  DWARF_SHEETS,
+  SPRITE_SHEETS,
+  WORKER2_GRIND_MS,
+  WORKER2_SHIFT_SWINGS,
+  type SpriteSheetKey
+} from './dwarfSheets'
 import { SPRITE_FRAME_SIZE, type SpriteSheet } from './spriteSheet'
 
 // Amended by #157: 'worker2' joined DwarfRole, and a hand-written list is
@@ -373,13 +380,16 @@ describe('DWARF_SHEETS', () => {
  * grind recording is 8.53 s long and the numbers have to add up to it.
  */
 describe('DWARF_CREW (#330)', () => {
-  it('swings the worker twice a shift and the worker2 eight times', () => {
-    // Not a taste: the worker2's grind is one 8.53 s recording of the whole
-    // movement, and it is asked to start 200 ms before the first swing and to
-    // die out three frames into the set-down. Eight swings is the only count
-    // that fits between the two.
+  /*
+   * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts; the worker2's shift is as many swings as fit inside the
+   * 8.53 s grind, and the rest of the shift is silence. It pinned eight, the v2 count worked at
+   * 100ms a frame. Under the v3 sidecars that is five (the arithmetic is pinned below), and the
+   * count is one named constant because the PO judges it by ear (#330).
+   */
+  it('swings the worker twice a shift and the worker2 as often as fits inside its grind', () => {
     expect(DWARF_CREW.worker.swings).toBe(2)
-    expect(DWARF_CREW.worker2.swings).toBe(8)
+    expect(DWARF_CREW.worker2.swings).toBe(WORKER2_SHIFT_SWINGS)
+    expect(WORKER2_SHIFT_SWINGS).toBe(5)
   })
 
   it('declares no count for the foreman, who has no swing to repeat', () => {
@@ -398,42 +408,42 @@ describe('DWARF_CREW (#330)', () => {
   })
 
   /*
-   * AMENDED by #635. The cue is still frame 14 of 16, and was 200ms before the first swing at the
-   * v2 sheets' uniform 100ms. The v3 sidecar holds frame 14 for 100ms and frame 15, the held
-   * last frame of the pick-up, for 200ms, so the same frame now opens the grind 300ms ahead.
-   * The frame is the maintainer's by ear and is not retuned here; whether it should move is an
-   * open question on #635.
+   * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts. It pinned the cue at frame 14 of the 16-frame pick-up, 200ms
+   * (300ms under v3) before the first swing. The shift starts on the pick-up's first frame, so
+   * that is where the grind opens now.
    */
-  it("starts the worker2's grind at frame 14 of 16, now 300ms before its first swing", () => {
-    expect(DWARF_CREW.worker2.sound?.shift).toEqual({ sheet: 'start-working', frame: 14 })
-    // The worker2 has no strike to name and never will (#211): it carries no
-    // pick, which is why its whole shift is one sound instead of a hit.
+  it("starts the worker2's grind as its shift starts, on the pick-up's first frame", () => {
+    expect(DWARF_CREW.worker2.sound?.shift).toEqual({ sheet: 'start-working', frame: 0 })
+    // The worker2 has no strike to name and never will (#211, confirmed by the design lead on
+    // 2026-09-26, SPRITE-QUESTIONS.md question 4): its "Impact" labels are motion phase names.
     expect(DWARF_CREW.worker2.sound?.strike).toBeUndefined()
-    const pickUp = DWARF_SHEETS.worker2['start-working']!
-    const lead = (pickUp.durations ?? []).slice(14).reduce((sum, hold) => sum + hold, 0)
-    expect(lead).toBe(300)
   })
 
   /*
-   * AMENDED by #635, and the property it held no longer holds. At the v2 sheets' uniform 100ms the
-   * cue left 0.2s of pick-up and eight 1.0s swings, so the 8.53s grind died three frames into the
-   * set-down, where the arms stop. The v3 sidecars time a swing at 1.16s, so the same eight swings
-   * now outlast the recording: it ends 1.05s before the eighth swing does. The count and the cue
-   * are the maintainer's by ear and are NOT retuned here (a seven-swing shift would end the grind
-   * 0.11s into the set-down, still short of three frames); this pins the arithmetic as it now
-   * stands so a retune is a visible change, and the question is open on #635.
+   * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts. It pinned the grind ending 1.05s before the last of eight
+   * swings did, the v2 count outlasting the recording under v3 timing. Now the arithmetic is the
+   * ruling's: the grind opens with the shift, the pick-up (1830ms) and every swing (1160ms each)
+   * fall inside the 8530ms recording, and the time left until the next shift is silence.
+   *
+   *     8530 - 1830 = 6700ms for swings; 6700 / 1160 = 5.78, so five swings (a sixth ends at 8790)
+   *     the swings end at 1830 + 5 x 1160 = 7630ms; the grind ends 900ms into the 1750ms set-down
+   *     the shift lasts 1830 + 5800 + 1750 = 9380ms, so 850ms of silence before the next grind
    */
-  it('lands the end of the grind inside the eighth swing under the v3 timing (#635)', () => {
-    const GRIND_MS = 8530
+  it('fits the pick-up and every swing inside one grind, silent until the next shift (#635)', () => {
     const sum = (holds: readonly number[] | undefined): number =>
       (holds ?? []).reduce((total, hold) => total + hold, 0)
-    const cue = DWARF_CREW.worker2.sound!.shift!
-    const pickUp = DWARF_SHEETS.worker2['start-working']!
-    const swing = DWARF_SHEETS.worker2.working!
-    const lead = sum(pickUp.durations?.slice(cue.frame))
-    const swinging = DWARF_CREW.worker2.swings! * sum(swing.durations)
-    expect(lead + swinging).toBe(9580)
-    expect(lead + swinging - GRIND_MS).toBe(1050)
+    const pickUp = sum(DWARF_SHEETS.worker2['start-working']!.durations)
+    const swing = sum(DWARF_SHEETS.worker2.working!.durations)
+    const setDown = sum(DWARF_SHEETS.worker2['end-working']!.durations)
+    const swings = DWARF_CREW.worker2.swings!
+    expect(WORKER2_GRIND_MS).toBe(8530)
+    expect(pickUp + swings * swing).toBe(7630)
+    expect(pickUp + swings * swing).toBeLessThanOrEqual(WORKER2_GRIND_MS)
+    // One more swing would outlast the recording: five is as many as fit.
+    expect(pickUp + (swings + 1) * swing).toBeGreaterThan(WORKER2_GRIND_MS)
+    // The shift outlasts its grind, so a shift's grind has ended before the next one opens.
+    expect(pickUp + swings * swing + setDown).toBe(9380)
+    expect(pickUp + swings * swing + setDown - WORKER2_GRIND_MS).toBe(850)
   })
 
   it('names the strip the grind is timed against, and it is one the rank has', () => {

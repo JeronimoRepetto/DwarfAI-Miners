@@ -454,9 +454,21 @@ const exitStyle = computed(() => ({
  */
 const SPARKS_PER_HIT = 5
 const impactCount = ref(0)
+/*
+ * The sequence the last position belonged to. A position is only a step from
+ * the one before it within the SAME sequence: across a swap, clip 0 frame 0 of
+ * the idle and clip 0 frame 0 of the pick-up are different pictures, so the new
+ * sequence is read as a first reading. That is what lets a worker2 put to work
+ * open its grind on the shift's first frame (#635; design lead ruling
+ * 2026-09-26, SPRITE-QUESTIONS.md question 2), and why the watch below runs on
+ * the very first frame too.
+ */
+let positionClips: readonly SpriteClip[] | undefined
 watch(
   () => position.value,
-  (now, previous) => {
+  (now, stepFrom) => {
+    const previous = positionClips === clips.value ? stepFrom : undefined
+    positionClips = clips.value
     if (props.dwarf.status !== 'working') return
     if (props.walking === true) return
     const strip = clips.value[now.clip]?.sheet
@@ -478,7 +490,8 @@ watch(
     for (const signal of crewFrameSignals(props.dwarf.role, clips.value, previous, now)) {
       emit('crew-sound', signal)
     }
-  }
+  },
+  { immediate: true }
 )
 
 /**
