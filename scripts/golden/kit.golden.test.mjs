@@ -17,6 +17,7 @@ import {
   componentOf,
   expectation,
   framingFor,
+  splitFraming,
   stageWidth
 } from './states.mjs'
 
@@ -135,13 +136,15 @@ describe.runIf(runnable)('golden harness', () => {
         anatomyRoot(readDesign('docs', 'anatomy.md'), row.file)
       )
       if (framingError) throw new Error(framingError)
+      const split = splitFraming(framing)
       const frame = {
         id: state.key,
-        css: readStageCss(location.root),
+        // A framing rule written against the stage joins the stage's own CSS, as in the kit.
+        css: readStageCss(location.root) + (split.css ? '\n' + split.css : ''),
         x: row.x,
         y: row.y,
         width: stageWidth(row),
-        framing: framing.map((r) => r.declarations),
+        framing: split.root,
         // The texts its tree shows, for a specimen's captions: read here, never committed.
         texts: anatomyTexts(readDesign('docs', 'anatomy.md'), row.file),
         // The attributes its tree prints, for a form control's design text: the same.

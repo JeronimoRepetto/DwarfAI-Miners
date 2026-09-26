@@ -146,7 +146,8 @@ pnpm test:golden
   types). Run the goldens: the state fails as expected and prints its numbers. Build the state
   from the Markdown until it passes — a red state that passes fails the run — then remove `red`.
   The stage, and a component's "UI kit framing" rules on its root, come from the design's docs at
-  run time; a state whose framing targets another element is refused until the harness learns it.
+  run time; a framing rule the kit writes against its stage (`.kit-stage …`) joins the stage CSS,
+  and a state whose framing targets any other element is refused until the harness learns it.
 - **Output stays out of the tree.** Captures and diffs go to `dwarfai-golden/` under the system
   temp directory. They picture the private references: never commit one, and never paste an image
   or an output path into an issue or a pull request.

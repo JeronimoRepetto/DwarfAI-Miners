@@ -10,8 +10,9 @@
  *
  * The framing a state needs beyond the stage (a component's "UI kit framing" rules, such as a
  * fixed height the kit gives a column) is read from the design's docs at run time, like the stage
- * CSS, and only for the component's root element: a rule for any other element is refused rather
- * than placed by guess. Pure; the golden test reads the files and calls these.
+ * CSS, and only for the component's root element or, for a rule the kit writes against its stage,
+ * under the stage: a rule for any other element is refused rather than placed by guess. Pure; the
+ * golden test reads the files and calls these.
  */
 
 const STATE_FIELDS = new Set(['key', 'red'])
@@ -157,10 +158,16 @@ export function anatomyAttributes(anatomyMd, file) {
   return elements
 }
 
+// A rule the kit writes against its own stage (`.kit-stage …`) reaches parts no inline style can,
+// such as a `::after` (#635). It is applied as the kit applies it: a stylesheet rule under the
+// stage. Braces in it would let it close its block and style the page, so they are refused.
+const onStage = (r) =>
+  /^\.kit-stage\s+\S/.test(r.selector) && !/[{}]/.test(r.selector + r.declarations)
+
 export function checkFraming(framing, rootLine) {
   const classes = rootLine.split(/\s/)[0].split('.').slice(1)
   const stray = framing.filter(
-    (r) => !/^\.[\w-]+$/.test(r.selector) || !classes.includes(r.selector.slice(1))
+    (r) => !onStage(r) && (!/^\.[\w-]+$/.test(r.selector) || !classes.includes(r.selector.slice(1)))
   )
   if (!stray.length) return null
   return (
@@ -168,8 +175,20 @@ export function checkFraming(framing, rootLine) {
     stray.map((r) => r.selector).join(', ') +
     ' frames an element other than the root (' +
     rootLine +
-    '); the harness places framing on the root only'
+    '); the harness places framing on the root, or under the stage for a .kit-stage rule, only'
   )
+}
+
+// Framing that checkFraming accepted, as the page applies it: declarations for the root's inline
+// style, and the stage-scoped rules as one stylesheet.
+export function splitFraming(framing) {
+  return {
+    root: framing.filter((r) => !onStage(r)).map((r) => r.declarations),
+    css: framing
+      .filter(onStage)
+      .map((r) => r.selector + ' { ' + r.declarations + ' }')
+      .join('\n')
+  }
 }
 
 const plural = (n, one, many = one + 's') => n + ' ' + (n === 1 ? one : many)

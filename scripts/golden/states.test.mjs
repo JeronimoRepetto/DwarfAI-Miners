@@ -9,6 +9,7 @@ import {
   componentOf,
   expectation,
   framingFor,
+  splitFraming,
   stageWidth
 } from './states.mjs'
 
@@ -314,5 +315,42 @@ describe('anatomyAttributes', () => {
 
   it('fails when no tree names that image', () => {
     expect(() => anatomyAttributes(ATTRIBUTES, 'atoms/lamp/none.png')).toThrow(/none\.png/)
+  })
+})
+
+// APPENDED for #635: a UI kit framing rule written against the stage (`.kit-stage …`), such as
+// the nav slot's rule on its label's `::after`, frames a part no inline style can reach. It is
+// applied as the kit applies it, a stylesheet rule under the stage, and never on the root.
+describe('stage-scoped framing', () => {
+  const root = 'div [style="display: flex; gap: 10px"]'
+  const rule = { selector: '.kit-stage .dm-lamp.is-hover::after', declarations: 'x: 0ms' }
+
+  it('accepts a rule written against the stage, whatever element it reaches under it', () => {
+    expect(checkFraming([rule], root)).toBeNull()
+  })
+
+  it('still refuses a rule neither on the root nor under the stage', () => {
+    expect(checkFraming([{ selector: '.dm-lamp::after', declarations: 'x: 0ms' }], root)).toMatch(
+      /\.dm-lamp::after/
+    )
+  })
+
+  it('refuses a stage rule that could break out of its own block', () => {
+    expect(
+      checkFraming([{ selector: '.kit-stage .dm-lamp', declarations: 'x: 0 } body { y: 1' }], root)
+    ).toMatch(/\.kit-stage \.dm-lamp/)
+  })
+
+  it('splits the framing into root declarations and a stage stylesheet', () => {
+    expect(
+      splitFraming([{ selector: '.dm-lamp--static', declarations: 'height: 9px' }, rule])
+    ).toEqual({ root: ['height: 9px'], css: '.kit-stage .dm-lamp.is-hover::after { x: 0ms }' })
+  })
+
+  it('has an empty stage stylesheet when every rule is on the root', () => {
+    expect(splitFraming([{ selector: '.dm-lamp', declarations: 'a: 1' }])).toEqual({
+      root: ['a: 1'],
+      css: ''
+    })
   })
 })

@@ -138,5 +138,80 @@
   },
   {
     "key": "atoms/chip#meta-chips"
+  },
+  {
+    "key": "atoms/slot#default-hover-pressed"
+  },
+  {
+    "key": "atoms/slot#current-page"
+  },
+  {
+    "key": "atoms/slot#needs-you-badge"
+  },
+  {
+    "key": "atoms/slot#toggle"
+  },
+  {
+    "key": "atoms/slot#warning"
+  },
+  {
+    "key": "atoms/slot#focus-visible"
+  },
+  {
+    "key": "atoms/slot#mode-lever"
+  },
+  {
+    "key": "atoms/badge#badges"
+  },
+  {
+    "key": "atoms/badge#crew-state-pills"
+  },
+  {
+    "key": "atoms/badge#semantic-pills"
+  },
+  {
+    "key": "atoms/portrait#ranks"
+  },
+  {
+    "key": "atoms/portrait#status"
+  },
+  {
+    "key": "atoms/portrait#interaction"
+  },
+  {
+    "key": "atoms/portrait#sizes"
+  },
+  {
+    "key": "atoms/progress#toward-gold"
+  },
+  {
+    "key": "atoms/progress#toward-copper"
+  },
+  {
+    "key": "atoms/progress#measuring"
+  },
+  {
+    "key": "atoms/progress#max-tier"
+  },
+  {
+    "key": "atoms/ore#every-material"
+  },
+  {
+    "key": "atoms/ore#large"
+  },
+  {
+    "key": "atoms/ore#zero"
+  },
+  {
+    "key": "atoms/marker#tiers"
+  },
+  {
+    "key": "atoms/marker#hover-pressed-open"
+  },
+  {
+    "key": "atoms/marker#needs-you"
+  },
+  {
+    "key": "atoms/marker#focus-visible"
   }
 ]

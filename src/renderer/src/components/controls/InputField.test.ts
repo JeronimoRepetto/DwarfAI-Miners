@@ -101,3 +101,18 @@ describe('FieldHint', () => {
     expect(mount(FieldHint).classes()).toEqual(['dm-field__hint'])
   })
 })
+
+// APPENDED for #635: the design lead's ruling on the atoms questions (question 3) — an invalid
+// input carries aria-invalid="true" and aria-describedby pointing at its hint.
+describe('InputField with its hint', () => {
+  it('marks the invalid control and ties it to the hint that says why', () => {
+    const field = mount(InputField, {
+      props: { placeholder: 'Folder', invalid: true, describedBy: 'folder-hint' }
+    })
+    const input = field.get('input')
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(input.attributes('aria-describedby')).toBe('folder-hint')
+    const hint = mount(FieldHint, { props: { error: true }, attrs: { id: 'folder-hint' } })
+    expect(hint.attributes('id')).toBe('folder-hint')
+  })
+})

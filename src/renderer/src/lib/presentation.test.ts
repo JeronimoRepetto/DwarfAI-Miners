@@ -6,6 +6,7 @@ import {
   BUBBLE_MAX_CHARS,
   LEAVING_EXIT_MS,
   describeSilence,
+  groupDigits,
   isDwarfSilent,
   materialLabel,
   orePileLabel,
@@ -298,5 +299,21 @@ describe('describeSilence', () => {
   it('says less than a minute rather than counting seconds nobody reads', () => {
     expect(describeSilence(0)).toBe('no output for less than a minute')
     expect(describeSilence(59_999)).toBe('no output for less than a minute')
+  })
+})
+
+// APPENDED for #635: the redesigned atoms write whole numbers with comma thousands (the tier
+// progress "1,630 / 2,048", an ore capsule's name "Coal: 280,612"), whatever the machine's locale.
+describe('groupDigits', () => {
+  it('writes a whole number with comma thousands', () => {
+    expect(groupDigits(0)).toBe('0')
+    expect(groupDigits(12)).toBe('12')
+    expect(groupDigits(9999)).toBe('9,999')
+    expect(groupDigits(1630)).toBe('1,630')
+    expect(groupDigits(1234567)).toBe('1,234,567')
+  })
+
+  it('never writes a fraction', () => {
+    expect(groupDigits(1630.7)).toBe('1,630')
   })
 })

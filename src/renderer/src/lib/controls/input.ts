@@ -19,7 +19,10 @@ export interface InputOptions {
   /** The accessible name; the placeholder names the control when this is absent. */
   label?: string
   disabled?: boolean
+  /** Marks the control aria-invalid, beside the danger edge. */
   invalid?: boolean
+  /** The id of the hint that describes the control, such as the error saying why it is invalid. */
+  describedBy?: string
   /** The native input type; a search field is always `search`. */
   type?: string
   state?: FieldState
@@ -30,6 +33,8 @@ export interface FieldControlAttributes {
   placeholder: string
   rows?: number
   'aria-label'?: string
+  'aria-invalid'?: 'true'
+  'aria-describedby'?: string
   disabled: boolean
 }
 
@@ -54,6 +59,10 @@ export function fieldControlAttributes(options: InputOptions): FieldControlAttri
   // The name comes from the label, falling back to the placeholder; an empty one names nothing.
   const name = options.label || options.placeholder
   if (name) attributes['aria-label'] = name
+  // The design lead's ruling on the atoms questions (3): an invalid input carries aria-invalid, and
+  // aria-describedby points at its hint, the hint being a sibling of the field.
+  if (options.invalid) attributes['aria-invalid'] = 'true'
+  if (options.describedBy) attributes['aria-describedby'] = options.describedBy
   attributes.disabled = options.disabled === true
   return attributes
 }

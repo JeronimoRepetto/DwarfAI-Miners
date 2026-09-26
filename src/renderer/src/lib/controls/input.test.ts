@@ -80,3 +80,24 @@ describe('escapeAction', () => {
     expect(escapeAction({ area: true }, 'text')).toBe('bubble')
   })
 })
+
+// APPENDED for #635: the design lead's ruling on the atoms questions (question 3) — an invalid
+// input carries aria-invalid="true", and aria-describedby names its hint.
+describe('fieldControlAttributes, invalid and described', () => {
+  it('marks an invalid control, on the input and on the textarea alike', () => {
+    expect(fieldControlAttributes({ invalid: true })['aria-invalid']).toBe('true')
+    expect(fieldControlAttributes({ area: true, invalid: true })['aria-invalid']).toBe('true')
+  })
+
+  it('points at the hint that describes it', () => {
+    expect(fieldControlAttributes({ describedBy: 'folder-hint' })['aria-describedby']).toBe(
+      'folder-hint'
+    )
+  })
+
+  it('states neither on a valid field with no hint', () => {
+    const attributes = fieldControlAttributes({ placeholder: 'Folder' })
+    expect(attributes).not.toHaveProperty('aria-invalid')
+    expect(attributes).not.toHaveProperty('aria-describedby')
+  })
+})
