@@ -98,6 +98,9 @@ describe.runIf(runnable)('golden coverage', () => {
   for (const key of Object.keys(manifest)) if (!COVERED.has(key)) test.todo(key)
 })
 
-describe.skipIf(runnable)('golden', () => {
-  it.skip(decision.message, () => {})
-})
+// Run straight through vitest on CI without a design: say why, rather than an empty file.
+if (!runnable) {
+  describe('golden', () => {
+    it.skip(decision.message, () => {})
+  })
+}
