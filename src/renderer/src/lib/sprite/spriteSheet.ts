@@ -39,8 +39,16 @@ export interface SpriteSheet {
   readonly src: string
   /** How many frames the strip holds, left to right. */
   readonly frames: number
-  /** How long each frame is held. */
+  /**
+   * How long each frame is held where the sheet has no `durations`: `--frame-ms`, the fallback
+   * for a sheet with no Aseprite JSON sidecar (motion.md, Sprite frame timing).
+   */
   readonly frameMs: number
+  /**
+   * Each frame's own hold, in strip order, read from the sheet's sidecar (#635). Present, it is
+   * the sheet's timing and `frameMs` is not read; see `spriteSidecar.ts`.
+   */
+  readonly durations?: readonly number[]
   /**
    * The frames on which the tool bites the rock. Sparks fire on these and
    * nowhere else, so a sheet that names none throws none — which is the honest
