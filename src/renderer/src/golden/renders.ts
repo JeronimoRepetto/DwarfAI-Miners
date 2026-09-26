@@ -22,6 +22,7 @@ import InputField from '../components/controls/InputField.vue'
 import MetaChip from '../components/controls/MetaChip.vue'
 import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
+import OreCapsule from '../components/vault/OreCapsule.vue'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
 import CountBadge from '../components/dwarf/CountBadge.vue'
 import DwarfPortrait from '../components/dwarf/DwarfPortrait.vue'
@@ -32,7 +33,7 @@ import ShellNav from '../components/shell/ShellNav.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
-import type { DwarfRole, MineTier } from '../types'
+import type { DwarfRole, Material, MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
@@ -352,6 +353,26 @@ const progress: Render = framed((texts, attributes) => {
   ]
 })
 
+// One capsule as its tree names it ("Coal: 280,612"): the material and its full count.
+const capsule = ({ element, attributes: a }: GoldenAttributes): Record<string, unknown> => {
+  const [label = '', count = ''] = (a['aria-label'] ?? '').split(': ')
+  return {
+    material: label.toLowerCase() as Material,
+    units: Number(count.replace(/,/g, '')),
+    size: modifierOf(element, 'dm-ore') === 'lg' ? 'lg' : undefined
+  }
+}
+const capsules = (attributes: GoldenAttributes[]): GoldenAttributes[] =>
+  attributes.filter((entry) => entry.element.startsWith('span.dm-ore'))
+// Every material in the kit's row, and a capsule alone as the stage's only child.
+const oreRow: Render = framed((_texts, attributes) =>
+  capsules(attributes).map((entry) => ({ component: OreCapsule, props: capsule(entry) }))
+)
+const oreAlone: Render = (_sample, _texts, attributes) => ({
+  component: OreCapsule,
+  props: capsule(capsules(attributes)[0]!)
+})
+
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
@@ -568,14 +589,16 @@ export const RENDERS: Record<string, Render> = {
   'atoms/progress#measuring': progress,
   'atoms/progress#max-tier': progress,
 
+  // The ore capsules: every material, poorest first; the vault size; a material at zero.
+  'atoms/ore#every-material': oreRow,
+  'atoms/ore#large': oreAlone,
+  'atoms/ore#zero': oreAlone,
+
   // The remaining atoms, not built yet (#635): each state mounts an empty box and fails.
   // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
   'atoms/badge#badges': badges,
   'atoms/badge#crew-state-pills': pills(),
   'atoms/badge#semantic-pills': pills(['check']),
-  'atoms/ore#every-material': unbuilt,
-  'atoms/ore#large': unbuilt,
-  'atoms/ore#zero': unbuilt,
   'atoms/marker#tiers': unbuilt,
   'atoms/marker#hover-pressed-open': unbuilt,
   'atoms/marker#needs-you': unbuilt,
