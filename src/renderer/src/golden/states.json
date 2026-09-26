@@ -80,40 +80,31 @@
     "key": "atoms/icon#tones"
   },
   {
-    "key": "atoms/input#text",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#text"
   },
   {
-    "key": "atoms/input#hover",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#hover"
   },
   {
-    "key": "atoms/input#focus",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#focus"
   },
   {
-    "key": "atoms/input#search",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#search"
   },
   {
-    "key": "atoms/input#invalid",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#invalid"
   },
   {
-    "key": "atoms/input#disabled",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#disabled"
   },
   {
-    "key": "atoms/input#textarea",
-    "red": "the redesigned input is not built yet (#635)"
+    "key": "atoms/input#textarea"
   },
   {
-    "key": "atoms/select#default-hover-focus",
-    "red": "the redesigned select is not built yet (#635)"
+    "key": "atoms/select#default-hover-focus"
   },
   {
-    "key": "atoms/select#disabled",
-    "red": "the redesigned select is not built yet (#635)"
+    "key": "atoms/select#disabled"
   },
   {
     "key": "atoms/toggle#off-on",

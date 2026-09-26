@@ -137,6 +137,8 @@ export const TypeScale = defineComponent({
 export interface FramedPart {
   component: Component
   props: Record<string, unknown>
+  /** Its default slot's text, for a part that takes its content that way. */
+  text?: string
 }
 
 const parts = { type: Array as PropType<readonly FramedPart[]>, required: true } as const
@@ -151,6 +153,22 @@ export const KitRow = defineComponent({
         'div',
         { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
         props.parts.map((part) => h(part.component, part.props))
+      )
+  }
+})
+
+// Any other UI kit frame: a plain div with the inline style the state's tree prints on it, read at
+// run time, around the real components in order (#635).
+export const KitFrame = defineComponent({
+  props: { style: { type: String, default: '' }, parts },
+  setup(props) {
+    return () =>
+      h(
+        'div',
+        { style: props.style },
+        props.parts.map((part) =>
+          h(part.component, part.props, part.text === undefined ? undefined : () => part.text)
+        )
       )
   }
 })
