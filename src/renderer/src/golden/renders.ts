@@ -15,16 +15,26 @@
  */
 import type { Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
+import TierProgress from '../components/browse/TierProgress.vue'
+import TierMarker from '../components/map/TierMarker.vue'
 import ChoiceChip from '../components/controls/ChoiceChip.vue'
 import FieldHint from '../components/controls/FieldHint.vue'
 import InputField from '../components/controls/InputField.vue'
 import MetaChip from '../components/controls/MetaChip.vue'
 import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
+import OreCapsule from '../components/vault/OreCapsule.vue'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
+import CountBadge from '../components/dwarf/CountBadge.vue'
+import DwarfPortrait from '../components/dwarf/DwarfPortrait.vue'
+import StatePill from '../components/dwarf/StatePill.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
+import NavSlot from '../components/shell/NavSlot.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
-import type { MineTier } from '../types'
+import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
+import type { PortraitStatus } from '../lib/dwarf/portrait'
+import type { IconName } from '../lib/icon/iconGrids'
+import type { DwarfRole, Material, MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
@@ -203,6 +213,195 @@ const choiceChips = (states: (string | undefined)[] = []): Render =>
       }
     }))
   )
+
+// The modifier a tree's element carries for a block, as `span.dm-badge.dm-badge--info` carries
+// `info`: a tone is a class, so it arrives with the tree like the rest of its design.
+const modifierOf = (element: string, block: string): string | undefined =>
+  element
+    .split('.')
+    .find((c) => c.startsWith(block + '--'))
+    ?.slice(block.length + 2)
+
+// Each badge of the tree, its count read back from the text it shows: "99+" is a count past 99.
+const badges: Render = framed((texts, attributes) =>
+  attributes
+    .filter((entry) => entry.element.startsWith('span.dm-badge'))
+    .map((entry, i) => {
+      const shown = texts[i]?.text ?? ''
+      return {
+        component: CountBadge,
+        props: {
+          count: shown.endsWith('+') ? Number(shown.slice(0, -1)) + 1 : Number(shown),
+          tone: modifierOf(entry.element, 'dm-badge') as BadgeTone | undefined
+        }
+      }
+    })
+)
+
+/*
+ * Each pill of the tree in its tone, with the needs-you plate its tree draws inside it, its mark
+ * and word the next texts. An icon line prints no name a render can read, so a state's icons are
+ * its render's, in tree order, as a button's are.
+ */
+const pills = (icons: IconName[] = []): Render =>
+  framed((texts, attributes) => {
+    const specs: { tone?: PillTone; ask: boolean; icon?: IconName }[] = []
+    let icon = 0
+    for (const { element } of attributes.slice(1)) {
+      if (element.startsWith('span.dm-pill__q')) specs.at(-1)!.ask = true
+      else if (element.startsWith('span.dm-pill')) {
+        specs.push({ tone: modifierOf(element, 'dm-pill') as PillTone | undefined, ask: false })
+      } else if (element === 'icon') specs.at(-1)!.icon = icons[icon++]
+    }
+    let next = 0
+    return specs.map((spec) => {
+      const mark = spec.ask ? texts[next++]?.text : undefined
+      return {
+        component: StatePill,
+        props: { ...spec, ...(mark === undefined ? {} : { mark }), text: texts[next++]?.text ?? '' }
+      }
+    })
+  })
+
+// The state a tree's element is forced to, as `button.dm-slot.is-hover` is.
+const forcedOf = (element: string): string | undefined =>
+  element
+    .split('.')
+    .find((c) => c.startsWith('is-'))
+    ?.slice(3)
+
+/*
+ * Each slot of the tree, labelled, current, pressed, warned and forced as it prints, its badge
+ * the count the next badge line shows. An icon line prints no name a render can read, so the
+ * state's icons are its render's, in tree order.
+ */
+const slots =
+  (icons: IconName[]): Render =>
+  (_sample, texts, attributes) => {
+    const parts: FramedPart[] = []
+    let badge = 0
+    for (const { element, attributes: a } of attributes.slice(1)) {
+      if (element.startsWith('button.dm-slot')) {
+        parts.push({
+          component: NavSlot,
+          props: {
+            icon: icons[parts.length],
+            label: a['data-label'] ?? '',
+            current: a['aria-current'] === 'page',
+            ...(a['aria-pressed'] === undefined ? {} : { pressed: a['aria-pressed'] === 'true' }),
+            warn: a['data-warn'] === 'true',
+            state: forcedOf(element)
+          }
+        })
+      } else if (element.startsWith('span.dm-badge')) {
+        parts.at(-1)!.props.badge = Number(texts[badge++]?.text)
+      }
+    }
+    return {
+      component: KitFrame,
+      props: { style: attributes[0]?.attributes.style ?? '', parts }
+    }
+  }
+
+/*
+ * Each portrait of the tree, in its status, size and forced look, a button (named, pressed) where
+ * the tree draws one. Its face line prints a path, not an attribute a render can read, so the
+ * state's ranks are its render's, in tree order.
+ */
+const portraits = (roles: DwarfRole[]): Render =>
+  framed((_texts, attributes) =>
+    attributes
+      .filter((entry) => /^(span|button)\.dm-portrait(\.|$)/.test(entry.element))
+      .map(({ element, attributes: a }, i) => ({
+        component: DwarfPortrait,
+        props: {
+          role: roles[i],
+          status: a['data-status'] as PortraitStatus,
+          size: modifierOf(element, 'dm-portrait'),
+          interactive: element.startsWith('button'),
+          name: (a['aria-label'] ?? '').split(', ')[0],
+          selected: a['aria-pressed'] === 'true',
+          state: forcedOf(element)
+        }
+      }))
+  )
+
+/*
+ * The tier progress the tree prints, in the kit's width frame: toward the tier its root names,
+ * value and maximum read from the bar's own aria values; measuring where the root is a status;
+ * the top tier where it carries --max, its value the number it shows.
+ */
+const progress: Render = framed((texts, attributes) => {
+  const root = attributes.find((entry) => entry.element.startsWith('div.dm-progress'))!
+  const bar = attributes.find((entry) => entry.attributes.role === 'progressbar')?.attributes
+  if (root.attributes.role === 'status')
+    return [{ component: TierProgress, props: { measuring: true } }]
+  if (root.element.includes('dm-progress--max')) {
+    const shown = texts.at(-1)?.text ?? ''
+    return [
+      { component: TierProgress, props: { maxTier: true, value: Number(shown.replace(/,/g, '')) } }
+    ]
+  }
+  return [
+    {
+      component: TierProgress,
+      props: {
+        nextTier: root.attributes['data-tier'] as MineTier,
+        value: Number(bar?.['aria-valuenow']),
+        max: Number(bar?.['aria-valuemax'])
+      }
+    }
+  ]
+})
+
+// One capsule as its tree names it ("Coal: 280,612"): the material and its full count.
+const capsule = ({ element, attributes: a }: GoldenAttributes): Record<string, unknown> => {
+  const [label = '', count = ''] = (a['aria-label'] ?? '').split(': ')
+  return {
+    material: label.toLowerCase() as Material,
+    units: Number(count.replace(/,/g, '')),
+    size: modifierOf(element, 'dm-ore') === 'lg' ? 'lg' : undefined
+  }
+}
+const capsules = (attributes: GoldenAttributes[]): GoldenAttributes[] =>
+  attributes.filter((entry) => entry.element.startsWith('span.dm-ore'))
+// Every material in the kit's row, and a capsule alone as the stage's only child.
+const oreRow: Render = framed((_texts, attributes) =>
+  capsules(attributes).map((entry) => ({ component: OreCapsule, props: capsule(entry) }))
+)
+const oreAlone: Render = (_sample, _texts, attributes) => ({
+  component: OreCapsule,
+  props: capsule(capsules(attributes)[0]!)
+})
+
+/*
+ * The markers of the tree, each inside the one-pixel point the kit places it on (a plain div
+ * with the style the tree prints), all in the kit's frame: tiered, named, open, asking and
+ * forced as each prints. The marker centres itself on its point.
+ */
+const markers: Render = (_sample, _texts, attributes) => {
+  const points: FramedPart[] = []
+  for (const { element, attributes: a } of attributes.slice(1)) {
+    if (element === 'div') {
+      points.push({ component: KitFrame, props: { style: a.style ?? '', parts: [] } })
+    } else if (element.startsWith('button.dm-marker')) {
+      ;(points.at(-1)!.props.parts as FramedPart[]).push({
+        component: TierMarker,
+        props: {
+          tier: a['data-tier'] as MineTier,
+          label: a['aria-label'],
+          selected: a['aria-pressed'] === 'true',
+          asking: element.split('.').includes('dm-marker--ask'),
+          state: forcedOf(element)
+        }
+      })
+    }
+  }
+  return {
+    component: KitFrame,
+    props: { style: attributes[0]?.attributes.style ?? '', parts: points }
+  }
+}
 
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
@@ -396,5 +595,42 @@ export const RENDERS: Record<string, Render> = {
   ),
   'atoms/chip#meta-chips': framed((texts) =>
     texts.map((fact) => ({ component: MetaChip, props: { text: fact.text ?? '' } }))
-  )
+  ),
+
+  // The nav slots in the kit's row: at rest, hovered and pressed; current; badged; the music
+  // toggle; warned; focused; the mode lever.
+  'atoms/slot#default-hover-pressed': slots(['map', 'map', 'map']),
+  'atoms/slot#current-page': slots(['mines']),
+  'atoms/slot#needs-you-badge': slots(['mines', 'mines']),
+  'atoms/slot#toggle': slots(['music-off', 'music-on']),
+  'atoms/slot#warning': slots(['settings']),
+  'atoms/slot#focus-visible': slots(['settings']),
+  'atoms/slot#mode-lever': slots(['valle', 'veta']),
+
+  // The portraits: the three ranks, the five statuses, the interaction looks, the three sizes.
+  'atoms/portrait#ranks': portraits(['worker', 'worker2', 'foreman']),
+  'atoms/portrait#status': portraits(['worker', 'worker2', 'foreman', 'worker', 'worker2']),
+  'atoms/portrait#interaction': portraits(['worker', 'worker', 'worker', 'worker']),
+  'atoms/portrait#sizes': portraits(['foreman', 'foreman', 'foreman']),
+
+  // The tier progress toward Gold and toward Copper, measuring, and at the top tier.
+  'atoms/progress#toward-gold': progress,
+  'atoms/progress#toward-copper': progress,
+  'atoms/progress#measuring': progress,
+  'atoms/progress#max-tier': progress,
+
+  // The ore capsules: every material, poorest first; the vault size; a material at zero.
+  'atoms/ore#every-material': oreRow,
+  'atoms/ore#large': oreAlone,
+  'atoms/ore#zero': oreAlone,
+
+  // The map markers on their points: every tier; hovered, pressed and open; asking; focused.
+  // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
+  'atoms/badge#badges': badges,
+  'atoms/badge#crew-state-pills': pills(),
+  'atoms/badge#semantic-pills': pills(['check']),
+  'atoms/marker#tiers': markers,
+  'atoms/marker#hover-pressed-open': markers,
+  'atoms/marker#needs-you': markers,
+  'atoms/marker#focus-visible': markers
 }

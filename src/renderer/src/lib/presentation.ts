@@ -220,3 +220,12 @@ export function vaultLabel(totals: MaterialTotals | undefined, tokensObserved: n
  * `facesLeft` from the station a dwarf stands at, or from the leg it is walking.
  * The mirror lives beside it, in the one component that draws a sprite.
  */
+
+/**
+ * A whole number as the redesigned surfaces write it: comma thousands ("1,630 / 2,048",
+ * "Coal: 280,612"). Spelled out rather than through `toLocaleString`, because the design fixes
+ * the shape and the locale of the machine must not change it (#635).
+ */
+export function groupDigits(n: number): string {
+  return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
