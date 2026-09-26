@@ -201,6 +201,12 @@
   --font-family-pixelify-sans: 'Pixelify Sans Variable', 'Segoe UI', system-ui, sans-serif;
   --font-family-roboto: 'Roboto Variable', 'Segoe UI', system-ui, sans-serif;
   --font-family-arial: Arial, Helvetica, 'Segoe UI', system-ui, sans-serif;
+  /*
+   * The titles face (#635), under the family its package registers. Not one
+   * of the faces the Interface and Messaging choices offer: it is blackletter,
+   * for titles only.
+   */
+  --font-family-jacquard-12: 'Jacquard 12', 'Segoe UI', system-ui, sans-serif;
 
   /* The Pixel UI role: everything outside messaging. */
   --font-pixel: var(--font-family-tiny5);
@@ -225,6 +231,36 @@
    * token here rather than the same stack spelled twice.
    */
   --font-code: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Consolas, monospace;
+
+  /*
+   * The redesign's four type roles (#635), plus code. A component names a
+   * role and a size, never a face. These are the DwarfAI preset, the default,
+   * spelled in CSS because the stylesheet is what paints before anything
+   * applies a preset; lib/typography/typePresets.ts holds all three presets
+   * and a test there keeps this block equal to its default. `--f-ui` is not a
+   * role and no preset repoints it.
+   *
+   * They sit beside --font-pixel and --font-conversation rather than
+   * replacing them: today's Interface and Messaging choices still repoint
+   * those two, until the Panel slice migrates that preference to a preset.
+   */
+  --f-ui: var(--font-family-tiny5);
+  --f-display: var(--font-family-jacquard-12);
+  --f-label: var(--font-family-tiny5);
+  --f-meta: var(--font-family-pixelify-sans);
+  --f-talk: var(--font-family-pixelify-sans);
+  --f-code: var(--font-code);
+
+  /*
+   * The type scale. A pixel face is sharp only at whole multiples of its em
+   * grid: Jacquard 12 is drawn on 21 units, so titles and headlines are 21px
+   * and never 26px, where it smears; Tiny5 on 8, so labels are 16px.
+   */
+  --fs-meta: 12px;
+  --fs-body: 14px;
+  --fs-section: 16px;
+  --fs-title: 21px;
+  --fs-headline: 21px;
 
   /* Closed edge rail. */
   --color-rail: var(--brass);
@@ -313,22 +349,25 @@
    * `foundations.md`'s Typography table for the amendment note.
    */
   /* Dense labels, controls and metadata. */
-  --text-meta: 12px;
+  --text-meta: var(--fs-meta);
   /*
    * What the crew says (#347). Its own rung rather than a second reader of
    * --text-helper, which happens to be 14px too: the two answer different
    * questions, and a correction to confirmation copy must not silently resize
    * every bubble in the panel.
    */
-  --text-conversation: 14px;
+  --text-conversation: var(--fs-body);
   /* Confirmation helper copy. */
   --text-helper: 14px;
   /* Settings section labels. */
-  --text-section: 16px;
+  --text-section: var(--fs-section);
   /* Settings title, mine type and project name. */
-  --text-title: 21px;
-  /* Modal and empty-state headline. */
-  --text-headline: 26px;
+  --text-title: var(--fs-title);
+  /*
+   * Modal and empty-state headline. AMENDED for #635: 21px with the
+   * redesign's scale, no longer 26px, where the titles face smears.
+   */
+  --text-headline: var(--fs-headline);
 
   /* One radius across rails, panels, cards, inputs, buttons and dialogs. */
   --radius-default: 12px;
@@ -513,4 +552,43 @@
 }
 .m-rivets::after {
   right: 4px;
+}
+
+/*
+ * The type steps (#635): each class sets its role, size and line height in
+ * one shorthand, so a step's line height and letter-spacing live with it and
+ * nowhere else. `.t-label` is the uppercase eyebrow of the small-text role.
+ */
+.t-meta {
+  font: 400 var(--fs-meta) / 1.3 var(--f-meta);
+  letter-spacing: 0.02em;
+}
+.t-label {
+  font: 400 var(--fs-meta) / 1.2 var(--f-meta);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.t-section {
+  font: 400 var(--fs-section) / 1.25 var(--f-label);
+}
+.t-title {
+  font: 400 var(--fs-title) / 1.15 var(--f-display);
+}
+.t-headline {
+  font: 400 var(--fs-headline) / 1.1 var(--f-display);
+}
+.t-talk {
+  font: 400 var(--fs-body) / 1.35 var(--f-talk);
+}
+.t-code {
+  font: 400 var(--fs-meta) / 1.4 var(--f-code);
+}
+.t-num {
+  font-variant-numeric: tabular-nums;
+}
+.t-soft {
+  color: var(--ink-soft);
+}
+.t-faint {
+  color: var(--ink-faint);
 }

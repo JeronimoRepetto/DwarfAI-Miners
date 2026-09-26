@@ -13,6 +13,7 @@
  * loads them, and nothing else: whatever differs from its reference is the component's.
  */
 import '@fontsource/tiny5/400.css'
+import '@fontsource/jacquard-12/400.css'
 import '@fontsource-variable/pixelify-sans'
 import '../assets/fonts/roboto/roboto.css'
 import '../assets/base.css'

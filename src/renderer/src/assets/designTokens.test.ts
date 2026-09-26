@@ -155,14 +155,19 @@ describe('design-tokens.css against the design foundations', () => {
    * ruling raised every rung by 2px rather than one. `foundations.md`'s
    * Typography table carries the amendment note; this is its transcription.
    */
+  /*
+   * AMENDED for #635: read through the alias, as the old size names now read the redesign's
+   * `--fs-*` scale. `--text-headline` moves from 26px to 21px with it — the redesign's titles face
+   * is drawn on 21 units and smears at 26px — and that is the one changed expectation here.
+   */
   it.each([
     ['--text-meta', '12px'],
     ['--text-helper', '14px'],
     ['--text-section', '16px'],
     ['--text-title', '21px'],
-    ['--text-headline', '26px']
+    ['--text-headline', '21px']
   ])('carries the design type size %s as %s', (name, value) => {
-    expect(valueOf(name)).toBe(value)
+    expect(resolvedValueOf(name)).toBe(value)
   })
 
   it.each([
@@ -288,7 +293,8 @@ describe('design-tokens.css against the design foundations', () => {
   })
 
   it('carries the conversation body size the amendment fixes at 14px', () => {
-    expect(valueOf('--text-conversation')).toBe('14px')
+    // AMENDED for #635: unchanged value, now held by --fs-body and aliased here.
+    expect(resolvedValueOf('--text-conversation')).toBe('14px')
   })
 
   /*
@@ -966,5 +972,85 @@ describe('design-tokens.css motion tokens (#635)', () => {
     )
     expect(reset?.declarations.get('animation-duration')).toBe('0.01ms !important')
     expect(reset?.declarations.get('transition-duration')).toBe('0.01ms !important')
+  })
+})
+
+describe('design-tokens.css type roles and scale (#635)', () => {
+  /*
+   * The app registers its faces under their hosted family names, and asking for a plain name it
+   * never registered loads nothing — so the titles face gets a `--font-family-*` stack like the
+   * others, with the same fallback, and the roles only reference stacks.
+   */
+  it('declares the titles face under its hosted family, with the app’s fallback', () => {
+    expect(rootToken('--font-family-jacquard-12')).toBe(
+      "'Jacquard 12', 'Segoe UI', system-ui, sans-serif"
+    )
+  })
+
+  it.each([
+    ['--f-ui', 'var(--font-family-tiny5)'],
+    ['--f-display', 'var(--font-family-jacquard-12)'],
+    ['--f-label', 'var(--font-family-tiny5)'],
+    ['--f-meta', 'var(--font-family-pixelify-sans)'],
+    ['--f-talk', 'var(--font-family-pixelify-sans)'],
+    ['--f-code', 'var(--font-code)']
+  ])('points the role %s at %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  it.each([
+    ['--fs-meta', '12px'],
+    ['--fs-body', '14px'],
+    ['--fs-section', '16px'],
+    ['--fs-title', '21px'],
+    // Never 26px: Jacquard 12 is drawn on 21 units and smears anywhere between its multiples.
+    ['--fs-headline', '21px']
+  ])('carries the type size %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  /*
+   * The old size names read the redesign's scale (the handoff's token mapping). `--text-headline`
+   * moves from 26px to 21px with it; `--text-helper` has no counterpart and keeps its literal.
+   */
+  it.each([
+    ['--text-meta', 'var(--fs-meta)'],
+    ['--text-conversation', 'var(--fs-body)'],
+    ['--text-section', 'var(--fs-section)'],
+    ['--text-title', 'var(--fs-title)'],
+    ['--text-headline', 'var(--fs-headline)']
+  ])('keeps the old size name %s as an alias of %s', (name, alias) => {
+    expect(rootToken(name)).toBe(alias)
+  })
+
+  // One line height and letter-spacing per step, carried by the class that sets the step.
+  it.each([
+    ['.t-meta', '400 var(--fs-meta) / 1.3 var(--f-meta)', '0.02em'],
+    ['.t-label', '400 var(--fs-meta) / 1.2 var(--f-meta)', '0.04em'],
+    ['.t-section', '400 var(--fs-section) / 1.25 var(--f-label)', undefined],
+    ['.t-title', '400 var(--fs-title) / 1.15 var(--f-display)', undefined],
+    ['.t-headline', '400 var(--fs-headline) / 1.1 var(--f-display)', undefined],
+    ['.t-talk', '400 var(--fs-body) / 1.35 var(--f-talk)', undefined],
+    ['.t-code', '400 var(--fs-meta) / 1.4 var(--f-code)', undefined]
+  ])('sets %s in its role, size and line height', (selector, font, letterSpacing) => {
+    expect(declared('design-tokens.css', selector, 'font')).toBe(font)
+    expect(declared('design-tokens.css', selector, 'letter-spacing')).toBe(letterSpacing)
+  })
+
+  it('sets the eyebrow in capitals and the helper classes by token', () => {
+    expect(declared('design-tokens.css', '.t-label', 'text-transform')).toBe('uppercase')
+    expect(declared('design-tokens.css', '.t-num', 'font-variant-numeric')).toBe('tabular-nums')
+    expect(declared('design-tokens.css', '.t-soft', 'color')).toBe('var(--ink-soft)')
+    expect(declared('design-tokens.css', '.t-faint', 'color')).toBe('var(--ink-faint)')
+  })
+
+  /*
+   * Bundled, never fetched, for the reason the faces above are: the CSP admits no remote origin.
+   * The golden page loads the app's faces as the app does, or a title would be graded in its
+   * fallback.
+   */
+  it.each([['main.ts'], ['golden/page.ts']])('bundles the titles face in %s', (file) => {
+    const entry = readFileSync(join(ASSETS_DIR, '..', file), 'utf8')
+    expect(entry).toContain("import '@fontsource/jacquard-12/400.css'")
   })
 })

@@ -104,6 +104,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.258",
     "@fontsource-variable/pixelify-sans": "^5.3.0",
+    "@fontsource/jacquard-12": "^5.3.0",
     "@fontsource/tiny5": "^5.3.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@typesafe-ai/sdk": "0.6.0",
