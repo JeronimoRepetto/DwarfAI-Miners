@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS, needsYouCount, reachableArea } from './panelNav'
+import { SHELL_AREAS } from './shellNav'
 
 const question = {
   toolUseId: 'tool-1',
@@ -28,6 +29,12 @@ describe('the Panel nav’s groups', () => {
     expect(SYSTEM_SLOTS.map((slot) => [slot.area, slot.label, slot.icon])).toEqual([
       ['settings', 'Settings', 'settings']
     ])
+  })
+
+  it('gives every area exactly one slot', () => {
+    // Taken over from shellNav's SHELL_NAV list, which went with the v4 nav.
+    const areas = [...WORLD_SLOTS, ...GUILD_SLOTS, ...SYSTEM_SLOTS].map((slot) => slot.area)
+    expect([...areas].sort()).toEqual([...SHELL_AREAS].sort())
   })
 
   it('names each slot by the design’s own slot id', () => {

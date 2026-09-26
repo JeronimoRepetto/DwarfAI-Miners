@@ -8,23 +8,25 @@ import { minWindowWidth } from '../platform/windowMetrics'
 /*
  * Crosses the main -> renderer boundary only to PIN two copies equal (see
  * AGENTS.md's boundaries section): the interior column main derives below,
- * against the renderer's own `interiorColumnWidth`, `DESIGN_INTERIOR_WIDTH`
- * and `SHELL_CONTENT_INSET` — asserted in "the derived columns" below.
+ * against the renderer's own `interiorColumnWidth` and `SHELL_CONTENT_INSET`,
+ * asserted in "the derived columns" and "the redesigned Panel grid" below.
+ * (`DESIGN_INTERIOR_WIDTH` left this import with the 245px case, #635.)
  * Production code never imports across this boundary either way.
  */
-import {
-  DESIGN_INTERIOR_WIDTH,
-  SHELL_CONTENT_INSET,
-  interiorColumnWidth
-} from '../../renderer/src/lib/scene/sceneSizing'
+import { SHELL_CONTENT_INSET, interiorColumnWidth } from '../../renderer/src/lib/scene/sceneSizing'
 import {
   DESIGN_COMPOSITION_HEIGHT,
   DESIGN_SCREEN_HEIGHT,
-  DESIGN_SECONDARY_WIDTH,
-  MAP_FRAME_INSET,
+  DOCK_INSET,
   MESSAGE_PANEL_DESIGN_WIDTH,
   MESSAGE_PANEL_GAP,
+  MINE_COLUMN_MIN_WIDTH,
+  NAV_WIDTH,
+  PAGE_WIDTH,
   RAIL_WIDTH,
+  SHELL_EDGE_MARGIN,
+  SHELL_GAP,
+  SHELL_PADDING,
   clampMessagePanelBounds,
   detachedMessagePanelBounds,
   detachedMessagePanelWidth,
@@ -131,11 +133,15 @@ describe('panelWidth', () => {
   })
 
   it('never asks for more width than the display has', () => {
-    // Narrower than the design's own composition, which the source does not
-    // cover: the panel spans the display rather than hanging off the side.
-    const narrow = { x: 0, y: 0, width: 480, height: 600 }
-    expect(panelWidth(narrow, OPEN)).toBe(480)
-    expect(panelWidth(narrow, OPEN_WITH_MINE)).toBe(480)
+    // Narrower than the design's own composition: the panel spans the display
+    // rather than hanging off the side (decision log, Narrow screen: the dock
+    // never grows past the screen).
+    // AMENDED for #635 (was: 480 wide): the redesigned grid is narrower than
+    // the map-shaped column it replaced, so 480x600 now holds the whole of it;
+    // 240 is narrower than the scaled grid again.
+    const narrow = { x: 0, y: 0, width: 240, height: 600 }
+    expect(panelWidth(narrow, OPEN)).toBe(240)
+    expect(panelWidth(narrow, OPEN_WITH_MINE)).toBe(240)
     // The rail is smaller than any display, so it is never clamped.
     expect(panelWidth(narrow, CLOSED, 'win32')).toBe(WIN32_FLOOR)
   })
@@ -247,92 +253,47 @@ describe('the scaled window', () => {
  * that width in the window; the renderer draws into it (sceneSizing, MapView).
  */
 describe('the derived columns', () => {
-  it('reproduces the design’s own 245px interior at the design’s own 768-tall composition', () => {
-    // The design never stated 245 as a constant: it is this rule evaluated at
-    // the composition's own height, which is why it is checked rather than
-    // copied. One pixel of rounding is the whole disagreement.
-    expect(mineColumnWidth(DESIGN_COMPOSITION_HEIGHT)).toBeCloseTo(DESIGN_INTERIOR_WIDTH + 8, -0.5)
-  })
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "reproduces the
+   * design’s own 245px interior at the design’s own 768-tall composition". 245
+   * was the retired v4 mock's column; the redesign draws the mine column at
+   * the painting's height less its chrome, floored at 300px, which "the
+   * redesigned Panel grid" above pins at the design screen and beyond it.
+   */
 
   it('reserves exactly the interior column the renderer draws, plus the gap beside it', () => {
+    // AMENDED for #635 (was: `- 8`): the gap is the redesign's 6px.
     for (const height of [600, DESIGN_COMPOSITION_HEIGHT, 1032, 1392, 2160]) {
-      expect(mineColumnWidth(height) - 8).toBe(interiorColumnWidth(height))
+      expect(mineColumnWidth(height) - SHELL_GAP).toBe(interiorColumnWidth(height))
     }
   })
 
-  it('never squeezes the secondary column below the design’s own content width', () => {
-    expect(secondaryColumnWidth(200)).toBe(DESIGN_SECONDARY_WIDTH)
-    expect(secondaryColumnWidth(DESIGN_COMPOSITION_HEIGHT)).toBeGreaterThan(DESIGN_SECONDARY_WIDTH)
+  it('gives the page one width whatever the display’s height', () => {
+    // AMENDED for #635 (was: "never squeezes the secondary column below the
+    // design’s own content width", against the 555px floor of a column that
+    // followed the map's shape). The page is 440px whatever it shows.
+    expect(secondaryColumnWidth(200)).toBe(PAGE_WIDTH)
+    expect(secondaryColumnWidth(DESIGN_COMPOSITION_HEIGHT)).toBe(PAGE_WIDTH)
+    expect(secondaryColumnWidth(2160)).toBe(PAGE_WIDTH)
   })
 
-  /**
-   * The third acceptance run's first correction (#165): the map painting sat
-   * with margins inside its column.
-   *
-   * The column followed the map's aspect against the WHOLE content height, but
-   * the painting never sees the whole of it — the design's map container spends
-   * 21px of padding and a 2px border on every side first. So the box the
-   * painting was actually drawn into was 46px shorter and 46px narrower than
-   * the one the width was derived for, its shape no longer matched the art, and
-   * `contain` letterboxed the difference. Measured in design pixels below,
-   * because the margin is a number and not an impression.
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: the describe
+   * block "the map column hugs its painting" (#165) and its three cases —
+   * "leaves the painting no margin at the design screen", "leaves it none at
+   * any height the fit rule governs" and "counts the same frame the stylesheet
+   * draws" — with this file's import of `MAP_FRAME_INSET`. They held a
+   * secondary column derived from the map painting's shape inside its frame;
+   * the redesign gives the page one 440px width whatever it shows, so there is
+   * no derivation left to hold. The map page's own fit is the map-page
+   * organism's, rebuilt in its own slice of #635.
    */
-  describe('the map column hugs its painting', () => {
-    /** The delivered map art, as `MAP_ART_SIZE` in renderer/src/lib/art.ts. */
-    const MAP_ART = { width: 1856, height: 2304 }
-
-    /** The box the painting is drawn into, inside the map container's own frame. */
-    function mapBox(windowHeight: number): { width: number; height: number } {
-      return {
-        width: secondaryColumnWidth(windowHeight) - MAP_FRAME_INSET,
-        height: windowHeight - SHELL_CONTENT_INSET - MAP_FRAME_INSET
-      }
-    }
-
-    /** What `object-fit: contain` leaves empty in that box, per axis, in design px. */
-    function letterbox(windowHeight: number): { x: number; y: number } {
-      const box = mapBox(windowHeight)
-      const scale = Math.min(box.width / MAP_ART.width, box.height / MAP_ART.height)
-      return {
-        x: box.width - MAP_ART.width * scale,
-        y: box.height - MAP_ART.height * scale
-      }
-    }
-
-    it('leaves the painting no margin at the design screen', () => {
-      // Was 11.3 design px of empty column above and below the map, on a box
-      // 1018 tall — the margin the acceptance run photographed. Sub-pixel is
-      // the whole of what integer column widths can leave behind.
-      const empty = letterbox(DESIGN_SCREEN_HEIGHT)
-      expect(empty.x).toBeLessThan(1)
-      expect(empty.y).toBeLessThan(1)
-    })
-
-    it('leaves it none at any height the fit rule governs', () => {
-      for (const height of [DESIGN_COMPOSITION_HEIGHT, 1032, 1392, 2160]) {
-        const empty = letterbox(height)
-        expect(empty.x).toBeLessThan(1)
-        expect(empty.y).toBeLessThan(1)
-      }
-    })
-
-    it('counts the same frame the stylesheet draws', () => {
-      // The inset is a copy of CSS main cannot read, so it is pinned to the
-      // tokens themselves: `.panel-frame.is-map` spends --space-map-pad on
-      // every side inside a --border-highlight border.
-      const css = readFileSync(
-        join(import.meta.dirname, '../../renderer/src/assets/design-tokens.css'),
-        'utf8'
-      )
-      const pad = Number(/--space-map-pad:\s*(\d+)px/.exec(css)?.[1])
-      const border = Number(/--border-highlight:\s*(\d+)px/.exec(css)?.[1])
-      expect(MAP_FRAME_INSET).toBe(2 * (pad + border))
-    })
-  })
 
   it('spends the opened width on the design’s own chrome plus that column', () => {
+    // AMENDED for #635 (was: 90, the v4 frame). The redesigned plate: both
+    // edge margins, the padding, the nav, the rail and two gaps.
     for (const height of [DESIGN_COMPOSITION_HEIGHT, 1392]) {
-      expect(expandedWidth(height) - secondaryColumnWidth(height)).toBe(90)
+      expect(expandedWidth(height) - secondaryColumnWidth(height)).toBe(104)
     }
   })
 
@@ -341,6 +302,73 @@ describe('the derived columns', () => {
       expect(Number.isInteger(mineColumnWidth(height))).toBe(true)
       expect(Number.isInteger(secondaryColumnWidth(height))).toBe(true)
       expect(Number.isInteger(expandedWidth(height))).toBe(true)
+    }
+  })
+})
+
+/*
+ * ADDED for #635. The redesigned Panel's grid (screens/shell.md, Layout and
+ * Parts): the nav column at the screen edge, the page column beside it, and the
+ * mine column between them while a mine is open, on one rock plate with a 6px
+ * padding and 6px gaps, held 2px off the screen edge. The closed rail stays
+ * exactly as it was (#388) until the Veta slice retires it, so it is still
+ * the free-side column of every open composition.
+ */
+describe('the redesigned Panel grid', () => {
+  it('declares the grid’s own columns and spacing', () => {
+    expect(NAV_WIDTH).toBe(56)
+    expect(PAGE_WIDTH).toBe(440)
+    expect(MINE_COLUMN_MIN_WIDTH).toBe(300)
+    expect(SHELL_PADDING).toBe(6)
+    expect(SHELL_GAP).toBe(6)
+    expect(SHELL_EDGE_MARGIN).toBe(2)
+    expect(DOCK_INSET).toBe(12)
+  })
+
+  it('spends the opened width on the plate, the nav, the page and the rail', () => {
+    // 2 + 6 + 56 + 6 + 440 + 6 + 20 + 6 + 2: the edge margin and the plate's
+    // own frame edge on the free side, the padding, the nav, the page and the
+    // rail with a gap before each of the last two.
+    expect(expandedWidth(DESIGN_SCREEN_HEIGHT)).toBe(544)
+    expect(expandedWidth(1392)).toBe(544)
+  })
+
+  it('draws the mine column at the painting’s height less its chrome, never under 300px', () => {
+    // The column is as tall as the shell's content: the work area less the
+    // dock's 12px top and bottom and the plate's 6px padding.
+    const art = (height: number) => Math.round((height - 36 - 196) * (1184 / 3622))
+    expect(mineColumnWidth(DESIGN_SCREEN_HEIGHT)).toBe(300 + SHELL_GAP)
+    expect(mineColumnWidth(3000)).toBe(art(3000) + 16 + SHELL_GAP)
+    expect(mineColumnWidth(0)).toBe(300 + SHELL_GAP)
+  })
+
+  it('adds only the mine column and its gap when a mine opens beside the page', () => {
+    expect(panelWidth(AT_1X, OPEN_WITH_MINE) - panelWidth(AT_1X, OPEN)).toBe(306)
+  })
+
+  it('keeps the mine column and the nav, without the page, when only the page closes', () => {
+    expect(mineOnlyWidth(DESIGN_SCREEN_HEIGHT)).toBe(544 - PAGE_WIDTH - SHELL_GAP + 306)
+  })
+
+  it('reserves the same grid the renderer’s stylesheet draws', () => {
+    // main cannot read CSS, so its copies are pinned to the stylesheet itself,
+    // the way the design tokens were pinned for the map frame before (#165).
+    const app = readFileSync(join(import.meta.dirname, '../../renderer/src/App.vue'), 'utf8')
+    const px = (name: string) => Number(new RegExp(`--${name}:\\s*(\\d+)px`).exec(app)?.[1])
+    expect(px('shell-pad')).toBe(SHELL_PADDING)
+    expect(px('shell-gap')).toBe(SHELL_GAP)
+    expect(px('shell-edge')).toBe(SHELL_EDGE_MARGIN)
+    expect(px('dock-inset')).toBe(DOCK_INSET)
+    expect(px('page-width')).toBe(PAGE_WIDTH)
+    // And the renderer's own copy of the height they leave the mine column.
+    expect(SHELL_CONTENT_INSET).toBe(2 * DOCK_INSET + 2 * SHELL_PADDING)
+  })
+
+  it('composes the same design width on every platform', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      for (const layout of [OPEN, OPEN_WITH_MINE, { expanded: false, mineOpen: true }]) {
+        expect(panelWidth(AT_1X, layout, platform)).toBe(panelWidth(AT_1X, layout, 'win32'))
+      }
     }
   })
 })
@@ -476,10 +504,14 @@ describe('panelBounds', () => {
  */
 describe('the mine column against the panel it opens beside', () => {
   it('leaves the secondary panel room the mine column never eats into', () => {
-    // The mine is mounted OUTBOARD of the navigation stack, so opening one
-    // widens the window rather than squeezing what is already in it.
+    // Opening a mine widens the window rather than squeezing what is already
+    // in it. AMENDED for #635 (was: the whole opened width compared with the
+    // mine column's): the page is a fixed 440px now, so a tall display's mine
+    // column may be the wider of the two; what opening one must never do is
+    // take width from the page, which is what this asserts.
     for (const height of [600, DESIGN_COMPOSITION_HEIGHT, 1392, 2160]) {
-      expect(expandedWidth(height)).toBeGreaterThan(mineColumnWidth(height))
+      expect(expandedWidth(height) + mineColumnWidth(height)).toBeGreaterThan(expandedWidth(height))
+      expect(secondaryColumnWidth(height)).toBe(PAGE_WIDTH)
     }
   })
 
@@ -584,12 +616,16 @@ describe('messagePanelBounds', () => {
    */
   describe('when the display has no 990px of room beside the shell', () => {
     it('shrinks to the room it has rather than hanging off the display', () => {
-      const shell = shellAt(AT_1X, 'right', OPEN_WITH_MINE)
-      const bounds = messagePanelBounds(AT_1X, shell, 'right', DESIGN_HEIGHT)
+      // AMENDED for #635 (was: the 1920-wide AT_1X): the redesigned shell is
+      // narrow enough to leave 990 free there, so a 1600-wide display is the
+      // one whose widest composition leaves less than 990.
+      const area = { x: 0, y: 0, width: 1600, height: DESIGN_SCREEN_HEIGHT }
+      const shell = shellAt(area, 'right', OPEN_WITH_MINE)
+      const bounds = messagePanelBounds(area, shell, 'right', DESIGN_HEIGHT)
       // The widest composition — a page and a mine — leaves less than 990.
-      expect(bounds.width).toBeLessThan(scaled(AT_1X, MESSAGE_PANEL_DESIGN_WIDTH))
-      expect(bounds.width).toBe(shell.x - AT_1X.x - scaled(AT_1X, MESSAGE_PANEL_GAP))
-      expect(bounds.x).toBe(AT_1X.x)
+      expect(bounds.width).toBeLessThan(scaled(area, MESSAGE_PANEL_DESIGN_WIDTH))
+      expect(bounds.width).toBe(shell.x - area.x - scaled(area, MESSAGE_PANEL_GAP))
+      expect(bounds.x).toBe(area.x)
     })
 
     it('never flips to the shell’s other side, and never covers it', () => {
@@ -837,13 +873,17 @@ describe('messagePanelPlacement', () => {
   it('lets the person put the panel ON TOP of the shell', () => {
     // It is already a child window, so it stands above the shell; nothing here
     // may refuse an overlap somebody chose.
+    // AMENDED for #635 (was: anchored at the shell's own left edge): the
+    // redesigned shell is narrow enough that a 990 panel anchored there would
+    // run off the display and be clamped back, so it is anchored 200px short of
+    // the shell and still overlaps it.
     const shell = panelBounds(AT_1X, 'right', OPEN_WITH_MINE)
     const onTop = messagePanelPlacement(AT_1X, shell, 'right', DESIGN_HEIGHT, {
-      x: shell.x,
+      x: shell.x - 200,
       bottom: shell.y + shell.height
     })
-    expect(onTop.x).toBe(shell.x)
-    expect(onTop.x).toBeLessThan(shell.x + shell.width)
+    expect(onTop.x).toBe(shell.x - 200)
+    expect(onTop.x + onTop.width).toBeGreaterThan(shell.x)
   })
 
   it('keeps resizing in place when the panel reports a new height', () => {

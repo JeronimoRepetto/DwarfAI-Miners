@@ -3,6 +3,41 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import PanelNav from './PanelNav.vue'
 
+/*
+ * This file replaces ShellNav.test.ts, REMOVED for #635 with ShellNav.vue, the
+ * v4 nav it tested; stated here, where its coverage went, rather than passing
+ * unseen. Its cases and where each guarantee lives now:
+ *
+ * - "draws the six buttons the design names, in its order" and "gives every
+ *   button a different icon": the groups below, lib/shell/panelNav.test.ts, and
+ *   the four organisms/nav goldens, which grade every icon's pixels.
+ * - "gives every button a real keyboard-reachable control": NavSlot.test.ts
+ *   (every slot is a type=button <button>) and the mark case below.
+ * - "marks exactly the selected area as pressed": the World group case below;
+ *   the redesign marks it with aria-current, not aria-pressed.
+ * - "names the area it was pressed for, and selects nothing itself": below.
+ * - "carries the app mark above the stack", "makes the app mark the control
+ *   that hides the window", "asks to be hidden, and hides nothing itself": the
+ *   app mark case below, and App.test.ts's app mark cases.
+ * - "draws each icon from the design’s own SVG rather than a substitute": gone
+ *   with the SVG masks; the icon atom's registry (lib/icon) draws every glyph.
+ * - "flags a broken shortcut on the settings button…" and "leaves the settings
+ *   button unflagged…": the Settings warning case below.
+ * - The music button's five: "draws it below the six areas, at the bottom of
+ *   the column", "keeps one accessible name and carries the state on
+ *   aria-pressed", "flips the glyph between the designer’s two music icons" and
+ *   "asks for the toggle and changes nothing itself" live in the System group
+ *   and Music cases below; "says what the current state does, so the tooltip is
+ *   not just a label" went with the title it tested — a nav slot's tooltip is
+ *   its rising label, the same word in both states.
+ * - The press and hover feedback's four: "routes every control through
+ *   motion.button carrying the shared variants", "has no disabled control in
+ *   any state…", "grows a control under a hover and leaves the transform the
+ *   fold wrote on the strip alone" went with the motion-v gesture the design
+ *   replaced — a slot sinks one art pixel by CSS on its own box (NavSlot.vue),
+ *   never on the nav's root; "leaves the root the plain navigation landmark the
+ *   fold carries" is the first case below.
+ */
 const slot = (nav: ReturnType<typeof mount>, label: string) =>
   nav.get(`.dm-slot[data-label="${label}"]`)
 const group = (nav: ReturnType<typeof mount>, name: string) =>
@@ -74,7 +109,7 @@ describe('PanelNav', () => {
 
   it('puts the System group last, below the spacer: Settings, then the music toggle', () => {
     const nav = mount(PanelNav, { props: { page: 'settings' } })
-    const children = Array.from(nav.element.children).map((el) => el.className)
+    const children = Array.from((nav.element as HTMLElement).children).map((el) => el.className)
     expect(children.slice(-2)).toEqual(['dm-nav__spacer', 'dm-nav__group'])
     const system = group(nav, 'System')
     expect(system.findAll(':scope > .dm-slot').map((s) => s.attributes('data-label'))).toEqual([

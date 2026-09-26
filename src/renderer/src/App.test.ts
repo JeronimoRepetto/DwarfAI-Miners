@@ -45,10 +45,21 @@ const OPEN_LAYOUT = { edge: 'right', expanded: true, mineOpen: false }
  * name where it moved to. They are constants rather than literals because the
  * same three appear in nearly every test below.
  */
-const NAV = '.shell-nav .nav-button'
-const NAV_SETTINGS = `${NAV}[aria-label="Settings"]`
-const NAV_MAP = `${NAV}[aria-label="Map"]`
-const NAV_MINES = `${NAV}[aria-label="Mines"]`
+// AMENDED for #635 (was: `.shell-nav .nav-button` found by aria-label). The
+// redesigned nav's slots are `.dm-slot`s, found by the label they rise with:
+// the Mines slot's accessible name carries its needs-you count.
+const NAV = '.dm-nav .dm-slot'
+const NAV_SETTINGS = `${NAV}[data-label="Settings"]`
+const NAV_MAP = `${NAV}[data-label="Map"]`
+const NAV_MINES = `${NAV}[data-label="Mines"]`
+// AMENDED for #635, and once here rather than at each use: the nav's root is
+// `.dm-nav` (was `.shell-nav`), its app mark `.dm-nav__mark` (was
+// `.nav-mark`), and the music toggle is the System group's Music slot (was
+// `.nav-music`). Each case below that only changed selector is otherwise
+// untouched; the ones whose assertions changed say so where they stand.
+const NAV_MUSIC = `${NAV}[data-label="Music"]`
+/** The guild areas revealed, which main's configuration keeps hidden by default (#635). */
+const GUILD_ON = { getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnabled: true }) }
 
 /*
  * WHAT LEFT THIS FILE FOR #162, and where each block went.
@@ -158,6 +169,9 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
     setToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
     getAppBuild: vi.fn().mockResolvedValue(DEFAULT_BUILD),
+    // The features that ship hidden (#635), all off by default as main's
+    // configuration is; only the tests about a flag turn one on.
+    getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnabled: false }),
     // The browse surface (#92). Answered empty by default: only the tests that
     // are about the Mines panel care what comes back.
     queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
@@ -422,13 +436,13 @@ describe('App panel motion (#164)', () => {
     await flushPromises()
     expect(animated()).toEqual(['shell'])
     expect(wrapper.find('.shell-secondary').exists()).toBe(true)
-    expect(wrapper.find('.shell-nav').exists()).toBe(true)
+    expect(wrapper.find('.dm-nav').exists()).toBe(true)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     animations[0]!.finish()
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
     expect(wrapper.find('.shell-secondary').exists()).toBe(false)
-    expect(wrapper.find('.shell-nav').exists()).toBe(false)
+    expect(wrapper.find('.dm-nav').exists()).toBe(false)
   })
 
   it('crossfades same-size secondary navigation without another native resize', async () => {
@@ -702,12 +716,15 @@ describe('App settings entry point', () => {
     // art. The redesign's icons are the designer's SVG files, drawn through a
     // CSS mask so idle and selected take their colour from the tokens — so what
     // is checked is that a real icon is bound, not that it is inlined.
+    // AMENDED again for #635: the slot draws its icon from the registry
+    // (`.dm-icon`), and carries no `title` — its label rises beside it
+    // (`data-label`), which is the design's tooltip for a nav slot.
     const { wrapper } = await mountOpenApp()
     const gear = wrapper.find(NAV_SETTINGS)
     expect(gear.attributes('type')).toBe('button')
     expect(gear.attributes('aria-label')).toBe('Settings')
-    expect(gear.attributes('title')).toBeTruthy()
-    expect(gear.find('.nav-icon').attributes('style')).toMatch(/--nav-icon:\s*url\(/)
+    expect(gear.attributes('data-label')).toBe('Settings')
+    expect(gear.find('.dm-icon').exists()).toBe(true)
     expect(gear.text()).toBe('')
   })
 
@@ -720,17 +737,19 @@ describe('App settings entry point', () => {
     // it as stale for what is now a full-page screen (see
     // ShortcutSettings.test.ts). `.settings-panel` is the screen's own root
     // and is what "settings is open" now means.
+    // AMENDED a third time for #635: the page shown carries
+    // `aria-current="page"` (was `aria-pressed`), as the design's slot does.
     const { wrapper } = await mountOpenApp()
     expect(wrapper.find('.settings-panel').exists()).toBe(false)
-    expect(wrapper.find(NAV_SETTINGS).attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find(NAV_SETTINGS).attributes('aria-current')).toBeUndefined()
 
     await wrapper.find(NAV_SETTINGS).trigger('click')
     expect(wrapper.find('.settings-panel').exists()).toBe(true)
-    expect(wrapper.find(NAV_SETTINGS).attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find(NAV_SETTINGS).attributes('aria-current')).toBe('page')
 
     await wrapper.find(NAV_MAP).trigger('click')
     expect(wrapper.find('.settings-panel').exists()).toBe(false)
-    expect(wrapper.find(NAV_SETTINGS).attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find(NAV_SETTINGS).attributes('aria-current')).toBeUndefined()
   })
 
   // REMOVED (#138): Settings drew its own close (x) only as part of the
@@ -752,14 +771,17 @@ describe('App settings entry point', () => {
         error: 'Ctrl + Alt + Shift + P is already in use by another application.'
       })
     })
+    // AMENDED for #635 (was: the class `is-broken` and a title reading
+    // "unavailable"): the design's slot warns with `data-warn`, its dot in
+    // the corner, and has no title of its own; Settings says why once open.
     const gear = wrapper.find(NAV_SETTINGS)
-    expect(gear.classes()).toContain('is-broken')
-    expect(gear.attributes('title')).toMatch(/unavailable/i)
+    expect(gear.attributes('data-warn')).toBe('true')
   })
 
   it('does not flag the gear when the shortcut is working', async () => {
+    // AMENDED for #635 (was: the class `is-broken`), as above.
     const { wrapper } = await mountOpenApp()
-    expect(wrapper.find(NAV_SETTINGS).classes()).not.toContain('is-broken')
+    expect(wrapper.find(NAV_SETTINGS).attributes('data-warn')).toBeUndefined()
   })
 })
 
@@ -1062,17 +1084,19 @@ describe('App mines browse', () => {
     // AMENDED: the accessible name was "Browse mines" on a titlebar button. It
     // is "Mines" now, because the design names the navigation buttons and this
     // is the name it gives this one.
+    // AMENDED for #635: the state is `aria-current` (was `aria-pressed`).
     const { wrapper } = await mountOpenApp()
     const mines = wrapper.find(NAV_MINES)
     expect(mines.attributes('type')).toBe('button')
     expect(mines.attributes('aria-label')).toBe('Mines')
-    expect(mines.attributes('aria-pressed')).toBe('false')
+    expect(mines.attributes('aria-current')).toBeUndefined()
   })
 
   it('draws the entry point from the design’s own icon, not text or emoji', async () => {
     const { wrapper } = await mountOpenApp()
+    // AMENDED for #635: the icon is the registry's (`.dm-icon`), not a mask.
     const mines = wrapper.find(NAV_MINES)
-    expect(mines.find('.nav-icon').attributes('style')).toMatch(/--nav-icon:\s*url\(/)
+    expect(mines.find('.dm-icon').exists()).toBe(true)
     expect(mines.text()).toBe('')
   })
 
@@ -1122,7 +1146,8 @@ describe('App mines browse', () => {
     const { wrapper } = await mountOpenApp()
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    expect(wrapper.find(NAV_MINES).attributes('aria-pressed')).toBe('true')
+    // AMENDED for #635: `aria-current` (was `aria-pressed`).
+    expect(wrapper.find(NAV_MINES).attributes('aria-current')).toBe('page')
     await wrapper.find(NAV_MINES).trigger('click')
     expect(wrapper.find('.mines-panel').exists()).toBe(true)
     await wrapper.find(NAV_MAP).trigger('click')
@@ -1302,7 +1327,7 @@ describe('App shell', () => {
   it('starts as the rail, with no screen drawn behind it', async () => {
     const { wrapper } = await mountApp()
     expect(wrapper.find('.edge-rail').exists()).toBe(true)
-    expect(wrapper.find('.shell-nav').exists()).toBe(false)
+    expect(wrapper.find('.dm-nav').exists()).toBe(false)
     expect(wrapper.find('.map-view').exists()).toBe(false)
   })
 
@@ -1321,7 +1346,7 @@ describe('App shell', () => {
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false })
     expect(wrapper.find('.map-view').exists()).toBe(true)
-    expect(wrapper.find('.shell-nav').exists()).toBe(true)
+    expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
 
   it('stays closed when main refuses to open it', async () => {
@@ -1341,15 +1366,25 @@ describe('App shell', () => {
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.shell-nav').exists()).toBe(false)
+    expect(wrapper.find('.dm-nav').exists()).toBe(false)
   })
 
   it('shows the Lab and the Market as the design specifies them: unavailable', async () => {
-    const { wrapper } = await mountOpenApp()
-    await wrapper.find(`${NAV}[aria-label="Lab"]`).trigger('click')
+    // AMENDED for #635: the guild areas ship hidden, so this case reveals
+    // them first; the case below it holds what the default shows.
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    await wrapper.find(`${NAV}[data-label="Lab"]`).trigger('click')
     expect(wrapper.find('.unavailable').text()).toContain('rebuild the lab')
-    await wrapper.find(`${NAV}[aria-label="Market"]`).trigger('click')
+    await wrapper.find(`${NAV}[data-label="Market"]`).trigger('click')
     expect(wrapper.find('.unavailable').text()).toContain('rebuild the market')
+  })
+
+  // ADDED for #635: while the flag is off nothing points at the guild areas.
+  it('draws no guild slot at all while the guild areas are hidden', async () => {
+    const { wrapper } = await mountOpenApp()
+    expect(wrapper.find('.dm-nav__group[aria-label="Guild"]').exists()).toBe(false)
+    for (const label of ['Lab', 'Market', 'Laboral Union'])
+      expect(wrapper.find(`${NAV}[data-label="${label}"]`).exists()).toBe(false)
   })
 
   it('shows the Laboral Union the same way, as the design’s sixth area', async () => {
@@ -1357,8 +1392,9 @@ describe('App shell', () => {
     // complete, and says outright that the hall is not open yet. Selecting it
     // must reach the SAME shared overlay Lab and Market do — a fourth panel
     // invented for it would be the gap the source deliberately left.
-    const { wrapper } = await mountOpenApp()
-    await wrapper.find(`${NAV}[aria-label="Laboral Union"]`).trigger('click')
+    // AMENDED for #635: revealed first, as above.
+    const { wrapper } = await mountOpenApp(GUILD_ON)
+    await wrapper.find(`${NAV}[data-label="Laboral Union"]`).trigger('click')
     expect(wrapper.find('.unavailable').text()).toContain('rebuild the Laboral Union')
     expect(wrapper.find('.unavailable').text()).toContain('Please come back later.')
   })
@@ -1424,7 +1460,7 @@ describe('App concurrent mine', () => {
     expect(wrapper.find('.map-view').exists()).toBe(false)
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     // The navigation stack stays: it is how the panel comes back.
-    expect(wrapper.find('.shell-nav').exists()).toBe(true)
+    expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
 
   /*
@@ -1463,7 +1499,7 @@ describe('App concurrent mine', () => {
    */
   it('draws the app mark exactly once, in every composition', async () => {
     const { wrapper } = await openMine()
-    const marks = (): number => wrapper.findAll('.rail-mark, .nav-mark-art').length
+    const marks = (): number => wrapper.findAll('.rail-mark, .dm-nav__mark').length
     expect(marks()).toBe(1)
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
@@ -1484,7 +1520,7 @@ describe('App concurrent mine', () => {
   it('hides the whole window from the app mark, mine and all', async () => {
     const { wrapper, api } = await openMine()
     const beforeMark = api.setPanelLayout.mock.calls.length
-    await wrapper.find('.nav-mark').trigger('click')
+    await wrapper.find('.dm-nav__mark').trigger('click')
     await flushPromises()
     expect(api.hidePanel).toHaveBeenCalledOnce()
     // The window went away; the panel it will come back as did not change.
@@ -1493,11 +1529,11 @@ describe('App concurrent mine', () => {
 
   it('leaves the mine and the page standing, because hiding forgets nothing', async () => {
     const { wrapper } = await openMine()
-    await wrapper.find('.nav-mark').trigger('click')
+    await wrapper.find('.dm-nav__mark').trigger('click')
     await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     expect(wrapper.find('.map-view').exists()).toBe(true)
-    expect(wrapper.find('.shell-nav').exists()).toBe(true)
+    expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
 
   it('lands on the rail when the last mine closes with the panel already closed', async () => {
@@ -2180,16 +2216,16 @@ describe('App audio (#174, #173)', () => {
   it('starts the music with the shell, and draws the button as playing', async () => {
     const { wrapper } = await audioApp()
     expect(opened).toHaveLength(1)
-    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
   })
 
   it('stops the music from the shell button and starts it again', async () => {
     const { wrapper } = await audioApp()
-    await wrapper.find('.nav-music').trigger('click')
-    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('false')
+    await wrapper.find(NAV_MUSIC).trigger('click')
+    expect(wrapper.find(NAV_MUSIC).attributes('aria-pressed')).toBe('false')
 
-    await wrapper.find('.nav-music').trigger('click')
-    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+    await wrapper.find(NAV_MUSIC).trigger('click')
+    expect(wrapper.find(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
     // A fresh track rather than a resumed one: turning the music off releases
     // what was playing (see engine.ts).
     expect(opened).toHaveLength(2)
@@ -2202,10 +2238,10 @@ describe('App audio (#174, #173)', () => {
         .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, musicAtStartup: false })
     })
     expect(opened).toHaveLength(0)
-    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find(NAV_MUSIC).attributes('aria-pressed')).toBe('false')
 
     // The button is still the way in, which is #174's own acceptance step.
-    await wrapper.find('.nav-music').trigger('click')
+    await wrapper.find(NAV_MUSIC).trigger('click')
     expect(opened).toHaveLength(1)
   })
 
@@ -2272,7 +2308,7 @@ describe('App audio (#174, #173)', () => {
     expect(wrapper.find('.mute-ambience').attributes('aria-pressed')).toBe('true')
     // The music is untouched, which is the whole point of a mute that names
     // one channel (#173).
-    expect(wrapper.find('.nav-music').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
   })
 
   it('gives a clicked dwarf its rank voice, once', async () => {
@@ -2302,8 +2338,10 @@ describe('App audio (#174, #173)', () => {
    * the loop being left to run over whatever it finds.
    */
   it('clicks on each of the navigation column’s six area buttons (#323)', async () => {
-    const { wrapper } = await audioApp()
-    const buttons = wrapper.findAll('.nav-button')
+    // AMENDED for #635: the six areas are the slots naming one
+    // (`data-slot`), and three of them are the guild's, revealed here.
+    const { wrapper } = await audioApp(GUILD_ON)
+    const buttons = wrapper.findAll(`${NAV}[data-slot]`)
     expect(buttons).toHaveLength(6)
 
     for (const button of buttons) {
@@ -2337,7 +2375,7 @@ describe('App audio (#174, #173)', () => {
   it('leaves the music button silent, because it is not an interface press (#323)', async () => {
     const { wrapper } = await audioApp()
     const before = opened.length
-    await wrapper.find('.nav-music').trigger('click')
+    await wrapper.find(NAV_MUSIC).trigger('click')
     await flushPromises()
     // AMENDED for #637: both interface files were renamed with their replacements.
     const sfx = opened

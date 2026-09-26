@@ -17,7 +17,7 @@ import MinesPanel from './components/browse/MinesPanel.vue'
 import PanelFrame from './components/shell/PanelFrame.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
-import ShellNav from './components/shell/ShellNav.vue'
+import PanelNav from './components/shell/PanelNav.vue'
 import UnavailablePanel from './components/shell/UnavailablePanel.vue'
 import { useAudio } from './composables/useAudio'
 import { useDwarfDelivery } from './composables/useDwarfDelivery'
@@ -36,13 +36,28 @@ import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
 import { INTERIOR_ART_SIZE } from './lib/art'
+import {
+  MINE_COLUMN_ART_INSET,
+  MINE_COLUMN_CHROME_HEIGHT,
+  MINE_COLUMN_MIN_WIDTH,
+  SHELL_CONTENT_INSET
+} from './lib/scene/sceneSizing'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { shellComposition } from './lib/shell/composition'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
+import { needsYouCount, reachableArea } from './lib/shell/panelNav'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import type { AppBuild, Dwarf, Mine, MineHistoryResult, MinesSnapshot, ShellArea } from './types'
+import type {
+  AppBuild,
+  Dwarf,
+  FeatureFlags,
+  Mine,
+  MineHistoryResult,
+  MinesSnapshot,
+  ShellArea
+} from './types'
 
 const props = defineProps<{
   /**
@@ -247,13 +262,18 @@ const shellEl = ref<HTMLElement | null>(null)
  */
 const railEl = ref<ComponentPublicInstance | null>(null)
 /*
- * The secondary panel and the navigation stack, which now travel with the
- * fold too whenever the mine column is what closes or opens beside them
- * (#566 T5b): both dock beyond the mine column's own free side, which #464
- * had no evidence for and so never carried. `secondaryEl` is a plain
- * element's own ref; `navEl` reads `ShellNav`'s root the same guarded way
- * `railEl` reads `EdgeRail`'s, because a component ref answers an instance,
- * not a node.
+ * The page, which travels with the fold too whenever the mine column is what
+ * closes or opens beside it (#566 T5b): it stands on the mine column's free
+ * side, which #464 had no evidence for and so never carried. `secondaryEl` is
+ * a plain element's own ref.
+ *
+ * The nav is no longer carried (#635). It stands at the screen edge now, docked
+ * of every other column, so nothing that leaves or arrives is ever between it
+ * and the edge: "opening or closing a mine never moves the nav" is the design's
+ * rule and this is the fold keeping it. It is still named as the strip, the
+ * wall a drawer goes behind — the mine column slides out from behind it now.
+ * `navEl` reads the nav's root the same guarded way `railEl` reads
+ * `EdgeRail`'s, because a component ref answers an instance, not a node.
  */
 const secondaryEl = ref<HTMLElement | null>(null)
 const navEl = ref<ComponentPublicInstance | null>(null)
@@ -269,10 +289,7 @@ const {
   // The strip is named as well as carried (#585 round 3): it is the wall a
   // drawer goes behind, and the one column whose room a drawer never follows.
   strip: () => (navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null),
-  carried: () => [
-    secondaryEl.value,
-    navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null
-  ],
+  carried: () => [secondaryEl.value],
   /*
    * The layout queue's own flag, which the fold reads as "not yet" (#585): the
    * browser's `resize` for a grow arrives before Vue has mounted the columns
@@ -419,6 +436,35 @@ const shortcutBroken = computed(
   () => shortcutState.value !== null && !shortcutState.value.registered
 )
 
+/* --- Features that ship hidden (#635) — one block, appended --------------- */
+/**
+ * The features that ship hidden, as main resolved them from configuration.
+ *
+ * Off until main answers, and off for good if the read fails: a flag is the
+ * permission to show something, and a bridge that could not say so has not
+ * given it. Read once, like the build — nothing changes it while main lives.
+ */
+const featureFlags = ref<FeatureFlags>({ guildAreasEnabled: false })
+
+async function loadFeatureFlags(): Promise<void> {
+  try {
+    featureFlags.value = await window.api.getFeatureFlags()
+  } catch {
+    // Nothing to fall back on but the closed default, which is what stands.
+  }
+}
+
+/**
+ * The page the shell shows: the view's own area, unless that is a guild area
+ * while the guild areas are hidden — nothing may point at them then, so the
+ * view shows the map instead (see `reachableArea`).
+ */
+const page = computed(() => reachableArea(viewState.area, featureFlags.value.guildAreasEnabled))
+
+/** How many dwarfs need you, on the nav's Mines slot (screens/shell.md, W1·10). */
+const needsYou = computed(() => needsYouCount(state.mines))
+/* --- end of the #635 block ------------------------------------------------- */
+
 /**
  * The area the panel is on, when that area is one the design ships as
  * unavailable — the Lab, the Market, or the Laboral Union (#335).
@@ -426,7 +472,7 @@ const shortcutBroken = computed(
  * The list belongs to shellNav rather than to this template: `undefined` here
  * means the area has a screen of its own and one of the branches above draws it.
  */
-const unavailableArea = computed(() => unavailableAreaOf(viewState.area))
+const unavailableArea = computed(() => unavailableAreaOf(page.value))
 
 /**
  * Selecting an area never closes the mine held open beside it — that is the
@@ -486,12 +532,18 @@ const versionText = computed(() => (build.value === null ? null : versionLabel(b
 const versionHint = computed(() => (build.value === null ? '' : versionTitle(build.value)))
 
 /**
- * The interior painting's own shape, published to CSS so the mine column can
- * derive its width from the height the shell gives it (#153). Bound from
- * `INTERIOR_ART_SIZE` rather than written into the stylesheet, so the column and
- * the projection inside it cannot disagree about the painting.
+ * The mine column's width, published to CSS from the same constants main
+ * reserves it with (#153, #635): the painting drawn whole at the column's
+ * height less its chrome, plus 16px, never under 300px (screens/shell.md,
+ * Layout). The column is the shell's height, which is the window's less the
+ * dock inset and the plate's padding, so `100vh` less that inset is the
+ * height it is derived from. Bound from `INTERIOR_ART_SIZE` and sceneSizing
+ * rather than written into the stylesheet, so the column, the window main
+ * sized for it and the projection inside it cannot disagree.
  */
-const interiorColumnAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
+const mineColumnWidth =
+  `max(${MINE_COLUMN_MIN_WIDTH}px, calc((100vh - ${SHELL_CONTENT_INSET + MINE_COLUMN_CHROME_HEIGHT}px)` +
+  ` * ${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height} + ${MINE_COLUMN_ART_INSET}px))`
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -900,6 +952,8 @@ onMounted(() => {
   // failure can be flagged on the Settings button before anyone opens it.
   void syncShortcut()
   void loadBuild()
+  // The features that ship hidden (#635): pulled once, like the build.
+  void loadFeatureFlags()
   // Adopts the stored Audio settings and the window's REAL visibility, then
   // starts the music if the settings say it should be playing (#174).
   void syncAudio()
@@ -970,8 +1024,9 @@ onBeforeUnmount(() => {
     <div
       ref="shellEl"
       class="shell"
-      :class="[`edge-${layout.edge}`, `is-${composition}`]"
-      :style="{ '--interior-column-aspect': interiorColumnAspect }"
+      :class="[`edge-${layout.edge}`, `is-${composition}`, { 'm-mat': composition !== 'rail' }]"
+      :data-dock="layout.edge"
+      :style="{ '--mine-column-width': mineColumnWidth }"
       @pointerdown.capture="raisePanel"
     >
       <!--
@@ -1007,7 +1062,7 @@ onBeforeUnmount(() => {
           #fae2b6 border and elevation 5, with the collected-materials totals
           overlaid in its upper-right corner (VaultChip, inside MapView).
         -->
-            <PanelFrame v-if="viewState.area === 'map'" variant="map">
+            <PanelFrame v-if="page === 'map'" class="shell-page" variant="map">
               <div v-if="loading" class="loading" role="status">
                 <span class="spinner" aria-hidden="true"></span>
                 <p>Scanning the hills for active agents...</p>
@@ -1022,7 +1077,7 @@ onBeforeUnmount(() => {
               />
             </PanelFrame>
 
-            <PanelFrame v-else-if="viewState.area === 'mines'">
+            <PanelFrame v-else-if="page === 'mines'" class="shell-page">
               <MinesPanel
                 :projects="projects"
                 :mines="state.mines"
@@ -1056,7 +1111,7 @@ onBeforeUnmount(() => {
           shortcut/position/Data-Base sections, and the Application section
           #142 had nowhere else to put pin/hide/version.
         -->
-            <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
+            <PanelFrame v-else-if="page === 'settings'" class="shell-page" variant="settings">
               <SettingsPanel
                 :shortcut-state="shortcutState"
                 :shortcut-error="shortcutError"
@@ -1109,37 +1164,18 @@ onBeforeUnmount(() => {
             because an area with no screen and no unavailable painting should
             draw nothing instead of borrowing another hall's sentence.
           -->
-            <PanelFrame v-else-if="unavailableArea" :key="viewState.area" variant="settings">
+            <PanelFrame
+              v-else-if="unavailableArea"
+              :key="page"
+              class="shell-page"
+              variant="settings"
+            >
               <UnavailablePanel :feature="unavailableArea" />
             </PanelFrame>
           </PanelTransition>
 
           <p v-if="error" class="notice" role="alert">{{ error }}</p>
         </div>
-      </PanelTransition>
-
-      <!--
-        The app mark hides the WINDOW (#156), which is the same hidePanel the
-        global shortcut and Settings' own hide control already ask for. The
-        layout is deliberately untouched: the panel that comes back is the one
-        that went away, mine and page and all.
-      -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <ShellNav
-          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
-          ref="navEl"
-          :area="viewState.area"
-          :broken="shortcutBroken"
-          :music-playing="musicPlaying"
-          @select="selectArea"
-          @hide="hidePanel"
-          @toggle-music="toggleMusic"
-        />
       </PanelTransition>
 
       <!--
@@ -1182,6 +1218,40 @@ onBeforeUnmount(() => {
             />
           </PanelFrame>
         </div>
+      </PanelTransition>
+
+      <!--
+        The nav, at the screen edge (#635): the last column of the row, which
+        `row` puts against a right edge and `row-reverse` against a left one.
+        Its app mark hides the WINDOW (#156), which is the same hidePanel the
+        global shortcut and Settings' own hide control already ask for. The
+        layout is deliberately untouched: the panel that comes back is the one
+        that went away, mine and page and all.
+
+        The mode lever is left out until a mode beyond the Panel exists: Veta
+        and Valle are later slices, and the docs say nothing of a lever whose
+        destination is not built yet, so the nav's own "no dead buttons" rule
+        is the fallback until that is ruled on.
+      -->
+      <PanelTransition
+        :hold="holdColumn"
+        :hold-enter="enterColumn"
+        :engine="props.engine"
+        @leave="trackPanelLeave"
+      >
+        <PanelNav
+          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
+          ref="navEl"
+          :page="page"
+          :guild="featureFlags.guildAreasEnabled"
+          :badge="needsYou"
+          :music="musicPlaying"
+          :warn="shortcutBroken"
+          :lever="false"
+          @nav="selectArea"
+          @mark="hidePanel"
+          @music="toggleMusic"
+        />
       </PanelTransition>
 
       <!--
@@ -1295,14 +1365,40 @@ onBeforeUnmount(() => {
  * the rail against the shell's box with `getBoundingClientRect`, so they read
  * where the row actually put it rather than assuming which rule put it there.
  */
+/*
+ * The redesigned Panel (#635, screens/shell.md, Layout and Parts): one rock
+ * plate with a brass-lo edge, 6px padding and 6px gaps, inside the dock's 12px
+ * inset from the top and the bottom of the work area, held 2px off the screen
+ * edge so that edge shows. The window still spans the work area; the inset is
+ * drawn here, so no platform's window geometry changes for it.
+ *
+ * The 2px on the FREE side is not in the design's margin: the plate's material
+ * draws its edge 2px outside its box on every side (`.m-mat`), and main
+ * reserves that room in the window so the free edge is painted rather than cut
+ * off by it (SHELL_EDGE_MARGIN in main/shell/panelBounds.ts). The numbers are
+ * the custom properties below, which panelBounds.test.ts pins to main's own.
+ *
+ * Mirrored for a left dock by `row-reverse` above, as the prototype mirrors
+ * its grid: right-docked the columns run page, mine, nav, screen edge, and
+ * left-docked screen edge, nav, mine, page. The rail (#388) stays the free-side
+ * column of both until the Veta slice retires it.
+ */
 .shell.is-mine,
 .shell.is-pages {
+  --shell-pad: 6px;
+  --shell-gap: 6px;
+  --shell-edge: 2px;
+  --dock-inset: 12px;
+  --page-width: 440px;
+  --mat-fill: var(--rock);
+  --mat-hi: var(--rock-hi);
+  --mat-lo: var(--rock-lo);
+  --mat-edge: var(--brass-lo);
   justify-content: flex-end;
-  gap: var(--space-nav-gap);
-  padding: var(--space-nav-gap);
-  border-radius: var(--radius-default);
-  background: var(--color-rail);
-  box-shadow: var(--elevation-5);
+  height: calc(100vh - 2 * var(--dock-inset));
+  margin: var(--dock-inset) var(--shell-edge);
+  gap: var(--shell-gap);
+  padding: var(--shell-pad);
 }
 /*
  * Where the mine's History panel sits — all that is left of this dock (#162).
@@ -1338,41 +1434,58 @@ onBeforeUnmount(() => {
 .message-dock > * {
   pointer-events: auto;
 }
+/*
+ * The page column (#635): 440px, and on a screen narrower than the dock it is
+ * the part that gives way (decision log, Narrow screen). The column shrinks and
+ * clips, and the page inside keeps its 440px anchored against the mine column
+ * — the docked side — so it is cut at its far side, exactly as the prototype's
+ * `minmax(0, 440px)` column does. The nav and the mine column never shrink.
+ */
 .shell-secondary {
   position: relative;
   display: flex;
-  flex: 1;
+  flex: 0 1 var(--page-width);
   flex-direction: column;
   min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 .shell-secondary > * {
   flex: 1;
   min-height: 0;
 }
-.shell-secondary > .panel-frame {
+.shell-secondary > .shell-page {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--page-width);
+}
+.shell.edge-left .shell-secondary > .shell-page {
+  right: auto;
+  left: 0;
 }
 /*
- * The mine's own column, outboard of the navigation stack (see the exports).
+ * The mine's own column, between the page and the nav (#635): the nav anchors
+ * to the screen edge and the mine opens inward beside it, so opening or closing
+ * a mine never moves the nav (screens/shell.md, W1).
  *
- * Its width is DERIVED, not declared (#153): the painting is drawn at the full
- * height of the shell's content area with its aspect preserved and nothing
- * cropped, so `aspect-ratio` on a full-height column is the whole rule — the
- * browser reads the height the flex row already gave it and answers with the
- * width. The design's 245px is what that returns at the mock's own 768-tall
- * composition; reserving 245 on a 1392-tall display is what made the interior
- * read tiny. main reserves the same number in the window; see mineColumnWidth
- * in main/shell/panelBounds.ts and interiorColumnWidth in lib/scene/sceneSizing.
+ * Its width is DERIVED, not declared (#153, #635): the painting drawn whole at
+ * the column's height less its chrome, plus 16px, never under 300px — the
+ * `--mine-column-width` the script binds. main reserves the same number in the
+ * window; see mineColumnWidth in main/shell/panelBounds.ts and
+ * interiorColumnWidth in lib/scene/sceneSizing. Today's scene draws its
+ * painting `contain` inside it until the mine column organism brings the chrome
+ * that height is kept for.
  */
 .shell-mine {
   position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: auto;
+  width: var(--mine-column-width);
   height: 100%;
-  aspect-ratio: var(--interior-column-aspect);
   min-width: 0;
 }
 .shell-mine > .panel-frame {
