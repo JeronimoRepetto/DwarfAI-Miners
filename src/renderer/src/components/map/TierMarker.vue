@@ -105,6 +105,18 @@ const attributes = computed(() => tierMarkerAttributes(props))
   height: 30px;
   background: var(--brass);
 }
+/*
+ * Under reduced motion design-tokens.css stops the pulse, and the halo then holds still at this
+ * one frame rather than vanishing: a marker that needs you still shows it (motion.css in the
+ * design, ruled 2026-09-26). It is declared here because this scoped `opacity: 0` above outranks
+ * any unscoped rule.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .dm-marker__pulse {
+    opacity: 0.45;
+    transform: scale(1.15);
+  }
+}
 /* The chip's tier map (controls/chip.css), repeated because each component's rules are scoped. */
 [data-tier='bronze'] {
   --tier-c: var(--tier-bronze);
