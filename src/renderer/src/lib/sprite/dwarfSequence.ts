@@ -133,9 +133,9 @@ function cycleStep(sheets: DwarfSheetSet, name: DwarfSheetName): SpriteClip[] {
  * HOW MANY TURNS IS THE RANK'S OWN DECLARATION (`DWARF_CREW`, issue #330), not
  * a number this file knows: #325's literal "twice" became a per-rank count the
  * moment a sound had to fit inside the shift — the worker2's grind is one 8.53s
- * recording of its whole movement, so its shift is eight swings long and the
- * worker's stays at two. See `dwarfSheets.ts` for that arithmetic; it is the
- * maintainer's and is judged by ear.
+ * recording, so its shift is as many swings as fit inside it (`WORKER2_SHIFT_SWINGS`,
+ * five under the v3 timing; design lead ruling 2026-09-26) and the worker's stays
+ * at two. See `dwarfSheets.ts` for that arithmetic; the PO judges it by ear.
  *
  * A rank that declares no count swings ONCE rather than inheriting a number
  * from somewhere: a forgotten declaration should be visibly the wrong length,

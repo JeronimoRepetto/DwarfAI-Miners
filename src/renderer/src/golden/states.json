@@ -213,5 +213,35 @@
   },
   {
     "key": "atoms/marker#focus-visible"
+  },
+  {
+    "key": "atoms/sprite#worker-working"
+  },
+  {
+    "key": "atoms/sprite#worker-idle"
+  },
+  {
+    "key": "atoms/sprite#worker-start-working"
+  },
+  {
+    "key": "atoms/sprite#worker2-working"
+  },
+  {
+    "key": "atoms/sprite#worker2-start-working"
+  },
+  {
+    "key": "atoms/sprite#worker2-idle"
+  },
+  {
+    "key": "atoms/sprite#foreman-idle"
+  },
+  {
+    "key": "atoms/sprite#foreman-sleeping"
+  },
+  {
+    "key": "atoms/sprite#base-idle"
+  },
+  {
+    "key": "atoms/sprite#still"
   }
 ]

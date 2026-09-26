@@ -22,6 +22,8 @@ import '../assets/base.css'
 import '../assets/design-tokens.css'
 import '../assets/theme.css'
 import { createApp, h, nextTick, type App } from 'vue'
+import { FRAME_CLOCK_KEY } from '../composables/useFramePlayer'
+import { stoppedFrameClock } from '../lib/sprite/frameClock'
 import { RENDERS, type GoldenAttributes, type GoldenText } from './renders'
 import { adaptSample, type GoldenSample } from './sample'
 
@@ -141,7 +143,10 @@ function loadSample(source: string): { mines: number; dwarfs: number } {
 }
 
 // The real component for a state, mounted as the stage's only child so it is the stage's flex
-// item, as the kit's component is. Every state starts from the same clock and empty storage.
+// item, as the kit's component is. Every state starts from the same clock and empty storage, and
+// every sprite plays on a frame clock stopped at t = 0: every reference holds every sprite on frame
+// 0, whatever its phase (components.md, Sprite, Anatomy), and the harness's virtual timers would
+// otherwise carry the shared clock on through the settle.
 async function mountState(frame: StateFrame): Promise<void> {
   const render = RENDERS[frame.id]
   if (!render) throw new Error('golden: renders.ts has no entry for ' + frame.id)
@@ -153,6 +158,7 @@ async function mountState(frame: StateFrame): Promise<void> {
   sessionStorage.clear()
   const stage = stageElement(frame.css, frame.x, frame.y, frame.width)
   mounted = createApp({ render: () => h(component, props) })
+  mounted.provide(FRAME_CLOCK_KEY, stoppedFrameClock())
   mounted.mount(stage)
   await nextTick()
   const root = stage.firstElementChild

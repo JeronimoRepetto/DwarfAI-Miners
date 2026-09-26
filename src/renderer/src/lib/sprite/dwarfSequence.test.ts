@@ -2,13 +2,29 @@ import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus } from '../../types'
 import { DWARF_CREW, DWARF_SHEETS } from './dwarfSheets'
 import { dwarfClips, isResting, stillFrameOf } from './dwarfSequence'
-import { isImpactFrame, loopOf, onceOf, sequenceFrameAt } from './spriteSheet'
+import {
+  isImpactFrame,
+  loopOf,
+  onceOf,
+  sequenceFrameAt,
+  sequenceOffsetMs,
+  type SpriteSheet
+} from './spriteSheet'
 
 const ROLES: readonly DwarfRole[] = ['worker', 'foreman']
 
 const FOREMAN = DWARF_SHEETS.foreman
 const WORKER = DWARF_SHEETS.worker
 const WORKER2 = DWARF_SHEETS.worker2
+
+/*
+ * How long one play of a sheet lasts, from its own per-frame durations (#635). The tests below
+ * that ran on `frames * 100` were written for the v2 sheets' uniform 100ms; the design replaced
+ * that with each sheet's sidecar durations, so they read this instead and name the v3 totals.
+ */
+function lengthOf(sheet: SpriteSheet | undefined): number {
+  return (sheet?.durations ?? []).reduce((sum, hold) => sum + hold, 0)
+}
 
 /** Every sheet a sequence draws from, in order, so a failure names the art. */
 function sheetsOf(clips: ReturnType<typeof dwarfClips>): string[] {
@@ -436,13 +452,14 @@ describe('dwarfClips', () => {
     })
 
     it('runs the worker through 35 frames of shift before the pick comes up again', () => {
-      // 3 + 13 + 13 + 6 = 35 frames at 100ms, so 3.5s a turn. Read off the
-      // sheets rather than written down, because the counts belong to the art.
+      // 3 + 13 + 13 + 6 = 35 frames. AMENDED by #635: at the v2 sheets' 100ms that was 3.5s a
+      // turn; the v3 sidecars give 370 + 1460 + 1460 + 680 = 3970ms. Read off the sheets rather
+      // than written down, because the counts and the holds belong to the art.
       const clips = dwarfClips('worker', false, false, true, false)
-      const start = WORKER['start-working']!.frames * 100
-      const swing = WORKER.working!.frames * 100
-      const end = WORKER['end-working']!.frames * 100
-      expect(start + swing + swing + end).toBe(3500)
+      const start = lengthOf(WORKER['start-working'])
+      const swing = lengthOf(WORKER.working)
+      const end = lengthOf(WORKER['end-working'])
+      expect(start + swing + swing + end).toBe(3970)
 
       expect(sequenceFrameAt(clips, 0)).toEqual({ clip: 0, frame: 0 })
       expect(sequenceFrameAt(clips, start)).toEqual({ clip: 1, frame: 0 })
@@ -450,7 +467,8 @@ describe('dwarfClips', () => {
       expect(sequenceFrameAt(clips, start + swing + swing)).toEqual({ clip: 3, frame: 0 })
       // The set-down's last frame, and then the pick-up again: the cycle
       // closing is the whole point of it.
-      expect(sequenceFrameAt(clips, start + swing + swing + end - 100)).toEqual({
+      const lastHold = WORKER['end-working']!.durations!.at(-1)!
+      expect(sequenceFrameAt(clips, start + swing + swing + end - lastHold)).toEqual({
         clip: 3,
         frame: WORKER['end-working']!.frames - 1
       })
@@ -468,24 +486,34 @@ describe('dwarfClips', () => {
        * pick-up and a set-down nearly three times the worker's is the art
        * (#211), whatever the count between them.
        */
+      // AMENDED by #635: lengths from the sheets' own durations, not `frames * 100`.
       const clips = dwarfClips('worker2', false, false, true, false)
-      const start = WORKER2['start-working']!.frames * 100
-      const swing = WORKER2.working!.frames * 100
-      const end = WORKER2['end-working']!.frames * 100
+      const start = lengthOf(WORKER2['start-working'])
+      const swing = lengthOf(WORKER2.working)
+      const end = lengthOf(WORKER2['end-working'])
       const cycle = start + swing * DWARF_CREW.worker2.swings! + end
       expect(sequenceFrameAt(clips, cycle)).toEqual({ clip: 0, frame: 0 })
       expect(sequenceFrameAt(clips, start + swing)).toEqual({ clip: 2, frame: 0 })
-      expect(end).toBeGreaterThan(start)
+      // AMENDED by #635: this compared the two lengths, which at a uniform 100ms were the frame
+      // counts. The v3 sidecars hold the pick-up's frames longer (1830ms) than the set-down's
+      // (1750ms), so the claim about the ART — a longer set-down, 17 frames against 16 — is now
+      // pinned on the frames themselves.
+      expect(WORKER2['end-working']!.frames).toBeGreaterThan(WORKER2['start-working']!.frames)
     })
 
     it('bites the rock on both turns of the swing, not only the first', () => {
       // The sparks and the strike glow are the sheet's own claim about a frame
       // (`impactFrames`), and the second turn draws the same sheet — so a hit
       // lands on every lap exactly as it did when the swing looped alone.
+      // AMENDED by #635: the hit's moment is when its frame starts under the sidecar's durations,
+      // not `index * 100`.
       const clips = dwarfClips('worker', false, false, true, false)
-      const start = WORKER['start-working']!.frames * 100
-      const swing = WORKER.working!.frames * 100
-      const hit = WORKER.working!.impactFrames![0]! * 100
+      const start = lengthOf(WORKER['start-working'])
+      const swing = lengthOf(WORKER.working)
+      const hit = sequenceOffsetMs([loopOf(WORKER.working!)], {
+        clip: 0,
+        frame: WORKER.working!.impactFrames![0]!
+      })
       const turns = [start + hit, start + swing + hit].map((elapsed) => {
         const at = sequenceFrameAt(clips, elapsed)
         const sheet = clips[at.clip]?.sheet
@@ -739,13 +767,15 @@ describe('states that no longer have a drawing of their own', () => {
  * has to be as long as the recording rather than the other way round.
  */
 describe('the shift swings as many times as the rank declares (#330)', () => {
-  it('takes the worker2 through eight swings, not the two the worker takes', () => {
+  // AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts: the worker2's shift is as many swings as fit inside
+  // its grind, five under the v3 timing (dwarfSheets.test.ts pins the arithmetic), not eight.
+  it('takes the worker2 through five swings, not the two the worker takes', () => {
     const swings = (role: 'worker' | 'worker2'): number =>
       dwarfClips(role, false, false, true, false).filter(
         (clip) => clip.sheet.src === DWARF_SHEETS[role].working!.src
       ).length
     expect(swings('worker')).toBe(2)
-    expect(swings('worker2')).toBe(8)
+    expect(swings('worker2')).toBe(5)
   })
 
   it('reads the count off the declaration rather than a literal of its own', () => {
@@ -759,33 +789,41 @@ describe('the shift swings as many times as the rank declares (#330)', () => {
     }
   })
 
-  it('runs the worker2 through 113 frames of shift, 11.3s a turn', () => {
-    // 16 + (8 x 10) + 17. The worker's 35 are pinned in the block above and
+  /*
+   * AMENDED by #635: 113 frames was 11.3s a turn at the v2 sheets' 100ms, and eight swings. On the
+   * design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts, the shift is five swings: 16 + (5 x 10) + 17 = 83 frames, 1830 + 5 x 1160 + 1750 =
+   * 9380ms under the v3 sidecars.
+   */
+  it('runs the worker2 through 83 frames of shift, 9.38s a turn under the v3 timing', () => {
+    // 16 + (5 x 10) + 17. The worker's 35 are pinned in the block above and
     // are untouched: only the count between the two transitions moved.
     const clips = dwarfClips('worker2', false, false, true, false)
-    const start = WORKER2['start-working']!.frames * 100
-    const swing = WORKER2.working!.frames * 100
-    const end = WORKER2['end-working']!.frames * 100
+    const start = lengthOf(WORKER2['start-working'])
+    const swing = lengthOf(WORKER2.working)
+    const end = lengthOf(WORKER2['end-working'])
     const cycle = start + swing * DWARF_CREW.worker2.swings! + end
-    expect(cycle).toBe(11_300)
+    expect(cycle).toBe(9380)
     // Round it goes: the frame after the set-down's last is the pick-up again.
     expect(sequenceFrameAt(clips, cycle)).toEqual({ clip: 0, frame: 0 })
-    expect(sequenceFrameAt(clips, cycle - 100)).toEqual({
+    expect(sequenceFrameAt(clips, cycle - WORKER2['end-working']!.durations!.at(-1)!)).toEqual({
       clip: DWARF_CREW.worker2.swings! + 1,
       frame: WORKER2['end-working']!.frames - 1
     })
   })
 
-  it('reaches the last of the eight swings, so none of them is unreachable', () => {
+  // AMENDED by #635: the last swing is the fifth now (the ruling above), read off the declaration.
+  it('reaches the last of the declared swings, so none of them is unreachable', () => {
     // A cycle is one movement whose position picks the clip (see
     // `sequenceCycle`), so an eighth swing that could never be drawn would be
     // a declaration the model quietly ignored.
+    // AMENDED by #635: lengths from the sheets' own durations, not `frames * 100`.
     const clips = dwarfClips('worker2', false, false, true, false)
-    const start = WORKER2['start-working']!.frames * 100
-    const swing = WORKER2.working!.frames * 100
-    const eighth = sequenceFrameAt(clips, start + swing * 7)
-    expect(eighth).toEqual({ clip: 8, frame: 0 })
-    expect(clips[eighth.clip]?.sheet.src).toBe(WORKER2.working!.src)
+    const start = lengthOf(WORKER2['start-working'])
+    const swing = lengthOf(WORKER2.working)
+    const swings = DWARF_CREW.worker2.swings!
+    const last = sequenceFrameAt(clips, start + swing * (swings - 1))
+    expect(last).toEqual({ clip: swings, frame: 0 })
+    expect(clips[last.clip]?.sheet.src).toBe(WORKER2.working!.src)
   })
 
   it('still holds a swinging frame for reduced motion, eight swings or two', () => {
