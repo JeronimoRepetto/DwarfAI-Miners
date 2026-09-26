@@ -396,5 +396,32 @@ export const RENDERS: Record<string, Render> = {
   ),
   'atoms/chip#meta-chips': framed((texts) =>
     texts.map((fact) => ({ component: MetaChip, props: { text: fact.text ?? '' } }))
-  )
+  ),
+
+  // The remaining atoms, not built yet (#635): each state mounts an empty box and fails.
+  'atoms/slot#default-hover-pressed': unbuilt,
+  'atoms/slot#current-page': unbuilt,
+  'atoms/slot#needs-you-badge': unbuilt,
+  'atoms/slot#toggle': unbuilt,
+  'atoms/slot#warning': unbuilt,
+  'atoms/slot#focus-visible': unbuilt,
+  'atoms/slot#mode-lever': unbuilt,
+  'atoms/badge#badges': unbuilt,
+  'atoms/badge#crew-state-pills': unbuilt,
+  'atoms/badge#semantic-pills': unbuilt,
+  'atoms/portrait#ranks': unbuilt,
+  'atoms/portrait#status': unbuilt,
+  'atoms/portrait#interaction': unbuilt,
+  'atoms/portrait#sizes': unbuilt,
+  'atoms/progress#toward-gold': unbuilt,
+  'atoms/progress#toward-copper': unbuilt,
+  'atoms/progress#measuring': unbuilt,
+  'atoms/progress#max-tier': unbuilt,
+  'atoms/ore#every-material': unbuilt,
+  'atoms/ore#large': unbuilt,
+  'atoms/ore#zero': unbuilt,
+  'atoms/marker#tiers': unbuilt,
+  'atoms/marker#hover-pressed-open': unbuilt,
+  'atoms/marker#needs-you': unbuilt,
+  'atoms/marker#focus-visible': unbuilt
 }

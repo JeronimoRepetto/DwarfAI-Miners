@@ -138,5 +138,105 @@
   },
   {
     "key": "atoms/chip#meta-chips"
+  },
+  {
+    "key": "atoms/slot#default-hover-pressed",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slot#current-page",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slot#needs-you-badge",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slot#toggle",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slot#warning",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slot#focus-visible",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slot#mode-lever",
+    "red": "the redesigned nav slot is not built yet (#635)"
+  },
+  {
+    "key": "atoms/badge#badges",
+    "red": "the redesigned badge and pill is not built yet (#635)"
+  },
+  {
+    "key": "atoms/badge#crew-state-pills",
+    "red": "the redesigned badge and pill is not built yet (#635)"
+  },
+  {
+    "key": "atoms/badge#semantic-pills",
+    "red": "the redesigned badge and pill is not built yet (#635)"
+  },
+  {
+    "key": "atoms/portrait#ranks",
+    "red": "the redesigned portrait is not built yet (#635)"
+  },
+  {
+    "key": "atoms/portrait#status",
+    "red": "the redesigned portrait is not built yet (#635)"
+  },
+  {
+    "key": "atoms/portrait#interaction",
+    "red": "the redesigned portrait is not built yet (#635)"
+  },
+  {
+    "key": "atoms/portrait#sizes",
+    "red": "the redesigned portrait is not built yet (#635)"
+  },
+  {
+    "key": "atoms/progress#toward-gold",
+    "red": "the redesigned tier progress is not built yet (#635)"
+  },
+  {
+    "key": "atoms/progress#toward-copper",
+    "red": "the redesigned tier progress is not built yet (#635)"
+  },
+  {
+    "key": "atoms/progress#measuring",
+    "red": "the redesigned tier progress is not built yet (#635)"
+  },
+  {
+    "key": "atoms/progress#max-tier",
+    "red": "the redesigned tier progress is not built yet (#635)"
+  },
+  {
+    "key": "atoms/ore#every-material",
+    "red": "the redesigned ore capsule is not built yet (#635)"
+  },
+  {
+    "key": "atoms/ore#large",
+    "red": "the redesigned ore capsule is not built yet (#635)"
+  },
+  {
+    "key": "atoms/ore#zero",
+    "red": "the redesigned ore capsule is not built yet (#635)"
+  },
+  {
+    "key": "atoms/marker#tiers",
+    "red": "the redesigned map marker is not built yet (#635)"
+  },
+  {
+    "key": "atoms/marker#hover-pressed-open",
+    "red": "the redesigned map marker is not built yet (#635)"
+  },
+  {
+    "key": "atoms/marker#needs-you",
+    "red": "the redesigned map marker is not built yet (#635)"
+  },
+  {
+    "key": "atoms/marker#focus-visible",
+    "red": "the redesigned map marker is not built yet (#635)"
   }
 ]
