@@ -140,32 +140,25 @@
     "key": "atoms/chip#meta-chips"
   },
   {
-    "key": "atoms/slot#default-hover-pressed",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#default-hover-pressed"
   },
   {
-    "key": "atoms/slot#current-page",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#current-page"
   },
   {
-    "key": "atoms/slot#needs-you-badge",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#needs-you-badge"
   },
   {
-    "key": "atoms/slot#toggle",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#toggle"
   },
   {
-    "key": "atoms/slot#warning",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#warning"
   },
   {
-    "key": "atoms/slot#focus-visible",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#focus-visible"
   },
   {
-    "key": "atoms/slot#mode-lever",
-    "red": "the redesigned nav slot is not built yet (#635)"
+    "key": "atoms/slot#mode-lever"
   },
   {
     "key": "atoms/badge#badges"

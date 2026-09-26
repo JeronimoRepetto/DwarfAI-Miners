@@ -25,6 +25,7 @@ import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
 import CountBadge from '../components/dwarf/CountBadge.vue'
 import StatePill from '../components/dwarf/StatePill.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
+import NavSlot from '../components/shell/NavSlot.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { IconName } from '../lib/icon/iconGrids'
@@ -257,6 +258,46 @@ const pills = (icons: IconName[] = []): Render =>
     })
   })
 
+// The state a tree's element is forced to, as `button.dm-slot.is-hover` is.
+const forcedOf = (element: string): string | undefined =>
+  element
+    .split('.')
+    .find((c) => c.startsWith('is-'))
+    ?.slice(3)
+
+/*
+ * Each slot of the tree, labelled, current, pressed, warned and forced as it prints, its badge
+ * the count the next badge line shows. An icon line prints no name a render can read, so the
+ * state's icons are its render's, in tree order.
+ */
+const slots =
+  (icons: IconName[]): Render =>
+  (_sample, texts, attributes) => {
+    const parts: FramedPart[] = []
+    let badge = 0
+    for (const { element, attributes: a } of attributes.slice(1)) {
+      if (element.startsWith('button.dm-slot')) {
+        parts.push({
+          component: NavSlot,
+          props: {
+            icon: icons[parts.length],
+            label: a['data-label'] ?? '',
+            current: a['aria-current'] === 'page',
+            ...(a['aria-pressed'] === undefined ? {} : { pressed: a['aria-pressed'] === 'true' }),
+            warn: a['data-warn'] === 'true',
+            state: forcedOf(element)
+          }
+        })
+      } else if (element.startsWith('span.dm-badge')) {
+        parts.at(-1)!.props.badge = Number(texts[badge++]?.text)
+      }
+    }
+    return {
+      component: KitFrame,
+      props: { style: attributes[0]?.attributes.style ?? '', parts }
+    }
+  }
+
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
@@ -451,14 +492,17 @@ export const RENDERS: Record<string, Render> = {
     texts.map((fact) => ({ component: MetaChip, props: { text: fact.text ?? '' } }))
   ),
 
+  // The nav slots in the kit's row: at rest, hovered and pressed; current; badged; the music
+  // toggle; warned; focused; the mode lever.
+  'atoms/slot#default-hover-pressed': slots(['map', 'map', 'map']),
+  'atoms/slot#current-page': slots(['mines']),
+  'atoms/slot#needs-you-badge': slots(['mines', 'mines']),
+  'atoms/slot#toggle': slots(['music-off', 'music-on']),
+  'atoms/slot#warning': slots(['settings']),
+  'atoms/slot#focus-visible': slots(['settings']),
+  'atoms/slot#mode-lever': slots(['valle', 'veta']),
+
   // The remaining atoms, not built yet (#635): each state mounts an empty box and fails.
-  'atoms/slot#default-hover-pressed': unbuilt,
-  'atoms/slot#current-page': unbuilt,
-  'atoms/slot#needs-you-badge': unbuilt,
-  'atoms/slot#toggle': unbuilt,
-  'atoms/slot#warning': unbuilt,
-  'atoms/slot#focus-visible': unbuilt,
-  'atoms/slot#mode-lever': unbuilt,
   // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
   'atoms/badge#badges': badges,
   'atoms/badge#crew-state-pills': pills(),
