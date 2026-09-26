@@ -25,8 +25,7 @@
     "key": "foundations/materials#raised"
   },
   {
-    "key": "foundations/materials#focus-visible",
-    "red": "the focus ring ports with the base rules in the atoms slice of #635 (design lead ruling, tokens-port question 7)"
+    "key": "foundations/materials#focus-visible"
   },
   {
     "key": "foundations/materials#rules"
@@ -35,12 +34,10 @@
     "key": "foundations/motion#tokens"
   },
   {
-    "key": "foundations/motion#enter",
-    "red": "draws the redesigned button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
+    "key": "foundations/motion#enter"
   },
   {
-    "key": "foundations/motion#press",
-    "red": "draws the redesigned primary button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
+    "key": "foundations/motion#press"
   },
   {
     "key": "foundations/type#scale"
@@ -48,5 +45,38 @@
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
     "red": "draws the page header, mine card and bubbles in each preset, which the Panel slice of #635 rebuilds (design lead ruling, tokens-port question 11)"
+  },
+  {
+    "key": "atoms/button#secondary"
+  },
+  {
+    "key": "atoms/button#primary"
+  },
+  {
+    "key": "atoms/button#danger"
+  },
+  {
+    "key": "atoms/button#disabled"
+  },
+  {
+    "key": "atoms/button#toggle"
+  },
+  {
+    "key": "atoms/button#icon-only"
+  },
+  {
+    "key": "atoms/button#large-primary"
+  },
+  {
+    "key": "atoms/button#link"
+  },
+  {
+    "key": "atoms/icon#registry-at-2x"
+  },
+  {
+    "key": "atoms/icon#registry-at-1x"
+  },
+  {
+    "key": "atoms/icon#tones"
   }
 ]

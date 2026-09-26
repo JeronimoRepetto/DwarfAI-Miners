@@ -14,9 +14,14 @@
  * `texts`. A specimen still marked `Unbuilt` has no view yet, so it fails as it should.
  */
 import type { Component } from 'vue'
+import ActionButton from '../components/controls/ActionButton.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { GoldenSample } from './sample'
 import {
+  EnterFrame,
+  IconRow,
+  IconSheet,
+  KitRow,
   PlateRow,
   RuleFrame,
   SwatchSheet,
@@ -48,6 +53,36 @@ const unbuilt = (): GoldenRender => ({ component: Unbuilt, props: {} })
 const ramp = (name: string) => [name + '-hi', name, name + '-lo']
 
 type Render = (sample: GoldenSample, texts: GoldenText[]) => GoldenRender
+
+/*
+ * One button of a state, as the props the app would pass. `labelled` takes the next label from the
+ * state's texts, in tree order: a label is design text, so it arrives at run time with the rest
+ * and is never written here. An icon-only button's `title` is its icon's own name instead: the
+ * accessible name never paints, and the golden grades pixels.
+ */
+type ButtonSpec = Record<string, unknown> & { labelled?: boolean }
+
+const buttonProps = (specs: ButtonSpec[], texts: GoldenText[]): Record<string, unknown>[] => {
+  let next = 0
+  return specs.map(({ labelled, ...props }) =>
+    labelled ? { ...props, label: texts[next++]?.text ?? '' } : props
+  )
+}
+// The kit's row of buttons: each spec one real button, side by side in the kit's own frame.
+const buttonRow =
+  (specs: ButtonSpec[]): Render =>
+  (_sample, texts) => ({
+    component: KitRow,
+    props: {
+      parts: buttonProps(specs, texts).map((props) => ({ component: ActionButton, props }))
+    }
+  })
+// A state that is one button and nothing around it: the button is the stage's only child.
+const button =
+  (spec: ButtonSpec): Render =>
+  (_sample, texts) => ({ component: ActionButton, props: buttonProps([spec], texts)[0]! })
+
+const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav on the Mines page with the music playing; whether the shortcut failed is the
@@ -133,10 +168,58 @@ export const RENDERS: Record<string, Render> = {
       texts
     }
   }),
-  // Specimens with no view yet. The two motion states draw the redesigned button, which they
-  // wait for (design lead ruling, tokens-port question 5). The presets draw the page header, the
-  // mine card and two bubbles in each preset, none rebuilt yet.
-  'foundations/motion#enter': unbuilt,
-  'foundations/motion#press': unbuilt,
-  'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt
+  // The two motion states draw the redesigned button (design lead ruling, tokens-port question
+  // 5): Enter beside the overlay plate it replays, Press as the primary button alone.
+  'foundations/motion#enter': (_sample, texts) => ({ component: EnterFrame, props: { texts } }),
+  'foundations/motion#press': button({ labelled: true, variant: 'primary' }),
+  // Specimens with no view yet. The presets draw the page header, the mine card and two bubbles
+  // in each preset, none rebuilt yet.
+  'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt,
+
+  // The icon registry at both scales, and the tones on the close and check icons.
+  'atoms/icon#registry-at-2x': (_sample, texts) => ({
+    component: IconSheet,
+    props: { scale: 2, texts }
+  }),
+  'atoms/icon#registry-at-1x': (_sample, texts) => ({
+    component: IconSheet,
+    props: { scale: 1, texts }
+  }),
+  'atoms/icon#tones': () => ({
+    component: IconRow,
+    props: {
+      icons: [{ name: 'close', tone: 'danger' }, { name: 'close', tone: 'dim' }, { name: 'check' }]
+    }
+  }),
+
+  // The button's states, each in the kit's row frame; `state` forces the look a pointer or the
+  // keyboard would give, as the kit's own option does.
+  'atoms/button#secondary': buttonRow(STATES.map((state) => ({ labelled: true, state }))),
+  'atoms/button#primary': buttonRow(
+    STATES.map((state) => ({ labelled: true, variant: 'primary', icon: 'send', state }))
+  ),
+  'atoms/button#danger': buttonRow(
+    STATES.slice(0, 3).map((state) => ({ labelled: true, variant: 'danger', state }))
+  ),
+  'atoms/button#disabled': buttonRow([
+    { labelled: true, variant: 'primary', disabled: true },
+    { labelled: true, disabled: true },
+    { icon: 'attach', title: 'attach', disabled: true }
+  ]),
+  'atoms/button#toggle': buttonRow([
+    { icon: 'ambience-on', title: 'ambience-on', pressed: false },
+    { icon: 'ambience-on', title: 'ambience-on', pressed: true },
+    { labelled: true, pressed: true }
+  ]),
+  'atoms/button#icon-only': buttonRow([
+    { icon: 'history', title: 'history' },
+    { icon: 'close', title: 'close' },
+    { icon: 'more', title: 'more', state: 'hover' },
+    { icon: 'more', title: 'more', size: 'sm' },
+    { icon: 'info', title: 'info', size: 'sm' }
+  ]),
+  'atoms/button#large-primary': button({ labelled: true, variant: 'primary', size: 'lg' }),
+  'atoms/button#link': buttonRow(
+    STATES.slice(0, 2).map((state) => ({ labelled: true, variant: 'link', state }))
+  )
 }
