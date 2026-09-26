@@ -2,7 +2,14 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole } from '../../types'
-import { DWARF_CREW, DWARF_SHEETS } from './dwarfSheets'
+import {
+  DWARF_CREW,
+  DWARF_SHEETS,
+  SPRITE_SHEETS,
+  WORKER2_GRIND_MS,
+  WORKER2_SHIFT_SWINGS,
+  type SpriteSheetKey
+} from './dwarfSheets'
 import { SPRITE_FRAME_SIZE, type SpriteSheet } from './spriteSheet'
 
 // Amended by #157: 'worker2' joined DwarfRole, and a hand-written list is
@@ -155,13 +162,45 @@ describe('DWARF_SHEETS', () => {
     })
   })
 
-  it('plays every sheet at the tempo its own preview GIF was exported at', () => {
-    // 100ms a frame, read out of the Graphic Control Extension of every GIF
-    // beside the sheets — uniform across all of them, transitions included.
-    // The cadence is the artist's, not a number chosen here.
+  /*
+   * AMENDED by #635, and the old claim is gone because the design replaced it: this asserted every
+   * sheet played at a uniform 100ms, read off the v2 preview GIFs. The design adopted per-action
+   * frame timing (decision log, Frame timing and Sprite frame clock): every sheet now plays each
+   * frame's own duration from its Aseprite sidecar, and 100ms (`--frame-ms`) is only the fallback
+   * for a sheet with no sidecar. `frameMs` stays on every sheet as exactly that fallback.
+   */
+  it('plays every sheet by its own sidecar, with --frame-ms only as the fallback (#635)', () => {
     for (const { where, sheet } of everySheet()) {
       expect(sheet.frameMs, where).toBe(100)
+      expect(sheet.durations?.length, where).toBe(sheet.frames)
+      for (const hold of sheet.durations ?? []) expect(hold, where).toBeGreaterThan(0)
     }
+  })
+
+  it('carries the approved cycle of every sheet (art bible, Timing, per action)', () => {
+    // The sum of each sheet's durations: the design's per-sheet rows, as the export wrote them.
+    const cycle = (sheet: SpriteSheet | undefined): number =>
+      (sheet?.durations ?? []).reduce((sum, hold) => sum + hold, 0)
+    expect(cycle(DWARF_SHEETS.worker.working)).toBe(1460)
+    expect(cycle(DWARF_SHEETS.worker.idle)).toBe(1120)
+    expect(cycle(DWARF_SHEETS.worker['start-working'])).toBe(370)
+    expect(cycle(DWARF_SHEETS.worker['end-working'])).toBe(680)
+    expect(cycle(DWARF_SHEETS.worker2.working)).toBe(1160)
+    expect(cycle(DWARF_SHEETS.worker2.idle)).toBe(1120)
+    expect(cycle(DWARF_SHEETS.worker2['start-working'])).toBe(1830)
+    expect(cycle(DWARF_SHEETS.worker2['end-working'])).toBe(1750)
+    expect(cycle(DWARF_SHEETS.foreman.idle)).toBe(5230)
+    expect(cycle(DWARF_SHEETS.foreman.sleeping)).toBe(2560)
+    expect(cycle(DWARF_SHEETS.foreman['start-sleep'])).toBe(1040)
+    expect(cycle(DWARF_SHEETS.foreman['end-sleep'])).toBe(1280)
+  })
+
+  it('holds the pick swing’s impact frame 200ms, the longest of the swing (#635)', () => {
+    // The reason per-frame timing exists at all: "the impact frame is held 200ms and the swing
+    // hurried" (art bible, Working (pick)).
+    const holds = DWARF_SHEETS.worker.working?.durations ?? []
+    expect(holds[5]).toBe(200)
+    expect(Math.max(...holds)).toBe(200)
   })
 
   describe('the foreman falling asleep', () => {
@@ -289,15 +328,18 @@ describe('DWARF_SHEETS', () => {
    * OTHER sheet, which the tests below still pin.
    */
   describe('the worker striking the rock', () => {
-    it("declares the strike at the artist's frame 5, converted to index 4", () => {
-      // The maintainer's own frame map is 1-indexed off the preview GIF; every
-      // index in this codebase is 0-indexed, so frame 5 (the swing landing,
-      // first spark centered on the pick's tip) becomes index 4. Sparks fire
-      // off exactly this one frame and nowhere else — the pre-migration
-      // `isPickImpact` this restores marked only the down-stroke a hit,
-      // warning that more would read as "a permanent glow ... rather than
-      // impacts" (see presentation.ts before #87's sheet migration).
-      expect(DWARF_SHEETS.worker.working?.impactFrames).toEqual([4])
+    /*
+     * AMENDED by #635. This pinned index 4, the maintainer's 1-indexed frame 5 read off the v2
+     * preview GIF. The design now names the impact frame of the v3 swing as the one it holds
+     * 200ms (art bible, Working (pick): "the impact frame is held 200ms"; sound.md, "crew cue
+     * `strike` on the impact frame"), and that hold is index 5. Still ONE frame and nowhere else:
+     * the pre-migration `isPickImpact` warning against "a permanent glow ... rather than impacts"
+     * (see presentation.ts before #87's sheet migration) still holds.
+     */
+    it('declares the strike on the frame the swing holds 200ms, index 5 (#635)', () => {
+      const swing = DWARF_SHEETS.worker.working!
+      expect(swing.impactFrames).toEqual([5])
+      expect(swing.durations?.[5]).toBe(200)
     })
 
     it("glows only the artist's two brightest frames, 5-6 (index 4-5), never the dispersal", () => {
@@ -338,13 +380,16 @@ describe('DWARF_SHEETS', () => {
  * grind recording is 8.53 s long and the numbers have to add up to it.
  */
 describe('DWARF_CREW (#330)', () => {
-  it('swings the worker twice a shift and the worker2 eight times', () => {
-    // Not a taste: the worker2's grind is one 8.53 s recording of the whole
-    // movement, and it is asked to start 200 ms before the first swing and to
-    // die out three frames into the set-down. Eight swings is the only count
-    // that fits between the two.
+  /*
+   * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts; the worker2's shift is as many swings as fit inside the
+   * 8.53 s grind, and the rest of the shift is silence. It pinned eight, the v2 count worked at
+   * 100ms a frame. Under the v3 sidecars that is five (the arithmetic is pinned below), and the
+   * count is one named constant because the PO judges it by ear (#330).
+   */
+  it('swings the worker twice a shift and the worker2 as often as fits inside its grind', () => {
     expect(DWARF_CREW.worker.swings).toBe(2)
-    expect(DWARF_CREW.worker2.swings).toBe(8)
+    expect(DWARF_CREW.worker2.swings).toBe(WORKER2_SHIFT_SWINGS)
+    expect(WORKER2_SHIFT_SWINGS).toBe(5)
   })
 
   it('declares no count for the foreman, who has no swing to repeat', () => {
@@ -362,29 +407,43 @@ describe('DWARF_CREW (#330)', () => {
     expect(DWARF_CREW.worker.sound?.shift).toBeUndefined()
   })
 
-  it("starts the worker2's grind 200ms before its first swing, at frame 14 of 16", () => {
-    expect(DWARF_CREW.worker2.sound?.shift).toEqual({ sheet: 'start-working', frame: 14 })
-    // The worker2 has no strike to name and never will (#211): it carries no
-    // pick, which is why its whole shift is one sound instead of a hit.
+  /*
+   * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts. It pinned the cue at frame 14 of the 16-frame pick-up, 200ms
+   * (300ms under v3) before the first swing. The shift starts on the pick-up's first frame, so
+   * that is where the grind opens now.
+   */
+  it("starts the worker2's grind as its shift starts, on the pick-up's first frame", () => {
+    expect(DWARF_CREW.worker2.sound?.shift).toEqual({ sheet: 'start-working', frame: 0 })
+    // The worker2 has no strike to name and never will (#211, confirmed by the design lead on
+    // 2026-09-26, SPRITE-QUESTIONS.md question 4): its "Impact" labels are motion phase names.
     expect(DWARF_CREW.worker2.sound?.strike).toBeUndefined()
-    const pickUp = DWARF_SHEETS.worker2['start-working']!
-    expect((pickUp.frames - 14) * pickUp.frameMs).toBe(200)
   })
 
-  it('lands the end of the grind three frames into the set-down', () => {
-    // The whole arithmetic, read off the sheets rather than restated. The cue
-    // leaves 0.2s of pick-up, then eight 1.0s swings — and `worker2-grind.mp3` is
-    // 8.53s, so its tail runs 0.33s past the last swing: three frames into
-    // end-working, which is where the arms stop in the art.
-    const GRIND_MS = 8530
-    const cue = DWARF_CREW.worker2.sound!.shift!
-    const pickUp = DWARF_SHEETS.worker2['start-working']!
-    const swing = DWARF_SHEETS.worker2.working!
-    const setDown = DWARF_SHEETS.worker2['end-working']!
-    const lead = (pickUp.frames - cue.frame) * pickUp.frameMs
-    const swinging = DWARF_CREW.worker2.swings! * swing.frames * swing.frameMs
-    expect(lead + swinging).toBe(8200)
-    expect(Math.floor((GRIND_MS - lead - swinging) / setDown.frameMs)).toBe(3)
+  /*
+   * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts. It pinned the grind ending 1.05s before the last of eight
+   * swings did, the v2 count outlasting the recording under v3 timing. Now the arithmetic is the
+   * ruling's: the grind opens with the shift, the pick-up (1830ms) and every swing (1160ms each)
+   * fall inside the 8530ms recording, and the time left until the next shift is silence.
+   *
+   *     8530 - 1830 = 6700ms for swings; 6700 / 1160 = 5.78, so five swings (a sixth ends at 8790)
+   *     the swings end at 1830 + 5 x 1160 = 7630ms; the grind ends 900ms into the 1750ms set-down
+   *     the shift lasts 1830 + 5800 + 1750 = 9380ms, so 850ms of silence before the next grind
+   */
+  it('fits the pick-up and every swing inside one grind, silent until the next shift (#635)', () => {
+    const sum = (holds: readonly number[] | undefined): number =>
+      (holds ?? []).reduce((total, hold) => total + hold, 0)
+    const pickUp = sum(DWARF_SHEETS.worker2['start-working']!.durations)
+    const swing = sum(DWARF_SHEETS.worker2.working!.durations)
+    const setDown = sum(DWARF_SHEETS.worker2['end-working']!.durations)
+    const swings = DWARF_CREW.worker2.swings!
+    expect(WORKER2_GRIND_MS).toBe(8530)
+    expect(pickUp + swings * swing).toBe(7630)
+    expect(pickUp + swings * swing).toBeLessThanOrEqual(WORKER2_GRIND_MS)
+    // One more swing would outlast the recording: five is as many as fit.
+    expect(pickUp + (swings + 1) * swing).toBeGreaterThan(WORKER2_GRIND_MS)
+    // The shift outlasts its grind, so a shift's grind has ended before the next one opens.
+    expect(pickUp + swings * swing + setDown).toBe(9380)
+    expect(pickUp + swings * swing + setDown - WORKER2_GRIND_MS).toBe(850)
   })
 
   it('names the strip the grind is timed against, and it is one the rank has', () => {
@@ -404,5 +463,68 @@ describe('DWARF_CREW (#330)', () => {
   it('leaves the foreman silent at work, having neither a strike nor a shift', () => {
     expect(DWARF_CREW.foreman.sound?.strike).toBeUndefined()
     expect(DWARF_CREW.foreman.sound?.shift).toBeUndefined()
+  })
+})
+
+/*
+ * The sheets by the design's own key (#635): what the sprite atom plays, `DM.SHEETS` in the
+ * design's prototype (assets.md, Sprite sheets). The ranks' keys point at the ranks' own sheets,
+ * never at a copy, and the base dwarf's idle is the one sheet no rank plays.
+ */
+describe('SPRITE_SHEETS (#635)', () => {
+  it('names every sheet the sprite atom plays, by the design’s key', () => {
+    expect(Object.keys(SPRITE_SHEETS).sort()).toEqual(
+      [
+        'base/idle',
+        'foreman/end-sleep',
+        'foreman/idle',
+        'foreman/sleeping',
+        'foreman/start-sleep',
+        'worker/end-working',
+        'worker/idle',
+        'worker/start-working',
+        'worker/working',
+        'worker2/end-working',
+        'worker2/idle',
+        'worker2/start-working',
+        'worker2/working'
+      ].sort()
+    )
+  })
+
+  it('points each rank’s key at that rank’s own sheet', () => {
+    for (const role of ROLES) {
+      for (const [name, sheet] of Object.entries(DWARF_SHEETS[role])) {
+        expect(SPRITE_SHEETS[`${role}/${name}` as SpriteSheetKey]?.sheet, `${role}/${name}`).toBe(
+          sheet
+        )
+      }
+    }
+  })
+
+  it('plays the start and end transitions once, and every other sheet as a loop', () => {
+    const once = Object.entries(SPRITE_SHEETS)
+      .filter(([, entry]) => entry.once)
+      .map(([key]) => key)
+      .sort()
+    expect(once).toEqual(
+      [
+        'foreman/end-sleep',
+        'foreman/start-sleep',
+        'worker/end-working',
+        'worker/start-working',
+        'worker2/end-working',
+        'worker2/start-working'
+      ].sort()
+    )
+  })
+
+  it('carries the base dwarf’s seven-frame idle, 1120ms a cycle, drawn in the same cell', () => {
+    const base = SPRITE_SHEETS['base/idle'].sheet
+    expect(base.frames).toBe(7)
+    expect(base.durations).toEqual([100, 100, 180, 180, 260, 140, 160])
+    const { width, height } = pngSize(base.src)
+    expect(height).toBe(SPRITE_FRAME_SIZE.height)
+    expect(width / SPRITE_FRAME_SIZE.width).toBe(base.frames)
   })
 })

@@ -834,7 +834,11 @@ describe('MineScene single selection', () => {
  */
 describe('MineScene crew sounds (#330)', () => {
   it('forwards a sprite cue with the mine and the dwarf it came from', () => {
-    const dwarf = defaultDwarf({ id: 'claude:s9', role: 'worker2', status: 'working' })
+    // AMENDED by #635: 'waiting', not 'working'. A worker2 at work now opens its own grind on the
+    // shift's first frame (design lead ruling 2026-09-26, SPRITE-QUESTIONS.md question 2), which
+    // would add a second, real cue to the one this test emits by hand; a resting worker2 makes
+    // none, so the forwarding is still the only thing under test.
+    const dwarf = defaultDwarf({ id: 'claude:s9', role: 'worker2', status: 'waiting' })
     const wrapper = mount(MineScene, {
       props: { mine: defaultMine({ id: 'mine-7', dwarfs: [dwarf] }) }
     })

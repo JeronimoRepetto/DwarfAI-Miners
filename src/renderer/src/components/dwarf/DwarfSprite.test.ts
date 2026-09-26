@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
+import { config, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { motion } from 'motion-v'
 import { BUBBLE_ROW_HEIGHT_PX } from '../../lib/overlay/bubbleLayout'
 import { fadeVariants } from '../../lib/shell/presence'
-import { DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
+import { DWARF_CREW, DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { dwarfClips } from '../../lib/sprite/dwarfSequence'
-import { SPRITE_FRAME_SIZE, loopOf } from '../../lib/sprite/spriteSheet'
+import { SPRITE_FRAME_SIZE, loopOf, type SpriteSheet } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf } from '../../testing/factories'
 import {
   DWARF_SILENCE_WINDOW_MS,
@@ -17,6 +17,57 @@ import {
 } from '../../types'
 import DwarfSprite from './DwarfSprite.vue'
 import spriteSource from './DwarfSprite.vue?raw'
+import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
+import {
+  browserFrameClockEnv,
+  createFrameClock,
+  type FrameClock
+} from '../../lib/sprite/frameClock'
+
+/*
+ * ADDED by #635: every sprite now plays on the window's one shared frame clock instead of an
+ * interval of its own. Each test gets a fresh clock on the real window host — so the fake timers
+ * a test installs are the clock's timers, and no sprite another test left mounted can hold a
+ * timer into this one — with the random phase pinned to frame 0, so a test reads the strip from
+ * its head exactly as it did before the phase existed (components.md, Sprite, Anatomy).
+ */
+let frameClock: FrameClock
+beforeEach(() => {
+  frameClock = createFrameClock({ ...browserFrameClockEnv(), random: () => 0 })
+  Reflect.set(config.global.provide, FRAME_CLOCK_KEY, frameClock)
+})
+afterEach(() => {
+  frameClock.dispose()
+  Reflect.deleteProperty(config.global.provide, FRAME_CLOCK_KEY as symbol)
+})
+
+/*
+ * ADDED by #635: how long a sheet's frames last, from its own sidecar durations. The timing tests
+ * below advanced by `frames * frameMs` and by `frameMs` steps, the v2 sheets' uniform 100ms; the
+ * design replaced that with per-frame durations, so they read these instead.
+ */
+function holdsOf(sheet: SpriteSheet | undefined): readonly number[] {
+  return sheet?.durations ?? []
+}
+function lengthOf(sheet: SpriteSheet | undefined): number {
+  return holdsOf(sheet).reduce((sum, hold) => sum + hold, 0)
+}
+/** When a frame of a sheet starts, counted from the sheet's own start. */
+function startOf(sheet: SpriteSheet | undefined, frame: number): number {
+  return holdsOf(sheet)
+    .slice(0, frame)
+    .reduce((sum, hold) => sum + hold, 0)
+}
+/** The moment a working worker's first swing lands, after its pick-up. */
+function firstStrikeMs(): number {
+  const swing = DWARF_SHEETS.worker.working!
+  return lengthOf(DWARF_SHEETS.worker['start-working']) + startOf(swing, swing.impactFrames![0]!)
+}
+/** The moment a worker2's pick-up is on its last frame, well past where its grind opens. */
+function pastGrindCueMs(): number {
+  const pickUp = DWARF_SHEETS.worker2['start-working']!
+  return startOf(pickUp, pickUp.frames - 1)
+}
 
 /*
  * Every sheet the maintainer has drawn holds at least six frames and none of
@@ -690,38 +741,55 @@ describe('DwarfSprite', () => {
       // 'waiting' (not 'working'), so the strip under test is still the plain
       // idle loop now that working has its own start-working sheet — this
       // test is about the stepping mechanism, not any one sheet's frame count.
-      const { frames, frameMs } = DWARF_SHEETS.worker.idle
+      // AMENDED by #635: each step is that frame's own sidecar hold, not a uniform frameMs.
+      const idle = DWARF_SHEETS.worker.idle
+      const { frames } = idle
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ status: 'waiting' }) }
       })
       expect(framePercentOf(wrapper)).toBe(0)
-      vi.advanceTimersByTime(frameMs)
+      vi.advanceTimersByTime(holdsOf(idle)[0]!)
       await wrapper.vm.$nextTick()
       expect(framePercentOf(wrapper)).toBeCloseTo(100 / (frames - 1))
-      vi.advanceTimersByTime(frameMs)
+      vi.advanceTimersByTime(holdsOf(idle)[1]!)
       await wrapper.vm.$nextTick()
       expect(framePercentOf(wrapper)).toBeCloseTo(200 / (frames - 1))
     })
 
     it('wraps back to the head of the strip at the end of a loop', async () => {
       // Same reasoning as above: 'waiting' keeps this on the idle loop.
-      const { frames, frameMs } = DWARF_SHEETS.worker.idle
+      // AMENDED by #635: one lap is the sum of the sidecar's holds, not frames * frameMs.
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ status: 'waiting' }) }
       })
-      vi.advanceTimersByTime(frames * frameMs)
+      vi.advanceTimersByTime(lengthOf(DWARF_SHEETS.worker.idle))
       await wrapper.vm.$nextTick()
       expect(framePercentOf(wrapper)).toBe(0)
     })
 
     it('holds a single-frame animation still', async () => {
+      // AMENDED by #635: counted on the frame clock rather than as every timer in the window —
+      // the sprite owns no timer now, and motion-v's own frame loop schedules one under jsdom that
+      // is not the sprite's. What is pinned is unchanged: a still sequence schedules nothing.
+      let scheduled = 0
+      Reflect.set(
+        config.global.provide,
+        FRAME_CLOCK_KEY,
+        createFrameClock({
+          ...browserFrameClockEnv(),
+          setTimer: (run, ms) => {
+            scheduled++
+            return globalThis.setTimeout(run, ms)
+          }
+        })
+      )
       vi.mocked(dwarfClips).mockReturnValue([
         loopOf({ src: '/one-frame.png', frames: 1, frameMs: 1400 })
       ])
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
       })
-      expect(vi.getTimerCount()).toBe(0)
+      expect(scheduled).toBe(0)
       vi.advanceTimersByTime(10_000)
       await wrapper.vm.$nextTick()
       expect(sheetOf(wrapper)).toBe('one-frame')
@@ -742,7 +810,8 @@ describe('DwarfSprite', () => {
       const wrapper = mount(DwarfSprite, {
         props: { dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) }
       })
-      vi.advanceTimersByTime(DWARF_SHEETS.foreman.idle.frameMs)
+      // AMENDED by #635: the first frame's own hold, not a uniform frameMs.
+      vi.advanceTimersByTime(holdsOf(DWARF_SHEETS.foreman.idle)[0]!)
       await wrapper.vm.$nextTick()
       expect(framePercentOf(wrapper)).toBeGreaterThan(0)
 
@@ -1052,13 +1121,13 @@ describe('DwarfSprite pick sparks', () => {
     // coalesces a watcher across a synchronous run of interval callbacks
     // down to one job reflecting the FINAL elapsed value, so a coarse
     // advance can sail straight past the one frame that matters and land
-    // somewhere else in the loop's other ten frames. 300ms clears the
-    // 3-frame start-working transition; +400ms lands exactly on index 4 of
-    // the working loop behind it (see dwarfSequence.ts).
+    // somewhere else in the loop's other ten frames. AMENDED by #635: the
+    // jump is the pick-up's own 370ms plus the start of the impact frame,
+    // index 5 since the design moved it, under the sidecar's durations.
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
     })
-    vi.advanceTimersByTime(700)
+    vi.advanceTimersByTime(firstStrikeMs())
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.spark-burst').exists()).toBe(true)
   })
@@ -1132,9 +1201,9 @@ describe('DwarfSprite strike glow', () => {
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
     })
-    // 300ms clears the 3-frame start-working transition; +400ms lands on
-    // index 4 of the working loop behind it (see dwarfSequence.ts).
-    vi.advanceTimersByTime(700)
+    // AMENDED by #635: lands on the impact frame, index 5 and a glow frame,
+    // after the pick-up's own 370ms, under the sidecar's durations.
+    vi.advanceTimersByTime(firstStrikeMs())
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.dwarf-frame').classes()).toContain('is-strike-glow')
   })
@@ -1393,8 +1462,8 @@ describe('DwarfSprite sleep indicator', () => {
     // Falls asleep first, then stays asleep: two sheets, one movement.
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['start-sleep']!.src))
 
-    const { frames, frameMs } = DWARF_SHEETS.foreman['start-sleep']!
-    vi.advanceTimersByTime(frames * frameMs)
+    // AMENDED by #635: the transition lasts its sidecar's holds, not frames * frameMs.
+    vi.advanceTimersByTime(lengthOf(DWARF_SHEETS.foreman['start-sleep']))
     await wrapper.vm.$nextTick()
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman.sleeping!.src))
   })
@@ -1408,8 +1477,8 @@ describe('DwarfSprite sleep indicator', () => {
     await wrapper.setProps({ dwarf: defaultDwarf({ role: 'foreman', status: 'working' }) })
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['end-sleep']!.src))
 
-    const { frames, frameMs } = DWARF_SHEETS.foreman['end-sleep']!
-    vi.advanceTimersByTime(frames * frameMs)
+    // AMENDED by #635: the transition lasts its sidecar's holds, not frames * frameMs.
+    vi.advanceTimersByTime(lengthOf(DWARF_SHEETS.foreman['end-sleep']))
     await wrapper.vm.$nextTick()
     expect(sheetOf(wrapper)).toBe(FOREMAN_IDLE)
   })
@@ -1487,26 +1556,42 @@ describe('DwarfSprite with reduced motion', () => {
     }
   }
 
-  it('holds one frame and starts no timer for a viewer who asked for less', async () => {
+  /*
+   * REPLACED by #635, and the two claims that stood here are the ones the design reversed. They
+   * held that a viewer who asked for less movement got one frame and no timer ("holds one frame and
+   * starts no timer") and that the frame held was the loop's last ("holds the end of the loop").
+   * The PO ruled on 2026-09-25 that the dwarfs keep moving under reduced motion, every frame of
+   * every sheet a flat 200ms — the durations replaced, not scaled — and that only the shell's own
+   * motion stops (decision log, Reduced motion; motion.md, Reduced motion). So the dwarf starts at
+   * the head of its sequence like any other and steps every 200ms.
+   */
+  it('keeps playing for a viewer who asked for less, every frame a flat 200ms (#635)', async () => {
     stubReducedMotion(true)
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
     })
-    expect(vi.getTimerCount()).toBe(0)
-
-    const held = framePercentOf(wrapper)
-    vi.advanceTimersByTime(10_000)
+    // The pick-up, three frames: 0%, 50%, 100% along its strip.
+    expect(framePercentOf(wrapper)).toBe(0)
+    vi.advanceTimersByTime(199)
     await wrapper.vm.$nextTick()
-    expect(framePercentOf(wrapper)).toBe(held)
+    expect(framePercentOf(wrapper)).toBe(0)
+    vi.advanceTimersByTime(1)
+    await wrapper.vm.$nextTick()
+    expect(framePercentOf(wrapper)).toBe(50)
   })
 
-  it('holds the end of the loop, where the gesture finishes', () => {
-    // The rule the painted loops used, kept exactly: the last frame, not the
-    // wind-up into it (see stillFrameOf).
+  it('replaces the sidecar durations under reduced motion rather than scaling them (#635)', async () => {
+    // The worker's pick-up holds 120, 100 and 150ms; under reduced motion each is 200ms, so the
+    // third frame shows at 400ms, not at the 220ms its own durations would put it.
     stubReducedMotion(true)
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
     })
+    vi.advanceTimersByTime(399)
+    await wrapper.vm.$nextTick()
+    expect(framePercentOf(wrapper)).toBe(50)
+    vi.advanceTimersByTime(1)
+    await wrapper.vm.$nextTick()
     expect(framePercentOf(wrapper)).toBe(100)
   })
 
@@ -1538,13 +1623,18 @@ describe('DwarfSprite with reduced motion', () => {
   })
 
   // AMENDED for #306: dropped `waitingReason: 'user-input'`, same reason.
-  it('shows a sleeping foreman asleep rather than caught halfway down', () => {
-    // Holding the FIRST clip would draw him mid-fall, which is a foreman
-    // frozen in an action rather than a foreman in a state.
+  // AMENDED by #635: this held that the foreman was drawn on the sleeping sheet at once, because
+  // reduced motion froze the sequence on the clip it settles on. The dwarfs keep playing under
+  // reduced motion now (decision log, Reduced motion), so he lies down first, as he does for every
+  // viewer — eight frames at 200ms — and is asleep, not frozen mid-fall, once that has played.
+  it('lets a foreman lie down and then shows him asleep, at 200ms a frame', async () => {
     stubReducedMotion(true)
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ role: 'foreman', status: 'waiting' }) }
     })
+    expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman['start-sleep']!.src))
+    vi.advanceTimersByTime(DWARF_SHEETS.foreman['start-sleep']!.frames * 200)
+    await wrapper.vm.$nextTick()
     expect(sheetOf(wrapper)).toBe(sheetName(DWARF_SHEETS.foreman.sleeping!.src))
   })
 
@@ -1569,26 +1659,33 @@ describe('DwarfSprite with reduced motion', () => {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
     })
     expect(framePercentOf(wrapper)).toBe(0)
-    vi.advanceTimersByTime(DWARF_SHEETS.worker.idle.frameMs)
+    // AMENDED by #635: the pick-up's first frame holds its own 120ms, not the idle's frameMs.
+    vi.advanceTimersByTime(holdsOf(DWARF_SHEETS.worker['start-working'])[0]!)
     await wrapper.vm.$nextTick()
     expect(framePercentOf(wrapper)).toBeGreaterThan(0)
   })
 
+  /*
+   * AMENDED by #635. This held that turning the preference on under an open panel stopped the
+   * sprite's timer and froze its frame. The design keeps the dwarfs moving under reduced motion
+   * (decision log, Reduced motion), so what the sprite follows now is the TIMING: the frame it is
+   * on starts a flat 200ms hold where its own duration was 120ms. The clock's timer is the one
+   * shared by every sprite, so the window's timer count says nothing about this sprite.
+   */
   it('follows the preference being turned on under a panel already open', async () => {
     const media = stubReducedMotion(false)
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }) }
     })
-    expect(vi.getTimerCount()).toBe(1)
-
     media.flip(true)
     await wrapper.vm.$nextTick()
-    expect(vi.getTimerCount()).toBe(0)
-
-    const held = framePercentOf(wrapper)
-    vi.advanceTimersByTime(10_000)
+    // Frame 0 now lasts 200ms, not its own 120ms.
+    vi.advanceTimersByTime(199)
     await wrapper.vm.$nextTick()
-    expect(framePercentOf(wrapper)).toBe(held)
+    expect(framePercentOf(wrapper)).toBe(0)
+    vi.advanceTimersByTime(1)
+    await wrapper.vm.$nextTick()
+    expect(framePercentOf(wrapper)).toBe(50)
   })
 
   it('animates again the moment the preference is turned back off', async () => {
@@ -1599,8 +1696,9 @@ describe('DwarfSprite with reduced motion', () => {
     media.flip(false)
     await wrapper.vm.$nextTick()
 
+    // AMENDED by #635: back on the sidecar's own 120ms for the first frame, not the idle's frameMs.
     expect(framePercentOf(wrapper)).toBe(0)
-    vi.advanceTimersByTime(DWARF_SHEETS.worker.idle.frameMs)
+    vi.advanceTimersByTime(holdsOf(DWARF_SHEETS.worker['start-working'])[0]!)
     await wrapper.vm.$nextTick()
     expect(framePercentOf(wrapper)).toBeGreaterThan(0)
   })
@@ -1608,7 +1706,10 @@ describe('DwarfSprite with reduced motion', () => {
   it('stops listening to the preference when the sprite goes', () => {
     const media = stubReducedMotion(false)
     const wrapper = mount(DwarfSprite, { props: { dwarf: defaultDwarf() } })
-    expect(media.listenerCount).toBe(1)
+    // AMENDED by #635: 2, not 1 — the shared frame clock listens to the preference too while it
+    // has a sprite to play, since reduced motion now retimes the frames rather than stopping them.
+    // Both let go when the only sprite goes, which is what this test is about.
+    expect(media.listenerCount).toBe(2)
 
     wrapper.unmount()
     expect(media.listenerCount).toBe(0)
@@ -1620,18 +1721,20 @@ describe('DwarfSprite with reduced motion', () => {
    * even by the coincidence of the held still frame landing on a declared
    * glow frame.
    */
-  it('never lights the strike glow, even on a still frame the artist marked bright', () => {
+  // AMENDED by #635: the frame is reached by playing rather than held. Reduced motion no longer
+  // freezes the sprite (decision log, Reduced motion), so the declared glow frame is shown for
+  // 200ms of every lap — and the glow must still never light on it.
+  it('never lights the strike glow, even on a frame the artist marked bright', async () => {
     stubReducedMotion(true)
-    // Built so the held STILL frame (the loop's last, see stillFrameOf) IS
-    // itself the declared glow frame — proving the refusal is explicit
-    // rather than a lucky accident of which frame a loop settles on.
     vi.mocked(dwarfClips).mockReturnValue([
       loopOf({ src: '/glow-swing.png', frames: 6, frameMs: 100, glowFrames: [5] })
     ])
     const wrapper = mount(DwarfSprite, {
       props: { dwarf: defaultDwarf({ status: 'working' }), anchored: true }
     })
-    expect(framePercentOf(wrapper)).toBe(100) // held on frame 5 of 6 — the glow frame
+    vi.advanceTimersByTime(5 * 200)
+    await wrapper.vm.$nextTick()
+    expect(framePercentOf(wrapper)).toBe(100) // frame 5 of 6 — the glow frame
     expect(wrapper.find('.dwarf-frame').classes()).not.toContain('is-strike-glow')
   })
 })
@@ -1840,8 +1943,10 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // above gives: Vue coalesces a run of interval callbacks into one job.
     // AMENDED for the maintainer's first live listen of #339 (issue #330), dated
     // 2026-09-09: the strike now carries the gain DWARF_CREW.worker declares.
+    // AMENDED by #635: the jump is the pick-up's own 370ms plus the start of the impact frame,
+    // index 5 since the design moved it, under the sidecar's durations.
     const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
-    vi.advanceTimersByTime(700)
+    vi.advanceTimersByTime(firstStrikeMs())
     await wrapper.vm.$nextTick()
     expect(cues).toEqual([{ cue: 'strike', gain: 0.1 }])
   })
@@ -1849,10 +1954,10 @@ describe('DwarfSprite crew sounds (#330)', () => {
   it('strikes on both swings of the shift, not only the first', async () => {
     // The second swing is a clip of its own drawn from the same strip (#325).
     const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
-    vi.advanceTimersByTime(700)
+    vi.advanceTimersByTime(firstStrikeMs())
     await wrapper.vm.$nextTick()
-    // 3 frames of pick-up + 13 of the first swing + 4 into the second.
-    vi.advanceTimersByTime(1300)
+    // AMENDED by #635: one whole swing later, by the sidecar's 1460ms, lands on the second hit.
+    vi.advanceTimersByTime(lengthOf(DWARF_SHEETS.worker.working))
     await wrapper.vm.$nextTick()
     expect(cues).toEqual([
       { cue: 'strike', gain: 0.1 },
@@ -1866,8 +1971,12 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // straight to 15 and frame 14 is never drawn. The cue is a CROSSING for
     // exactly this — a grind that silently did not start is a worker2 miming
     // its whole shift.
+    // AMENDED by #635: advanced to the pick-up's last frame by the sidecar's durations (1630ms),
+    // where 1500ms reached it at the v2 sheets' 100ms. Since the design lead ruling 2026-09-26
+    // (SPRITE-QUESTIONS.md, question 2) the declared frame is the pick-up's first, so the grind
+    // has opened on the shift's first frame already; what stays pinned is that it opens once.
     const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
-    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(pastGrindCueMs())
     await wrapper.vm.$nextTick()
     expect(cues).toEqual([{ cue: 'shift' }])
 
@@ -1880,10 +1989,13 @@ describe('DwarfSprite crew sounds (#330)', () => {
   it('sounds a new grind on the next shift, a cycle being a shift', async () => {
     // Stepped frame by frame here (the async advance lets the watcher run
     // between ticks) rather than coalesced, because what is under test is the
-    // cycle coming round: 113 frames, 11.3s, and the pick-up crosses its
-    // declared frame at 1.4s of each of them.
+    // cycle coming round: 113 frames, and the pick-up crosses its declared
+    // frame early in each of them. AMENDED by #635: on the design lead ruling
+    // 2026-09-26 (SPRITE-QUESTIONS.md, question 2) the grind opens as each shift
+    // starts and a shift is five swings, 9.38s under the sidecars, so 14.4s
+    // holds the first shift's grind and the second's.
     const { cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
-    await vi.advanceTimersByTimeAsync(12_800)
+    await vi.advanceTimersByTimeAsync(14_400)
     expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift' }])
   })
 
@@ -1905,16 +2017,21 @@ describe('DwarfSprite crew sounds (#330)', () => {
     }
   })
 
-  it('strikes nothing under reduced motion, the cue being a frame', async () => {
-    // A viewer who asked for no motion sees no frames — the sprite holds one
-    // pose and runs no timer — so there is no strike to hear. Guarded here as
-    // well as by the held frame, for the reason the strike glow is: belt and
-    // suspenders on the one preference this panel must not get wrong.
+  /*
+   * REPLACED by #635. This held that reduced motion struck nothing, "the cue being a frame": the
+   * sprite used to hold one pose and run no timer, so there was no frame to sound. The design keeps
+   * the dwarfs playing under reduced motion, every frame 200ms (decision log, Reduced motion), so
+   * the impact frame IS drawn — and the strike, being that frame, sounds with it rather than leaving
+   * a swing landing in silence. The reason the cue is a frame is unchanged; the frames are back.
+   */
+  it('strikes under reduced motion too, on the impact frame drawn at 200ms (#635)', async () => {
     stubReducedMotion(true)
     const { wrapper, cues } = mountSprite(defaultDwarf({ status: 'working' }))
-    vi.advanceTimersByTime(10_000)
+    const pickUp = DWARF_SHEETS.worker['start-working']!.frames
+    const impact = DWARF_SHEETS.worker.working!.impactFrames![0]!
+    vi.advanceTimersByTime((pickUp + impact) * 200)
     await wrapper.vm.$nextTick()
-    expect(cues).toEqual([])
+    expect(cues).toEqual([{ cue: 'strike', gain: 0.1 }])
   })
 
   it('still walks audibly under reduced motion, the walk being a position', () => {
@@ -1956,7 +2073,8 @@ describe('DwarfSprite crew sounds (#330)', () => {
 
   it('ends the grind when its worker2 stops working', async () => {
     const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
-    vi.advanceTimersByTime(1500)
+    // AMENDED by #635: past the grind's cue by the sidecar's durations, not the v2 1500ms.
+    vi.advanceTimersByTime(pastGrindCueMs())
     await wrapper.vm.$nextTick()
 
     await wrapper.setProps({ dwarf: defaultDwarf({ role: 'worker2', status: 'waiting' }) })
@@ -1967,7 +2085,8 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // Leaving the cycle is leaving the cycle, whether the status changed or
     // the scene simply started walking it somewhere (#262's own gate).
     const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
-    vi.advanceTimersByTime(1500)
+    // AMENDED by #635: past the grind's cue by the sidecar's durations, not the v2 1500ms.
+    vi.advanceTimersByTime(pastGrindCueMs())
     await wrapper.vm.$nextTick()
 
     await wrapper.setProps({ walking: true })
@@ -1984,7 +2103,8 @@ describe('DwarfSprite crew sounds (#330)', () => {
     // unmounting is the strongest form of "no longer drawn" there is, and a
     // grind outliving the dwarf that made it is the promise broken.
     const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
-    vi.advanceTimersByTime(1500)
+    // AMENDED by #635: past the grind's cue by the sidecar's durations, not the v2 1500ms.
+    vi.advanceTimersByTime(pastGrindCueMs())
     await wrapper.vm.$nextTick()
     expect(cues).toEqual([{ cue: 'shift' }])
 
@@ -1999,6 +2119,42 @@ describe('DwarfSprite crew sounds (#330)', () => {
       { cue: 'walk', gain: 0.05 },
       { cue: 'walk', ending: true }
     ])
+  })
+
+  /*
+   * ADDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one
+   * grind per shift, starting when the shift starts, and silence for the rest of the shift once
+   * the recording is over. So the grind opens on the very first frame of the shift — however the
+   * worker2 came to be at the rock — and not again until the next shift begins.
+   */
+  it('opens the grind the moment a worker2 at the rock starts its shift', () => {
+    const { cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    expect(cues).toEqual([{ cue: 'shift' }])
+  })
+
+  it('opens the grind when a worker2 is put to work, from the same frame of another sheet', async () => {
+    // Idle and pick-up both begin on clip 0, frame 0: the swap has to read as a new shift,
+    // not as a sprite that never moved. From 'leaving' rather than 'waiting': leaving rest plays
+    // the way out of rest before any work (dwarfSequence.ts).
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'leaving' }))
+    expect(cues).toEqual([])
+    await wrapper.setProps({ dwarf: defaultDwarf({ role: 'worker2', status: 'working' }) })
+    expect(cues).toEqual([{ cue: 'shift' }])
+  })
+
+  it('opens exactly one grind per shift, the next as the next shift starts', async () => {
+    const { wrapper, cues } = mountSprite(defaultDwarf({ role: 'worker2', status: 'working' }))
+    const sheets = DWARF_SHEETS.worker2
+    const shift =
+      lengthOf(sheets['start-working']) +
+      DWARF_CREW.worker2.swings! * lengthOf(sheets.working) +
+      lengthOf(sheets['end-working'])
+    await vi.advanceTimersByTimeAsync(shift - 1)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }])
+    await vi.advanceTimersByTimeAsync(1)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'shift' }, { cue: 'shift' }])
   })
 
   it('ends nothing on unmount for a dwarf that was neither walking nor at work', () => {
