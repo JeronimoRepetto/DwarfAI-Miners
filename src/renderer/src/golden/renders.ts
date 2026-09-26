@@ -15,12 +15,22 @@
  */
 import type { Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
+import ChoiceChip from '../components/controls/ChoiceChip.vue'
+import FieldHint from '../components/controls/FieldHint.vue'
+import InputField from '../components/controls/InputField.vue'
+import MetaChip from '../components/controls/MetaChip.vue'
+import SelectField from '../components/controls/SelectField.vue'
+import TierChip from '../components/controls/TierChip.vue'
+import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
+import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
+import type { MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
   IconRow,
   IconSheet,
+  KitFrame,
   KitRow,
   PlateRow,
   RuleFrame,
@@ -28,10 +38,17 @@ import {
   TokenList,
   TypeScale,
   Unbuilt,
+  type FramedPart,
   type GoldenText
 } from './specimens'
 
 export type { GoldenText }
+
+/** One element of a state's anatomy tree and the attributes it prints (a placeholder, a value). */
+export interface GoldenAttributes {
+  element: string
+  attributes: Record<string, string>
+}
 
 export interface GoldenRender {
   component: Component
@@ -52,7 +69,11 @@ const unbuilt = (): GoldenRender => ({ component: Unbuilt, props: {} })
 
 const ramp = (name: string) => [name + '-hi', name, name + '-lo']
 
-type Render = (sample: GoldenSample, texts: GoldenText[]) => GoldenRender
+type Render = (
+  sample: GoldenSample,
+  texts: GoldenText[],
+  attributes: GoldenAttributes[]
+) => GoldenRender
 
 /*
  * One button of a state, as the props the app would pass. `labelled` takes the next label from the
@@ -81,6 +102,107 @@ const buttonRow =
 const button =
   (spec: ButtonSpec): Render =>
   (_sample, texts) => ({ component: ActionButton, props: buttonProps([spec], texts)[0]! })
+
+/*
+ * The form controls' design text (a placeholder, a value, an accessible name, an option) is in
+ * the attributes the state's tree prints, handed in at run time like the texts. `elementsOf` picks
+ * the elements of one kind, in tree order; the frame around them takes the style its own root
+ * prints. A flag no attribute shows, such as a forced look or `invalid`, is the render's, as a
+ * button's variant is.
+ */
+const elementsOf = (attributes: GoldenAttributes[], element: string): Record<string, string>[] =>
+  attributes
+    .filter((entry) => entry.element === element || entry.element.startsWith(element + '.'))
+    .map((entry) => entry.attributes)
+
+const framed =
+  (parts: (texts: GoldenText[], attributes: GoldenAttributes[]) => FramedPart[]): Render =>
+  (_sample, texts, attributes) => ({
+    component: KitFrame,
+    props: { style: attributes[0]?.attributes.style ?? '', parts: parts(texts, attributes) }
+  })
+
+// One field per spec, each taking its placeholder, value and disabled flag from the matching
+// control of the tree, and the error hint under the last when the tree has one.
+const fields = (
+  specs: Record<string, unknown>[],
+  { control = 'input', hint = false }: { control?: 'input' | 'textarea'; hint?: boolean } = {}
+): Render =>
+  framed((texts, attributes) => {
+    const controls = elementsOf(attributes, control)
+    const parts: FramedPart[] = specs.map((spec, i) => {
+      const native = controls[i] ?? {}
+      return {
+        component: InputField,
+        props: {
+          ...spec,
+          placeholder: native.placeholder ?? '',
+          value: native.value ?? '',
+          disabled: 'disabled' in native,
+          ...(native.rows === undefined ? {} : { rows: Number(native.rows) })
+        }
+      }
+    })
+    if (hint) parts.push({ component: FieldHint, props: { error: true }, text: texts[0]?.text })
+    return parts
+  })
+
+// Each select of the tree with its name, disabled flag and options, in order.
+const selectsOf = (
+  attributes: GoldenAttributes[]
+): { label: string; disabled: boolean; options: string[] }[] => {
+  const selects: { label: string; disabled: boolean; options: string[] }[] = []
+  for (const { element, attributes: a } of attributes) {
+    if (element.startsWith('select')) {
+      selects.push({ label: a['aria-label'] ?? '', disabled: 'disabled' in a, options: [] })
+    } else if (element.startsWith('option')) selects.at(-1)?.options.push(a.value ?? '')
+  }
+  return selects
+}
+
+// Each switch of the tree, named and set as it prints, with the look each is forced to.
+const toggles = (states: (string | undefined)[] = []): Render =>
+  framed((_texts, attributes) =>
+    elementsOf(attributes, 'button.dm-toggle').map((button, i) => ({
+      component: ToggleSwitch,
+      props: {
+        label: button['aria-label'] ?? '',
+        on: button['aria-checked'] === 'true',
+        disabled: 'disabled' in button,
+        state: states[i]
+      }
+    }))
+  )
+
+// Each range of the tree, named and set as it prints, with the look each is forced to.
+const sliders = (states: (string | undefined)[] = []): Render =>
+  framed((_texts, attributes) =>
+    elementsOf(attributes, 'input').map((range, i) => ({
+      component: VolumeSlider,
+      props: {
+        label: range['aria-label'] ?? '',
+        value: Number(range.value),
+        disabled: 'disabled' in range,
+        state: states[i]
+      }
+    }))
+  )
+
+// Each choice chip of the tree, its label the next text, pressed, disabled and tiered as it
+// prints, with the look each is forced to.
+const choiceChips = (states: (string | undefined)[] = []): Render =>
+  framed((texts, attributes) =>
+    elementsOf(attributes, 'button.dm-chip').map((chip, i) => ({
+      component: ChoiceChip,
+      props: {
+        label: texts[i]?.text ?? '',
+        ...(chip['aria-pressed'] === undefined ? {} : { pressed: chip['aria-pressed'] === 'true' }),
+        ...(chip['data-tier'] === undefined ? {} : { tier: chip['data-tier'] as MineTier }),
+        disabled: 'disabled' in chip,
+        state: states[i]
+      }
+    }))
+  )
 
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
@@ -221,5 +343,58 @@ export const RENDERS: Record<string, Render> = {
   'atoms/button#large-primary': button({ labelled: true, variant: 'primary', size: 'lg' }),
   'atoms/button#link': buttonRow(
     STATES.slice(0, 2).map((state) => ({ labelled: true, variant: 'link', state }))
+  ),
+
+  // The input's states, each in the kit's frame; `state` forces the look a pointer or the
+  // keyboard would give, as the kit's own option does.
+  'atoms/input#text': fields([{}]),
+  'atoms/input#hover': fields([{ state: 'hover' }]),
+  'atoms/input#focus': fields([{ state: 'focus' }]),
+  'atoms/input#search': fields([{ search: true }, { search: true }]),
+  'atoms/input#invalid': fields([{ invalid: true }], { hint: true }),
+  'atoms/input#disabled': fields([{}]),
+  'atoms/input#textarea': fields([{ area: true }], { control: 'textarea' }),
+
+  // The select at rest, forced to hover and to focus, in the kit's row; disabled alone.
+  'atoms/select#default-hover-focus': framed((_texts, attributes) =>
+    selectsOf(attributes).map((props, i) => ({
+      component: SelectField,
+      props: { ...props, state: [undefined, 'hover', 'focus'][i] }
+    }))
+  ),
+  'atoms/select#disabled': (_sample, _texts, attributes) => ({
+    component: SelectField,
+    props: selectsOf(attributes)[0]!
+  }),
+  // The toggle's states in the kit's row: hover, pressed while on, and focus are forced looks.
+  'atoms/toggle#off-on': toggles(),
+  'atoms/toggle#hover-pressed-focus': toggles(['hover', 'active', 'focus']),
+  'atoms/toggle#disabled': toggles(),
+
+  // The slider's states, each in the kit's frame; hover is a forced look.
+  'atoms/slider#default': sliders(),
+  'atoms/slider#hover': sliders(['hover']),
+  'atoms/slider#muted-full': sliders(),
+  'atoms/slider#disabled': sliders(),
+  // The chips in the kit's row: a choice chip at rest, forced to hover and to press, pressed,
+  // disabled and forced to focus; the tier filters in canonical order; the tier chips, whose word
+  // is the chip's own; and the meta chips, each fact the next text.
+  'atoms/chip#choice-chip': choiceChips([
+    undefined,
+    'hover',
+    'active',
+    undefined,
+    undefined,
+    'focus'
+  ]),
+  'atoms/chip#tier-filter-chips': choiceChips(),
+  'atoms/chip#tier-chips': framed((_texts, attributes) =>
+    elementsOf(attributes, 'span.dm-tier').map((chip) => ({
+      component: TierChip,
+      props: { tier: chip['data-tier'] as MineTier }
+    }))
+  ),
+  'atoms/chip#meta-chips': framed((texts) =>
+    texts.map((fact) => ({ component: MetaChip, props: { text: fact.text ?? '' } }))
   )
 }
