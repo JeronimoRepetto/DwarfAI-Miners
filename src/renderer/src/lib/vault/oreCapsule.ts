@@ -9,20 +9,25 @@ import type { Material } from '../../types'
 
 const COMPACT_FROM = 10_000
 
-// Below a hundred of a unit, one decimal place, dropped when it is zero ("12.5K", "10K"); from a
-// hundred up, whole ("281K").
-function scaled(value: number, at: number): number {
+/*
+ * One decimal place below `wholeFrom` of the unit, dropped when it is zero ("12.5K", "10K"); from
+ * there up, whole ("281K"). Thousands keep their decimal to 99.9K, millions only to 9.9M (the
+ * design lead's ruling, 2026-09-26). The decimal is judged on the rounded figure, so 99,960 reads
+ * "100K" rather than "100.0K".
+ */
+function scaled(value: number, at: number, wholeFrom: number): number {
   const v = value / at
-  return v < 100 ? Number(v.toFixed(1)) : Math.round(v)
+  const tenths = Number(v.toFixed(1))
+  return tenths < wholeFrom ? tenths : Math.round(v)
 }
 
 export function compactUnits(units: number): string {
   const value = Math.max(0, Math.trunc(units))
   if (value < COMPACT_FROM) return groupDigits(value)
-  const thousands = scaled(value, 1_000)
-  // A figure that rounds to a thousand thousands is written as millions instead.
-  if (value < 1_000_000 && thousands < 1000) return thousands + 'K'
-  return scaled(value, 1_000_000) + 'M'
+  const thousands = scaled(value, 1_000, 100)
+  // A figure that rounds to a thousand thousands is written as millions instead ("1M", not "1000K").
+  if (thousands < 1000) return thousands + 'K'
+  return scaled(value, 1_000_000, 10) + 'M'
 }
 
 export function oreCapsuleName(material: Material, units: number): string {
