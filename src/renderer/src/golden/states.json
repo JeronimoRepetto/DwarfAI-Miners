@@ -168,16 +168,13 @@
     "red": "the redesigned nav slot is not built yet (#635)"
   },
   {
-    "key": "atoms/badge#badges",
-    "red": "the redesigned badge and pill is not built yet (#635)"
+    "key": "atoms/badge#badges"
   },
   {
-    "key": "atoms/badge#crew-state-pills",
-    "red": "the redesigned badge and pill is not built yet (#635)"
+    "key": "atoms/badge#crew-state-pills"
   },
   {
-    "key": "atoms/badge#semantic-pills",
-    "red": "the redesigned badge and pill is not built yet (#635)"
+    "key": "atoms/badge#semantic-pills"
   },
   {
     "key": "atoms/portrait#ranks",

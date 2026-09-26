@@ -22,8 +22,12 @@ import MetaChip from '../components/controls/MetaChip.vue'
 import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
+import CountBadge from '../components/dwarf/CountBadge.vue'
+import StatePill from '../components/dwarf/StatePill.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
+import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
+import type { IconName } from '../lib/icon/iconGrids'
 import type { MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
@@ -203,6 +207,55 @@ const choiceChips = (states: (string | undefined)[] = []): Render =>
       }
     }))
   )
+
+// The modifier a tree's element carries for a block, as `span.dm-badge.dm-badge--info` carries
+// `info`: a tone is a class, so it arrives with the tree like the rest of its design.
+const modifierOf = (element: string, block: string): string | undefined =>
+  element
+    .split('.')
+    .find((c) => c.startsWith(block + '--'))
+    ?.slice(block.length + 2)
+
+// Each badge of the tree, its count read back from the text it shows: "99+" is a count past 99.
+const badges: Render = framed((texts, attributes) =>
+  attributes
+    .filter((entry) => entry.element.startsWith('span.dm-badge'))
+    .map((entry, i) => {
+      const shown = texts[i]?.text ?? ''
+      return {
+        component: CountBadge,
+        props: {
+          count: shown.endsWith('+') ? Number(shown.slice(0, -1)) + 1 : Number(shown),
+          tone: modifierOf(entry.element, 'dm-badge') as BadgeTone | undefined
+        }
+      }
+    })
+)
+
+/*
+ * Each pill of the tree in its tone, with the needs-you plate its tree draws inside it, its mark
+ * and word the next texts. An icon line prints no name a render can read, so a state's icons are
+ * its render's, in tree order, as a button's are.
+ */
+const pills = (icons: IconName[] = []): Render =>
+  framed((texts, attributes) => {
+    const specs: { tone?: PillTone; ask: boolean; icon?: IconName }[] = []
+    let icon = 0
+    for (const { element } of attributes.slice(1)) {
+      if (element.startsWith('span.dm-pill__q')) specs.at(-1)!.ask = true
+      else if (element.startsWith('span.dm-pill')) {
+        specs.push({ tone: modifierOf(element, 'dm-pill') as PillTone | undefined, ask: false })
+      } else if (element === 'icon') specs.at(-1)!.icon = icons[icon++]
+    }
+    let next = 0
+    return specs.map((spec) => {
+      const mark = spec.ask ? texts[next++]?.text : undefined
+      return {
+        component: StatePill,
+        props: { ...spec, ...(mark === undefined ? {} : { mark }), text: texts[next++]?.text ?? '' }
+      }
+    })
+  })
 
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
@@ -406,9 +459,10 @@ export const RENDERS: Record<string, Render> = {
   'atoms/slot#warning': unbuilt,
   'atoms/slot#focus-visible': unbuilt,
   'atoms/slot#mode-lever': unbuilt,
-  'atoms/badge#badges': unbuilt,
-  'atoms/badge#crew-state-pills': unbuilt,
-  'atoms/badge#semantic-pills': unbuilt,
+  // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
+  'atoms/badge#badges': badges,
+  'atoms/badge#crew-state-pills': pills(),
+  'atoms/badge#semantic-pills': pills(['check']),
   'atoms/portrait#ranks': unbuilt,
   'atoms/portrait#status': unbuilt,
   'atoms/portrait#interaction': unbuilt,
