@@ -207,10 +207,41 @@ history.
 [D] <https://opencode.ai/docs/cli/>, <https://opencode.ai/docs/server/>. No usage or rate-limit
 endpoint in `opencode serve`.
 
-What OpenCode can honestly contribute is spend, not quota: `session.cost` is a stored column, so its
-cost does not have to be derived from a price table. [V] [I] An OpenCode session signed in
-with a Claude Pro/Max or Copilot subscription draws on that subscription's quota, but OpenCode does
-not report it, so the Union can at most say which subscription a session spends.
+What OpenCode can honestly contribute is tokens and a cost figure, not quota. `session.cost` is a
+stored column, and each assistant message's `data` JSON carries its own `providerID`, `cost` and
+`tokens`. [V]
+
+### What the stored cost means
+
+[V] An aggregate over the maintainer's assistant messages, grouped by `providerID` (`opencode db`,
+read-only, counts and sums only):
+
+| `providerID`  | Messages | Stored cost | Messages with cost 0 |
+| ------------- | -------- | ----------- | -------------------- |
+| `opencode`    | 890      | 0           | 890                  |
+| `opencode-go` | 1229     | about $65   | 38                   |
+
+`opencode auth list` shows one credential on that machine: **OpenCode Go**, typed `api`. [V]
+
+What that establishes, and what it does not:
+
+- **A stored cost is not a bill.** OpenCode Go is a subscription, and OpenCode still recorded about
+  $65 against it. It is almost certainly list price for the tokens, the same kind of number as
+  Claude's `cost.total_cost_usd`. [I] The Union must never present it as money the user spent.
+- **The credential type does not tell how the user pays.** A subscription shows up as `api`, so
+  "API credential, therefore pay per token" cannot be inferred from it.
+- **Zero cost does not mean free.** The `opencode` rows could be free Zen models, or a cost that
+  was simply not recorded. Nothing local distinguishes the two.
+- **A subscription's quota is not local.** Third-party reports say OpenCode's hosted plans have
+  5-hour, weekly and monthly limits, and those reports are leads only. No table, command or server
+  endpoint exposes them. [V] for the absence, [I] for the limits.
+- A session signed in to someone else's subscription (Claude Pro/Max over OAuth, Copilot) draws on
+  that subscription's quota, and OpenCode does not report it either. [I]
+- `auth.json`, beside the database, holds the credentials. Like `account` and `control_account`,
+  it is never read.
+
+So an OpenCode card shows tokens and "cost at list price", split by `providerID`, and its quota
+states that this provider does not report one.
 
 ## Integration outline
 
@@ -235,7 +266,19 @@ interface QuotaWindow {
   usedFraction: number // 0..1, always "used", converted at the parser
   resetsAt?: number // epoch ms
 }
+interface AccountSpend {
+  provider: ProviderId
+  accountKey: string
+  subProvider?: string // OpenCode's providerID; absent elsewhere
+  tokens: number
+  estimatedCostUsd?: number // always list price; no local source carries an invoice
+  since: number // epoch ms the figure accumulates from
+  observedAt: number
+}
 ```
+
+`AccountSpend` is the spend card's record. It is separate from `AccountQuota` because an account
+may have both, and because a quota reading replaces the last one while spend accumulates.
 
 The conversion happens once, in each parser: Claude `used_percentage / 100`, Codex
 `used_percent / 100`, Antigravity `1 - remaining_fraction`. Nothing downstream should know which
@@ -253,6 +296,52 @@ Rules the shape has to carry:
   `privacy.md` claim that the app transmits nothing. The app-server read would make Codex call its
   backend on our behalf, which is one more reason it is last.
 
+### Several sources for one account: the freshest reading wins
+
+Claude has two sources: the status line and the usage cache. They are not a primary and a backup.
+They are two readings of the same account, and both run:
+
+- Each parser emits an `AccountQuota` with its own `observedAt`: the event time for the status line,
+  `fetchedAtMs` for the cache. The store keeps the newest reading per account and window, and
+  records which source it came from.
+- When one breaks, the other carries on and the user sees nothing change. The cache breaks when its
+  undocumented shape changes. The status line breaks when the user disables it, or when a project's
+  own `statusLine` overrides it.
+- When both report the same window and disagree beyond rounding, that goes to the log, not to the
+  screen. It is the earliest warning that the cache parser has fallen behind its shape.
+- **A parser that meets an unexpected shape returns "no reading", never a number.** Otherwise a
+  broken source that emits 0% would win on freshness and overwrite a correct reading.
+
+The same rule covers Codex, whose rollout and app-server reads report the same snapshot, if the
+app-server read is ever added.
+
+### Accounts without a subscription: spend, not quota
+
+An account on an API key has no 5-hour or weekly window. It pays per token. [D] Claude's status line
+never carries `rate_limits` under API-key auth. The API's own rate limits (requests and tokens per
+minute) travel in response headers that only the CLI sees, so the app cannot read them locally.
+
+The Union therefore needs two kinds of card, and each account gets whichever its data supports:
+
+- **Quota card**, for accounts that report windows: used fraction, reset, plan, credits.
+- **Spend card**, for accounts that do not: tokens, and a cost figure.
+
+What a spend card can show, per provider:
+
+| Provider    | Cost figure                                                                                    | Source                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Claude Code | Client estimate at list price                                                                  | Status line `cost`, or `totalCostUsd` of held sessions |
+| Codex       | None stored. Needs a price table                                                               | Rollout tokens                                         |
+| OpenCode    | Stored per message, list price (see [what the stored cost means](#what-the-stored-cost-means)) | `message.data`, `session.cost`                         |
+| Antigravity | Does not apply. Its docs say it takes no user-supplied key                                     | —                                                      |
+
+**Every cost figure says it is an estimate.** No local source carries an actual invoice, and a
+subscription account can show a large list-price cost it never paid. A spend card may also sit next
+to a quota card for the same account: a Claude Max account has both windows and a cost estimate.
+
+The card kind follows the data, never the credential type. The OpenCode measurement shows why: a
+subscription credential labelled `api`.
+
 ### Slices, in recommended order
 
 1. **Codex rollout parser.** Extend `parseCodexRolloutTail()` to keep the last `rate_limits`, and
@@ -266,30 +355,41 @@ Rules the shape has to carry:
    keys only, verifies units from a captured fixture first, and updates `privacy.md`. It is the
    fastest way to real Claude numbers. It is undocumented, and the UI must be able to lose it.
 4. **Claude status-line channel.** An opt-in wrapper beside the hooks channel, which chains the
-   user's command and restores it verbatim on disable. It is the documented contract, and it
-   replaces or cross-checks slice 3 when enabled.
+   user's command and restores it verbatim on disable. It is the documented contract. When it is
+   enabled it runs beside slice 3, with the freshest reading winning.
 5. **Antigravity status line.** Same pattern as slice 4, against `agy`'s settings file. It is
    blocked until `agy` is installed and its payload is captured, since nothing about it is [V].
-6. **OpenCode spend.** Surface `session.cost` and tokens, with an explicit "this provider reports
-   no quota" state.
+6. **Spend cards.** Tokens and list-price cost: OpenCode per `providerID` from the stored cost,
+   Claude from the status line and held sessions, and Codex once a price table exists. Every
+   figure is labelled as an estimate, and every quota slot without a source says the provider does
+   not report one.
 7. **The screen.** The Union panel itself, once the maintainer's design amendment exists.
 
 Slices 1–3 work on all three OSes as they are, because they are file reads under the user's home.
 Slices 4–5 install a command that the CLI runs through a shell, so they need the platform-ports
 treatment the hooks installer already has.
 
+## Decisions taken
+
+Maintainer decisions from the 2026-09-26 review of this note:
+
+- **Claude reads both sources**, the usage cache and the status line, and the freshest reading wins.
+  See [several sources for one account](#several-sources-for-one-account-the-freshest-reading-wins).
+- **Two card kinds, quota and spend.** The data decides which kind an account gets, never the
+  credential type. See [accounts without a subscription](#accounts-without-a-subscription-spend-not-quota).
+
 ## Open questions
 
-1. Is an undocumented cache acceptable as a source at all (slice 3), or is Claude quota opt-in
-   through the status line only?
-2. Does the Union show only the current reading, or history? History needs a table and a retention
+1. Does the Union show only the current reading, or history? History needs a table and a retention
    rule.
-3. Several accounts per provider (two Claude roots, several `CODEX_HOME`s): one card per account,
+2. Several accounts per provider (two Claude roots, several `CODEX_HOME`s): one card per account,
    or one per provider?
-4. Should the app-server read ever be used, for example on demand from the Union, given that it is
+3. Should the app-server read ever be used, for example on demand from the Union, given that it is
    experimental and makes Codex call out?
-5. For OpenCode sessions spending a Claude or Copilot subscription, is naming the subscription
+4. For OpenCode sessions spending a Claude or Copilot subscription, is naming the subscription
    enough?
+5. Does Codex get a price table, a config value or a bundled default, so that its spend card shows a
+   cost and not tokens only?
 
 ## Evidence gaps
 
@@ -301,3 +401,7 @@ treatment the hooks installer already has.
 - The exact method string of Codex's rate-limit update notification.
 - Whether `cachedUsageUtilization` is refreshed while no Claude session is open, or only by a
   running CLI.
+- API-key accounts, since none was available on the measuring machine: whether
+  `cachedUsageUtilization` exists at all under API-key auth, and whether Codex leaves `rate_limits`
+  `null` or omits it.
+- Whether OpenCode's stored cost is list price on every provider, and what a zero cost means.
