@@ -98,6 +98,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:golden": "node scripts/golden/run.mjs",
     "golden:design": "node scripts/golden/design-copy.mjs"
   },
   "dependencies": {
