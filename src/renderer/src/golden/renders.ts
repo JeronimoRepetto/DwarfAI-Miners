@@ -30,10 +30,12 @@ import DwarfPortrait from '../components/dwarf/DwarfPortrait.vue'
 import StatePill from '../components/dwarf/StatePill.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import NavSlot from '../components/shell/NavSlot.vue'
+import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
+import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
 import type { DwarfRole, Material, MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
@@ -403,6 +405,35 @@ const markers: Render = (_sample, _texts, attributes) => {
   }
 }
 
+/*
+ * Each sprite of the tree: its sheet the key its `data-sheet` names, its scale the `--s` its style
+ * prints, mirrored or still as its classes say. The key is the design's own name for a sheet the
+ * app ships; the phase the tree prints is the prototype's, and the page's stopped clock holds every
+ * sprite on frame 0, as the references do.
+ */
+const spritesOf = (attributes: GoldenAttributes[]): FramedPart[] =>
+  attributes
+    .filter((entry) => /^span\.dm-sprite(\.|$)/.test(entry.element))
+    .map(({ element, attributes: a }) => {
+      const { sheet, once } = SPRITE_SHEETS[a['data-sheet'] as SpriteSheetKey]
+      const classes = element.split('.')
+      return {
+        component: SpriteStrip,
+        props: {
+          sheet,
+          once,
+          scale: Number(/--s:\s*(\d+)/.exec(a.style ?? '')?.[1] ?? 1),
+          flip: classes.includes('dm-sprite--flip'),
+          still: classes.includes('dm-sprite--still')
+        }
+      }
+    })
+const sprites: Render = framed((_texts, attributes) => spritesOf(attributes))
+const spriteAlone: Render = (_sample, _texts, attributes) => {
+  const [part] = spritesOf(attributes)
+  return { component: part!.component, props: part!.props }
+}
+
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
@@ -634,16 +665,15 @@ export const RENDERS: Record<string, Render> = {
   'atoms/marker#needs-you': markers,
   'atoms/marker#focus-visible': markers,
 
-  // The sprite atom's sheets at 1x, 2x and 2x mirrored, and the still option. No view yet: the
-  // atom and its shared frame clock arrive with the sprite player slice of #635.
-  'atoms/sprite#worker-working': unbuilt,
-  'atoms/sprite#worker-idle': unbuilt,
-  'atoms/sprite#worker-start-working': unbuilt,
-  'atoms/sprite#worker2-working': unbuilt,
-  'atoms/sprite#worker2-start-working': unbuilt,
-  'atoms/sprite#worker2-idle': unbuilt,
-  'atoms/sprite#foreman-idle': unbuilt,
-  'atoms/sprite#foreman-sleeping': unbuilt,
-  'atoms/sprite#base-idle': unbuilt,
-  'atoms/sprite#still': unbuilt
+  // The sprite atom's sheets at 1x, 2x and 2x mirrored in the kit's row, and the still option alone.
+  'atoms/sprite#worker-working': sprites,
+  'atoms/sprite#worker-idle': sprites,
+  'atoms/sprite#worker-start-working': sprites,
+  'atoms/sprite#worker2-working': sprites,
+  'atoms/sprite#worker2-start-working': sprites,
+  'atoms/sprite#worker2-idle': sprites,
+  'atoms/sprite#foreman-idle': sprites,
+  'atoms/sprite#foreman-sleeping': sprites,
+  'atoms/sprite#base-idle': sprites,
+  'atoms/sprite#still': spriteAlone
 }
