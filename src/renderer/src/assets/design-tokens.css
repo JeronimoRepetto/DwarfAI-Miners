@@ -106,6 +106,32 @@
   --px: 2px;
   /* The material recipe's extra ring when a state adds none. */
   --ring-none: 0 0 0 0 transparent;
+
+  /*
+   * Spacing on the 2px art pixel. `--sp-3` is the sibling floor: two
+   * neighbouring controls never sit closer than 8px (stacked nav slots and
+   * vertical tabs excepted, at 6px). A test fails on any odd pixel value in
+   * this file outside the type sizes and the v4 sizes still awaiting their
+   * rebuild slices.
+   */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+  /* Hit targets: nothing is smaller than --hit, and navigation is taller. */
+  --hit: 32px;
+  --hit-tool: 36px;
+  --hit-nav: 40px;
+  --row: 40px;
+
+  /* Layers, lowest first: a rising nav label, tooltips, menus, dialogs, the toast. */
+  --z-float: 20;
+  --z-overlay: 50;
+  --z-menu: 60;
+  --z-dialog: 80;
+  --z-toast: 90;
 }
 
 :root {
@@ -403,6 +429,10 @@
 }
 .m-trim-lit {
   --mat-edge: var(--brass);
+}
+/* The base every control sits on. */
+.m-plate {
+  padding: var(--sp-2) var(--sp-3);
 }
 /* A hard pixel shadow that follows the notch, never a blur. */
 .m-raised {

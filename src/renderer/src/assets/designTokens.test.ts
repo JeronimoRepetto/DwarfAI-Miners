@@ -817,3 +817,76 @@ describe('design-tokens.css against the redesign foundations (#635)', () => {
     expect(declared('design-tokens.css', '.m-rivets::after', 'right')).toBe('4px')
   })
 })
+
+describe('design-tokens.css spacing, hit targets and layers (#635)', () => {
+  it.each([
+    ['--sp-1', '2px'],
+    ['--sp-2', '4px'],
+    ['--sp-3', '8px'],
+    ['--sp-4', '12px'],
+    ['--sp-5', '16px'],
+    ['--sp-6', '24px'],
+    ['--hit', '32px'],
+    ['--hit-tool', '36px'],
+    ['--hit-nav', '40px'],
+    ['--row', '40px']
+  ])('carries the spacing token %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  // Stacked in the order the layers sit, each above the one before it.
+  it.each([
+    ['--z-float', '20'],
+    ['--z-overlay', '50'],
+    ['--z-menu', '60'],
+    ['--z-dialog', '80'],
+    ['--z-toast', '90']
+  ])('carries the layer %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  it('pads a plate by the scale, never by a literal', () => {
+    expect(declared('design-tokens.css', '.m-plate', 'padding')).toBe('var(--sp-2) var(--sp-3)')
+  })
+
+  /*
+   * The whole-art-pixel rule: every gap, padding, margin and size is a whole number of 2px art
+   * pixels, so an edge never lands between screen pixels at 1x. Type sizes are exempt — a face is
+   * sharp at multiples of its own em grid (Jacquard 12 at 21px), which the crisp-size rule governs.
+   *
+   * The v4 sizes below predate the rule and are retired by the rebuild slice that replaces their
+   * callers, not re-valued here by guesswork. The list may only shrink: each entry must still be
+   * odd, so a token fixed in place has to leave it.
+   */
+  const LEGACY_V4_ODD_SIZES = [
+    '--space-map-pad',
+    '--size-icon',
+    '--size-sleep-icon',
+    '--size-chip-height',
+    '--size-mine-interior-width',
+    '--size-feature-panel-width',
+    '--size-message-input-width'
+  ]
+  const isTypeSize = (name: string) => name.startsWith('--fs-') || name.startsWith('--text-')
+  const pixelsIn = (value: string) =>
+    [...value.matchAll(/(-?\d*\.?\d+)px/g)].map((match) => Number(match[1]))
+
+  it('draws every size and spacing in design-tokens.css in whole 2px art pixels', () => {
+    const offenders: string[] = []
+    for (const rule of rulesIn('design-tokens.css')) {
+      for (const [name, value] of rule.declarations) {
+        if (isTypeSize(name) || LEGACY_V4_ODD_SIZES.includes(name)) continue
+        if (pixelsIn(value).some((px) => px % 2 !== 0)) {
+          offenders.push(`${rule.selector} ${name}: ${value}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it.each(LEGACY_V4_ODD_SIZES)('still lists %s only because it is still off the grid', (name) => {
+    const value = rootToken(name)
+    expect(value).toBeTruthy()
+    expect(pixelsIn(value!).some((px) => px % 2 !== 0)).toBe(true)
+  })
+})
