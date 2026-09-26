@@ -128,19 +128,15 @@
     "key": "atoms/slider#disabled"
   },
   {
-    "key": "atoms/chip#choice-chip",
-    "red": "the redesigned chip is not built yet (#635)"
+    "key": "atoms/chip#choice-chip"
   },
   {
-    "key": "atoms/chip#tier-filter-chips",
-    "red": "the redesigned chip is not built yet (#635)"
+    "key": "atoms/chip#tier-filter-chips"
   },
   {
-    "key": "atoms/chip#tier-chips",
-    "red": "the redesigned chip is not built yet (#635)"
+    "key": "atoms/chip#tier-chips"
   },
   {
-    "key": "atoms/chip#meta-chips",
-    "red": "the redesigned chip is not built yet (#635)"
+    "key": "atoms/chip#meta-chips"
   }
 ]

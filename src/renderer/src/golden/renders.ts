@@ -15,12 +15,16 @@
  */
 import type { Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
+import ChoiceChip from '../components/controls/ChoiceChip.vue'
 import FieldHint from '../components/controls/FieldHint.vue'
 import InputField from '../components/controls/InputField.vue'
+import MetaChip from '../components/controls/MetaChip.vue'
 import SelectField from '../components/controls/SelectField.vue'
+import TierChip from '../components/controls/TierChip.vue'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
+import type { MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
@@ -179,6 +183,22 @@ const sliders = (states: (string | undefined)[] = []): Render =>
         label: range['aria-label'] ?? '',
         value: Number(range.value),
         disabled: 'disabled' in range,
+        state: states[i]
+      }
+    }))
+  )
+
+// Each choice chip of the tree, its label the next text, pressed, disabled and tiered as it
+// prints, with the look each is forced to.
+const choiceChips = (states: (string | undefined)[] = []): Render =>
+  framed((texts, attributes) =>
+    elementsOf(attributes, 'button.dm-chip').map((chip, i) => ({
+      component: ChoiceChip,
+      props: {
+        label: texts[i]?.text ?? '',
+        ...(chip['aria-pressed'] === undefined ? {} : { pressed: chip['aria-pressed'] === 'true' }),
+        ...(chip['data-tier'] === undefined ? {} : { tier: chip['data-tier'] as MineTier }),
+        disabled: 'disabled' in chip,
         state: states[i]
       }
     }))
@@ -356,9 +376,25 @@ export const RENDERS: Record<string, Render> = {
   'atoms/slider#hover': sliders(['hover']),
   'atoms/slider#muted-full': sliders(),
   'atoms/slider#disabled': sliders(),
-  // The chip, not built yet (#635): each state mounts an empty box and fails.
-  'atoms/chip#choice-chip': unbuilt,
-  'atoms/chip#tier-filter-chips': unbuilt,
-  'atoms/chip#tier-chips': unbuilt,
-  'atoms/chip#meta-chips': unbuilt
+  // The chips in the kit's row: a choice chip at rest, forced to hover and to press, pressed,
+  // disabled and forced to focus; the tier filters in canonical order; the tier chips, whose word
+  // is the chip's own; and the meta chips, each fact the next text.
+  'atoms/chip#choice-chip': choiceChips([
+    undefined,
+    'hover',
+    'active',
+    undefined,
+    undefined,
+    'focus'
+  ]),
+  'atoms/chip#tier-filter-chips': choiceChips(),
+  'atoms/chip#tier-chips': framed((_texts, attributes) =>
+    elementsOf(attributes, 'span.dm-tier').map((chip) => ({
+      component: TierChip,
+      props: { tier: chip['data-tier'] as MineTier }
+    }))
+  ),
+  'atoms/chip#meta-chips': framed((texts) =>
+    texts.map((fact) => ({ component: MetaChip, props: { text: fact.text ?? '' } }))
+  )
 }
