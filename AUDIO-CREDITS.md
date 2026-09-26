@@ -19,8 +19,8 @@ recorded audio sampled, or built from recordings their authors released under
 as well, and are therefore outside [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md). CC0 asks for no
 attribution; the authors are recorded here so every source can be traced.
 
-Each file was re-levelled for the app and encoded as MP3 with all metadata stripped; see
-[the level table](src/renderer/src/assets/audio/sfx/README.md#levels).
+Each file was raised by one gain shared by all six, which keeps their approved balance, and
+encoded as MP3 with all metadata stripped; see [the level table](src/renderer/src/assets/audio/sfx/README.md#levels).
 
 | File                                                    | Plays                                          | Made of                                                                                                                                                                                                                                                                                                                                                                                                             | Licence                                   |
 | ------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |

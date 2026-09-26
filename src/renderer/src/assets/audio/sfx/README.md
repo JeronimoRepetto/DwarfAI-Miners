@@ -24,25 +24,33 @@ nothing here is transcoded at build time.
 
 ## Levels
 
-The six CC0 replacements of #637 arrive mastered at their design levels, which are far quieter than
-the files they replaced. The app's own gains (`STRIKE_GAIN`, `WALK_GAIN` in
-`lib/sprite/dwarfSheets.ts`, the channel volumes in `lib/audio/volume.ts`) were set by ear against
-the old files, so each replacement was re-levelled to the old file's loudness instead, and no gain
-in code moved: each role measures as loud as it did. Nobody has listened to the result in the app
-yet, so this is a measured match, not an ear's ruling.
+**One shared gain, anchored on the pick.** The six CC0 replacements of #637 were mastered together
+in the design's sound lab, and the product owner approved their balance there by ear: the walk much
+softer, the grind quieter, the room tone very low. That balance is the relationship BETWEEN the
+masters, so it survives only if every file moves by the same amount. So one file is the anchor: the
+pick, the most frequent crew sound, whose loudness is matched to the `pickaxe-sfx.mp3` it replaced
+(+6.3 dB). The same +6.3 dB is then applied to all six, with no per-file matching. Had any file gone
+over -1 dBTP, the whole set would have come down together by the same amount, never one file alone;
+none did, so none was needed. No gain in code moved (`STRIKE_GAIN`, `WALK_GAIN` in
+`lib/sprite/dwarfSheets.ts`, the channel volumes in `lib/audio/volume.ts`): the pick keeps
+today's level in the mix, and everything else sits where the approved mix puts it relative to the
+pick. That makes the walk, the grind and the room tone quieter than the files they replaced, on
+purpose.
 
 Loudness is ffmpeg's `ebur128` integrated loudness, measured with 0.5 s of silence appended so that
 clips shorter than one 400 ms gating block are measurable at all; for the long files the padding
-changes nothing. The walk had two old files, so its target is their mean.
+changes nothing. "Old" is the replaced file, for comparison only; it chose nothing but the anchor.
 
-| File                        | Replaced                          | Old (LUFS)      | Master (LUFS) | Gain applied | Result (LUFS) | True peak (dBTP) |
-| --------------------------- | --------------------------------- | --------------- | ------------- | ------------ | ------------- | ---------------- |
-| `ui-click.mp3`              | `button_sound.mp3`                | -26.3           | -35.6         | +9.3 dB      | -26.3         | -2.1             |
-| `panel-open-close.mp3`      | `open_sound.mp3`                  | -28.6           | -30.1         | +1.5 dB      | -28.6         | -10.3            |
-| `pickaxe-strike.mp3`        | `pickaxe-sfx.mp3`                 | -20.2           | -26.5         | +6.3 dB      | -20.2         | -2.3             |
-| `worker2-grind.mp3`         | `hands-sfx.mp3`                   | -27.3           | -35.0         | +7.7 dB      | -27.3         | -17.3            |
-| `walk-loop.mp3`             | `steps-sfx.mp3`, `steps2-sfx.mp3` | -41.2 and -33.5 | -49.4         | +12.0 dB     | -37.4         | -20.4            |
-| `mine-inside-room-tone.mp3` | `mine-inside-silence.mp3`         | -26.8           | -42.0         | +15.2 dB     | -26.8         | -9.5             |
+| File                          | Replaced                          | Old (LUFS)      | Master (LUFS) | Gain applied | Result (LUFS) | True peak (dBTP) |
+| ----------------------------- | --------------------------------- | --------------- | ------------- | ------------ | ------------- | ---------------- |
+| `pickaxe-strike.mp3` (anchor) | `pickaxe-sfx.mp3`                 | -20.2           | -26.5         | +6.3 dB      | -20.2         | -2.3             |
+| `ui-click.mp3`                | `button_sound.mp3`                | -26.3           | -35.6         | +6.3 dB      | -29.3         | -5.1             |
+| `panel-open-close.mp3`        | `open_sound.mp3`                  | -28.6           | -30.1         | +6.3 dB      | -23.8         | -5.6             |
+| `worker2-grind.mp3`           | `hands-sfx.mp3`                   | -27.3           | -35.0         | +6.3 dB      | -28.7         | -18.7            |
+| `walk-loop.mp3`               | `steps-sfx.mp3`, `steps2-sfx.mp3` | -41.2 and -33.5 | -49.4         | +6.3 dB      | -43.1         | -26.0            |
+| `mine-inside-room-tone.mp3`   | `mine-inside-silence.mp3`         | -26.8           | -42.0         | +6.3 dB      | -35.7         | -18.4            |
+
+Nobody has listened to the result in the app yet.
 
 `mine-inside-working.mp3`, unplayed since #330, was deleted with no replacement.
 
