@@ -590,3 +590,20 @@
 .t-faint {
   color: var(--ink-faint);
 }
+
+/*
+ * The foundations' looping keyframes (#635), declared once and globally as the design's
+ * foundations/motion declares them, so every atom that plays one names the same frames. Only
+ * transform and opacity move. A scoped component stylesheet names them without redeclaring them.
+ */
+/* The needs-you "?" and the "z" bob one art pixel up, in two held frames. */
+@keyframes dm-bob {
+  0%,
+  49% {
+    transform: translateY(0);
+  }
+  50%,
+  100% {
+    transform: translateY(-2px);
+  }
+}

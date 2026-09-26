@@ -23,13 +23,15 @@ import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
 import CountBadge from '../components/dwarf/CountBadge.vue'
+import DwarfPortrait from '../components/dwarf/DwarfPortrait.vue'
 import StatePill from '../components/dwarf/StatePill.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import NavSlot from '../components/shell/NavSlot.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
+import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
-import type { MineTier } from '../types'
+import type { DwarfRole, MineTier } from '../types'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
@@ -298,6 +300,29 @@ const slots =
     }
   }
 
+/*
+ * Each portrait of the tree, in its status, size and forced look, a button (named, pressed) where
+ * the tree draws one. Its face line prints a path, not an attribute a render can read, so the
+ * state's ranks are its render's, in tree order.
+ */
+const portraits = (roles: DwarfRole[]): Render =>
+  framed((_texts, attributes) =>
+    attributes
+      .filter((entry) => /^(span|button)\.dm-portrait(\.|$)/.test(entry.element))
+      .map(({ element, attributes: a }, i) => ({
+        component: DwarfPortrait,
+        props: {
+          role: roles[i],
+          status: a['data-status'] as PortraitStatus,
+          size: modifierOf(element, 'dm-portrait'),
+          interactive: element.startsWith('button'),
+          name: (a['aria-label'] ?? '').split(', ')[0],
+          selected: a['aria-pressed'] === 'true',
+          state: forcedOf(element)
+        }
+      }))
+  )
+
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
 export const RENDERS: Record<string, Render> = {
@@ -502,15 +527,17 @@ export const RENDERS: Record<string, Render> = {
   'atoms/slot#focus-visible': slots(['settings']),
   'atoms/slot#mode-lever': slots(['valle', 'veta']),
 
+  // The portraits: the three ranks, the five statuses, the interaction looks, the three sizes.
+  'atoms/portrait#ranks': portraits(['worker', 'worker2', 'foreman']),
+  'atoms/portrait#status': portraits(['worker', 'worker2', 'foreman', 'worker', 'worker2']),
+  'atoms/portrait#interaction': portraits(['worker', 'worker', 'worker', 'worker']),
+  'atoms/portrait#sizes': portraits(['foreman', 'foreman', 'foreman']),
+
   // The remaining atoms, not built yet (#635): each state mounts an empty box and fails.
   // The badges in their tones and overflow, and the pills: the crew states, then the semantic tones.
   'atoms/badge#badges': badges,
   'atoms/badge#crew-state-pills': pills(),
   'atoms/badge#semantic-pills': pills(['check']),
-  'atoms/portrait#ranks': unbuilt,
-  'atoms/portrait#status': unbuilt,
-  'atoms/portrait#interaction': unbuilt,
-  'atoms/portrait#sizes': unbuilt,
   'atoms/progress#toward-gold': unbuilt,
   'atoms/progress#toward-copper': unbuilt,
   'atoms/progress#measuring': unbuilt,

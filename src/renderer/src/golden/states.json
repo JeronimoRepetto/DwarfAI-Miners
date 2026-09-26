@@ -170,20 +170,16 @@
     "key": "atoms/badge#semantic-pills"
   },
   {
-    "key": "atoms/portrait#ranks",
-    "red": "the redesigned portrait is not built yet (#635)"
+    "key": "atoms/portrait#ranks"
   },
   {
-    "key": "atoms/portrait#status",
-    "red": "the redesigned portrait is not built yet (#635)"
+    "key": "atoms/portrait#status"
   },
   {
-    "key": "atoms/portrait#interaction",
-    "red": "the redesigned portrait is not built yet (#635)"
+    "key": "atoms/portrait#interaction"
   },
   {
-    "key": "atoms/portrait#sizes",
-    "red": "the redesigned portrait is not built yet (#635)"
+    "key": "atoms/portrait#sizes"
   },
   {
     "key": "atoms/progress#toward-gold",
