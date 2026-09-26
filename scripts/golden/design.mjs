@@ -65,7 +65,7 @@ export function missingFiles(root, fsPort) {
   return REQUIRED_FILES.filter((rel) => !fsPort.isFile(path.join(root, ...rel.split('/'))))
 }
 
-function check(root, source, fsPort) {
+export function checkRoot(root, source, fsPort) {
   const missing = missingFiles(root, fsPort)
   return missing.length
     ? { kind: 'invalid', root, source, missing }
@@ -74,14 +74,14 @@ function check(root, source, fsPort) {
 
 export function locateDesign({ checkout, env, fs: fsPort }) {
   const configured = (env[DESIGN_ENV] ?? '').trim()
-  if (configured) return check(path.resolve(configured), 'env', fsPort)
+  if (configured) return checkRoot(path.resolve(configured), 'env', fsPort)
 
   const copy = path.join(checkout, COPY_DIR)
-  if (fsPort.isDirectory(copy)) return check(copy, 'copy', fsPort)
+  if (fsPort.isDirectory(copy)) return checkRoot(copy, 'copy', fsPort)
 
   const junction = path.join(checkout, ...JUNCTION)
   if (fsPort.isDirectory(path.join(checkout, '.git')) && fsPort.isDirectory(junction)) {
-    return check(path.dirname(fsPort.realpath(junction)), 'junction', fsPort)
+    return checkRoot(path.dirname(fsPort.realpath(junction)), 'junction', fsPort)
   }
   return { kind: 'absent' }
 }
