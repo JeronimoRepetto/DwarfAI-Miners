@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accept,
+  anatomyAttributes,
   anatomyRoot,
   anatomyTexts,
   checkFraming,
@@ -253,5 +254,65 @@ describe('anatomyTexts', () => {
 
   it('fails when no tree names that image', () => {
     expect(() => anatomyTexts(TEXTS, 'foundations/lamp/none.png')).toThrow(/none\.png/)
+  })
+})
+
+// APPENDED for #635: the attributes a state's tree prints (a placeholder, a value, an accessible
+// name), read at run time like its texts, so a form control's design text is never committed.
+const ATTRIBUTES = `
+**Pair** · [reference image](reference/atoms/lamp/pair.png), 404 × 96px, standard cell
+
+\`\`\`text
+div [style="width: 240px; display: grid"]
+  label.lamp.m-mat.is-hover
+    input [type=text placeholder="Wick length" aria-label="Wick length"]
+  label.lamp.m-mat
+    input [type=search placeholder value=ai- disabled]
+    button.lamp__clear [title="Clear" hidden]
+  select [aria-label=Mode] shows "Oil"
+    option [value="Last used"] "Last used"
+  p.lamp__hint "Say "yes" first."
+  i.lamp__dot [data-n=1] ×2
+\`\`\`
+
+**Other** · [reference image](reference/atoms/lamp/other.png), 404 × 96px, standard cell
+
+\`\`\`text
+input [value=not-this-one]
+\`\`\`
+`
+
+describe('anatomyAttributes', () => {
+  it("lists every element of the state's tree with its attributes, in DOM order", () => {
+    expect(anatomyAttributes(ATTRIBUTES, 'atoms/lamp/pair.png')).toEqual([
+      { element: 'div', attributes: { style: 'width: 240px; display: grid' } },
+      { element: 'label.lamp.m-mat.is-hover', attributes: {} },
+      {
+        element: 'input',
+        attributes: { type: 'text', placeholder: 'Wick length', 'aria-label': 'Wick length' }
+      },
+      { element: 'label.lamp.m-mat', attributes: {} },
+      // A bare name is an attribute present with no value, as `placeholder` and `disabled` are.
+      {
+        element: 'input',
+        attributes: { type: 'search', placeholder: '', value: 'ai-', disabled: '' }
+      },
+      { element: 'button.lamp__clear', attributes: { title: 'Clear', hidden: '' } },
+      { element: 'select', attributes: { 'aria-label': 'Mode' } },
+      { element: 'option', attributes: { value: 'Last used' } },
+      { element: 'p.lamp__hint', attributes: {} },
+      { element: 'i.lamp__dot', attributes: { 'data-n': '1' } },
+      { element: 'i.lamp__dot', attributes: { 'data-n': '1' } }
+    ])
+  })
+
+  it('stops at the end of its own tree', () => {
+    expect(anatomyAttributes(ATTRIBUTES, 'atoms/lamp/other.png')).toEqual([
+      { element: 'input', attributes: { value: 'not-this-one' } }
+    ])
+  })
+
+  it('fails when no tree names that image', () => {
+    expect(() => anatomyAttributes(ATTRIBUTES, 'atoms/lamp/none.png')).toThrow(/none\.png/)
   })
 })

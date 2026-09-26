@@ -131,6 +131,32 @@ export function anatomyTexts(anatomyMd, file) {
   return texts
 }
 
+// Every element of a state's tree with the attributes it prints, in DOM order, for a form
+// control's design text (a placeholder, a value, an accessible name), handed in at run time like
+// the texts so none is committed (#635). `name=value` and `name="quoted value"` keep their value;
+// a bare name is present with no value, as `disabled` or an empty `placeholder` is. A line
+// ending `×N` stands for N identical siblings.
+export function anatomyAttributes(anatomyMd, file) {
+  const elements = []
+  for (const raw of anatomyTree(anatomyMd, file)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('"')) continue
+    const element = line.split(/\s/)[0]
+    const end = afterSelector(line)
+    const open = line.indexOf('[', element.length)
+    const block = open >= 0 && open < end ? line.slice(open + 1, end - 1) : ''
+    const attributes = {}
+    for (const m of block.matchAll(/([^\s=]+)(?:=(?:"([^"]*)"|(\S+)))?/g)) {
+      attributes[m[1]] = m[2] ?? m[3] ?? ''
+    }
+    const repeat = /\s×(\d+)$/.exec(line)
+    for (let n = repeat ? Number(repeat[1]) : 1; n > 0; n--) {
+      elements.push({ element, attributes: { ...attributes } })
+    }
+  }
+  return elements
+}
+
 export function checkFraming(framing, rootLine) {
   const classes = rootLine.split(/\s/)[0].split('.').slice(1)
   const stray = framing.filter(

@@ -22,7 +22,7 @@ import '../assets/base.css'
 import '../assets/design-tokens.css'
 import '../assets/theme.css'
 import { createApp, h, nextTick, type App } from 'vue'
-import { RENDERS, type GoldenText } from './renders'
+import { RENDERS, type GoldenAttributes, type GoldenText } from './renders'
 import { adaptSample, type GoldenSample } from './sample'
 
 export interface GoldenBox {
@@ -50,6 +50,8 @@ export interface StateFrame {
   framing: string[]
   /** Every text the state's anatomy tree shows, in DOM order: a specimen's captions. */
   texts: GoldenText[]
+  /** Every element of the state's anatomy tree with its attributes, in DOM order. */
+  attributes: GoldenAttributes[]
 }
 
 export interface StateMeasure {
@@ -144,7 +146,7 @@ async function mountState(frame: StateFrame): Promise<void> {
   const render = RENDERS[frame.id]
   if (!render) throw new Error('golden: renders.ts has no entry for ' + frame.id)
   if (!sample) throw new Error('golden: loadSample must run before mountState')
-  const { component, props } = render(sample, frame.texts)
+  const { component, props } = render(sample, frame.texts, frame.attributes)
   const runtime = (window as unknown as { __snapRuntime?: { reset(): void } }).__snapRuntime
   runtime?.reset()
   localStorage.clear()

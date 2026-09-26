@@ -33,6 +33,12 @@ import {
 
 export type { GoldenText }
 
+/** One element of a state's anatomy tree and the attributes it prints (a placeholder, a value). */
+export interface GoldenAttributes {
+  element: string
+  attributes: Record<string, string>
+}
+
 export interface GoldenRender {
   component: Component
   props: Record<string, unknown>
@@ -52,7 +58,11 @@ const unbuilt = (): GoldenRender => ({ component: Unbuilt, props: {} })
 
 const ramp = (name: string) => [name + '-hi', name, name + '-lo']
 
-type Render = (sample: GoldenSample, texts: GoldenText[]) => GoldenRender
+type Render = (
+  sample: GoldenSample,
+  texts: GoldenText[],
+  attributes: GoldenAttributes[]
+) => GoldenRender
 
 /*
  * One button of a state, as the props the app would pass. `labelled` takes the next label from the
