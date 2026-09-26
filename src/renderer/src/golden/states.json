@@ -48,5 +48,37 @@
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
     "red": "draws the page header, mine card and bubbles in each preset, which the Panel slice of #635 rebuilds (design lead ruling, tokens-port question 11)"
+  },
+  {
+    "key": "atoms/button#secondary",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#primary",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#danger",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#disabled",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#toggle",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#icon-only",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#large-primary",
+    "red": "the redesigned button is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/button#link",
+    "red": "the redesigned button is built in the atoms slice of #635"
   }
 ]

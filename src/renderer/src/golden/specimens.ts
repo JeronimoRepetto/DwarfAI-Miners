@@ -14,7 +14,7 @@
  * Captions are design text: the harness reads them from the anatomy at run time and hands them in
  * as `texts`, in tree order (question 2).
  */
-import { defineComponent, h, type PropType } from 'vue'
+import { defineComponent, h, type Component, type PropType } from 'vue'
 import './specimenBaseShim.css'
 
 /** One text of a state's anatomy tree: plain text, or content the tree gives as HTML. */
@@ -131,6 +131,28 @@ export const TypeScale = defineComponent({
             ...content(props.texts[i])
           })
         )
+      )
+  }
+})
+
+/** One part a UI kit frame lays out: a real component and its props. */
+export interface FramedPart {
+  component: Component
+  props: Record<string, unknown>
+}
+
+const parts = { type: Array as PropType<readonly FramedPart[]>, required: true } as const
+
+// The UI kit's row frame around a component's states: a plain div with an inline style (README,
+// "Frames that are not the component"), holding the real components side by side.
+export const KitRow = defineComponent({
+  props: { parts },
+  setup(props) {
+    return () =>
+      h(
+        'div',
+        { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+        props.parts.map((part) => h(part.component, part.props))
       )
   }
 })
