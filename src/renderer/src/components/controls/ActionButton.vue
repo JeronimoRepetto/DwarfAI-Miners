@@ -7,6 +7,7 @@
  * disabled one never fires.
  */
 import { computed } from 'vue'
+import PixelIcon from '../icon/PixelIcon.vue'
 import {
   buttonAttributes,
   buttonClasses,
@@ -28,16 +29,7 @@ const scale = computed(() => buttonIconScale(props))
 
 <template>
   <button :class="classes" v-bind="attributes">
-    <!--
-      The icon's box, sized as the icon atom sizes it. The glyph itself is the icon atom's, which
-      a later slice of #635 builds and puts here; until then the box holds its place.
-    -->
-    <span
-      v-if="icon !== undefined"
-      :class="['dm-icon', 'dm-icon--x' + scale]"
-      :data-icon="icon"
-      aria-hidden="true"
-    />
+    <PixelIcon v-if="icon !== undefined" :name="icon" :scale="scale" />
     <span v-if="label" class="dm-btn__label">{{ label }}</span>
   </button>
 </template>
@@ -169,24 +161,5 @@ const scale = computed(() => buttonIconScale(props))
 .dm-btn--icon.dm-btn--sm {
   width: var(--hit);
   height: var(--hit);
-}
-
-/*
- * The icon's box, as the icon atom's stylesheet gives it: only whole scales, 16px at 1x and 32px
- * at 2x. It moves to the icon atom with the glyph.
- */
-.dm-icon {
-  display: inline-grid;
-  flex: none;
-  line-height: 0;
-  place-items: center;
-}
-.dm-icon--x1 {
-  width: 16px;
-  height: 16px;
-}
-.dm-icon--x2 {
-  width: 32px;
-  height: 32px;
 }
 </style>

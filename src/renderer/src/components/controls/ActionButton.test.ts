@@ -19,7 +19,8 @@ describe('ActionButton', () => {
     expect(parts).toHaveLength(2)
     expect(parts[0]!.classList.contains('dm-icon')).toBe(true)
     expect(parts[0]!.getAttribute('aria-hidden')).toBe('true')
-    expect(parts[0]!.getAttribute('data-icon')).toBe('send')
+    // The registry's glyph, drawn by the icon atom.
+    expect(parts[0]!.querySelector('svg rect')).not.toBeNull()
     expect(parts[0]!.classList.contains('dm-icon--x1')).toBe(true)
     expect(parts[1]!.className).toBe('dm-btn__label')
     expect(parts[1]!.textContent).toBe('Send')

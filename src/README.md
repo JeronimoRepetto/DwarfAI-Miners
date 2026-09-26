@@ -72,7 +72,7 @@ src/
     ├── App.vue      the SHELL window's root; types.ts beside it is this process's type barrel
     ├── MessagePanelWindow.vue  the message panel's own window (#162) — the second root, one entry
     ├── assets/      processed art, css, and fonts/ — the one face this repo carries files for
-    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ · controls/ — thin, and decide nothing
+    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ · controls/ · icon/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
     │                  shell/     the frame every screen sits in: the areas the rail opens onto, how its ground folds into the rail, the one bounded runner every panel's motion goes through and the motion-v engine it drives, the timing that runner derives from that engine, and the presence vocabulary popups and tooltips animate through instead
@@ -87,10 +87,11 @@ src/
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
     │                  typography/ the chosen faces: a stored identifier, the token that draws it, its name
     │                  controls/  the redesign's shared controls: what a button's options decide, its classes, glyph scale and native attributes
+    │                  icon/      every glyph the panel shows: the provisional 16x16 set and the one registry a drawn icon replaces it through
     │                  art.ts · presentation.ts · placement.ts — see rule 3
     └── testing/     factories for tests
 ```
 
 `components/` and `lib/` share the family names `shell`, `map`, `scene`, `message`, `history`,
-`launch`, `vault` and `controls` on purpose: a component may read from several `lib/` families, but when a name exists in
+`launch`, `vault`, `controls` and `icon` on purpose: a component may read from several `lib/` families, but when a name exists in
 both, it means the same thing in both.

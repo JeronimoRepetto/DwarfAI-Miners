@@ -50,23 +50,19 @@
     "key": "atoms/button#secondary"
   },
   {
-    "key": "atoms/button#primary",
-    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
+    "key": "atoms/button#primary"
   },
   {
     "key": "atoms/button#danger"
   },
   {
-    "key": "atoms/button#disabled",
-    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
+    "key": "atoms/button#disabled"
   },
   {
-    "key": "atoms/button#toggle",
-    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
+    "key": "atoms/button#toggle"
   },
   {
-    "key": "atoms/button#icon-only",
-    "red": "draws icon glyphs, which the icon atom slice of #635 builds; the button around them is done"
+    "key": "atoms/button#icon-only"
   },
   {
     "key": "atoms/button#large-primary"
@@ -75,15 +71,12 @@
     "key": "atoms/button#link"
   },
   {
-    "key": "atoms/icon#registry-at-2x",
-    "red": "the provisional icon set is built in the atoms slice of #635"
+    "key": "atoms/icon#registry-at-2x"
   },
   {
-    "key": "atoms/icon#registry-at-1x",
-    "red": "the provisional icon set is built in the atoms slice of #635"
+    "key": "atoms/icon#registry-at-1x"
   },
   {
-    "key": "atoms/icon#tones",
-    "red": "the provisional icon set is built in the atoms slice of #635"
+    "key": "atoms/icon#tones"
   }
 ]

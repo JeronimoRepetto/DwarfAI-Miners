@@ -4,6 +4,8 @@
  * these options, a native <button> underneath. The component draws; this decides.
  */
 
+import type { IconName } from '../icon/iconGrids'
+
 /** Primary is brass, one per surface; danger stays red and apart; link has no plate. */
 export type ButtonVariant = 'primary' | 'danger' | 'link'
 /** `sm` shrinks an icon-only button to 32px; `lg` is the 40px launch action. */
@@ -14,7 +16,7 @@ export type ButtonState = 'hover' | 'active' | 'focus'
 export interface ButtonOptions {
   label?: string
   /** An icon's registry name. */
-  icon?: string
+  icon?: IconName
   iconScale?: 1 | 2
   variant?: ButtonVariant
   size?: ButtonSize

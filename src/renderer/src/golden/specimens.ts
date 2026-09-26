@@ -17,6 +17,7 @@
 import { defineComponent, h, type Component, type PropType } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
 import PixelIcon from '../components/icon/PixelIcon.vue'
+import type { IconName } from '../lib/icon/iconGrids'
 
 /** One text of a state's anatomy tree: plain text, or content the tree gives as HTML. */
 export interface GoldenText {
@@ -201,7 +202,7 @@ export const IconSheet = defineComponent({
               }
             },
             [
-              h(PixelIcon, { name: caption.text ?? '', scale: props.scale }),
+              h(PixelIcon, { name: (caption.text ?? '') as IconName, scale: props.scale }),
               h('span', { class: 't-meta t-faint', ...content(caption) })
             ]
           )
@@ -212,7 +213,7 @@ export const IconSheet = defineComponent({
 
 /** One icon of a row: its registry name and tone, at 2x. */
 export interface IconSpec {
-  name: string
+  name: IconName
   tone?: 'danger' | 'dim' | 'ok'
 }
 
