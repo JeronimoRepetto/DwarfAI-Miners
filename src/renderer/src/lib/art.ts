@@ -10,18 +10,19 @@ import type { DwarfRole, Material, MineTier } from '../types'
 import type { MapTimeVariant } from './map/mapTime'
 import type { ShellArea, UnavailableArea } from './shell/shellNav'
 
-import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
-import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-long-idle-v2-Sheet.png'
-import foremanSleepingSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-sleeping-v2-Sheet.png'
-import foremanStartSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-strart-sleep-v2-Sheet.png'
-import workerIdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker-idle-v2-Sheet.png'
-import worker2IdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker2-idle-v2-Sheet.png'
-import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-start-working.png'
-import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
-import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
-import worker2StartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-start-working-v2.png'
-import worker2WorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-working-v2.png'
-import worker2EndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-end-working-v2.png'
+import foremanEndSleepSheet from '../assets/art/sprites/dwarf-foreman-end-sleep-v3-Sheet.png'
+import foremanIdleSheet from '../assets/art/sprites/dwarf-foreman-long-idle-v3-Sheet.png'
+import foremanSleepingSheet from '../assets/art/sprites/dwarf-foreman-sleeping-v3-Sheet.png'
+import foremanStartSleepSheet from '../assets/art/sprites/dwarf-foreman-start-sleep-v3-Sheet.png'
+import workerIdleSheet from '../assets/art/sprites/dwarf-worker-idle-v3-Sheet.png'
+import worker2IdleSheet from '../assets/art/sprites/dwarf-worker2-idle-v3-Sheet.png'
+import workerStartWorkingSheet from '../assets/art/sprites/dwarf-worker-start-working-v3-Sheet.png'
+import workerWorkingSheet from '../assets/art/sprites/dwarf-worker-working-v3-Sheet.png'
+import workerEndWorkingSheet from '../assets/art/sprites/dwarf-worker-end-working-v3-Sheet.png'
+import worker2StartWorkingSheet from '../assets/art/sprites/dwarf-worker2-start-working-v3-Sheet.png'
+import worker2WorkingSheet from '../assets/art/sprites/dwarf-worker2-working-v3-Sheet.png'
+import worker2EndWorkingSheet from '../assets/art/sprites/dwarf-worker2-end-working-v3-Sheet.png'
+import baseIdleSheet from '../assets/art/sprites/dwarf-base-idle-v3-Sheet.png'
 
 import foremanFace from '../assets/art/dwarf-foreman/dwarf-foreman-face.jpg'
 import workerFace from '../assets/art/dwarf-worker/dwarf-worker-face.jpg'
@@ -99,21 +100,17 @@ export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, st
 /**
  * The hand-drawn dwarfs, one horizontal strip per animation (issues #74, #87).
  *
- * The filename `strart-sleep` is the ASSET's own typo, reproduced here exactly.
- * Renaming a committed file to tidy a spelling is a separate change from
- * teaching the panel to play it, and doing both at once makes neither
- * reviewable.
+ * Every strip is the design repository's v3 export (`art/v3/export/`, cut from
+ * its Aseprite tag by that repository's `tools/export-sprites.js`), copied into
+ * `assets/art/sprites/` byte for byte under its export name, with the JSON
+ * sidecar that carries each frame's own duration beside it (#635). The v2
+ * sheets they replace had the same frames, order and cells; only the master
+ * palette's merges changed pixels (art bible, "What the sources say"). The v2
+ * file's `strart-sleep` typo went with it: the export is named `start-sleep`.
  *
- * A worker now has its working sequence too (#74's first delivery beyond
- * idle): picked up once, swings on a loop, set down once on the way out.
- * Waiting and walking art still arrives later and drops in here the same
- * way — no branch anywhere else moves.
- *
- * The worker2's sheets (#157's idle, #211's working triad) live in the WORKER's
- * directory because that is where the maintainer drew and delivered them; the
- * path is the artist's filing, not a claim that the two ranks share art. They
- * do not — every sheet below is one rank's own file, which is exactly what the
- * fallback rule depends on.
+ * Waiting and walking art still arrives later and drops in here the same way —
+ * no branch anywhere else moves. Every sheet below is one rank's own file,
+ * which is exactly what the fallback rule depends on.
  */
 export const DWARF_SHEET_SRC = {
   worker: {
@@ -142,6 +139,13 @@ export const DWARF_SHEET_SRC = {
   // rank keeps the exact set of sheets it has, so reaching for one a rank has
   // not been drawn is a type error rather than an undefined at runtime.
 } satisfies Record<DwarfRole, DwarfSheetSrc>
+
+/**
+ * The base dwarf, with no rank clothing: one idle strip. No rank plays it; the
+ * sprite atom draws it (components.md, Sprite, `base/idle`), so it ships beside
+ * the ranks rather than inside `DWARF_SHEET_SRC`, whose keys are the ranks.
+ */
+export const BASE_SHEET_SRC = { idle: baseIdleSheet } as const
 
 /** Mine entrance on the map, one painting per tier. */
 export const MOUND_SRC: Record<MineTier, string> = {
@@ -430,10 +434,9 @@ let preloaded = false
  * animation does not draw against an empty box. Safe to call from every
  * DwarfSprite instance; only the first call does any work.
  *
- * Cheaper than it was, and by more than the count suggests: eight files
- * (five before #74's working strips) instead of nine, and each of them a
- * handful of kilobytes of pixel art rather than a ~195 KB painted pose (see
- * docs/animation-loops.md).
+ * Cheap: twelve rank strips, each a handful of kilobytes of pixel art rather
+ * than a ~195 KB painted pose (see docs/animation-loops.md). The base dwarf's
+ * strip is not among them — no dwarf in the scene plays it.
  */
 export function preloadDwarfArt(): void {
   if (preloaded || typeof Image === 'undefined') return
