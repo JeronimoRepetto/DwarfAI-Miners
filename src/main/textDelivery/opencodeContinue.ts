@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process'
+import { spawn, type SpawnOptions } from 'node:child_process'
 import type { FsLike } from '../adapters/fsLike'
 import { redactSecrets } from '../domain/redactSecrets'
+import { withSessionPwd } from '../domain/sessionEnv'
 import {
   describeProgramFailure,
   describeShimRefusal,
@@ -129,6 +130,35 @@ export function buildOpenCodeContinueArgs(sessionId: string): string[] {
 }
 
 /**
+ * The exact spawn call, as a value (#640) — the same split launchRunner's
+ * buildLaunchSpawn and nodeHostedProcess's buildHostedSpawn already keep, so
+ * the PWD fix below is a pure assertion instead of a real spawn.
+ *
+ * `env` used to be entirely absent from this call, which means "inherit this
+ * app's whole environment" — and that inherited environment can carry a
+ * shell's own `PWD`, which OpenCode's `run` reads instead of the process's
+ * real cwd (#640's own repro). `withSessionPwd` keeps every other inherited
+ * key and pins only that one to the SAME `cwd` this call already spawns in,
+ * so an explicit `env` here changes nothing else about what this process
+ * inherits.
+ */
+export function buildOpenCodeContinueSpawn(
+  invocation: OpenCodeContinueInvocation,
+  env: NodeJS.ProcessEnv = process.env
+): { command: string; args: string[]; options: SpawnOptions } {
+  return {
+    command: invocation.command,
+    args: invocation.args,
+    options: {
+      cwd: invocation.cwd,
+      env: withSessionPwd(env, invocation.cwd),
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    }
+  }
+}
+
+/**
  * Spawn one continued turn and answer at the start window, never at its
  * exit — the OpenCode twin of runCodexResumeProcess.
  *
@@ -151,11 +181,8 @@ export function runOpenCodeContinueProcess(
   invocation: OpenCodeContinueInvocation
 ): Promise<OpenCodeContinueResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const call = buildOpenCodeContinueSpawn(invocation)
+    const child = spawn(call.command, call.args, call.options)
     let settled = false
     let stderrTail = ''
     let exited = false

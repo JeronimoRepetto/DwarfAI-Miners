@@ -6280,6 +6280,46 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     log.mockRestore()
   })
 
+  /**
+   * #640's still-unopen second symptom: a session ran a DIFFERENT model than
+   * the one this launch explicitly asked for. Nothing logged which model was
+   * ever sent with `-m`, so this line exists to settle it on the next live
+   * repro — naming what was passed (or that nothing was), and the resolved
+   * cwd, never the prompt or any secret.
+   */
+  it('logs the model this launch passed with -m, and the resolved cwd', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(
+      vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    )
+
+    await runtime.launchAgent({
+      mineId,
+      provider: 'opencode',
+      prompt: 'dig the east tunnel',
+      model: 'opencode-go/kimi-k2.6'
+    })
+
+    const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('opencode-go/kimi-k2.6')
+    expect(lines).toContain('C:\\work\\project')
+    expect(lines).not.toContain('dig the east tunnel')
+    log.mockRestore()
+  })
+
+  it('logs "none" for the model when a launch named none', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(
+      vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    )
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig' })
+
+    const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('none')
+    log.mockRestore()
+  })
+
   /*
    * #168. The chip the user pressed reaches the engine, and reaches it
    * unchanged. Before this the port took a folder and a prompt only, so the

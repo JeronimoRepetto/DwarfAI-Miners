@@ -5080,10 +5080,15 @@ export class AgentRuntime {
           this.delegation?.revoke(delegationIssue.token)
         }
       }
+      // #640: naming the model this launch passed with `-m` (or `none`) and
+      // the resolved cwd, never the prompt or a secret — the still-unexplained
+      // second symptom in #640 (a chosen model that ran a different one) has
+      // no argv logged anywhere to settle it against, and this is that line.
       console.log(
         `[runtime] Launch of ${request.provider} in ${mine.id}: ` +
           `${result.launched ? 'started' : 'failed'} ` +
-          `(${prompt.length} chars)${stageSuffix(timer.timings())}`
+          `(model ${request.model ?? 'none'}, cwd ${mine.path}, ${prompt.length} chars)` +
+          `${stageSuffix(timer.timings())}`
       )
       return result
     } catch (error) {

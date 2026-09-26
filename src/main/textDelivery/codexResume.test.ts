@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import {
   buildCodexResumeArgs,
+  buildCodexResumeSpawn,
   deliverViaCodexResume,
   CODEX_RESUME_START_WINDOW_MS,
   type CodexResumeInvocation,
@@ -55,6 +56,45 @@ describe('buildCodexResumeArgs', () => {
   /** The id is one argv element, so nothing about it is ever re-parsed. */
   it('carries the thread id as its own argument', () => {
     expect(buildCodexResumeArgs(THREAD_ID)[2]).toBe(THREAD_ID)
+  })
+})
+
+/**
+ * #640. The same PWD-following shape #640 measured for OpenCode's `run` is
+ * not proven for Codex — Codex reads its real cwd — but the fix is applied
+ * here too (harmless for a CLI that ignores it, and one shared rule rather
+ * than a fourth provider-specific branch). `runCodexResumeProcess` used to
+ * spawn with no `env` at all, which inherits this app's whole environment
+ * untouched, PWD included; the pure builder below is the spawn call as a
+ * VALUE, the same split launchRunner's buildLaunchSpawn already keeps.
+ */
+describe('buildCodexResumeSpawn', () => {
+  const INVOCATION: CodexResumeInvocation = {
+    command: BINARY,
+    args: buildCodexResumeArgs(THREAD_ID),
+    cwd: CWD,
+    text: 'run the tests',
+    startWindowMs: CODEX_RESUME_START_WINDOW_MS
+  }
+
+  it('spawns exactly the command, args and cwd it was given', () => {
+    const call = buildCodexResumeSpawn(INVOCATION, {})
+    expect(call.command).toBe(BINARY)
+    expect(call.args).toEqual(buildCodexResumeArgs(THREAD_ID))
+    expect(call.options.cwd).toBe(CWD)
+  })
+
+  it('sets PWD to the same cwd it is about to spawn in', () => {
+    const call = buildCodexResumeSpawn(INVOCATION, { PATH: '/usr/bin' })
+    expect(call.options.env).toEqual({ PATH: '/usr/bin', PWD: CWD })
+  })
+
+  it('overrides an inherited PWD that names a different folder', () => {
+    const call = buildCodexResumeSpawn(INVOCATION, {
+      PATH: '/usr/bin',
+      PWD: '/home/j/some/other/shell/folder'
+    })
+    expect(call.options.env).toEqual({ PATH: '/usr/bin', PWD: CWD })
   })
 })
 

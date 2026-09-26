@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
+import { withSessionPwd } from '../domain/sessionEnv'
 import type {
   HostedProcessHandle,
   HostedProcessPort,
@@ -65,7 +66,10 @@ export function buildHostedSpawn(request: {
     args: [...request.args],
     options: {
       cwd: request.cwd,
-      env: request.env,
+      // #640: PWD pinned to this SAME cwd. A custom "Add > Other" command can
+      // itself be `opencode run …`, which is the exact shape #640 measured —
+      // see domain/sessionEnv.ts.
+      env: withSessionPwd(request.env, request.cwd),
       // Held, not handed over: see the module comment on why this is the whole
       // bargain rather than an omission.
       detached: false,

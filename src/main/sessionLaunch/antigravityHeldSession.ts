@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { toolActivityLine } from '../domain/permissionSummary'
+import { withSessionPwd } from '../domain/sessionEnv'
 import {
   boundTurnText,
   type FeedActivity,
@@ -217,7 +218,10 @@ export function buildAntigravityHeldSpawn(request: {
     args: [...request.args],
     options: {
       cwd: request.cwd,
-      env: request.env,
+      // #640: PWD pinned to this SAME cwd. Not measured to affect
+      // Antigravity's own CLI, but applied here too — harmless for a CLI
+      // that reads its real cwd instead (see domain/sessionEnv.ts).
+      env: withSessionPwd(request.env, request.cwd),
       detached: false,
       // stderr on its OWN pipe, unlike a hosted process's folded stream — see
       // the module comment on why a parsed stdout cannot share one.
