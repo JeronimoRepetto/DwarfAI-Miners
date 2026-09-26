@@ -16,6 +16,7 @@
  */
 import { defineComponent, h, type Component, type PropType } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
+import PixelIcon from '../components/icon/PixelIcon.vue'
 
 /** One text of a state's anatomy tree: plain text, or content the tree gives as HTML. */
 export interface GoldenText {
@@ -166,6 +167,65 @@ export const EnterFrame = defineComponent({
           h('span', { class: 't-meta', ...content(props.texts[1]) })
         ])
       ])
+  }
+})
+
+// The icon registry sheet: every icon in a bevelled wood cell over its name. The sheet is the
+// design's demo layout, not product UI, so its rules from icon.css ride inline here; each cell's
+// caption is its icon's name, handed in with the state's texts, so the tree order is the sheet's.
+export const IconSheet = defineComponent({
+  props: { scale: { type: Number as PropType<1 | 2>, required: true }, texts },
+  setup(props) {
+    const column = props.scale === 2 ? '84px' : '72px'
+    return () =>
+      h(
+        'div',
+        {
+          style: {
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(' + column + ', 1fr))',
+            gap: '8px'
+          }
+        },
+        props.texts.map((caption) =>
+          h(
+            'div',
+            {
+              style: {
+                display: 'grid',
+                gap: '6px',
+                padding: '8px 4px',
+                background: 'var(--wood)',
+                boxShadow: 'inset 2px 2px 0 0 var(--wood-hi), inset -2px -2px 0 0 var(--wood-lo)',
+                justifyItems: 'center'
+              }
+            },
+            [
+              h(PixelIcon, { name: caption.text ?? '', scale: props.scale }),
+              h('span', { class: 't-meta t-faint', ...content(caption) })
+            ]
+          )
+        )
+      )
+  }
+})
+
+/** One icon of a row: its registry name and tone, at 2x. */
+export interface IconSpec {
+  name: string
+  tone?: 'danger' | 'dim' | 'ok'
+}
+
+// The Tones state: the kit's plain flex frame around three icons at 2x.
+export const IconRow = defineComponent({
+  props: { icons: { type: Array as PropType<readonly IconSpec[]>, required: true } },
+  setup(props) {
+    return () =>
+      h(
+        'div',
+        { style: { display: 'flex', gap: '12px' } },
+        props.icons.map((icon) => h(PixelIcon, { ...icon, scale: 2 }))
+      )
   }
 })
 

@@ -19,6 +19,8 @@ import ShellNav from '../components/shell/ShellNav.vue'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
+  IconRow,
+  IconSheet,
   KitRow,
   PlateRow,
   RuleFrame,
@@ -173,6 +175,22 @@ export const RENDERS: Record<string, Render> = {
   // Specimens with no view yet. The presets draw the page header, the mine card and two bubbles
   // in each preset, none rebuilt yet.
   'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt,
+
+  // The icon registry at both scales, and the tones on the close and check icons.
+  'atoms/icon#registry-at-2x': (_sample, texts) => ({
+    component: IconSheet,
+    props: { scale: 2, texts }
+  }),
+  'atoms/icon#registry-at-1x': (_sample, texts) => ({
+    component: IconSheet,
+    props: { scale: 1, texts }
+  }),
+  'atoms/icon#tones': () => ({
+    component: IconRow,
+    props: {
+      icons: [{ name: 'close', tone: 'danger' }, { name: 'close', tone: 'dim' }, { name: 'check' }]
+    }
+  }),
 
   // The button's states, each in the kit's row frame; `state` forces the look a pointer or the
   // keyboard would give, as the kit's own option does.

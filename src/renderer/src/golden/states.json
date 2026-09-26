@@ -73,5 +73,17 @@
   },
   {
     "key": "atoms/button#link"
+  },
+  {
+    "key": "atoms/icon#registry-at-2x",
+    "red": "the provisional icon set is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/icon#registry-at-1x",
+    "red": "the provisional icon set is built in the atoms slice of #635"
+  },
+  {
+    "key": "atoms/icon#tones",
+    "red": "the provisional icon set is built in the atoms slice of #635"
   }
 ]
