@@ -7,7 +7,7 @@ description: >
 license: MIT
 metadata:
   author: JeronimoRepetto
-  version: '2.1'
+  version: '2.2'
   scope: [root]
   auto_invoke:
     - 'implementing a screen, panel or component of the redesigned UI'
@@ -37,29 +37,51 @@ as history only, and nothing here reads them.
   building, then `components.md` for shared parts, and `decisions.md` before reopening anything.
 - **No folder, no design.** A worktree never has the folder. Ask the maintainer where the design
   docs are and read them there — do not reconstruct the design from screenshots, existing code,
-  memory or taste, and do not copy or link the folder into the worktree.
+  memory or taste, do not copy or link the folder into the worktree, and never write its local
+  path into a tracked file ([`privacy-guard`](../privacy-guard/SKILL.md)).
+- **No reference images either.** Every state's PNG lives only in the design repository's
+  `docs/reference/` — never copy, commit or link one here, screenshot included (PO ruling,
+  2026-09-26). Ask the maintainer to compare a build against one (Accepting a built piece, below).
 
-| Building                                  | Read first                                                                         |
-| ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| Anything                                  | `README.md` — the routing map and the read-only rule                               |
-| Anything visual                           | `foundations.md` — tokens, materials, type, spacing, shape, icons, attention       |
-| A shared part                             | `components.md` — every kit component, its states, anatomy and accessibility       |
-| Anything already argued                   | `decisions.md` — the binding decision log                                          |
-| One screen                                | `screens/{shell,browse,mine,message,map,settings,launch}.md`                       |
-| A mode or a hidden guild area             | `screens/{veta,valle}.md`, `screens/{lab,market,laboral-union}.md`                 |
-| History                                   | `screens/mine.md` — there is no separate history screen                            |
-| Motion, sound, focus and keyboard, or art | `motion.md`, `sound.md`, `accessibility.md`, `art-bible.md`                        |
-| Text, per-OS behaviour, or porting        | `copy.md`, `platforms.md`, `handoff.md` — where each token and component lives now |
-| Why the redesign exists                   | `brief.md`                                                                         |
+| Building                                  | Read first                                                                                                                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Anything                                  | `README.md` — the routing map and the read-only rule                                                                                                                                                   |
+| Anything visual                           | `foundations.md` — tokens, materials, type, spacing, shape, icons, attention                                                                                                                           |
+| A shared part                             | `components.md` — every component's states, its public constructor, options and methods, "Shown when" rules, anatomy, accessibility, and its drawn and minimum widths with container conflicts flagged |
+| Anything already argued                   | `decisions.md` — the binding decision log                                                                                                                                                              |
+| One screen                                | `screens/{shell,browse,mine,message,map,settings,launch}.md`                                                                                                                                           |
+| A mode or a hidden guild area             | `screens/{veta,valle}.md`, `screens/{lab,market,laboral-union}.md`                                                                                                                                     |
+| History                                   | `screens/mine.md` — there is no separate history screen                                                                                                                                                |
+| Motion, sound, focus and keyboard, or art | `motion.md` (the transitions table, and the CSS it writes at run time), `sound.md`, `accessibility.md`, `art-bible.md`                                                                                 |
+| Text, per-OS behaviour, or porting        | `copy.md` (every UI string, and the whole templates built at run time with named `{value}` slots), `platforms.md`, `handoff.md` — where each token and component lives now                             |
+| Why the redesign exists                   | `brief.md`                                                                                                                                                                                             |
 
 ## Status words
 
-Every rule in the docs carries one. **Decided** is binding. **Proposal** is the design system's
-recommendation awaiting a ruling. **Question** and **Verify** are open. **Missing** is an asset
-that does not exist yet. Implement what is Decided; for anything else, implement nothing silently
-— surface it in the PR or issue. Where the docs and today's code disagree, **the docs win**: the
-decision log is binding for the redesign, and today's code is the baseline only where the docs
-say nothing.
+Every rule in the docs carries one (`docs/README.md` defines them). **Decided** is binding.
+**Proposal** is the design system's recommendation awaiting a ruling. **Question** is open.
+**Implementation** is developer guidance — a rename, a measurement, a check in the app code — and
+awaits no design ruling. **Planned** is an agreed asset not drawn or sourced yet. **Missing** is an
+asset that does not exist and has no plan recorded. Implement Decided, Implementation and Planned
+rows; for a Proposal or a Question, implement nothing silently — see Accepting a built piece below
+for what to do instead. Where the docs and today's code disagree, **the docs win**: the decision
+log is binding for the redesign, and today's code is the baseline only where the docs say nothing.
+
+## Accepting a built piece
+
+The PO's acceptance rule, checked against the state's reference image captured under the
+documented conditions (`docs/README.md`, "Reference images"): the same size, **under 1%** of
+pixels differing, and **no 3×3 (or larger) cluster** of differing pixels anywhere. The maintainer
+runs `tools/compare-ref.js` in the design repository, which checks exactly those two and prints
+`PASS` or `FAIL`. The third half is never pixels: **no silent guess**. When a value or behaviour
+the state needs is not in the docs, do not assume it — write down the question, the assumption
+you would otherwise make, and where it applies, and ask the maintainer; the designer rules on it
+in the design repository, which regenerates the docs. A guess shipped as if it were documented
+fails acceptance even at a perfect pixel score.
+
+App issue #634's golden UI tests apply this rule in code, but run only on the maintainer's
+machine, against the private references — CI never runs them, because the references never leave
+the design repository.
 
 ## Decisions already resolved — do not reopen them in code
 
@@ -93,9 +115,8 @@ Each is recorded in `foundations.md` or `decisions.md`.
 ## The prototype is the visual reference
 
 The design repository also holds the clickable prototype and the UI kit the docs were generated
-from: how every component looks, every state, and how every transition moves. When a doc leaves
-you guessing, ask the maintainer for access and replicate the prototype's behaviour — never
-eyeball a screenshot. A gap the docs do not cover is reported in the PR or issue, not filled.
+from: how every component looks, every state, and how every transition moves. Ask the maintainer
+for access and replicate its behaviour, rather than eyeballing a screenshot.
 
 ## Boundaries the rebuild does not get to break
 
@@ -126,6 +147,9 @@ eyeball a screenshot. A gap the docs do not cover is reported in the PR or issue
 - Keeping the uniform 100ms sprite timing, or freezing the dwarfs under reduced motion.
 - Hardcoding `#d19831` and friends inline across components, so a palette correction becomes a
   repo-wide hunt instead of one token edit.
+- Filling a gap with a guess instead of a question: it can pass a pixel compare and still fail
+  acceptance. Copying, committing or linking a reference image here fails the same rule, even for
+  a screenshot meant to illustrate a PR comment.
 
 ## References
 
