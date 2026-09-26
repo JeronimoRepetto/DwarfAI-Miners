@@ -24,6 +24,25 @@ import worker2WorkingSheet from '../assets/art/sprites/dwarf-worker2-working-v3-
 import worker2EndWorkingSheet from '../assets/art/sprites/dwarf-worker2-end-working-v3-Sheet.png'
 import baseIdleSheet from '../assets/art/sprites/dwarf-base-idle-v3-Sheet.png'
 
+/*
+ * Each strip's Aseprite sidecar, read as text and parsed once by lib/sprite/dwarfSheets.ts. As raw
+ * text rather than a JSON module so the bytes stay exactly the export's and no typed copy of the
+ * exporter's fields enters the app; spriteSidecar.ts reads only what the sheet needs.
+ */
+import foremanEndSleepTiming from '../assets/art/sprites/dwarf-foreman-end-sleep-v3-Sheet.json?raw'
+import foremanIdleTiming from '../assets/art/sprites/dwarf-foreman-long-idle-v3-Sheet.json?raw'
+import foremanSleepingTiming from '../assets/art/sprites/dwarf-foreman-sleeping-v3-Sheet.json?raw'
+import foremanStartSleepTiming from '../assets/art/sprites/dwarf-foreman-start-sleep-v3-Sheet.json?raw'
+import workerIdleTiming from '../assets/art/sprites/dwarf-worker-idle-v3-Sheet.json?raw'
+import worker2IdleTiming from '../assets/art/sprites/dwarf-worker2-idle-v3-Sheet.json?raw'
+import workerStartWorkingTiming from '../assets/art/sprites/dwarf-worker-start-working-v3-Sheet.json?raw'
+import workerWorkingTiming from '../assets/art/sprites/dwarf-worker-working-v3-Sheet.json?raw'
+import workerEndWorkingTiming from '../assets/art/sprites/dwarf-worker-end-working-v3-Sheet.json?raw'
+import worker2StartWorkingTiming from '../assets/art/sprites/dwarf-worker2-start-working-v3-Sheet.json?raw'
+import worker2WorkingTiming from '../assets/art/sprites/dwarf-worker2-working-v3-Sheet.json?raw'
+import worker2EndWorkingTiming from '../assets/art/sprites/dwarf-worker2-end-working-v3-Sheet.json?raw'
+import baseIdleTiming from '../assets/art/sprites/dwarf-base-idle-v3-Sheet.json?raw'
+
 import foremanFace from '../assets/art/dwarf-foreman/dwarf-foreman-face.jpg'
 import workerFace from '../assets/art/dwarf-worker/dwarf-worker-face.jpg'
 import worker2Face from '../assets/art/dwarf-worker/dwarf-worker2-face.jpg'
@@ -146,6 +165,35 @@ export const DWARF_SHEET_SRC = {
  * the ranks rather than inside `DWARF_SHEET_SRC`, whose keys are the ranks.
  */
 export const BASE_SHEET_SRC = { idle: baseIdleSheet } as const
+
+/**
+ * Every strip's sidecar text, keyed exactly as its strip is above (#635): each frame's own
+ * duration and the export's tag. A strip listed above with no entry here would play at the
+ * `--frame-ms` fallback; none does today.
+ */
+export const DWARF_SHEET_SIDECAR = {
+  worker: {
+    idle: workerIdleTiming,
+    'start-working': workerStartWorkingTiming,
+    working: workerWorkingTiming,
+    'end-working': workerEndWorkingTiming
+  },
+  worker2: {
+    idle: worker2IdleTiming,
+    'start-working': worker2StartWorkingTiming,
+    working: worker2WorkingTiming,
+    'end-working': worker2EndWorkingTiming
+  },
+  foreman: {
+    idle: foremanIdleTiming,
+    'start-sleep': foremanStartSleepTiming,
+    sleeping: foremanSleepingTiming,
+    'end-sleep': foremanEndSleepTiming
+  }
+} satisfies Record<DwarfRole, DwarfSheetSrc>
+
+/** The base dwarf's sidecar text, beside its strip. */
+export const BASE_SHEET_SIDECAR = { idle: baseIdleTiming } as const
 
 /** Mine entrance on the map, one painting per tier. */
 export const MOUND_SRC: Record<MineTier, string> = {

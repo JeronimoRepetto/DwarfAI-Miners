@@ -15,15 +15,14 @@ import {
   crewWalkSignal,
   type CrewSoundSignal
 } from '../../lib/sprite/crewSound'
-import { dwarfClips, isResting, stillFrameOf } from '../../lib/sprite/dwarfSequence'
+import { useFramePlayer } from '../../composables/useFramePlayer'
+import { dwarfClips, isResting } from '../../lib/sprite/dwarfSequence'
 import {
   SPRITE_FRAME_SIZE,
   backgroundSizePercent,
   framePositionPercent,
   isGlowFrame,
   isImpactFrame,
-  sequenceFrameAt,
-  sequenceIsStill,
   type SpriteClip
 } from '../../lib/sprite/spriteSheet'
 import { prefersReducedMotion, watchReducedMotion } from '../../lib/scene/sceneMotion'
@@ -314,12 +313,8 @@ const arrived = computed(() => props.walking !== true)
 const atWork = computed(() => working.value && arrived.value)
 
 /**
- * The strips to play, and how far into them the drawing is.
- *
- * `elapsedMs` rather than a frame counter, because a sequence is more than one
- * strip: the elapsed figure is what lets a transition played once hand over to
- * the loop behind it without a second timer, and it makes the whole cadence a
- * pure function this component only has to advance (see lib/sprite).
+ * The strips to play. Which frame of them is showing is the shared frame
+ * clock's answer (#635, below), not this component's: there is no timer here.
  *
  * The watcher carries the PREVIOUS answer on each axis into `dwarfClips`,
  * which is what turns a state into a transition — a foreman lies down when
@@ -329,14 +324,6 @@ const atWork = computed(() => working.value && arrived.value)
  * run, which is exactly the "nothing to leave" case the sequence wants.
  */
 const clips = ref<readonly SpriteClip[]>([])
-const elapsedMs = ref(0)
-let timer: ReturnType<typeof setInterval> | undefined
-
-function stopCycle(): void {
-  if (timer === undefined) return
-  clearInterval(timer)
-  timer = undefined
-}
 
 // Any change of state restarts the sequence at its head, so a dwarf that just
 // picked up a task never starts mid-gesture. `arrived` is tracked alongside
@@ -348,42 +335,32 @@ watch(
   [resting, working, () => props.dwarf.role, arrived, atWork] as const,
   ([nowResting, nowWorking, role, nowArrived], previous) => {
     clips.value = dwarfClips(role, nowResting, previous?.[0], nowWorking, previous?.[4], nowArrived)
-    elapsedMs.value = 0
   },
   { immediate: true }
 )
 
-const position = computed(() =>
-  // Reduced motion is answered by holding one frame and running no timer at
-  // all, which is the same shape a one-frame loop already had (issue #71).
-  reducedMotion.value ? stillFrameOf(clips.value) : sequenceFrameAt(clips.value, elapsedMs.value)
-)
+/*
+ * The frame showing, from the ONE frame clock every sprite in the window shares
+ * (#635; motion.md, "Any mode, working"). Each frame is held for its own sidecar
+ * duration, and a new sequence swaps in place and starts over. A lone looping
+ * sheet starts on a random phase frame so a crew never breathes in lockstep; a
+ * sequence led by a transition, or a shift cycle, starts on its first frame.
+ *
+ * REDUCED MOTION NO LONGER FREEZES THE DWARF. Until #635 it held one frame and
+ * ran no timer (#71); the design's ruling is that the dwarfs keep moving, every
+ * frame a flat 200ms, and only the shell's own motion stops (decision log,
+ * Reduced motion) — the clock plays that timing, so nothing here branches on it.
+ * The clock also stops while the window is hidden.
+ */
+const position = useFramePlayer(() => clips.value, { phase: true })
 const sheet = computed(() => clips.value[position.value.clip]?.sheet)
-
-// One interval per sprite, stepping at the CURRENT clip's own hold — so a
-// transition drawn at a different tempo from the loop it hands over to needs
-// no second mechanism. A sequence that can never change starts no timer.
-watch(
-  [clips, reducedMotion, () => sheet.value?.frameMs],
-  () => {
-    stopCycle()
-    if (reducedMotion.value || sequenceIsStill(clips.value)) return
-    const step = sheet.value?.frameMs
-    if (step === undefined || step <= 0) return
-    timer = setInterval(() => {
-      elapsedMs.value += step
-    }, step)
-  },
-  { immediate: true }
-)
-onBeforeUnmount(stopCycle)
 
 /**
  * Which frame of the strip is showing, as the percentage the CSS slides by.
  *
  * ONLY the position lives on this element, and that is deliberate. Vue rewrites
  * every declaration in a bound style object on each patch, so anything sitting
- * beside this gets re-set ten times a second per dwarf. The strip's URL is the
+ * beside this gets re-set on every frame of every dwarf. The strip's URL is the
  * thing that must not: Vite inlines a sheet under 4 KB as a base64 data URI, so
  * four of the five are several kilobytes of string, and a crowded valley (#42)
  * would be rewriting all of it continuously. It rides on the root instead,
@@ -454,7 +431,7 @@ const rootClasses = computed(() => [
 // The walk-out lasts exactly as long as the runtime keeps a leaving dwarf.
 // `--frame-aspect` carries the authored frame box so the CSS never repeats it,
 // and the strip rides here rather than on the frame so that the only thing
-// rewritten ten times a second is the one short percentage (see frameStyle).
+// rewritten on every frame is the one short percentage (see frameStyle).
 const exitStyle = computed(() => ({
   '--exit-ms': `${LEAVING_EXIT_MS}ms`,
   '--depth-scale': String(props.depthScale ?? 1),
@@ -491,14 +468,13 @@ watch(
      * with no sound behind it — or the other way round — is the drift that
      * putting them a few lines apart would eventually cause.
      *
-     * REDUCED MOTION HEARS NONE OF IT. The two cues below are FRAMES, and a
-     * viewer who asked for less movement is shown one held pose with no timer
-     * running, so there are no frames to sound. Guarded outright as well,
-     * beside the strike glow's own guard, rather than left to the held frame
-     * happening not to be an impact one. The footsteps are the exception and
+     * The two cues below are FRAMES, so they sound wherever the frames are
+     * drawn — under reduced motion too, since #635: the dwarfs keep playing
+     * there at 200ms a frame (decision log, Reduced motion), and a strike drawn
+     * with no sound behind it is the drift the paragraph above forbids. Until
+     * #635 reduced motion held one pose and heard none of them. The footsteps
      * are emitted elsewhere: a walk is a position, not an animation.
      */
-    if (reducedMotion.value) return
     for (const signal of crewFrameSignals(props.dwarf.role, clips.value, previous, now)) {
       emit('crew-sound', signal)
     }
@@ -934,13 +910,10 @@ const kickMarker = computed(() => kickMarkerFor(props.kickState))
 
 /*
  * A viewer who asked for less movement still gets the whole scene — every
- * dwarf stands at its painted feature — but nothing twitches, sparks or
- * drifts to get there.
- *
- * The frame timer is answered in script rather than here (issue #71): CSS
- * cannot reach a setInterval, so the same preference is read through
- * prefersReducedMotion and collapses each loop to one held pose. This block is
- * only the part CSS owns.
+ * dwarf stands at its painted feature — but nothing sparks or drifts to get
+ * there. The dwarfs themselves keep playing, every frame a flat 200ms (#635;
+ * decision log, Reduced motion): that timing is the shared frame clock's, in
+ * script. This block is only the part CSS owns.
  */
 @media (prefers-reduced-motion: reduce) {
   .spark-burst {

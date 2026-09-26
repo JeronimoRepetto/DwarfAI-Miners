@@ -355,3 +355,28 @@ describe('createFrameClock and a preference it was never told about', () => {
     expect(frames).toEqual([at(0), at(1)])
   })
 })
+
+describe('createFrameClock and the host’s events', () => {
+  it('listens only while a sprite plays, and hears a query swapped in before the first one', () => {
+    let listeners = 0
+    const env = fakeEnv()
+    const counted: FrameClockEnv = {
+      ...env,
+      onReducedMotionChange(listener) {
+        listeners++
+        const stop = env.onReducedMotionChange(listener)
+        return () => {
+          listeners--
+          stop()
+        }
+      }
+    }
+    const clock = createFrameClock(counted)
+    expect(listeners).toBe(0)
+    const player = clock.player(() => {})
+    player.play([loopOf(SWING)])
+    expect(listeners).toBe(1)
+    player.stop()
+    expect(listeners).toBe(0)
+  })
+})

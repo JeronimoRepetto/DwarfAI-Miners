@@ -298,6 +298,13 @@ of fewer than two frames starts no timer" machinery #47 already built. The parag
 describe the gap exactly as measured — they are why the fix exists — but the gap itself is
 closed.
 
+**Superseded by the redesign (#635).** The design's reduced-motion ruling keeps the dwarfs moving:
+under `prefers-reduced-motion: reduce` every frame of every sheet lasts a flat 200ms, the per-frame
+durations replaced rather than scaled, and only the shell's own motion stops. Sprites no longer run
+one `setInterval` each: every sprite in a window plays on one shared frame clock that reads each
+sheet's Aseprite sidecar, which is also what gives a loop the per-frame holds item 2 below asks
+for (`lib/sprite/frameClock.ts`).
+
 `prefers-reduced-motion: reduce` is handled in four places, and handled well:
 
 - `theme.css` neutralises **every** CSS animation and transition globally.

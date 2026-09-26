@@ -27,11 +27,15 @@ describe('crewFrameSignals — the strike (#330)', () => {
   // through rather than hardcoded, exactly as `crewWalkSignal`'s own tests
   // read `declared.gain` instead of restating the number.
   const STRIKE = DWARF_CREW.worker.sound!.strike!
+  // AMENDED by #635: these named frame 4, the v2 impact. The design moved the impact to the frame
+  // the v3 swing holds 200ms, index 5 (dwarfSheets.test.ts pins it), so the frame is read off the
+  // sheet's own declaration here rather than restated — the strike follows it by construction.
+  const IMPACT = DWARF_SHEETS.worker.working!.impactFrames![0]!
 
   it('sounds on the frame the sheet already calls an impact', () => {
-    // Clip 1 is the first swing, frame 4 the declared impact — the same frame
+    // Clip 1 is the first swing, IMPACT the declared impact — the same frame
     // the sparks fire on, so the sound and the debris are one event.
-    expect(step('worker', { clip: 1, frame: 3 }, { clip: 1, frame: 4 })).toEqual([
+    expect(step('worker', { clip: 1, frame: IMPACT - 1 }, { clip: 1, frame: IMPACT })).toEqual([
       { cue: 'strike', gain: STRIKE.gain }
     ])
   })
@@ -39,13 +43,13 @@ describe('crewFrameSignals — the strike (#330)', () => {
   it('sounds on BOTH swings of the shift, not only the first', () => {
     // The second swing is a clip of its own drawn from the same strip (#325),
     // so the declaration reaches it without naming it.
-    expect(step('worker', { clip: 2, frame: 3 }, { clip: 2, frame: 4 })).toEqual([
+    expect(step('worker', { clip: 2, frame: IMPACT - 1 }, { clip: 2, frame: IMPACT })).toEqual([
       { cue: 'strike', gain: STRIKE.gain }
     ])
   })
 
   it('says nothing on any other frame of the swing', () => {
-    for (const frame of [0, 1, 2, 3, 5, 6, 12]) {
+    for (const frame of [0, 1, 2, 3, 4, 5, 6, 12].filter((frame) => frame !== IMPACT)) {
       expect(step('worker', { clip: 1, frame: frame - 1 }, { clip: 1, frame }), `${frame}`).toEqual(
         []
       )
@@ -58,7 +62,7 @@ describe('crewFrameSignals — the strike (#330)', () => {
   })
 
   it('needs no previous position: a strike is the frame showing, not a crossing', () => {
-    expect(step('worker', undefined, { clip: 1, frame: 4 })).toEqual([
+    expect(step('worker', undefined, { clip: 1, frame: IMPACT })).toEqual([
       { cue: 'strike', gain: STRIKE.gain }
     ])
   })

@@ -7,13 +7,14 @@
  * still renders. `dwarfSheets.test.ts` reads the PNG headers and holds the two
  * together, which is the only check there is.
  *
- * `frameMs` is 100 throughout because that is the delay in every preview GIF
- * the maintainer exported beside the sheets, transitions included. It is the
- * artist's cadence read off the artist's file, not a tempo chosen here — the
- * working preview (dwarf-worker-working-v2.gif) confirms the same 100ms, read
- * off its own Graphic Control Extension blocks, though its 60 encoded frames
- * loop the swing several times rather than concatenating start+loop+end once
- * each, unlike the foreman's sleep preview.
+ * Every frame plays its OWN duration, read from the Aseprite sidecar exported
+ * beside its strip (#635; the design's decision log, Frame timing and Sprite
+ * frame clock). The v2 sheets played a uniform 100ms read off their preview
+ * GIFs; the design replaced that with per-action timing — the pick swing holds
+ * its impact frame 200ms and hurries the swing — and `frameMs`, still on every
+ * sheet, is now only the `--frame-ms` fallback for a strip with no sidecar.
+ * Nothing here restates a duration: the sidecar is the one source, and
+ * `dwarfSheets.test.ts` holds its cycles against the art bible's rows.
  *
  * THE ORDER THE WORKING TRIAD IS PLAYED IN is not this file's to decide and is
  * stated here only because the counts above are read as evidence of it: since
@@ -32,9 +33,16 @@
  * another rank's art — which is why a worker currently idles through waiting
  * and walking, having only working (#74's next delivery) and idle drawn.
  */
-import { DWARF_SHEET_SRC, type DwarfSheetName } from '../art'
+import {
+  BASE_SHEET_SIDECAR,
+  BASE_SHEET_SRC,
+  DWARF_SHEET_SIDECAR,
+  DWARF_SHEET_SRC,
+  type DwarfSheetName
+} from '../art'
 import type { DwarfRole } from '../../types'
 import type { SpriteSheet } from './spriteSheet'
+import { readSidecar, sheetFromSidecar, type SheetExtras } from './spriteSidecar'
 
 export type { DwarfSheetName }
 
@@ -49,9 +57,9 @@ export type DwarfSheetSet = { idle: SpriteSheet } & Partial<Record<DwarfSheetNam
  * silent at the rock because his say nothing. Nothing that plays a sound is
  * allowed to know which rank it is holding.
  *
- * The cues name FRAMES, never seconds. Every strip here is held at 100ms
- * (see the note at the top of this file), so a frame index is the one figure
- * that survives an artist re-exporting the same movement at another tempo.
+ * The cues name FRAMES, never seconds. Every strip plays its sidecar's own
+ * durations (see the note at the top of this file), so a frame index is the
+ * one figure that survives an artist retiming the same movement.
  */
 export interface CrewSoundSet {
   readonly strike?: {
@@ -109,9 +117,6 @@ export interface DwarfCrewSet {
   readonly sound?: CrewSoundSet
 }
 
-/** The tempo every sheet was exported at; see the note above. */
-const FRAME_MS = 100
-
 /**
  * How loud footsteps are: five percent of the ambience channel (#330).
  *
@@ -131,20 +136,32 @@ const WALK_GAIN = 0.05
  */
 const STRIKE_GAIN = 0.1
 
+/**
+ * One rank's strip, timed by its sidecar. Throws at load for a strip listed in `DWARF_SHEET_SRC`
+ * with no sidecar beside it or a sidecar that is not an export: a sheet quietly falling back to
+ * `--frame-ms` would be the uniform tempo the design replaced, and nothing would say so.
+ */
+function sheet(role: DwarfRole, name: DwarfSheetName, extras?: SheetExtras): SpriteSheet {
+  const sources: Partial<Record<DwarfSheetName, string>> = DWARF_SHEET_SRC[role]
+  const sidecars: Partial<Record<DwarfSheetName, string>> = DWARF_SHEET_SIDECAR[role]
+  const src = sources[name]
+  const text = sidecars[name]
+  if (src === undefined || text === undefined) {
+    throw new Error(`dwarf sheet ${role}/${name} has no strip or no sidecar`)
+  }
+  return sheetFromSidecar(src, readSidecar(JSON.parse(text)), extras)
+}
+
 export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
   worker: {
-    idle: { src: DWARF_SHEET_SRC.worker.idle, frames: 6, frameMs: FRAME_MS },
-    'start-working': {
-      src: DWARF_SHEET_SRC.worker['start-working'],
-      frames: 3,
-      frameMs: FRAME_MS
-    },
+    idle: sheet('worker', 'idle'),
+    'start-working': sheet('worker', 'start-working'),
     /*
-     * The strike (issue #74's last piece). The maintainer's own frame map is
-     * 1-indexed off the artist's preview GIF and everything else in this file
-     * is 0-indexed, so the conversion is stated here rather than left
-     * implicit: frame 5 (the swing lands, first spark centered on the pick's
-     * tip) becomes index 4.
+     * The strike (issue #74's last piece), on the frame the design names the
+     * impact: the one the v3 swing holds 200ms, index 5 (art bible, Working
+     * (pick); sound.md, the `strike` cue "on the impact frame"). Until #635 it
+     * was index 4, the maintainer's 1-indexed frame 5 read off the v2 preview
+     * GIF, where every frame lasted 100ms and no hold marked the hit.
      *
      * `impactFrames` names that ONE frame alone, restoring the pre-migration
      * `isPickImpact` semantics verbatim (see presentation.ts before #87): a
@@ -153,32 +170,20 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
      * rather than as impacts" — exactly what declaring the whole spark span
      * here would do, since each named frame retriggers the debris burst.
      *
-     * `glowFrames` is the separate, maintainer-delegated design call: frames
-     * 5-6 (index 4-5) are the two brightest the artist drew, and the sprite
-     * lights only those beside the art's own sparks. The frames after them
-     * disperse and fade — the art carries that alone.
-     *
-     * Thirteen frames since the loop was redrawn (2026-09-05): the artist
-     * lengthened the swing's recovery, and the strike stayed where it was. A
-     * per-frame pixel census of the redrawn strip confirmed it — frame 5 is
-     * still the one with the most lit pixels, the spark burst — so the indices
-     * above did not move; only the count did. Start and end were untouched.
+     * `glowFrames` is the separate, maintainer-delegated design call: index
+     * 4-5 are the two brightest frames the artist drew, and the sprite lights
+     * only those beside the art's own sparks. The frames after them disperse
+     * and fade — the art carries that alone. The v3 export keeps those frames
+     * and their order, so the glow stays where it was; the design gives no glow
+     * frames of its own, which is an open question on #635.
      */
-    working: {
-      src: DWARF_SHEET_SRC.worker.working,
-      frames: 13,
-      frameMs: FRAME_MS,
-      impactFrames: [4],
-      glowFrames: [4, 5]
-    },
-    'end-working': { src: DWARF_SHEET_SRC.worker['end-working'], frames: 6, frameMs: FRAME_MS }
+    working: sheet('worker', 'working', { impactFrames: [5], glowFrames: [4, 5] }),
+    'end-working': sheet('worker', 'end-working')
   },
   /*
    * The rank #157 introduced, and it no longer has the smallest inventory this
    * table admits: its working sequence arrived (#211) and is declared below.
-   * The idle is six frames of 36x38, read off the PNG header, at 100ms apiece
-   * read off the six Graphic Control Extension blocks of the preview GIF
-   * committed beside it.
+   * The idle is six frames of 36x38, read off the PNG header.
    *
    * The working triad is 16/10/17, every count read off its own PNG's IHDR
    * width against the 36px cell — 576/36, 360/36, 612/36, all exact and all 38
@@ -186,10 +191,9 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
    * the worker's 3/11/6: a slower pick-up, a shorter swing, and a set-down
    * nearly three times the length. That is the art, not a miscount.
    *
-   * Its 100ms is measured, not inherited from the pattern: every one of
-   * dwarf-worker2-working-v2.gif's 73 Graphic Control Extension blocks carries
-   * a delay of 10 (hundredths). Those 73 frames are also evidence of ORDER,
-   * which the worker's own preview could not give — 73 is exactly
+   * The v2 preview GIF (dwarf-worker2-working-v2.gif, retired by #635) was
+   * the evidence of ORDER, which the worker's own preview could not give: its
+   * 73 frames are exactly
    * 16 + (10 x 4) + 17, the pick-up, four turns of the swing and the set-down
    * concatenated, where the worker's 60 do not decompose into 3/11/6 at all.
    * FOUR turns is the preview's own count and not the panel's: the shift cycle
@@ -211,32 +215,31 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
    * this file exists to forbid, and the maintainer's own art arrived first.
    */
   worker2: {
-    idle: { src: DWARF_SHEET_SRC.worker2.idle, frames: 6, frameMs: FRAME_MS },
-    'start-working': {
-      src: DWARF_SHEET_SRC.worker2['start-working'],
-      frames: 16,
-      frameMs: FRAME_MS
-    },
-    working: { src: DWARF_SHEET_SRC.worker2.working, frames: 10, frameMs: FRAME_MS },
-    'end-working': {
-      src: DWARF_SHEET_SRC.worker2['end-working'],
-      frames: 17,
-      frameMs: FRAME_MS
-    }
+    idle: sheet('worker2', 'idle'),
+    'start-working': sheet('worker2', 'start-working'),
+    working: sheet('worker2', 'working'),
+    'end-working': sheet('worker2', 'end-working')
   },
   foreman: {
     // The long idle: 28 frames, which is nearly three seconds before it repeats
     // and is why a foreman standing at his post does not read as a loop at all.
-    // A six-frame short idle is also committed and is not played by anything.
-    idle: { src: DWARF_SHEET_SRC.foreman.idle, frames: 28, frameMs: FRAME_MS },
-    'start-sleep': { src: DWARF_SHEET_SRC.foreman['start-sleep'], frames: 8, frameMs: FRAME_MS },
-    sleeping: { src: DWARF_SHEET_SRC.foreman.sleeping, frames: 12, frameMs: FRAME_MS },
-    'end-sleep': { src: DWARF_SHEET_SRC.foreman['end-sleep'], frames: 11, frameMs: FRAME_MS }
+    // The design's five-frame short idle is not shipped: nothing plays it.
+    idle: sheet('foreman', 'idle'),
+    'start-sleep': sheet('foreman', 'start-sleep'),
+    sleeping: sheet('foreman', 'sleeping'),
+    'end-sleep': sheet('foreman', 'end-sleep')
   }
 }
 
 /**
  * Each rank's shift and its own sounds (issues #325, #330).
+ *
+ * THE ARITHMETIC BELOW IS THE V2 ONE (#635). It was worked at the v2 sheets'
+ * uniform 100ms. Under the v3 sidecars the cue at frame 14 opens the grind
+ * 300ms before the first swing (frame 15 is held 200ms), a worker2 swing
+ * lasts 1.16 s, and eight of them outlast the 8.53 s recording by 1.05 s. The
+ * counts and the cue stay the maintainer's until he retunes them by ear; the
+ * question is open on #635, and `dwarfSheets.test.ts` pins the v3 figures.
  *
  * BESIDE THE STRIPS RATHER THAN INSIDE THEM. Every value in a `DwarfSheetSet`
  * is a claim about bytes on disk that `dwarfSheets.test.ts` reads the PNG
@@ -283,3 +286,46 @@ export const DWARF_CREW: Record<DwarfRole, DwarfCrewSet> = {
     sound: { walk: { gain: WALK_GAIN } }
   }
 }
+
+/** Every sheet the app ships, by the design's own key: `worker/working`, `base/idle`. */
+export type SpriteSheetKey =
+  | `worker/${keyof typeof DWARF_SHEET_SRC.worker}`
+  | `worker2/${keyof typeof DWARF_SHEET_SRC.worker2}`
+  | `foreman/${keyof typeof DWARF_SHEET_SRC.foreman}`
+  | 'base/idle'
+
+/** A sheet by key, and whether it is a transition played once rather than a loop. */
+export interface KeyedSheet {
+  readonly sheet: SpriteSheet
+  readonly once: boolean
+}
+
+const TRANSITIONS: ReadonlySet<DwarfSheetName> = new Set([
+  'start-working',
+  'end-working',
+  'start-sleep',
+  'end-sleep'
+])
+
+/**
+ * Every shipped sheet by the design's key (#635): what the sprite atom plays, the design's
+ * `DM.SHEETS` (assets.md, Sprite sheets). The ranks' keys point at the ranks' own sheet objects
+ * above, never at a copy, so a sheet is timed in one place; the base dwarf's idle is the one sheet
+ * no rank plays. A start or end transition plays once, as the design's one-shot sheets do.
+ */
+export const SPRITE_SHEETS: Record<SpriteSheetKey, KeyedSheet> = (() => {
+  const keyed: Partial<Record<SpriteSheetKey, KeyedSheet>> = {}
+  for (const role of Object.keys(DWARF_SHEETS) as DwarfRole[]) {
+    for (const [name, sheet] of Object.entries(DWARF_SHEETS[role]) as [
+      DwarfSheetName,
+      SpriteSheet
+    ][]) {
+      keyed[`${role}/${name}` as SpriteSheetKey] = { sheet, once: TRANSITIONS.has(name) }
+    }
+  }
+  keyed['base/idle'] = {
+    sheet: sheetFromSidecar(BASE_SHEET_SRC.idle, readSidecar(JSON.parse(BASE_SHEET_SIDECAR.idle))),
+    once: false
+  }
+  return keyed as Record<SpriteSheetKey, KeyedSheet>
+})()

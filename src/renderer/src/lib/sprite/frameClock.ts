@@ -145,7 +145,7 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
     schedule()
   }
 
-  const stopVisibility = env.onVisibilityChange(() => {
+  function onVisibility(): void {
     const hidden = env.hidden()
     if (hidden && hiddenSince === undefined) {
       hiddenSince = env.now()
@@ -154,7 +154,7 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
       hiddenSince = undefined
     }
     schedule()
-  })
+  }
 
   // A new timing keeps every sprite on the frame it shows, starting that frame's hold afresh.
   function applyReduced(next: boolean): void {
@@ -166,10 +166,26 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
       track.due = dueAfter(track, now)
     }
   }
-  const stopReduced = env.onReducedMotionChange((next) => {
-    applyReduced(next)
-    schedule()
-  })
+
+  /*
+   * The host's events are listened to only while a sprite plays, not from the clock's making: a
+   * clock with nothing on it has nothing to keep awake for, and a media query or document the host
+   * swaps in before a sprite plays (a test stubbing matchMedia) must still be the one heard.
+   */
+  let stopListening: (() => void) | undefined
+  function listen(): void {
+    if (stopListening !== undefined) return
+    const stopVisibility = env.onVisibilityChange(onVisibility)
+    const stopReduced = env.onReducedMotionChange((next) => {
+      applyReduced(next)
+      schedule()
+    })
+    stopListening = () => {
+      stopVisibility()
+      stopReduced()
+    }
+    onVisibility()
+  }
 
   function startOffset(clips: readonly SpriteClip[], options: PlayOptions | undefined): number {
     const only = clips[0]
@@ -192,8 +208,9 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
       return {
         play(clips, options) {
           if (disposed) return
+          listen()
           // Read the preference again here as well as on its change event: a query replaced
-          // since the clock was made (a test stubbing matchMedia) sends this clock no event.
+          // since the clock began listening sends it no event.
           applyReduced(env.reducedMotion())
           const now = spriteNow()
           const offset = startOffset(clips, options)
@@ -207,6 +224,10 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
         },
         stop() {
           tracks.delete(track)
+          if (tracks.size === 0) {
+            stopListening?.()
+            stopListening = undefined
+          }
           schedule()
         }
       }
@@ -215,8 +236,7 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
       disposed = true
       tracks.clear()
       clearTimer()
-      stopVisibility()
-      stopReduced()
+      stopListening?.()
     }
   }
 }
