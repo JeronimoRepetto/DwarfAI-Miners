@@ -1,8 +1,26 @@
-/* The window is transparent; the .panel element paints the visible surface. */
+/*
+ * The redesign's base rules (#635): what every part gets before its own stylesheet says anything,
+ * ported from the design's base.css as `foundations.md` ("Global rules") lists it, selector by
+ * selector. `baseRules.test.ts` holds this file to that list. Tokens stay in design-tokens.css;
+ * this file only reads them.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/*
+ * The one departure from the design, on purpose. The prototype's page is a browser page painted
+ * rock; the product's page is a frameless transparent window on the desktop, and the .panel
+ * element paints the visible surface. Painting the window would break the rule the shell's fold
+ * keeps — the window only ever adds or removes pixels that are already transparent (#388) — and
+ * would frame the message panel's window in rock (#162). The same window must never scroll as a
+ * page, so it clips instead.
+ */
 html,
 body {
   margin: 0;
-  padding: 0;
   height: 100%;
   background: transparent;
   overflow: hidden;
@@ -12,42 +30,119 @@ body {
   height: 100%;
 }
 
-* {
-  box-sizing: border-box;
-}
-
 /*
- * The design's Pixel UI family reaches every screen from here, so a component
- * mounted inside the shell inherits it instead of declaring its own.
+ * The page ink and the small-text role, which every part inherits unless it takes another. The
+ * user-select rule is the app's own: the panel is a desktop control, not a document.
  */
 body {
-  font-family: var(--font-pixel);
+  color: var(--ink);
+  font: 400 var(--fs-meta) / 1.3 var(--f-meta);
+  -webkit-font-smoothing: none;
+  text-rendering: optimizeSpeed;
   user-select: none;
   -webkit-user-select: none;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+img {
+  display: block;
+}
+
+p {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 400;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
 /*
- * The renderer's own scrollbar, styled once here rather than per component
- * (#195) — the browser default it replaces is what every scrollable surface
- * drew before this (`.panel-conversation` chief among them, since a re-read
- * used to reset it to the top on every poll). `foundations.md` names no
- * scrollbar recipe, so the width and colours are ours (see
- * `--size-scrollbar-width` in design-tokens.css); both the standard
- * properties and the WebKit pseudo-elements are set because Electron's
- * Chromium renderer honours either, depending on version.
+ * The focus ring: square, outside the frame, on keyboard focus only, so a material never hides it
+ * and focusing never changes an element's size. `.is-focus` draws the same ring for a state shown
+ * without real focus.
+ */
+:focus {
+  outline: none;
+}
+
+:focus-visible,
+.is-focus {
+  outline: var(--px) solid var(--parchment);
+  outline-offset: 4px;
+}
+
+/*
+ * The scrollbar, once for every scrollable surface (#195): a brass thumb bevelled in gold on a
+ * wood track. Both the standard properties and the WebKit pseudo-elements are set because
+ * Electron's Chromium honours either, depending on version.
  */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-accent) var(--color-panel-deep);
+  scrollbar-color: var(--brass-lo) var(--wood-lo);
 }
-*::-webkit-scrollbar {
+
+::-webkit-scrollbar {
   width: var(--size-scrollbar-width);
   height: var(--size-scrollbar-width);
 }
-*::-webkit-scrollbar-track {
-  background: var(--color-panel-deep);
+
+::-webkit-scrollbar-track {
+  background: var(--wood-lo);
 }
-*::-webkit-scrollbar-thumb {
-  background: var(--color-accent);
-  border-radius: var(--radius-default);
+
+::-webkit-scrollbar-thumb {
+  background: var(--brass-lo);
+  box-shadow:
+    inset 2px 2px 0 0 var(--gold),
+    inset -2px -2px 0 0 var(--gold-deep);
+}
+
+.sr-only {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  padding: 0;
+  margin: -2px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pixelated {
+  image-rendering: pixelated;
 }

@@ -25,8 +25,7 @@
     "key": "foundations/materials#raised"
   },
   {
-    "key": "foundations/materials#focus-visible",
-    "red": "the focus ring ports with the base rules in the atoms slice of #635 (design lead ruling, tokens-port question 7)"
+    "key": "foundations/materials#focus-visible"
   },
   {
     "key": "foundations/materials#rules"

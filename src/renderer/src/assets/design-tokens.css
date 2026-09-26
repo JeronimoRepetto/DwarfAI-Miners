@@ -424,11 +424,9 @@
   --size-history-panel-max-height: 500px;
 
   /*
-   * The renderer's own scrollbar (#195). `foundations.md` gives no scrollbar
-   * recipe — like `--elevation-5` above, this is a decision rather than a
-   * transcription — so the width is ours, chosen once here for every
-   * scrollable surface rather than per component, and the colours reuse
-   * `--color-panel-deep` and `--color-accent` rather than a new hex pair.
+   * The renderer's own scrollbar (#195). AMENDED for #635: the redesign's
+   * base rules now give the recipe, 8px wide with a brass thumb bevelled in
+   * gold on a wood track, and base.css draws it; the width stays one token.
    */
   --size-scrollbar-width: 8px;
 }
