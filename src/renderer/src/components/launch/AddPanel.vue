@@ -945,7 +945,7 @@ function onCommandKeydown(event: KeyboardEvent): void {
   opacity: 0.75;
 }
 .launch-alert {
-  color: var(--danger-ink);
+  color: var(--danger-hi);
 }
 /*
  * Jev (#509). No new tokens: the toggle borrows the provider chip's own box

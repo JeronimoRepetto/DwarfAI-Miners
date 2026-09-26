@@ -1539,7 +1539,7 @@ function onKick(): void {
  * send or a kick failure, not a colour invented for this row alone.
  */
 .panel-turn-outcome.is-errored {
-  color: var(--danger-ink);
+  color: var(--danger-hi);
 }
 /*
  * Whether the WIRE cut the text at its own bound (`boundTurnText`), never the
@@ -1770,7 +1770,7 @@ function onKick(): void {
   letter-spacing: normal;
 }
 .bubble-marker.is-failed {
-  color: var(--danger-ink);
+  color: var(--danger-hi);
 }
 /*
  * The retry, drawn as the text button #279 established for this panel: no new
@@ -2033,6 +2033,6 @@ function onKick(): void {
   color: #8fd07a;
 }
 .panel-alert {
-  color: var(--danger-ink);
+  color: var(--danger-hi);
 }
 </style>

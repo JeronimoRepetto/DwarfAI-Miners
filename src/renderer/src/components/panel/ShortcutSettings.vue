@@ -182,7 +182,7 @@ onMounted(() => recorderRef.value?.focus())
 }
 .recorder.is-broken {
   border-color: var(--danger-line);
-  color: var(--danger-ink);
+  color: var(--danger-hi);
 }
 .recorder:hover:not(:disabled) {
   border-color: var(--lantern);
@@ -203,7 +203,7 @@ onMounted(() => recorderRef.value?.focus())
   padding: 7px 8px;
   border-left: 3px solid var(--danger-line);
   border-radius: 4px;
-  color: var(--danger-ink);
+  color: var(--danger-hi);
   background: var(--danger-bg);
   font-size: var(--text-helper);
   line-height: 1.4;

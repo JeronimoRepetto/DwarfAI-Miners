@@ -59,11 +59,10 @@
   --ink-on-light-soft: #443629;
 
   /*
-   * Semantic marks and their grounds. The redesign's `--danger-ink` (red text
-   * on parchment) is NOT here yet: theme.css still declares that name for a
-   * light red on dark grounds, read by ten rules, and porting the redesign's
-   * dark red under it would make every one of them unreadable. It waits on a
-   * ruling for where those callers move (#635).
+   * Semantic marks and their grounds. `--danger-ink` is red text on parchment
+   * only; on a dark ground danger text is `--danger-hi`. The name used to mean
+   * the light red in theme.css, so its dark-ground callers moved to
+   * `--danger-hi` in the same change that shipped this value (#635).
    */
   --ok: #8fbf5a;
   --ok-lo: #2e3a1f;
@@ -72,6 +71,7 @@
   --danger: #d0583c;
   --danger-hi: #e98a70;
   --danger-lo: #3a1c15;
+  --danger-ink: #833726;
   --danger-badge: #b74d35;
   --info: #6fb3c4;
   --info-lo: #1d3036;

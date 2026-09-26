@@ -514,6 +514,19 @@ describe('renderer components against the type scale tokens', () => {
   })
 
   /*
+   * theme.css's `--danger-ink` was a light red for dark grounds; the redesign's is a dark red for
+   * parchment. Every rule that read the old one sits on a dark ground, so they read `--danger-hi`,
+   * the redesign's light step, instead — reading the new `--danger-ink` there would be dark red on
+   * dark. The first rule that sets red text on parchment names itself here.
+   */
+  it('reads the parchment-only --danger-ink in no renderer component yet', () => {
+    const readers = vueFiles(RENDERER_SRC).filter((file) =>
+      readFileSync(file, 'utf8').includes('var(--danger-ink)')
+    )
+    expect(readers).toEqual([])
+  })
+
+  /*
    * #347: the amendment is only real if the surfaces it names actually ask for
    * the second face. Walked off disk for the reason the size check above is —
    * a `<style>` block has no import a test could assert against — and named
@@ -663,6 +676,8 @@ describe('design-tokens.css against the redesign foundations (#635)', () => {
     ['--danger-hi', '#e98a70'],
     ['--danger-lo', '#3a1c15'],
     ['--danger-badge', '#b74d35'],
+    // APPENDED for #635: shipped once its dark-ground callers moved to --danger-hi.
+    ['--danger-ink', '#833726'],
     ['--info', '#6fb3c4'],
     ['--info-lo', '#1d3036'],
     ['--tier-bronze', '#5ce1e6'],
@@ -717,10 +732,12 @@ describe('design-tokens.css against the redesign foundations (#635)', () => {
   })
 
   /*
-   * The three collisions the handoff names: the redesign's values ship, and theme.css stops
+   * The collisions the handoff names: the redesign's values ship, and theme.css stops
    * declaring them — removed, never renamed to a `--legacy-*` copy that would keep two answers.
+   * AMENDED for #635: `--danger-ink` joined the three the handoff first listed (its collisions
+   * table, and the design lead's ruling on the tokens-port questions).
    */
-  it.each(['--ink', '--ink-faint', '--parchment'])(
+  it.each(['--ink', '--ink-faint', '--parchment', '--danger-ink'])(
     'leaves %s to design-tokens.css alone, with no legacy copy in theme.css',
     (name) => {
       const themeNames = rulesIn('theme.css').flatMap((rule) => [...rule.declarations.keys()])
