@@ -1373,10 +1373,13 @@ describe('App shell', () => {
     // AMENDED for #635: the guild areas ship hidden, so this case reveals
     // them first; the case below it holds what the default shows.
     const { wrapper } = await mountOpenApp(GUILD_ON)
+    // And the page is the redesign's guild page (was: `.unavailable` saying
+    // "rebuild the lab"), in the redesign's words.
     await wrapper.find(`${NAV}[data-label="Lab"]`).trigger('click')
-    expect(wrapper.find('.unavailable').text()).toContain('rebuild the lab')
+    expect(wrapper.find('.dm-guild').attributes('aria-label')).toBe('Lab')
+    expect(wrapper.find('.dm-guild').text()).toContain('Not open yet')
     await wrapper.find(`${NAV}[data-label="Market"]`).trigger('click')
-    expect(wrapper.find('.unavailable').text()).toContain('rebuild the market')
+    expect(wrapper.find('.dm-guild').attributes('aria-label')).toBe('Market')
   })
 
   // ADDED for #635: while the flag is off nothing points at the guild areas.
@@ -1394,9 +1397,11 @@ describe('App shell', () => {
     // invented for it would be the gap the source deliberately left.
     // AMENDED for #635: revealed first, as above.
     const { wrapper } = await mountOpenApp(GUILD_ON)
+    // The guild page (was: `.unavailable` with the v4 sentence and "Please
+    // come back later."), in the redesign's words.
     await wrapper.find(`${NAV}[data-label="Laboral Union"]`).trigger('click')
-    expect(wrapper.find('.unavailable').text()).toContain('rebuild the Laboral Union')
-    expect(wrapper.find('.unavailable').text()).toContain('Please come back later.')
+    expect(wrapper.find('.dm-guild').attributes('aria-label')).toBe('Laboral Union')
+    expect(wrapper.find('.dm-guild').text()).toContain('This area is being built.')
   })
 })
 

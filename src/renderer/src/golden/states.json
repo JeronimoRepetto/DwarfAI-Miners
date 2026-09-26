@@ -12,16 +12,13 @@
     "key": "organisms/nav#in-valle"
   },
   {
-    "key": "organisms/guild-page#lab",
-    "red": "UnavailablePanel predates the redesign; the guild pages are rebuilt in #635"
+    "key": "organisms/guild-page#lab"
   },
   {
-    "key": "organisms/guild-page#market",
-    "red": "UnavailablePanel predates the redesign; the guild pages are rebuilt in #635"
+    "key": "organisms/guild-page#market"
   },
   {
-    "key": "organisms/guild-page#laboral-union",
-    "red": "UnavailablePanel predates the redesign; the guild pages are rebuilt in #635"
+    "key": "organisms/guild-page#laboral-union"
   },
   {
     "key": "foundations/colour#materials"

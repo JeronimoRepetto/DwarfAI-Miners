@@ -18,7 +18,7 @@ import PanelFrame from './components/shell/PanelFrame.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
-import UnavailablePanel from './components/shell/UnavailablePanel.vue'
+import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
 import { useDwarfDelivery } from './composables/useDwarfDelivery'
 import { useMessagePanel } from './composables/useMessagePanel'
@@ -1157,21 +1157,21 @@ onBeforeUnmount(() => {
             </PanelFrame>
 
             <!--
-            The Lab, the Market and the Laboral Union (#335): one overlay for the
-            three areas the design ships as unavailable, keyed so switching
-            between them re-enters the transition rather than swapping the
-            painting under a still frame. `v-else-if` rather than `v-else`,
-            because an area with no screen and no unavailable painting should
-            draw nothing instead of borrowing another hall's sentence.
+            The Lab, the Market and the Laboral Union (#335, #635): the guild
+            page, reached only once the guild flag reveals them (`page` never
+            names one otherwise), keyed so switching between them re-enters the
+            transition rather than swapping the painting under a still page.
+            `v-else-if` rather than `v-else`, because an area with no screen
+            and no guild page should draw nothing instead of borrowing another
+            hall's sentence. It stands on the plate itself, with no frame of
+            its own, as the design draws it.
           -->
-            <PanelFrame
+            <GuildPage
               v-else-if="unavailableArea"
               :key="page"
               class="shell-page"
-              variant="settings"
-            >
-              <UnavailablePanel :feature="unavailableArea" />
-            </PanelFrame>
+              :area="unavailableArea"
+            />
           </PanelTransition>
 
           <p v-if="error" class="notice" role="alert">{{ error }}</p>

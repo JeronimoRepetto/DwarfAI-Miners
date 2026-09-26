@@ -32,7 +32,7 @@ import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import NavSlot from '../components/shell/NavSlot.vue'
 import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import PanelNav from '../components/shell/PanelNav.vue'
-import UnavailablePanel from '../components/shell/UnavailablePanel.vue'
+import GuildPage from '../components/shell/GuildPage.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
@@ -472,7 +472,7 @@ const guildPage =
     component: KitFrame,
     props: {
       style: attributes[0]?.attributes.style ?? '',
-      parts: [{ component: UnavailablePanel, props: { feature } }]
+      parts: [{ component: GuildPage, props: { area: feature } }]
     }
   })
 
@@ -482,7 +482,7 @@ export const RENDERS: Record<string, Render> = {
   'organisms/nav#guild-revealed': nav,
   'organisms/nav#shortcut-failed': nav,
   'organisms/nav#in-valle': nav,
-  // The guild pages in the kit's frame, drawn by today's unavailable panel until they are rebuilt.
+  // The guild pages, each in the kit's frame.
   'organisms/guild-page#lab': guildPage('lab'),
   'organisms/guild-page#market': guildPage('market'),
   'organisms/guild-page#laboral-union': guildPage('laboral-union'),

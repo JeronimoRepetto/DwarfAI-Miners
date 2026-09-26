@@ -36,7 +36,7 @@ export function isShellArea(value: unknown): value is ShellArea {
  * The areas the design specifies as intentionally unavailable, and the one place
  * that list is written down (#335).
  *
- * All three carry the SAME overlay — `UnavailablePanel` — so the only thing that
+ * All three carry the SAME page — `GuildPage` since #635 — so the only thing that
  * distinguishes them is a painting and a sentence. Which is exactly why the list
  * is here rather than inferred in the shell's template: the fallback used to be
  * `area === 'lab' ? 'lab' : 'market'`, which answers "market" for every area
