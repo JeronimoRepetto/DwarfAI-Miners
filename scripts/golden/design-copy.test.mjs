@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { COPY_DIR, DESIGN_ENV, REQUIRED_FILES } from './design.mjs'
 import {
   COPY_INCLUDE,
+  SCOPE_MANIFEST,
   checkTarget,
   findCopySource,
   isExcluded,
@@ -116,6 +117,15 @@ describe('what is copied', () => {
     expect(isExcluded('tools/node_modules/x.js')).toBe(true)
     expect(isExcluded('docs/.git/HEAD')).toBe(true)
     expect(isExcluded('docs/reference/manifest.json')).toBe(false)
+  })
+})
+
+describe('the copy as a package scope', () => {
+  it("is CommonJS like its source, not this checkout's ES module scope", () => {
+    // The design tools are CommonJS .js files under a root with no package.json; inside this
+    // checkout Node would read them through its "type": "module" and refuse `require`.
+    expect(SCOPE_MANIFEST.type).toBe('commonjs')
+    expect(SCOPE_MANIFEST.private).toBe(true)
   })
 })
 

@@ -28,6 +28,10 @@ export const COPY_INCLUDE = [
   'prototype/foundations/tokens.css',
   'prototype/data'
 ]
+// Written as .design/package.json. The design repository has no package.json, so Node reads its
+// tools as CommonJS; copied under this checkout they would inherit its "type": "module" and fail
+// on their first `require`. The copy is made its own CommonJS scope instead.
+export const SCOPE_MANIFEST = { name: 'dwarfai-design-copy', private: true, type: 'commonjs' }
 const EXCLUDED_SEGMENTS = new Set(['node_modules', '.git'])
 
 export function isExcluded(rel) {
@@ -144,6 +148,10 @@ function run() {
     fs.mkdirSync(path.dirname(to), { recursive: true })
     fs.copyFileSync(path.join(found.root, ...rel.split('/')), to)
   }
+  fs.writeFileSync(
+    path.join(target, 'package.json'),
+    JSON.stringify(SCOPE_MANIFEST, null, 2) + '\n'
+  )
   console.log(
     'golden:design: copied ' +
       plan.files.length +
