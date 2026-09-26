@@ -20,6 +20,33 @@ describe('compactUnits', () => {
   it('moves up a unit rather than write a thousand of the one below', () => {
     expect(compactUnits(999_999)).toBe('1M')
   })
+
+  /*
+   * The design lead's compact-count ruling (ATOMS-QUESTIONS-2, question 4), band by band: full
+   * under 10,000; one decimal to 99.9K; whole to 999K; one decimal to 9.9M; whole from 10M; a
+   * trailing ".0" dropped; a figure that rounds into the next band is written in that band.
+   */
+  it.each([
+    [9_999, '9,999'],
+    [10_000, '10K'],
+    [10_040, '10K'],
+    [99_940, '99.9K'],
+    [99_960, '100K'],
+    [100_000, '100K'],
+    [280_600, '281K'],
+    [999_499, '999K'],
+    [999_950, '1M'],
+    [1_000_000, '1M'],
+    [1_040_000, '1M'],
+    [1_240_000, '1.2M'],
+    [9_940_000, '9.9M'],
+    [9_960_000, '10M'],
+    [10_000_000, '10M'],
+    [12_345_678, '12M'],
+    [123_456_789, '123M']
+  ])('follows the compact count rule at its boundaries: %i reads %s', (units, text) => {
+    expect(compactUnits(units)).toBe(text)
+  })
 })
 
 describe('oreCapsuleName', () => {
