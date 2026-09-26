@@ -31,11 +31,12 @@ import StatePill from '../components/dwarf/StatePill.vue'
 import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import NavSlot from '../components/shell/NavSlot.vue'
 import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
-import ShellNav from '../components/shell/ShellNav.vue'
+import PanelNav from '../components/shell/PanelNav.vue'
 import UnavailablePanel from '../components/shell/UnavailablePanel.vue'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
+import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../lib/shell/panelNav'
 import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
 import type { DwarfRole, Material, MineTier } from '../types'
 import type { GoldenSample } from './sample'
@@ -437,6 +438,33 @@ const spriteAlone: Render = (_sample, _texts, attributes) => {
 
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
+/*
+ * The nav as its tree prints it: the page shown is the slot marked current, the badge the text of
+ * the one badge line (the only text before the lever's label), the guild group revealed when it
+ * is not hidden, the music on when its toggle is pressed, and the mark, the lever and the
+ * landmark's name as the tree has them.
+ */
+const nav: Render = (_sample, texts, attributes) => {
+  const slots = elementsOf(attributes, 'button.dm-slot')
+  const current = slots.find((a) => a['aria-current'] === 'page')?.['data-slot']
+  const page = [...WORLD_SLOTS, ...GUILD_SLOTS, ...SYSTEM_SLOTS].find((s) => s.id === current)
+  const guild = elementsOf(attributes, 'div.dm-nav__group').find((a) => a['aria-label'] === 'Guild')
+  const badged = elementsOf(attributes, 'span.dm-badge').length > 0
+  return {
+    component: PanelNav,
+    props: {
+      page: page?.area ?? 'map',
+      guild: guild !== undefined && !('hidden' in guild),
+      badge: badged ? Number(texts[0]?.text) : 0,
+      music: slots.find((a) => a['data-label'] === 'Music')?.['aria-pressed'] === 'true',
+      warn: slots.some((a) => a['data-warn'] === 'true'),
+      mark: elementsOf(attributes, 'button.dm-nav__mark').length > 0,
+      lever: elementsOf(attributes, 'div.dm-nav__lever').length > 0,
+      label: attributes[0]?.attributes['aria-label'] ?? ''
+    }
+  }
+}
+
 // One guild page in the frame its tree's root prints.
 const guildPage =
   (feature: 'lab' | 'market' | 'laboral-union'): Render =>
@@ -449,25 +477,11 @@ const guildPage =
   })
 
 export const RENDERS: Record<string, Render> = {
-  // The Panel's nav on the Mines page with the music playing; whether the shortcut failed is the
-  // sample configuration's.
-  'organisms/nav#default': (sample) => ({
-    component: ShellNav,
-    props: { area: 'mines', broken: sample.config.shortcutFailed, musicPlaying: true }
-  }),
-  // The nav's other states, drawn by today's nav until the redesigned one replaces it.
-  'organisms/nav#guild-revealed': () => ({
-    component: ShellNav,
-    props: { area: 'map', broken: false, musicPlaying: false }
-  }),
-  'organisms/nav#shortcut-failed': () => ({
-    component: ShellNav,
-    props: { area: 'settings', broken: true, musicPlaying: false }
-  }),
-  'organisms/nav#in-valle': () => ({
-    component: ShellNav,
-    props: { area: 'mines', broken: false, musicPlaying: true }
-  }),
+  // The Panel's nav in each of its states, every prop read off the state's own tree.
+  'organisms/nav#default': nav,
+  'organisms/nav#guild-revealed': nav,
+  'organisms/nav#shortcut-failed': nav,
+  'organisms/nav#in-valle': nav,
   // The guild pages in the kit's frame, drawn by today's unavailable panel until they are rebuilt.
   'organisms/guild-page#lab': guildPage('lab'),
   'organisms/guild-page#market': guildPage('market'),

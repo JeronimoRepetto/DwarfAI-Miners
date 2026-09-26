@@ -1,19 +1,15 @@
 [
   {
-    "key": "organisms/nav#default",
-    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+    "key": "organisms/nav#default"
   },
   {
-    "key": "organisms/nav#guild-revealed",
-    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+    "key": "organisms/nav#guild-revealed"
   },
   {
-    "key": "organisms/nav#shortcut-failed",
-    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+    "key": "organisms/nav#shortcut-failed"
   },
   {
-    "key": "organisms/nav#in-valle",
-    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+    "key": "organisms/nav#in-valle"
   },
   {
     "key": "organisms/guild-page#lab",
