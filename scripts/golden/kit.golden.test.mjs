@@ -7,6 +7,16 @@ import { decide, locateDesign, nodeFs } from './design.mjs'
 import { openPage, openRenderer, recordedRenderer, rendererMismatch } from './renderer.mjs'
 import { startGoldenServer } from './server.mjs'
 import { readStageCss } from './stage.mjs'
+import {
+  accept,
+  anatomyRoot,
+  checkFraming,
+  checkStates,
+  componentOf,
+  expectation,
+  framingFor,
+  stageWidth
+} from './states.mjs'
 
 /*
  * Golden UI tests for the redesigned kit (#634), run by `pnpm test:golden` on the maintainer's
@@ -19,8 +29,11 @@ import { readStageCss } from './stage.mjs'
  * If the loopback is not exact, the harness moves pixels by itself, and no golden below it means
  * anything.
  *
- * Every manifest state no golden covers yet is listed as a todo, so the run doubles as the
- * rebuild's coverage list. State ids appear here; nothing of the design itself does.
+ * Then each state in src/renderer/src/golden/states.json is the real component (renders.ts), with
+ * props built from the design's sample data, mounted on a stage framed like its reference and
+ * graded. A state marked `red` is an expected failure that must flip: it fails the run once it
+ * passes (states.mjs). Every manifest state no golden covers yet is listed as a todo, so the run
+ * doubles as the rebuild's coverage list. State ids appear here; nothing of the design itself does.
  */
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -33,8 +46,12 @@ const manifest = runnable
   ? JSON.parse(readFileSync(path.join(referenceDir, 'manifest.json'), 'utf8'))
   : {}
 
+const readDesign = (...parts) => readFileSync(path.join(location.root, ...parts), 'utf8')
+const states = JSON.parse(
+  readFileSync(path.join(checkout, 'src', 'renderer', 'src', 'golden', 'states.json'), 'utf8')
+)
 // States a golden covers. Every other manifest state is a todo below.
-const COVERED = new Set([])
+const COVERED = new Set(states.map((s) => s.key))
 // A visible (never held-out) kit reference with no scaled art: the loopback image.
 const LOOPBACK_STATE = 'foundations/colour#materials'
 // A standard UI kit cell's stage width, padding included (the design's "How a reference image is
@@ -92,6 +109,76 @@ describe.runIf(runnable)('golden harness', () => {
     expect(box).toEqual({ x, y, width: STANDARD_STAGE_WIDTH, height: 96 })
     expect(page.errors).toEqual([])
   })
+
+  it('loads the sample data from the design repository into the page', async () => {
+    const found = await page.evaluate(
+      'window.golden.loadSample(' +
+        JSON.stringify(readDesign('prototype', 'data', 'sample-data.js')) +
+        ')'
+    )
+    expect(found.mines).toBeGreaterThan(0)
+    expect(found.dwarfs).toBeGreaterThan(0)
+    expect(page.errors).toEqual([])
+  })
+
+  it('lists only states the manifest has, in the cell it records', () => {
+    expect(checkStates(states, manifest)).toEqual([])
+  })
+
+  for (const state of states) {
+    const title = state.red ? state.key + ' (red: ' + state.red + ')' : state.key
+    it(title, async () => {
+      const row = manifest[state.key]
+      const framing = framingFor(readDesign('docs', 'components.md'), componentOf(state.key))
+      const framingError = checkFraming(
+        framing,
+        anatomyRoot(readDesign('docs', 'anatomy.md'), row.file)
+      )
+      if (framingError) throw new Error(framingError)
+      const frame = {
+        id: state.key,
+        css: readStageCss(location.root),
+        x: row.x,
+        y: row.y,
+        width: stageWidth(state, row),
+        framing: framing.map((r) => r.declarations)
+      }
+      await page.evaluate('window.golden.mountState(' + JSON.stringify(frame) + ')')
+      await page.settle()
+      const measured = await page.evaluate('window.golden.measureState()')
+      // Where the stage sits is the harness's to get right, red or not.
+      expect({ x: measured.box.x, y: measured.box.y }).toEqual({ x: row.x, y: row.y })
+      expect(page.errors).toEqual([])
+      const file = path.join(referenceDir, ...row.file.split('/'))
+      const { stats, verdict } = compareToReference(
+        location.root,
+        file,
+        await page.shot(measured.box),
+        state.key
+      )
+      const outcome = expectation(state, accept(verdict, measured))
+      console.log(
+        'golden: ' +
+          outcome.message +
+          ' [' +
+          stats.candWidth +
+          'x' +
+          stats.candHeight +
+          ' against ' +
+          stats.refWidth +
+          'x' +
+          stats.refHeight +
+          '; ' +
+          (stats.differing + stats.uncovered) +
+          ' of ' +
+          stats.total +
+          ' pixels; ' +
+          stats.clusters +
+          ' clusters]'
+      )
+      if (!outcome.ok) throw new Error(outcome.message)
+    })
+  }
 })
 
 describe.runIf(runnable)('golden coverage', () => {

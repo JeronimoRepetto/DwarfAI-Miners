@@ -13,6 +13,9 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, '.design/**'],
     environment: 'node',
     fileParallelism: false,
+    // Every state's line, its console output included: a red state reports its numbers there, and
+    // the todo lines are the rebuild's coverage list. The default reporter shows neither.
+    reporters: ['verbose'],
     testTimeout: 120_000,
     hookTimeout: 120_000
   }

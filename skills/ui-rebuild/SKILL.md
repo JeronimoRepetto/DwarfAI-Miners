@@ -87,8 +87,10 @@ the design repository.
 ## Golden first
 
 App issue #634's goldens (`pnpm test:golden`, `scripts/golden/`) apply that rule in code. For a
-state you rebuild: add its golden first and watch it fail, build it from the Markdown, then watch it
-pass — never tune the component or the stage until the pixels agree. The harness only counts once
+state you rebuild: add its golden first and watch it fail (an entry in
+`src/renderer/src/golden/states.json` marked `red`, and its render in `renders.ts`), build it from
+the Markdown, then watch it pass and remove `red` — a red state that passes fails the run. Never
+tune the component or the stage until the pixels agree. The harness only counts once
 its loopback passes: a reference shown as a plain image must capture back at 0%, with the recorded
 browser build. Nothing of the design enters this repository to make a golden work — no image, no
 sample data, no kit CSS; the run reads them from the design repository, and state ids such as

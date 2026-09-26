@@ -27,6 +27,10 @@ describe('golden suite wiring', () => {
     expect(golden.test.testTimeout).toBeGreaterThanOrEqual(60_000)
   })
 
+  it("prints every state's outcome, so a red state's numbers and the todo list are in the run", () => {
+    expect(golden.test.reporters).toEqual(['verbose'])
+  })
+
   it('exposes the golden run and the design copy as package scripts', () => {
     const { scripts } = JSON.parse(read('package.json'))
     expect(scripts['test:golden']).toBe('node scripts/golden/run.mjs')

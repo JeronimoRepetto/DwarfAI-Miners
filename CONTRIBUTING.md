@@ -138,6 +138,14 @@ pnpm test:golden
 - **The renderer is the recorded one.** The run fails when the browser differs from the build in
   the design's `docs/reference/capture.json`, naming both. `GOLDEN_BROWSER=<path>` pins a browser
   executable.
+- **Adding a state: red first, then flip.** Add its manifest key and UI kit cell to
+  `src/renderer/src/golden/states.json` with a `red` reason, and an entry in `renders.ts` beside
+  it that draws the real component with props built from the sample data (the page loads the
+  design's `prototype/data/sample-data.js` at run time and `sample.ts` adapts it to the contract
+  types). Run the goldens: the state fails as expected and prints its numbers. Build the state
+  from the Markdown until it passes — a red state that passes fails the run — then remove `red`.
+  The stage, and a component's "UI kit framing" rules on its root, come from the design's docs at
+  run time; a state whose framing targets another element is refused until the harness learns it.
 - **Output stays out of the tree.** Captures and diffs go to `dwarfai-golden/` under the system
   temp directory. They picture the private references: never commit one, and never paste an image
   or an output path into an issue or a pull request.

@@ -1,0 +1,7 @@
+[
+  {
+    "key": "organisms/nav#default",
+    "cell": "standard",
+    "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+  }
+]
