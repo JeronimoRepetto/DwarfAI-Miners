@@ -78,5 +78,85 @@
   },
   {
     "key": "atoms/icon#tones"
+  },
+  {
+    "key": "atoms/input#text",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/input#hover",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/input#focus",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/input#search",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/input#invalid",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/input#disabled",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/input#textarea",
+    "red": "the redesigned input is not built yet (#635)"
+  },
+  {
+    "key": "atoms/select#default-hover-focus",
+    "red": "the redesigned select is not built yet (#635)"
+  },
+  {
+    "key": "atoms/select#disabled",
+    "red": "the redesigned select is not built yet (#635)"
+  },
+  {
+    "key": "atoms/toggle#off-on",
+    "red": "the redesigned toggle is not built yet (#635)"
+  },
+  {
+    "key": "atoms/toggle#hover-pressed-focus",
+    "red": "the redesigned toggle is not built yet (#635)"
+  },
+  {
+    "key": "atoms/toggle#disabled",
+    "red": "the redesigned toggle is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slider#default",
+    "red": "the redesigned slider is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slider#hover",
+    "red": "the redesigned slider is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slider#muted-full",
+    "red": "the redesigned slider is not built yet (#635)"
+  },
+  {
+    "key": "atoms/slider#disabled",
+    "red": "the redesigned slider is not built yet (#635)"
+  },
+  {
+    "key": "atoms/chip#choice-chip",
+    "red": "the redesigned chip is not built yet (#635)"
+  },
+  {
+    "key": "atoms/chip#tier-filter-chips",
+    "red": "the redesigned chip is not built yet (#635)"
+  },
+  {
+    "key": "atoms/chip#tier-chips",
+    "red": "the redesigned chip is not built yet (#635)"
+  },
+  {
+    "key": "atoms/chip#meta-chips",
+    "red": "the redesigned chip is not built yet (#635)"
   }
 ]

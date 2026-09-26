@@ -231,5 +231,27 @@ export const RENDERS: Record<string, Render> = {
   'atoms/button#large-primary': button({ labelled: true, variant: 'primary', size: 'lg' }),
   'atoms/button#link': buttonRow(
     STATES.slice(0, 2).map((state) => ({ labelled: true, variant: 'link', state }))
-  )
+  ),
+
+  // The form controls, not built yet (#635): each state mounts an empty box and fails.
+  'atoms/input#text': unbuilt,
+  'atoms/input#hover': unbuilt,
+  'atoms/input#focus': unbuilt,
+  'atoms/input#search': unbuilt,
+  'atoms/input#invalid': unbuilt,
+  'atoms/input#disabled': unbuilt,
+  'atoms/input#textarea': unbuilt,
+  'atoms/select#default-hover-focus': unbuilt,
+  'atoms/select#disabled': unbuilt,
+  'atoms/toggle#off-on': unbuilt,
+  'atoms/toggle#hover-pressed-focus': unbuilt,
+  'atoms/toggle#disabled': unbuilt,
+  'atoms/slider#default': unbuilt,
+  'atoms/slider#hover': unbuilt,
+  'atoms/slider#muted-full': unbuilt,
+  'atoms/slider#disabled': unbuilt,
+  'atoms/chip#choice-chip': unbuilt,
+  'atoms/chip#tier-filter-chips': unbuilt,
+  'atoms/chip#tier-chips': unbuilt,
+  'atoms/chip#meta-chips': unbuilt
 }
