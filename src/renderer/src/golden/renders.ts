@@ -18,6 +18,8 @@ import ActionButton from '../components/controls/ActionButton.vue'
 import FieldHint from '../components/controls/FieldHint.vue'
 import InputField from '../components/controls/InputField.vue'
 import SelectField from '../components/controls/SelectField.vue'
+import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
+import VolumeSlider from '../components/controls/VolumeSlider.vue'
 import ShellNav from '../components/shell/ShellNav.vue'
 import type { GoldenSample } from './sample'
 import {
@@ -153,6 +155,34 @@ const selectsOf = (
   }
   return selects
 }
+
+// Each switch of the tree, named and set as it prints, with the look each is forced to.
+const toggles = (states: (string | undefined)[] = []): Render =>
+  framed((_texts, attributes) =>
+    elementsOf(attributes, 'button.dm-toggle').map((button, i) => ({
+      component: ToggleSwitch,
+      props: {
+        label: button['aria-label'] ?? '',
+        on: button['aria-checked'] === 'true',
+        disabled: 'disabled' in button,
+        state: states[i]
+      }
+    }))
+  )
+
+// Each range of the tree, named and set as it prints, with the look each is forced to.
+const sliders = (states: (string | undefined)[] = []): Render =>
+  framed((_texts, attributes) =>
+    elementsOf(attributes, 'input').map((range, i) => ({
+      component: VolumeSlider,
+      props: {
+        label: range['aria-label'] ?? '',
+        value: Number(range.value),
+        disabled: 'disabled' in range,
+        state: states[i]
+      }
+    }))
+  )
 
 const STATES = [undefined, 'hover', 'active', 'focus'] as const
 
@@ -295,7 +325,6 @@ export const RENDERS: Record<string, Render> = {
     STATES.slice(0, 2).map((state) => ({ labelled: true, variant: 'link', state }))
   ),
 
-  // The form controls not built yet (#635): each state mounts an empty box and fails.
   // The input's states, each in the kit's frame; `state` forces the look a pointer or the
   // keyboard would give, as the kit's own option does.
   'atoms/input#text': fields([{}]),
@@ -317,13 +346,17 @@ export const RENDERS: Record<string, Render> = {
     component: SelectField,
     props: selectsOf(attributes)[0]!
   }),
-  'atoms/toggle#off-on': unbuilt,
-  'atoms/toggle#hover-pressed-focus': unbuilt,
-  'atoms/toggle#disabled': unbuilt,
-  'atoms/slider#default': unbuilt,
-  'atoms/slider#hover': unbuilt,
-  'atoms/slider#muted-full': unbuilt,
-  'atoms/slider#disabled': unbuilt,
+  // The toggle's states in the kit's row: hover, pressed while on, and focus are forced looks.
+  'atoms/toggle#off-on': toggles(),
+  'atoms/toggle#hover-pressed-focus': toggles(['hover', 'active', 'focus']),
+  'atoms/toggle#disabled': toggles(),
+
+  // The slider's states, each in the kit's frame; hover is a forced look.
+  'atoms/slider#default': sliders(),
+  'atoms/slider#hover': sliders(['hover']),
+  'atoms/slider#muted-full': sliders(),
+  'atoms/slider#disabled': sliders(),
+  // The chip, not built yet (#635): each state mounts an empty box and fails.
   'atoms/chip#choice-chip': unbuilt,
   'atoms/chip#tier-filter-chips': unbuilt,
   'atoms/chip#tier-chips': unbuilt,

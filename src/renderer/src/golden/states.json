@@ -107,32 +107,25 @@
     "key": "atoms/select#disabled"
   },
   {
-    "key": "atoms/toggle#off-on",
-    "red": "the redesigned toggle is not built yet (#635)"
+    "key": "atoms/toggle#off-on"
   },
   {
-    "key": "atoms/toggle#hover-pressed-focus",
-    "red": "the redesigned toggle is not built yet (#635)"
+    "key": "atoms/toggle#hover-pressed-focus"
   },
   {
-    "key": "atoms/toggle#disabled",
-    "red": "the redesigned toggle is not built yet (#635)"
+    "key": "atoms/toggle#disabled"
   },
   {
-    "key": "atoms/slider#default",
-    "red": "the redesigned slider is not built yet (#635)"
+    "key": "atoms/slider#default"
   },
   {
-    "key": "atoms/slider#hover",
-    "red": "the redesigned slider is not built yet (#635)"
+    "key": "atoms/slider#hover"
   },
   {
-    "key": "atoms/slider#muted-full",
-    "red": "the redesigned slider is not built yet (#635)"
+    "key": "atoms/slider#muted-full"
   },
   {
-    "key": "atoms/slider#disabled",
-    "red": "the redesigned slider is not built yet (#635)"
+    "key": "atoms/slider#disabled"
   },
   {
     "key": "atoms/chip#choice-chip",
