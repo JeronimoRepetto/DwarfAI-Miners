@@ -3183,7 +3183,151 @@ export interface AgentLaunchResult {
    * conversation it was seeded with).
    */
   launchId?: string
+  /**
+   * Present only when `launched` is false because the chosen OpenCode model's
+   * provider has no credential (#597 T3) — named apart from `error` (a free
+   * sentence, present on every other refusal too) so a dialog can address the
+   * exact provider and model without parsing that sentence back apart. Every
+   * other refusal, and every other provider, leaves this absent.
+   */
+  credentialMissing?: OpenCodeCredentialMissing
 }
+
+/** See `AgentLaunchResult.credentialMissing`'s own comment for what this names and why. */
+export interface OpenCodeCredentialMissing {
+  providerId: string
+  model: string
+}
+
+/* --- OpenCode login operations (#597 T4) — one block, appended --- */
+
+/**
+ * A prompt's own visibility rule, exactly as `GET /provider/auth` describes
+ * it (OpenCode 1.18.32, measured #597 T4): shown only once a previously
+ * answered prompt's own value matches (or does not) this one's `value`.
+ */
+export interface OpenCodeAuthPromptWhen {
+  key: string
+  op: 'eq' | 'neq'
+  value: string
+}
+
+/** A free-text field an OAuth method asks before it will hand back an authorize URL. */
+export interface OpenCodeAuthTextPrompt {
+  type: 'text'
+  key: string
+  message: string
+  placeholder?: string
+  when?: OpenCodeAuthPromptWhen
+}
+
+export interface OpenCodeAuthSelectOption {
+  label: string
+  value: string
+  hint?: string
+}
+
+/**
+ * A closed choice an OAuth method asks first — measured on `github-copilot`,
+ * whose one OAuth method carries a `deploymentType` prompt of exactly this
+ * shape. T5's dialog renders this as a picker, never a free-text box.
+ */
+export interface OpenCodeAuthSelectPrompt {
+  type: 'select'
+  key: string
+  message: string
+  options: OpenCodeAuthSelectOption[]
+  when?: OpenCodeAuthPromptWhen
+}
+
+export type OpenCodeAuthPrompt = OpenCodeAuthTextPrompt | OpenCodeAuthSelectPrompt
+
+/**
+ * One way to authenticate a provider, exactly as `GET /provider/auth`'s own
+ * `ProviderAuthMethod` shape reads (measured #597 T4). An `'api'` method asks
+ * for nothing but a key; an `'oauth'` method may carry `prompts` that must be
+ * answered BEFORE the authorize call ever asks OpenCode for a URL.
+ */
+export interface OpenCodeAuthMethod {
+  type: 'oauth' | 'api'
+  label: string
+  prompts?: OpenCodeAuthPrompt[]
+}
+
+/**
+ * Every way this app's own login operations (#597 T4) can fail, collapsed to
+ * one set so a dialog reads one shape no matter which of the four routes
+ * failed. `server-unavailable` is T1's control server never coming up at all
+ * (not installed, refused to spawn, timed out) — never a reason naming which,
+ * because a person completing a login does not need the control server's own
+ * diagnosis, only that it did not work. `cancelled` is `completeOAuth` alone:
+ * the person gave up while an `'auto'` method was still blocked inside
+ * OpenCode's own server.
+ */
+export type OpenCodeLoginFailureReason =
+  | 'server-unavailable'
+  | 'unreachable'
+  | 'unauthorized'
+  | 'refused'
+  | 'timeout'
+  | 'cancelled'
+  | 'malformed'
+
+/** `GET /provider/auth`, filtered to the ONE provider a dialog is open for (#597 T4). */
+export type OpenCodeAuthMethodsResult =
+  { ok: true; methods: OpenCodeAuthMethod[] } | { ok: false; reason: OpenCodeLoginFailureReason }
+
+export interface OpenCodeAuthMethodsRequest {
+  providerId: string
+}
+
+/**
+ * The verdict of a write that can complete a login: `PUT /auth/{id}` with an
+ * API key, or `POST /provider/{id}/oauth/callback` (#597 T4). `connected` is
+ * T2's own `GET /provider` read, taken again right after the write succeeds —
+ * see `loginService.ts` for why a re-read that itself cannot be trusted still
+ * reports `connected: false` rather than leaving the write's own success in
+ * doubt.
+ */
+export type OpenCodeLoginResult =
+  { ok: true; connected: boolean } | { ok: false; reason: OpenCodeLoginFailureReason }
+
+export interface OpenCodeSubmitApiKeyRequest {
+  providerId: string
+  /**
+   * Crosses renderer -> preload -> main exactly once, straight into the PUT
+   * body (#597's own constraint): never logged, never stored on this side of
+   * that one hop, and never echoed back in any result or error.
+   */
+  key: string
+}
+
+/** `POST /provider/{id}/oauth/authorize`'s own answer: where to send the person, and which callback shape follows. */
+export type OpenCodeOAuthStartResult =
+  | { ok: true; url: string; method: 'auto' | 'code'; instructions: string }
+  | { ok: false; reason: OpenCodeLoginFailureReason }
+
+export interface OpenCodeStartOAuthRequest {
+  providerId: string
+  /** The chosen `OpenCodeAuthMethod`'s own index into `GET /provider/auth`'s array for this provider. */
+  method: number
+  /** Answers to that method's own `prompts`, keyed by each prompt's `key`. */
+  inputs?: Record<string, string>
+}
+
+export interface OpenCodeCompleteOAuthRequest {
+  providerId: string
+  method: number
+  /**
+   * A `'code'` method's pasted code — crosses exactly once, like
+   * `OpenCodeSubmitApiKeyRequest.key`, and under the same rule: never logged,
+   * stored or echoed back. Absent for an `'auto'` method, which blocks inside
+   * OpenCode's own server instead of asking this app for anything more.
+   */
+  code?: string
+}
+
+/* --- end of the #597 T4 block --- */
 
 /**
  * Pushed when a launch this app started exits almost immediately with
@@ -5344,6 +5488,21 @@ export const IPC_CHANNELS = {
   getOpenCodeSettings: 'opencode:settings:get',
   setOpenCodePluginEnabled: 'opencode:plugin:set',
   setOpenCodeServerPassword: 'opencode:password:set',
-  clearOpenCodeServerPassword: 'opencode:password:clear'
+  clearOpenCodeServerPassword: 'opencode:password:clear',
   /* --- end of the #588 T6 block ------------------------------------------------ */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  /**
+   * Completing a login the T3 gate found missing, without a terminal (#597).
+   * All four requests carry a `providerId`; `openCodeAuthMethods` and
+   * `openCodeSubmitApiKey` never need anything OpenCode calls a directory or
+   * workspace, so neither crosses here. `openCodeCancelOAuth` is one-way and
+   * carries nothing: only one OAuth completion is ever in flight, the one the
+   * login dialog itself started, so there is nothing to name.
+   */
+  openCodeAuthMethods: 'opencode:auth:methods',
+  openCodeSubmitApiKey: 'opencode:auth:submitKey',
+  openCodeStartOAuth: 'opencode:oauth:start',
+  openCodeCompleteOAuth: 'opencode:oauth:complete',
+  openCodeCancelOAuth: 'opencode:oauth:cancel'
+  /* --- end of the #597 T4 block --- */
 } as const

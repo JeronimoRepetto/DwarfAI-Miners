@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import {
   buildOpenCodeContinueArgs,
+  buildOpenCodeContinueSpawn,
   deliverViaOpenCodeContinue,
   OPENCODE_CONTINUE_START_WINDOW_MS,
   type OpenCodeContinueInvocation,
@@ -50,6 +51,46 @@ describe('buildOpenCodeContinueArgs', () => {
   /** The id is one argv element, so nothing about it is ever re-parsed. */
   it('carries the session id as its own argument', () => {
     expect(buildOpenCodeContinueArgs(SESSION_ID)[2]).toBe(SESSION_ID)
+  })
+})
+
+/**
+ * #640. OpenCode 1.18.32's own `run` (this continuation's own argv, see
+ * buildOpenCodeContinueArgs) reads a NEW session's directory from `PWD`, not
+ * from the process's real cwd — measured live against the opening launch's
+ * own repro. `runOpenCodeContinueProcess` used to spawn with no `env` at all,
+ * which inherits this app's whole environment untouched, PWD included; the
+ * pure builder below is the spawn call as a VALUE (the same split
+ * launchRunner's buildLaunchSpawn and nodeHostedProcess's buildHostedSpawn
+ * already keep), so the fix is a plain assertion instead of a real spawn.
+ */
+describe('buildOpenCodeContinueSpawn', () => {
+  const INVOCATION: OpenCodeContinueInvocation = {
+    command: BINARY,
+    args: buildOpenCodeContinueArgs(SESSION_ID),
+    cwd: CWD,
+    text: 'run the tests',
+    startWindowMs: OPENCODE_CONTINUE_START_WINDOW_MS
+  }
+
+  it('spawns exactly the command, args and cwd it was given', () => {
+    const call = buildOpenCodeContinueSpawn(INVOCATION, {})
+    expect(call.command).toBe(BINARY)
+    expect(call.args).toEqual(buildOpenCodeContinueArgs(SESSION_ID))
+    expect(call.options.cwd).toBe(CWD)
+  })
+
+  it('sets PWD to the same cwd it is about to spawn in', () => {
+    const call = buildOpenCodeContinueSpawn(INVOCATION, { PATH: '/usr/bin' })
+    expect(call.options.env).toEqual({ PATH: '/usr/bin', PWD: CWD })
+  })
+
+  it('overrides an inherited PWD that names a different folder', () => {
+    const call = buildOpenCodeContinueSpawn(INVOCATION, {
+      PATH: '/usr/bin',
+      PWD: '/home/j/some/other/shell/folder'
+    })
+    expect(call.options.env).toEqual({ PATH: '/usr/bin', PWD: CWD })
   })
 })
 

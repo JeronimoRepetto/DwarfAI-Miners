@@ -1230,9 +1230,12 @@ describe('runLaunchProcess', () => {
     // AMENDED again for #510 (was: stdio: ['pipe', 'ignore', FAKE_STDERR_FD])
     // — stdout is now captured through a real fd too, for the same reason
     // and the same way stderr already was.
+    // AMENDED for #640: `env` now also carries `PWD`, pinned to the mine
+    // buildLaunchSpawn is about to spawn in — see the dedicated PWD describe
+    // block below for why.
     expect(call.options).toEqual({
       cwd: MINE_PATH,
-      env: { PATH: '/usr/bin' },
+      env: { PATH: '/usr/bin', PWD: MINE_PATH },
       detached: true,
       stdio: ['pipe', FAKE_STDOUT_FD, FAKE_STDERR_FD],
       windowsHide: true
@@ -1315,9 +1318,10 @@ describe('runLaunchProcess', () => {
     // outlive the panel, and no shell is involved in either hop.
     // AMENDED for #263, for the same reason the test above was.
     // AMENDED again for #510 (was: stdio: ['pipe', 'ignore', FAKE_STDERR_FD]).
+    // AMENDED for #640, same reason as the test above.
     expect(call.options).toEqual({
       cwd: MINE_PATH,
-      env: { PATH: '/usr/bin' },
+      env: { PATH: '/usr/bin', PWD: MINE_PATH },
       detached: true,
       stdio: ['pipe', FAKE_STDOUT_FD, FAKE_STDERR_FD],
       windowsHide: true
@@ -1339,6 +1343,47 @@ describe('runLaunchProcess', () => {
     expect(call.command).toBe(CODEX_PATH)
     expect(call.args).toEqual(['exec', '-'])
     expect(call.args).not.toContain('-e')
+  })
+
+  /*
+   * #640. OpenCode 1.18.32's own `run` takes a new session's directory from
+   * `PWD`, not from the process's real cwd — measured live: an inherited
+   * shell `PWD` overrode the mine every other provider's own `cwd` already
+   * puts them in. buildLaunchSpawn pins PWD to the SAME mine for every
+   * provider, not only OpenCode: harmless for the three that read their real
+   * cwd instead, and one shared fix rather than a fourth provider-specific
+   * branch (see domain/sessionEnv.ts).
+   */
+  describe('sets PWD to the mine, for every provider (#640)', () => {
+    it('overrides an inherited PWD naming a different folder, for an OpenCode launch', async () => {
+      const spawn = fakeSpawn()
+
+      await runLaunchProcess(
+        invocation({
+          command: OPENCODE_PATH,
+          args: ['run', '--format', 'json'],
+          env: { PATH: '/usr/bin', PWD: '/home/j/some/other/shell/folder' }
+        }),
+        spawn.spawnProcess,
+        fakeStderrFile(),
+        fakeStdoutFile()
+      )
+
+      expect(spawn.calls[0]!.options.env).toEqual({ PATH: '/usr/bin', PWD: MINE_PATH })
+    })
+
+    it('sets PWD to the mine for a Codex launch too, even with no PWD inherited at all', async () => {
+      const spawn = fakeSpawn()
+
+      await runLaunchProcess(
+        invocation({ env: { PATH: '/usr/bin' } }),
+        spawn.spawnProcess,
+        fakeStderrFile(),
+        fakeStdoutFile()
+      )
+
+      expect(spawn.calls[0]!.options.env).toEqual({ PATH: '/usr/bin', PWD: MINE_PATH })
+    })
   })
 
   /*

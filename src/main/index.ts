@@ -58,8 +58,17 @@ import type {
   JevSettings,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  OpenCodeSettings
+  OpenCodeSettings,
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  OpenCodeAuthMethodsRequest,
+  OpenCodeAuthMethodsResult,
+  OpenCodeCompleteOAuthRequest,
+  OpenCodeLoginResult,
+  OpenCodeOAuthStartResult,
+  OpenCodeStartOAuthRequest,
+  OpenCodeSubmitApiKeyRequest
+  /* --- end of the #597 T4 block --- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
@@ -121,6 +130,16 @@ import { openCodeGlobalPluginDir } from './opencodePermissions/openCodePluginIns
 import { createOpenCodeServerPasswordStore } from './opencodePermissions/openCodeServerPassword'
 import { createOpenCodePermissionAnswerPort } from './opencodePermissions/answerOpenCodePermission'
 import type { OpenCodePermissionPush } from './opencodePermissions/permissionPushPayload'
+import {
+  createOpenCodeControlServer,
+  type OpenCodeControlServerPort
+} from './opencodeLogin/controlServer'
+import { createOpenCodeLaunchCredentialGate } from './opencodeLogin/launchCredentialGate'
+import { isOpenCodeProviderIdShape } from './opencodeLogin/credentialCheck'
+import {
+  createOpenCodeLoginService,
+  type OpenCodeLoginServicePort
+} from './opencodeLogin/loginService'
 import { NodeFs } from './adapters/fsLike'
 import { NodeSqlite } from './adapters/sqliteLike'
 import { createPlatformAdapters } from './platform/platformAdapters'
@@ -209,6 +228,20 @@ let delegationService: DelegationService | null = null
  */
 let hookListener: HookListener | null = null
 let openCodePlugin: OpenCodePluginChannel | null = null
+/**
+ * The loopback `opencode serve --pure` this app starts for itself (#597 T1),
+ * shared by every credential check a launch makes. Module scope for the same
+ * reason `delegationService` is: the quit handler releases the port and its
+ * whole process tree.
+ */
+let openCodeControlServer: OpenCodeControlServerPort | null = null
+/**
+ * Completing a login the T3 gate found missing (#597 T4) — over the SAME
+ * control server above, constructed right after it. Module scope only so the
+ * IPC handlers registered later can reach it; it holds no process of its own
+ * to release on quit, unlike `openCodeControlServer`.
+ */
+let openCodeLoginService: OpenCodeLoginServicePort | null = null
 /** Held at module scope so the quit handler can close the database handle. */
 let projects: ProjectsStore | null = null
 /** Held at module scope so the will-quit handler can release the OS claim. */
@@ -329,6 +362,13 @@ function removeIpcHandlers(): void {
   /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
   ipcMain.removeHandler(IPC_CHANNELS.setJevPreferences)
   /* --- end of the #509 follow-up block --------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  ipcMain.removeHandler(IPC_CHANNELS.openCodeAuthMethods)
+  ipcMain.removeHandler(IPC_CHANNELS.openCodeSubmitApiKey)
+  ipcMain.removeHandler(IPC_CHANNELS.openCodeStartOAuth)
+  ipcMain.removeHandler(IPC_CHANNELS.openCodeCompleteOAuth)
+  ipcMain.removeAllListeners(IPC_CHANNELS.openCodeCancelOAuth)
+  /* --- end of the #597 T4 block --- */
 }
 
 /**
@@ -420,6 +460,119 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
 }
+
+/* --- OpenCode login operations (#597 T4) — one block, appended --- */
+
+/** Bounds every field these four requests carry off an untrusted renderer — refusals of an obvious accident, never a format check. */
+const MAX_OPENCODE_PROVIDER_ID_LENGTH = 200
+const MAX_OPENCODE_LOGIN_SECRET_LENGTH = 4_096
+const MAX_OPENCODE_OAUTH_METHOD_INDEX = 999
+const MAX_OPENCODE_OAUTH_INPUTS = 20
+const MAX_OPENCODE_OAUTH_INPUT_VALUE_LENGTH = 4_096
+
+function parseOpenCodeProviderId(value: unknown): string | null {
+  if (typeof value !== 'string' || value === '') return null
+  if (value.length > MAX_OPENCODE_PROVIDER_ID_LENGTH) return null
+  // Same shape `loginService.ts` itself refuses to build a route from
+  // (#597 T4 correction) — checked again here so a malformed id never even
+  // reaches the service, agreeing with its own defense in depth rather than
+  // relying on it alone.
+  if (!isOpenCodeProviderIdShape(value)) return null
+  return value
+}
+
+/** Same boundary discipline as parseKickRequest: one required field, checked and nothing more. */
+function parseOpenCodeAuthMethodsRequest(payload: unknown): OpenCodeAuthMethodsRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const providerId = parseOpenCodeProviderId((payload as Record<string, unknown>).providerId)
+  if (providerId === null) return null
+  return { providerId }
+}
+
+/**
+ * The key crosses exactly once, here, straight into whatever this either
+ * refuses or forwards to `loginService.submitApiKey` — never logged. The
+ * length bound refuses an obvious accident (a pasted file, a whole document),
+ * never a real key's shape, which this app does not check.
+ */
+function parseOpenCodeSubmitApiKeyRequest(payload: unknown): OpenCodeSubmitApiKeyRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  const providerId = parseOpenCodeProviderId(record.providerId)
+  if (providerId === null) return null
+  if (
+    typeof record.key !== 'string' ||
+    record.key === '' ||
+    record.key.length > MAX_OPENCODE_LOGIN_SECRET_LENGTH
+  ) {
+    return null
+  }
+  return { providerId, key: record.key }
+}
+
+function parseOpenCodeOAuthMethodIndex(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null
+  if (value < 0 || value > MAX_OPENCODE_OAUTH_METHOD_INDEX) return null
+  return value
+}
+
+/**
+ * `inputs` answers a chosen method's own `prompts`, keyed by each prompt's
+ * own key. Returns `undefined` for an absent field (nothing to answer),
+ * `null` to refuse a present-but-unreadable one — the same three-way split
+ * `parseLaunchTuning` already uses for an optional field that must not be
+ * silently dropped when it IS present.
+ */
+function parseOpenCodeOAuthInputs(value: unknown): Record<string, string> | undefined | null {
+  if (value === undefined) return undefined
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length > MAX_OPENCODE_OAUTH_INPUTS) return null
+  const inputs: Record<string, string> = {}
+  for (const [key, entryValue] of entries) {
+    if (
+      typeof entryValue !== 'string' ||
+      entryValue.length > MAX_OPENCODE_OAUTH_INPUT_VALUE_LENGTH
+    ) {
+      return null
+    }
+    inputs[key] = entryValue
+  }
+  return inputs
+}
+
+function parseOpenCodeStartOAuthRequest(payload: unknown): OpenCodeStartOAuthRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  const providerId = parseOpenCodeProviderId(record.providerId)
+  if (providerId === null) return null
+  const method = parseOpenCodeOAuthMethodIndex(record.method)
+  if (method === null) return null
+  const inputs = parseOpenCodeOAuthInputs(record.inputs)
+  if (inputs === null) return null
+  return { providerId, method, ...(inputs === undefined ? {} : { inputs }) }
+}
+
+/** The pasted code crosses exactly once, here, on the same terms `parseOpenCodeSubmitApiKeyRequest`'s key does. */
+function parseOpenCodeCompleteOAuthRequest(payload: unknown): OpenCodeCompleteOAuthRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  const providerId = parseOpenCodeProviderId(record.providerId)
+  if (providerId === null) return null
+  const method = parseOpenCodeOAuthMethodIndex(record.method)
+  if (method === null) return null
+  if (record.code === undefined) return { providerId, method }
+  if (
+    typeof record.code !== 'string' ||
+    record.code === '' ||
+    record.code.length > MAX_OPENCODE_LOGIN_SECRET_LENGTH
+  ) {
+    return null
+  }
+  return { providerId, method, code: record.code }
+}
+
+/* --- end of the #597 T4 block --- */
 
 /**
  * Same boundary discipline again, over a payload that NAMES AN ACT (issue
@@ -1026,6 +1179,27 @@ async function init(): Promise<void> {
       : {})
   })
 
+  // #597 T1/T3: one control server for this process's whole lifetime, shared
+  // by every credential check a launch makes — `ensure()` starts it on first
+  // use and reuses it after, `stop()` runs on quit below. Resolved through the
+  // same CLI detection every other OpenCode spawn already uses (#91), fresh on
+  // every start attempt so an install made after this app started is found.
+  openCodeControlServer = createOpenCodeControlServer({
+    resolveBinaryPath: async () => {
+      const detection = await platformAdapters.cliDetector.detect('opencode')
+      return detection.installed ? detection.path : undefined
+    },
+    env: process.env
+  })
+
+  // #597 T4: the SAME control server just above, over plain `fetch` — the
+  // login dialog's four routes never need the Settings password either, for
+  // the identical reason `openCodeCredentialGate` below does not.
+  openCodeLoginService = createOpenCodeLoginService({
+    controlServer: openCodeControlServer,
+    fetch: globalThis.fetch
+  })
+
   runtime = new AgentRuntime({
     config,
     ledger,
@@ -1091,6 +1265,14 @@ async function init(): Promise<void> {
     // answer, and sends it only to a loopback OpenCode server.
     answerOpenCodePermission: createOpenCodePermissionAnswerPort(globalThis.fetch, {
       readPassword: openCodePasswordStore.readPassword
+    }),
+    // #597 T3: the same control server constructed just above, over plain
+    // `fetch` — no Settings password to read here, unlike the permission
+    // answerer above: the control server mints its own per-start password
+    // (controlServer.ts), so `ensure()`'s own `readPassword()` is enough.
+    openCodeCredentialGate: createOpenCodeLaunchCredentialGate({
+      controlServer: openCodeControlServer,
+      fetch: globalThis.fetch
     }),
     onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
       // Both windows (#162). The panel window reads the board for the same
@@ -1891,6 +2073,67 @@ async function init(): Promise<void> {
     return runtime?.launchAgent(request) ?? notLaunched
   })
 
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  // Completing a login the T3 gate found missing, without a terminal. A
+  // malformed payload and `openCodeLoginService` not being up yet answer with
+  // the SAME 'server-unavailable' reason — the identical collapsing
+  // `notLaunched` above already does for its own channel: both are an
+  // operation that could not even be attempted.
+  const openCodeLoginUnavailable: { ok: false; reason: 'server-unavailable' } = {
+    ok: false,
+    reason: 'server-unavailable'
+  }
+  ipcMain.handle(
+    IPC_CHANNELS.openCodeAuthMethods,
+    (_event, payload: unknown): Promise<OpenCodeAuthMethodsResult> => {
+      const request = parseOpenCodeAuthMethodsRequest(payload)
+      if (request === null) return Promise.resolve(openCodeLoginUnavailable)
+      return (
+        openCodeLoginService?.listAuthMethods(request.providerId) ??
+        Promise.resolve(openCodeLoginUnavailable)
+      )
+    }
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.openCodeSubmitApiKey,
+    (_event, payload: unknown): Promise<OpenCodeLoginResult> => {
+      const request = parseOpenCodeSubmitApiKeyRequest(payload)
+      if (request === null) return Promise.resolve(openCodeLoginUnavailable)
+      return (
+        openCodeLoginService?.submitApiKey(request.providerId, request.key) ??
+        Promise.resolve(openCodeLoginUnavailable)
+      )
+    }
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.openCodeStartOAuth,
+    (_event, payload: unknown): Promise<OpenCodeOAuthStartResult> => {
+      const request = parseOpenCodeStartOAuthRequest(payload)
+      if (request === null) return Promise.resolve(openCodeLoginUnavailable)
+      return (
+        openCodeLoginService?.startOAuth(request.providerId, request.method, request.inputs) ??
+        Promise.resolve(openCodeLoginUnavailable)
+      )
+    }
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.openCodeCompleteOAuth,
+    (_event, payload: unknown): Promise<OpenCodeLoginResult> => {
+      const request = parseOpenCodeCompleteOAuthRequest(payload)
+      if (request === null) return Promise.resolve(openCodeLoginUnavailable)
+      return (
+        openCodeLoginService?.completeOAuth(request.providerId, request.method, request.code) ??
+        Promise.resolve(openCodeLoginUnavailable)
+      )
+    }
+  )
+  // One-way, like retireDwarf: only one login dialog is ever open at a time,
+  // so there is nothing to name and nothing to answer with.
+  ipcMain.on(IPC_CHANNELS.openCodeCancelOAuth, () => {
+    openCodeLoginService?.cancelOAuth()
+  })
+  /* --- end of the #597 T4 block --- */
+
   // Which providers the Add Panel may offer (#86). No payload to validate: the
   // question is about this machine. A runtime that never came up answers with
   // an empty list rather than a guess — the panel then shows Other alone,
@@ -2060,6 +2303,15 @@ if (!app.requestSingleInstanceLock()) {
     // channel just above — nothing here is written to disk to bring back.
     void delegationService?.stop()
     delegationService = null
+    // #597 T1/T3: kills the control server's whole process tree, same
+    // fire-and-forget terms as delegationService's own loopback listener above
+    // — nothing this server holds is written to disk to bring back either.
+    void openCodeControlServer?.stop()
+    openCodeControlServer = null
+    // #597 T4: no process or port of its own to release — the control server
+    // above already is one — but a live reference held past quit could still
+    // be called by a handler racing removeIpcHandlers() below.
+    openCodeLoginService = null
     // Same for the OpenCode relay (#588 T6): the plugin file and its opt-in
     // stay; a push while the app is closed just fails to connect, which the
     // plugin already treats as silent. Then the shared port itself.

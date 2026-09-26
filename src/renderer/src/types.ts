@@ -13,6 +13,7 @@ export type { ShellArea }
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
+  AgentLaunchRequest,
   AgentModelCatalog,
   AgentModelCatalogList,
   AgentModelSource,
@@ -143,8 +144,27 @@ export type {
   /* --- end of the #510 block ------------------------------------------------- */
   /* --- OpenCode permission relay: consent and server password (#588 T6) — one block, appended --- */
   OpenCodePasswordUnavailableReason,
-  OpenCodeSettings
+  OpenCodeSettings,
   /* --- end of the #588 T6 block ------------------------------------------------ */
+  /* --- OpenCode credential check before launch (#597 T3) — one block, appended --- */
+  OpenCodeCredentialMissing,
+  /* --- end of the #597 T3 block -------------------------------------------------- */
+  /* --- OpenCode login operations (#597 T4) — one block, appended --- */
+  OpenCodeAuthMethod,
+  OpenCodeAuthMethodsRequest,
+  OpenCodeAuthMethodsResult,
+  OpenCodeAuthPrompt,
+  OpenCodeAuthPromptWhen,
+  OpenCodeAuthSelectOption,
+  OpenCodeAuthSelectPrompt,
+  OpenCodeAuthTextPrompt,
+  OpenCodeCompleteOAuthRequest,
+  OpenCodeLoginFailureReason,
+  OpenCodeLoginResult,
+  OpenCodeOAuthStartResult,
+  OpenCodeStartOAuthRequest,
+  OpenCodeSubmitApiKeyRequest
+  /* --- end of the #597 T4 block --- */
 } from '../../shared/contracts'
 
 /**

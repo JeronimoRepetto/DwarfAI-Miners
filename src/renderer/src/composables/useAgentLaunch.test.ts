@@ -1307,3 +1307,114 @@ describe('the Jev entry path (#523)', () => {
     })
   })
 })
+
+/*
+ * ADDED for #597 T5. A detached OpenCode launch main held back because the
+ * chosen model's provider has no credential: the composable keeps the refusal
+ * on the ordinary error line, names the provider and model for the login
+ * dialog, and — once that dialog reports a login — sends the SAME request
+ * again, so the session starts with no further input.
+ */
+describe('a launch held back for a missing OpenCode login (#597)', () => {
+  const MISSING = { providerId: 'anthropic', model: 'anthropic/claude-sonnet-4' }
+  const HELD_BACK = {
+    launched: false,
+    provider: 'opencode',
+    error: 'OpenCode has no login for anthropic.',
+    credentialMissing: MISSING
+  }
+
+  async function readyOnOpenCode(overrides: Record<string, unknown> = {}) {
+    const api = stubApi({
+      listAgentProviders: vi.fn().mockResolvedValue({
+        providers: [{ provider: 'opencode', installed: true, launchable: true }]
+      }),
+      launchAgent: vi
+        .fn()
+        .mockResolvedValueOnce(HELD_BACK)
+        .mockResolvedValue({ launched: true, provider: 'opencode', launchId: 'receipt:7' }),
+      ...overrides
+    })
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose('opencode')
+    launch.setModel('anthropic/claude-sonnet-4')
+    launch.setPrompt('  dig the east gallery  ')
+    return { api, launch }
+  }
+
+  it('names the provider and model, and keeps main’s sentence on the error line', async () => {
+    const { launch } = await readyOnOpenCode()
+
+    await launch.submit()
+
+    expect(launch.credentialMissing.value).toEqual(MISSING)
+    expect(launch.phase.value).toBe('prompt-ready')
+    expect(launch.state.value.error).toBe('OpenCode has no login for anthropic.')
+  })
+
+  it('names nothing for every other refusal', async () => {
+    const { launch } = await readyOnOpenCode({
+      launchAgent: vi.fn().mockResolvedValue({
+        launched: false,
+        provider: 'opencode',
+        error: 'OpenCode is not installed on this machine.'
+      })
+    })
+
+    await launch.submit()
+
+    expect(launch.credentialMissing.value).toBeNull()
+    expect(launch.state.value.error).toBe('OpenCode is not installed on this machine.')
+  })
+
+  it('relaunches the identical request once the login took', async () => {
+    const { api, launch } = await readyOnOpenCode()
+    await launch.submit()
+
+    await launch.relaunch()
+
+    expect(api.launchAgent).toHaveBeenCalledTimes(2)
+    expect(api.launchAgent.mock.calls[1]![0]).toEqual(api.launchAgent.mock.calls[0]![0])
+    expect(api.launchAgent.mock.calls[1]![0]).toEqual({
+      mineId: MINE,
+      provider: 'opencode',
+      prompt: 'dig the east gallery',
+      model: 'anthropic/claude-sonnet-4'
+    })
+    expect(launch.credentialMissing.value).toBeNull()
+    expect(launch.phase.value).toBe('started-detached')
+    expect(launch.state.value.launchId).toBe('receipt:7')
+  })
+
+  it('names the login again when the relaunch is held back once more', async () => {
+    const { launch } = await readyOnOpenCode({
+      launchAgent: vi.fn().mockResolvedValue(HELD_BACK)
+    })
+    await launch.submit()
+
+    await launch.relaunch()
+
+    expect(launch.credentialMissing.value).toEqual(MISSING)
+    expect(launch.phase.value).toBe('prompt-ready')
+  })
+
+  it('forgets the held-back launch when the panel closes, so nothing relaunches', async () => {
+    const { api, launch } = await readyOnOpenCode()
+    await launch.submit()
+
+    launch.close()
+    await launch.relaunch()
+
+    expect(launch.credentialMissing.value).toBeNull()
+    expect(api.launchAgent).toHaveBeenCalledOnce()
+  })
+
+  it('does nothing on a relaunch nobody was held back for', async () => {
+    const { api, launch } = await readyOnOpenCode()
+
+    await launch.relaunch()
+
+    expect(api.launchAgent).not.toHaveBeenCalled()
+  })
+})

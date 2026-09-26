@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process'
+import { spawn, type SpawnOptions } from 'node:child_process'
 import type { FsLike } from '../adapters/fsLike'
 import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
 import { redactSecrets } from '../domain/redactSecrets'
+import { withSessionPwd } from '../domain/sessionEnv'
 import {
   describeProgramFailure,
   describeShimRefusal,
@@ -143,6 +144,36 @@ export function buildCodexResumeArgs(threadId: string, options: readonly string[
 }
 
 /**
+ * The exact spawn call, as a value (#640) — the same split launchRunner's
+ * buildLaunchSpawn and nodeHostedProcess's buildHostedSpawn already keep, so
+ * the PWD fix below is a pure assertion instead of a real spawn.
+ *
+ * `env` used to be entirely absent from this call, which means "inherit this
+ * app's whole environment" — and that inherited environment can carry a
+ * shell's own `PWD`. Codex's own resume is not measured to follow `PWD` the
+ * way OpenCode's `run` is (#640), but the fix is applied here too: harmless
+ * for a CLI that reads its real cwd instead, and one shared rule rather than
+ * a fourth provider-specific branch (see domain/sessionEnv.ts).
+ * `withSessionPwd` keeps every other inherited key and pins only that one to
+ * the SAME `cwd` this call already spawns in.
+ */
+export function buildCodexResumeSpawn(
+  invocation: CodexResumeInvocation,
+  env: NodeJS.ProcessEnv = process.env
+): { command: string; args: string[]; options: SpawnOptions } {
+  return {
+    command: invocation.command,
+    args: invocation.args,
+    options: {
+      cwd: invocation.cwd,
+      env: withSessionPwd(env, invocation.cwd),
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    }
+  }
+}
+
+/**
  * Spawn one resumed turn and answer at the start window, never at its exit.
  *
  * stdout is ignored: nothing reads a resumed turn's output — the panel reads
@@ -167,11 +198,8 @@ export function runCodexResumeProcess(
   invocation: CodexResumeInvocation
 ): Promise<CodexResumeResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const call = buildCodexResumeSpawn(invocation)
+    const child = spawn(call.command, call.args, call.options)
     let settled = false
     let stderrTail = ''
     let exited = false

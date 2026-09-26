@@ -78,6 +78,21 @@ describe('buildHostedSpawn', () => {
     // given the prompt, and this pins that it never grows a reason to be.
     expect(JSON.stringify(buildHostedSpawn(REQUEST))).not.toContain('prompt')
   })
+
+  /**
+   * #640. A custom "Add > Other" command runs in a mine's folder exactly as
+   * every launched provider does, and can itself be `opencode run …` — so the
+   * same PWD-following shape applies here. `withSessionPwd` pins PWD to the
+   * SAME cwd this call already spawns in, on top of whatever env the caller
+   * handed it.
+   */
+  it('sets PWD to the mine, overriding an inherited PWD that names a different folder', () => {
+    const call = buildHostedSpawn({
+      ...REQUEST,
+      env: { PATH: '/usr/bin', PWD: '/home/j/some/other/shell/folder' }
+    })
+    expect(call.options.env).toEqual({ PATH: '/usr/bin', PWD: REQUEST.cwd })
+  })
 })
 
 describe('hostedStdinLine', () => {

@@ -61,6 +61,7 @@ import { createCliDetector, type CliDetector } from '../platform/cliDetection'
 import { UNCLAIMED_ASK_GRACE_MS } from '../opencodePermissions/openCodePermissionRegistry'
 import type { OpenCodePermissionPush } from '../opencodePermissions/permissionPushPayload'
 import type { OpenCodePermissionAnswerPort } from '../opencodePermissions/answerOpenCodePermission'
+import type { OpenCodeLaunchCredentialGate } from '../opencodeLogin/launchCredentialGate'
 import { PROVIDER_REGISTRY, type ProviderFactory } from '../providers/registry'
 import type { Provider } from '../providers/provider'
 import type { PermissionKeystroke } from '../textDelivery/permissionKeys'
@@ -6279,6 +6280,46 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     log.mockRestore()
   })
 
+  /**
+   * #640's still-unopen second symptom: a session ran a DIFFERENT model than
+   * the one this launch explicitly asked for. Nothing logged which model was
+   * ever sent with `-m`, so this line exists to settle it on the next live
+   * repro — naming what was passed (or that nothing was), and the resolved
+   * cwd, never the prompt or any secret.
+   */
+  it('logs the model this launch passed with -m, and the resolved cwd', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(
+      vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    )
+
+    await runtime.launchAgent({
+      mineId,
+      provider: 'opencode',
+      prompt: 'dig the east tunnel',
+      model: 'opencode-go/kimi-k2.6'
+    })
+
+    const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('opencode-go/kimi-k2.6')
+    expect(lines).toContain('C:\\work\\project')
+    expect(lines).not.toContain('dig the east tunnel')
+    log.mockRestore()
+  })
+
+  it('logs "none" for the model when a launch named none', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { runtime, mineId } = await runtimeWith(
+      vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    )
+
+    await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'dig' })
+
+    const lines = log.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('none')
+    log.mockRestore()
+  })
+
   /*
    * #168. The chip the user pressed reaches the engine, and reaches it
    * unchanged. Before this the port took a folder and a prompt only, so the
@@ -6425,6 +6466,273 @@ describe('AgentRuntime.launchAgent (#86)', () => {
       error: 'OpenCode is not installed on this machine.'
     })
     expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
+  })
+})
+
+/*
+ * #597 T3. Before an OpenCode launch spawns, the runtime asks an injected
+ * gate whether the chosen model's provider has a credential — composed in
+ * production from T1's control server and T2's reader/decision
+ * (launchCredentialGate.ts), but a bare mock here: this suite is about the
+ * WIRING (when the gate is asked, and what each of its outcomes does to a
+ * launch), not the HTTP the gate itself already owns its own tests for.
+ */
+describe('AgentRuntime.launchAgent — OpenCode credential gate (#597 T3)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'claude:session-1',
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  async function runtimeWith(
+    launchSession: SessionLauncher,
+    openCodeCredentialGate?: OpenCodeLaunchCredentialGate
+  ) {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      ...(openCodeCredentialGate === undefined ? {} : { openCodeCredentialGate })
+    })
+    await runtime.refresh()
+    const mine = runtime.getMines()[0]!
+    return { runtime, mineId: mine.id, minePath: mine.path }
+  }
+
+  it('(a) holds the launch and never spawns when the gate reports credential-missing', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({
+      kind: 'credential-missing',
+      providerId: 'anthropic',
+      model: 'anthropic/claude-3-5'
+    })
+    const { runtime, mineId, minePath } = await runtimeWith(launchSession, gate)
+
+    const result = await runtime.launchAgent({
+      mineId,
+      provider: 'opencode',
+      prompt: 'go',
+      model: 'anthropic/claude-3-5'
+    })
+
+    expect(result.launched).toBe(false)
+    expect(result.provider).toBe('opencode')
+    expect(result.credentialMissing).toEqual({
+      providerId: 'anthropic',
+      model: 'anthropic/claude-3-5'
+    })
+    expect(result.error).toContain('anthropic')
+    expect(result.error).toContain('anthropic/claude-3-5')
+    expect(launchSession).not.toHaveBeenCalled()
+    // #597 T3b: the gate's signature grew a second argument, the launch's own
+    // folder — passed here so a launch with no model can still have its
+    // config-resolved default checked (see the T3b describe block below).
+    expect(gate).toHaveBeenCalledWith('anthropic/claude-3-5', minePath)
+  })
+
+  it('(b) spawns exactly as before once the gate reports ready', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({ kind: 'ready' })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'opencode',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'opencode' })
+    expect(launchSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('(c) fails open — a check-failed gate still launches, and logs the detail once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi
+      .fn<OpenCodeLaunchCredentialGate>()
+      .mockResolvedValue({ kind: 'check-failed', detail: 'control server: not-installed' })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'opencode',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'opencode' })
+    expect(launchSession).toHaveBeenCalledTimes(1)
+    const lines = warn.mock.calls.map((call) => call.join(' ')).join('\n')
+    expect(lines).toContain('control server: not-installed')
+    warn.mockRestore()
+  })
+
+  it('(d) asks the gate — with the mine’s folder — even when no model was chosen (#597 T3b)', async () => {
+    // AMENDED (#597 T3b): this test used to assert the OPPOSITE — the gate was
+    // never asked when no model was chosen, because a launch with no model was
+    // "nothing to check". The coverage finding that produced T3b is exactly
+    // that this was wrong: `opencode run` still starts on a model, the one
+    // OpenCode's own config resolves for the launch's folder, so the gate now
+    // runs unconditionally for every OpenCode launch that has one wired.
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({ kind: 'ready' })
+    const { runtime, mineId, minePath } = await runtimeWith(launchSession, gate)
+
+    await runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
+
+    expect(gate).toHaveBeenCalledWith(undefined, minePath)
+    expect(launchSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('(e) never asks the gate for a non-OpenCode provider, whatever the gate would answer', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({
+      kind: 'credential-missing',
+      providerId: 'anthropic',
+      model: 'anthropic/claude-3-5'
+    })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'claude',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'claude' })
+    expect(gate).not.toHaveBeenCalled()
+  })
+
+  it('spawns exactly as before when no gate is wired at all, the shape every existing test is in', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({
+        mineId,
+        provider: 'opencode',
+        prompt: 'go',
+        model: 'anthropic/claude-3-5'
+      })
+    ).resolves.toMatchObject({ launched: true, provider: 'opencode' })
+  })
+})
+
+/*
+ * #597 T3b. The coverage finding recorded in the feature doc: `opencode
+ * models` (and therefore both the Add Panel picker and Jev routing) lists
+ * only CONNECTED providers, so a chosen model almost never lacks a
+ * credential — the issue's own main scenario is a launch that names NONE,
+ * where `opencode run` falls back to the model OpenCode's own config
+ * resolves. `launchCredentialGate.ts` owns reading that config; this suite
+ * only pins the RUNTIME wiring — that a launch with no model still reaches a
+ * refusal shaped exactly like a chosen model's, and that a later relaunch
+ * (T5's own pattern: the same request resubmitted with no model, after a
+ * login) reads a fresh answer rather than one cached from before the login.
+ */
+describe('AgentRuntime.launchAgent — OpenCode credential gate, no model chosen (#597 T3b)', () => {
+  function crewScan() {
+    return vi.fn<Provider['scan']>().mockResolvedValue([
+      {
+        provider: 'claude',
+        sessionId: 'session-1',
+        cwd: 'C:\\work\\project',
+        status: 'busy',
+        updatedAt: 1,
+        dwarfs: [
+          {
+            id: 'claude:session-1',
+            provider: 'claude',
+            role: 'foreman',
+            name: 'boss',
+            status: 'working',
+            sessionId: 'session-1'
+          }
+        ]
+      }
+    ])
+  }
+
+  async function runtimeWith(launchSession: SessionLauncher, gate: OpenCodeLaunchCredentialGate) {
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [{ kind: 'claude', scan: crewScan(), feed: vi.fn().mockResolvedValue([]) }],
+      launchSession,
+      onMinesUpdated: vi.fn(),
+      openCodeCredentialGate: gate
+    })
+    await runtime.refresh()
+    const mine = runtime.getMines()[0]!
+    return { runtime, mineId: mine.id, minePath: mine.path }
+  }
+
+  it('refuses a no-model launch exactly like a chosen one, when the folder\u2019s config names an uncredentialed model', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi.fn<OpenCodeLaunchCredentialGate>().mockResolvedValue({
+      kind: 'credential-missing',
+      providerId: 'anthropic',
+      model: 'anthropic/claude-sonnet-5'
+    })
+    const { runtime, mineId, minePath } = await runtimeWith(launchSession, gate)
+
+    const result = await runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
+
+    expect(result.launched).toBe(false)
+    expect(result.credentialMissing).toEqual({
+      providerId: 'anthropic',
+      model: 'anthropic/claude-sonnet-5'
+    })
+    expect(launchSession).not.toHaveBeenCalled()
+    expect(gate).toHaveBeenCalledWith(undefined, minePath)
+  })
+
+  it('a T5 relaunch (the same no-model request resubmitted) re-reads the gate fresh and passes once it does', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'opencode' })
+    const gate = vi
+      .fn<OpenCodeLaunchCredentialGate>()
+      .mockResolvedValueOnce({
+        kind: 'credential-missing',
+        providerId: 'anthropic',
+        model: 'anthropic/claude-sonnet-5'
+      })
+      // The login dialog (T4/T5) runs entirely between these two calls; the
+      // runtime itself does nothing to cause this — the point of this test is
+      // that NOTHING caches the first answer, so a plain resubmit is enough.
+      .mockResolvedValueOnce({ kind: 'ready' })
+    const { runtime, mineId } = await runtimeWith(launchSession, gate)
+
+    const first = await runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
+    expect(first.launched).toBe(false)
+    expect(first.credentialMissing).toBeDefined()
+    expect(launchSession).not.toHaveBeenCalled()
+
+    const relaunch = await runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
+    expect(relaunch.launched).toBe(true)
+    expect(launchSession).toHaveBeenCalledTimes(1)
+    expect(gate).toHaveBeenCalledTimes(2)
   })
 })
 

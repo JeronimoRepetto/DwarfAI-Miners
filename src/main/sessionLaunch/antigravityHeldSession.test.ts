@@ -127,6 +127,21 @@ describe('buildAntigravityHeldSpawn', () => {
     })
     expect(call.options.shell).toBeUndefined()
   })
+
+  /**
+   * #640. Not measured to affect Antigravity's own CLI, but applied here too:
+   * harmless for a CLI that reads its real cwd instead, and one shared rule
+   * rather than a fourth provider-specific branch (see domain/sessionEnv.ts).
+   */
+  it('sets PWD to the mine, overriding an inherited PWD that names a different folder', () => {
+    const call = buildAntigravityHeldSpawn({
+      program: AGY,
+      args: antigravityHeldArgs(),
+      cwd: MINE,
+      env: { PATH: '/usr/bin', PWD: 'C:\\Users\\j\\some\\other\\shell\\folder' }
+    })
+    expect(call.options.env).toEqual({ PATH: '/usr/bin', PWD: MINE })
+  })
 })
 
 describe('AntigravityStreamReader', () => {

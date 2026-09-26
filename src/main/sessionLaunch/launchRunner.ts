@@ -11,6 +11,7 @@ import {
   notInstalledReason
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
+import { withSessionPwd } from '../domain/sessionEnv'
 import type { AgentLaunchResult, DwarfProvider, TurnOutcome } from '../domain/types'
 import {
   describeProgramFailure,
@@ -687,7 +688,10 @@ export function buildLaunchSpawn(
 } {
   const options: SpawnOptions = {
     cwd: invocation.cwd,
-    env: invocation.env,
+    // #640: PWD pinned to this SAME cwd, for every provider — see
+    // domain/sessionEnv.ts on why OpenCode's own `run` needs this and every
+    // other provider does not mind it.
+    env: withSessionPwd(invocation.env, invocation.cwd),
     detached: true,
     // stdout and stderr are each a FILE's own fd, never a pipe and never
     // 'ignore' (#263, #510).
