@@ -10,6 +10,7 @@ import { readStageCss } from './stage.mjs'
 import {
   accept,
   anatomyRoot,
+  anatomyTexts,
   checkFraming,
   checkStates,
   componentOf,
@@ -139,7 +140,9 @@ describe.runIf(runnable)('golden harness', () => {
         x: row.x,
         y: row.y,
         width: stageWidth(row),
-        framing: framing.map((r) => r.declarations)
+        framing: framing.map((r) => r.declarations),
+        // The texts its tree shows, for a specimen's captions: read here, never committed.
+        texts: anatomyTexts(readDesign('docs', 'anatomy.md'), row.file)
       }
       await page.evaluate('window.golden.mountState(' + JSON.stringify(frame) + ')')
       await page.settle()

@@ -2,5 +2,51 @@
   {
     "key": "organisms/nav#default",
     "red": "ShellNav predates the redesign; the Panel nav is rebuilt in #635"
+  },
+  {
+    "key": "foundations/colour#materials"
+  },
+  {
+    "key": "foundations/colour#text"
+  },
+  {
+    "key": "foundations/colour#semantic"
+  },
+  {
+    "key": "foundations/colour#tiers"
+  },
+  {
+    "key": "foundations/materials#surfaces"
+  },
+  {
+    "key": "foundations/materials#trims"
+  },
+  {
+    "key": "foundations/materials#raised"
+  },
+  {
+    "key": "foundations/materials#focus-visible",
+    "red": "the focus ring ports with the base rules in the atoms slice of #635 (design lead ruling, tokens-port question 7)"
+  },
+  {
+    "key": "foundations/materials#rules"
+  },
+  {
+    "key": "foundations/motion#tokens"
+  },
+  {
+    "key": "foundations/motion#enter",
+    "red": "draws the redesigned button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
+  },
+  {
+    "key": "foundations/motion#press",
+    "red": "draws the redesigned primary button, which the atoms slice of #635 rebuilds (design lead ruling, tokens-port question 5)"
+  },
+  {
+    "key": "foundations/type#scale"
+  },
+  {
+    "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
+    "red": "draws the page header, mine card and bubbles in each preset, which the Panel slice of #635 rebuilds (design lead ruling, tokens-port question 11)"
   }
 ]

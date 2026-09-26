@@ -88,6 +88,49 @@ export function anatomyRoot(anatomyMd, file) {
   return lines[fence + 1].trim()
 }
 
+// The lines of the state's element tree: the text block after the line linking its image.
+function anatomyTree(anatomyMd, file) {
+  const lines = anatomyMd.split(/\r?\n/)
+  const at = lines.findIndex((l) => l.includes('(reference/' + file + ')'))
+  const open = at < 0 ? -1 : lines.findIndex((l, i) => i > at && l.startsWith('```'))
+  const close = open < 0 ? -1 : lines.findIndex((l, i) => i > open && l.startsWith('```'))
+  if (close < 0) throw new Error('anatomy.md has no element tree for reference/' + file)
+  return lines.slice(open + 1, close)
+}
+
+// Past the `tag.class` selector and an optional `[attributes]` block, whose quoted values may
+// hold a bracket: where a line's text, if any, starts.
+function afterSelector(line) {
+  let i = line.search(/\s|$/)
+  if (line[i + 1] !== '[') return i
+  let quoted = false
+  for (i += 2; i < line.length; i++) {
+    if (line[i] === '"') quoted = !quoted
+    else if (line[i] === ']' && !quoted) return i + 1
+  }
+  return i
+}
+
+// Every text a state's tree shows, in DOM order, for the specimen captions the golden harness
+// hands in at run time (the design lead's ruling on the tokens-port questions: no caption is
+// committed). A plain text is `{ text }`; content the tree prints as `(innerHTML "…")`, a JSON
+// string, is `{ html }`. A line ending `×N` stands for N identical siblings.
+export function anatomyTexts(anatomyMd, file) {
+  const texts = []
+  for (const raw of anatomyTree(anatomyMd, file)) {
+    const line = raw.trim()
+    if (!line) continue
+    const rest = line.startsWith('"') ? line : line.slice(afterSelector(line)).trim()
+    const repeat = /\s×(\d+)$/.exec(rest)
+    const body = repeat ? rest.slice(0, repeat.index).trim() : rest
+    const html = /^\(innerHTML (".*")\)$/.exec(body)
+    const text = /^"(.*)"$/.exec(body)
+    const entry = html ? { html: JSON.parse(html[1]) } : text ? { text: text[1] } : null
+    if (entry) for (let n = repeat ? Number(repeat[1]) : 1; n > 0; n--) texts.push({ ...entry })
+  }
+  return texts
+}
+
 export function checkFraming(framing, rootLine) {
   const classes = rootLine.split(/\s/)[0].split('.').slice(1)
   const stray = framing.filter(

@@ -1409,7 +1409,7 @@ onBeforeUnmount(() => {
   padding: 9px var(--space-settings);
   border-left: 3px solid var(--danger-line);
   border-radius: var(--radius-default);
-  color: var(--danger-ink);
+  color: var(--danger-hi);
   background: var(--danger-bg);
 }
 @keyframes spin {

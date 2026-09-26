@@ -35,14 +35,26 @@ interface Declaration {
  * no nesting or at-rule-scoped custom properties, and a real CSS parser would be
  * a dependency bought to read four files.
  */
+/*
+ * AMENDED for #635: one at-rule now scopes custom properties — the reduced-motion block redeclares
+ * the duration tokens on `:root` — so the selector is keyed with its enclosing at-rules. A value
+ * inside `@media` is that block's own answer, not a second declaration in the same block.
+ */
 function declarationsIn(file: string): Declaration[] {
   const css = readFileSync(join(ASSETS_DIR, file), 'utf8')
   const found: Declaration[] = []
   let selector = ''
+  const open: string[] = []
   for (const raw of css.split('\n')) {
     const line = raw.trim()
     if (line.endsWith('{')) {
-      selector = line.slice(0, -1).trim()
+      open.push(line.slice(0, -1).trim())
+      selector = open.join(' ')
+      continue
+    }
+    if (line === '}') {
+      open.pop()
+      selector = open.join(' ')
       continue
     }
     const declaration = /^(--[a-z0-9-]+)\s*:/i.exec(line)
@@ -132,7 +144,9 @@ describe('design-tokens.css against the design foundations', () => {
     ['--color-black', '#000000'],
     ['--color-question-dark', '#13100a']
   ])('carries the design colour %s as %s', (name, value) => {
-    expect(valueOf(name)).toBe(value)
+    // AMENDED for #635: the value is unchanged, read one indirection later —
+    // the old app names now alias the redesign's tokens (handoff, Token mapping).
+    expect(resolvedValueOf(name)).toBe(value)
   })
 
   /*
@@ -141,14 +155,19 @@ describe('design-tokens.css against the design foundations', () => {
    * ruling raised every rung by 2px rather than one. `foundations.md`'s
    * Typography table carries the amendment note; this is its transcription.
    */
+  /*
+   * AMENDED for #635: read through the alias, as the old size names now read the redesign's
+   * `--fs-*` scale. `--text-headline` moves from 26px to 21px with it — the redesign's titles face
+   * is drawn on 21 units and smears at 26px — and that is the one changed expectation here.
+   */
   it.each([
     ['--text-meta', '12px'],
     ['--text-helper', '14px'],
     ['--text-section', '16px'],
     ['--text-title', '21px'],
-    ['--text-headline', '26px']
+    ['--text-headline', '21px']
   ])('carries the design type size %s as %s', (name, value) => {
-    expect(valueOf(name)).toBe(value)
+    expect(resolvedValueOf(name)).toBe(value)
   })
 
   it.each([
@@ -247,7 +266,8 @@ describe('design-tokens.css against the design foundations', () => {
     ['--color-marker-gold', '#ffde59'],
     ['--color-marker-uranium', '#00bf63']
   ])('carries the sampled marker colour %s as %s', (name, value) => {
-    expect(valueOf(name)).toBe(value)
+    // AMENDED for #635: unchanged value, now held by `--tier-*` and aliased here.
+    expect(resolvedValueOf(name)).toBe(value)
   })
 
   it('names the pixel family the design calls Pixel UI, with a fallback stack', () => {
@@ -273,7 +293,8 @@ describe('design-tokens.css against the design foundations', () => {
   })
 
   it('carries the conversation body size the amendment fixes at 14px', () => {
-    expect(valueOf('--text-conversation')).toBe('14px')
+    // AMENDED for #635: unchanged value, now held by --fs-body and aliased here.
+    expect(resolvedValueOf('--text-conversation')).toBe('14px')
   })
 
   /*
@@ -360,7 +381,7 @@ describe('design-tokens.css against the design foundations', () => {
       // WCAG AA for normal text. An unselected option is one the person is
       // about to choose, so it has to be READ, not merely sensed — this is the
       // floor the ruling set, and the reason a fresh token exists at all.
-      expect(contrastRatio(idle!, valueOf(background)!)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(idle!, resolvedValueOf(background)!)).toBeGreaterThanOrEqual(4.5)
     }
   )
 
@@ -380,11 +401,13 @@ describe('design-tokens.css against the design foundations', () => {
     expect(disabled).toBeTruthy()
     // The 3:1 WCAG gives non-text UI, applied here to a word nobody may click:
     // enough to see WHAT is unavailable, never enough to look available.
-    expect(contrastRatio(disabled!, valueOf('--color-panel-deep')!)).toBeGreaterThanOrEqual(3)
+    expect(contrastRatio(disabled!, resolvedValueOf('--color-panel-deep')!)).toBeGreaterThanOrEqual(
+      3
+    )
   })
 
   it('keeps disabled visibly quieter than merely unselected', () => {
-    const ground = valueOf('--color-panel-deep')!
+    const ground = resolvedValueOf('--color-panel-deep')!
     const disabled = contrastRatio(valueOf('--color-control-disabled')!, ground)
     const idle = contrastRatio(valueOf('--color-control-idle')!, ground)
     // The whole point of two tokens: cannot-be-chosen must not look the same
@@ -393,8 +416,14 @@ describe('design-tokens.css against the design foundations', () => {
   })
 
   it('keeps the idle foreground quieter than the selected one, so the states still differ', () => {
-    const idle = contrastRatio(valueOf('--color-control-idle')!, valueOf('--color-panel-deep')!)
-    const selected = contrastRatio(valueOf('--color-cream')!, valueOf('--color-panel-deep')!)
+    const idle = contrastRatio(
+      valueOf('--color-control-idle')!,
+      resolvedValueOf('--color-panel-deep')!
+    )
+    const selected = contrastRatio(
+      resolvedValueOf('--color-cream')!,
+      resolvedValueOf('--color-panel-deep')!
+    )
     // Legible is not the same as loud: if idle ever reached the selected
     // state's own contrast, the control would read as having every option
     // chosen — the mirror of the bug being fixed.
@@ -485,6 +514,19 @@ describe('renderer components against the type scale tokens', () => {
   })
 
   /*
+   * theme.css's `--danger-ink` was a light red for dark grounds; the redesign's is a dark red for
+   * parchment. Every rule that read the old one sits on a dark ground, so they read `--danger-hi`,
+   * the redesign's light step, instead — reading the new `--danger-ink` there would be dark red on
+   * dark. The first rule that sets red text on parchment names itself here.
+   */
+  it('reads the parchment-only --danger-ink in no renderer component yet', () => {
+    const readers = vueFiles(RENDERER_SRC).filter((file) =>
+      readFileSync(file, 'utf8').includes('var(--danger-ink)')
+    )
+    expect(readers).toEqual([])
+  })
+
+  /*
    * #347: the amendment is only real if the surfaces it names actually ask for
    * the second face. Walked off disk for the reason the size check above is —
    * a `<style>` block has no import a test could assert against — and named
@@ -530,5 +572,502 @@ describe('renderer components against the type scale tokens', () => {
     const entry = readFileSync(join(RENDERER_SRC, 'main.ts'), 'utf8')
     expect(entry).not.toContain('arial')
     expect(entry.toLowerCase()).toContain('roboto')
+  })
+})
+
+/* --- The redesign's foundations (#635) — one block, appended --------------- */
+
+/**
+ * The redesign's tokens, under the names its foundations give them, so the golden specimens and
+ * every rebuilt component read `var(--rock)` rather than a legacy alias.
+ *
+ * Read with a small rule parser of its own rather than the `valueOf` regex above: that one is
+ * unanchored, so `--gold` would match inside `--tier-gold`, and it cannot tell a `:root` value
+ * from the same name redeclared inside an at-rule.
+ */
+interface CssRule {
+  /** The enclosing at-rules, e.g. `@media (prefers-reduced-motion: reduce)`, or ''. */
+  atRule: string
+  selector: string
+  declarations: Map<string, string>
+}
+
+function rulesIn(file: string): CssRule[] {
+  const css = readFileSync(join(ASSETS_DIR, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const rules: CssRule[] = []
+  const atRules: string[] = []
+  let current: CssRule | null = null
+  let buffer = ''
+  for (const char of css) {
+    if (char === '{') {
+      const head = buffer.trim().replace(/\s+/g, ' ')
+      buffer = ''
+      if (head.startsWith('@')) atRules.push(head)
+      else {
+        current = { atRule: atRules.join(' '), selector: head, declarations: new Map() }
+        rules.push(current)
+      }
+    } else if (char === ';' || char === '}') {
+      const text = buffer.trim()
+      buffer = ''
+      if (current !== null && text !== '') {
+        const colon = text.indexOf(':')
+        const value = text
+          .slice(colon + 1)
+          .trim()
+          .replace(/\s+/g, ' ')
+        current.declarations.set(text.slice(0, colon).trim(), value)
+      }
+      if (char === '}') {
+        if (current !== null) current = null
+        else atRules.pop()
+      }
+    } else {
+      buffer += char
+    }
+  }
+  return rules
+}
+
+function declared(file: string, selector: string, name: string, atRule = ''): string | undefined {
+  const matches = rulesIn(file).filter(
+    (rule) => rule.selector === selector && rule.atRule === atRule && rule.declarations.has(name)
+  )
+  return matches.at(-1)?.declarations.get(name)
+}
+
+const rootToken = (name: string): string | undefined => declared('design-tokens.css', ':root', name)
+
+describe('design-tokens.css against the redesign foundations (#635)', () => {
+  it.each([
+    ['--rock-hi', '#221b13'],
+    ['--rock', '#14100b'],
+    ['--rock-lo', '#0a0805'],
+    ['--wood-hi', '#3d2f23'],
+    ['--wood', '#2b2119'],
+    ['--wood-lo', '#1c150f'],
+    ['--control-hi', '#3a2f20'],
+    ['--control', '#272015'],
+    ['--control-lo', '#17120b'],
+    ['--gold-hi', '#e8b451'],
+    ['--gold', '#d19831'],
+    ['--gold-lo', '#9a6c1f'],
+    ['--gold-select', '#865e1b'],
+    ['--gold-deep', '#6e4c14'],
+    ['--brass-hi', '#ffd27a'],
+    ['--brass', '#f6b644'],
+    ['--brass-lo', '#b9832a'],
+    ['--parch-hi', '#fff1d6'],
+    ['--parchment', '#fae2b6'],
+    ['--parch-lo', '#d9bd8c'],
+    ['--steel-hi', '#c9ced3'],
+    ['--steel', '#9aa0a6'],
+    ['--steel-lo', '#5d6369'],
+    ['--ink', '#f3dcb2'],
+    ['--ink-soft', '#c9b08a'],
+    ['--ink-faint', '#ad9674'],
+    ['--ink-on-light', '#2b2119'],
+    ['--ink-on-light-soft', '#443629'],
+    ['--ok', '#8fbf5a'],
+    ['--ok-lo', '#2e3a1f'],
+    ['--warn', '#e0a33a'],
+    ['--warn-lo', '#3a2c14'],
+    ['--danger', '#d0583c'],
+    ['--danger-hi', '#e98a70'],
+    ['--danger-lo', '#3a1c15'],
+    ['--danger-badge', '#b74d35'],
+    // APPENDED for #635: shipped once its dark-ground callers moved to --danger-hi.
+    ['--danger-ink', '#833726'],
+    ['--info', '#6fb3c4'],
+    ['--info-lo', '#1d3036'],
+    ['--tier-bronze', '#5ce1e6'],
+    ['--tier-bronze-lo', '#173d3f'],
+    ['--tier-copper', '#ba6336'],
+    ['--tier-copper-lo', '#45230f'],
+    ['--tier-silver', '#c7c7c7'],
+    ['--tier-silver-lo', '#3b3d40'],
+    ['--tier-gold', '#ffde59'],
+    ['--tier-gold-lo', '#4d3f0e'],
+    ['--tier-uranium', '#00bf63'],
+    ['--tier-uranium-lo', '#0a3520']
+  ])('carries the redesign colour %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  it.each([
+    ['--shadow-drop', 'rgba(0, 0, 0, 0.45)'],
+    ['--scrim', 'rgba(10, 8, 5, 0.72)'],
+    ['--veil', 'rgba(0, 0, 0, 0.5)'],
+    ['--glow-brass', 'rgba(246, 182, 68, 0.35)'],
+    ['--glow-parch', 'rgba(250, 226, 182, 0.18)'],
+    ['--hover-wash', 'rgba(250, 226, 182, 0.06)']
+  ])('carries the translucent layer %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  it('ports none of the tokens the design keeps for its own drawn desktop', () => {
+    expect(rootToken('--desk')).toBeUndefined()
+    expect(rootToken('--desk-glow')).toBeUndefined()
+  })
+
+  /*
+   * The rename the handoff's token mapping calls for, one step at a time: the redesign's name
+   * holds the value and the old app name reads it, so a palette correction is one edit while
+   * callers still ask for the old name. Each caller moves in its own rebuild slice.
+   */
+  it.each([
+    ['--color-panel-deep', 'var(--rock)'],
+    ['--color-panel', 'var(--wood)'],
+    ['--color-control', 'var(--control)'],
+    ['--color-accent', 'var(--gold)'],
+    ['--color-rail', 'var(--brass)'],
+    ['--color-cream', 'var(--parchment)'],
+    ['--color-marker-bronze', 'var(--tier-bronze)'],
+    ['--color-marker-copper', 'var(--tier-copper)'],
+    ['--color-marker-silver', 'var(--tier-silver)'],
+    ['--color-marker-gold', 'var(--tier-gold)'],
+    ['--color-marker-uranium', 'var(--tier-uranium)']
+  ])('keeps the old app name %s as an alias of %s', (name, alias) => {
+    expect(rootToken(name)).toBe(alias)
+  })
+
+  /*
+   * The collisions the handoff names: the redesign's values ship, and theme.css stops
+   * declaring them — removed, never renamed to a `--legacy-*` copy that would keep two answers.
+   * AMENDED for #635: `--danger-ink` joined the three the handoff first listed (its collisions
+   * table, and the design lead's ruling on the tokens-port questions).
+   */
+  it.each(['--ink', '--ink-faint', '--parchment', '--danger-ink'])(
+    'leaves %s to design-tokens.css alone, with no legacy copy in theme.css',
+    (name) => {
+      const themeNames = rulesIn('theme.css').flatMap((rule) => [...rule.declarations.keys()])
+      expect(themeNames).not.toContain(name)
+      expect(themeNames).not.toContain('--legacy-' + name.slice(2))
+      expect(rootToken(name)).toBeTruthy()
+    }
+  )
+
+  it('draws one art pixel of chrome as 2px, and names the empty extra ring', () => {
+    expect(rootToken('--px')).toBe('2px')
+    expect(rootToken('--ring-none')).toBe('0 0 0 0 transparent')
+  })
+
+  it('builds the notched frame from the five material variables', () => {
+    const at = (name: string) => declared('design-tokens.css', '.m-mat', name)
+    expect(at('--mat-fill')).toBe('var(--wood)')
+    expect(at('--mat-hi')).toBe('var(--wood-hi)')
+    expect(at('--mat-lo')).toBe('var(--wood-lo)')
+    expect(at('--mat-edge')).toBe('var(--rock-lo)')
+    expect(at('--mat-extra')).toBe('var(--ring-none)')
+    expect(at('background-color')).toBe('var(--mat-fill)')
+    expect(at('box-shadow')).toBe(
+      [
+        '0 calc(var(--px) * -1) 0 0 var(--mat-edge)',
+        '0 var(--px) 0 0 var(--mat-edge)',
+        'calc(var(--px) * -1) 0 0 0 var(--mat-edge)',
+        'var(--px) 0 0 0 var(--mat-edge)',
+        'inset var(--px) var(--px) 0 0 var(--mat-hi)',
+        'inset calc(var(--px) * -1) calc(var(--px) * -1) 0 0 var(--mat-lo)',
+        'var(--mat-extra)'
+      ].join(', ')
+    )
+  })
+
+  it('rounds no corner: stepped corners replace the radius on every material', () => {
+    const materials = rulesIn('design-tokens.css').filter((rule) => rule.selector.startsWith('.m-'))
+    expect(materials.length).toBeGreaterThan(0)
+    for (const rule of materials) expect(rule.declarations.has('border-radius')).toBe(false)
+  })
+
+  it.each([
+    ['.m-wood', { fill: 'wood', hi: 'wood-hi', lo: 'wood-lo' }],
+    ['.m-control', { fill: 'control', hi: 'control-hi', lo: 'control-lo' }],
+    ['.m-rock', { fill: 'rock', hi: 'rock-hi', lo: 'rock-lo' }],
+    ['.m-well', { fill: 'rock', hi: 'rock-lo', lo: 'rock-hi', edge: 'wood-lo' }],
+    [
+      '.m-parchment',
+      { fill: 'parchment', hi: 'parch-hi', lo: 'parch-lo', edge: 'rock-lo', color: 'ink-on-light' }
+    ],
+    [
+      '.m-parchment-well',
+      { fill: 'parch-hi', hi: 'parch-lo', lo: 'parch-hi', edge: 'wood-lo', color: 'ink-on-light' }
+    ],
+    [
+      '.m-brass',
+      { fill: 'brass', hi: 'brass-hi', lo: 'brass-lo', edge: 'rock-lo', color: 'ink-on-light' }
+    ],
+    ['.m-gold', { fill: 'gold-lo', hi: 'gold', lo: 'gold-deep', edge: 'brass-hi' }]
+  ])('paints the %s material from its variables', (selector, material) => {
+    const at = (name: string) => declared('design-tokens.css', selector, name)
+    const { edge, color } = material as { edge?: string; color?: string }
+    expect(at('--mat-fill')).toBe(`var(--${material.fill})`)
+    expect(at('--mat-hi')).toBe(`var(--${material.hi})`)
+    expect(at('--mat-lo')).toBe(`var(--${material.lo})`)
+    expect(at('--mat-edge')).toBe(edge === undefined ? undefined : `var(--${edge})`)
+    expect(at('color')).toBe(color === undefined ? undefined : `var(--${color})`)
+  })
+
+  it.each([
+    ['.m-trim', 'var(--brass-lo)'],
+    ['.m-trim-lit', 'var(--brass)']
+  ])('swaps only the dark edge for %s', (selector, edge) => {
+    const rule = rulesIn('design-tokens.css').find((candidate) => candidate.selector === selector)
+    expect([...(rule?.declarations.entries() ?? [])]).toEqual([['--mat-edge', edge]])
+  })
+
+  it('raises an overlay with a hard pixel drop shadow, not a blur', () => {
+    expect(declared('design-tokens.css', '.m-raised', 'filter')).toBe(
+      'drop-shadow(4px 4px 0 var(--shadow-drop))'
+    )
+  })
+
+  it('draws a rule as a 2px wood line with a lit lip beside it', () => {
+    const at = (name: string) => declared('design-tokens.css', '.m-rule', name)
+    expect(at('height')).toBe('var(--px)')
+    expect(at('background')).toBe('var(--wood-lo)')
+    expect(at('box-shadow')).toBe('0 var(--px) 0 0 var(--wood-hi)')
+    expect(at('border')).toBe('0')
+    expect(at('margin')).toBe('0')
+    const vertical = (name: string) => declared('design-tokens.css', '.m-rule-v', name)
+    expect(vertical('width')).toBe('var(--px)')
+    expect(vertical('align-self')).toBe('stretch')
+    expect(vertical('background')).toBe('var(--wood-lo)')
+    expect(vertical('box-shadow')).toBe('var(--px) 0 0 0 var(--wood-hi)')
+  })
+
+  it('sets two brass rivets at a plate’s top corners', () => {
+    const pair = '.m-rivets::before, .m-rivets::after'
+    const at = (name: string) => declared('design-tokens.css', pair, name)
+    expect(declared('design-tokens.css', '.m-rivets', 'position')).toBe('relative')
+    // An empty string either way: the formatter owns the quote style.
+    expect(at('content')).toMatch(/^(""|'')$/)
+    expect(at('position')).toBe('absolute')
+    expect(at('top')).toBe('4px')
+    expect(at('width')).toBe('var(--px)')
+    expect(at('height')).toBe('var(--px)')
+    expect(at('background')).toBe('var(--brass-lo)')
+    expect(at('box-shadow')).toBe('0 var(--px) 0 0 var(--rock-lo)')
+    expect(at('pointer-events')).toBe('none')
+    expect(declared('design-tokens.css', '.m-rivets::before', 'left')).toBe('4px')
+    expect(declared('design-tokens.css', '.m-rivets::after', 'right')).toBe('4px')
+  })
+})
+
+describe('design-tokens.css spacing, hit targets and layers (#635)', () => {
+  it.each([
+    ['--sp-1', '2px'],
+    ['--sp-2', '4px'],
+    ['--sp-3', '8px'],
+    ['--sp-4', '12px'],
+    ['--sp-5', '16px'],
+    ['--sp-6', '24px'],
+    ['--hit', '32px'],
+    ['--hit-tool', '36px'],
+    ['--hit-nav', '40px'],
+    ['--row', '40px']
+  ])('carries the spacing token %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  // Stacked in the order the layers sit, each above the one before it.
+  it.each([
+    ['--z-float', '20'],
+    ['--z-overlay', '50'],
+    ['--z-menu', '60'],
+    ['--z-dialog', '80'],
+    ['--z-toast', '90']
+  ])('carries the layer %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  it('pads a plate by the scale, never by a literal', () => {
+    expect(declared('design-tokens.css', '.m-plate', 'padding')).toBe('var(--sp-2) var(--sp-3)')
+  })
+
+  /*
+   * The whole-art-pixel rule: every gap, padding, margin and size is a whole number of 2px art
+   * pixels, so an edge never lands between screen pixels at 1x. Type sizes are exempt — a face is
+   * sharp at multiples of its own em grid (Jacquard 12 at 21px), which the crisp-size rule governs.
+   *
+   * The v4 sizes below predate the rule and are retired by the rebuild slice that replaces their
+   * callers, not re-valued here by guesswork. The list may only shrink: each entry must still be
+   * odd, so a token fixed in place has to leave it.
+   */
+  const LEGACY_V4_ODD_SIZES = [
+    '--space-map-pad',
+    '--size-icon',
+    '--size-sleep-icon',
+    '--size-chip-height',
+    '--size-mine-interior-width',
+    '--size-feature-panel-width',
+    '--size-message-input-width'
+  ]
+  const isTypeSize = (name: string) => name.startsWith('--fs-') || name.startsWith('--text-')
+  const pixelsIn = (value: string) =>
+    [...value.matchAll(/(-?\d*\.?\d+)px/g)].map((match) => Number(match[1]))
+
+  it('draws every size and spacing in design-tokens.css in whole 2px art pixels', () => {
+    const offenders: string[] = []
+    for (const rule of rulesIn('design-tokens.css')) {
+      for (const [name, value] of rule.declarations) {
+        if (isTypeSize(name) || LEGACY_V4_ODD_SIZES.includes(name)) continue
+        if (pixelsIn(value).some((px) => px % 2 !== 0)) {
+          offenders.push(`${rule.selector} ${name}: ${value}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it.each(LEGACY_V4_ODD_SIZES)('still lists %s only because it is still off the grid', (name) => {
+    const value = rootToken(name)
+    expect(value).toBeTruthy()
+    expect(pixelsIn(value!).some((px) => px % 2 !== 0)).toBe(true)
+  })
+})
+
+describe('design-tokens.css motion tokens (#635)', () => {
+  const REDUCED = '@media (prefers-reduced-motion: reduce)'
+
+  it.each([
+    ['--dur-press', '60ms'],
+    ['--dur-fast', '90ms'],
+    ['--dur-base', '140ms'],
+    ['--dur-panel', '180ms'],
+    ['--dur-tip-delay', '300ms'],
+    ['--dur-pulse', '1600ms'],
+    ['--frame-ms', '100ms'],
+    ['--ease-step', 'steps(2, end)'],
+    ['--ease-out', 'cubic-bezier(0.2, 0.7, 0.1, 1)'],
+    ['--ease-in', 'cubic-bezier(0.5, 0, 0.9, 0.3)'],
+    ['--rise', '6px']
+  ])('carries the motion token %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  // Every duration token, so a new one cannot land without its reduced-motion answer.
+  const durations = () =>
+    rulesIn('design-tokens.css')
+      .filter((rule) => rule.selector === ':root' && rule.atRule === '')
+      .flatMap((rule) => [...rule.declarations.keys()])
+      .filter((name) => name.startsWith('--dur-'))
+
+  it('reads every duration token as 0ms under reduced motion, so each switch lands in one frame', () => {
+    expect(durations().length).toBe(6)
+    for (const name of durations()) {
+      expect([name, declared('design-tokens.css', ':root', name, REDUCED)]).toEqual([name, '0ms'])
+    }
+  })
+
+  it('stops an overlay travelling under reduced motion: it appears in place', () => {
+    expect(declared('design-tokens.css', ':root', '--rise', REDUCED)).toBe('0px')
+  })
+
+  /*
+   * The one token that does not go to zero. Sprites keep playing under reduced motion, every frame
+   * a flat 200ms; only the shell's own motion stops. The frame clock that reads per-frame
+   * durations from each sheet is the sprite slice's; this is only the fallback's reduced value.
+   */
+  it('slows the fallback sprite frame to 200ms under reduced motion rather than stopping it', () => {
+    expect(declared('design-tokens.css', ':root', '--frame-ms', REDUCED)).toBe('200ms')
+  })
+
+  it('leaves the easings alone under reduced motion: with no duration they have nothing to shape', () => {
+    for (const name of ['--ease-step', '--ease-out', '--ease-in']) {
+      expect(declared('design-tokens.css', ':root', name, REDUCED)).toBeUndefined()
+    }
+  })
+
+  /*
+   * theme.css's global reset is what stops every component's own scoped animations under reduced
+   * motion today, and the tokens do not replace it until each motion reads them. Both must agree
+   * that reduced motion means no shell motion, so the reset has to stay.
+   */
+  it('keeps the global reduced-motion reset beside the zeroed tokens', () => {
+    const reset = rulesIn('theme.css').find(
+      (rule) => rule.atRule === REDUCED && rule.selector.startsWith('*')
+    )
+    expect(reset?.declarations.get('animation-duration')).toBe('0.01ms !important')
+    expect(reset?.declarations.get('transition-duration')).toBe('0.01ms !important')
+  })
+})
+
+describe('design-tokens.css type roles and scale (#635)', () => {
+  /*
+   * The app registers its faces under their hosted family names, and asking for a plain name it
+   * never registered loads nothing — so the titles face gets a `--font-family-*` stack like the
+   * others, with the same fallback, and the roles only reference stacks.
+   */
+  it('declares the titles face under its hosted family, with the app’s fallback', () => {
+    expect(rootToken('--font-family-jacquard-12')).toBe(
+      "'Jacquard 12', 'Segoe UI', system-ui, sans-serif"
+    )
+  })
+
+  it.each([
+    ['--f-ui', 'var(--font-family-tiny5)'],
+    ['--f-display', 'var(--font-family-jacquard-12)'],
+    ['--f-label', 'var(--font-family-tiny5)'],
+    ['--f-meta', 'var(--font-family-pixelify-sans)'],
+    ['--f-talk', 'var(--font-family-pixelify-sans)'],
+    ['--f-code', 'var(--font-code)']
+  ])('points the role %s at %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  it.each([
+    ['--fs-meta', '12px'],
+    ['--fs-body', '14px'],
+    ['--fs-section', '16px'],
+    ['--fs-title', '21px'],
+    // Never 26px: Jacquard 12 is drawn on 21 units and smears anywhere between its multiples.
+    ['--fs-headline', '21px']
+  ])('carries the type size %s as %s', (name, value) => {
+    expect(rootToken(name)).toBe(value)
+  })
+
+  /*
+   * The old size names read the redesign's scale (the handoff's token mapping). `--text-headline`
+   * moves from 26px to 21px with it; `--text-helper` has no counterpart and keeps its literal.
+   */
+  it.each([
+    ['--text-meta', 'var(--fs-meta)'],
+    ['--text-conversation', 'var(--fs-body)'],
+    ['--text-section', 'var(--fs-section)'],
+    ['--text-title', 'var(--fs-title)'],
+    ['--text-headline', 'var(--fs-headline)']
+  ])('keeps the old size name %s as an alias of %s', (name, alias) => {
+    expect(rootToken(name)).toBe(alias)
+  })
+
+  // One line height and letter-spacing per step, carried by the class that sets the step.
+  it.each([
+    ['.t-meta', '400 var(--fs-meta) / 1.3 var(--f-meta)', '0.02em'],
+    ['.t-label', '400 var(--fs-meta) / 1.2 var(--f-meta)', '0.04em'],
+    ['.t-section', '400 var(--fs-section) / 1.25 var(--f-label)', undefined],
+    ['.t-title', '400 var(--fs-title) / 1.15 var(--f-display)', undefined],
+    ['.t-headline', '400 var(--fs-headline) / 1.1 var(--f-display)', undefined],
+    ['.t-talk', '400 var(--fs-body) / 1.35 var(--f-talk)', undefined],
+    ['.t-code', '400 var(--fs-meta) / 1.4 var(--f-code)', undefined]
+  ])('sets %s in its role, size and line height', (selector, font, letterSpacing) => {
+    expect(declared('design-tokens.css', selector, 'font')).toBe(font)
+    expect(declared('design-tokens.css', selector, 'letter-spacing')).toBe(letterSpacing)
+  })
+
+  it('sets the eyebrow in capitals and the helper classes by token', () => {
+    expect(declared('design-tokens.css', '.t-label', 'text-transform')).toBe('uppercase')
+    expect(declared('design-tokens.css', '.t-num', 'font-variant-numeric')).toBe('tabular-nums')
+    expect(declared('design-tokens.css', '.t-soft', 'color')).toBe('var(--ink-soft)')
+    expect(declared('design-tokens.css', '.t-faint', 'color')).toBe('var(--ink-faint)')
+  })
+
+  /*
+   * Bundled, never fetched, for the reason the faces above are: the CSP admits no remote origin.
+   * The golden page loads the app's faces as the app does, or a title would be graded in its
+   * fallback.
+   */
+  it.each([['main.ts'], ['golden/page.ts']])('bundles the titles face in %s', (file) => {
+    const entry = readFileSync(join(ASSETS_DIR, '..', file), 'utf8')
+    expect(entry).toContain("import '@fontsource/jacquard-12/400.css'")
   })
 })

@@ -7,19 +7,22 @@
  * The stage framing CSS is not here. The harness reads it from the design repository at run time
  * and hands it in (PO ruling G-04, 2026-09-26); this file only positions the stage and reports
  * its box. The same goes for the sample data (G-03): the harness hands in the design's
- * sample-data.js as text, and the page runs it as the classic script it is.
+ * sample-data.js as text, and the page runs it as the classic script it is. A specimen's captions
+ * arrive the same way, as the texts of its state's anatomy tree (the design lead's ruling on the
+ * tokens-port questions).
  *
  * A state is the real component on the stage with the app's own stylesheets loaded as the app
  * loads them, and nothing else: whatever differs from its reference is the component's.
  */
 import '@fontsource/tiny5/400.css'
+import '@fontsource/jacquard-12/400.css'
 import '@fontsource-variable/pixelify-sans'
 import '../assets/fonts/roboto/roboto.css'
 import '../assets/base.css'
 import '../assets/design-tokens.css'
 import '../assets/theme.css'
 import { createApp, h, nextTick, type App } from 'vue'
-import { RENDERS } from './renders'
+import { RENDERS, type GoldenText } from './renders'
 import { adaptSample, type GoldenSample } from './sample'
 
 export interface GoldenBox {
@@ -45,6 +48,8 @@ export interface StateFrame {
   width: number | null
   /** The component's UI kit framing declarations, applied to its root element. */
   framing: string[]
+  /** Every text the state's anatomy tree shows, in DOM order: a specimen's captions. */
+  texts: GoldenText[]
 }
 
 export interface StateMeasure {
@@ -139,7 +144,7 @@ async function mountState(frame: StateFrame): Promise<void> {
   const render = RENDERS[frame.id]
   if (!render) throw new Error('golden: renders.ts has no entry for ' + frame.id)
   if (!sample) throw new Error('golden: loadSample must run before mountState')
-  const { component, props } = render(sample)
+  const { component, props } = render(sample, frame.texts)
   const runtime = (window as unknown as { __snapRuntime?: { reset(): void } }).__snapRuntime
   runtime?.reset()
   localStorage.clear()
