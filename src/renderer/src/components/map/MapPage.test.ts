@@ -339,6 +339,52 @@ describe('MapPage mine tooltip', () => {
     wrapper.unmount()
   })
 
+  /*
+   * A press dismisses the card until the pointer leaves (components.md, Tooltip card: it shows when
+   * the pointer arrives or on keyboard focus, and is gone on press). Found in the live app (#654):
+   * after a click the card came back about a second later under the resting pointer, when the
+   * window gave the pressed marker its focus again, and stayed until the pointer left.
+   */
+  it('keeps a pressed marker’s card away while the pointer rests there, whatever refocuses it', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(MapPage, { props, attachTo: document.body })
+    await rest(wrapper, TIP_DELAY_MS)
+    const marker = wrapper.get('.dm-marker')
+    await marker.trigger('pointerdown')
+    await marker.trigger('click')
+    await marker.trigger('blur')
+    await marker.trigger('focus')
+    await marker.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(TIP_DELAY_MS * 4)
+    await flushPromises()
+    expect(tip()).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('shows the card again once the pointer has left and come back', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(MapPage, { props, attachTo: document.body })
+    const marker = wrapper.get('.dm-marker')
+    await marker.trigger('pointerdown')
+    await marker.trigger('click')
+    await marker.trigger('pointerleave')
+    await rest(wrapper, TIP_DELAY_MS)
+    expect(tip()).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  // A mouse press opens the mine without giving the marker focus, so no keyboard ring shows.
+  it('takes no focus from a mouse press, only from the keyboard', async () => {
+    const wrapper = mount(MapPage, { props, attachTo: document.body })
+    const marker = wrapper.get('.dm-marker').element as HTMLButtonElement
+    const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    marker.dispatchEvent(press)
+    expect(press.defaultPrevented).toBe(true)
+    marker.focus()
+    expect(document.activeElement).toBe(marker)
+    wrapper.unmount()
+  })
+
   it('hides the card on Esc', async () => {
     vi.useFakeTimers()
     const wrapper = mount(MapPage, { props, attachTo: document.body })

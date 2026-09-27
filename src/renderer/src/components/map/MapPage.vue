@@ -82,14 +82,17 @@ const tierInfoOpen = ref(false)
  * The one tooltip (components.md, Tooltip card): 300ms after the pointer arrives, at once on
  * keyboard focus, gone on leave, blur, press or Esc. Held by mine id, so a poll replacing the
  * board keeps it describing the same mine with fresh numbers instead of vanishing under the
- * pointer. A press also focuses its button; `pressing` stops that focus from bringing it back.
+ * pointer. A press dismisses it until the pointer leaves: nothing re-arms it before then, neither
+ * the pointer resting on nor the window handing the pressed marker its focus back (which brought
+ * it back a second after a click, #654). A mouse press takes no focus at all (`@mousedown.prevent`),
+ * so the keyboard's ring shows only for the keyboard; Tab still focuses and shows the card.
  */
 const tipId = ref<string | null>(null)
 const tipCard = ref<InstanceType<typeof TooltipCard> | null>(null)
 const tipPlace = ref<{ left: number; top: number; side: TipSide }>({ left: 0, top: 0, side: 'top' })
 let tipTarget: HTMLElement | null = null
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
-let pressing = false
+let dismissed = false
 
 const tipMine = computed(() => population.value.find((mine) => mine.id === tipId.value))
 const tip = computed(() => (tipMine.value === undefined ? undefined : mineTip(tipMine.value)))
@@ -126,28 +129,28 @@ function hideTip(): void {
 }
 
 function hover(id: string, event: PointerEvent): void {
+  if (dismissed) return
   const target = event.currentTarget as HTMLElement
   clearHover()
   hoverTimer = setTimeout(() => void showTip(id, target), TIP_DELAY_MS)
 }
 
 function focus(id: string, event: FocusEvent): void {
-  if (!pressing) void showTip(id, event.currentTarget as HTMLElement)
+  if (!dismissed) void showTip(id, event.currentTarget as HTMLElement)
 }
 
-// Leaving the marker or its focus ends a press that never became a click, as a drag off it does.
+// Only the pointer leaving re-arms a card a press dismissed.
 function leave(): void {
-  pressing = false
+  dismissed = false
   hideTip()
 }
 
 function press(): void {
-  pressing = true
+  dismissed = true
   hideTip()
 }
 
 function open(id: string): void {
-  pressing = false
   hideTip()
   emit('open', id)
 }
@@ -201,8 +204,9 @@ onBeforeUnmount(() => {
           @pointerenter="hover(marker.id, $event)"
           @pointerleave="leave"
           @pointerdown="press"
+          @mousedown.prevent
           @focus="focus(marker.id, $event)"
-          @blur="leave"
+          @blur="hideTip"
           @click="open(marker.id)"
         />
       </div>
