@@ -20,6 +20,7 @@ import './assets/base.css'
 import './assets/design-tokens.css'
 import './assets/theme.css'
 import { rendererSurface } from './lib/shell/surface'
+import { restoreLaunchView } from './composables/useView'
 
 /*
  * Which of the app's two windows this is (#162). The message panel is a window
@@ -29,4 +30,11 @@ import { rendererSurface } from './lib/shell/surface'
  */
 const surface = rendererSurface(window.location.search)
 
-createApp(surface === 'message-panel' ? MessagePanelWindow : App).mount('#app')
+if (surface === 'message-panel') {
+  createApp(MessagePanelWindow).mount('#app')
+} else {
+  // The shell opens on the page and the mine it last closed on (#635, PANEL-QUESTIONS 25), read
+  // before it mounts so its first paint is that page, never the Map corrected a frame later.
+  // restoreLaunchView never rejects: a bridge that cannot answer opens the default view.
+  void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
+}

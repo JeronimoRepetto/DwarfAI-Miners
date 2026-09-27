@@ -31,12 +31,12 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { createAttentionWatch } from './lib/audio/attentionCues'
 import { browseRows } from './lib/browse/boardRows'
-import { columnMine, openableMineIds } from './lib/browse/columnMine'
+import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
-import { useView } from './composables/useView'
+import { takeLaunchMine, useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
@@ -679,8 +679,49 @@ const currentMine = computed<Mine | undefined>(() =>
 /*
  * A remembered mine held open has no board push to let it go when it is removed, so a change of the
  * remembered list asks the same question the board push does (useView.syncWithMines).
+ *
+ * AMENDED for #635 (PANEL-QUESTIONS 25): the question waits until the board AND the remembered list
+ * have each been read once. The app now opens on the mine it last closed on, and the board usually
+ * answers first: a remembered mine nobody is working is only in the list, so asking on the board
+ * alone let it go before the list could say it was still there. Once both are read, a mine that was
+ * removed, or whose folder is gone, is let go of as before — it opens nothing, and the page stays.
  */
-watch(projects, (list) => syncWithMines(openableMineIds(state.mines, list)))
+let boardRead = false
+let projectsRead = false
+function pruneOpenMine(): void {
+  if (!boardRead || !projectsRead) return
+  syncWithMines(openableMineIds(state.mines, projects.value))
+  settleLaunchMine()
+}
+
+/*
+ * The mine the launch remembered (#635, PANEL-QUESTIONS 25) is judged here, once, with both lists
+ * read: it opens only if it still does, its folder included (launchMineOpens), and it never opens
+ * first to close a moment later. One the person has already replaced by opening another mine stays
+ * unopened. A mine that no longer opens is forgotten in main at once, so the next launch does not
+ * look for it again.
+ */
+function settleLaunchMine(): void {
+  const remembered = takeLaunchMine()
+  if (remembered === null) return
+  if (viewState.mineId !== null) return
+  if (launchMineOpens(remembered, state.mines, projects.value)) openMine(remembered)
+  else window.api.setLaunchView({ area: viewState.area, mineId: null })
+}
+watch(projects, () => {
+  projectsRead = true
+  pruneOpenMine()
+})
+
+/*
+ * The page and the mine the next launch opens on (#635, PANEL-QUESTIONS 25): each change is
+ * reported to main as it happens, one-way, and main coalesces the writes. The two fields are
+ * watched apart so a write-back of an unchanged value reports nothing, and the view the entry
+ * restored before mounting is not reported back — only what changes from it.
+ */
+watch([() => viewState.area, () => viewState.mineId], ([area, mineId]) =>
+  window.api.setLaunchView({ area, mineId })
+)
 
 /*
  * `toggleSecondary` stood here until #635: the closed rail's arrow, which closed
@@ -715,7 +756,8 @@ function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
-  syncWithMines(openableMineIds(snapshot.mines, projects.value))
+  boardRead = true
+  pruneOpenMine()
   // A launch in flight is watching for its own dwarf, which arrives on an
   // ordinary poll like every other session's — this is that poll.
   if (import.meta.env.DEV) {
