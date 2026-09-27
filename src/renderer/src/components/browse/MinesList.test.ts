@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MinesList from './MinesList.vue'
 import type { MineCardView } from '../../lib/browse/mineCard'
 import { MINE_CARD_ENTER, MINE_CARD_EXIT } from '../../lib/browse/cardMotion'
@@ -461,6 +461,108 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
     await flushPromises()
     expect(runs).toEqual([])
     expect(list.find('[data-mine="beta"]').exists()).toBe(false)
+    list.unmount()
+  })
+
+  /*
+   * APPENDED for #635 (measured in the live app: the enter never rose, the exit never slid, and
+   * the added card flashed at full opacity on its first frame). The card's own stylesheet
+   * transitions `transform` over --dur-press with a stepped ease, for its press; the engine writes
+   * `transform` inline every frame, and each write restarted that transition before its first step,
+   * so the card never moved. The page suspends the transition for as long as the motion owns the
+   * card, and puts it at its from-state before it is ever painted.
+   */
+  const inline = (el: Element) => {
+    const style = (el as HTMLElement).style
+    return { opacity: style.opacity, transform: style.transform, transition: style.transition }
+  }
+
+  it('starts the rise at its from-state, the card’s own transition suspended', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.setProps({ cards: [...valley, card({ name: 'gamma' })], revealId: 'gamma' })
+    await flushPromises()
+    expect(runs).toHaveLength(1)
+    expect(inline(runs[0]!.element)).toEqual({
+      opacity: '0',
+      transform: 'translateY(6px)',
+      transition: 'none'
+    })
+    runs[0]!.finish()
+    await flushPromises()
+    // Handed back to the stylesheet: the press transition works again once the rise is over.
+    expect(inline(runs[0]!.element)).toEqual({ opacity: '', transform: '', transition: '' })
+    list.unmount()
+  })
+
+  it('holds a card inserted while an add is under way at its from-state, then rises it', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine, adding: true },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.setProps({ cards: [...valley, card({ name: 'gamma' })] })
+    await flushPromises()
+    const inserted = list.get('[data-mine="gamma"]').element
+    expect(runs).toEqual([])
+    expect(inline(inserted)).toEqual({
+      opacity: '0',
+      transform: 'translateY(6px)',
+      transition: 'none'
+    })
+    // The app's own order: the add ends, then names the mine it made.
+    await list.setProps({ adding: false })
+    await list.setProps({ revealId: 'gamma' })
+    await flushPromises()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.element).toBe(inserted)
+    expect(inline(inserted).opacity).toBe('0')
+    list.unmount()
+  })
+
+  it('lets a held card appear at once when the add ends without naming it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const list = mount(MinesList, {
+        props: { ...base, engine, adding: true },
+        attachTo: document.body,
+        global: UNSTUBBED
+      })
+      await list.setProps({ cards: [...valley, card({ name: 'gamma' })] })
+      await flushPromises()
+      await list.setProps({ adding: false })
+      vi.advanceTimersByTime(0)
+      await flushPromises()
+      expect(runs).toEqual([])
+      expect(inline(list.get('[data-mine="gamma"]').element)).toEqual({
+        opacity: '',
+        transform: '',
+        transition: ''
+      })
+      list.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('slides the removed card out with the card’s own transition suspended', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    await flushPromises()
+    expect(runs).toHaveLength(1)
+    expect(inline(runs[0]!.element).transition).toBe('none')
     list.unmount()
   })
 })

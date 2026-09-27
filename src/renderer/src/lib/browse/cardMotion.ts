@@ -29,8 +29,39 @@ export const MINE_CARD_EXIT: CardMotion = {
   transition: { duration: 0.09, ease: [0.5, 0, 0.9, 0.3] }
 }
 
+/*
+ * The card's own stylesheet transitions `transform` over --dur-press with --ease-step, for its
+ * press (mine-card.css). The engine drives `x` and `y` on its JS driver, which writes `transform`
+ * inline every frame, and each write restarted that stepped transition before its first step: in
+ * the live app the card never moved (#635). So the motion suspends it inline for as long as it owns
+ * the card, and hands it back with the rest when the card settles.
+ */
+
+/**
+ * The enter's first frame, written inline before the card is ever painted: without it the card
+ * showed at full opacity for a frame before the engine's first one (#635).
+ */
+export function holdEnterFrame(element: HTMLElement): void {
+  element.style.transition = 'none'
+  element.style.opacity = '0'
+  element.style.transform = 'translateY(6px)'
+}
+
+/** Hand the card back to its stylesheet once it has risen, or appears without rising. */
+export function releaseEnterFrame(element: HTMLElement): void {
+  element.style.removeProperty('transition')
+  element.style.removeProperty('opacity')
+  element.style.removeProperty('transform')
+}
+
+/** Suspend the card's own transition before it leaves: it starts from the frame it shows. */
+export function armExit(element: HTMLElement): void {
+  element.style.transition = 'none'
+}
+
 /** The exit's last frame, written inline so the card holds it until it is removed. */
 export function holdExitFrame(element: HTMLElement): void {
+  element.style.transition = 'none'
   element.style.opacity = '0'
   element.style.transform = 'translateX(-8px)'
 }
