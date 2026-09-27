@@ -91,12 +91,11 @@ export function readSidecar(json: unknown): SpriteSidecar {
   return { durations, cell, tags }
 }
 
-/** What a sheet declares beyond its timing: the frames that throw sparks or glow (issue #74). */
+/** What a sheet declares beyond its timing: the frame its pick strikes on (issue #74). */
 export interface SheetExtras {
   /** Cut the strip to this tag of the sidecar; absent plays every frame. */
   readonly tag?: string
   readonly impactFrames?: readonly number[]
-  readonly glowFrames?: readonly number[]
 }
 
 /**
@@ -119,8 +118,7 @@ export function sheetFromSidecar(
     frames: durations.length,
     frameMs: FALLBACK_FRAME_MS,
     durations,
-    ...(extras.impactFrames === undefined ? {} : { impactFrames: extras.impactFrames }),
-    ...(extras.glowFrames === undefined ? {} : { glowFrames: extras.glowFrames })
+    ...(extras.impactFrames === undefined ? {} : { impactFrames: extras.impactFrames })
   }
 }
 
