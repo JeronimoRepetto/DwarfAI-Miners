@@ -107,8 +107,11 @@ describe('useAudio', () => {
 
     const stop = surface.listen()
     ;(pushVisibility as VisibilityListener)(true)
-    expect(player.live()).toHaveLength(1)
-    expect(player.live()[0]!.playing).toBe(true)
+    // AMENDED for #635 (PANEL-QUESTIONS Q22): the show now also sounds the
+    // panel cue, so the music is counted apart from it; the claim is unchanged.
+    const music = player.live().filter((clip) => !clip.src.includes('panel-open-close'))
+    expect(music).toHaveLength(1)
+    expect(music[0]!.playing).toBe(true)
 
     stop()
     surface.dispose()
@@ -215,7 +218,14 @@ describe('useAudio', () => {
 
     ;(pushVisibility as VisibilityListener)(false)
     expect(player.live().filter((clip) => clip.src.includes('mine-inside'))).toHaveLength(0)
-    expect(player.live().every((clip) => !clip.playing)).toBe(true)
+    // AMENDED for #635 (PANEL-QUESTIONS Q22): every clip but the close cue. The
+    // hide now sounds the panel cue, and that one plays out across the hide.
+    expect(
+      player
+        .live()
+        .filter((clip) => !clip.src.includes('panel-open-close'))
+        .every((clip) => !clip.playing)
+    ).toBe(true)
 
     ;(pushVisibility as VisibilityListener)(true)
     expect(player.live().some((clip) => clip.playing)).toBe(true)
@@ -278,6 +288,56 @@ describe('useAudio', () => {
     surface.playSfx('panel')
     expect(player.live().some((clip) => clip.src.includes('panel-open-close'))).toBe(true)
     surface.dispose()
+  })
+
+  describe('the panel cue on show and hide (#635, PANEL-QUESTIONS Q22)', () => {
+    const panelCues = () => player.clips.filter((clip) => clip.src.includes('panel-open-close'))
+
+    it('sounds once as the window is shown and once as it is hidden', async () => {
+      stubApi({ getPanelVisible: () => Promise.resolve(false) })
+      const surface = audio(player)
+      await surface.sync()
+      const stop = surface.listen()
+
+      ;(pushVisibility as VisibilityListener)(true)
+      expect(panelCues()).toHaveLength(1)
+      expect(panelCues()[0]!.playing).toBe(true)
+
+      // Main publishes on show, restore and the rest; a second push saying the
+      // same thing is not a second transition.
+      ;(pushVisibility as VisibilityListener)(true)
+      expect(panelCues()).toHaveLength(1)
+
+      ;(pushVisibility as VisibilityListener)(false)
+      expect(panelCues()).toHaveLength(2)
+      // Audible although the window is going: it plays out across the hide.
+      expect(panelCues()[1]!.playing).toBe(true)
+      expect(panelCues()[1]!.stopped).toBe(false)
+
+      ;(pushVisibility as VisibilityListener)(false)
+      expect(panelCues()).toHaveLength(2)
+
+      stop()
+      surface.dispose()
+    })
+
+    it('makes no cue for the visibility the window starts in', async () => {
+      stubApi({ getPanelVisible: () => Promise.resolve(false) })
+      const hiddenAtStart = audio(player)
+      await hiddenAtStart.sync()
+      const stopHidden = hiddenAtStart.listen()
+      expect(panelCues()).toHaveLength(0)
+      stopHidden()
+      hiddenAtStart.dispose()
+
+      stubApi({ getPanelVisible: () => Promise.resolve(true) })
+      const shownAtStart = audio(player)
+      await shownAtStart.sync()
+      const stopShown = shownAtStart.listen()
+      expect(panelCues()).toHaveLength(0)
+      stopShown()
+      shownAtStart.dispose()
+    })
   })
 
   it('drives the engine on a tick, so the fades and seams happen at all', async () => {

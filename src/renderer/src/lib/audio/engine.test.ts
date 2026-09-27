@@ -958,11 +958,29 @@ describe('createAudioEngine — interface sounds (#323)', () => {
     expect(player.clips).toHaveLength(0)
   })
 
+  // AMENDED for #635 (PANEL-QUESTIONS Q22): this played 'panel', and the panel
+  // cue is now the one interface sound a hide lets finish — it is the sound OF
+  // the hide (see the case below). The claim is unchanged for every other kind.
   it('cuts an interface sound mid-play when the app is hidden', () => {
-    engine.playSfx('panel')
+    engine.playSfx('click')
     const clip = player.live()[0]!
     engine.setGates({ hidden: true, collapsed: false })
     expect(clip.stopped).toBe(true)
+  })
+
+  it('lets the panel cue that announces a hide play out across it (#635)', () => {
+    // The close cue starts on the push that says the window went away, so the
+    // gate shuts in the same breath; cutting it there would make it inaudible.
+    engine.playSfx('question')
+    engine.playSfx('panel')
+    const [question, panel] = player.live()
+    engine.setGates({ hidden: true, collapsed: false })
+    expect(panel!.stopped).toBe(false)
+    expect(panel!.playing).toBe(true)
+    expect(question!.stopped).toBe(true)
+    // Surviving is not starting: hidden still opens no new panel cue.
+    engine.playSfx('panel')
+    expect(player.clips).toHaveLength(2)
   })
 
   it('says nothing when the Effects slider is all the way down', () => {

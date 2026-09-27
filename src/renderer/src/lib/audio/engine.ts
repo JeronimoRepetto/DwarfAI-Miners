@@ -420,7 +420,13 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
         voice?.stop()
         voice = undefined
         // Same reasoning, same act: an interface sound is shorter still.
-        stopInterfaceSfx()
+        //
+        // AMENDED for #635 (PANEL-QUESTIONS Q22): except the panel cue, which
+        // is the sound OF the hide. It is started on the very push that shuts
+        // this gate, so cutting it here would make the close cue inaudible by
+        // construction. It is 0.134 s and it is not restarted: a hidden window
+        // still opens no new panel cue (`sfxVolume` answers 0).
+        stopInterfaceSfx((kind) => kind !== 'panel')
       } else if (wasHidden && musicOn) {
         // Resumed if there is a track, STARTED if there is not. The second
         // half is the ordinary launch: the window is created hidden and the
