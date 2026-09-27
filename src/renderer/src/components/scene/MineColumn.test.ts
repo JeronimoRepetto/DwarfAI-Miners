@@ -476,6 +476,68 @@ describe('MineColumn arrivals', () => {
     const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
     expect(wrapper.find('.dm-minecol__art').classes()).not.toContain('is-still')
   })
+
+  /*
+   * ADDED for #635: a live run turned reduced motion on with a mine open, and its dwarfs kept
+   * walking and their footsteps kept playing, because the column read the preference once. It is
+   * watched now, as the frame clock watches it (#71): a walk under way snaps to its station and
+   * its footsteps end, and a viewer who lets motion back gets the walk for the next arrival.
+   */
+  function changingMotionQuery(reduced: boolean) {
+    const listeners = new Set<() => void>()
+    const query = {
+      matches: reduced,
+      addEventListener: (_: 'change', listener: () => void) => void listeners.add(listener),
+      removeEventListener: (_: 'change', listener: () => void) => void listeners.delete(listener)
+    }
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => query })
+    return {
+      listeners,
+      set(next: boolean) {
+        query.matches = next
+        for (const listener of [...listeners]) listener()
+      }
+    }
+  }
+
+  it('stops a walk under way, on its station, once the viewer asks for less movement', async () => {
+    const motion = changingMotionQuery(false)
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(true)
+    motion.set(true)
+    await wrapper.vm.$nextTick()
+    const target = assignScene([first, later], sceneLayout('bronze')).get(later.id)!
+    const at = dwarfOf(wrapper, 'later').props()
+    expect(at.walking).toBe(false)
+    expect(at.walkMs).toBe(0)
+    expect([at.x, at.y]).toEqual([target.point.x, target.point.y])
+    expect(wrapper.find('.dm-minecol__art').classes()).toContain('is-still')
+    const sent = (wrapper.emitted('crew-sound') ?? []) as CrewSoundEvent[][]
+    expect(sent.some(([e]) => e?.cue === 'walk' && e.ending === true)).toBe(true)
+  })
+
+  it('walks the next arrival again once the viewer lets motion back', async () => {
+    const motion = changingMotionQuery(true)
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    motion.set(false)
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'first').props('walking')).toBe(false)
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(true)
+  })
+
+  it('stops watching the preference once it closes', () => {
+    const motion = changingMotionQuery(false)
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    expect(motion.listeners.size).toBeGreaterThan(0)
+    wrapper.unmount()
+    expect(motion.listeners.size).toBe(0)
+  })
 })
 
 /*

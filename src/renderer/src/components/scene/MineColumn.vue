@@ -41,7 +41,12 @@ import {
 import type { CrewSoundSignal } from '../../lib/sprite/crewSound'
 import { INTERIOR_ROUTE, routeBetween } from '../../lib/scene/interiorRoute'
 import { nearestSpawn, sceneLayout, type ScenePoint } from '../../lib/scene/sceneLayout'
-import { createWalkBoard, prefersReducedMotion, type WalkState } from '../../lib/scene/sceneMotion'
+import {
+  createWalkBoard,
+  prefersReducedMotion,
+  watchReducedMotion,
+  type WalkState
+} from '../../lib/scene/sceneMotion'
 import type { Dwarf, DwarfKickState, DwarfSendState, Mine } from '../../types'
 
 const props = withDefaults(
@@ -86,29 +91,45 @@ const stands = computed(() => mineStands(crew.value, props.mine.tier, props.stat
  * a dwarf that turns up later, or one the panel saw arrive (#156), walks in from the nearest
  * spawn point along the painted corridors at today's pace; a leaver walks out to its spawn point.
  * The board plans only when a target moves, so a poll does not re-plan the crew. A viewer who asked
- * for less movement gets every dwarf placed, read before the first paint (#71).
+ * for less movement gets every dwarf placed, read before the first paint (#71), and watched after
+ * it: asking mid-walk drops the board, so every walk under way snaps to its station and its
+ * footsteps end; letting motion back starts a fresh board that places the crew standing there, so
+ * only a later arrival walks.
  */
-const reducedMotion = prefersReducedMotion()
+const reducedMotion = ref(prefersReducedMotion())
 const walks = ref<ReadonlyMap<string, WalkState>>(new Map())
-const board = createWalkBoard((state) => {
-  walks.value = state
+const newBoard = () =>
+  createWalkBoard((state) => {
+    walks.value = state
+  })
+let board = newBoard()
+function syncBoard(): void {
+  if (reducedMotion.value) return
+  const targets = new Map<string, ScenePoint>(
+    stands.value.map((s) => [s.dwarf.id, { x: s.x, y: s.y }])
+  )
+  const layout = sceneLayout(props.mine.tier)
+  board.sync(
+    targets,
+    (from, to) => routeBetween(INTERIOR_ROUTE, from, to),
+    (target) => nearestSpawn(layout, target),
+    props.arrived
+  )
+}
+watch(stands, syncBoard, { immediate: true })
+const stopWatchingMotion = watchReducedMotion((reduced) => {
+  if (reduced === reducedMotion.value) return
+  reducedMotion.value = reduced
+  board.dispose()
+  walks.value = new Map()
+  if (reduced) return
+  board = newBoard()
+  syncBoard()
 })
-watch(
-  stands,
-  (next) => {
-    if (reducedMotion) return
-    const targets = new Map<string, ScenePoint>(next.map((s) => [s.dwarf.id, { x: s.x, y: s.y }]))
-    const layout = sceneLayout(props.mine.tier)
-    board.sync(
-      targets,
-      (from, to) => routeBetween(INTERIOR_ROUTE, from, to),
-      (target) => nearestSpawn(layout, target),
-      props.arrived
-    )
-  },
-  { immediate: true }
-)
-onBeforeUnmount(() => board.dispose())
+onBeforeUnmount(() => {
+  stopWatchingMotion()
+  board.dispose()
+})
 
 /** Each dwarf where the walk has it now: its current leg's end, facing the way it goes. */
 const placed = computed(() =>
