@@ -5,8 +5,12 @@
  * Esc cancels; focus goes back to whatever held it before (components.md, Dialog, Accessibility).
  * The scrim fades in while the card rises 6px, and both fade out together (motion.md, Overlays),
  * transform and opacity only. In <body>, so no panel's clipping or stacking reaches it.
+ *
+ * The keys are heard on the document, not on the scrim: a press on the scrim moves the focus out
+ * of the dialog (the scrim takes none, and a press there closes nothing), and Esc and the Tab
+ * trap must still hold wherever it went. Focus that lands behind the scrim is pulled back in.
  */
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import DialogCard from './DialogCard.vue'
 import { trapTab, type DialogAction } from '../../lib/overlay/dialog'
 
@@ -32,20 +36,10 @@ const focusables = (): HTMLElement[] => [
   ...(scrim.value?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
 ]
 
-watch(
-  () => props.open,
-  async (open) => {
-    if (open) {
-      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-      await nextTick()
-      scrim.value?.querySelector<HTMLElement>('.dm-dialog__actions button')?.focus()
-    } else {
-      opener?.focus()
-      opener = null
-    }
-  },
-  { immediate: true }
-)
+const firstAction = (): HTMLElement | null =>
+  scrim.value?.querySelector<HTMLElement>('.dm-dialog__actions button:not(:disabled)') ??
+  focusables()[0] ??
+  null
 
 function keydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
@@ -59,12 +53,46 @@ function keydown(event: KeyboardEvent): void {
   event.preventDefault()
   if (at !== undefined) all[at]!.focus()
 }
+
+function focusin(event: FocusEvent): void {
+  const target = event.target as Node | null
+  if (scrim.value && target && !scrim.value.contains(target)) firstAction()?.focus()
+}
+
+function listen(on: boolean): void {
+  if (on) {
+    document.addEventListener('keydown', keydown, true)
+    document.addEventListener('focusin', focusin, true)
+  } else {
+    document.removeEventListener('keydown', keydown, true)
+    document.removeEventListener('focusin', focusin, true)
+  }
+}
+
+watch(
+  () => props.open,
+  async (open) => {
+    if (open) {
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      await nextTick()
+      listen(true)
+      firstAction()?.focus()
+    } else {
+      listen(false)
+      opener?.focus()
+      opener = null
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => listen(false))
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="dm-dialog-pop">
-      <div v-if="open" ref="scrim" class="dm-scrim" @keydown="keydown">
+      <div v-if="open" ref="scrim" class="dm-scrim">
         <DialogCard
           :title="title"
           :actions="actions"

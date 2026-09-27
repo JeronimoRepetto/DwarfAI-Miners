@@ -25,6 +25,7 @@ const emit = defineEmits<{ pick: [index: number] }>()
 const open = ref(false)
 const trigger = ref<InstanceType<typeof ActionButton> | null>(null)
 const menu = ref<HTMLElement | null>(null)
+const list = ref<InstanceType<typeof MenuList> | null>(null)
 const place = ref<{ left: number; top: number } | null>(null)
 
 const button = (): HTMLElement | null => (trigger.value?.$el as HTMLElement | undefined) ?? null
@@ -41,13 +42,34 @@ async function show(): Promise<void> {
   await nextTick()
   const anchor = button()?.getBoundingClientRect()
   const box = menu.value?.getBoundingClientRect()
-  if (anchor && box) {
-    place.value = placeFloating(anchor, box, {
+  place.value = placeFloating(
+    anchor ?? { left: 0, top: 0, right: 0, bottom: 0 },
+    box ?? { width: 0, height: 0 },
+    {
       width: window.innerWidth,
       height: window.innerHeight
-    })
-  }
+    }
+  )
   document.addEventListener('pointerdown', outside, true)
+  // Only now is the menu visible: a hidden element takes no focus in a real browser.
+  await nextTick()
+  list.value?.focusFirst()
+}
+
+// The keys still work while the focus is on the button with its menu open.
+function triggerKey(event: KeyboardEvent): void {
+  if (!open.value) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    close(true)
+  } else if (event.key === 'Tab') close(false)
+  else if (event.key === 'ArrowDown' || event.key === 'Home') {
+    event.preventDefault()
+    list.value?.focusFirst()
+  } else if (event.key === 'ArrowUp' || event.key === 'End') {
+    event.preventDefault()
+    list.value?.focusLast()
+  }
 }
 
 function close(refocus: boolean): void {
@@ -81,6 +103,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true)
     :disabled="disabled"
     :aria-expanded="open ? 'true' : 'false'"
     @click="toggle"
+    @keydown="triggerKey"
   />
   <Teleport to="body">
     <Transition name="dm-menu-pop">
@@ -94,7 +117,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true)
             : { left: '0px', top: '0px', visibility: 'hidden' }
         "
       >
-        <MenuList :items="items" autofocus @pick="pick" @close="close(true)" />
+        <MenuList ref="list" :items="items" @pick="pick" @close="close(true)" />
       </div>
     </Transition>
   </Teleport>

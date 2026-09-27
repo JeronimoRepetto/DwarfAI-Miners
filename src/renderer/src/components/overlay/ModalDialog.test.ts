@@ -73,3 +73,47 @@ describe('ModalDialog', () => {
     dialog.unmount()
   })
 })
+
+// ADDED for #635 (PR2 live fixes): a press on the scrim moves the focus out of the dialog (the
+// scrim takes none), and Esc and the Tab trap must still hold wherever the focus went.
+describe('ModalDialog after a pointer press outside the card', () => {
+  const keyOn = (target: EventTarget, key: string) =>
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+
+  it('still cancels on Esc once the focus has left the dialog', async () => {
+    const dialog = mount(ModalDialog, {
+      props: { open: true, title: 'T', actions },
+      attachTo: document.body
+    })
+    await flushPromises()
+    ;(document.activeElement as HTMLElement).blur()
+    keyOn(document.body, 'Escape')
+    expect(dialog.emitted('cancel')).toHaveLength(1)
+    dialog.unmount()
+  })
+
+  it('brings Tab back inside the dialog from wherever the focus went', async () => {
+    const dialog = mount(ModalDialog, {
+      props: { open: true, title: 'T', actions },
+      attachTo: document.body
+    })
+    await flushPromises()
+    ;(document.activeElement as HTMLElement).blur()
+    keyOn(document.body, 'Tab')
+    expect(document.activeElement?.closest('.dm-dialog')).not.toBeNull()
+    dialog.unmount()
+  })
+
+  it('pulls the focus back when a control behind the scrim takes it', async () => {
+    const behind = document.createElement('button')
+    document.body.appendChild(behind)
+    const dialog = mount(ModalDialog, {
+      props: { open: true, title: 'T', actions },
+      attachTo: document.body
+    })
+    await flushPromises()
+    behind.focus()
+    expect(document.activeElement?.closest('.dm-dialog')).not.toBeNull()
+    dialog.unmount()
+  })
+})

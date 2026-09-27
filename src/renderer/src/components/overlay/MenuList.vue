@@ -3,9 +3,10 @@
  * The overflow menu's plate (#635), `molecules/menu` in the design: a raised wood plate of rows,
  * each an optional icon, a label and an optional hint, rules between groups and danger last. A
  * menu with menuitems: ↑/↓ move and wrap, Home and End jump, Enter picks, Esc or Tab asks to close.
- * What the items decide is lib/overlay/menu's; MenuButton is what opens this beside its button.
+ * What the items decide is lib/overlay/menu's; MenuButton opens this beside its button and, once it
+ * shows, focuses its first item through focusFirst.
  */
-import { nextTick, onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import PixelIcon from '../icon/PixelIcon.vue'
 import {
   firstEnabled,
@@ -16,9 +17,7 @@ import {
   type MenuItem
 } from '../../lib/overlay/menu'
 
-const props = withDefaults(defineProps<{ items: MenuEntry[]; autofocus?: boolean }>(), {
-  autofocus: false
-})
+const props = defineProps<{ items: MenuEntry[] }>()
 const emit = defineEmits<{ pick: [index: number]; close: [] }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -28,13 +27,25 @@ function focusItem(index: number | undefined): void {
   root.value?.querySelector<HTMLButtonElement>('[data-index="' + index + '"]')?.focus()
 }
 
-function keydown(event: KeyboardEvent, index: number): void {
+/** The first and the last enabled item, for whoever opened the menu to focus. */
+const focusFirst = (): void => focusItem(firstEnabled(props.items))
+const focusLast = (): void => focusItem(menuKeyTarget(props.items, 0, 'End'))
+
+// One listener on the plate, so a key works wherever inside it the focus is.
+function keydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' || event.key === 'Tab') {
     if (event.key === 'Escape') event.preventDefault()
     emit('close')
     return
   }
-  const target = menuKeyTarget(props.items, index, event.key)
+  const on = (event.target as HTMLElement).closest<HTMLElement>('[data-index]')
+  const from = on ? Number(on.dataset.index) : -1
+  const target =
+    from < 0 && event.key === 'ArrowDown'
+      ? firstEnabled(props.items)
+      : from < 0 && event.key === 'ArrowUp'
+        ? menuKeyTarget(props.items, 0, 'End')
+        : menuKeyTarget(props.items, Math.max(from, 0), event.key)
   if (target === undefined) return
   event.preventDefault()
   focusItem(target)
@@ -44,13 +55,11 @@ const pick = (index: number, entry: MenuItem): void => {
   if (!entry.disabled) emit('pick', index)
 }
 
-onMounted(() => {
-  if (props.autofocus) void nextTick(() => focusItem(firstEnabled(props.items)))
-})
+defineExpose({ focusFirst, focusLast })
 </script>
 
 <template>
-  <div ref="root" class="dm-menu m-mat m-raised" role="menu">
+  <div ref="root" class="dm-menu m-mat m-raised" role="menu" @keydown="keydown">
     <template v-for="(entry, index) in items" :key="index">
       <hr v-if="isSeparator(entry)" class="dm-menu__sep m-rule" role="separator" />
       <button
@@ -61,7 +70,6 @@ onMounted(() => {
         :data-index="index"
         :disabled="entry.disabled === true"
         @click="pick(index, entry)"
-        @keydown="keydown($event, index)"
       >
         <PixelIcon v-if="entry.icon !== undefined" :name="entry.icon" />{{ entry.label
         }}<span v-if="entry.hint !== undefined" class="dm-menu__hint">{{ entry.hint }}</span>
