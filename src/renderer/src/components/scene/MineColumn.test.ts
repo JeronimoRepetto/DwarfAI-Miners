@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
 import type { CrewSoundEvent } from '../../lib/audio/crew'
 import { MINE_FOOTER_ORE_MAX } from '../../lib/scene/mineColumn'
@@ -11,6 +11,10 @@ import { assignScene } from '../../lib/scene/sceneAssignment'
 import { sceneLayout } from '../../lib/scene/sceneLayout'
 import MineColumn from './MineColumn.vue'
 import SceneDwarf from './SceneDwarf.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 /*
  * The mine column (#635), `organisms/mine-column` in the design, which replaces MineScene inside
@@ -471,5 +475,45 @@ describe('MineColumn arrivals', () => {
     })
     const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
     expect(wrapper.find('.dm-minecol__art').classes()).not.toContain('is-still')
+  })
+})
+
+/*
+ * ADDED for #635: a column closed mid-walk takes every walk leg, footstep and fade with it. CI
+ * caught a walk leg updating a column after its test had torn the page down; nothing the column,
+ * its dwarfs, the walk board or the tooltip started may run once it is gone.
+ */
+describe('MineColumn closing mid-walk', () => {
+  it('runs nothing after it is unmounted, mid-walk, mid-fade and mid-tooltip', async () => {
+    vi.useFakeTimers()
+    const errors: unknown[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => errors.push(args))
+    try {
+      const walker = defaultDwarf({ id: 'later', status: 'working' })
+      const leaver = defaultDwarf({ id: 'leaver', status: 'leaving' })
+      const wrapper = mount(MineColumn, {
+        props: { mine: defaultMine({ dwarfs: [] }) },
+        attachTo: document.body,
+        global: { config: { errorHandler: (err) => void errors.push(err) } }
+      })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ mine: defaultMine({ dwarfs: [walker, leaver] }) })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAllComponents(SceneDwarf).some((d) => d.props('walking'))).toBe(true)
+      // The pointer resting on a dwarf leaves its tooltip's delay pending too.
+      await wrapper.find('button.dm-dwarf').trigger('pointerenter')
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+      wrapper.unmount()
+      // Closed means nothing left pending: a leg or a delay that merely runs out harmlessly still
+      // holds the column's state alive past it.
+      expect(vi.getTimerCount()).toBe(0)
+      document.body.innerHTML = ''
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(errors).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
   })
 })

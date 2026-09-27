@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultDwarf } from '../../testing/factories'
 import CrewRoster from './CrewRoster.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 const crew = (count: number) =>
   Array.from({ length: count }, (_, i) =>

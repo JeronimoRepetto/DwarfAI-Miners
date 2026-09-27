@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   HISTORY_EMPTY_NOTE,
   HISTORY_READING_NOTE,
@@ -12,6 +12,10 @@ import {
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import { MINE_HISTORY_MESSAGE_LIMIT, type MineHistorySpeaker } from '../../types'
 import HistoryPanel from './HistoryPanel.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 /*
  * The mine history (#635), `organisms/history-panel` in the design, which replaces

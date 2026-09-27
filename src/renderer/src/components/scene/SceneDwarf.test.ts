@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { config, mount } from '@vue/test-utils'
+import { config, enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
@@ -15,6 +15,10 @@ import { defaultDwarf } from '../../testing/factories'
 import type { Dwarf } from '../../types'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
 import SceneDwarf from './SceneDwarf.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 /*
  * The dwarf in the scene (#635), `molecules/dwarf` in the design, which replaces DwarfSprite in
