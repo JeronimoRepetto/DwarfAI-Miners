@@ -105,6 +105,9 @@ export async function openPage({ browser, capture, runtime }) {
       evaluate(`(async () => {
         const R = window.__snapRuntime
         await R.advance(${Number(capture.SETTLE_MS)})
+        // The app's sprites play on a JavaScript frame clock the runtime's freeze cannot reach:
+        // the golden page holds them the same way (page.ts, captureFrameClock).
+        window.golden?.holdSprites?.()
         await document.fonts.ready
         await R.images(document.body)
         await R.advance(0)

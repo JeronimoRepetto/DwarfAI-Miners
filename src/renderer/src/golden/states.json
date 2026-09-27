@@ -109,8 +109,7 @@
     "key": "molecules/tooltip#live"
   },
   {
-    "key": "organisms/mine-column#dwarfai-miners",
-    "red": "one working dwarf of the state draws a different picture from the reference where its tree prints the same sheet (worker/working, pass 1), facing and frame as a working dwarf that matches (#635, PR4 question): d56 against d53 here"
+    "key": "organisms/mine-column#dwarfai-miners"
   },
   {
     "key": "organisms/mine-column#ai-tools"
@@ -125,15 +124,13 @@
     "key": "molecules/crew-roster#empty"
   },
   {
-    "key": "molecules/dwarf#working-selected-hover",
-    "red": "one working dwarf of the state draws a different picture from the reference where its tree prints the same sheet (worker/working, pass 1), facing and frame as a working dwarf that matches (#635, PR4 question): k50 and k80 against k20 here"
+    "key": "molecules/dwarf#working-selected-hover"
   },
   {
     "key": "molecules/dwarf#asking-asleep-idle"
   },
   {
-    "key": "molecules/dwarf#delivery-marks",
-    "red": "one working dwarf of the state draws a different picture from the reference where its tree prints the same sheet (worker/working, pass 1), facing and frame as a working dwarf that matches (#635, PR4 question): k38 and k86 against k14 and k62 here"
+    "key": "molecules/dwarf#delivery-marks"
   },
   {
     "key": "molecules/dwarf-tooltip#working"
