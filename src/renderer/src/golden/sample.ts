@@ -297,7 +297,9 @@ function launchOf(row: unknown): LaunchView | undefined {
  * The sample a prototype control swapped in under a running app (#635): the panel page's First run
  * switch. It swaps the data and relaunches nothing (panel.js: the page shown stays, and the mine
  * column is dropped because its mine is gone), so the view the screen opened with is still the one
- * the app restored: the launch is the booted sample's, never the swapped one's.
+ * the app restored: the launch is the booted sample's, never the swapped one's. The references
+ * confirm the reading: panel#mines-first-run opens on the Mines page with no mine in the column, and
+ * both first-run full screens match theirs at 0.000% once the hidden mode lever is stood in.
  */
 export function swapSample(booted: GoldenSample, swapped: GoldenSample): GoldenSample {
   const next: GoldenSample = { ...swapped }
