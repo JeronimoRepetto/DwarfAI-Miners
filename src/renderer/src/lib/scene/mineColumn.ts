@@ -8,12 +8,11 @@
  * fitted or clamped (components.md, Dwarf in the scene: "stations are image percent"; the
  * coordinates rule).
  *
- * THE WALK IS RETIRED (#635). The design's Panel dwarf stands at its station: a new one fades in
- * there (`.dm-dwarf.is-entering`), status changes swap its sheet in place, and motion animates only
- * transform and opacity, never a position. So nobody walks the interior's routes any more, and a
- * dwarf on its way out keeps the station it had rather than jumping to a spawn point.
+ * THE WALK STAYS (PANEL-QUESTIONS 14, PO ruling 2026-09-27): a dwarf arriving walks in from the
+ * mine's spawn point along the painted corridors, and one leaving walks out to the nearest, as
+ * today; this answers where each is SENT, and MineColumn walks it there (sceneMotion's board).
  */
-import { assignScene, type SceneOccupant } from './sceneAssignment'
+import { assignScene } from './sceneAssignment'
 import { sceneLayout } from './sceneLayout'
 import type { Dwarf, Mine, MineTier } from '../../types'
 
@@ -56,18 +55,6 @@ export interface DwarfStand extends Station {
   dwarf: Dwarf
 }
 
-/*
- * A leaving dwarf is placed as the worker or foreman it was, so it keeps its station, and so the
- * pools the rest of the crew are hashed into are the ones they already had.
- */
-function occupantOf(dwarf: Dwarf): SceneOccupant {
-  return {
-    id: dwarf.id,
-    role: dwarf.role,
-    status: dwarf.status === 'leaving' ? 'working' : dwarf.status
-  }
-}
-
 /**
  * Every dwarf on its station, in the crew's own order: the design draws the crew as the board
  * lists it, every dwarf at the one z-index (anatomy.md, Mine column; components.md, Dwarf), and
@@ -80,7 +67,7 @@ export function mineStands(
   tier: MineTier,
   stations: Readonly<Record<string, Station>> = {}
 ): DwarfStand[] {
-  const placements = assignScene(crew.map(occupantOf), sceneLayout(tier))
+  const placements = assignScene(crew, sceneLayout(tier))
   const stands: DwarfStand[] = []
   for (const dwarf of crew) {
     const named = stations[dwarf.id]

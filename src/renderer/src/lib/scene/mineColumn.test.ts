@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf, defaultMine } from '../../testing/factories'
+import { INTERIOR_STATIONS } from './interiorMap'
 import { assignScene } from './sceneAssignment'
 import { sceneLayout } from './sceneLayout'
 import { ADD_DWARF_LABEL, interiorLabel, mineColumnLabel, mineCrew, mineStands } from './mineColumn'
@@ -69,19 +70,20 @@ describe('mineStands', () => {
   })
 
   /*
-   * A dwarf on its way out keeps the station it worked at (the design has no walk in the Panel,
-   * #635): sent to a spawn point it would jump there in one frame. Keeping it also leaves every
-   * other dwarf on the rock it had.
+   * AMENDED for #635 (PANEL-QUESTIONS 14; was: "keeps a leaving dwarf, and everyone else, on the
+   * station it had"): today's walk is restored, so a leaving dwarf is sent to a spawn point and
+   * walks out to it. RESTORED from MineScene.test.ts (88ee3fc): "sends a leaving dwarf to a spawn
+   * point rather than fading in place".
    */
-  it('keeps a leaving dwarf, and everyone else, on the station it had', () => {
-    const before = mineStands(crew, 'silver')
-    const after = mineStands(
+  it('sends a leaving dwarf to a spawn point rather than fading in place', () => {
+    const working = mineStands(crew, 'silver').find((s) => s.dwarf.id === 'w1')!
+    const leaving = mineStands(
       crew.map((d) => (d.id === 'w1' ? { ...d, status: 'leaving' as const } : d)),
       'silver'
-    )
-    expect(after.map(({ dwarf, ...at }) => [dwarf.id, at])).toEqual(
-      before.map(({ dwarf, ...at }) => [dwarf.id, at])
-    )
+    ).find((s) => s.dwarf.id === 'w1')!
+    expect([leaving.x, leaving.y]).not.toEqual([working.x, working.y])
+    const spawns = INTERIOR_STATIONS.filter((station) => station.kind === 'spawn')
+    expect(spawns.map((s) => [s.x, s.y])).toContainEqual([leaving.x, leaving.y])
   })
 
   // The caller may name each dwarf's station itself, as the design's own sample does.
