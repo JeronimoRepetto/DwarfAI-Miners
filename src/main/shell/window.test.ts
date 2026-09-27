@@ -32,6 +32,7 @@ import {
   applyUiScale,
   buildMainWindowOptions,
   fitShellWindow,
+  refitOnDisplayChange,
   // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
   focusMessagePanelOnSelection,
   type MessagePanelFocusTarget,
@@ -510,6 +511,25 @@ describe('fitShellWindow', () => {
     // Asked again for the layout it holds, so the docked edge stays where the design puts it.
     expect(asked).toEqual([1062, 668])
     expect(fit.appliedWidth).toBe(668)
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). A display that changes under the shell — a resolution or scale
+ * change, a monitor plugged in or out, a taskbar appearing — leaves it sized and zoomed for a
+ * display that is no longer there. Only the moved message panel was refitted (#296); the shell
+ * waited for the next layout change or show. The shell goes first, because the docked panel is
+ * placed against the shell's new rectangle.
+ */
+describe('refitOnDisplayChange', () => {
+  it('refits the shell, then the message panel against it', () => {
+    const steps: string[] = []
+    const refit = refitOnDisplayChange({
+      fitShell: () => steps.push('shell'),
+      placeMessagePanel: () => steps.push('panel')
+    })
+    refit()
+    expect(steps).toEqual(['shell', 'panel'])
   })
 })
 

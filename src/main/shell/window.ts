@@ -419,6 +419,26 @@ export function panelLayout(): PanelLayout {
 }
 
 /**
+ * What a display change does to the two windows (#635, window fit).
+ *
+ * The shell is refitted as well as the message panel: a resolution or scale
+ * change, a monitor plugged in or out, or a taskbar appearing leaves it sized
+ * and zoomed for a display that is no longer there, and until now it waited
+ * for the next layout change or show. It is refitted hidden as well as shown —
+ * a bounds change shows nothing, and the show path fits it again regardless —
+ * and first, because the docked panel is placed against its new rectangle.
+ */
+export function refitOnDisplayChange(steps: {
+  fitShell: () => void
+  placeMessagePanel: () => void
+}): () => void {
+  return () => {
+    steps.fitShell()
+    steps.placeMessagePanel()
+  }
+}
+
+/**
  * Fit the shell window to the current layout on the display it is on, and hold what it can
  * hold (#635). The one path every resize of the shell takes — a layout change, a show, a
  * display change — so the renderer is never told a layout the window was not given.
@@ -519,7 +539,8 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
   })
 
   /*
-   * Re-clamp the message panel when the displays change under it (#296).
+   * Refit the shell and re-clamp the message panel when the displays change
+   * under them (#296, #635 window fit: the shell too, see refitOnDisplayChange).
    *
    * A docked panel is re-derived on every show, every layout change and every
    * height report, so it never needed this. A panel the person MOVED is
@@ -535,10 +556,10 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
    * destroyed after, so subscribing over there would risk one listener per
    * rebuild for a rectangle main can always re-derive from state it holds.
    */
-  const refitMessagePanel = (): void => placeMessagePanel()
-  screen.on('display-metrics-changed', refitMessagePanel)
-  screen.on('display-added', refitMessagePanel)
-  screen.on('display-removed', refitMessagePanel)
+  const refitDisplays = refitOnDisplayChange({ fitShell, placeMessagePanel })
+  screen.on('display-metrics-changed', refitDisplays)
+  screen.on('display-added', refitDisplays)
+  screen.on('display-removed', refitDisplays)
 
   // The page is NOT loaded here (#570) — see loadPanelPage below for why.
   return mainWindow
