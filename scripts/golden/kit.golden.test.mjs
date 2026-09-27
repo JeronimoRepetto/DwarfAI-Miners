@@ -154,6 +154,15 @@ describe.runIf(runnable)('golden harness', () => {
         // The attributes its tree prints, for a form control's design text: the same.
         attributes: anatomyAttributes(readDesign('docs', 'anatomy.md'), row.file)
       }
+      // A fresh page per state (#635): a state drawn earlier in the same page changed how a later
+      // one's images drew - the mounds a mine card scaled to 112x84 drew differently in the tier
+      // explainer after it - so no state may inherit another's page.
+      await page.navigate(server.url)
+      await page.evaluate(
+        'window.golden.loadSample(' +
+          JSON.stringify(readDesign('prototype', 'data', 'sample-data.js')) +
+          ')'
+      )
       await page.evaluate('window.golden.mountState(' + JSON.stringify(frame) + ')')
       await page.settle()
       const measured = await page.evaluate('window.golden.measureState()')
