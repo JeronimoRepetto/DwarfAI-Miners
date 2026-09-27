@@ -3224,3 +3224,62 @@ describe('App Map page', () => {
     expect(wrapper.get('.dm-marker').attributes('aria-pressed')).toBe('true')
   })
 })
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 2, design lead ruling 2026-09-27). Tab order is the nav, then
+ * the page, then the open mine, on BOTH docks (accessibility.md, Keyboard; screens/shell.md, Left
+ * to right). The nav comes first in the DOM and CSS `order` keeps it at the screen edge, so nothing
+ * moves on screen: docked right the row reads rail, page, mine, nav; `row-reverse` mirrors it.
+ * jsdom lays nothing out, so the orders are read from the stylesheet, as the packing block above
+ * reads its `justify-content`.
+ */
+describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
+  /** The `order` each selector in App.vue's own stylesheet declares. */
+  function declaredOrders(): Map<string, number> {
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    const style = source.slice(source.indexOf('<style scoped>')).replace(/\/\*[\s\S]*?\*\//g, '')
+    const orders = new Map<string, number>()
+    for (const rule of style.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const order = /(?:^|;|\s)order:\s*(-?\d+)/.exec(rule[2]!)
+      if (order) for (const one of rule[1]!.split(',')) orders.set(one.trim(), Number(order[1]))
+    }
+    return orders
+  }
+
+  for (const edge of ['right', 'left'] as const) {
+    it(`walks the nav, then the page, then the open mine, docked ${edge}`, async () => {
+      const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+      const { wrapper } = await mountApp({
+        getPanelLayout: vi.fn().mockResolvedValue({ edge, expanded: true, mineOpen: false }),
+        setPanelLayout: vi
+          .fn()
+          .mockImplementation((request: { expanded: boolean; mineOpen: boolean }) =>
+            Promise.resolve({ edge, ...request })
+          ),
+        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      })
+      await flushPromises()
+      wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+      await flushPromises()
+      // Document order, which is tab order; transitions stand between the shell and each column.
+      const columns = Array.from(
+        wrapper.get('.shell').element.querySelectorAll('.dm-nav, .shell-secondary, .shell-mine')
+      ).map((el) => el.classList[0])
+      expect(columns).toEqual(['dm-nav', 'shell-secondary', 'shell-mine'])
+    })
+  }
+
+  it('keeps the nav at the screen edge with `order`, so nothing moves on screen', () => {
+    const orders = declaredOrders()
+    const rail = orders.get('.shell > .edge-rail') ?? 0
+    const page = orders.get('.shell > .shell-secondary') ?? 0
+    const mine = orders.get('.shell > .shell-mine') ?? 0
+    const nav = orders.get('.shell > .dm-nav')
+    expect(nav).toBeDefined()
+    // A `row` docked right runs these from the free edge to the screen edge; `row-reverse` runs
+    // the same sequence from the screen edge on the left.
+    expect(rail).toBeLessThan(page)
+    expect(page).toBeLessThanOrEqual(mine)
+    expect(mine).toBeLessThan(nav!)
+  })
+})

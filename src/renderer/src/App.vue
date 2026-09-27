@@ -1142,6 +1142,43 @@ onBeforeUnmount(() => {
       />
 
       <!--
+        The nav, at the screen edge (#635), and first of the columns in the DOM (PANEL-QUESTIONS 2,
+        design lead ruling 2026-09-27): tab order is the DOM order, and it is the nav, then the
+        page, then the open mine on both docks (accessibility.md, Keyboard). CSS `order` below
+        keeps it the last column of the row, which `row` puts against a right edge and
+        `row-reverse` against a left one, so nothing moves on screen for it.
+        Its app mark hides the WINDOW (#156), which is the same hidePanel the
+        global shortcut and Settings' own hide control already ask for. The
+        layout is deliberately untouched: the panel that comes back is the one
+        that went away, mine and page and all.
+
+        The mode lever is left out until a mode beyond the Panel exists: Veta
+        and Valle are later slices, and the docs say nothing of a lever whose
+        destination is not built yet, so the nav's own "no dead buttons" rule
+        is the fallback until that is ruled on.
+      -->
+      <PanelTransition
+        :hold="holdColumn"
+        :hold-enter="enterColumn"
+        :engine="props.engine"
+        @leave="trackPanelLeave"
+      >
+        <PanelNav
+          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
+          ref="navEl"
+          :page="page"
+          :guild="featureFlags.guildAreasEnabled"
+          :badge="needsYou"
+          :music="musicPlaying"
+          :warn="shortcutBroken"
+          :lever="false"
+          @nav="selectArea"
+          @mark="hidePanel"
+          @music="toggleMusicAndSay"
+        />
+      </PanelTransition>
+
+      <!--
       The three columns of the book hand their motion to the ground they stand
       on (#388): `hold` is the shell's own fold, and each column is only
       RETAINED here until it ends — unmounting one before main has shrunk the
@@ -1317,40 +1354,6 @@ onBeforeUnmount(() => {
       </PanelTransition>
 
       <!--
-        The nav, at the screen edge (#635): the last column of the row, which
-        `row` puts against a right edge and `row-reverse` against a left one.
-        Its app mark hides the WINDOW (#156), which is the same hidePanel the
-        global shortcut and Settings' own hide control already ask for. The
-        layout is deliberately untouched: the panel that comes back is the one
-        that went away, mine and page and all.
-
-        The mode lever is left out until a mode beyond the Panel exists: Veta
-        and Valle are later slices, and the docs say nothing of a lever whose
-        destination is not built yet, so the nav's own "no dead buttons" rule
-        is the fallback until that is ruled on.
-      -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <PanelNav
-          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
-          ref="navEl"
-          :page="page"
-          :guild="featureFlags.guildAreasEnabled"
-          :badge="needsYou"
-          :music="musicPlaying"
-          :warn="shortcutBroken"
-          :lever="false"
-          @nav="selectArea"
-          @mark="hidePanel"
-          @music="toggleMusicAndSay"
-        />
-      </PanelTransition>
-
-      <!--
       The mine's History panel, and it is what is LEFT of the dock (#162).
 
       The MessagePanel and the Add Panel used to share this slot; they are a
@@ -1427,6 +1430,22 @@ onBeforeUnmount(() => {
  */
 .shell.is-rail {
   justify-content: flex-end;
+}
+/*
+ * Where each column stands, which is no longer where it is in the DOM (PANEL-QUESTIONS 2, design
+ * lead ruling 2026-09-27). The nav comes first of the columns in the DOM so Tab walks the nav, then
+ * the page, then the open mine on both docks (accessibility.md, Keyboard); `order` keeps it at the
+ * screen edge, so a `row` still runs rail, page, mine, nav from the free edge and `row-reverse`
+ * mirrors it. The rail keeps the default order and its place ahead of them all.
+ */
+.shell > .shell-secondary {
+  order: 1;
+}
+.shell > .shell-mine {
+  order: 2;
+}
+.shell > .dm-nav {
+  order: 3;
 }
 /*
  * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,
