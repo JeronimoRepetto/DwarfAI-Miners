@@ -51,6 +51,13 @@ export interface PlayOptions {
    * sequence led by a transition, or made of several clips, always starts on frame 0.
    */
   readonly phase?: boolean
+  /**
+   * With `phase`: how many leading clips the phase spans, for a dwarf already working when it is
+   * drawn (#635): it starts on a random whole frame of its swings, k = round(random x frames) over
+   * every frame of those clips, the clips after them being the way out and back in (components.md,
+   * Sprite, Anatomy). Absent, only a lone looping sheet takes a phase.
+   */
+  readonly phaseClips?: number
 }
 
 /** One sprite on the clock. */
@@ -188,12 +195,16 @@ export function createFrameClock(env: FrameClockEnv): FrameClock {
   }
 
   function startOffset(clips: readonly SpriteClip[], options: PlayOptions | undefined): number {
-    const only = clips[0]
-    if (options?.phase !== true || clips.length !== 1 || only?.playback !== 'loop') return 0
-    const frames = only.sheet.frames
+    if (options?.phase !== true) return 0
+    const span = options.phaseClips ?? (clips.length === 1 ? 1 : 0)
+    const spanned = clips.slice(0, span)
+    if (spanned.length === 0 || spanned.some((clip) => clip.playback !== 'loop')) return 0
+    const frames = spanned.reduce((sum, clip) => sum + clip.sheet.frames, 0)
     if (frames < 2) return 0
-    const k = Math.round(env.random() * frames) % frames
-    return sequenceOffsetMs(clips, { clip: 0, frame: k }, flat())
+    let k = Math.round(env.random() * frames) % frames
+    let clip = 0
+    while (k >= spanned[clip]!.sheet.frames) k -= spanned[clip++]!.sheet.frames
+    return sequenceOffsetMs(clips, { clip, frame: k }, flat())
   }
 
   return {

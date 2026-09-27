@@ -13,6 +13,7 @@ import {
 import type { SpriteSheet } from '../../lib/sprite/spriteSheet'
 import { defaultDwarf } from '../../testing/factories'
 import type { Dwarf } from '../../types'
+import SpriteStrip from '../dwarf/SpriteStrip.vue'
 import SceneDwarf from './SceneDwarf.vue'
 
 /*
@@ -400,5 +401,28 @@ describe('SceneDwarf crew sounds (#330)', () => {
     const { wrapper, cues } = mountDwarf(defaultDwarf({ status: 'waiting' }))
     wrapper.unmount()
     expect(cues).toEqual([])
+  })
+})
+
+/*
+ * A dwarf found at work starts on a random whole frame of its swings (#635; components.md,
+ * Sprite, Anatomy): the swing is the work, and its crew does not swing in lockstep. An arrival is
+ * put to work from the first frame of its pick-up instead.
+ */
+describe('SceneDwarf found at work', () => {
+  it('starts on a random whole frame of its swings, and an arrival on its pick-up', () => {
+    const clock = createFrameClock({ ...browserFrameClockEnv(), random: () => 0.5 })
+    Reflect.set(config.global.provide, FRAME_CLOCK_KEY, clock)
+    try {
+      // The worker swings twice a shift, 13 frames each: 0.5 of 26 is frame 13, the second swing.
+      const found = mountDwarf(defaultDwarf({ status: 'working' })).wrapper
+      expect(found.findComponent(SpriteStrip).emitted('frame')![0]).toEqual([{ clip: 1, frame: 0 }])
+      const arrival = mountDwarf(defaultDwarf({ status: 'working' }), { entering: true }).wrapper
+      expect(arrival.findComponent(SpriteStrip).emitted('frame')![0]).toEqual([
+        { clip: 0, frame: 0 }
+      ])
+    } finally {
+      clock.dispose()
+    }
   })
 })

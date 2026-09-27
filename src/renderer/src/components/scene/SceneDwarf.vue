@@ -40,6 +40,7 @@ import {
   crewFrameSignals,
   type CrewSoundSignal
 } from '../../lib/sprite/crewSound'
+import { DWARF_CREW, DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import { dwarfClips, settledClips } from '../../lib/sprite/dwarfSequence'
 import type { SequencePosition, SpriteClip } from '../../lib/sprite/spriteSheet'
 import type { Dwarf, DwarfKickState, DwarfSendState } from '../../types'
@@ -95,15 +96,22 @@ const atWork = computed(() => status.value === 'working')
  * getting-up, the lying-down, the picking-up and the setting-down.
  */
 const clips = ref<readonly SpriteClip[]>([])
+/*
+ * A dwarf found at work starts on a random whole frame of its swings, the leading clips of its
+ * settled shift (components.md, Sprite, Anatomy); every other sequence takes the clock's own rule.
+ */
+const phaseClips = ref<number | undefined>(undefined)
 // Vue hands the immediate first run an empty list of old values, so the first reading is flagged.
 let firstReading = true
 watch(
   [resting, atWork, () => props.dwarf.role] as const,
   ([nowResting, nowWorking, role], previous) => {
-    clips.value =
-      firstReading && !props.entering
-        ? settledClips(role, nowResting, nowWorking)
-        : dwarfClips(role, nowResting, previous?.[0], nowWorking, previous?.[1])
+    const settled = firstReading && !props.entering
+    clips.value = settled
+      ? settledClips(role, nowResting, nowWorking)
+      : dwarfClips(role, nowResting, previous?.[0], nowWorking, previous?.[1])
+    const swings = DWARF_SHEETS[role].working === undefined ? undefined : DWARF_CREW[role].swings
+    phaseClips.value = settled && nowWorking && !nowResting ? swings : undefined
     firstReading = false
   },
   { immediate: true }
@@ -183,7 +191,7 @@ const rootStyle = computed(() => ({
       <span class="dm-dwarf__tag">{{ dwarf.name }}</span>
     </span>
     <span class="dm-dwarf__halo"></span>
-    <SpriteStrip :clips="clips" :flip="!facesLeft" @frame="onFrame" />
+    <SpriteStrip :clips="clips" :phase-clips="phaseClips" :flip="!facesLeft" @frame="onFrame" />
   </button>
   <!-- In <body>: the dwarf is transformed onto its feet, which would hold a fixed card. -->
   <Teleport to="body">

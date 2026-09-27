@@ -380,3 +380,39 @@ describe('createFrameClock and the host’s events', () => {
     expect(listeners).toBe(0)
   })
 })
+
+/*
+ * A dwarf already working when it is drawn (#635): "a new sprite already working starts on a
+ * random whole frame of its swings (the swing is the work; the clips either side are the way in
+ * and out)", k = round(random x frames) over every frame of those swings (components.md, Sprite,
+ * Anatomy). `phaseClips` names how many leading clips the phase spans; settledClips puts the
+ * swings first.
+ */
+describe('the phase over a shift', () => {
+  const shift = [loopOf(SWING), loopOf(SWING), loopOf(START)]
+
+  it('starts on a random whole frame of its leading swings, in any of them', () => {
+    const env = fakeEnv()
+    const clock = createFrameClock(env)
+    for (const [rnd, position] of [
+      [0, { clip: 0, frame: 0 }],
+      [0.5, { clip: 1, frame: 0 }],
+      [0.7, { clip: 1, frame: 1 }],
+      [0.99, { clip: 0, frame: 0 }]
+    ] as const) {
+      env.rnd = rnd
+      const frames: SequencePosition[] = []
+      clock.player((p) => frames.push(p)).play(shift, { phase: true, phaseClips: 2 })
+      expect(frames, String(rnd)).toEqual([position])
+    }
+  })
+
+  it('never starts on a clip past the swings it spans', () => {
+    const env = fakeEnv()
+    env.rnd = 0.5
+    const clock = createFrameClock(env)
+    const frames: SequencePosition[] = []
+    clock.player((p) => frames.push(p)).play(shift, { phase: true, phaseClips: 1 })
+    expect(frames).toEqual([{ clip: 0, frame: 2 }])
+  })
+})

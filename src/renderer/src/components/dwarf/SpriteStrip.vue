@@ -30,12 +30,22 @@ const props = withDefaults(
     sheet?: SpriteSheet
     /** A sequence to play instead of `sheet`, a clip at a time. */
     clips?: readonly SpriteClip[]
+    /** How many leading clips of `clips` its random start frame spans (frameClock, phaseClips). */
+    phaseClips?: number
     scale?: number
     flip?: boolean
     still?: boolean
     once?: boolean
   }>(),
-  { sheet: undefined, clips: undefined, scale: 1, flip: false, still: false, once: false }
+  {
+    sheet: undefined,
+    clips: undefined,
+    phaseClips: undefined,
+    scale: 1,
+    flip: false,
+    still: false,
+    once: false
+  }
 )
 const emit = defineEmits<{ frame: [position: SequencePosition] }>()
 
@@ -49,7 +59,10 @@ const clips = computed<readonly SpriteClip[]>(() => {
   if (props.still) return [loopOf({ ...sheet, frames: 1 })]
   return [props.once ? onceOf(sheet) : loopOf(sheet)]
 })
-const position = useFramePlayer(() => clips.value, { phase: true })
+const position = useFramePlayer(
+  () => clips.value,
+  () => ({ phase: true, phaseClips: props.phaseClips })
+)
 watch(position, (now) => emit('frame', now), { immediate: true })
 
 // The sheet on show: the one given (whole, a still one too), or the clip the sequence is on.
