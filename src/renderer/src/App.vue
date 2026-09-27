@@ -29,6 +29,7 @@ import { useShellFold } from './composables/useShellFold'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
+import { createAttentionWatch } from './lib/audio/attentionCues'
 import { browseRows } from './lib/browse/boardRows'
 import { columnMine, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
@@ -226,6 +227,14 @@ const {
   playCrew,
   dispose: disposeAudio
 } = useAudio()
+
+/**
+ * The attention cues (#635): every snapshot, however it arrived, goes through
+ * one watch, which answers the cues whose state BEGAN since the last one — never
+ * a state that was already pending at launch or merely re-polled. The engine
+ * decides whether each is heard (Notification sounds, the hidden window).
+ */
+const attentionWatch = createAttentionWatch()
 
 /**
  * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
@@ -704,6 +713,7 @@ function raisePanel(): void {
 
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
+  for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
   syncWithMines(openableMineIds(snapshot.mines, projects.value))
   // A launch in flight is watching for its own dwarf, which arrives on an

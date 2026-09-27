@@ -2558,6 +2558,58 @@ describe('App audio (#174, #173)', () => {
     expect(sfx).toHaveLength(0)
   })
 
+  /*
+   * The attention cues (#635) — APPENDED. The rules of WHEN live in
+   * lib/audio/attentionCues.test.ts and of HOW in engine.test.ts; these hold only
+   * that the shell feeds every snapshot to the watch and its answer to the engine.
+   */
+  const ASKING = defaultDwarf({
+    id: 'claude:s1',
+    role: 'worker',
+    status: 'waiting',
+    pendingPermission: {
+      toolUseId: 'p1',
+      toolName: 'Bash',
+      input: 'ls',
+      channel: 'held',
+      askedAt: '2026-09-27T10:00:00.000Z'
+    }
+  })
+
+  it('cues a permission when a snapshot begins one, not at launch and not on a re-poll (#635)', async () => {
+    const { api } = await audioApp({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    })
+    const cues = () => opened.filter((src) => src.includes('attention-'))
+    // Already pending when the app started: nobody heard it begin.
+    expect(cues()).toHaveLength(0)
+
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
+    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(cues()).toHaveLength(1)
+    expect(cues()[0]).toContain('attention-permission')
+
+    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(cues()).toHaveLength(1)
+  })
+
+  it('plays no attention cue with Notification sounds off (#635)', async () => {
+    const { api } = await audioApp({
+      getAudioPreferences: vi
+        .fn()
+        .mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: false })
+    })
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [{ ...MINE, dwarfs: [ASKING] }], tokensObserved: 0 })
+    await flushPromises()
+    expect(opened.filter((src) => src.includes('attention-'))).toHaveLength(0)
+  })
+
   it('gives a foreman the foreman voice, and no other rank’s', async () => {
     const foreman = defaultDwarf({ id: 'claude:s2', role: 'foreman', status: 'waiting' })
     const { wrapper } = await audioApp({
