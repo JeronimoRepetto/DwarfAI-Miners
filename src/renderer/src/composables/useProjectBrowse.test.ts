@@ -701,3 +701,67 @@ describe('useProjectBrowse worktree question', () => {
     expect(addError.value).toBe('The projects database is locked.')
   })
 })
+
+/*
+ * ADDED for #635 (PANEL-QUESTIONS 29 live check): the list re-read while it stays on screen, when
+ * the board shows a measurement the list has not caught (lib/browse/browseRefresh.ts). A re-read
+ * the person did not ask for changes the rows and nothing else: no loading line, no filters reset.
+ */
+describe('useProjectBrowse refresh', () => {
+  it('replaces the rows without showing a read or touching the filters', async () => {
+    const release = deferred<ProjectQueryResult>()
+    const queryProjects = vi
+      .fn()
+      .mockResolvedValueOnce(page(1))
+      .mockReturnValueOnce(release.promise)
+    stubQuery(queryProjects)
+    const browse = useProjectBrowse()
+    await browse.load()
+    browse.setSearch('p')
+    browse.setTier('gold')
+    browse.setSort('name')
+    const refreshing = browse.refresh()
+    expect(browse.loading.value).toBe(false)
+    release.release({
+      answered: true,
+      projects: [defaultProject({ id: 'p0', name: 'p0', weightBytes: 2048 })]
+    })
+    await refreshing
+    expect(browse.projects.value[0]!.weightBytes).toBe(2048)
+    expect(browse.filters.value).toMatchObject({ search: 'p', tier: 'gold', sort: 'name' })
+    expect(browse.loading.value).toBe(false)
+  })
+
+  it('keeps the rows on screen when the re-read is refused, and says nothing', async () => {
+    const queryProjects = vi
+      .fn()
+      .mockResolvedValueOnce(page(2))
+      .mockResolvedValueOnce({ answered: false, projects: [], reason: 'no' })
+    stubQuery(queryProjects)
+    const browse = useProjectBrowse()
+    await browse.load()
+    await browse.refresh()
+    expect(browse.projects.value.map((project) => project.id)).toEqual(['p0', 'p1'])
+    expect(browse.error.value).toBeNull()
+  })
+
+  it('runs one re-read at a time, with one more after it for what arrived meanwhile', async () => {
+    const first = deferred<ProjectQueryResult>()
+    const queryProjects = vi
+      .fn()
+      .mockResolvedValueOnce(page(1))
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue(page(1))
+    stubQuery(queryProjects)
+    const browse = useProjectBrowse()
+    await browse.load()
+    const one = browse.refresh()
+    void browse.refresh()
+    void browse.refresh()
+    first.release(page(1))
+    await one
+    await vi.waitFor(() => expect(queryProjects).toHaveBeenCalledTimes(3))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(queryProjects).toHaveBeenCalledTimes(3)
+  })
+})

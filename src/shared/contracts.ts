@@ -1783,6 +1783,18 @@ export interface Mine {
    */
   declared?: boolean
   /**
+   * This run's measured source weight in bytes (#635), the same reading
+   * `ProjectSummary.weightBytes` is and off the same TierService cache, by path.
+   * Absent until a walk has answered in this process; a stale one counts.
+   *
+   * It is on the board because the board is what main pushes: the Mines list
+   * reads store rows once, and a walk that answers while it is on screen has no
+   * other way to reach it. The panel compares the two and reads the list again
+   * when the board has a reading the list lacks (lib/browse/browseRefresh.ts).
+   * Absent for a simulated valley, which has no walk.
+   */
+  weightBytes?: number
+  /**
    * Which of the world map's spawn locations this mine stands on (#136), from
    * `1` to `MAP_SPAWN_SITE_COUNT`.
    *

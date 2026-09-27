@@ -54,6 +54,9 @@
     "key": "molecules/mine-card#measuring"
   },
   {
+    "key": "molecules/mine-card#measuring-never-measured"
+  },
+  {
     "key": "molecules/mine-card#working-not-recorded-yet"
   },
   {
@@ -441,7 +444,7 @@
   },
   {
     "key": "screens-full/panel#mines",
-    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 760, y 810 of the window. With the lever drawn, 1.709% and 17 clusters, all in the list's fifth card (x 20 to 413, y 783 to 890 of the window, the last one the list's height shows): the design draws ore-ledger there, as Copper and Measuring… (the order organisms/mines-list#live's anatomy prints, by tier then score), because the sample's measuring mine keeps its Copper tier and 905 score (ruling 27); the app has no tier while a mine is measuring (browseCards.ts: isMeasuring is cardTierFor undefined, #41), so it draws ore-ledger on the Bronze placeholder and ranks it below every tier (minesList.ts), last, and lantern-docs takes the fifth slot. A design question: a mine measuring with a tier already known is a state the app cannot have"
+    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it. The launch restores the Mines page with DwarfAI-Miners open (PANEL-QUESTIONS 25) and the re-measured ore-ledger keeps its Copper and its place (PANEL-QUESTIONS 29), so with the lever drawn it passes at 0.000%"
   },
   {
     "key": "screens-full/panel#map",

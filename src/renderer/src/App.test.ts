@@ -3817,3 +3817,63 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
   })
 })
 /* --- end of the #635 launch view block --------------------------------------- */
+
+/*
+ * ADDED for #635 (PANEL-QUESTIONS 29 live check). The Mines list was read on panel open and on
+ * entering Mines only, so a card stayed "Measuring…" after its walk had answered for as long as
+ * the person stayed on the page. The board push carries each mine's measured weight; when it
+ * shows one the list has not caught, the list is read again, quietly, while it is on screen.
+ */
+describe('App keeping the Mines list current (#635)', () => {
+  const BOARD_MINE = {
+    id: 'mine:a',
+    path: 'a',
+    name: 'alpha',
+    tier: 'gold',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0,
+    declared: true
+  }
+  const MEASURING = {
+    id: 'mine:a',
+    path: 'a',
+    name: 'alpha',
+    declared: true,
+    addedAt: 1,
+    live: true
+  }
+
+  beforeEach(() => useView().clear())
+
+  it('reads the list again when a measurement lands while Mines is on screen', async () => {
+    const queryProjects = vi.fn().mockResolvedValue({ answered: true, projects: [MEASURING] })
+    const { wrapper, api } = await mountOpenApp({ queryProjects })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    const asked = queryProjects.mock.calls.length
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    queryProjects.mockResolvedValue({
+      answered: true,
+      projects: [{ ...MEASURING, knownTier: 'gold', weightBytes: 3_000_000 }]
+    })
+    push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
+    await flushPromises()
+    expect(queryProjects.mock.calls.length).toBe(asked + 1)
+    expect(wrapper.find('.dm-card').attributes('data-state')).toBe('active')
+    // The list has caught up: the next poll with the same reading asks nothing.
+    push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
+    await flushPromises()
+    expect(queryProjects.mock.calls.length).toBe(asked + 1)
+  })
+
+  it('asks nothing while the Mines page is not on screen', async () => {
+    const queryProjects = vi.fn().mockResolvedValue({ answered: true, projects: [MEASURING] })
+    const { api } = await mountOpenApp({ queryProjects })
+    const asked = queryProjects.mock.calls.length
+    const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
+    push({ mines: [{ ...BOARD_MINE, weightBytes: 3_000_000 }], tokensObserved: 0 })
+    await flushPromises()
+    expect(queryProjects.mock.calls.length).toBe(asked)
+  })
+})

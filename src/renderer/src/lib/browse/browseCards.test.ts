@@ -158,8 +158,22 @@ describe('isMeasuring', () => {
     expect(isMeasuring(project({ declared: true }))).toBe(true)
   })
 
-  it('stops the moment the store records a walk’s verdict', () => {
-    expect(isMeasuring(project({ declared: true, knownTier: 'silver' }))).toBe(false)
+  // AMENDED for #635 (PANEL-QUESTIONS 29, design lead ruling 2026-09-27). This said a stored
+  // verdict alone ends the measuring, which drew a mine measured in an earlier run as active with
+  // no reading beside its tier while this run's walk was still owed. A stored tier with no weight
+  // is exactly that re-measure: the mine keeps the tier and shows Measuring… (the next test).
+  it('stops the moment this run’s walk gives the store’s verdict a weight', () => {
+    expect(isMeasuring(project({ declared: true, knownTier: 'silver', weightBytes: 1 }))).toBe(
+      false
+    )
+  })
+
+  // APPENDED for #635 (PANEL-QUESTIONS 29): a stale reading still counts as known (#41), so this
+  // is measuring WITH a tier, never a mine that lost it.
+  it('says a declared mine measured before is being re-measured until its weight is read', () => {
+    const again = project({ declared: true, knownTier: 'silver' })
+    expect(isMeasuring(again)).toBe(true)
+    expect(cardTierFor(again)).toBe('silver')
   })
 
   it('stops on a weight alone, which is a measurement the card can already read', () => {
@@ -172,15 +186,18 @@ describe('isMeasuring', () => {
     expect(isMeasuring(project())).toBe(false)
   })
 
-  it('agrees with the tier the card would state, by construction', () => {
-    // The two are one reading: the state exists exactly where cardTierFor has
-    // nothing to say, and a card that drew both would contradict itself.
+  // AMENDED for #635 (PANEL-QUESTIONS 29). This pinned the state to exactly the rows cardTierFor
+  // has nothing to say about, the rule the ruling retires: a re-measured mine is measuring and
+  // states its tier. What still holds is the other direction, kept here: a declared mine with no
+  // tier to state is always measuring, so no card is left bare with neither.
+  it('never leaves a declared mine with no tier to state outside Measuring', () => {
     for (const summary of [
       project({ declared: true }),
       project({ declared: true, knownTier: 'gold' }),
       project({ declared: true, weightBytes: 0 })
     ]) {
-      expect(isMeasuring(summary)).toBe(cardTierFor(summary) === undefined)
+      if (cardTierFor(summary) === undefined) expect(isMeasuring(summary)).toBe(true)
     }
+    expect(isMeasuring(project({ declared: true, weightBytes: 0 }))).toBe(false)
   })
 })

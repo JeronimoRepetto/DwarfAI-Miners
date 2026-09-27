@@ -8,6 +8,7 @@ import {
   mineCardView,
   mineRefusalToast
 } from './mineCard'
+import { filterCards, sortCards } from './minesList'
 import type { BrowseRow, Dwarf, Mine } from '../../types'
 
 const KB = 1024
@@ -105,6 +106,35 @@ describe('mineCardView', () => {
       state: 'measuring',
       progress: { measuring: true }
     })
+  })
+
+  // APPENDED for #635 (PANEL-QUESTIONS 29, design lead ruling 2026-09-27): a mine measured before
+  // keeps its last tier while it is re-measured. The store's tier with no weight yet is a reading
+  // from an earlier run and a walk this run still owes it; a stale reading still counts as known
+  // (#41), so the card keeps that tier, answers its tier filter and keeps its place.
+  it('keeps a re-measured mine’s last tier while it shows Measuring…', () => {
+    const view = mineCardView(row({ declared: true, knownTier: 'copper' }), board([]))
+    expect(view).toMatchObject({
+      tier: 'copper',
+      measured: true,
+      state: 'measuring',
+      progress: { measuring: true }
+    })
+  })
+
+  it('ranks a re-measured mine in its tier and a never-measured one last', () => {
+    const cards = [
+      mineCardView(row({ id: 'new', name: 'new', declared: true }), board([])),
+      mineCardView(row({ id: 'low', name: 'low', knownTier: 'bronze', weightBytes: KB }), []),
+      mineCardView(row({ id: 'again', name: 'again', declared: true, knownTier: 'copper' }), [])
+    ]
+    expect(sortCards(cards, 'tier').map((card) => [card.name, card.state])).toEqual([
+      ['again', 'measuring'],
+      ['low', 'active'],
+      ['new', 'measuring']
+    ])
+    expect(filterCards(cards, '', 'copper').map((card) => card.name)).toEqual(['again'])
+    expect(filterCards(cards, '', 'bronze').map((card) => card.name)).toEqual(['low'])
   })
 
   it('draws a board mine the store has no row for as working, not recorded yet', () => {
