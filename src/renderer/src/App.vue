@@ -113,6 +113,29 @@ const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines 
  */
 const dock = useMessageDock()
 const { close: closeMessagePanel } = dock
+
+/**
+ * The control that opened what the dock's window slot holds (#635): "+ Dwarf" for the Add panel,
+ * the pressed dwarf for its chat. Esc closes the topmost layer and focus returns to whatever
+ * opened it (accessibility.md, Focus), and keyboard focus is never dropped to the page: the panel
+ * that had it is gone, so the opener takes it back. Remembered at the press, before the panel
+ * takes the keyboard for itself; a launch handing over to its dwarf's chat keeps the one it had.
+ */
+let dockOpener: HTMLElement | null = null
+
+function rememberDockOpener(): void {
+  const active = document.activeElement
+  dockOpener = active instanceof HTMLElement && active !== document.body ? active : null
+}
+
+/** The panels' own close, Esc among it: the slot empties and the opener takes the keyboard back. */
+function closeDockToOpener(): void {
+  const opener = dockOpener
+  dockOpener = null
+  closeMessagePanel()
+  // The opener may have been redrawn away since; a control no longer in the page takes nothing.
+  if (opener !== null) void nextTick(() => opener.isConnected && opener.focus())
+}
 const dwarfDelivery = dock.delivery
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
@@ -786,7 +809,9 @@ function selectDwarf(dwarf: Dwarf): void {
   }
   // Naming the mine as well as the dwarf: the Add panel that shares the slot
   // needs the mine, and the chat follows its mine rather than the board.
-  if (viewState.mineId !== null) dock.openMessage(viewState.mineId, dwarf.id)
+  if (viewState.mineId === null) return
+  rememberDockOpener()
+  dock.openMessage(viewState.mineId, dwarf.id)
 }
 
 /**
@@ -992,6 +1017,7 @@ watch(() => viewState.mineId, setAudioScene, { immediate: true })
  */
 function openLaunch(mineId: string): void {
   historyOpen.value = false
+  rememberDockOpener()
   dock.openLaunch(mineId)
 }
 
@@ -1202,7 +1228,7 @@ onBeforeUnmount(() => {
               @toggle-jev-auto="dock.launch.toggleJevAutoAccept"
               @dismiss-jev="dock.launch.dismissJevDecision"
               @submit="dock.launch.submit"
-              @close="closeMessagePanel"
+              @close="closeDockToOpener"
             />
             <!--
               Keyed by dwarf, so opening the chat on another one is a fresh
@@ -1234,7 +1260,7 @@ onBeforeUnmount(() => {
               @open-link="dock.openLink"
               @page-back="dock.pageBack"
               @history="openHistory"
-              @close="closeMessagePanel"
+              @close="closeDockToOpener"
             />
             <HistoryPanel
               v-else-if="dockItem.kind === 'history' && currentMine"

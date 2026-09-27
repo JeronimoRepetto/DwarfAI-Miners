@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   COMPOSER_ENABLED_PLACEHOLDER,
   OTHER_CHOICE,
@@ -59,8 +59,12 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       modelPicker: (overrides.modelPicker ?? HIDDEN_MODEL_PICKER) as ModelPicker,
       effortPicker: (overrides.effortPicker ?? HIDDEN_EFFORT_PICKER) as EffortPicker,
       permissionsVisible: (overrides.permissionsVisible ?? false) as boolean,
-      jev: (overrides.jev ?? HIDDEN_JEV) as JevState
-    }
+      jev: (overrides.jev ?? HIDDEN_JEV) as JevState,
+      // APPENDED for #635: `onCommit`-style listeners, for the cases that read the ORDER in which
+      // the panel reports two gestures, which `emitted()` keeps per event and cannot show.
+      ...((overrides.listeners ?? {}) as Record<string, unknown>)
+    },
+    ...(overrides.attachTo === undefined ? {} : { attachTo: overrides.attachTo as HTMLElement })
   })
 }
 
@@ -1472,5 +1476,103 @@ describe('AddPanel press and hover feedback', () => {
 
     await chips[0]!.trigger('click')
     expect(wrapper.emitted('choose')).toHaveLength(1)
+  })
+})
+
+/*
+ * APPENDED for #635, from a live run: Other… with a command typed and a prompt written could never
+ * launch, because the gate waited on the command's Enter that the old panel forced (its prompt was
+ * disabled until then) and the redesigned one never asks for. A command in the box is a chosen
+ * supplier; launching commits it first, so the launch model reads exactly what main's panel sent.
+ */
+describe('a custom command of the person’s own', () => {
+  function typed(overrides: Record<string, unknown> = {}) {
+    return panel({
+      chosen: OTHER_CHOICE,
+      phase: 'other-command-required',
+      enabled: false,
+      command: 'my-agent --yes',
+      prompt: 'dig',
+      ...overrides
+    })
+  }
+
+  it('is a chosen supplier once it is typed, before any Enter', () => {
+    const wrapper = typed()
+
+    expect(wrapper.get(WHY).text()).toBe('Ready. The dwarf walks into DwarfAI-Miners.')
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeUndefined()
+  })
+
+  it('commits the command, then launches, on Ctrl+Enter and on Send the dwarf in', async () => {
+    const said: string[] = []
+    const wrapper = typed({
+      listeners: { onCommit: () => said.push('commit'), onSubmit: () => said.push('submit') }
+    })
+
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get(LAUNCH).trigger('click')
+
+    expect(said).toEqual(['commit', 'submit', 'commit', 'submit'])
+  })
+
+  it('still waits for a command while the box holds only spaces', async () => {
+    const wrapper = typed({ command: '   ' })
+
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+
+    expect(wrapper.get(WHY).text()).toBe('Choose a supplier, or let Jev choose.')
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+})
+
+/*
+ * APPENDED for #635, from a live run: Ctrl+Enter pressed while an input method was still composing
+ * launched with the text it had not committed yet. A key that belongs to a composition is the
+ * input method's, in both fields, whatever it would otherwise do.
+ */
+describe('keys that belong to an input method composition', () => {
+  const ready = () =>
+    panel({ chosen: 'claude', phase: 'prompt-ready', enabled: true, prompt: 'dig here' })
+
+  it('never launch from the prompt', async () => {
+    const wrapper = ready()
+
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true, isComposing: true })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', metaKey: true, keyCode: 229 })
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+
+  it('never commit the custom command', async () => {
+    const wrapper = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
+
+    await wrapper.get(COMMAND).setValue('my-agent')
+    await wrapper.get(COMMAND).trigger('keydown', { key: 'Enter', isComposing: true })
+    await wrapper.get(COMMAND).trigger('keydown', { key: 'Enter', keyCode: 229 })
+
+    expect(wrapper.emitted('commit')).toBeUndefined()
+  })
+})
+
+/*
+ * APPENDED for #635: the Add panel focuses its first control when it opens (screens/shell.md,
+ * Accessibility, and Where focus goes: `focusFirst()` is the first supplier chip), so the keyboard
+ * is never left on the page body.
+ */
+describe('focus when the panel opens', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('lands on the first supplier chip', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const wrapper = panel({ attachTo: host })
+    await flushPromises()
+
+    expect(document.activeElement).toBe(wrapper.findAll(CHIPS)[0]!.element)
+    wrapper.unmount()
   })
 })

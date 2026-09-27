@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { belongsToComposition } from '../../lib/controls/input'
 import {
   CONSOLE_HINT,
   JUMP_TO_TERMINAL_NAME,
@@ -627,6 +628,8 @@ function submit(): void {
 /** Enter sends, Shift+Enter writes a newline — the convention every composer here uses. */
 function onInputKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || event.shiftKey) return
+  // An input method's own Enter picks its candidate; the text is not written yet (#635).
+  if (belongsToComposition(event)) return
   event.preventDefault()
   submit()
 }

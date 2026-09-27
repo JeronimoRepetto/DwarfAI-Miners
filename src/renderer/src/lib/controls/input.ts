@@ -79,3 +79,16 @@ export function showsClear(options: InputOptions, value: string): boolean {
 export function escapeAction(options: InputOptions, value: string): 'clear' | 'bubble' {
   return showsClear(options, value) ? 'clear' : 'bubble'
 }
+
+/**
+ * Whether a key belongs to an input method's composition rather than to the field (#635): the
+ * Enter that picks a candidate in a Japanese, Chinese or Korean IME is the IME's, and a shortcut
+ * that acted on it would send text the person has not committed yet. `isComposing` is the
+ * standard answer; keyCode 229 is the one Chromium gives a keydown the IME consumed, which covers
+ * the committing Enter on engines that report `isComposing` false for it.
+ */
+export function belongsToComposition(
+  event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>
+): boolean {
+  return event.isComposing || event.keyCode === 229
+}

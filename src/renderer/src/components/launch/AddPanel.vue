@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { belongsToComposition } from '../../lib/controls/input'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
 import {
   OTHER_CHOICE,
@@ -103,11 +104,24 @@ const chosen = computed(() => props.chips.find((chip) => chip.state === 'selecte
 const showCommand = computed(() => chosen.value === OTHER_CHOICE)
 const jevOn = computed(() => props.jev.availability === 'ready' && props.jev.enabled)
 
+/**
+ * A command typed under Other… but not yet committed with its Enter (#635). The panel this one
+ * replaced kept its prompt disabled until that Enter, so nobody could reach a launch without it;
+ * this one lets the prompt be written first, and a person who typed a command and moved on has
+ * chosen their supplier. So the command in the box counts as committed, and launching commits it
+ * first — the launch model's own gate still decides, on the same committed command as before.
+ */
+const commandPending = computed(
+  () => showCommand.value && !props.enabled && props.command.trim() !== ''
+)
+/** The gate as this panel reads it: the launch model's, or Other… with a command in its box. */
+const supplierReady = computed(() => props.enabled || commandPending.value)
+
 /** The line beside Send the dwarf in, and whether it is an alert. */
 const why = computed(() =>
   addPanelWhy({
     phase: props.phase,
-    enabled: props.enabled,
+    enabled: supplierReady.value,
     prompt: props.prompt,
     refusal: props.refusal,
     error: props.error,
@@ -130,7 +144,7 @@ const selects = computed(() =>
 /** Send the dwarf in wakes once a supplier is valid (or Jev is on) and there is a prompt. */
 const canLaunch = computed(
   () =>
-    props.enabled &&
+    supplierReady.value &&
     !launched.value &&
     props.jev.routing.phase !== 'asking' &&
     props.prompt.trim() !== ''
@@ -138,6 +152,7 @@ const canLaunch = computed(
 
 function launch(): void {
   if (!canLaunch.value) return
+  if (commandPending.value) emit('commit')
   emit('submit')
 }
 
@@ -148,9 +163,29 @@ function launch(): void {
  */
 function onPromptKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return
+  // An input method's own Enter picks its candidate; the text is not written yet (#635).
+  if (belongsToComposition(event)) return
   event.preventDefault()
   launch()
 }
+
+/** Enter commits the command (#194), unless it is the input method's own (#635). */
+function onCommandKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || belongsToComposition(event)) return
+  event.preventDefault()
+  emit('commit')
+}
+
+/*
+ * The panel takes the keyboard when it opens, on its first control: the first supplier chip
+ * (screens/shell.md, Where focus goes, `focusFirst()`). Once Vue has drawn it, as the
+ * MessagePanel does its composer (#409); the dock remounts the panel for every opening.
+ */
+const chipRow = ref<HTMLElement | null>(null)
+onMounted(async () => {
+  await nextTick()
+  chipRow.value?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
+})
 
 /** A pick off one of the three selects, reported to the launch model under its own name. */
 function pick(label: 'Model' | 'Effort' | 'Permissions', value: string): void {
@@ -465,7 +500,7 @@ const jevUnavailableTitle = computed(() =>
       -->
       <div class="dm-add__sec">
         <p class="dm-add__label">Choose your dwarf supplier</p>
-        <div class="dm-add__chips" role="radiogroup" aria-label="Supplier">
+        <div ref="chipRow" class="dm-add__chips" role="radiogroup" aria-label="Supplier">
           <ChoiceChip
             v-for="chip in chips"
             :key="chip.choice"
@@ -485,7 +520,7 @@ const jevUnavailableTitle = computed(() =>
           :value="command"
           :disabled="launched"
           @update:value="emit('command', $event)"
-          @keydown.enter.prevent="emit('commit')"
+          @keydown="onCommandKeydown"
         />
       </div>
 

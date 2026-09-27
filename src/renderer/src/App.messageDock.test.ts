@@ -2291,3 +2291,99 @@ describe('typography preferences (#370)', () => {
  * (#566 T3)', the second root's own `<MotionConfig>`. The panels are under the shell's root now,
  * whose MotionConfig cases in App.test.ts hold the same two answers.
  */
+
+/*
+ * APPENDED for #635, from a live run of the rebuilt Add panel: the three things it got wrong, read
+ * through the whole shell and the real launch model rather than through the panel's props.
+ */
+describe('the rebuilt Add panel, as a person drives it (#635)', () => {
+  const DWARF = {
+    id: 'claude:s1',
+    provider: 'claude',
+    role: 'foreman',
+    name: 'Foreman',
+    status: 'working',
+    sessionId: 's1',
+    lastMessage: 'Halfway down the shaft',
+    // A dwarf the chat can write to, so its composer is what takes the keyboard on open.
+    textDelivery: 'terminal'
+  }
+
+  /** The shell attached to the document, so focus is real, with the mine open from the map. */
+  async function mountAttached(overrides: Record<string, unknown> = {}) {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const api = stubApi({
+      getMines: vi
+        .fn()
+        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [DWARF] }], tokensObserved: 0 }),
+      ...overrides
+    })
+    const wrapper = mount(App, { attachTo: host })
+    mounted.push(wrapper)
+    await flushPromises()
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    return { wrapper, api }
+  }
+
+  /** The mine column's "+ Dwarf", focused and pressed as a person presses it. */
+  async function pressAddDwarf(wrapper: VueWrapper) {
+    const add = wrapper.findComponent(MineColumn).get('.dm-minecol__foot button')
+    ;(add.element as HTMLButtonElement).focus()
+    await add.trigger('click')
+    await flushPromises()
+    return add.element
+  }
+
+  it('launches a custom command typed under Other…, with no Enter in its box', async () => {
+    const launchHostedProcess = vi.fn().mockResolvedValue({ launched: true })
+    const { wrapper } = await mountAttached({ launchHostedProcess })
+    await pressAddDwarf(wrapper)
+
+    await wrapper.findAll('.dm-add__chips .dm-chip')[1]!.trigger('click')
+    await wrapper.get('.dm-add__command input').setValue('my-agent --yes')
+    await wrapper.get('.dm-add__prompt textarea').setValue('dig the east gallery')
+    expect(wrapper.get('.dm-add__why').text()).toBe(`Ready. The dwarf walks into ${MINE.name}.`)
+
+    await wrapper
+      .get('.dm-add__prompt textarea')
+      .trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+
+    expect(launchHostedProcess).toHaveBeenCalledWith({
+      mineId: MINE.id,
+      command: 'my-agent --yes',
+      prompt: 'dig the east gallery'
+    })
+  })
+
+  it('opens on its first control, and Esc gives the keyboard back to + Dwarf', async () => {
+    const { wrapper } = await mountAttached()
+    const opener = await pressAddDwarf(wrapper)
+
+    expect(document.activeElement).toBe(wrapper.findAll('.dm-add__chips .dm-chip')[0]!.element)
+
+    await wrapper.get('.dm-add').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+
+    expect(wrapper.find('.dm-add').exists()).toBe(false)
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('gives the keyboard back to the dwarf that opened its chat when the chat closes', async () => {
+    const { wrapper } = await mountAttached()
+    const dwarf = wrapper.get('button.dm-dwarf')
+    ;(dwarf.element as HTMLButtonElement).focus()
+    await dwarf.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+    expect(document.activeElement).toBe(wrapper.get('.dm-msg .dm-composer textarea').element)
+
+    await wrapper.get('.dm-msg').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
+    expect(document.activeElement).toBe(dwarf.element)
+  })
+})

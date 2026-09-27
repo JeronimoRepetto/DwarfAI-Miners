@@ -2801,3 +2801,20 @@ describe('DwarfMessagePanel keeps its draft with its host', () => {
     expect(wrapper.emitted('draft')?.at(-1)).toEqual(['dig'])
   })
 })
+
+// APPENDED for #635, from a live run of the Add panel: the composer's Enter follows the same rule.
+describe('DwarfMessagePanel input under an input method', () => {
+  it('sends nothing on an Enter the input method is still composing with', async () => {
+    const wrapper = panel()
+    await wrapper.find('.dm-composer textarea').setValue('掘る')
+
+    await wrapper
+      .find('.dm-composer textarea')
+      .trigger('keydown', { key: 'Enter', isComposing: true })
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter', keyCode: 229 })
+    expect(wrapper.emitted('send')).toBeUndefined()
+
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toEqual([[{ text: '掘る', pressEnter: true }]])
+  })
+})
