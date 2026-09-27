@@ -67,3 +67,31 @@ describe('TierMarker under reduced motion (#635)', () => {
     )
   })
 })
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 12, design lead ruling 2026-09-27): every marker, not only one
+ * that needs you, sets `--delay` once when it is built, and its pulse starts that far into its loop.
+ */
+describe('TierMarker pulse phase (#635)', () => {
+  it('sets --delay once at build to an offset within one pulse, on every marker', async () => {
+    for (const asking of [false, true]) {
+      const marker = mount(TierMarker, { props: { tier: 'gold', asking } })
+      const delay = (marker.element as HTMLElement).style.getPropertyValue('--delay')
+      expect(delay).toMatch(/^-?\d+ms$/)
+      expect(Number.parseInt(delay, 10)).toBeLessThanOrEqual(0)
+      expect(Number.parseInt(delay, 10)).toBeGreaterThanOrEqual(-1600)
+      await marker.setProps({ selected: true, asking: !asking })
+      expect((marker.element as HTMLElement).style.getPropertyValue('--delay')).toBe(delay)
+    }
+  })
+
+  it('starts the pulse that far into its loop', () => {
+    const style = markerSource
+      .slice(markerSource.indexOf('<style'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const pulse = [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((rule) => rule[1]!.trim() === '.dm-marker__pulse')
+      .map((rule) => rule[2]!)
+    expect(pulse.some((body) => body.includes('animation-delay: var(--delay, 0ms);'))).toBe(true)
+  })
+})
