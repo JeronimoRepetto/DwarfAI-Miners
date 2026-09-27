@@ -1263,6 +1263,16 @@ export type TurnOutcomeKind = 'concluded' | 'capped' | 'errored' | 'interrupted'
  * such as `error_max_turns`, or an Antigravity `status` such as `ERROR` —
  * carried verbatim rather than reworded into this app's own taxonomy, so a
  * reader can always trace a reading back to what the provider actually said.
+ *
+ * `cancelledFromApp: true` marks a turn THIS APP asked to end — a Kick on a
+ * held session (its interrupt) or on a session it launched (ending the
+ * process) — and is present only then (#635, PANEL-QUESTIONS Q24). It is the
+ * app's own fact, stamped where the app sends the cancel, because the
+ * provider's reading of one cannot carry it: Claude answers an interrupt with
+ * an ordinary error result, and a killed one-shot reads SIGTERM like any other
+ * signal. `kind` and `detail` stay exactly what the provider said. Absent
+ * means the app did not ask, never "the provider says nobody did": an
+ * interruption the user did not cause from here reads unmarked.
  */
 export interface TurnOutcome {
   kind: TurnOutcomeKind
@@ -1270,6 +1280,7 @@ export interface TurnOutcome {
   truncated?: boolean
   detail?: string
   endedAt: number
+  cancelledFromApp?: true
 }
 
 export interface Dwarf {

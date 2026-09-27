@@ -210,6 +210,16 @@ interface HeldRecord {
    */
   telemetry: HeldSessionTelemetryUpdate
   /**
+   * True from the moment this app asks the running turn to stop until the
+   * ending that answers it arrives (#635, PANEL-QUESTIONS Q24), which is then
+   * stamped `cancelledFromApp` — see TurnOutcome. Set BEFORE the interrupt is
+   * sent, because the provider's result can land before the interrupt call
+   * itself resolves; cleared again when the stream refuses the interrupt, and
+   * when the person speaks again, since a new turn is no longer the one they
+   * cancelled.
+   */
+  cancelRequested?: boolean
+  /**
    * The context-usage pull in flight for this session, if any (issue #96) —
    * so a mine reopened twice in a second, or a turn ending while the last
    * pull is still on the wire, JOINS that same control request rather than
@@ -1060,6 +1070,7 @@ export class HeldSessionRegistry {
       // and then be spoken to again. Not merged when the stream refused it: a
       // refused send is not a turn beginning.
       record.telemetry = { ...record.telemetry, turn: 'started' }
+      record.cancelRequested = false
       for (const entry of heldMessageEntries(content)) {
         this.appendMessage(record, 'user', entry.text, entry.activity)
       }
@@ -1090,7 +1101,12 @@ export class HeldSessionRegistry {
     // absent rather than a method returning false.
     const cut = record.handle.interrupt
     if (cut === undefined) return 'unsupported'
-    return (await cut.call(record.handle)) ? 'interrupted' : 'refused'
+    // AMENDED for #635 (PANEL-QUESTIONS Q24): the ending this causes is the
+    // user's own doing, and marked so — see HeldRecord.cancelRequested.
+    record.cancelRequested = true
+    const taken = await cut.call(record.handle)
+    if (!taken) record.cancelRequested = false
+    return taken ? 'interrupted' : 'refused'
   }
 
   /**
@@ -1174,6 +1190,12 @@ export class HeldSessionRegistry {
   private recordTelemetry(key: number, update: HeldSessionTelemetryUpdate): void {
     const record = this.held.get(key)
     if (record === undefined) return
+    // #635: the first ending after this app's own interrupt is the one it
+    // caused. Only an update that carries an ending uses the mark up.
+    if (update.lastTurn !== undefined && record.cancelRequested === true) {
+      record.cancelRequested = false
+      update = { ...update, lastTurn: { ...update.lastTurn, cancelledFromApp: true } }
+    }
     record.telemetry = { ...record.telemetry, ...update }
     // An `init` names the model AND the effort the session will actually use,
     // so it is the second confirmation route for a model change and the ONLY
