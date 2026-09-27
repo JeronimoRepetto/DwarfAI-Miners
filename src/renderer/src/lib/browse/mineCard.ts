@@ -17,6 +17,7 @@
 import { vaultRows } from '../vault/vault'
 import { designTierLabel } from '../presentation'
 import { dwarfNeedsYou } from '../shell/panelNav'
+import { needsYouCount } from '../shell/navSlot'
 import type { TierProgressOptions } from './tierProgress'
 import { cardTierFor, isMeasuring, nextLevelFor } from './browseCards'
 import type { PillTone } from '../dwarf/badge'
@@ -62,7 +63,7 @@ export interface MineCardView {
 }
 
 /**
- * The crew line: "N working", "N needs you", "N asleep", each only when non-zero; "No dwarfs" for
+ * The crew line: "N working", "N need you", "N asleep", each only when non-zero; "No dwarfs" for
  * no crew; one "idle", with no count, when nobody is working, asking or asleep (components.md,
  * Mine card, As built). Asleep is a session at rest that asked nobody anything.
  */
@@ -78,7 +79,7 @@ export function crewPills(dwarfs: readonly Dwarf[]): CrewPill[] {
   }
   const pills: CrewPill[] = []
   if (working) pills.push({ text: working + ' working' })
-  if (needs) pills.push({ text: needs + ' needs you', tone: 'needs', ask: true })
+  if (needs) pills.push({ text: needsYouCount(needs), tone: 'needs', ask: true })
   if (asleep) pills.push({ text: asleep + ' asleep' })
   return pills.length ? pills : [{ text: 'idle' }]
 }
@@ -144,8 +145,9 @@ export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardVi
     needsCount,
     progress:
       state === 'unrecorded' || state === 'unenterable' ? undefined : progressFor(row, state),
-    // Only a mine on the board can be entered (#85): opening one nobody is working opens nothing.
-    enterable: row.live && state !== 'unenterable',
+    // Only a missing folder refuses entry (PANEL-QUESTIONS 5 and 6, design lead ruling 2026-09-27):
+    // a remembered mine nobody is working opens too, onto the empty roster and + Dwarf.
+    enterable: state !== 'unenterable',
     ...(state === 'unenterable' ? { reason: MINE_UNENTERABLE_REASON } : {}),
     removable: row.unrecorded !== true,
     ...(row.weightBytes === undefined ? {} : { score: row.weightBytes / 1024 })

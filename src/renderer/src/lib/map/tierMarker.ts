@@ -46,3 +46,17 @@ export function tierMarkerAttributes(options: TierMarkerOptions): TierMarkerAttr
   if (options.selected) attributes['aria-pressed'] = 'true'
   return attributes
 }
+
+/** One pulse, `--dur-pulse` in design-tokens.css, which tierMarker.test.ts pins to this. */
+export const MARKER_PULSE_MS = 1600
+
+/**
+ * The pulse's phase, `--delay`: a random negative offset within one pulse, set once when a marker
+ * is built, so every marker on the map pulses at its own phase and never in step, as each sprite
+ * starts on a random frame (PANEL-QUESTIONS 12, design lead ruling 2026-09-27). Every marker takes
+ * one, not only one that needs you. The prototype's own formula, `-Math.round(random * 1600)`.
+ */
+export function markerPulseDelay(random: () => number): string {
+  const offset = Math.round(random() * MARKER_PULSE_MS)
+  return (offset === 0 ? 0 : -offset) + 'ms'
+}

@@ -288,8 +288,10 @@ describe('MapPage mine tooltip', () => {
     const card = tip()!
     expect(card.querySelector('.dm-tier')!.getAttribute('data-tier')).toBe('uranium')
     expect(card.querySelector('.dm-tip__title')!.textContent).toBe('Uraniumbeta')
+    // AMENDED for #635 (PANEL-QUESTIONS 11; was: 'Dwarfs working3'): two working dwarfs and one
+    // that needs you, which is counted in its own row alone.
     expect([...card.querySelectorAll('.dm-tip__row')].map((row) => row.textContent)).toEqual([
-      'Dwarfs working3',
+      'Dwarfs working2',
       'Needs you1'
     ])
     wrapper.unmount()

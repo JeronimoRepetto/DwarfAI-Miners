@@ -31,6 +31,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { browseRows } from './lib/browse/boardRows'
+import { columnMine, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
@@ -675,9 +676,19 @@ const openDwarfId = computed(() =>
  * which dwarf it has open, and it is no longer this window that knows.
  */
 
+/*
+ * The board's mine, or else a remembered one nobody is working (PANEL-QUESTIONS 5): it opens like
+ * any other card, onto the empty roster and + Dwarf, drawn from its store row (lib/browse/columnMine).
+ */
 const currentMine = computed<Mine | undefined>(() =>
-  viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
+  viewState.mineId === null ? undefined : columnMine(viewState.mineId, state.mines, projects.value)
 )
+
+/*
+ * A remembered mine held open has no board push to let it go when it is removed, so a change of the
+ * remembered list asks the same question the board push does (useView.syncWithMines).
+ */
+watch(projects, (list) => syncWithMines(openableMineIds(state.mines, list)))
 
 /**
  * The mine column is width the WINDOW has to be given before anything can be
@@ -742,7 +753,7 @@ function raisePanel(): void {
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   loading.value = false
-  syncWithMines(snapshot.mines.map((mine) => mine.id))
+  syncWithMines(openableMineIds(snapshot.mines, projects.value))
   // A launch in flight is watching for its own dwarf, which arrives on an
   // ordinary poll like every other session's — this is that poll.
   if (import.meta.env.DEV) {
@@ -1142,6 +1153,43 @@ onBeforeUnmount(() => {
       />
 
       <!--
+        The nav, at the screen edge (#635), and first of the columns in the DOM (PANEL-QUESTIONS 2,
+        design lead ruling 2026-09-27): tab order is the DOM order, and it is the nav, then the
+        page, then the open mine on both docks (accessibility.md, Keyboard). CSS `order` below
+        keeps it the last column of the row, which `row` puts against a right edge and
+        `row-reverse` against a left one, so nothing moves on screen for it.
+        Its app mark hides the WINDOW (#156), which is the same hidePanel the
+        global shortcut and Settings' own hide control already ask for. The
+        layout is deliberately untouched: the panel that comes back is the one
+        that went away, mine and page and all.
+
+        The mode lever is left out until a mode beyond the Panel exists: Veta
+        and Valle are later slices, and the docs say nothing of a lever whose
+        destination is not built yet, so the nav's own "no dead buttons" rule
+        is the fallback until that is ruled on.
+      -->
+      <PanelTransition
+        :hold="holdColumn"
+        :hold-enter="enterColumn"
+        :engine="props.engine"
+        @leave="trackPanelLeave"
+      >
+        <PanelNav
+          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
+          ref="navEl"
+          :page="page"
+          :guild="featureFlags.guildAreasEnabled"
+          :badge="needsYou"
+          :music="musicPlaying"
+          :warn="shortcutBroken"
+          :lever="false"
+          @nav="selectArea"
+          @mark="hidePanel"
+          @music="toggleMusicAndSay"
+        />
+      </PanelTransition>
+
+      <!--
       The three columns of the book hand their motion to the ground they stand
       on (#388): `hold` is the shell's own fold, and each column is only
       RETAINED here until it ends — unmounting one before main has shrunk the
@@ -1193,6 +1241,7 @@ onBeforeUnmount(() => {
               :remove-error="removeMineError"
               :worktree-question="worktreeQuestion"
               :reveal-id="revealMine"
+              :engine="props.engine"
               @search="setProjectSearch"
               @tier="setProjectTier"
               @sort="sortProjects"
@@ -1273,6 +1322,12 @@ onBeforeUnmount(() => {
           </PanelTransition>
 
           <p v-if="error" class="notice" role="alert">{{ error }}</p>
+          <!--
+            Toasts stand in the page column, centred 56px from its bottom, whatever raised them
+            (PANEL-QUESTIONS 10, PO ruling 2026-09-27): never over the painting, the dwarfs or the
+            MessagePanel's composer. The column is the containing block.
+          -->
+          <ToastHost />
         </div>
       </PanelTransition>
 
@@ -1317,40 +1372,6 @@ onBeforeUnmount(() => {
       </PanelTransition>
 
       <!--
-        The nav, at the screen edge (#635): the last column of the row, which
-        `row` puts against a right edge and `row-reverse` against a left one.
-        Its app mark hides the WINDOW (#156), which is the same hidePanel the
-        global shortcut and Settings' own hide control already ask for. The
-        layout is deliberately untouched: the panel that comes back is the one
-        that went away, mine and page and all.
-
-        The mode lever is left out until a mode beyond the Panel exists: Veta
-        and Valle are later slices, and the docs say nothing of a lever whose
-        destination is not built yet, so the nav's own "no dead buttons" rule
-        is the fallback until that is ruled on.
-      -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <PanelNav
-          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
-          ref="navEl"
-          :page="page"
-          :guild="featureFlags.guildAreasEnabled"
-          :badge="needsYou"
-          :music="musicPlaying"
-          :warn="shortcutBroken"
-          :lever="false"
-          @nav="selectArea"
-          @mark="hidePanel"
-          @music="toggleMusicAndSay"
-        />
-      </PanelTransition>
-
-      <!--
       The mine's History panel, and it is what is LEFT of the dock (#162).
 
       The MessagePanel and the Add Panel used to share this slot; they are a
@@ -1386,7 +1407,6 @@ onBeforeUnmount(() => {
         </div>
       </PanelTransition>
     </div>
-    <ToastHost />
   </MotionConfig>
 </template>
 
@@ -1427,6 +1447,22 @@ onBeforeUnmount(() => {
  */
 .shell.is-rail {
   justify-content: flex-end;
+}
+/*
+ * Where each column stands, which is no longer where it is in the DOM (PANEL-QUESTIONS 2, design
+ * lead ruling 2026-09-27). The nav comes first of the columns in the DOM so Tab walks the nav, then
+ * the page, then the open mine on both docks (accessibility.md, Keyboard); `order` keeps it at the
+ * screen edge, so a `row` still runs rail, page, mine, nav from the free edge and `row-reverse`
+ * mirrors it. The rail keeps the default order and its place ahead of them all.
+ */
+.shell > .shell-secondary {
+  order: 1;
+}
+.shell > .shell-mine {
+  order: 2;
+}
+.shell > .dm-nav {
+  order: 3;
 }
 /*
  * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,

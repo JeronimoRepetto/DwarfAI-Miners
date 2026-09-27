@@ -13879,3 +13879,68 @@ describe('AgentRuntime.sendDwarfText while a prompt stands at its terminal (#481
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 })
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 5, design lead ruling 2026-09-27). A remembered mine with no
+ * dwarf and no live session opens like any other, and its mine column's + Dwarf is where dwarfs
+ * are launched (decision log, First run: add a mine). Such a mine is not on the board, so a launch
+ * that looked only at the board refused it. The folder is still main's to resolve — from the
+ * store row the panel's card is built from — and never taken from the request; a forgotten row is
+ * not a mine the panel shows, so it stays refused.
+ */
+describe('AgentRuntime launching into a remembered mine (#635, PANEL-QUESTIONS 5)', () => {
+  const REMEMBERED = 'C:\\work\\remembered'
+
+  async function rememberedRuntime(launchSession: SessionLauncher) {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite(),
+      platform: 'win32'
+    })
+    const observed = await projects.upsertObserved({ path: REMEMBERED, at: 1 })
+    if (!observed.ok) throw new Error('the store refused the observation')
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [],
+      projects,
+      launchSession,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, projects, mineId: observed.value.id }
+  }
+
+  it('starts the session in the remembered folder though no mine on the board names it', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await rememberedRuntime(launchSession)
+    expect(runtime.getMines()).toHaveLength(0)
+
+    const verdict = await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+    runtime.stop()
+
+    expect(verdict).toMatchObject({ launched: true, provider: 'claude' })
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'claude',
+      minePath: REMEMBERED,
+      prompt: 'go'
+    })
+  })
+
+  it('still refuses a mine the person removed, whose row is only flagged', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, projects, mineId } = await rememberedRuntime(launchSession)
+    await projects.forget({ id: mineId, at: 2 })
+
+    const verdict = await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+    runtime.stop()
+
+    expect(verdict).toEqual({
+      launched: false,
+      provider: 'none',
+      error: 'That mine is no longer on the map.'
+    })
+    expect(launchSession).not.toHaveBeenCalled()
+  })
+})

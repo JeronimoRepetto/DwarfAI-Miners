@@ -11,6 +11,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 // `.map-view` with `.mine-marker`s), in every test below that reads the map.
 import MapPage from './components/map/MapPage.vue'
 import MinesList from './components/browse/MinesList.vue'
+import { MINE_CARD_ENTER } from './lib/browse/cardMotion'
 import MineColumn from './components/scene/MineColumn.vue'
 import HistoryPanel from './components/history/HistoryPanel.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
@@ -3158,6 +3159,41 @@ describe('App Mines page', () => {
     expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 
+  /*
+   * APPENDED for #635 (PANEL-QUESTIONS 5, design lead ruling 2026-09-27): a remembered mine with no
+   * dwarf and no live session opens, onto the empty roster and + Dwarf, and stays open while the
+   * board goes on not carrying it. + Dwarf asks main for the Add panel on that mine.
+   */
+  it('opens a remembered mine nobody is working, onto the empty roster, and keeps it open', async () => {
+    let push: (snapshot: unknown) => void = () => undefined
+    const { wrapper, api } = await mountOpenApp({
+      onMinesUpdated: vi.fn((listener: (snapshot: unknown) => void) => {
+        push = listener
+        return () => undefined
+      }),
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [{ ...ALPHA_ROW, declared: false, live: false }]
+      })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    const card = wrapper.get('.dm-card')
+    expect(card.text()).toContain('No dwarfs')
+    await card.get('button.dm-card__hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    expect(wrapper.get('.dm-minecol').text()).toContain('No dwarfs here yet.')
+    push({ mines: [], tokensObserved: 0 })
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    wrapper.findComponent(MineColumn).vm.$emit('add')
+    await flushPromises()
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ surface: 'launch', mineId: ALPHA_ROW.id })
+    )
+  })
+
   it('says what the Music slot did', async () => {
     const { wrapper } = await mountOpenApp()
     const on = wrapper.get(NAV_MUSIC).attributes('aria-pressed') === 'true'
@@ -3222,5 +3258,176 @@ describe('App Map page', () => {
     await flushPromises()
     expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(wrapper.get('.dm-marker').attributes('aria-pressed')).toBe('true')
+  })
+})
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 2, design lead ruling 2026-09-27). Tab order is the nav, then
+ * the page, then the open mine, on BOTH docks (accessibility.md, Keyboard; screens/shell.md, Left
+ * to right). The nav comes first in the DOM and CSS `order` keeps it at the screen edge, so nothing
+ * moves on screen: docked right the row reads rail, page, mine, nav; `row-reverse` mirrors it.
+ * jsdom lays nothing out, so the orders are read from the stylesheet, as the packing block above
+ * reads its `justify-content`.
+ */
+describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
+  /** The `order` each selector in App.vue's own stylesheet declares. */
+  function declaredOrders(): Map<string, number> {
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    const style = source.slice(source.indexOf('<style scoped>')).replace(/\/\*[\s\S]*?\*\//g, '')
+    const orders = new Map<string, number>()
+    for (const rule of style.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const order = /(?:^|;|\s)order:\s*(-?\d+)/.exec(rule[2]!)
+      if (order) for (const one of rule[1]!.split(',')) orders.set(one.trim(), Number(order[1]))
+    }
+    return orders
+  }
+
+  for (const edge of ['right', 'left'] as const) {
+    it(`walks the nav, then the page, then the open mine, docked ${edge}`, async () => {
+      const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+      const { wrapper } = await mountApp({
+        getPanelLayout: vi.fn().mockResolvedValue({ edge, expanded: true, mineOpen: false }),
+        setPanelLayout: vi
+          .fn()
+          .mockImplementation((request: { expanded: boolean; mineOpen: boolean }) =>
+            Promise.resolve({ edge, ...request })
+          ),
+        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      })
+      await flushPromises()
+      wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+      await flushPromises()
+      // Document order, which is tab order; transitions stand between the shell and each column.
+      const columns = Array.from(
+        wrapper.get('.shell').element.querySelectorAll('.dm-nav, .shell-secondary, .shell-mine')
+      ).map((el) => el.classList[0])
+      expect(columns).toEqual(['dm-nav', 'shell-secondary', 'shell-mine'])
+    })
+  }
+
+  it('keeps the nav at the screen edge with `order`, so nothing moves on screen', () => {
+    const orders = declaredOrders()
+    const rail = orders.get('.shell > .edge-rail') ?? 0
+    const page = orders.get('.shell > .shell-secondary') ?? 0
+    const mine = orders.get('.shell > .shell-mine') ?? 0
+    const nav = orders.get('.shell > .dm-nav')
+    expect(nav).toBeDefined()
+    // A `row` docked right runs these from the free edge to the screen edge; `row-reverse` runs
+    // the same sequence from the screen edge on the left.
+    expect(rail).toBeLessThan(page)
+    expect(page).toBeLessThanOrEqual(mine)
+    expect(mine).toBeLessThan(nav!)
+  })
+})
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 10, PO ruling 2026-09-27): a toast is centred on the page
+ * column, 56px from its bottom, whatever raised it, so it never covers the painting, the dwarfs or
+ * the MessagePanel's composer. The host stands in the page column; ToastHost.test.ts pins its
+ * placement there.
+ */
+describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
+  const hostsWithToasts = (wrapper: VueWrapper) =>
+    wrapper.findAll('.dm-toasts').filter((host) => host.find('.dm-toast').exists())
+
+  it('raises a toast in the page column, even from the nav beside an open mine', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    const hosts = hostsWithToasts(wrapper)
+    expect(hosts).toHaveLength(1)
+    expect(hosts[0]!.element.closest('.shell-secondary')).not.toBeNull()
+  })
+
+  // Under the PO rule of 2026-09-27, the old window-wide host is not in the design and is gone:
+  // there is one host, and it is the page column's.
+  it('draws no toast host but the page column’s', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
+    expect(wrapper.find('.dm-toasts').exists()).toBe(false)
+  })
+})
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 9, found in the live app): the card of a mine just added is
+ * the one that rises in. The add reloads the list before it says which mine it made, so the card
+ * is already on screen by the time the page learns it is the new one: the rise has to play on the
+ * card that stays on screen, not only on a card inserted after the page knew.
+ */
+describe('App adding a mine, card motion (#635, PANEL-QUESTIONS 9)', () => {
+  const runs: { element: Element; keyframes: unknown; finish: () => void }[] = []
+  const wrappers: VueWrapper[] = []
+  const engine: MotionAnimate = (element, keyframes: DOMKeyframesDefinition) => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    runs.push({ element, keyframes, finish })
+    return {
+      cancel: () => undefined,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
+  beforeEach(() => {
+    runs.length = 0
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: () => undefined
+    })
+  })
+  afterEach(() => {
+    for (const wrapper of wrappers.splice(0)) wrapper.unmount()
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+  })
+
+  it('rises in on the card that stays on screen once the add has reloaded the list', async () => {
+    const row = {
+      id: 'C:/dev/alpha',
+      path: 'C:/dev/alpha',
+      name: 'alpha',
+      declared: true,
+      addedAt: 1,
+      live: false
+    }
+    let stored: unknown[] = []
+    stubApi({
+      getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT),
+      queryProjects: vi
+        .fn()
+        .mockImplementation(() => Promise.resolve({ answered: true, projects: stored })),
+      declareMine: vi.fn().mockImplementation(() => {
+        stored = [row]
+        return Promise.resolve({ outcome: 'added', mineId: row.id, project: row })
+      })
+    })
+    const wrapper = mount(App, {
+      props: { engine },
+      global: { stubs: { transition: false, 'transition-group': false } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    runs.splice(0).forEach((run) => run.finish())
+    await flushPromises()
+    await wrapper.get('.dm-empty button').trigger('click')
+    await flushPromises()
+    const card = wrapper.get('[data-mine="C:/dev/alpha"]').element
+    const rises = runs.filter((run) => run.element.classList.contains('dm-card'))
+    expect(rises).toHaveLength(1)
+    expect(rises[0]!.element).toBe(card)
+    expect(rises[0]!.keyframes).toEqual(MINE_CARD_ENTER.keyframes)
   })
 })

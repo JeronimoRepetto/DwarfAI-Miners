@@ -8,6 +8,7 @@
  */
 import { computed } from 'vue'
 import {
+  markerPulseDelay,
   tierMarkerAttributes,
   tierMarkerClasses,
   type TierMarkerOptions
@@ -22,10 +23,12 @@ const props = withDefaults(defineProps<TierMarkerOptions>(), {
 
 const classes = computed(() => tierMarkerClasses(props))
 const attributes = computed(() => tierMarkerAttributes(props))
+// Once, at build, and never again: a marker keeps its phase for as long as it stands.
+const pulsePhase = { '--delay': markerPulseDelay(Math.random) }
 </script>
 
 <template>
-  <button :class="classes" v-bind="attributes">
+  <button :class="classes" v-bind="attributes" :style="pulsePhase">
     <span class="dm-marker__pulse"></span>
     <span class="dm-marker__gem"><span v-if="asking" class="dm-marker__q">?</span></span>
   </button>
@@ -69,6 +72,7 @@ const attributes = computed(() => tierMarkerAttributes(props))
   background: var(--tier-c);
   opacity: 0;
   animation: dm-pulse var(--dur-pulse) steps(6, end) infinite;
+  animation-delay: var(--delay, 0ms);
 }
 .dm-marker:hover .dm-marker__gem,
 .dm-marker.is-hover .dm-marker__gem {

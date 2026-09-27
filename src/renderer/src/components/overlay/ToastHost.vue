@@ -1,8 +1,13 @@
 <script setup lang="ts">
 /*
- * Where toasts show (#635), the design's `.dm-toasts`: bottom centre of the window, above
- * everything else and never in the pointer's way, announced politely without taking focus. Each
- * rises 6px in and leaves 4px down after 2.6s (motion.md, Overlays), transform and opacity only.
+ * Where toasts show (#635), the design's `.dm-toasts`: above everything else and never in the
+ * pointer's way, announced politely without taking focus. Each rises 6px in and leaves 4px down
+ * after 2.6s (motion.md, Overlays), transform and opacity only.
+ *
+ * In the app a toast is centred on the page column, 56px from its bottom, whatever raised it
+ * (PANEL-QUESTIONS 10, PO ruling 2026-09-27; decision log, Toast position). The host stands inside
+ * that column, its containing block, so it never covers the painting, the dwarfs or the
+ * MessagePanel's composer. The old window-wide host is not in the design and is gone.
  */
 import ToastCard from './ToastCard.vue'
 import { useToasts } from '../../composables/useToasts'
@@ -19,7 +24,7 @@ const { toasts } = useToasts()
 <style scoped>
 .dm-toasts {
   display: grid;
-  position: fixed;
+  position: absolute;
   left: 50%;
   bottom: 56px;
   transform: translateX(-50%);
