@@ -485,6 +485,26 @@ describe('SceneDwarf in the scene', () => {
   })
 
   /*
+   * ADDED for #635: a session that comes back under the same id (DwarfLifecycleTracker's
+   * "Reappeared", and every turn of the simulation's status cycle) is real again, so its next
+   * departure fades only once that walk out has reached the way out, not from its first step.
+   */
+  it('fades a returning leaver only once its next walk out arrives', async () => {
+    const leaver = defaultDwarf({ status: 'leaving' })
+    const { wrapper } = mountDwarf(leaver, { walking: true })
+    const button = () => wrapper.find('.dm-dwarf')
+    await wrapper.setProps({ walking: false })
+    expect(button().classes()).toContain('is-departed')
+    await wrapper.setProps({ dwarf: { ...leaver, status: 'working' }, walking: true })
+    await wrapper.setProps({ walking: false })
+    await wrapper.setProps({ dwarf: leaver, walking: true })
+    expect(button().classes()).not.toContain('is-departed')
+    expect(button().attributes('inert')).toBeUndefined()
+    await wrapper.setProps({ walking: false })
+    expect(button().classes()).toContain('is-departed')
+  })
+
+  /*
    * ADDED for #635. A dwarf at rest draws at its station as it did before the walk came back: one
    * the column never walked (drawn on its way out when the column opened, or under reduced motion)
    * has reached no way out, so it stays drawn, idle, rather than fading where it stands.

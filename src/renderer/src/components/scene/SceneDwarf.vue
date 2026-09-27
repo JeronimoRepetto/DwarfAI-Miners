@@ -186,6 +186,13 @@ watch(
     if (!walking && was === true && props.dwarf.status === 'leaving') walkedOut.value = true
   }
 )
+// One that comes back under the same id is real again: its next departure has a walk of its own.
+watch(
+  () => props.dwarf.status === 'leaving',
+  (leaving) => {
+    if (!leaving) walkedOut.value = false
+  }
+)
 const departed = computed(() => walkedOut.value && props.dwarf.status === 'leaving')
 
 // A dwarf dropping out of the crew between polls takes its grind and its footsteps with it.
