@@ -12,14 +12,15 @@ under `src/renderer/src/assets/art/` are the maintainer's own, covered by
 
 ## Sound effects released as CC0
 
-The six effects below replaced eight files that carried a third-party copyright tag (#637). Each is
+The first six effects below replaced eight files that carried a third-party copyright tag (#637);
+the three attention cues after them were added with the Notification sounds setting (#635). Each is
 either original work made for DwarfAI-Miners, synthesised from oscillators and seeded noise with no
 recorded audio sampled, or built from recordings their authors released under
-[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). All six are released under CC0 1.0
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). All nine are released under CC0 1.0
 as well, and are therefore outside [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md). CC0 asks for no
 attribution; the authors are recorded here so every source can be traced.
 
-Each file was raised by one gain shared by all six, which keeps their approved balance, and
+Each file was raised by one gain shared by all nine, which keeps their approved balance, and
 encoded as MP3 with all metadata stripped; see [the level table](src/renderer/src/assets/audio/sfx/README.md#levels).
 
 | File                                                    | Plays                                          | Made of                                                                                                                                                                                                                                                                                                                                                                                                             | Licence                                   |
@@ -30,6 +31,9 @@ encoded as MP3 with all metadata stripped; see [the level table](src/renderer/sr
 | `assets/audio/sfx/worker2-grind.mp3`                    | A worker2's shift, the whole 8.53 s movement   | Original synthesis: spin-up, stone contact and spin-down; an FM sawtooth whine over a motor hum, band-passed noise for the stone.                                                                                                                                                                                                                                                                                   | Original work for DwarfAI-Miners, CC0 1.0 |
 | `assets/audio/sfx/walk-loop.mp3`                        | Footsteps, looped for as long as a dwarf walks | Original synthesis: twelve footsteps in a seamless 6.7 s loop.                                                                                                                                                                                                                                                                                                                                                      | Original work for DwarfAI-Miners, CC0 1.0 |
 | `assets/art/inside-mines/sfx/mine-inside-room-tone.mp3` | The mine's room tone, a 90 s loop              | `dungeon_ambient_1.ogg` by JaggedStone, <https://opengameart.org/content/loopable-dungeon-ambience>; `atmosbasement.flac` by Independent.nu (submitted by qubodup), <https://opengameart.org/content/dripping-water-loop>; and `dungeon002.ogg` by yd, <https://opengameart.org/content/dungeon-ambience> — all on OpenGameArt, mixed, filtered and compressed, with an original synthesised sub rumble and reverb. | CC0 1.0 (JaggedStone, Independent.nu, yd) |
+| `assets/audio/sfx/attention-question.mp3`               | A dwarf asking a question                      | Original synthesis: a faint falling pair of soft tones, A5 then E5 120 ms later, low-passed; 0.85 s.                                                                                                                                                                                                                                                                                                                | Original work for DwarfAI-Miners, CC0 1.0 |
+| `assets/audio/sfx/attention-permission.mp3`             | A dwarf asking for a permission                | Original synthesis: a glassy double tap, a near-pure sine F5 twice, the second softer; 0.9 s.                                                                                                                                                                                                                                                                                                                       | Original work for DwarfAI-Miners, CC0 1.0 |
+| `assets/audio/sfx/attention-finished.mp3`               | A dwarf finishing its turn                     | Original synthesis: a faint low wooden tone, a marimba-like A4, low-passed; 0.6 s.                                                                                                                                                                                                                                                                                                                                  | Original work for DwarfAI-Miners, CC0 1.0 |
 
 Paths are relative to `src/renderer/src/`. Each OpenGameArt item's licence was verified on the
 item's own page when the sound was chosen, since that site hosts CC0, CC-BY, CC-BY-SA and GPL work

@@ -109,3 +109,13 @@ describe('CREW_SFX_SRC (#330)', () => {
     expect(new Set(all).size).toBe(3)
   })
 })
+
+describe('UI_SFX_SRC — attention cues (#635)', () => {
+  it('gives each of the five interface sounds its own recording', () => {
+    // sound.md, "Distinct per attention type": each cue is recognisable
+    // without looking, so none may borrow another's clip.
+    const sources = Object.values(UI_SFX_SRC)
+    expect(sources).toHaveLength(5)
+    expect(new Set(sources).size).toBe(5)
+  })
+})

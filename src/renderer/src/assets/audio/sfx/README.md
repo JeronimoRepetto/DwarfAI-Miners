@@ -13,7 +13,8 @@ licence, before it is committed.
 ## What plays them
 
 `lib/audio/audioAssets.ts` imports each file explicitly — the interface sounds into `UI_SFX_SRC`
-(a click on the shell's own navigation buttons, a sound when the side panel opens and closes) and
+(a click on the shell's own navigation buttons, a sound when the side panel opens and closes, and
+the three attention cues: a question, a permission, a finished turn) and
 the crew's into `CREW_SFX_SRC` (the pick, the worker2's grind, the footsteps). Nothing globs this
 directory: a renamed or missing file has to fail the build rather than leave an action silent at
 runtime, where nobody would notice. `lib/audio/bundledAudio.test.ts` holds the other direction: a
@@ -49,6 +50,13 @@ changes nothing. "Old" is the replaced file, for comparison only; it chose nothi
 | `worker2-grind.mp3`           | `hands-sfx.mp3`                   | -27.3           | -35.0         | +6.3 dB      | -28.7         | -18.7            |
 | `walk-loop.mp3`               | `steps-sfx.mp3`, `steps2-sfx.mp3` | -41.2 and -33.5 | -49.4         | +6.3 dB      | -43.1         | -26.0            |
 | `mine-inside-room-tone.mp3`   | `mine-inside-silence.mp3`         | -26.8           | -42.0         | +6.3 dB      | -35.7         | -18.4            |
+| `attention-question.mp3`      | none, new in #635                 | —               | -30.4         | +6.3 dB      | -24.1         | -14.8            |
+| `attention-permission.mp3`    | none, new in #635                 | —               | -30.3         | +6.3 dB      | -24.0         | -16.4            |
+| `attention-finished.mp3`      | none, new in #635                 | —               | -32.0         | +6.3 dB      | -25.7         | -14.7            |
+
+The three attention cues (#635) were mastered in the same lab session at one shared level (sound.md,
+"Attention cues are soft, harmonic and not realistic"), so they take the same +6.3 dB and keep
+their place beside the pick; they replaced nothing, so their "Old" column is empty.
 
 Nobody has listened to the result in the app yet.
 

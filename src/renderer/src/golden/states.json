@@ -163,8 +163,7 @@
     "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); and the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only). With the row stood in and the key cap unspaced it passes at 0.000%"
   },
   {
-    "key": "organisms/settings#sound",
-    "red": "no Notification sounds row: it switches the level-2 attention cues, which the app does not play yet, so the switch would change nothing (PR5 question). With the row stood in it passes at 0.000%"
+    "key": "organisms/settings#sound"
   },
   {
     "key": "organisms/settings#notifications"

@@ -32,8 +32,11 @@ describe('AudioSettings — rendering', () => {
     const wrapper = render()
     // AMENDED (#635): was toContain('Audio'); the section's name is SettingsPanel's now, and it is
     // "Sound" there (screens/settings.md, W6).
+    // AMENDED (#635, PANEL-QUESTIONS Q18): the Notification sounds row ships with the attention
+    // cues it switches, second as the design draws it (prototype settings.js, Sound).
     expect(wrapper.findAll('.dm-srow__label').map((l) => l.text())).toEqual([
       'Music at startup',
+      'Notification sounds',
       'Music',
       'Ambience',
       'Effects'
@@ -121,5 +124,34 @@ describe('AudioSettings — changing something', () => {
     ;(slider.element as HTMLInputElement).value = '0'
     await slider.trigger('input')
     expect(wrapper.find(readout('music')).text()).toBe('100%')
+  })
+})
+
+/*
+ * Notification sounds (#635) — APPENDED. PANEL-QUESTIONS Q18: the row ships with the attention
+ * cues it turns off. Copy from the design (copy.md, Sound).
+ */
+describe('AudioSettings — Notification sounds (#635)', () => {
+  it('draws the row with the design copy, as a switch in the state it was given', () => {
+    const wrapper = render({ notificationSounds: true })
+    const control = wrapper.find('.notification-sounds')
+    expect(control.attributes('aria-label')).toBe('Play notification sounds')
+    expect(control.attributes('aria-checked')).toBe('true')
+    expect(control.attributes('title')).toBe(
+      'A soft sound when a dwarf asks, needs a permission or finishes its turn'
+    )
+    expect(wrapper.findAll('.dm-srow__help').map((h) => h.text())).toContain(
+      'Plays a soft sound when a dwarf asks a question, asks for a permission or finishes its turn. Off, those moments stay silent; the rest of the sound is unchanged.'
+    )
+    expect(
+      render({ notificationSounds: false }).find('.notification-sounds').attributes('aria-checked')
+    ).toBe('false')
+  })
+
+  it('asks for the opposite and holds what it was given until main answers', async () => {
+    const wrapper = render({ notificationSounds: true })
+    await wrapper.find('.notification-sounds').trigger('click')
+    expect(wrapper.emitted('change')).toEqual([[{ notificationSounds: false }]])
+    expect(wrapper.find('.notification-sounds').attributes('aria-checked')).toBe('true')
   })
 })

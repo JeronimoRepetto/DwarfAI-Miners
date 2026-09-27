@@ -370,13 +370,17 @@ describe('parseAudioPreferences', () => {
         musicAtStartup: false,
         musicVolume: 0.4,
         ambienceVolume: 0.2,
-        voiceVolume: 0.9
+        voiceVolume: 0.9,
+        notificationSounds: false
       })
     ).toEqual({
       musicAtStartup: false,
       musicVolume: 0.4,
       ambienceVolume: 0.2,
-      voiceVolume: 0.9
+      voiceVolume: 0.9,
+      // AMENDED for #635 (sound.md, "Attention cues are global"): the document
+      // gained the Notification sounds switch, so "one it wrote itself" carries it.
+      notificationSounds: false
     })
   })
 
@@ -432,9 +436,43 @@ describe('DEFAULT_AUDIO_PREFERENCES', () => {
       musicAtStartup: true,
       musicVolume: 0.1,
       ambienceVolume: 1,
-      voiceVolume: 0.7
+      voiceVolume: 0.7,
+      // AMENDED for #635: the attention cues are on by default (sound.md).
+      notificationSounds: true
     })
   })
+})
+
+/*
+ * The Notification sounds switch (#635) — APPENDED. sound.md, "Attention cues
+ * are global": the question, permission and finished cues are turned off only
+ * from Settings › Sound "Notification sounds", on by default.
+ */
+describe('parseAudioPreferences notificationSounds', () => {
+  it('reads a document written before the switch existed as on, so an upgrade changes nothing', () => {
+    expect(
+      parseAudioPreferences({
+        musicAtStartup: false,
+        musicVolume: 0.4,
+        ambienceVolume: 0.2,
+        voiceVolume: 0.9
+      }).notificationSounds
+    ).toBe(true)
+  })
+
+  it('keeps an explicit off', () => {
+    expect(parseAudioPreferences({ notificationSounds: false }).notificationSounds).toBe(false)
+  })
+
+  it.each(['no', 0, null, {}])(
+    'reads %j as the default, the rule musicAtStartup already follows',
+    (value) => {
+      expect(parseAudioPreferences({ notificationSounds: value, musicVolume: 0.25 })).toEqual({
+        ...DEFAULT_AUDIO_PREFERENCES,
+        musicVolume: 0.25
+      })
+    }
+  )
 })
 
 /*

@@ -615,7 +615,7 @@ const api: DwarfAiMinersApi = {
   getAudioPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.getAudioPreferences),
   // Rebuilt through the SHARED parser rather than field by field like the
   // launch channels, because there is one for this document and all three
-  // processes read it (see parseAudioPreferences): what crosses is four
+  // processes read it (see parseAudioPreferences): what crosses is five
   // checked values with every volume already clamped, and nothing else the
   // caller happened to attach.
   setAudioPreferences: (preferences) =>
