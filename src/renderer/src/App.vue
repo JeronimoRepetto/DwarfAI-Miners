@@ -10,7 +10,6 @@ import {
 } from 'vue'
 import { MotionConfig } from 'motion-v'
 import HistoryPanel from './components/history/HistoryPanel.vue'
-import EdgeRail from './components/shell/EdgeRail.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
@@ -50,7 +49,7 @@ import {
 } from './lib/scene/sceneSizing'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
-import { shellComposition } from './lib/shell/composition'
+import { dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
@@ -222,7 +221,6 @@ const {
   toggleAmbienceMute,
   setSettings: setAudioSettings,
   setScene: setAudioScene,
-  setCollapsed: setAudioCollapsed,
   playVoice,
   playSfx,
   playCrew,
@@ -231,9 +229,9 @@ const {
 
 /**
  * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
- * because the window's rectangle is derived from the display: the rail's arrow
- * is drawn from `layout.edge`, and drawing it from a guess would point the user
- * off the screen.
+ * because the window's rectangle is derived from the display: the columns and
+ * the dock slot are drawn into width main gave the window, and drawing them from
+ * a guess would paint into width it does not have.
  */
 const {
   layout,
@@ -241,13 +239,12 @@ const {
   applying: layoutApplying,
   sync: syncLayout,
   apply: applyLayout,
-  toggle: toggleLayout,
   setEdge
 } = usePanelLayout(waitForPanelLeaves)
 
 /**
- * The shell's own ground, and the fold that is now the panel's whole motion
- * (#388).
+ * The shell's own ground, and the fold that moves it when the mine column opens
+ * or closes (#388).
  *
  * The columns used to fade inside a window that then jumped to its new
  * rectangle in one frame — the pixels main added or removed were painted at the
@@ -261,29 +258,21 @@ const shellEl = ref<HTMLElement | null>(null)
 /** The plate's `.m-mat` edge, one art pixel (--px) outside its box (#635). */
 const PLATE_OUTLINE = 2
 /*
- * The rail travels with the fold (#464), so the composable is handed it as well
- * as the ground: it is the one column standing on the free side of everything
- * that leaves, and the free side is the end of the shell a fold clips away.
+ * `railEl` stood here until #635: the closed rail, which travelled with the fold
+ * (#464). The rail is gone (PO ruling 2026-09-27).
  *
- * Read off the component rather than queried out of the DOM, and guarded rather
- * than asserted: what a template ref answers for a component with more than one
- * root is not an element, and a fold is what a shrink waits on — it may lose the
- * travel, never the shrink.
- */
-const railEl = ref<ComponentPublicInstance | null>(null)
-/*
- * The page, which travels with the fold too whenever the mine column is what
- * closes or opens beside it (#566 T5b): it stands on the mine column's free
- * side, which #464 had no evidence for and so never carried. `secondaryEl` is
- * a plain element's own ref.
+ * The page travels with the fold whenever the mine column is what closes or
+ * opens beside it (#566 T5b): it stands on the mine column's free side.
+ * `secondaryEl` is a plain element's own ref.
  *
  * The nav is no longer carried (#635). It stands at the screen edge now, docked
  * of every other column, so nothing that leaves or arrives is ever between it
  * and the edge: "opening or closing a mine never moves the nav" is the design's
  * rule and this is the fold keeping it. It is still named as the strip, the
  * wall a drawer goes behind — the mine column slides out from behind it now.
- * `navEl` reads the nav's root the same guarded way `railEl` reads
- * `EdgeRail`'s, because a component ref answers an instance, not a node.
+ * `navEl` reads the nav's root guarded rather than asserted, because a
+ * component ref answers an instance, not a node, and a fold is what a shrink
+ * waits on — it may lose the travel, never the shrink.
  */
 const secondaryEl = ref<HTMLElement | null>(null)
 const navEl = ref<ComponentPublicInstance | null>(null)
@@ -294,11 +283,9 @@ const {
 } = useShellFold({
   shell: () => shellEl.value,
   edge: () => layout.value.edge,
-  remaining: () => shellComposition(visibleLayout.value),
   // The plate's 2px edge is drawn outside the shell's box (#635), so the fold
-  // leaves it room; the bare rail draws no plate and so has none to keep.
-  outline: () => (composition.value === 'rail' ? 0 : PLATE_OUTLINE),
-  rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null),
+  // leaves it room.
+  outline: () => PLATE_OUTLINE,
   // The strip is named as well as carried (#585 round 3): it is the wall a
   // drawer goes behind, and the one column whose room a drawer never follows.
   strip: () => (navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null),
@@ -331,13 +318,14 @@ const {
  * true — a whole IPC round trip before anything had moved, so a no-op by
  * construction, and two of them on a swap (#396).
  */
+/*
+ * AMENDED for #635: the reservation is read off `mineOpen` alone. The dock slot
+ * stands beside the plate rather than on it, so a window reserved for the slot
+ * is not width the ground is folding in or out of.
+ */
 watch(
   [layout, visibleLayout],
-  () =>
-    settleShellFold(
-      layout.value.expanded !== visibleLayout.value.expanded ||
-        layout.value.mineOpen !== visibleLayout.value.mineOpen
-    ),
+  () => settleShellFold(layout.value.mineOpen !== visibleLayout.value.mineOpen),
   { flush: 'post' }
 )
 
@@ -362,17 +350,12 @@ async function waitForPanelLeaves(): Promise<void> {
   await Promise.allSettled(batch)
 }
 
-/**
- * Which of the book's three compositions is on screen (#156).
- *
- * Named once, here, and handed to everything that has to know — the shell's own
- * ground and padding, and the rail. Read from `expanded` alone, the mine-only
- * composition was indistinguishable from the collapsed rail, which is what left
- * a void between the navigation column and the mine, took the amber frame with
- * it, grew the interior into padding that was no longer reserved, and put a
- * second app mark in the gap. See lib/shell/composition.ts.
+/*
+ * `composition` stood here until #635: which of the rail, the mine alone and the
+ * pages was on screen (#156). The rail and the mine-alone composition it made
+ * are gone (PO ruling 2026-09-27), so the shell always paints its plate, the
+ * nav and the page; lib/shell/composition.ts went with them.
  */
-const composition = computed(() => shellComposition(layout.value))
 
 // The hover line explains what the CURRENT state does; the accessible name
 // stays stable and aria-pressed carries the state (see the pin button below).
@@ -690,43 +673,12 @@ const currentMine = computed<Mine | undefined>(() =>
  */
 watch(projects, (list) => syncWithMines(openableMineIds(state.mines, list)))
 
-/**
- * The mine column is width the WINDOW has to be given before anything can be
- * drawn into it, so opening or closing a mine reshapes the shell. Serialized in
- * usePanelLayout behind whatever the rail is doing, because the two overlap.
- *
- * The secondary panel is left exactly as it is (#153): the two columns are
- * independent now, so a mine opening beside a closed secondary must not reopen
- * it, and a mine closing while the secondary is closed leaves the rail.
+/*
+ * `toggleSecondary` stood here until #635: the closed rail's arrow, which closed
+ * the page and landed on the rail. The rail is gone (PO ruling 2026-09-27):
+ * closing the Panel is the app mark's `hidePanel`, and the page is always there.
+ * The window's width follows what the Panel shows, in `panelShape` below.
  */
-watch(
-  () => viewState.mineId !== null,
-  (mineOpen) => {
-    // Collapsed into the rail: nothing is drawn, and a mine opened behind it
-    // must not pop the window back out.
-    if (!layout.value.expanded && !layout.value.mineOpen) return
-    void applyLayout({ expanded: layout.value.expanded, mineOpen })
-  }
-)
-
-/**
- * The rail's arrow (#153): it closes the SECONDARY panel and leaves a mine held
- * open beside it standing — the design's own mine mock is exactly that state.
- * With no mine open there is nothing left to show, so it lands on the rail.
- */
-function toggleSecondary(): void {
-  /*
-   * The panel's own sound, both ways (#323), fired HERE rather than off the
-   * layout that comes back: this is the one place the secondary panel's state
-   * is flipped, so it is once per transition however many controls lead to it,
-   * and the press is what the sound is answering. It plays before the layout
-   * has been asked for on purpose — a press whose sound waited for main would
-   * be feedback arriving after the animation it belongs to, and opening from
-   * the rail is the press the collapse gate is exempted for (see volume.ts).
-   */
-  playSfx('panel')
-  void toggleLayout(viewState.mineId !== null)
-}
 
 function hidePanel(): void {
   window.api.hidePanel()
@@ -801,9 +753,10 @@ function selectDwarf(dwarf: Dwarf): void {
   // makes one speak. Before the toggle below, deliberately: clicking the
   // selected dwarf again closes its panel and is still a click on the dwarf.
   playVoice(dwarf.role)
-  // The mine's own History panel still shares the shell's dock, and one
-  // conversation surface at a time is the rule whether or not the two overlap
-  // any more: opening this puts that away.
+  // The dock's window slot holds one thing at a time (screens/shell.md,
+  // Layout): opening a chat replaces the history in it. The chat is still the
+  // MessagePanel's own window until its slice docks it here, so the history
+  // leaves the slot and the slot closes (#635).
   historyOpen.value = false
   if (openDwarfId.value === dwarf.id) {
     void closeMessagePanel()
@@ -837,11 +790,55 @@ const mineHistory = ref<MineHistoryResult | undefined>(undefined)
 /** Which read is the current one, so a slow answer cannot land on a later mine. */
 let historyToken = 0
 
-/** The mine's History action (#192): one conversation surface at a time (#162). */
+/**
+ * The mine's History action (#192): the history opens in the dock's window
+ * slot beside the shell (#635), which holds one thing at a time, so whatever
+ * the MessagePanel's window has open is put away.
+ */
 function openHistory(): void {
   void closeMessagePanel()
   historyOpen.value = true
 }
+
+/**
+ * What the dock's window slot holds, or `null` when it holds nothing and takes
+ * no width (#635, screens/shell.md, Layout: "the window slot none while no
+ * chat, Add panel or history is open in it").
+ *
+ * One thing at a time, keyed so that replacing one with another is a fresh
+ * slot. The history is the one it holds today; the MessagePanel and the Add
+ * panel join it when their own slice docks them, and until then they keep the
+ * window of their own, which opening either of them closes the history for
+ * (`selectDwarf`, `openLaunch`).
+ */
+const dockItem = computed<{ kind: 'history'; key: string } | null>(() =>
+  historyOpen.value && currentMine.value !== undefined
+    ? { kind: 'history', key: `history:${currentMine.value.id}` }
+    : null
+)
+
+/*
+ * The window is exactly as wide as what the Panel shows (#635, PO ruling
+ * 2026-09-27): the nav and the page always, the mine column while a mine is
+ * open, the dock's window slot while it holds something. Both are width the
+ * WINDOW has to be given before anything can be drawn into it, so each change
+ * reshapes it, serialized in usePanelLayout because the two can overlap.
+ * Watched as two booleans so switching mines, or history from one mine to the
+ * next, asks nothing of the window.
+ */
+/**
+ * The slot's own motion (motion.md, "MessagePanel window (Panel)"): in from its far side, out
+ * toward the shell, read against the edge main reports so a left dock mirrors it.
+ */
+function dockMotion(leaving: boolean): ReturnType<typeof dockWindowMotion> {
+  // Leaving with its mine (the mine is already let go of when the leave starts), the window is
+  // removed at once, before the column fades (motion.md, "Mine column leaves").
+  return dockWindowMotion(leaving, layout.value.edge, { withMine: viewState.mineId === null })
+}
+
+watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOpen, dockOpen]) => {
+  void applyLayout({ mineOpen, dockOpen })
+})
 
 function closeHistory(): void {
   historyOpen.value = false
@@ -946,12 +943,11 @@ watch(
 watch(() => viewState.mineId, setAudioScene, { immediate: true })
 
 /*
- * The shell collapsed to its bare rail silences the ambience and the voices
- * and leaves the music playing (#174). Read off the composition rather than
- * off `expanded`, for the reason that flag could not carry the mine-only
- * composition either (see lib/shell/composition.ts).
+ * The watch that told the audio the shell had collapsed to its bare rail (#174)
+ * stood here until #635. There is no rail to collapse to (PO ruling
+ * 2026-09-27); a hidden window still silences everything, through the window's
+ * own visibility.
  */
-watch(composition, (shape) => setAudioCollapsed(shape === 'rail'), { immediate: true })
 
 /**
  * The mine's Add action (#86).
@@ -1028,23 +1024,22 @@ let unlistenShowMine: (() => void) | undefined
  * had open is not incidental: the mine may be the one already open, in which
  * case nothing else would clear a selection made before the notification.
  *
- * The layout is asked for explicitly rather than left to the mine watch, which
- * refuses to reopen the window from the bare rail (see its own comment). That
- * refusal is right for a mine opened behind a collapsed shell and wrong here:
- * this click IS the request to look at the mine.
+ * AMENDED for #635: the layout is left to the shape watch above. It used to be
+ * asked for here because the mine watch refused to reopen the window from the
+ * bare rail; the rail is gone, and the watch now gives the column its width
+ * whatever opened the mine.
  */
-async function showMineFromNotification(mineId: string): Promise<void> {
+function showMineFromNotification(mineId: string): void {
   error.value = null
   if (messagePanel.value.surface !== 'none') void closeMessagePanel()
   historyOpen.value = false
   openMine(mineId)
-  await applyLayout({ expanded: layout.value.expanded, mineOpen: true })
 }
 /* --- end of the #316 block ------------------------------------------------- */
 
 onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
-  // created the window at, which is the rail unless a past run left it open.
+  // created the window at, which is the Panel with nothing beside its page.
   settleShellFold(false)
   void load()
   // The map draws every remembered project, not only the live board (#197),
@@ -1054,7 +1049,7 @@ onMounted(() => {
   // `selectArea` below still re-reads on every Mines visit to stay fresh.
   void loadProjects()
   // Adopts the window's REAL shape: which edge it is docked to decides which
-  // way the rail's arrow points, and the renderer never chose it.
+  // way the columns run, and the renderer never chose it.
   void syncLayout()
   // The button's initial "pinned" guess matches main's default; this adopts
   // the real BrowserWindow state (the user may have unpinned on a past run).
@@ -1082,7 +1077,7 @@ onMounted(() => {
   // raised. Subscribed rather than pulled, like the message panel above: a
   // click can land at any moment and there is no state to poll for.
   void syncNotifications()
-  unlistenShowMine = window.api.onShowMine((mineId) => void showMineFromNotification(mineId))
+  unlistenShowMine = window.api.onShowMine((mineId) => showMineFromNotification(mineId))
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   // Adopts the stored faces, and listens because the OTHER window can change
@@ -1132,27 +1127,57 @@ onBeforeUnmount(() => {
     :reduced-motion="reduced ? 'always' : 'never'"
     :transition="reduced ? REDUCED_MOTION_TRANSITION : undefined"
   >
+    <!--
+      The dock (#635, screens/shell.md, Layout): the dock's window slot and the
+      shell plate side by side, packed against the screen edge the Panel docks
+      to — `row` puts the plate against a right edge and `row-reverse` against a
+      left one, so the slot always stands on the plate's outer side. The window
+      is exactly as wide as the two, and main sizes it (panelBounds.ts).
+
+      The closed rail that stood on the plate's outer side is gone (PO ruling
+      2026-09-27): closing the Panel hides its window, as the app mark does.
+    -->
     <div
-      ref="shellEl"
-      class="shell"
-      :class="[`edge-${layout.edge}`, `is-${composition}`, { 'm-mat': composition !== 'rail' }]"
+      class="panel-dock"
+      :class="`edge-${layout.edge}`"
       :data-dock="layout.edge"
-      :style="{ '--mine-column-width': mineColumnWidth, '--shell-h': shellHeight }"
       @pointerdown.capture="raisePanel"
     >
       <!--
-      The rail and the collapse arrow are one control in one component, because
-      they are one surface in the design: the same #f6b644, with the arrow
-      turned round.
-    -->
-      <EdgeRail
-        ref="railEl"
-        :edge="layout.edge"
-        :composition="composition"
-        @toggle="toggleSecondary"
-      />
+        The dock's window slot, first in the DOM because the design's tab order
+        starts there (screens/shell.md, Left to right: the window, then the nav,
+        the page and the open mine). It holds one thing at a time and takes no
+        width while it holds nothing. Today that is the mine's history; the
+        MessagePanel and the Add panel keep their own window until their slice
+        docks them here, and opening either closes the history (`selectDwarf`,
+        `openLaunch`), so the two never stand at once. Drawn only once main has
+        given the window the slot's width (`visibleLayout`), as the mine column
+        is, and retained while it leaves so the shrink waits for it.
+      -->
+      <PanelTransition :motion="dockMotion" :engine="props.engine" @leave="trackPanelLeave">
+        <div v-if="dockItem && visibleLayout.dockOpen" :key="dockItem.key" class="dock-window">
+          <HistoryPanel
+            v-if="dockItem.kind === 'history' && currentMine"
+            :key="currentMine.id"
+            :mine="currentMine"
+            :history="mineHistory"
+            :path-refusal="historyPathRefusal"
+            :failed="dwarfDelivery.failed"
+            @close="closeHistory"
+            @open-path="openHistoryPath"
+            @open-link="openHistoryLink"
+          />
+        </div>
+      </PanelTransition>
 
-      <!--
+      <div
+        ref="shellEl"
+        class="shell m-mat"
+        :class="`edge-${layout.edge}`"
+        :data-dock="layout.edge"
+        :style="{ '--mine-column-width': mineColumnWidth, '--shell-h': shellHeight }"
+      >
+        <!--
         The nav, at the screen edge (#635), and first of the columns in the DOM (PANEL-QUESTIONS 2,
         design lead ruling 2026-09-27): tab order is the DOM order, and it is the nav, then the
         page, then the open mine on both docks (accessibility.md, Keyboard). CSS `order` below
@@ -1167,15 +1192,12 @@ onBeforeUnmount(() => {
         and Valle are later slices, and the docs say nothing of a lever whose
         destination is not built yet, so the nav's own "no dead buttons" rule
         is the fallback until that is ruled on.
+
+        AMENDED for #635: the nav and the page are always there while the
+        window shows ("the page and the nav are always there"), so neither is
+        mounted or retained by the fold any more; only the mine column is.
       -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
         <PanelNav
-          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
           ref="navEl"
           :page="page"
           :guild="featureFlags.guildAreasEnabled"
@@ -1187,23 +1209,12 @@ onBeforeUnmount(() => {
           @mark="hidePanel"
           @music="toggleMusicAndSay"
         />
-      </PanelTransition>
 
-      <!--
-      The three columns of the book hand their motion to the ground they stand
-      on (#388): `hold` is the shell's own fold, and each column is only
-      RETAINED here until it ends — unmounting one before main has shrunk the
-      window would repack the row inside a rectangle that has not changed yet.
-      The area switch inside the page and the history dock below still animate
-      themselves: both already move within bounds nothing is resizing.
+        <!--
+      The page. The area switch inside it animates itself: it moves within
+      bounds nothing is resizing.
     -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <div v-if="visibleLayout.expanded" ref="secondaryEl" class="shell-secondary">
+        <div ref="secondaryEl" class="shell-secondary">
           <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
             <!--
           The Map page (#635) in the page column, where the Mines page stands: the redesign
@@ -1329,131 +1340,172 @@ onBeforeUnmount(() => {
           -->
           <ToastHost />
         </div>
-      </PanelTransition>
 
-      <!--
+        <!--
         One mine beside AT MOST one secondary panel: the concurrent model the
         design's exports prove, and no more than that — the source warns in as
         many words against assuming arbitrary multi-panel stacking. The column
         follows the view's own open mine, as it always has; what main's
-        `mineOpen` decides is whether this whole block is drawn, so the app mark
-        can collapse the shell without the view forgetting its mine (#153).
+        `mineOpen` decides is whether this whole block is drawn, because it is
+        width the window has to be given first (#153). The column hands its
+        motion to the ground it stands on (#388): `hold` is the shell's own
+        fold, and the column is only RETAINED here until it ends — unmounting it
+        before main has shrunk the window would repack the row inside a
+        rectangle that has not changed yet.
       -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
-          <!--
+        <PanelTransition
+          :hold="holdColumn"
+          :hold-enter="enterColumn"
+          :engine="props.engine"
+          @leave="trackPanelLeave"
+        >
+          <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
+            <!--
             The redesigned mine column (#635), on the plate itself as the design
             draws it. Keyed by the mine, so switching from one to another is a
             fresh column rather than the same one handed different dwarfs (#153):
             a dwarf already there when a column opens is drawn settled in its
             state, and only a later arrival fades in.
           -->
-          <MineColumn
-            :key="currentMine.id"
-            :mine="currentMine"
-            :arrived="state.arrived"
-            :send-states="dwarfDelivery.send"
-            :kick-states="dwarfDelivery.kick"
-            :selected-id="openDwarfId"
-            :ambience-muted="ambienceMuted"
-            @close="leaveMine"
-            @select="selectDwarf"
-            @add="openLaunch(currentMine.id)"
-            @history="openHistory"
-            @toggle-ambience-mute="toggleAmbienceMute"
-            @crew-sound="playCrew"
-          />
-        </div>
-      </PanelTransition>
-
-      <!--
-      The mine's History panel, and it is what is LEFT of the dock (#162).
-
-      The MessagePanel and the Add Panel used to share this slot; they are a
-      window of their own now, beside the shell, which is how the design draws
-      all three. This one stayed because #162 asked for those two — the same
-      mock does put the history panel out here as well, so moving it is the
-      obvious follow-up rather than something this slot is right about.
-
-      Opening it still closes the panel window and being selected still closes
-      it, even though the two no longer overlap: one conversation surface at a
-      time is a rule about attention, not about geometry.
-    -->
-      <PanelTransition axis="vertical" :engine="props.engine" @leave="trackPanelLeave">
-        <!--
-        Keyed by mine, so opening it on another mine is a fresh panel and a fresh
-        default tab rather than a selection carried over from another folder.
-      -->
-        <div
-          v-if="historyOpen && currentMine"
-          :key="`history:${currentMine.id}`"
-          class="message-dock"
-        >
-          <HistoryPanel
-            :key="currentMine.id"
-            :mine="currentMine"
-            :history="mineHistory"
-            :path-refusal="historyPathRefusal"
-            :failed="dwarfDelivery.failed"
-            @close="closeHistory"
-            @open-path="openHistoryPath"
-            @open-link="openHistoryLink"
-          />
-        </div>
-      </PanelTransition>
+            <MineColumn
+              :key="currentMine.id"
+              :mine="currentMine"
+              :arrived="state.arrived"
+              :send-states="dwarfDelivery.send"
+              :kick-states="dwarfDelivery.kick"
+              :selected-id="openDwarfId"
+              :ambience-muted="ambienceMuted"
+              @close="leaveMine"
+              @select="selectDwarf"
+              @add="openLaunch(currentMine.id)"
+              @history="openHistory"
+              @toggle-ambience-mute="toggleAmbienceMute"
+              @crew-sound="playCrew"
+            />
+          </div>
+        </PanelTransition>
+      </div>
     </div>
   </MotionConfig>
 </template>
 
 <style scoped>
 /*
- * The shell is the whole window: a docked strip whose columns run from its free
- * edge to the screen edge it hangs on. A left-docked panel is the same DOM in
- * the other direction, which is what `row-reverse` buys — one order to reason
- * about, mirrored once.
+ * The dock (#635, screens/shell.md, Layout and Parts): the dock's window slot
+ * and the shell plate in one row, packed against the screen edge the Panel
+ * docks to. A left-docked Panel is the same DOM in the other direction, which
+ * is what `row-reverse` buys — one order to reason about, mirrored once — and
+ * `flex-end` is the right of a `row` and the left of a `row-reverse`, the
+ * docked side each time.
  *
- * Its ground is also the surface the whole panel's motion is drawn on (#388):
- * `clip-path` is set on this element, from useShellFold, and folds it toward
- * the docked edge so main only ever resizes the window into pixels that are
- * already transparent. Nothing here declares it — a clip left in the
- * stylesheet would be a second opinion about how wide the shell is — but every
- * rule below is inside it, the shadow and the radius included.
+ * The window is exactly as wide as what the row shows (PO ruling 2026-09-27);
+ * main reserves every number below and nothing else (panelBounds.ts, which
+ * pins these custom properties to its own constants). Packed against the
+ * docked edge, a frame in which the window and the row briefly disagree leaves
+ * its slack on the FREE side, which is the band main is adding or taking and
+ * is transparent either way (#488). What still does not fit on a screen
+ * narrower than the dock runs off the far side, away from the docked edge
+ * (decision log, Narrow screen).
  */
-.shell {
-  position: relative;
+.panel-dock {
+  --shell-edge: 2px;
+  --dock-inset: 12px;
+  --dock-gap: 12px;
+  --dock-width: 440px;
+  --dock-free-room: 6px;
   display: flex;
+  justify-content: flex-end;
   height: 100vh;
   overflow: hidden;
   color: var(--color-cream);
   font-size: var(--text-meta);
+}
+.panel-dock.edge-left {
+  flex-direction: row-reverse;
+}
+/*
+ * The dock's window slot (`.dm-window`): as tall as the shell, as wide as what
+ * it holds, and never shrunk. The dock's 12px gap is measured from the plate's
+ * box, which already stands 2px off the slot on its own margin, so the slot
+ * takes the rest; on its outer side it keeps the room its content's raised
+ * material draws beyond its box (`.m-mat` edge, `.m-raised` shadow), which main
+ * reserves as DOCK_FREE_ROOM.
+ */
+.dock-window {
+  display: flex;
+  flex: none;
+  width: var(--dock-width);
+  height: calc(100vh - 2 * var(--dock-inset));
+  min-height: 0;
+  margin: var(--dock-inset) calc(var(--dock-gap) - var(--shell-edge)) var(--dock-inset)
+    var(--dock-free-room);
+}
+.panel-dock.edge-left .dock-window {
+  margin-right: var(--dock-free-room);
+  margin-left: calc(var(--dock-gap) - var(--shell-edge));
+}
+/* The history fills the slot (`.dm-hist`: width 440px, height 100%). */
+.dock-window > .dm-hist {
+  height: 100%;
+}
+/*
+ * The redesigned Panel's plate (#635, screens/shell.md, Layout and Parts): one
+ * rock plate with a brass-lo edge, 6px padding and 6px gaps, inside the dock's
+ * 12px inset from the top and the bottom of the work area, held 2px off the
+ * screen edge so that edge shows. The window still spans the work area; the
+ * inset is drawn here, so no platform's window geometry changes for it.
+ *
+ * The 2px on the FREE side is not in the design's margin: the plate's material
+ * draws its edge 2px outside its box on every side (`.m-mat`), and main
+ * reserves that room in the window so the free edge is painted rather than cut
+ * off by it (SHELL_EDGE_MARGIN in main/shell/panelBounds.ts). With the dock
+ * slot open that room is part of the dock's 12px gap.
+ *
+ * Its ground is also the surface the mine column's motion is drawn on (#388):
+ * `clip-path` is set on this element, from useShellFold, and folds it toward
+ * the docked edge so main only ever resizes the window into pixels that are
+ * already transparent. Nothing here declares it — a clip left in the
+ * stylesheet would be a second opinion about how wide the shell is — but every
+ * rule below is inside it.
+ *
+ * The padding is load-bearing rather than decoration: main reserves it in the
+ * window, and the mine column's width is derived from the height it leaves.
+ *
+ * It is as wide as its columns (`flex: 0 1 auto`) rather than as the window,
+ * so the dock slot beside it never reads to the fold as the plate growing, and
+ * on a screen narrower than the dock its page column is the part that gives
+ * way (the nav and the mine column never shrink).
+ */
+.shell {
+  --shell-pad: 6px;
+  --shell-gap: 6px;
+  --page-width: 440px;
+  --mat-fill: var(--rock);
+  --mat-hi: var(--rock-hi);
+  --mat-lo: var(--rock-lo);
+  --mat-edge: var(--brass-lo);
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  /* May shrink below its columns on a screen narrower than the dock, so the page gives way. */
+  min-width: 0;
+  justify-content: flex-end;
+  height: calc(100vh - 2 * var(--dock-inset));
+  margin: var(--dock-inset) var(--shell-edge);
+  gap: var(--shell-gap);
+  padding: var(--shell-pad);
+  overflow: hidden;
 }
 .shell.edge-left {
   --panel-motion-x: -12px;
   flex-direction: row-reverse;
 }
 /*
- * The closed window is the design's 20px rail wherever the platform will make
- * one that narrow, and its own floor where it will not — Windows will not, and
- * since #465 it is the only one that will not (`minWindowWidth` in
- * main/platform/windowMetrics.ts, #153). The rail itself is 20px either way,
- * held against the DOCKED side so both edges look the same: `flex-end` is the
- * right of a `row` and the left of a `row-reverse`, which is exactly the docked
- * side each time.
- */
-.shell.is-rail {
-  justify-content: flex-end;
-}
-/*
  * Where each column stands, which is no longer where it is in the DOM (PANEL-QUESTIONS 2, design
  * lead ruling 2026-09-27). The nav comes first of the columns in the DOM so Tab walks the nav, then
  * the page, then the open mine on both docks (accessibility.md, Keyboard); `order` keeps it at the
- * screen edge, so a `row` still runs rail, page, mine, nav from the free edge and `row-reverse`
- * mirrors it. The rail keeps the default order and its place ahead of them all.
+ * screen edge, so a `row` still runs page, mine, nav from the free edge and `row-reverse`
+ * mirrors it.
  */
 .shell > .shell-secondary {
   order: 1;
@@ -1463,118 +1515,6 @@ onBeforeUnmount(() => {
 }
 .shell > .dm-nav {
   order: 3;
-}
-/*
- * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,
- * the 8px padding, the radius and the shadow belong to any composition that has
- * something in it, not only to the one with a secondary panel.
- *
- * The padding is load-bearing rather than decoration. main reserves it in the
- * window (SHELL_FRAME_WIDTH in main/shell/panelBounds.ts) and the mine column's
- * width is derived from the height it leaves, so a composition that skipped it
- * left the window 8px wider than the columns it drew — the void the acceptance
- * run photographed — and grew the painting into the difference.
- */
-/*
- * And both of them pack against the DOCKED edge, which is the whole of #488 and
- * of #472 before it, whose own class for the held frames this replaces.
- *
- * `.shell` is `overflow: hidden` and `.shell-mine` is `flex: none` standing at
- * the docked end of the row, so a row that disagrees with the box around it
- * overflows at whichever end the packing leaves loose — and the two disagree
- * every time the panel opens or closes, in both directions. main's `setBounds`
- * is synchronous inside the IPC handler, so the native window is already its
- * new width when the promise resolves, while the renderer's own box catches up
- * only when the browser delivers `resize`. Packed from the free edge those
- * frames are painted with the mine clipped and then snapped back: the blink.
- * Packed against the docked edge they are painted with the FREE side loose,
- * which is the band main is adding or taking and is transparent either way —
- * #388's rule, kept by the row instead of by a class that watches for it.
- *
- * At rest this moves nothing: the row exactly fills the box, so there is no
- * slack for either packing to place. `.shell.is-rail` has said the same thing
- * for the same reason since #153, and `flex-end` is the right of a `row` and
- * the left of a `row-reverse` — the docked side on both edges.
- *
- * The rail's carry is unaffected: `railStand` and `foldedRailOffset` measure
- * the rail against the shell's box with `getBoundingClientRect`, so they read
- * where the row actually put it rather than assuming which rule put it there.
- */
-/*
- * The redesigned Panel (#635, screens/shell.md, Layout and Parts): one rock
- * plate with a brass-lo edge, 6px padding and 6px gaps, inside the dock's 12px
- * inset from the top and the bottom of the work area, held 2px off the screen
- * edge so that edge shows. The window still spans the work area; the inset is
- * drawn here, so no platform's window geometry changes for it.
- *
- * The 2px on the FREE side is not in the design's margin: the plate's material
- * draws its edge 2px outside its box on every side (`.m-mat`), and main
- * reserves that room in the window so the free edge is painted rather than cut
- * off by it (SHELL_EDGE_MARGIN in main/shell/panelBounds.ts). The numbers are
- * the custom properties below, which panelBounds.test.ts pins to main's own.
- *
- * Mirrored for a left dock by `row-reverse` above, as the prototype mirrors
- * its grid: right-docked the columns run page, mine, nav, screen edge, and
- * left-docked screen edge, nav, mine, page. The rail (#388) stays the free-side
- * column of both until the Veta slice retires it.
- */
-.shell.is-mine,
-.shell.is-pages {
-  --shell-pad: 6px;
-  --shell-gap: 6px;
-  --shell-edge: 2px;
-  --dock-inset: 12px;
-  --page-width: 440px;
-  --mat-fill: var(--rock);
-  --mat-hi: var(--rock-hi);
-  --mat-lo: var(--rock-lo);
-  --mat-edge: var(--brass-lo);
-  justify-content: flex-end;
-  height: calc(100vh - 2 * var(--dock-inset));
-  margin: var(--dock-inset) var(--shell-edge);
-  gap: var(--shell-gap);
-  padding: var(--shell-pad);
-}
-/*
- * Where the mine's History panel sits — all that is left of this dock (#162).
- *
- * It used to hold three panels and the honest reconciliation of the design's
- * 990px with a window that could not grow for it: the mock draws the panel
- * BESIDE the shell, this app was one docked window, and only its widest
- * composition had 990 design pixels to give. That reconciliation is gone with
- * the compromise it belonged to — the MessagePanel and the Add Panel have a
- * window of their own now (see main/shell/panelBounds.ts) and take the
- * design's width beside the shell, not inside it.
- *
- * The history panel is still `min(990px, 100%)` of this strip, which is the
- * same compromise for the one surface #162 did not move. Held against the FREE
- * edge — the side away from the screen edge the window is docked to — which is
- * the relation the mock draws: panel on one side, mine on the other.
- * `pointer-events` is handed back only to the panel itself, so the strip beside
- * it never swallows a click meant for the mine underneath.
- */
-.message-dock {
-  position: absolute;
-  z-index: 60;
-  right: var(--space-nav-gap);
-  bottom: var(--space-nav-gap);
-  left: var(--space-nav-gap);
-  display: flex;
-  justify-content: flex-start;
-  pointer-events: none;
-}
-.shell.edge-left .message-dock {
-  justify-content: flex-end;
-}
-.message-dock > * {
-  pointer-events: auto;
-}
-/*
- * The redesigned history (#635) fills the height it is given, so it is given today's: the dock slot
- * beside the shell that the design opens it in is the window slice's to build.
- */
-.message-dock > .dm-hist {
-  height: min(var(--size-history-panel-max-height), calc(100vh - 2 * var(--space-nav-gap)));
 }
 /*
  * The page column (#635): 440px, and on a screen narrower than the dock it is
@@ -1588,6 +1528,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 0 1 var(--page-width);
   flex-direction: column;
+  /*
+   * A width of its own as well as the basis (#635, live check): the plate is sized to its
+   * columns, and a flex basis is not counted when a container is sized to its content. The
+   * page's own content is absolute, so without this the plate drew the column 0px wide.
+   */
+  width: var(--page-width);
   min-width: 0;
   height: 100%;
   min-height: 0;

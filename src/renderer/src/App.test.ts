@@ -16,6 +16,7 @@ import MineColumn from './components/scene/MineColumn.vue'
 import HistoryPanel from './components/history/HistoryPanel.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
+import { dockWindowMotion } from './lib/shell/dockMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
@@ -41,8 +42,12 @@ const DEFAULT_SHORTCUT = {
  */
 const DEFAULT_BUILD = { version: '1.2.3', packaged: true }
 
-/** The docked shell as main reports it once expanded (#90). */
-const OPEN_LAYOUT = { edge: 'right', expanded: true, mineOpen: false }
+/**
+ * The docked shell as main reports it (#90). AMENDED for #635 (was: `expanded: true`): the rail
+ * and the `expanded` it toggled are gone (PO ruling 2026-09-27), so this is the Panel with
+ * nothing beside its page, which is also what main creates the window as.
+ */
+const OPEN_LAYOUT = { edge: 'right', mineOpen: false, dockOpen: false }
 
 /*
  * Selectors for the redesigned shell (#90). The old titlebar and its four
@@ -95,7 +100,7 @@ const GUILD_ON = { getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnable
  * surface, the shortcut surface for the settings panel, the build surface for
  * the version, and — since #162 — the message-panel surface it asks main to
  * open and the delivery report it draws its markers from. Every member must
- * exist even in tests that only look at the rail.
+ * exist even in tests that only look at the shell.
  *
  * The members the panel window took with it stay in this stub on purpose: they
  * are still on the one bridge both windows read, and a stub that answered only
@@ -163,12 +168,12 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     setMessagePanel: vi.fn().mockImplementation((state: unknown) => Promise.resolve(state)),
     onMessagePanel: vi.fn().mockReturnValue(() => undefined),
     onDwarfDeliveryReport: vi.fn().mockReturnValue(() => undefined),
-    // The docked shell (#90). Answers "closed" by default, which is what main
-    // actually creates the window as; mountOpenApp expands it.
-    getPanelLayout: vi.fn().mockResolvedValue({ edge: 'right', expanded: false, mineOpen: false }),
+    // The docked shell (#90). Answers what main actually creates the window as: AMENDED for #635
+    // (was: the closed rail, which mountOpenApp expanded), the Panel with nothing beside its page.
+    getPanelLayout: vi.fn().mockResolvedValue({ edge: 'right', mineOpen: false, dockOpen: false }),
     setPanelLayout: vi
       .fn()
-      .mockImplementation((request: { expanded: boolean; mineOpen: boolean }) =>
+      .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
         Promise.resolve({ edge: 'right', ...request })
       ),
     getToggleShortcut: vi.fn().mockResolvedValue(DEFAULT_SHORTCUT),
@@ -351,9 +356,9 @@ async function mountApp(overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * Mount and open the panel, which is what almost every test below needs: the
- * app now STARTS as a 20px rail with nothing else drawn, so a test that mounts
- * and immediately looks for a screen finds an empty shell.
+ * Mount and open the panel, which is what almost every test below needs. AMENDED for #635: the
+ * app no longer starts as a 20px rail (PO ruling 2026-09-27), so this is `mountApp` with the
+ * layout named; it stays so the cases below keep saying which window they mean.
  */
 async function mountOpenApp(overrides: Record<string, unknown> = {}) {
   const mounted = await mountApp({
@@ -388,7 +393,9 @@ afterEach(() => {
 })
 
 describe('App panel motion (#164)', () => {
-  const animations: { element: Element; finish: () => void }[] = []
+  // AMENDED for #635: each run's keyframes are recorded too, for the dock slot's own motion.
+  const animations: { element: Element; keyframes: DOMKeyframesDefinition; finish: () => void }[] =
+    []
   const wrappers: VueWrapper[] = []
   /**
    * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
@@ -398,12 +405,12 @@ describe('App panel motion (#164)', () => {
    * still gets a bare stub below, because `still()` reads its mere PRESENCE
    * as the app's proxy for "a real Chromium window" and never calls it.
    */
-  const engine: MotionAnimate = (element, _keyframes: DOMKeyframesDefinition) => {
+  const engine: MotionAnimate = (element, keyframes: DOMKeyframesDefinition) => {
     let finish!: () => void
     const finished = new Promise<void>((resolve) => {
       finish = resolve
     })
-    animations.push({ element, finish })
+    animations.push({ element, keyframes, finish })
     return {
       cancel: () => undefined,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
@@ -437,29 +444,14 @@ describe('App panel motion (#164)', () => {
   const animated = (): string[] => animations.map(({ element }) => element.classList[0] ?? '')
 
   /*
-   * AMENDED for #388 (was: 'retains native width until BOTH the page and
-   * navigation have finished leaving', asserting one animation per leaving
-   * column). The columns no longer animate: the amber ground they stand on
-   * folds, once, so main's resize only ever takes away pixels that are already
-   * transparent. The subject is unchanged and is the whole point of the case —
-   * native width is retained until the motion has finished, and BOTH columns
-   * are still standing while it runs. The fold's own geometry is asserted in
-   * useShellFold.test.ts, which can give the shell a box jsdom never lays out.
+   * REMOVED for #635 (PO ruling 2026-09-27: the rail is gone), stated here rather than passing
+   * unseen: "retains native width until the shell has finished folding over page and
+   * navigation". The page and the nav folded away only when the rail's arrow closed them; they
+   * are always there now. Native width retained until a leaving column's fold has finished is
+   * still asserted for the one column that leaves, the mine's, in "keeps the mine instance
+   * through page and dock swaps…" below, and for the dock slot in "retains the dock slot's
+   * width until the history has finished leaving", appended to this block.
    */
-  it('retains native width until the shell has finished folding over page and navigation', async () => {
-    const { wrapper, api } = await animatedApp()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(animated()).toEqual(['shell'])
-    expect(wrapper.find('.shell-secondary').exists()).toBe(true)
-    expect(wrapper.find('.dm-nav').exists()).toBe(true)
-    expect(api.setPanelLayout).not.toHaveBeenCalled()
-    animations[0]!.finish()
-    await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
-    expect(wrapper.find('.dm-nav').exists()).toBe(false)
-  })
 
   it('crossfades same-size secondary navigation without another native resize', async () => {
     const { wrapper, api } = await animatedApp()
@@ -487,11 +479,8 @@ describe('App panel motion (#164)', () => {
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
     await finishAnimations()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    await finishAnimations()
-    // The design's own mine mock: a mine alone on the amber ground.
-    expect(wrapper.find('.shell').classes()).toContain('is-mine')
+    // AMENDED for #635 (was: the rail's arrow closing the page first, leaving the mine alone on
+    // the ground): the page never closes now, so the mine column stands beside it.
     expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     api.setPanelLayout.mockClear()
     // The window is occluded from here on, so not one of the leaves this
@@ -504,9 +493,10 @@ describe('App panel motion (#164)', () => {
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
     await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: false, dockOpen: false })
     expect(wrapper.find('.dm-minecol').exists()).toBe(false)
-    expect(wrapper.find('.shell').classes()).toContain('is-rail')
+    // AMENDED for #635 (was: the shell classified as the bare rail): what stands is the Panel.
+    expect(wrapper.find('.shell-secondary').exists()).toBe(true)
   })
 
   it('keeps the mine instance through page and dock swaps, then waits for mine AND message leaves', async () => {
@@ -521,7 +511,7 @@ describe('App panel motion (#164)', () => {
     }
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
     /*
      * AMENDED for #388 (was: `['shell-mine']`). An arriving column has no
      * motion of its own any more — the shell unfolds around it, from the
@@ -542,17 +532,20 @@ describe('App panel motion (#164)', () => {
      * nothing here at all and History is the only one left to enter and leave.
      * What the case is about is unchanged: the mine instance survives every
      * swap, and the native resize waits for every leave.
+     *
+     * AMENDED for #635: the history's slot is `.dock-window` beside the plate
+     * (was: `.message-dock`, a block floating over the shell).
      */
     scene.$emit('add')
     await flushPromises()
     expect(animations).toHaveLength(0)
     scene.$emit('history')
     await flushPromises()
-    expect(animated()).toEqual(['message-dock'])
+    expect(animated()).toEqual(['dock-window'])
     await finishAnimations()
     scene.$emit('select', dwarf)
     await flushPromises()
-    expect(animated()).toEqual(['message-dock'])
+    expect(animated()).toEqual(['dock-window'])
     await finishAnimations()
     expect(wrapper.findComponent(MineColumn).vm.$).toBe(scene.$)
     api.setPanelLayout.mockClear()
@@ -565,7 +558,7 @@ describe('App panel motion (#164)', () => {
     expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     await finishAnimations()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: false })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: false, dockOpen: false })
     expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 
@@ -576,27 +569,39 @@ describe('App panel motion (#164)', () => {
    * ASKED to resize. For that round trip the shell paints the fold's strip over
    * a row that has already moved out from under it.
    */
+  /*
+   * AMENDED for #635 (was: the page leaving under the rail's arrow). The subject is unchanged —
+   * the leaving column stands until main has applied the bounds — and the column that leaves is
+   * the mine's now, the page never closing: a mine opens at once, and its close is held.
+   */
   it('keeps the leaving column standing until main has applied the new bounds', async () => {
     let apply!: (layout: unknown) => void
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper, api } = await animatedApp({
-      setPanelLayout: vi.fn().mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            apply = resolve
-          })
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 }),
+      setPanelLayout: vi.fn().mockImplementation((request: { mineOpen: boolean }) =>
+        request.mineOpen
+          ? Promise.resolve({ edge: 'right', ...request })
+          : new Promise((resolve) => {
+              apply = resolve
+            })
       )
     })
-    await wrapper.find('.edge-rail').trigger('click')
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('close')
     await flushPromises()
     animations[0]!.finish()
     await flushPromises()
     // The fold has ended and the shrink has gone out, which is the whole of
     // what the fold releases.
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.shell-secondary').exists()).toBe(true)
-    apply({ edge: 'right', expanded: false, mineOpen: false })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: false, dockOpen: false })
+    expect(wrapper.find('.shell-mine').exists()).toBe(true)
+    apply({ edge: 'right', mineOpen: false, dockOpen: false })
     await flushPromises()
-    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
+    expect(wrapper.find('.shell-mine').exists()).toBe(false)
   })
 
   /*
@@ -628,8 +633,91 @@ describe('App panel motion (#164)', () => {
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
     expect(clips).toEqual([''])
+  })
+
+  /*
+   * APPENDED for #635. The dock slot is width main gives the window, so closing what it holds
+   * shrinks the window — and the shrink waits for the slot's own leave, as it waits for a
+   * column's, so the window never takes away pixels still painted.
+   */
+  it('retains the dock slot’s width until the history has finished leaving', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper, api } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    api.setPanelLayout.mockClear()
+    wrapper.findComponent(HistoryPanel).vm.$emit('close')
+    await flushPromises()
+    expect(animated()).toEqual(['dock-window'])
+    expect(api.setPanelLayout).not.toHaveBeenCalled()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ mineOpen: true, dockOpen: false })
+  })
+
+  /*
+   * APPENDED for #635 (motion.md, "MessagePanel window (Panel)"): the slot opens from 12px on its
+   * far side, away from the shell, and closes 8px toward it, mirrored for a left dock.
+   */
+  for (const edge of ['right', 'left'] as const) {
+    it(`opens the dock slot from its far side and closes it toward the shell, docked ${edge}`, async () => {
+      const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+      const { wrapper } = await animatedApp({
+        getPanelLayout: vi.fn().mockResolvedValue({ edge, mineOpen: false, dockOpen: false }),
+        setPanelLayout: vi
+          .fn()
+          .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
+            Promise.resolve({ edge, ...request })
+          ),
+        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      })
+      wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+      await flushPromises()
+      for (const animation of animations.splice(0)) animation.finish()
+      await flushPromises()
+      wrapper.findComponent(MineColumn).vm.$emit('history')
+      await flushPromises()
+      expect(animations.map((run) => run.keyframes)).toEqual([
+        dockWindowMotion(false, edge).keyframes
+      ])
+      for (const animation of animations.splice(0)) animation.finish()
+      await flushPromises()
+      wrapper.findComponent(HistoryPanel).vm.$emit('close')
+      await flushPromises()
+      expect(animations.map((run) => run.keyframes)).toEqual([
+        dockWindowMotion(true, edge).keyframes
+      ])
+    })
+  }
+
+  // APPENDED for #635 (motion.md, "Mine column leaves"): an open window closes at once.
+  it('removes the docked history at once when its mine closes, before the column folds', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('close')
+    await flushPromises()
+    const dock = animations.find((run) => run.element.classList.contains('dock-window'))
+    expect(dock?.keyframes).toEqual(dockWindowMotion(true, 'right', { withMine: true }).keyframes)
   })
 })
 
@@ -930,7 +1018,8 @@ describe('App position settings', () => {
 
   it('renders the edge main reported as selected', async () => {
     const { wrapper } = await openSettings({
-      getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+      // AMENDED for #635: `dockOpen` where the layout carried `expanded`.
+      getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', mineOpen: false, dockOpen: false })
     })
     // AMENDED (#635): radio chips, aria-checked (was aria-pressed).
     expect(wrapper.find('.position-left').attributes('aria-checked')).toBe('true')
@@ -940,13 +1029,14 @@ describe('App position settings', () => {
   it('asks main to redock when the other side is chosen', async () => {
     const setPanelLayout = vi
       .fn()
-      .mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+      .mockResolvedValue({ edge: 'left', mineOpen: false, dockOpen: false })
     const { wrapper } = await openSettings({ setPanelLayout })
 
     await wrapper.find('.position-left').trigger('click')
     await flushPromises()
 
-    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false, edge: 'left' })
+    // AMENDED for #635 (was: with `expanded: true`, which left the layout with the rail).
+    expect(setPanelLayout).toHaveBeenCalledWith({ mineOpen: false, dockOpen: false, edge: 'left' })
     // AMENDED (#635): aria-checked on the radio chip.
     expect(wrapper.find('.position-left').attributes('aria-checked')).toBe('true')
   })
@@ -956,7 +1046,7 @@ describe('App position settings', () => {
     // that could not honor the move must reach the renderer as a fact.
     const setPanelLayout = vi
       .fn()
-      .mockResolvedValue({ edge: 'right', expanded: true, mineOpen: false })
+      .mockResolvedValue({ edge: 'right', mineOpen: false, dockOpen: false })
     const { wrapper } = await openSettings({ setPanelLayout })
 
     await wrapper.find('.position-left').trigger('click')
@@ -1418,54 +1508,32 @@ describe('App mines browse', () => {
 })
 
 /*
- * The docked shell itself (#90): a 20px rail that opens into the panel, and
- * closes back into it. The window is main's, so every one of these renders the
+ * The docked shell itself (#90). The window is main's, so every one of these renders the
  * layout main answered with rather than the one the click asked for.
+ *
+ * AMENDED for #635 (PO ruling 2026-09-27): it no longer opens as a 20px rail. REMOVED with the
+ * rail, stated here rather than passing unseen, with where each guarantee went:
+ * - "starts as the rail, with no screen drawn behind it": the window opens as the Panel —
+ *   "opens on the Panel itself, with no rail beside it" in 'App dock (#635)' below.
+ * - "asks main to open, and draws the map it answered with" and "stays closed when main refuses
+ *   to open it": there is no opening press left. Drawing only what main granted is held for the
+ *   width that still changes, the dock slot, in "draws the slot only once main has given the
+ *   window its width" below, and for the mine column in usePanelLayout.test.ts.
+ * - "collapses back to the rail when there is no mine to keep": closing the Panel hides its
+ *   window, "hides the whole window from the app mark, mine and all" in 'App concurrent mine'.
+ * EdgeRail.test.ts went whole with EdgeRail.vue (its twelve cases held the rail's own button,
+ * arrow, mark and face); lib/shell/composition.test.ts went whole with composition.ts (five
+ * cases naming the rail, mine-only and pages compositions, of which only the last is left, and
+ * it needs no name: the shell always paints its plate).
  */
 describe('App shell', () => {
-  it('starts as the rail, with no screen drawn behind it', async () => {
-    const { wrapper } = await mountApp()
-    expect(wrapper.find('.edge-rail').exists()).toBe(true)
-    expect(wrapper.find('.dm-nav').exists()).toBe(false)
-    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
-  })
-
   it('adopts the layout main reports rather than assuming one', async () => {
     const { wrapper, api } = await mountApp({
-      getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+      getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', mineOpen: false, dockOpen: false })
     })
     expect(api.getPanelLayout).toHaveBeenCalledOnce()
     expect(wrapper.find('.shell').classes()).toContain('edge-left')
     expect(wrapper.find('.dm-mappage').exists()).toBe(true)
-  })
-
-  it('asks main to open, and draws the map it answered with', async () => {
-    const { wrapper, api } = await mountApp()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false })
-    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
-    expect(wrapper.find('.dm-nav').exists()).toBe(true)
-  })
-
-  it('stays closed when main refuses to open it', async () => {
-    // The window is derived from the display; the rail must never paint itself
-    // open against a window that did not move.
-    const { wrapper } = await mountApp({
-      setPanelLayout: vi.fn().mockResolvedValue({ edge: 'right', expanded: false, mineOpen: false })
-    })
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
-    expect(wrapper.find('.edge-rail').attributes('aria-expanded')).toBe('false')
-  })
-
-  it('collapses back to the rail when there is no mine to keep', async () => {
-    const { wrapper, api } = await mountOpenApp()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.dm-nav').exists()).toBe(false)
   })
 
   it('shows the Lab and the Market as the design specifies them: unavailable', async () => {
@@ -1538,7 +1606,7 @@ describe('App concurrent mine', () => {
 
   it('asks main for the mine column, because it is width the window has to have', async () => {
     const { api } = await openMine()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
   })
 
   it('switches the secondary panel without closing the mine', async () => {
@@ -1551,63 +1619,34 @@ describe('App concurrent mine', () => {
   })
 
   /*
-   * #153's fifth correction: three controls, three different jobs. The rail's
-   * arrow used to collapse the whole shell, the app mark was inert, and the
-   * interior's round close already worked. What the maintainer ruled is that the
-   * arrow closes only the secondary panel, the mark takes the whole shell back
-   * into the rail, and the close is untouched.
+   * REMOVED for #635 (PO ruling 2026-09-27: the rail is gone), stated here rather than passing
+   * unseen, with where each guarantee went:
+   * - "closes only the secondary panel from the rail’s arrow, keeping the mine": the arrow is
+   *   gone, and the page with it never closes; the mine's own round close is "closes the mine
+   *   from the design’s round close, leaving the panel behind it" below.
+   * - "keeps the shell’s own frame when only the mine is left" and "is the bare rail only when
+   *   neither page is drawn": the mine-only and bare-rail compositions went with the arrow, and
+   *   the shell carries its plate (`.m-mat`) in every composition, asserted in "keeps the
+   *   plate’s own frame whatever stands beside the page" below.
    */
-  it('closes only the secondary panel from the rail’s arrow, keeping the mine', async () => {
-    const { wrapper, api } = await openMine()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
-    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
-    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
-    // The navigation stack stays: it is how the panel comes back.
-    expect(wrapper.find('.dm-nav').exists()).toBe(true)
-  })
-
-  /*
-   * #156's first correction, and the reason the shell now says which of the
-   * BOOK's compositions it is in rather than reading `expanded` alone.
-   *
-   * Closing the left page beside an open mine left the shell classified as the
-   * bare rail: no amber ground, no padding, no radius and no shadow, so a void
-   * opened where the navigation column stood, the interior grew into the eight
-   * pixels of padding that were no longer there, and the mine's frame vanished.
-   */
-  it('keeps the shell’s own frame when only the mine is left', async () => {
+  it('keeps the plate’s own frame whatever stands beside the page', async () => {
     const { wrapper } = await openMine()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    const shell = wrapper.find('.shell')
-    expect(shell.classes()).toContain('is-mine')
-    expect(shell.classes()).not.toContain('is-rail')
-  })
-
-  it('is the bare rail only when neither page is drawn', async () => {
-    const { wrapper } = await openMine()
-    expect(wrapper.find('.shell').classes()).toContain('is-pages')
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
+    expect(wrapper.get('.shell').classes()).toContain('m-mat')
     await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.shell').classes()).toContain('is-rail')
+    expect(wrapper.get('.shell').classes()).toContain('m-mat')
   })
 
   /*
    * The second app icon the acceptance run found floating in that void: the rail
    * drew the mark whenever the secondary panel was closed, and the navigation
-   * stack drew its own whenever the stack was on screen. Both were true at once
-   * in the mine-only composition.
+   * stack drew its own whenever the stack was on screen. AMENDED for #635: the
+   * rail and its mark are gone, so this holds that the nav's is the only one,
+   * with a mine open and without.
    */
   it('draws the app mark exactly once, in every composition', async () => {
     const { wrapper } = await openMine()
     const marks = (): number => wrapper.findAll('.rail-mark, .dm-nav__mark').length
-    expect(marks()).toBe(1)
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
     expect(marks()).toBe(1)
     await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
@@ -1641,15 +1680,11 @@ describe('App concurrent mine', () => {
     expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
 
-  it('lands on the rail when the last mine closes with the panel already closed', async () => {
-    const { wrapper, api } = await openMine()
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
-    await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
-  })
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "lands on the rail when the last
+   * mine closes with the panel already closed". There is no closed panel to land on; the mine
+   * closing gives the window its column back, "gives the window its column back…" below.
+   */
 
   it('closes the mine from the design’s round close, leaving the panel behind it', async () => {
     const { wrapper } = await openMine()
@@ -1663,7 +1698,7 @@ describe('App concurrent mine', () => {
     const { wrapper, api } = await openMine()
     await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: false })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: false, dockOpen: false })
   })
 
   it('lets go of the mine when it leaves the board', async () => {
@@ -1920,7 +1955,9 @@ describe('App raise on click (#165)', () => {
     expect(api.raisePanel).toHaveBeenCalledOnce()
   })
 
-  it('raises on the rail too, which is all there is to click when collapsed', async () => {
+  // AMENDED for #635 (was: "raises on the rail too, which is all there is to click when
+  // collapsed"): the window opens as the Panel, which raises from its first frame.
+  it('raises on the Panel it opens as, before anything has been asked of it', async () => {
     const { wrapper, api } = await mountApp()
 
     await wrapper.find('.shell').trigger('pointerdown')
@@ -2500,24 +2537,14 @@ describe('App audio (#174, #173)', () => {
     }
   })
 
-  it('sounds the secondary panel once as it closes and once as it opens (#323)', async () => {
-    // Once per TRANSITION rather than once per control: the rail's arrow and
-    // the app mark on it are the same press, and the second one here happens
-    // with the shell already collapsed — the one exception a rail is allowed.
-    const { wrapper } = await audioApp()
-
-    // AMENDED for #637: `open_sound` was renamed `panel-open-close` with its
-    // replacement; the claim is unchanged.
-    const before = opened.length
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(opened.slice(before).filter((src) => src.includes('panel-open-close'))).toHaveLength(1)
-
-    const between = opened.length
-    await wrapper.find('.edge-rail').trigger('click')
-    await flushPromises()
-    expect(opened.slice(between).filter((src) => src.includes('panel-open-close'))).toHaveLength(1)
-  })
+  /*
+   * REMOVED for #635 (PO ruling 2026-09-27: the rail is gone), stated here rather than passing
+   * unseen: "sounds the secondary panel once as it closes and once as it opens (#323)". The rail's
+   * arrow was the one press that opened and closed the page, and the only one that played the
+   * `panel` cue; the page no longer opens or closes, so nothing in the shell plays that cue now.
+   * The cue itself is still the audio engine's, pinned in lib/audio/volume.test.ts and
+   * engine.test.ts.
+   */
 
   it('leaves the music button silent, because it is not an interface press (#323)', async () => {
     const { wrapper } = await audioApp()
@@ -2925,7 +2952,10 @@ describe('App shell packing (#488)', () => {
   /** Every selector in App.vue's own stylesheet whose row packs at its main END. */
   function packedAtTheDockedEdge(): string[] {
     const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
-    const style = source.slice(source.indexOf('<style scoped>')).replace(/\/\*[\s\S]*?\*\//g, '')
+    // AMENDED for #635: sliced past the tag itself, which otherwise reads as part of the first
+    // rule's selector — the first rule is `.panel-dock` now, and it packs.
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
     const packed: string[] = []
     for (const rule of style.matchAll(/([^{}]+)\{([^{}]*)\}/g))
       if (/justify-content:\s*flex-end/.test(rule[2]!))
@@ -2943,12 +2973,17 @@ describe('App shell packing (#488)', () => {
    * docked edge it is the free side, which is the band main is adding or taking
    * and is transparent either way, which is #388's rule.
    */
-  it('packs every composition that draws a column beyond the rail against the docked edge', () => {
+  /*
+   * AMENDED for #635 (was: "…every composition that draws a column beyond the rail…",
+   * asserting `.shell.is-mine`, `.shell.is-pages` and `.shell.is-rail`). The rail and the
+   * composition classes are gone (PO ruling 2026-09-27); the plate packs its columns against the
+   * docked edge in every composition, and the dock packs the plate and its window slot there too,
+   * so the window's free side is still the only loose end.
+   */
+  it('packs the plate’s columns, and the dock’s plate and slot, against the docked edge', () => {
     const packed = packedAtTheDockedEdge()
-    expect(packed).toContain('.shell.is-mine')
-    expect(packed).toContain('.shell.is-pages')
-    // The composition that has only the rail already did, and for this reason.
-    expect(packed).toContain('.shell.is-rail')
+    expect(packed).toContain('.shell')
+    expect(packed).toContain('.panel-dock')
   })
 
   /*
@@ -2957,6 +2992,28 @@ describe('App shell packing (#488)', () => {
    * duplicate of the default, and a rule that only ever restates another one is
    * a second opinion waiting to disagree.
    */
+  /*
+   * APPENDED for #635 (live check, 2026-09-27). The plate is as wide as its columns, and the page
+   * column's content is `position: absolute`, so the column's own declared width is the only thing
+   * the plate can size itself from: a flex basis alone is not counted when a flex container is
+   * sized to its content, and the page drew 0px wide inside a window sized for it. jsdom lays
+   * nothing out, so the declarations are pinned here, off the stylesheet, as the packing is above.
+   */
+  it('gives the page column a width of its own, so a plate sized to its columns includes it', () => {
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (selector: string): string =>
+      [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+        .filter((match) => match[1]!.split(',').some((one) => one.trim() === selector))
+        .map((match) => match[2]!)
+        .join(';')
+    expect(rule('.shell-secondary')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
+    // And on a screen narrower than the dock the page is still the part that gives way.
+    expect(rule('.shell-secondary')).toMatch(/min-width:\s*0/)
+    expect(rule('.shell')).toMatch(/min-width:\s*0/)
+  })
+
   it('keeps no separate rule for the frames a fold is held over', () => {
     const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
     expect(source).not.toContain('is-holding')
@@ -3265,7 +3322,9 @@ describe('App Map page', () => {
  * APPENDED for #635 (PANEL-QUESTIONS 2, design lead ruling 2026-09-27). Tab order is the nav, then
  * the page, then the open mine, on BOTH docks (accessibility.md, Keyboard; screens/shell.md, Left
  * to right). The nav comes first in the DOM and CSS `order` keeps it at the screen edge, so nothing
- * moves on screen: docked right the row reads rail, page, mine, nav; `row-reverse` mirrors it.
+ * moves on screen: docked right the row reads page, mine, nav (AMENDED for #635: the rail that
+ * led it is gone); `row-reverse` mirrors it. The dock's window slot, when it holds something,
+ * comes before all of them — 'App dock (#635)' asserts that.
  * jsdom lays nothing out, so the orders are read from the stylesheet, as the packing block above
  * reads its `justify-content`.
  */
@@ -3273,7 +3332,9 @@ describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
   /** The `order` each selector in App.vue's own stylesheet declares. */
   function declaredOrders(): Map<string, number> {
     const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
-    const style = source.slice(source.indexOf('<style scoped>')).replace(/\/\*[\s\S]*?\*\//g, '')
+    // AMENDED for #635: sliced past the tag, as the packing block's reader is.
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
     const orders = new Map<string, number>()
     for (const rule of style.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       const order = /(?:^|;|\s)order:\s*(-?\d+)/.exec(rule[2]!)
@@ -3286,10 +3347,11 @@ describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
     it(`walks the nav, then the page, then the open mine, docked ${edge}`, async () => {
       const mine = defaultMine({ dwarfs: [defaultDwarf()] })
       const { wrapper } = await mountApp({
-        getPanelLayout: vi.fn().mockResolvedValue({ edge, expanded: true, mineOpen: false }),
+        // AMENDED for #635: the layout carries `dockOpen` where it carried `expanded`.
+        getPanelLayout: vi.fn().mockResolvedValue({ edge, mineOpen: false, dockOpen: false }),
         setPanelLayout: vi
           .fn()
-          .mockImplementation((request: { expanded: boolean; mineOpen: boolean }) =>
+          .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
             Promise.resolve({ edge, ...request })
           ),
         getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
@@ -3307,14 +3369,13 @@ describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
 
   it('keeps the nav at the screen edge with `order`, so nothing moves on screen', () => {
     const orders = declaredOrders()
-    const rail = orders.get('.shell > .edge-rail') ?? 0
     const page = orders.get('.shell > .shell-secondary') ?? 0
     const mine = orders.get('.shell > .shell-mine') ?? 0
     const nav = orders.get('.shell > .dm-nav')
     expect(nav).toBeDefined()
     // A `row` docked right runs these from the free edge to the screen edge; `row-reverse` runs
-    // the same sequence from the screen edge on the left.
-    expect(rail).toBeLessThan(page)
+    // the same sequence from the screen edge on the left. AMENDED for #635: the rail that led the
+    // row, and its `rail < page` assertion, went with it (PO ruling 2026-09-27).
     expect(page).toBeLessThanOrEqual(mine)
     expect(mine).toBeLessThan(nav!)
   })
@@ -3346,6 +3407,8 @@ describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
 
   // Under the PO rule of 2026-09-27, the old window-wide host is not in the design and is gone:
   // there is one host, and it is the page column's.
+  // AMENDED for #635 (was: closing the page with the rail's arrow and finding no host at all):
+  // the page never closes now, so the one host is counted beside an open mine and a docked history.
   it('draws no toast host but the page column’s', async () => {
     const mine = defaultMine({ dwarfs: [defaultDwarf()] })
     const { wrapper } = await mountOpenApp({
@@ -3353,10 +3416,124 @@ describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
     })
     wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
-    await wrapper.find('.edge-rail').trigger('click')
+    wrapper.findComponent(MineColumn).vm.$emit('history')
     await flushPromises()
-    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
-    expect(wrapper.find('.dm-toasts').exists()).toBe(false)
+    const hosts = wrapper.findAll('.dm-toasts')
+    expect(hosts).toHaveLength(1)
+    expect(hosts[0]!.element.closest('.shell-secondary')).not.toBeNull()
+  })
+})
+
+/*
+ * APPENDED for #635 (PO rulings 2026-09-27: absence in the design is removal, and no empty
+ * region). The closed rail is gone, so the window opens as the Panel itself, and the history
+ * docks in the dock's window slot beside the plate (screens/shell.md, Layout): the window is as
+ * wide as what it shows, the slot holds one thing at a time, and it takes no width while empty.
+ * Main does the arithmetic (`panelBounds.test.ts`); these hold the renderer to asking for it.
+ */
+describe('App dock (#635)', () => {
+  async function mountWithMine(overrides: Record<string, unknown> = {}) {
+    const dwarf = defaultDwarf()
+    const mine = defaultMine({ dwarfs: [dwarf] })
+    const mounted = await mountApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 }),
+      ...overrides
+    })
+    mounted.wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    return { ...mounted, mine, dwarf }
+  }
+
+  it('opens on the Panel itself, with no rail beside it', async () => {
+    const { wrapper } = await mountApp()
+    expect(wrapper.find('.edge-rail').exists()).toBe(false)
+    expect(wrapper.find('.dm-nav').exists()).toBe(true)
+    expect(wrapper.find('.shell-secondary').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
+  })
+
+  it('reserves no dock slot while nothing is docked in it', async () => {
+    const { wrapper, api } = await mountWithMine()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
+    expect(wrapper.find('.dock-window').exists()).toBe(false)
+  })
+
+  it('docks the history beside the plate, in the slot main gave the window', async () => {
+    const { wrapper, api } = await mountWithMine()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: true })
+    // `.panel-dock` is this component's own root, which a selector search never matches, and the
+    // test renderer wraps a transition's child in a stub element, so both are read as ancestry.
+    const slot = wrapper.get('.dock-window')
+    expect(slot.element.closest('.panel-dock')).not.toBeNull()
+    expect(slot.find('.dm-hist').exists()).toBe(true)
+    // Beside the plate, never on it: the old floating block stood inside the shell.
+    expect(slot.element.closest('.shell')).toBeNull()
+    expect(wrapper.find('.shell .dm-hist').exists()).toBe(false)
+    // First in the DOM, so Tab starts in the window as the design's tab order does.
+    const shell = wrapper.get('.shell').element
+    expect(
+      slot.element.compareDocumentPosition(shell) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it('draws the slot only once main has given the window its width', async () => {
+    // A display that could not grow the window answers with the slot still closed, and the
+    // history must not be painted into width the window does not have.
+    const { wrapper } = await mountWithMine({
+      setPanelLayout: vi
+        .fn()
+        .mockImplementation((request: { mineOpen: boolean }) =>
+          Promise.resolve({ edge: 'right', mineOpen: request.mineOpen, dockOpen: false })
+        )
+    })
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    expect(wrapper.find('.dock-window').exists()).toBe(false)
+  })
+
+  it('gives the slot’s width back when the history closes', async () => {
+    const { wrapper, api } = await mountWithMine()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    wrapper.findComponent(HistoryPanel).vm.$emit('close')
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
+    expect(wrapper.find('.dock-window').exists()).toBe(false)
+  })
+
+  it('holds one thing at a time: opening a chat takes the history out of the slot', async () => {
+    // The MessagePanel keeps its own window until its slice docks it here; meanwhile opening it
+    // closes the docked history and the slot with it, as the design's one-thing rule says.
+    const { wrapper, api, dwarf } = await mountWithMine()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('select', dwarf)
+    await flushPromises()
+    expect(api.setMessagePanel).toHaveBeenCalled()
+    expect(wrapper.find('.dock-window').exists()).toBe(false)
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
+  })
+
+  it('shrinks the window by the mine column and the slot at once when the mine closes', async () => {
+    const { wrapper, api } = await mountWithMine()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    api.setPanelLayout.mockClear()
+    wrapper.findComponent(MineColumn).vm.$emit('close')
+    await flushPromises()
+    expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ mineOpen: false, dockOpen: false })
+    expect(wrapper.find('.dock-window').exists()).toBe(false)
+  })
+
+  it('mirrors the dock for a left edge, keeping the slot on the plate’s outer side', async () => {
+    const { wrapper } = await mountApp({
+      getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', mineOpen: false, dockOpen: false })
+    })
+    expect(wrapper.get('.panel-dock').classes()).toContain('edge-left')
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    expect(source).toMatch(/\.panel-dock\.edge-left \{\s*flex-direction: row-reverse;/)
   })
 })
 

@@ -430,50 +430,54 @@ describe('preload permission-decision contract (#203)', () => {
   })
 })
 
+/*
+ * AMENDED for #635, once here: `expanded` left the layout with the rail (PO ruling 2026-09-27)
+ * and `dockOpen` took its place, so every payload below carries `mineOpen` and `dockOpen`.
+ */
 describe('preload panel-layout contract (#90, #138)', () => {
   it('asks for the current layout on the panel:layout:get channel with no payload', async () => {
-    const layout = { edge: 'right', expanded: false, mineOpen: false }
+    const layout = { edge: 'right', mineOpen: false, dockOpen: false }
     invoke.mockResolvedValueOnce(layout)
     await expect(api.getPanelLayout()).resolves.toEqual(layout)
     expect(invoke).toHaveBeenLastCalledWith('panel:layout:get')
   })
 
-  it('collapses expanded and mineOpen to real booleans before they cross', async () => {
-    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+  it('collapses mineOpen and dockOpen to real booleans before they cross', async () => {
+    invoke.mockResolvedValueOnce({ edge: 'right', mineOpen: false, dockOpen: false })
     await (api.setPanelLayout as unknown as (value: unknown) => Promise<unknown>)({
-      expanded: 'yes',
-      mineOpen: 1
+      mineOpen: 1,
+      dockOpen: 'yes'
     })
     expect(invoke).toHaveBeenLastCalledWith('panel:layout:set', {
-      expanded: false,
-      mineOpen: false
+      mineOpen: false,
+      dockOpen: false
     })
   })
 
-  it('omits edge entirely when the caller (the rail toggle, a mine opening) does not name one', async () => {
+  it('omits edge entirely when the caller (a mine or the dock opening) does not name one', async () => {
     // Only the Settings position control may ever move the docked side; every
     // other caller must be structurally unable to nudge it by accident.
-    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
-    await api.setPanelLayout({ expanded: true, mineOpen: false })
+    invoke.mockResolvedValueOnce({ edge: 'right', mineOpen: false, dockOpen: false })
+    await api.setPanelLayout({ mineOpen: false, dockOpen: true })
     const [, payload] = invoke.mock.calls.at(-1) ?? []
     expect(payload).not.toHaveProperty('edge')
   })
 
   it('forwards a real edge from the position control untouched', async () => {
-    invoke.mockResolvedValueOnce({ edge: 'left', expanded: true, mineOpen: false })
-    await api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+    invoke.mockResolvedValueOnce({ edge: 'left', mineOpen: false, dockOpen: false })
+    await api.setPanelLayout({ mineOpen: false, dockOpen: true, edge: 'left' })
     expect(invoke).toHaveBeenLastCalledWith('panel:layout:set', {
-      expanded: true,
       mineOpen: false,
+      dockOpen: true,
       edge: 'left'
     })
   })
 
   it('drops an edge value no build recognizes rather than forwarding a guess', async () => {
-    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+    invoke.mockResolvedValueOnce({ edge: 'right', mineOpen: false, dockOpen: false })
     await (api.setPanelLayout as unknown as (value: unknown) => Promise<unknown>)({
-      expanded: true,
       mineOpen: false,
+      dockOpen: false,
       edge: 'top'
     })
     const [, payload] = invoke.mock.calls.at(-1) ?? []
@@ -483,10 +487,10 @@ describe('preload panel-layout contract (#90, #138)', () => {
   it('hands back the REAL layout main applied, never the wish', async () => {
     // A screen too narrow for the whole composition, or a docked edge the
     // window manager could not honor, must reach the renderer as a fact.
-    const actual = { edge: 'right', expanded: true, mineOpen: true }
+    const actual = { edge: 'right', mineOpen: true, dockOpen: false }
     invoke.mockResolvedValueOnce(actual)
     await expect(
-      api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+      api.setPanelLayout({ mineOpen: false, dockOpen: false, edge: 'left' })
     ).resolves.toEqual(actual)
   })
 })

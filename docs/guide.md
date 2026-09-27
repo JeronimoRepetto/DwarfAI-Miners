@@ -69,10 +69,11 @@ around work that is actually happening.
 
 ## What the panel shows
 
-The panel docks against one screen edge as a thin rail; the arrow on the rail slides it open. Along
-its outer edge sits the app mark — pressing it takes the window away, exactly as the global
-shortcut does — and under that a column of **six areas**, plus a note button at the bottom for the
-music:
+The panel docks against one screen edge, and the window is exactly as wide as what it shows: the
+navigation column against the edge, the page beside it, the open mine's column between them, and
+the mine's history docked on the outer side while it is open. Along the screen edge sits the app
+mark — pressing it takes the window away, exactly as the global shortcut and the tray do — and
+under that a column of **six areas**, plus a note button at the bottom for the music:
 
 | Area              | What it is                                                                                                  |
 | ----------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -653,13 +654,11 @@ Three independent channels, all off one engine:
   a foreman hears the quiet one — a foreman is not a worker. The round **mute** at the interior's
   top-left corner silences the ambience alone, also for this run.
 - **Effects.** One recording per dwarf rank, played when you click a dwarf, plus the shell's own
-  interface sounds — a click on the six navigation buttons and a sound when the side panel opens
-  and closes. One channel, one volume: a rank with no recording is simply silent rather than
+  interface sounds — a click on the six navigation buttons. One channel, one volume: a rank with no recording is simply silent rather than
   borrowing another rank's voice, and the same is true of an interface action with no sound of its
   own.
 
-All of it stops while the window is away — hidden, minimised, or sent to the tray — and the music
-alone survives the shell being collapsed to its rail. Nothing a media element refuses ever reaches
+All of it stops while the window is away — hidden, minimised, or sent to the tray. Nothing a media element refuses ever reaches
 the rest of the app: a machine with no audio pipeline at all shows the same map, mines and crew it
 always did.
 
@@ -681,7 +680,7 @@ out of the panel, and nothing else:
 Two rules decide whether one is sent, and both are about what you can already see:
 
 - **Never for the mine on screen.** That means the panel visible _and_ that mine's interior open. The
-  map, the browse, or a mine held open behind the collapsed rail all count as looking at no mine, so
+  map and the browse count as looking at no mine, so
   every mine can still reach you.
 - **Never twice for the same thing.** A question that stays open for twenty minutes notifies once,
   not once per poll. When the fact goes away — you answered at the terminal — the notification is

@@ -9,17 +9,18 @@ import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
  * main derives the window's rectangle from the DISPLAY, so a request can come
  * back changed — a screen too narrow for the whole composition, or an edge the
  * renderer never chose. `layout` therefore only ever changes to something main
- * reported, because the rail's arrow is drawn from `edge` and the shell's
- * columns from `expanded`, and drawing either against a wish rather than a fact
- * points the user at a panel that is not there.
+ * reported, because the shell's columns and its dock slot are drawn from it,
+ * and drawing them against a wish rather than a fact paints columns into width
+ * the window does not have.
  *
  * No module-scope singleton: App is the only consumer, so per-call refs keep
  * tests independent without a clearAll() ritual.
  */
 export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise.resolve()) {
   // Matches main's own starting layout, so the first paint is right before
-  // sync() has answered; the design names Right as the default side.
-  const layout = ref<PanelLayout>({ edge: 'right', expanded: false, mineOpen: false })
+  // sync() has answered: the Panel with nothing beside its page (#635), on the
+  // side the design names as the default.
+  const layout = ref<PanelLayout>({ edge: 'right', mineOpen: false, dockOpen: false })
   // Presentation may put a column away while its last frame still needs native
   // bounds. This is never evidence that main has already resized the window.
   const visibleLayout = ref<PanelLayout>({ ...layout.value })
@@ -41,7 +42,7 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
    * order and leave the shell drawn against a rectangle the window no longer
    * has, but a dropped one leaves the window at a width nothing will correct.
    * Both matter here — a resize is triggered by opening a mine as well as by
-   * pressing the rail, so the two can genuinely overlap.
+   * opening the dock, so the two can genuinely overlap.
    */
   let queue: Promise<void> = Promise.resolve()
 
@@ -53,8 +54,8 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
    * painted over nothing at all. Presentation asked to end it and nothing here
    * can make it: a leave reports completion from an animation whose timeline
    * the platform is free to freeze, and one that never reports held this queue
-   * open forever — so the rail stopped answering too, and the window kept the
-   * width of a column it was no longer showing.
+   * open forever — so every later request stopped answering too, and the window
+   * kept the width of a column it was no longer showing.
    *
    * A leave that overruns therefore loses its say rather than the shrink. Its
    * rejection is swallowed for the same reason: a torn-down leave is not
@@ -78,23 +79,23 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
     applying.value = true
     try {
       const shrinking =
-        (layout.value.expanded && !request.expanded) || (layout.value.mineOpen && !request.mineOpen)
+        (layout.value.dockOpen && !request.dockOpen) || (layout.value.mineOpen && !request.mineOpen)
       const growing =
-        (!layout.value.expanded && request.expanded) || (!layout.value.mineOpen && request.mineOpen)
+        (!layout.value.dockOpen && request.dockOpen) || (!layout.value.mineOpen && request.mineOpen)
       if (shrinking) {
         // A swap can grow one column while retiring another. Reserve their
         // union first; neither animation may draw outside the native window.
         if (growing) {
           layout.value = await window.api.setPanelLayout({
             ...request,
-            expanded: layout.value.expanded || request.expanded,
-            mineOpen: layout.value.mineOpen || request.mineOpen
+            mineOpen: layout.value.mineOpen || request.mineOpen,
+            dockOpen: layout.value.dockOpen || request.dockOpen
           })
         }
         visibleLayout.value = {
           ...layout.value,
-          expanded: layout.value.expanded && request.expanded,
-          mineOpen: layout.value.mineOpen && request.mineOpen
+          mineOpen: layout.value.mineOpen && request.mineOpen,
+          dockOpen: layout.value.dockOpen && request.dockOpen
         }
         await boundedLeave()
       }
@@ -117,25 +118,23 @@ export function usePanelLayout(waitForLeave: () => Promise<void> = () => Promise
     await queue
   }
 
-  /** Open or collapse, keeping whichever mine column the shell currently needs. */
-  async function toggle(mineOpen: boolean): Promise<void> {
-    // Evaluate toggles when dequeued, not against the same stale pre-IPC state.
-    queue = queue.then(() => send({ expanded: !layout.value.expanded, mineOpen }))
-    await queue
-  }
+  /*
+   * `toggle` stood here until #635: the closed rail's arrow opening and closing
+   * the page. The rail went (PO ruling 2026-09-27), and every request left names
+   * the state it wants.
+   */
 
   /**
    * Settings' position control asking to redock (#138) — the only caller that
-   * may ever send `edge`. Keeps expanded/mineOpen as they currently are: the
-   * position control moves the docked side, not whether the panel is open or
-   * whether a mine is held beside it.
+   * may ever send `edge`. Keeps mineOpen/dockOpen as they currently are: the
+   * position control moves the docked side, not what stands beside the page.
    */
   async function setEdge(edge: PanelEdge): Promise<void> {
     queue = queue.then(() =>
-      send({ expanded: layout.value.expanded, mineOpen: layout.value.mineOpen, edge })
+      send({ mineOpen: layout.value.mineOpen, dockOpen: layout.value.dockOpen, edge })
     )
     await queue
   }
 
-  return { layout, visibleLayout, applying, sync, apply, toggle, setEdge }
+  return { layout, visibleLayout, applying, sync, apply, setEdge }
 }

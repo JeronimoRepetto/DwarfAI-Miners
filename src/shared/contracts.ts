@@ -3636,49 +3636,40 @@ export type PanelEdge = 'left' | 'right'
  *
  * The same honesty rule the pin surface has, for the same reason: main derives
  * the panel's bounds from the display it is on, so a display too narrow for the
- * expanded panel, or an edge the user has not chosen, must reach the renderer as
- * a fact rather than being assumed by whoever pressed the arrow. The rail draws
- * its arrow from `edge`, so a panel drawn against the wrong edge would point the
- * user off the screen.
+ * whole composition, or an edge the user has not chosen, must reach the renderer
+ * as a fact rather than being assumed by whoever asked.
  *
- * `mineOpen` is here because it changes the WINDOW: the design keeps an open
- * mine beside one secondary panel, and that second column is width the window
- * has to be given before the renderer can draw into it.
+ * Both booleans are here because each changes the WINDOW, which is exactly as
+ * wide as what it shows (#635, PO ruling 2026-09-27): the nav and the page are
+ * always there, `mineOpen` adds the mine column, and `dockOpen` the dock's
+ * window slot beside the shell (`screens/shell.md`, Layout), which holds one
+ * thing at a time. Each is width the window has to be given before the
+ * renderer can draw into it, and none is reserved while it is not shown.
  *
- * The two booleans are INDEPENDENT since #153, and that is the whole of the
- * maintainer's fifth acceptance correction. `expanded` says whether the
- * SECONDARY panel — map, mines, settings, lab, market — is drawn; `mineOpen`
- * says whether the mine column is. The rail's arrow toggles the first and leaves
- * the second alone, the app mark above the navigation stack clears both, and the
- * interior's own round close clears only the mine. All four combinations are
- * real: neither is the closed rail, both is the design's concurrent model, and
- * a mine with no secondary beside it is the mine mock's own composition.
+ * `expanded` stood here until #635: whether the page was drawn, which only the
+ * closed rail's arrow could turn off. The rail is gone, and closing the Panel
+ * hides its window as the app mark always did, so a shown window always has
+ * its page.
  */
 export interface PanelLayout {
   edge: PanelEdge
-  /** Whether the SECONDARY panel is drawn — never "the shell is open at all". */
-  expanded: boolean
   mineOpen: boolean
+  /** Whether the dock's window slot beside the shell holds something (#635). */
+  dockOpen: boolean
 }
 
 /**
- * What the panel asks the shell window to become (#90, #138).
+ * What the panel asks the shell window to become (#90, #138, #635).
  *
  * `edge` is optional and absent from every request EXCEPT the Settings
  * position control (#138): omitting it means "keep whatever edge main already
- * has", which is what the rail toggle and the mine-open resize both do — they
+ * has", which is what a mine opening and the dock opening both do — they
  * are not the position control and must never nudge the docked side by
  * accident. Only the position control's Left/Right segments ever set it.
- *
- * Two dimensions, and there is no third (#162). #159's report named one that
- * was missing: the message panel was a band docked INSIDE this window, so the
- * shell had to grow to host it and nothing here could ask for that. The panel
- * is a window of its own now (see MessagePanelState) and the shell never grows
- * for it, so the gap closed by the request staying exactly this shape.
  */
 export interface PanelLayoutRequest {
-  expanded: boolean
   mineOpen: boolean
+  dockOpen: boolean
   edge?: PanelEdge
 }
 

@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { PanelEdge } from '../domain/types'
-import type { Platform } from '../platform/platform'
 import type { ScreenRect } from '../platform/screenArea'
 import { minWindowWidth } from '../platform/windowMetrics'
 /*
@@ -17,31 +16,42 @@ import { SHELL_CONTENT_INSET, interiorColumnWidth } from '../../renderer/src/lib
 import {
   DESIGN_COMPOSITION_HEIGHT,
   DESIGN_SCREEN_HEIGHT,
+  DOCK_FREE_ROOM,
+  DOCK_GAP,
   DOCK_INSET,
+  DOCK_WIDTH,
   MESSAGE_PANEL_DESIGN_WIDTH,
   MESSAGE_PANEL_GAP,
   MINE_COLUMN_MIN_WIDTH,
   NAV_WIDTH,
   PAGE_WIDTH,
-  RAIL_WIDTH,
   SHELL_EDGE_MARGIN,
   SHELL_GAP,
   SHELL_PADDING,
   clampMessagePanelBounds,
   detachedMessagePanelBounds,
   detachedMessagePanelWidth,
-  expandedWidth,
+  dockSlotWidth,
   messagePanelAnchorOf,
   messagePanelBounds,
   messagePanelPlacement,
   messagePanelWidth,
   mineColumnWidth,
-  mineOnlyWidth,
+  panelBaseWidth,
   panelBounds,
   panelWidth,
   secondaryColumnWidth,
   uiScale
 } from './panelBounds'
+
+/*
+ * AMENDED for #635 (PO ruling 2026-09-27: absence in the design is removal), once here rather
+ * than at each use. The closed 20px rail is gone, and with it `RAIL_WIDTH`, `mineOnlyWidth` and
+ * the `CLOSED` layout: closing the Panel hides its window, as the app mark always did, so there
+ * is no composition narrower than the nav and the page. `expandedWidth` is `panelBaseWidth`,
+ * because there is no longer a collapsed width for it to be the opposite of. `expanded` left the
+ * layout for the same reason; `dockOpen` took its place, the window slot beside the shell.
+ */
 
 const AREA = { x: 0, y: 0, width: 1920, height: 1032 }
 
@@ -64,9 +74,10 @@ function scaled(area: ScreenRect, designWidth: number): number {
  */
 const WIN32_FLOOR = minWindowWidth('win32')
 
-const CLOSED = { expanded: false, mineOpen: false }
-const OPEN = { expanded: true, mineOpen: false }
-const OPEN_WITH_MINE = { expanded: true, mineOpen: true }
+const OPEN = { mineOpen: false, dockOpen: false }
+const OPEN_WITH_MINE = { mineOpen: true, dockOpen: false }
+const OPEN_WITH_DOCK = { mineOpen: false, dockOpen: true }
+const OPEN_WITH_BOTH = { mineOpen: true, dockOpen: true }
 
 /*
  * AMENDED for the acceptance ruling (#153). Four cases in this describe block
@@ -81,55 +92,58 @@ const OPEN_WITH_MINE = { expanded: true, mineOpen: true }
  */
 describe('panelWidth', () => {
   /*
-   * AMENDED for #153's fifth correction. This case used to read "whether or not
-   * a mine is held open", asserting that `{ expanded: false, mineOpen: true }`
-   * was still just the rail — because `expanded` then meant "the shell is open
-   * at all" and a mine could only ever be held BESIDE an open secondary panel.
-   * The maintainer's ruling separates the two controls: the rail's arrow closes
-   * the SECONDARY panel and leaves the mine standing, so that combination is now
-   * a state the window really has, and it has a width of its own (below).
+   * REMOVED for #635 (the PO's ruling of 2026-09-27 removed the rail), stated here rather than
+   * passing unseen, with where each guarantee went:
+   * - "is the closed rail only when nothing at all is drawn" and "collapses to exactly the rail
+   *   on %s, with no transparent gutter beside it (#465)": there is no collapsed window left.
+   *   The Panel's close hides the window, and the narrowest window now drawn is the nav and the
+   *   page, asserted below. The per-platform floor itself is `windowMetrics.test.ts`'s, and
+   *   "never asks for a window narrower than the platform will make" in `panelBounds` below.
+   * - "holds the mine column open with the secondary panel closed beside it": the page never
+   *   closes in the design ("the page and the nav are always there", screens/shell.md), so the
+   *   mine-only composition went with the rail's arrow that produced it.
    */
-  it('is the closed rail only when nothing at all is drawn', () => {
-    // The design's rail is 20px and the renderer still draws exactly that; the
-    // WINDOW is the platform's 32px floor, because Windows will not make one
-    // narrower and asking for 20 docks differently on each edge (see below).
-    expect(panelWidth(AREA, CLOSED, 'win32')).toBe(WIN32_FLOOR)
-    expect(RAIL_WIDTH).toBeLessThan(WIN32_FLOOR)
-  })
-
-  /*
-   * ADDED for #465. Those twelve pixels are the Windows measurement, and they
-   * were spent on every platform: on a Mac the collapsed window stood wider
-   * than the rail the renderer paints into it, and the gutter left over is
-   * transparent — which is the rectangle the OS drew its shadow around.
-   */
-  it.each<Platform>(['darwin', 'linux'])(
-    'collapses to exactly the rail on %s, with no transparent gutter beside it (#465)',
-    (platform) => {
-      expect(panelWidth(AT_1X, CLOSED, platform)).toBe(RAIL_WIDTH)
-      expect(panelWidth(AT_1X, CLOSED, platform)).toBeLessThan(panelWidth(AT_1X, CLOSED, 'win32'))
-      // And it scales with the display like every other width here, rather
-      // than being pinned to the design's literal 20.
-      expect(panelWidth(AT_2X, CLOSED, platform)).toBe(RAIL_WIDTH * 2)
-    }
-  )
-
-  it('holds the mine column open with the secondary panel closed beside it', () => {
-    const mineOnly = { expanded: false, mineOpen: true }
-    expect(panelWidth(AREA, mineOnly)).toBe(scaled(AREA, mineOnlyWidth(DESIGN_SCREEN_HEIGHT)))
-    // Wider than the rail, narrower than the panel that carries a secondary.
-    expect(panelWidth(AREA, mineOnly)).toBeGreaterThan(panelWidth(AREA, CLOSED))
-    expect(panelWidth(AREA, mineOnly)).toBeLessThan(panelWidth(AREA, OPEN_WITH_MINE))
+  it('is the nav, the page and the plate around them while nothing else is open', () => {
+    expect(panelWidth(AT_1X, OPEN)).toBe(
+      2 * SHELL_EDGE_MARGIN + 2 * SHELL_PADDING + NAV_WIDTH + SHELL_GAP + PAGE_WIDTH
+    )
   })
 
   it('opens to the design world’s own width, scaled onto this display', () => {
-    expect(panelWidth(AREA, OPEN)).toBe(scaled(AREA, expandedWidth(DESIGN_SCREEN_HEIGHT)))
+    expect(panelWidth(AREA, OPEN)).toBe(scaled(AREA, panelBaseWidth(DESIGN_SCREEN_HEIGHT)))
   })
 
   it('adds the mine column when a mine is held open beside the secondary panel', () => {
     expect(panelWidth(AREA, OPEN_WITH_MINE)).toBe(
-      scaled(AREA, expandedWidth(DESIGN_SCREEN_HEIGHT) + mineColumnWidth(DESIGN_SCREEN_HEIGHT))
+      scaled(AREA, panelBaseWidth(DESIGN_SCREEN_HEIGHT) + mineColumnWidth(DESIGN_SCREEN_HEIGHT))
     )
+  })
+
+  /*
+   * ADDED for #635 (PO ruling 2026-09-27: no empty region). The window is exactly as wide as
+   * what it shows — nav, page, the mine column while a mine is open, and the dock's window slot
+   * while something is docked in it — and nothing is reserved for a slot that holds nothing.
+   */
+  it('adds the dock slot beside the shell only while something is docked in it', () => {
+    expect(panelWidth(AREA, OPEN_WITH_DOCK)).toBe(
+      scaled(AREA, panelBaseWidth(DESIGN_SCREEN_HEIGHT) + dockSlotWidth())
+    )
+    expect(panelWidth(AREA, OPEN_WITH_BOTH)).toBe(
+      scaled(
+        AREA,
+        panelBaseWidth(DESIGN_SCREEN_HEIGHT) +
+          mineColumnWidth(DESIGN_SCREEN_HEIGHT) +
+          dockSlotWidth()
+      )
+    )
+  })
+
+  it('reserves nothing beside the shell while the dock slot is empty', () => {
+    // The mine column is the only thing between the two: no rail, no dock room.
+    expect(panelWidth(AT_1X, OPEN_WITH_MINE) - panelWidth(AT_1X, OPEN)).toBe(
+      mineColumnWidth(DESIGN_SCREEN_HEIGHT)
+    )
+    expect(panelWidth(AT_1X, OPEN)).toBe(panelBaseWidth(DESIGN_SCREEN_HEIGHT))
   })
 
   it('never asks for more width than the display has', () => {
@@ -142,8 +156,9 @@ describe('panelWidth', () => {
     const narrow = { x: 0, y: 0, width: 240, height: 600 }
     expect(panelWidth(narrow, OPEN)).toBe(240)
     expect(panelWidth(narrow, OPEN_WITH_MINE)).toBe(240)
-    // The rail is smaller than any display, so it is never clamped.
-    expect(panelWidth(narrow, CLOSED, 'win32')).toBe(WIN32_FLOOR)
+    // AMENDED for #635: the closed rail's own line went with the rail. The dock never runs past
+    // the screen either, with a window docked beside the shell.
+    expect(panelWidth(narrow, OPEN_WITH_BOTH)).toBe(240)
   })
 
   it('grows with the display, because the whole surface is scaled onto it', () => {
@@ -180,7 +195,7 @@ describe('uiScale', () => {
   it('scales a display SHORTER than the design world down by the same rule', () => {
     const shortLaptop = { x: 0, y: 0, width: 1366, height: 768 }
     expect(uiScale(shortLaptop)).toBeCloseTo(768 / 1080, 12)
-    expect(panelWidth(shortLaptop, OPEN)).toBeLessThan(expandedWidth(DESIGN_SCREEN_HEIGHT))
+    expect(panelWidth(shortLaptop, OPEN)).toBeLessThan(panelBaseWidth(DESIGN_SCREEN_HEIGHT))
   })
 
   it('never divides by a display of no height', () => {
@@ -191,10 +206,12 @@ describe('uiScale', () => {
 describe('the scaled window', () => {
   it('spends the same design-world width at every scale', () => {
     for (const area of [AT_1X, AT_1_333X, AT_2X]) {
-      for (const layout of [OPEN, OPEN_WITH_MINE]) {
+      // AMENDED for #635: every composition, the docked slot's two included.
+      for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
         const design =
-          expandedWidth(DESIGN_SCREEN_HEIGHT) +
-          (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0)
+          panelBaseWidth(DESIGN_SCREEN_HEIGHT) +
+          (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0) +
+          (layout.dockOpen ? dockSlotWidth() : 0)
         expect(panelWidth(area, layout)).toBe(Math.round(design * uiScale(area)))
       }
     }
@@ -205,7 +222,7 @@ describe('the scaled window', () => {
     // makes them bigger. So every design-world derivation has to be a function
     // of the design screen alone, identical however tall the real display is.
     const first = {
-      expanded: expandedWidth(DESIGN_SCREEN_HEIGHT),
+      expanded: panelBaseWidth(DESIGN_SCREEN_HEIGHT),
       mine: mineColumnWidth(DESIGN_SCREEN_HEIGHT),
       secondary: secondaryColumnWidth(DESIGN_SCREEN_HEIGHT)
     }
@@ -214,7 +231,7 @@ describe('the scaled window', () => {
       // world may depend on where the window happens to be.
       void area
       expect({
-        expanded: expandedWidth(DESIGN_SCREEN_HEIGHT),
+        expanded: panelBaseWidth(DESIGN_SCREEN_HEIGHT),
         mine: mineColumnWidth(DESIGN_SCREEN_HEIGHT),
         secondary: secondaryColumnWidth(DESIGN_SCREEN_HEIGHT)
       }).toEqual(first)
@@ -228,7 +245,7 @@ describe('the scaled window', () => {
     const reserved = { x: 0, y: 0, width: 2560, height: 1392 }
     for (const area of [AT_1X, AT_1_333X, AT_2X, reserved]) {
       for (const edge of ['left', 'right'] as const) {
-        const bounds = panelBounds(area, edge, OPEN_WITH_MINE)
+        const bounds = panelBounds(area, edge, OPEN_WITH_BOTH)
         expect(bounds.y).toBe(area.y)
         expect(bounds.height).toBe(area.height)
         expect(bounds.x).toBeGreaterThanOrEqual(area.x)
@@ -237,12 +254,12 @@ describe('the scaled window', () => {
     }
   })
 
-  it('keeps the closed rail at the platform floor however small the scale makes it', () => {
-    const shortLaptop = { x: 0, y: 0, width: 1366, height: 768 }
-    expect(panelWidth(shortLaptop, CLOSED, 'win32')).toBe(WIN32_FLOOR)
-    // And lets it grow past the floor once the scale asks for more.
-    expect(panelWidth(AT_2X, CLOSED, 'win32')).toBe(RAIL_WIDTH * 2)
-  })
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "keeps the closed rail at the
+   * platform floor however small the scale makes it". The rail went (PO ruling 2026-09-27);
+   * the floor is still honoured for every composition by "never asks for a window narrower than
+   * the platform will make" below, which now asserts it on a display too small for the Panel.
+   */
 })
 
 /*
@@ -290,10 +307,10 @@ describe('the derived columns', () => {
    */
 
   it('spends the opened width on the design’s own chrome plus that column', () => {
-    // AMENDED for #635 (was: 90, the v4 frame). The redesigned plate: both
-    // edge margins, the padding, the nav, the rail and two gaps.
+    // AMENDED for #635 (was: 90, the v4 frame; then 104 with the rail). The
+    // redesigned plate: both edge margins, the padding, the nav and one gap.
     for (const height of [DESIGN_COMPOSITION_HEIGHT, 1392]) {
-      expect(expandedWidth(height) - secondaryColumnWidth(height)).toBe(104)
+      expect(panelBaseWidth(height) - secondaryColumnWidth(height)).toBe(78)
     }
   })
 
@@ -301,8 +318,9 @@ describe('the derived columns', () => {
     for (const height of [601, 769, 1033, 1393]) {
       expect(Number.isInteger(mineColumnWidth(height))).toBe(true)
       expect(Number.isInteger(secondaryColumnWidth(height))).toBe(true)
-      expect(Number.isInteger(expandedWidth(height))).toBe(true)
+      expect(Number.isInteger(panelBaseWidth(height))).toBe(true)
     }
+    expect(Number.isInteger(dockSlotWidth())).toBe(true)
   })
 })
 
@@ -310,9 +328,10 @@ describe('the derived columns', () => {
  * ADDED for #635. The redesigned Panel's grid (screens/shell.md, Layout and
  * Parts): the nav column at the screen edge, the page column beside it, and the
  * mine column between them while a mine is open, on one rock plate with a 6px
- * padding and 6px gaps, held 2px off the screen edge. The closed rail stays
- * exactly as it was (#388) until the Veta slice retires it, so it is still
- * the free-side column of every open composition.
+ * padding and 6px gaps, held 2px off the screen edge. AMENDED for #635 (PO
+ * ruling 2026-09-27): the closed rail that stood on the free side of every
+ * composition is gone, and the dock's window slot stands there instead while
+ * something is docked in it.
  */
 describe('the redesigned Panel grid', () => {
   it('declares the grid’s own columns and spacing', () => {
@@ -323,14 +342,41 @@ describe('the redesigned Panel grid', () => {
     expect(SHELL_GAP).toBe(6)
     expect(SHELL_EDGE_MARGIN).toBe(2)
     expect(DOCK_INSET).toBe(12)
+    // APPENDED for #635: the dock (`.dm-dock` gap 12px) and its window slot, as wide as the
+    // history panel it holds (`.dm-hist` width 440px), with the room its own raised material
+    // draws outside it (`.m-mat` 2px edge, `.m-raised` 4px drop shadow).
+    expect(DOCK_GAP).toBe(12)
+    expect(DOCK_WIDTH).toBe(440)
+    expect(DOCK_FREE_ROOM).toBe(6)
   })
 
-  it('spends the opened width on the plate, the nav, the page and the rail', () => {
-    // 2 + 6 + 56 + 6 + 440 + 6 + 20 + 6 + 2: the edge margin and the plate's
-    // own frame edge on the free side, the padding, the nav, the page and the
-    // rail with a gap before each of the last two.
-    expect(expandedWidth(DESIGN_SCREEN_HEIGHT)).toBe(544)
-    expect(expandedWidth(1392)).toBe(544)
+  // AMENDED for #635 (was: "…the page and the rail", 544 with the rail and its gap).
+  it('spends the opened width on the plate, the nav and the page', () => {
+    // 2 + 6 + 56 + 6 + 440 + 6 + 2: the edge margin, the padding, the nav, the
+    // gap, the page, the padding and the plate's own frame edge on the free side.
+    expect(panelBaseWidth(DESIGN_SCREEN_HEIGHT)).toBe(518)
+    expect(panelBaseWidth(1392)).toBe(518)
+  })
+
+  /*
+   * ADDED for #635. The design's own dock at its reference viewport (screens/shell.md, Full-screen
+   * references): the Panel shell is 820 wide with a mine open and 514 without one, which is the
+   * plate this window holds between its two 2px edges.
+   */
+  it('holds the design’s own shell between its two edges', () => {
+    expect(panelBaseWidth(DESIGN_SCREEN_HEIGHT) - 2 * SHELL_EDGE_MARGIN).toBe(514)
+    expect(
+      panelBaseWidth(DESIGN_SCREEN_HEIGHT) +
+        mineColumnWidth(DESIGN_SCREEN_HEIGHT) -
+        2 * SHELL_EDGE_MARGIN
+    ).toBe(820)
+  })
+
+  it('adds the dock’s gap, its slot and the room its raised edge is drawn in', () => {
+    // The plate's own free-side 2px edge now falls inside the 12px gap, so the
+    // slot adds the gap less that edge, the slot, and the slot's own outside room.
+    expect(dockSlotWidth()).toBe(DOCK_GAP - SHELL_EDGE_MARGIN + DOCK_WIDTH + DOCK_FREE_ROOM)
+    expect(dockSlotWidth()).toBe(456)
   })
 
   it('draws the mine column at the painting’s height less its chrome, never under 300px', () => {
@@ -346,9 +392,11 @@ describe('the redesigned Panel grid', () => {
     expect(panelWidth(AT_1X, OPEN_WITH_MINE) - panelWidth(AT_1X, OPEN)).toBe(306)
   })
 
-  it('keeps the mine column and the nav, without the page, when only the page closes', () => {
-    expect(mineOnlyWidth(DESIGN_SCREEN_HEIGHT)).toBe(544 - PAGE_WIDTH - SHELL_GAP + 306)
-  })
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "keeps the mine column and the nav,
+   * without the page, when only the page closes". The page never closes in the design; the
+   * rail's arrow that closed it is gone (PO ruling 2026-09-27).
+   */
 
   it('reserves the same grid the renderer’s stylesheet draws', () => {
     // main cannot read CSS, so its copies are pinned to the stylesheet itself,
@@ -360,13 +408,18 @@ describe('the redesigned Panel grid', () => {
     expect(px('shell-edge')).toBe(SHELL_EDGE_MARGIN)
     expect(px('dock-inset')).toBe(DOCK_INSET)
     expect(px('page-width')).toBe(PAGE_WIDTH)
+    // APPENDED for #635: the dock slot the renderer draws beside the shell.
+    expect(px('dock-gap')).toBe(DOCK_GAP)
+    expect(px('dock-width')).toBe(DOCK_WIDTH)
+    expect(px('dock-free-room')).toBe(DOCK_FREE_ROOM)
     // And the renderer's own copy of the height they leave the mine column.
     expect(SHELL_CONTENT_INSET).toBe(2 * DOCK_INSET + 2 * SHELL_PADDING)
   })
 
   it('composes the same design width on every platform', () => {
     for (const platform of ['win32', 'darwin', 'linux'] as const) {
-      for (const layout of [OPEN, OPEN_WITH_MINE, { expanded: false, mineOpen: true }]) {
+      // AMENDED for #635 (was: the mine-only composition as the third): every one there is now.
+      for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
         expect(panelWidth(AT_1X, layout, platform)).toBe(panelWidth(AT_1X, layout, 'win32'))
       }
     }
@@ -374,38 +427,45 @@ describe('the redesigned Panel grid', () => {
 })
 
 describe('panelBounds', () => {
-  it('hangs the closed rail on the right edge by default', () => {
-    expect(panelBounds(AREA, 'right', CLOSED, 'win32')).toEqual({
-      x: 1920 - WIN32_FLOOR,
+  // AMENDED for #635 (was: "hangs the closed rail on the right edge by default", and its left
+  // twin): the window a Panel opens as is the Panel itself, the rail having gone.
+  it('hangs the Panel on the right edge by default', () => {
+    const width = panelWidth(AREA, OPEN)
+    expect(panelBounds(AREA, 'right', OPEN, 'win32')).toEqual({
+      x: 1920 - width,
       y: 0,
-      width: WIN32_FLOOR,
+      width,
       height: 1032
     })
   })
 
-  it('hangs the closed rail on the left edge when that is the docked side', () => {
-    expect(panelBounds(AREA, 'left', CLOSED, 'win32')).toEqual({
+  it('hangs the Panel on the left edge when that is the docked side', () => {
+    expect(panelBounds(AREA, 'left', OPEN, 'win32')).toEqual({
       x: 0,
       y: 0,
-      width: WIN32_FLOOR,
+      width: panelWidth(AREA, OPEN),
       height: 1032
     })
   })
 
   it('grows inward from the docked edge when it opens', () => {
     // The docked edge does not move: a right-docked panel keeps its right edge
-    // against the screen and reaches left, which is the direction the rail's
-    // arrow points.
-    const closed = panelBounds(AREA, 'right', CLOSED)
+    // against the screen and reaches left. AMENDED for #635 (was: from the
+    // closed rail): a mine opening, and then something docked beside it.
     const open = panelBounds(AREA, 'right', OPEN)
-    expect(open.x + open.width).toBe(closed.x + closed.width)
-    expect(open.x).toBe(1920 - panelWidth(AREA, OPEN))
+    for (const layout of [OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
+      const grown = panelBounds(AREA, 'right', layout)
+      expect(grown.x + grown.width).toBe(open.x + open.width)
+      expect(grown.x).toBe(1920 - panelWidth(AREA, layout))
+    }
   })
 
   it('grows inward from the left edge too, with the left edge pinned', () => {
-    const open = panelBounds(AREA, 'left', OPEN)
-    expect(open.x).toBe(0)
-    expect(open.width).toBe(panelWidth(AREA, OPEN))
+    for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
+      const open = panelBounds(AREA, 'left', layout)
+      expect(open.x).toBe(0)
+      expect(open.width).toBe(panelWidth(AREA, layout))
+    }
   })
 
   /*
@@ -417,7 +477,8 @@ describe('panelBounds', () => {
   it('spans the usable height it was given, at that rectangle’s own origin, on both edges', () => {
     const reserved = { x: 0, y: 48, width: 1920, height: 984 }
     for (const edge of ['left', 'right'] as const) {
-      for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+      // AMENDED for #635: the rail's composition left this list; the docked slot's joined it.
+      for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
         const bounds = panelBounds(reserved, edge, layout)
         expect(bounds.y).toBe(48)
         expect(bounds.height).toBe(984)
@@ -436,7 +497,8 @@ describe('panelBounds', () => {
       { x: 0, y: 0, width: 480, height: 600 }
     ]) {
       for (const edge of ['left', 'right'] as const) {
-        for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+        // AMENDED for #635: the rail's composition left this list; the docked slot's joined it.
+        for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
           const bounds = panelBounds(area, edge, layout)
           expect(bounds.x).toBeGreaterThanOrEqual(area.x)
           expect(bounds.x + bounds.width).toBeLessThanOrEqual(area.x + area.width)
@@ -447,19 +509,19 @@ describe('panelBounds', () => {
 
   /*
    * Windows refuses to make a window narrower than 32px — measured on the
-   * maintainer's machine, where a 20px rail came back 32px wide. Asking for 20
-   * therefore docks the rail differently on each edge: right-docked the extra
-   * twelve hang off the screen and the rail still looks right, left-docked they
-   * do not and it comes out fat. The floor is requested here so both edges get
-   * the same window, and the renderer draws the design's 20px rail against the
-   * docked side of it.
+   * maintainer's machine, where a 20px rail came back 32px wide. The floor is
+   * requested here so both edges get the same window.
    */
   it('never asks for a window narrower than the platform will make', () => {
     // AMENDED for #465: asserted for each platform's own floor rather than for
     // the Windows one everywhere, which is the untruth that issue removes.
+    // AMENDED for #635: the closed rail was the one composition narrower than
+    // the floor, and it is gone, so the floor is asserted on a display whose
+    // scale shrinks the whole Panel below it.
+    const tiny = { x: 0, y: 0, width: 1920, height: 20 }
     for (const platform of ['win32', 'darwin', 'linux'] as const) {
       for (const edge of ['left', 'right'] as const) {
-        const bounds = panelBounds(AREA, edge, CLOSED, platform)
+        const bounds = panelBounds(tiny, edge, OPEN, platform)
         expect(bounds.width).toBeGreaterThanOrEqual(minWindowWidth(platform))
       }
     }
@@ -467,13 +529,14 @@ describe('panelBounds', () => {
 
   it('stays on the display it was handed, negative origins included', () => {
     const secondary = { x: -1920, y: 0, width: 1920, height: 1080 }
-    expect(panelBounds(secondary, 'right', CLOSED, 'win32').x).toBe(-WIN32_FLOOR)
+    // AMENDED for #635 (was: the closed rail at the platform floor).
+    expect(panelBounds(secondary, 'right', OPEN, 'win32').x).toBe(-panelWidth(secondary, OPEN))
     expect(panelBounds(secondary, 'left', OPEN).x).toBe(-1920)
   })
 
   it('returns whole pixels, which is all Electron accepts for bounds', () => {
     const odd = { x: 0, y: 0, width: 1367, height: 769 }
-    for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+    for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
       const bounds = panelBounds(odd, 'right', layout)
       for (const value of Object.values(bounds)) expect(Number.isInteger(value)).toBe(true)
     }
@@ -510,7 +573,9 @@ describe('the mine column against the panel it opens beside', () => {
     // column may be the wider of the two; what opening one must never do is
     // take width from the page, which is what this asserts.
     for (const height of [600, DESIGN_COMPOSITION_HEIGHT, 1392, 2160]) {
-      expect(expandedWidth(height) + mineColumnWidth(height)).toBeGreaterThan(expandedWidth(height))
+      expect(panelBaseWidth(height) + mineColumnWidth(height)).toBeGreaterThan(
+        panelBaseWidth(height)
+      )
       expect(secondaryColumnWidth(height)).toBe(PAGE_WIDTH)
     }
   })
@@ -538,8 +603,12 @@ describe('messagePanelBounds', () => {
   /** The panel's own opening height, in design pixels (see lib/message/panelHeight). */
   const DESIGN_HEIGHT = 235
 
-  /** The composition the design's own mock draws the panel beside. */
-  const MINE_ONLY = { expanded: false, mineOpen: true }
+  /**
+   * The composition the design's own mock draws the panel beside. AMENDED for #635 (was: the
+   * mine with the page closed, which the rail's arrow made and the design never had): the page
+   * is always there now, so this is the mine column beside it.
+   */
+  const MINE_ONLY = OPEN_WITH_MINE
 
   it('takes the design’s own 990px, scaled onto this display, when the room is there', () => {
     // The mine-only composition is what the design's mock draws beside it, and
@@ -666,7 +735,8 @@ describe('messagePanelBounds', () => {
       { x: 0, y: 0, width: 1024, height: 768 }
     ]) {
       for (const edge of ['left', 'right'] as const) {
-        for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+        // AMENDED for #635: the rail's composition left this list; the docked slot's joined it.
+        for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK]) {
           const shell = shellAt(area, edge, layout)
           for (const height of [235, 578]) {
             const bounds = messagePanelBounds(area, shell, edge, height)
@@ -846,11 +916,13 @@ describe('detachedMessagePanelBounds', () => {
 
 describe('messagePanelPlacement', () => {
   const DESIGN_HEIGHT = 235
-  const MINE_ONLY = { expanded: false, mineOpen: true }
+  // AMENDED for #635 (was: the mine with the page closed, gone with the rail's arrow).
+  const MINE_ONLY = OPEN_WITH_MINE
 
   it('is the docked rectangle while nothing has been moved', () => {
     for (const edge of ['left', 'right'] as const) {
-      for (const layout of [CLOSED, OPEN, OPEN_WITH_MINE]) {
+      // AMENDED for #635: the rail's composition left this list; the docked slot's joined it.
+      for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK]) {
         const shell = panelBounds(AT_1X, edge, layout)
         expect(messagePanelPlacement(AT_1X, shell, edge, DESIGN_HEIGHT, null)).toEqual(
           messagePanelBounds(AT_1X, shell, edge, DESIGN_HEIGHT)
@@ -863,7 +935,8 @@ describe('messagePanelPlacement', () => {
     // The decision the whole issue is about: a shell that moved, grew or
     // changed its docked side no longer drags the panel around with it.
     const anchor = { x: 300, bottom: 900 }
-    const railRight = panelBounds(AT_1X, 'right', CLOSED)
+    // AMENDED for #635 (was: the closed rail, gone): the plain Panel on the other side.
+    const railRight = panelBounds(AT_1X, 'right', OPEN)
     const openLeft = panelBounds(AT_1X, 'left', OPEN_WITH_MINE)
     expect(messagePanelPlacement(AT_1X, railRight, 'right', DESIGN_HEIGHT, anchor)).toEqual(
       messagePanelPlacement(AT_1X, openLeft, 'left', DESIGN_HEIGHT, anchor)

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DOMKeyframesDefinition } from 'motion-v'
 import PanelTransition from './PanelTransition.vue'
 import { panelKeyframes } from '../../lib/shell/panelMotion'
-import { motionBoundMs } from '../../lib/shell/motionTiming'
+import { motionBoundMs, type MotionTransition } from '../../lib/shell/motionTiming'
 import type { MotionAnimate } from '../../lib/shell/boundedMotion'
 import type { ShellFoldHold } from '../../composables/useShellFold'
 
@@ -51,7 +51,9 @@ function harness(
   axis?: 'horizontal' | 'vertical',
   hold?: (column: HTMLElement) => ShellFoldHold | null,
   watchable = true,
-  holdEnter?: (column: HTMLElement) => void
+  holdEnter?: (column: HTMLElement) => void,
+  // APPENDED for #635, optional so every case above is untouched: a motion of the caller's own.
+  motion?: (leaving: boolean) => { keyframes: DOMKeyframesDefinition; transition: MotionTransition }
 ) {
   const media = new EventTarget() as MediaQueryList
   Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
@@ -100,6 +102,7 @@ function harness(
               axis,
               hold,
               holdEnter,
+              motion,
               engine: animate as unknown as MotionAnimate,
               onLeave: (leave: Promise<void>) => leaves.push(leave)
             },
@@ -444,6 +447,45 @@ describe('PanelTransition', () => {
     await nextTick()
     expect(test.wrapper.find('div').exists()).toBe(true)
     expect(test.animate).not.toHaveBeenCalled()
+    test.wrapper.unmount()
+  })
+})
+
+/*
+ * APPENDED for #635. The dock's window slot has a motion of its own in the design (motion.md,
+ * "MessagePanel window (Panel)": in from its far side over --dur-panel, out toward the shell over
+ * --dur-fast), so a caller can hand this component the keyframes AND the transition to run, and
+ * the leave it reports is still what the shrink waits on.
+ */
+describe('PanelTransition with a motion of the caller’s own', () => {
+  const MOTION = (leaving: boolean) =>
+    leaving
+      ? { keyframes: { opacity: [1, 0], x: [0, 8] }, transition: { duration: 0.09 } }
+      : { keyframes: { opacity: [0, 1], x: [-12, 0] }, transition: { duration: 0.18 } }
+
+  it('runs the motion it is handed, entering and leaving, with that motion’s own transition', async () => {
+    const test = harness(false, undefined, undefined, true, undefined, MOTION)
+    test.shown.value = true
+    await nextTick()
+    expect(test.animate).toHaveBeenLastCalledWith(
+      expect.any(HTMLElement),
+      MOTION(false).keyframes,
+      MOTION(false).transition
+    )
+    test.animations[0]!.finish()
+    await nextTick()
+    test.shown.value = false
+    await nextTick()
+    expect(test.animate).toHaveBeenLastCalledWith(
+      expect.any(HTMLElement),
+      MOTION(true).keyframes,
+      MOTION(true).transition
+    )
+    expect(test.leaves).toHaveLength(1)
+    test.animations[1]!.finish()
+    await test.leaves[0]
+    await nextTick()
+    expect(test.wrapper.find('div').exists()).toBe(false)
     test.wrapper.unmount()
   })
 })

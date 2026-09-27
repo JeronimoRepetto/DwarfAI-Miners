@@ -15,14 +15,13 @@ import type { ScreenRect } from '../platform/screenArea'
 import { minWindowWidth } from '../platform/windowMetrics'
 import type { PanelEdge, PanelLayoutRequest } from '../domain/types'
 
-/** The design's closed rail: 20px, spanning the usable screen height. */
-export const RAIL_WIDTH = 20
-
 /*
+ * `RAIL_WIDTH` stood here until #635: the closed 20px rail, which the design never draws and the
+ * PO's ruling of 2026-09-27 removed. Closing the Panel hides its window, as the app mark always
+ * did, so no composition is narrower than the nav and the page any more.
+ *
  * `MIN_WINDOW_WIDTH` stood here until #465. It was a Windows MEASUREMENT (#153)
- * that every platform paid: on a Mac the collapsed window came out wider than
- * the rail the renderer paints into it, and macOS drew its own shadow round the
- * transparent gutter that left. The floors, per platform and with the one still
+ * that every platform paid. The floors, per platform and with the ones still
  * unmeasured said so, are now `minWindowWidth` in `platform/windowMetrics.ts`.
  */
 
@@ -38,8 +37,8 @@ export const DESIGN_COMPOSITION_HEIGHT = 768
  *
  * Type read far too small on a 2K display, and the maintainer's ruling is that
  * the shell is a SURFACE designed at 1080 logical pixels tall, scaled onto
- * whatever display it lands on. So every number below — the design's 20px rail,
- * its 38px navigation column, the derived columns — is computed against this
+ * whatever display it lands on. So every number below — the nav, the page,
+ * the dock slot, the derived columns — is computed against this
  * height and this height only, and the display's real one appears exactly once,
  * as the factor `uiScale` returns.
  *
@@ -54,14 +53,12 @@ export const DESIGN_SCREEN_HEIGHT = 1080
  * Layout and Parts, which the renderer's stylesheet draws literally.
  *
  * One rock plate docked against the screen edge, holding from the edge inward
- * the nav, the mine column while a mine is open, and the page. The page and the
- * nav are always there; the mine column takes no space while no mine is open.
- * The MessagePanel's dock slot is not part of this window yet: today's panel
- * is still its own window beside the shell until its own slice replaces it.
- *
- * The closed 20px rail (#388) is not in the design — it is what Veta retires —
- * and until then it stays exactly as it was: the free-side column of every
- * open composition, and the whole window when nothing else is drawn.
+ * the nav, the mine column while a mine is open, and the page, and beyond the
+ * plate on its free side the dock's window slot while something is docked in it.
+ * The page and the nav are always there; the mine column takes no space while
+ * no mine is open, and the window slot none while it holds nothing (Layout).
+ * The window is exactly as wide as that, and not a pixel is reserved for what
+ * is not shown (PO ruling 2026-09-27).
  */
 /** The nav column at the screen edge (`organisms/nav`, `.dm-nav`). */
 export const NAV_WIDTH = 56
@@ -90,6 +87,28 @@ export const SHELL_GAP = 6
  * the window.
  */
 export const SHELL_EDGE_MARGIN = 2
+
+/**
+ * The gap between the plate and the dock's window slot (`.dm-dock`, gap 12px).
+ * The plate's own free-side edge is drawn inside it.
+ */
+export const DOCK_GAP = 12
+
+/**
+ * The dock's window slot, as wide as what it holds (#635): the mine history
+ * today (`.dm-hist`, width 440px), and the MessagePanel and the Add panel
+ * (`.dm-msg`, 440px) once their own slice docks them. It holds one at a time.
+ */
+export const DOCK_WIDTH = 440
+
+/**
+ * What the slot's content draws outside its own box, reserved on the window's
+ * free side while the slot is open: its material's 2px edge (`.m-mat`) and its
+ * raised 4px drop shadow (`.m-raised`). The shadow falls toward the free side
+ * of a left dock only, but it is reserved on both edges alike: one composition
+ * is one window width, whichever side it is docked to.
+ */
+export const DOCK_FREE_ROOM = 6
 
 /**
  * The dock's inset from the top and the bottom of the work area (`.dm-dock`).
@@ -122,18 +141,11 @@ export const MINE_COLUMN_MIN_WIDTH = 300
 const MINE_COLUMN_ART_INSET = 16
 
 /**
- * What the shell spends before any content column: the edge margin at both
- * ends, the plate's padding at both ends, the nav, the rail, and the gap
- * between the nav and whatever stands beside it.
+ * What the shell spends on itself around the page: the edge margin at both
+ * ends, the plate's padding at both ends, the nav, and the gap between the nav
+ * and whatever stands beside it.
  */
-const SHELL_FRAME_WIDTH =
-  2 * SHELL_EDGE_MARGIN + 2 * SHELL_PADDING + NAV_WIDTH + RAIL_WIDTH + SHELL_GAP
-
-/**
- * What the shell spends on itself around the page: the frame above plus the
- * gap between the page and the rail.
- */
-export const SHELL_CHROME_WIDTH = SHELL_FRAME_WIDTH + SHELL_GAP
+const SHELL_CHROME_WIDTH = 2 * SHELL_EDGE_MARGIN + 2 * SHELL_PADDING + NAV_WIDTH + SHELL_GAP
 
 /** The two paintings, as the ratios their columns are derived from. */
 const INTERIOR_ART_ASPECT = 1184 / 3622
@@ -165,19 +177,21 @@ export function secondaryColumnWidth(_windowHeight: number): number {
   return PAGE_WIDTH
 }
 
-/** The whole panel with no mine held open, on a window this tall. */
-export function expandedWidth(windowHeight: number): number {
+/**
+ * The Panel with nothing beside its page: the nav and the page on the plate,
+ * the narrowest the window is while it shows since #635 removed the rail.
+ */
+export function panelBaseWidth(windowHeight: number): number {
   return SHELL_CHROME_WIDTH + secondaryColumnWidth(windowHeight)
 }
 
 /**
- * The panel with a mine held open and the page closed (#153): the rail's
- * arrow closes the PAGE, and a mine held open stays held open. The rail keeps
- * doing exactly that until Veta retires it; the redesign itself never closes
- * the page.
+ * What the dock's window slot adds while it holds something (#635): the gap,
+ * less the plate's free-side edge that the gap now holds, the slot, and the
+ * room the slot's own raised material is drawn in beyond it.
  */
-export function mineOnlyWidth(windowHeight: number): number {
-  return SHELL_FRAME_WIDTH + mineColumnWidth(windowHeight)
+export function dockSlotWidth(): number {
+  return DOCK_GAP - SHELL_EDGE_MARGIN + DOCK_WIDTH + DOCK_FREE_ROOM
 }
 
 /**
@@ -208,41 +222,39 @@ export function uiScale(area: ScreenRect): number {
  * the renderer keeps drawing the design's literal numbers and this is the only
  * place the display's real height is spent on a width.
  *
+ * The sum is the whole rule (#635): the nav and the page, the mine column while
+ * a mine is open, the dock slot while something is docked, and nothing else.
+ *
  * A display too narrow for the scaled composition gets a panel that spans it
- * rather than one that hangs off the side; the renderer's columns then shrink,
- * which is the honest failure mode for a size the design does not cover
- * (narrow-screen adaptation is Unspecified).
+ * rather than one that hangs off the side (decision log, Narrow screen: the
+ * dock is never wider than the screen); the renderer's page column then gives
+ * way. The platform floor is a real pixel count that does not scale: a window
+ * cannot be made narrower than it, so a display whose scale would shrink the
+ * Panel below it still asks for that floor (#465).
  */
 export function panelWidth(
   area: ScreenRect,
-  layout: PanelLayoutRequest,
+  layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
   platform?: Platform
 ): number {
-  const scale = uiScale(area)
-  if (!layout.expanded && !layout.mineOpen) {
-    // The rail scales like everything else, but the platform floor is a real
-    // pixel count and does not: a window cannot be made narrower than it. Where
-    // the floor is wider than the scaled rail the difference is transparent
-    // window, so it is asked for per platform rather than at the widest (#465).
-    return Math.min(Math.max(minWindowWidth(platform), Math.round(RAIL_WIDTH * scale)), area.width)
-  }
-  const design = layout.expanded
-    ? expandedWidth(DESIGN_SCREEN_HEIGHT) +
-      (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0)
-    : mineOnlyWidth(DESIGN_SCREEN_HEIGHT)
-  return Math.min(Math.round(design * scale), area.width)
+  const design =
+    panelBaseWidth(DESIGN_SCREEN_HEIGHT) +
+    (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0) +
+    (layout.dockOpen ? dockSlotWidth() : 0)
+  const scaled = Math.max(minWindowWidth(platform), Math.round(design * uiScale(area)))
+  return Math.min(scaled, area.width)
 }
 
 /**
  * The window rectangle for this layout on this display.
  *
  * The docked edge never moves: a right-docked panel keeps its right edge against
- * the screen and grows leftward, which is the direction the rail's arrow points.
+ * the screen and grows leftward, toward the free side the dock slot opens on.
  */
 export function panelBounds(
   area: ScreenRect,
   edge: PanelEdge,
-  layout: PanelLayoutRequest,
+  layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
   platform?: Platform
 ): ScreenRect {
   const width = panelWidth(area, layout, platform)
@@ -310,8 +322,7 @@ function messagePanelRoom(area: ScreenRect, shell: ScreenRect, edge: PanelEdge):
  * Shrinking is also already this file's answer to a composition a display
  * cannot hold (see `panelWidth`'s clamp), and it is what #159's docked band
  * shipped, so the narrowing is one the user has already met rather than a new
- * behaviour. It is self-explanatory too: the shell is what ate the room, and
- * collapsing the secondary panel with the rail gives it straight back.
+ * behaviour. It is self-explanatory too: the shell is what ate the room.
  *
  * One floor, and it is the platform's rather than the design's: a window of no
  * width is not a narrow panel, it is a panel that looks as though it never

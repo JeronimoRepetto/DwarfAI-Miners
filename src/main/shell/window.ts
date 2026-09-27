@@ -41,7 +41,7 @@ const DEFAULT_PANEL_EDGE: PanelEdge = 'right'
  * state: the renderer reads it back over the bridge rather than keeping a second
  * copy that could disagree with the bounds Electron actually applied.
  */
-let layout: PanelLayout = { edge: DEFAULT_PANEL_EDGE, expanded: false, mineOpen: false }
+let layout: PanelLayout = { edge: DEFAULT_PANEL_EDGE, mineOpen: false, dockOpen: false }
 
 /** Flip the close handler from "hide" to "really close" (called on before-quit). */
 export function markQuitting(): void {
@@ -142,14 +142,14 @@ export interface MainWindowOptionsInput {
   alwaysOnTop: boolean
   preloadPath: string
   iconPath: string
-  /** Where the closed rail hangs on the display it is docked to (see #90). */
+  /** Where the Panel hangs on the display it is docked to (see #90). */
   bounds: ScreenRect
 }
 
 /**
  * Pure options builder, split from createMainWindow so the creation-time
  * contract — the stored pin preference lands in `alwaysOnTop`, the frameless
- * floating-panel flags stay fixed, the window opens as the closed rail — is
+ * floating-panel flags stay fixed, the window opens on the bounds it is handed — is
  * testable without an Electron runtime.
  */
 export function buildMainWindowOptions(
@@ -174,7 +174,7 @@ export function buildMainWindowOptions(
      * Windows keeps the WS_THICKFRAME style on a frameless window unless told
      * otherwise, and with it the DWM's window-size animation — so every
      * `setBounds` a layout change issues redrew the WHOLE shell in one flash,
-     * including the columns the fold (#388) had left exactly where they were
+     * including the columns a layout change had left exactly where they were
      * (#394). Electron documents `false` as removing "window shadow and window
      * animations" and edge-drag resizing: the window is not resizable, and the
      * shell paints its own shadow, so nothing this app relies on goes with it.
@@ -185,13 +185,14 @@ export function buildMainWindowOptions(
      * The shell paints its own shadow, and `thickFrame: false` above takes the
      * native one on Windows only — it is a Windows style and nothing else reads
      * it. macOS keeps drawing its own around the shape a TRANSPARENT window
-     * presents, which the fold (#388) shrinks to the 20px rail while the window
-     * stays the full height, so what the OS outlined was a rectangle the fill
-     * no longer reached: a second shadow standing past the ends of the rail
-     * (#465). Electron's own `invalidateShadow()` documents transparent windows
-     * leaving exactly these artifacts on macOS; refusing the shadow outright
-     * beats repainting it after every animation, because the rail's own
-     * `--elevation-5` was always the one meant to be seen.
+     * presents, and the shell's fold clips that shape while the window stays
+     * the full height, so what the OS outlined was a rectangle the fill no
+     * longer reached: a second shadow standing past the painted plate (#465,
+     * photographed on the closed rail #635 has since removed). Electron's own
+     * `invalidateShadow()` documents transparent windows leaving exactly these
+     * artifacts on macOS; refusing the shadow outright beats repainting it
+     * after every animation, because the plate's own material is the one
+     * meant to be seen.
      */
     hasShadow: false,
     skipTaskbar: true,
@@ -375,15 +376,15 @@ export function seedPanelEdge(edge: PanelEdge): void {
  * Apply a layout the renderer asked for and answer with what the window became.
  *
  * `edge` is optional (#138): omitting it keeps the CURRENT edge, which is what
- * the rail toggle and the mine-open resize both do — neither is the Settings
+ * a mine opening and the dock opening both do — neither is the Settings
  * position control, and neither may nudge the docked side as a side effect.
  * Only a request that names one (the position control) ever moves it.
  */
 export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
   layout = {
     edge: request.edge ?? layout.edge,
-    expanded: request.expanded,
-    mineOpen: request.mineOpen
+    mineOpen: request.mineOpen,
+    dockOpen: request.dockOpen
   }
   if (mainWindow !== null) {
     const area = currentScreenArea()

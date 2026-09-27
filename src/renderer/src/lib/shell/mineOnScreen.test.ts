@@ -17,8 +17,10 @@ describe('mineOnScreen', () => {
   })
 
   it('is nothing for a mine held open behind a collapsed shell', () => {
-    // The bare rail draws nothing, so a mine the view is still holding is not
-    // something a person can see — and #316's rule is about what is visible.
+    // A column with no width draws nothing, so a mine the view is still holding
+    // is not something a person can see — and #316's rule is about what is
+    // visible. AMENDED for #635: the bare rail this was written for is gone; the
+    // view still holds a mine a moment before main has given its column width.
     // The two facts come from different owners: `mineId` is the shell's own
     // navigation, `mineOpen` is main's report that the column has width.
     expect(mineOnScreen('m1', { mineOpen: false })).toBe(null)
