@@ -250,6 +250,8 @@ const {
  * clipped to the footprint it had. See composables/useShellFold.ts.
  */
 const shellEl = ref<HTMLElement | null>(null)
+/** The plate's `.m-mat` edge, one art pixel (--px) outside its box (#635). */
+const PLATE_OUTLINE = 2
 /*
  * The rail travels with the fold (#464), so the composable is handed it as well
  * as the ground: it is the one column standing on the free side of everything
@@ -285,6 +287,9 @@ const {
   shell: () => shellEl.value,
   edge: () => layout.value.edge,
   remaining: () => shellComposition(visibleLayout.value),
+  // The plate's 2px edge is drawn outside the shell's box (#635), so the fold
+  // leaves it room; the bare rail draws no plate and so has none to keep.
+  outline: () => (composition.value === 'rail' ? 0 : PLATE_OUTLINE),
   rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null),
   // The strip is named as well as carried (#585 round 3): it is the wall a
   // drawer goes behind, and the one column whose room a drawer never follows.

@@ -68,11 +68,22 @@ export type ShellFoldState = 'whole' | number
  * than named here, so the clipped corners are the ones the ground is already
  * drawn with and the strip the fold ends on has the rail's shape.
  */
-export function shellFoldClip(state: ShellFoldState, edge: PanelEdge, radius: string): string {
-  const free = state === 'whole' ? '0px' : `calc(100% - ${state}px)`
+export function shellFoldClip(
+  state: ShellFoldState,
+  edge: PanelEdge,
+  radius: string,
+  outline = 0
+): string {
+  // The plate draws its edge `outline` px OUTSIDE its box (#635, `.m-mat`), so
+  // every side the fold does not cut is inset by minus that much and the edge
+  // stays continuous through the run. The folded free side is the one edge the
+  // fold cuts, exactly where it always did: it is the band the window is about
+  // to take away, so #388's rule is untouched.
+  const keep = outline > 0 ? `-${outline}px` : '0px'
+  const free = state === 'whole' ? keep : `calc(100% - ${state}px)`
   return edge === 'right'
-    ? `inset(0px 0px 0px ${free} round ${radius})`
-    : `inset(0px ${free} 0px 0px round ${radius})`
+    ? `inset(${keep} ${keep} ${keep} ${free} round ${radius})`
+    : `inset(${keep} ${free} ${keep} ${keep} round ${radius})`
 }
 
 /** The fold from what is painted now to what the change leaves painted. */
@@ -80,9 +91,12 @@ export function shellFoldKeyframes(
   from: ShellFoldState,
   to: ShellFoldState,
   edge: PanelEdge,
-  radius: string
+  radius: string,
+  outline = 0
 ): DOMKeyframesDefinition {
-  return { clipPath: [shellFoldClip(from, edge, radius), shellFoldClip(to, edge, radius)] }
+  return {
+    clipPath: [shellFoldClip(from, edge, radius, outline), shellFoldClip(to, edge, radius, outline)]
+  }
 }
 
 /**
