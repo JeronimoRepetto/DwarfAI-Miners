@@ -10,6 +10,9 @@
  */
 import {
   DWARF_PROVIDERS,
+  type AgentModelCatalog,
+  type AgentProviderOption,
+  type PanelEdge,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
   MINE_TIERS,
@@ -37,6 +40,14 @@ export interface SampleConfig {
 
 export interface GoldenSample {
   config: SampleConfig
+  /** The installed version the sample's About prints (#635). */
+  version?: string
+  /** The screen edge the sample's panel docks to. */
+  edge: PanelEdge
+  /** The sample's providers, each launchable, in its order, for the default launch (#635). */
+  providers: AgentProviderOption[]
+  /** What each of those providers answers it can start on. */
+  catalogs: AgentModelCatalog[]
   mines: Mine[]
   /**
    * The sample's own illustrative tier floors (`DM.TIER_FLOOR`), in the app's threshold shape, for
@@ -254,11 +265,26 @@ export function adaptSample(dm: unknown): GoldenSample {
     if (failed.length > 0) (failedSends[home.id] ??= {})[adapted.id] = failed
   }
   const floor = (dm as { TIER_FLOOR?: Record<string, unknown> }).TIER_FLOOR
+  const providers = ((data.providers ?? []) as Row[]).map((row) =>
+    oneOf<DwarfProvider>('provider', row.id, DWARF_PROVIDERS)
+  )
   return {
     config: {
       shortcutFailed: config.shortcutFailed === true,
       guildEnabled: config.guildEnabled === true
     },
+    ...(typeof config.version === 'string' ? { version: config.version } : {}),
+    edge:
+      config.dock === undefined
+        ? 'right'
+        : oneOf<PanelEdge>('dock', config.dock, ['left', 'right']),
+    providers: providers.map((provider) => ({ provider, installed: true, launchable: true })),
+    catalogs: ((data.providers ?? []) as Row[]).map((row, i) => ({
+      provider: providers[i]!,
+      models: ((row.models ?? []) as unknown[]).map((value) => ({ value: String(value) })),
+      efforts: ((row.efforts ?? []) as unknown[]).map(String),
+      source: 'provider' as const
+    })),
     mines,
     histories,
     failedSends,

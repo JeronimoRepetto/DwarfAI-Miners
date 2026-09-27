@@ -15,6 +15,11 @@ export interface SliderOptions {
   label: string
   disabled?: boolean
   state?: SliderState
+  /**
+   * The host holds the volume: a drag only asks, and the readout and fill show `value` alone until
+   * the host answers (#635, Settings draws what main stored, never what the drag asked).
+   */
+  held?: boolean
 }
 
 // A whole percentage from 0 to 100: the native range's own bounds and step.

@@ -36,4 +36,14 @@ describe('VolumeSlider', () => {
     const slider = mount(VolumeSlider, { props: { value: 40, label: 'Voices', disabled: true } })
     expect((slider.get('input').element as HTMLInputElement).disabled).toBe(true)
   })
+
+  // APPENDED (#635): Settings shows a volume only as main stored it, never as the drag asked.
+  it('only asks while held, its readout and fill showing the volume its host sets', async () => {
+    const slider = mount(VolumeSlider, { props: { value: 60, label: 'Music', held: true } })
+    await slider.get('input').setValue('35')
+    expect(slider.emitted('update:value')).toEqual([[35]])
+    expect(slider.get('.dm-slider__value').text()).toBe('60%')
+    await slider.setProps({ value: 35 })
+    expect(slider.get('.dm-slider__value').text()).toBe('35%')
+  })
 })

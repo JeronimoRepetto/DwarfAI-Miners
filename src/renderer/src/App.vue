@@ -15,7 +15,6 @@ import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
-import PanelFrame from './components/shell/PanelFrame.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
@@ -1206,56 +1205,54 @@ onBeforeUnmount(() => {
             />
 
             <!--
-          Settings, rebuilt to the design's own screen (#138): the heavy 4px
-          frame is PanelFrame's 'settings' variant, and SettingsPanel draws
-          everything specific to the screen — its title/divider, the
-          shortcut/position/Data-Base sections, and the Application section
-          #142 had nowhere else to put pin/hide/version.
+          Settings (#138, #635): the redesigned page, standing on the shell's plate
+          like every other page — its header, the seven section tabs and the
+          chosen section's rows.
         -->
-            <PanelFrame v-else-if="page === 'settings'" class="shell-page" variant="settings">
-              <SettingsPanel
-                :shortcut-state="shortcutState"
-                :shortcut-error="shortcutError"
-                :shortcut-recording="shortcutRecording"
-                :shortcut-applying="shortcutApplying"
-                :edge="layout.edge"
-                :edge-applying="layoutApplying"
-                :pinned="pinned"
-                :pin-tooltip="pinTooltip"
-                :version-text="versionText"
-                :version-hint="versionHint"
-                :resetting="metricsResetting"
-                :reset-error="metricsResetError"
-                :audio-settings="audioSettings"
-                :notifications-enabled="notificationsEnabled"
-                :typography="typography"
-                :typography-applying="typographyApplying"
-                :jev-settings="jevSettings"
-                :jev-saving="jevSaving"
-                :jev-providers="jevProviders"
-                :jev-catalogs="jevCatalogs"
-                :open-code-settings="openCodeSettings"
-                :open-code-applying="openCodeApplying"
-                @start-recording="startShortcutRecording"
-                @stop-recording="stopShortcutRecording"
-                @record="recordShortcut"
-                @reset-shortcut="resetShortcut"
-                @close="showMap"
-                @select-edge="setEdge"
-                @toggle-pin="togglePinned"
-                @hide-panel="hidePanel"
-                @reset-confirm="resetMetrics"
-                @audio-change="setAudioSettings"
-                @notifications-change="setNotificationsEnabled"
-                @typography-change="setTypography"
-                @jev-save="saveJevApiKey"
-                @jev-clear="clearJevApiKey"
-                @jev-preferences-change="setJevPreferences"
-                @opencode-plugin-change="setOpenCodePluginEnabled"
-                @opencode-password-save="saveOpenCodeServerPassword"
-                @opencode-password-clear="clearOpenCodeServerPassword"
-              />
-            </PanelFrame>
+            <SettingsPanel
+              v-else-if="page === 'settings'"
+              class="shell-page"
+              :shortcut-state="shortcutState"
+              :shortcut-error="shortcutError"
+              :shortcut-recording="shortcutRecording"
+              :shortcut-applying="shortcutApplying"
+              :edge="layout.edge"
+              :edge-applying="layoutApplying"
+              :pinned="pinned"
+              :pin-tooltip="pinTooltip"
+              :version-text="versionText"
+              :version-hint="versionHint"
+              :resetting="metricsResetting"
+              :reset-error="metricsResetError"
+              :audio-settings="audioSettings"
+              :notifications-enabled="notificationsEnabled"
+              :typography="typography"
+              :typography-applying="typographyApplying"
+              :jev-settings="jevSettings"
+              :jev-saving="jevSaving"
+              :jev-providers="jevProviders"
+              :jev-catalogs="jevCatalogs"
+              :open-code-settings="openCodeSettings"
+              :open-code-applying="openCodeApplying"
+              @start-recording="startShortcutRecording"
+              @stop-recording="stopShortcutRecording"
+              @record="recordShortcut"
+              @reset-shortcut="resetShortcut"
+              @close="showMap"
+              @select-edge="setEdge"
+              @toggle-pin="togglePinned"
+              @hide-panel="hidePanel"
+              @reset-confirm="resetMetrics"
+              @audio-change="setAudioSettings"
+              @notifications-change="setNotificationsEnabled"
+              @typography-change="setTypography"
+              @jev-save="saveJevApiKey"
+              @jev-clear="clearJevApiKey"
+              @jev-preferences-change="setJevPreferences"
+              @opencode-plugin-change="setOpenCodePluginEnabled"
+              @opencode-password-save="saveOpenCodeServerPassword"
+              @opencode-password-clear="clearOpenCodeServerPassword"
+            />
 
             <!--
             The Lab, the Market and the Laboral Union (#335, #635): the guild

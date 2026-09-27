@@ -257,6 +257,48 @@ describe('adaptSample histories', () => {
   })
 })
 
+/*
+ * APPENDED (#635, PR5): what the Settings page reads from the sample — the version About prints,
+ * the edge the panel docks to, and the providers the default launch lists, each with the models
+ * and efforts its catalogue answers.
+ */
+describe('adaptSample — the Settings page', () => {
+  const provider = { id: 'codex', label: 'Codex', models: ['m-large'], efforts: ['low'] }
+
+  it('reads the version and the edge from the config, leaving the flags as they were', () => {
+    const sample = adaptSample(
+      dm({ config: { shortcutFailed: false, guildEnabled: false, version: '9.9.9', dock: 'left' } })
+    )
+    expect(sample.version).toBe('9.9.9')
+    expect(sample.edge).toBe('left')
+    expect(sample.config).toEqual({ shortcutFailed: false, guildEnabled: false })
+  })
+
+  it('reads a panel with no edge in the config as docked right, the default', () => {
+    expect(adaptSample(dm({})).edge).toBe('right')
+  })
+
+  it('turns each provider into a launchable option and its catalogue, in the sample order', () => {
+    const sample = adaptSample(dm({ providers: [provider, { ...provider, id: 'claude' }] }))
+    expect(sample.providers).toEqual([
+      { provider: 'codex', installed: true, launchable: true },
+      { provider: 'claude', installed: true, launchable: true }
+    ])
+    expect(sample.catalogs[0]).toEqual({
+      provider: 'codex',
+      models: [{ value: 'm-large' }],
+      efforts: ['low'],
+      source: 'provider'
+    })
+  })
+
+  it('throws on a provider the app has no word for', () => {
+    expect(() => adaptSample(dm({ providers: [{ ...provider, id: 'wizard' }] }))).toThrow(
+      /provider "wizard"/
+    )
+  })
+})
+
 // PANEL-QUESTIONS 16: a message the sample marks failed is the app's own record of the send.
 describe('adaptSample failed sends', () => {
   it('keeps each failed message as the app records a send, by mine and dwarf', () => {

@@ -25,6 +25,11 @@ import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
 import OreCapsule from '../components/vault/OreCapsule.vue'
 import VaultStrip from '../components/vault/VaultStrip.vue'
+import KeyCap from '../components/panel/KeyCap.vue'
+import SettingsBanner from '../components/panel/SettingsBanner.vue'
+import SettingsRow from '../components/panel/SettingsRow.vue'
+import SettingsPanel from '../components/panel/SettingsPanel.vue'
+import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import CrewRoster from '../components/scene/CrewRoster.vue'
 import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
@@ -59,6 +64,7 @@ import type { IconName } from '../lib/icon/iconGrids'
 import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../lib/shell/panelNav'
 import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
 import {
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type Dwarf,
   type DwarfProvider,
@@ -994,6 +1000,131 @@ const historyPanel: Render = (sample, _texts, attributes) => {
   }
 }
 
+/*
+ * The settings row as its tree prints it, in the kit's frame: danger and stacked as its classes
+ * say, its label and help the first texts, then each control in tree order — a switch named and
+ * set as it prints, a key cap showing the next text, a button labelled with the next text in the
+ * variant its classes carry. The warning banner is the banner alone, its line the one text.
+ */
+const settingsRow: Render = (_sample, texts, attributes) => {
+  const style = attributes[0]?.attributes.style ?? ''
+  if (elementsOf(attributes, 'div.dm-banner').length) {
+    return {
+      component: KitFrame,
+      props: { style, parts: [{ component: SettingsBanner, props: { text: texts[0]?.text } }] }
+    }
+  }
+  const root = attributes.find((entry) => entry.element.startsWith('div.dm-srow'))!
+  const helped = elementsOf(attributes, 'p.dm-srow__help').length > 0
+  let next = helped ? 2 : 1
+  const controls: FramedPart[] = []
+  for (const { element, attributes: a } of attributes) {
+    if (element.startsWith('button.dm-toggle')) {
+      controls.push({
+        component: ToggleSwitch,
+        props: { label: a['aria-label'] ?? '', on: a['aria-checked'] === 'true' }
+      })
+    } else if (element.startsWith('span.dm-kbd')) {
+      controls.push({ component: KeyCap, props: {}, text: texts[next++]?.text })
+    } else if (element.startsWith('button.dm-btn')) {
+      controls.push({
+        component: ActionButton,
+        props: { label: texts[next++]?.text ?? '', variant: modifierOf(element, 'dm-btn') }
+      })
+    }
+  }
+  const row = {
+    label: texts[0]?.text ?? '',
+    ...(helped ? { help: texts[1]?.text } : {}),
+    ...(root.element.includes('dm-srow--danger') ? { tone: 'danger' } : {}),
+    stack: root.element.includes('dm-srow--stack')
+  }
+  return {
+    component: KitFrame,
+    props: { style, parts: [{ component: SettingsRow, props: row, children: controls }] }
+  }
+}
+
+/*
+ * The Settings page as its tree prints it, in the frame its root prints: the section its selected
+ * tab names, the shortcut failed where the General tab carries the warning dot, Custom in force
+ * where the tree draws the role selects, and each switch and volume as it prints. The rest is the
+ * sample's: its edge, version and providers, the default shortcut on the platform the references
+ * were taken on, the key configured with the Balanced profile and Claude as the default launch.
+ */
+const settings: Render = (sample, _texts, attributes) => {
+  const selected = elementsOf(attributes, 'button.dm-settings__tab').find(
+    (a) => a['aria-selected'] === 'true'
+  )
+  const failed = elementsOf(attributes, 'span.dm-warn-dot').length > 0
+  const custom = selectsOf(attributes).some((s) => s.label === 'Titles font')
+  const switchOn = (label: string, fallback: boolean): boolean => {
+    const found = elementsOf(attributes, 'button.dm-toggle').find((a) => a['aria-label'] === label)
+    return found === undefined ? fallback : found['aria-checked'] === 'true'
+  }
+  const volume = (label: string, fallback: number): number => {
+    const found = elementsOf(attributes, 'input').find((a) => a['aria-label'] === label)
+    return found === undefined ? fallback : Number(found.value) / 100
+  }
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: [
+        {
+          component: SettingsPanel,
+          props: {
+            section: selected?.['data-s'],
+            shortcutState: {
+              accelerator: DEFAULT_TOGGLE_ACCELERATOR,
+              registered: !failed,
+              platform: 'win32'
+            },
+            shortcutError: null,
+            shortcutRecording: false,
+            shortcutApplying: false,
+            edge: sample.edge,
+            edgeApplying: false,
+            pinned: switchOn('Always on top', true),
+            pinTooltip: '',
+            versionText: sample.version ?? null,
+            versionHint: '',
+            resetting: false,
+            resetError: null,
+            audioSettings: {
+              musicAtStartup: switchOn('Play music at startup', true),
+              musicVolume: volume('Music volume', 0.1),
+              ambienceVolume: volume('Mine ambience volume', 0.35),
+              voiceVolume: volume('Dwarf voice and interface sound volume', 0.7)
+            },
+            notificationsEnabled: switchOn('Show system notifications', true),
+            typography: custom
+              ? { style: 'custom', faces: { ...DEFAULT_TYPOGRAPHY_PREFERENCES.faces } }
+              : DEFAULT_TYPOGRAPHY_PREFERENCES,
+            typographyApplying: false,
+            jevSettings: {
+              configured: true,
+              preferences: {
+                profile: 'balanced',
+                default: { provider: 'claude' },
+                delegation: switchOn('Let Jev choose subagents by subtask complexity', false)
+              }
+            },
+            jevSaving: false,
+            jevProviders: sample.providers,
+            jevCatalogs: sample.catalogs,
+            openCodeSettings: {
+              pluginEnabled: switchOn('Answer OpenCode permission requests from the panel', true),
+              passwordConfigured: false
+            },
+            openCodeApplying: false
+          }
+        }
+      ]
+    }
+  }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -1067,6 +1198,28 @@ export const RENDERS: Record<string, Render> = {
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,
+  // The Settings page (#635, PR5) on each of its sections, read off its own tree.
+  'organisms/settings#general': settings,
+  'organisms/settings#general-shortcut-failed': settings,
+  'organisms/settings#sound': settings,
+  'organisms/settings#notifications': settings,
+  'organisms/settings#appearance': settings,
+  'organisms/settings#appearance-custom': settings,
+  'organisms/settings#integrations': settings,
+  'organisms/settings#data': settings,
+  'organisms/settings#about': settings,
+  // The settings row: a switch row, the shortcut's key cap and Reset, the warning banner, and the
+  // danger zone, each read off its own tree.
+  'molecules/settings-row#toggle-row': settingsRow,
+  'molecules/settings-row#shortcut-row': settingsRow,
+  'molecules/settings-row#warning-banner': settingsRow,
+  'molecules/settings-row#danger-zone': settingsRow,
+  // The Panel screen's kit cell: the two buttons that open the screen and the prototype, each
+  // labelled with the next text, the primary first, in the frame its tree prints.
+  'screens/panel#open-the-screen': framed((texts) => [
+    { component: ActionButton, props: { label: texts[0]?.text ?? '', variant: 'primary' } },
+    { component: ActionButton, props: { label: texts[1]?.text ?? '' } }
+  ]),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),

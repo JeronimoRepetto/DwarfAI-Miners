@@ -111,8 +111,11 @@ export type {
   OpenMineId,
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  InterfaceFont,
-  MessagingFont,
+  FontStyle,
+  TypeFace,
+  TypePresetId,
+  TypeRole,
+  TypeRoleFaces,
   TypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
@@ -207,10 +210,13 @@ export {
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   DEFAULT_TYPOGRAPHY_PREFERENCES,
-  INTERFACE_FONTS,
-  MESSAGING_FONTS,
-  isInterfaceFont,
-  isMessagingFont,
+  TYPE_FACES,
+  TYPE_PRESET_FACES,
+  TYPE_PRESET_IDS,
+  TYPE_ROLES,
+  TYPE_ROLE_FACES,
+  isTypeFaceFor,
+  isTypePresetId,
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Message attachments (#408) — one block, appended -------------------- */

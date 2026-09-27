@@ -32,10 +32,10 @@ body {
 }
 
 /*
- * The page ink and the small-text role, which every part inherits unless it takes another. Until
- * the Panel slice migrates today's Settings "Interface" font choice to a preset, that choice
- * reaches only elements that name `--font-pixel` themselves: inherited text takes the `--f-meta`
- * role. The user-select rule is the app's own: the panel is a desktop control, not a document.
+ * The page ink and the small-text role, which every part inherits unless it takes another. The
+ * font style chosen in Settings › Appearance repoints `--f-meta` with the other three roles
+ * (useTypography), so inherited text follows the person's Small text face and its size. The
+ * user-select rule is the app's own: the panel is a desktop control, not a document.
  */
 body {
   color: var(--ink);

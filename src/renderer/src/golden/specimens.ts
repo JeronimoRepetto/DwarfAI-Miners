@@ -14,7 +14,7 @@
  * Captions are design text: the harness reads them from the anatomy at run time and hands them in
  * as `texts`, in tree order (question 2).
  */
-import { defineComponent, h, type Component, type PropType } from 'vue'
+import { defineComponent, h, type Component, type PropType, type VNode } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
 import PixelIcon from '../components/icon/PixelIcon.vue'
 import type { IconName } from '../lib/icon/iconGrids'
@@ -139,7 +139,21 @@ export interface FramedPart {
   props: Record<string, unknown>
   /** Its default slot's text, for a part that takes its content that way. */
   text?: string
+  /** Its default slot's parts, for a part that holds other components (a settings row's controls). */
+  children?: readonly FramedPart[]
 }
+
+// One part as a vnode: its slot is its text, or its children drawn the same way.
+const drawPart = (part: FramedPart): VNode =>
+  h(
+    part.component,
+    part.props,
+    part.children !== undefined
+      ? () => part.children!.map(drawPart)
+      : part.text === undefined
+        ? undefined
+        : () => part.text
+  )
 
 const parts = { type: Array as PropType<readonly FramedPart[]>, required: true } as const
 
@@ -164,13 +178,7 @@ export const KitFrame = defineComponent({
   props: { style: { type: String, default: '' }, classes: { type: String, default: '' }, parts },
   setup(props) {
     return () =>
-      h(
-        'div',
-        { style: props.style, class: props.classes || undefined },
-        props.parts.map((part) =>
-          h(part.component, part.props, part.text === undefined ? undefined : () => part.text)
-        )
-      )
+      h('div', { style: props.style, class: props.classes || undefined }, props.parts.map(drawPart))
   }
 })
 

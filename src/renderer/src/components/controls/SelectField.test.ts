@@ -41,4 +41,16 @@ describe('SelectField', () => {
     expect(select.classes()).toContain('is-disabled')
     expect((select.get('select').element as HTMLSelectElement).disabled).toBe(true)
   })
+
+  // APPENDED (#635): Settings draws a select only as main stored it, never as the pick asked.
+  it('only asks while held, showing the value its host sets until the host answers', async () => {
+    const select = mount(SelectField, {
+      props: { options: ['Claude', 'Codex'], value: 'Claude', held: true }
+    })
+    await select.get('select').setValue('Codex')
+    expect(select.emitted('update:value')).toEqual([['Codex']])
+    expect((select.get('select').element as HTMLSelectElement).value).toBe('Claude')
+    await select.setProps({ value: 'Codex' })
+    expect((select.get('select').element as HTMLSelectElement).value).toBe('Codex')
+  })
 })

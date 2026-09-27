@@ -14,6 +14,11 @@ export interface ToggleOptions {
   label: string
   disabled?: boolean
   state?: ToggleState
+  /**
+   * The host holds the state: a press only asks for the other one, and the switch shows `on` alone
+   * until the host answers (#635, Settings draws what main stored, never what was pressed).
+   */
+  held?: boolean
 }
 
 export interface ToggleAttributes {

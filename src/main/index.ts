@@ -850,8 +850,12 @@ async function init(): Promise<void> {
   // first frame and corrects itself on mount. Not held in a variable beside the
   // file, unlike the notifications switch — nothing in main READS a face, so
   // there is no poll to keep off the disk.
+  //
+  // AMENDED for the type presets (#635): the font style lives in its own v2 document, and the v1
+  // document #370 wrote is read once to migrate it and never written again (see the store).
   const typographyStore = createTypographyPreferenceStore({
-    filePath: join(app.getPath('userData'), 'typography-preferences-v1.json')
+    filePath: join(app.getPath('userData'), 'typography-preferences-v2.json'),
+    legacyFilePath: join(app.getPath('userData'), 'typography-preferences-v1.json')
   })
   /* --- end of the #370 block ----------------------------------------------- */
 
@@ -1373,8 +1377,8 @@ async function init(): Promise<void> {
    * Settings' Typography section (#370).
    *
    * `set` answers with what was STORED, the discipline every preference channel
-   * here holds: the shared parser refuses a face this build cannot draw — Tiny5
-   * for messaging above all — so a segment can only ever be drawn selected for
+   * here holds: the shared parser refuses a face a role cannot carry — Tiny5
+   * for messages above all — so a style can only ever be drawn selected for
    * a choice that is really in force.
    *
    * And then it BROADCASTS, which no other preference does. Settings is in the

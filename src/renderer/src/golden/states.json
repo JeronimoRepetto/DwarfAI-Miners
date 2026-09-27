@@ -155,6 +155,51 @@
     "key": "molecules/vault-strip#empty"
   },
   {
+    "key": "organisms/settings#general",
+    "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only); and Reset to default stays disabled while the default is set and working, as it always has, where the design draws it enabled (PR5 question). With the row stood in and both kept as today, 2.027% and 1 cluster, all on the disabled Reset"
+  },
+  {
+    "key": "organisms/settings#general-shortcut-failed",
+    "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); and the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only). With the row stood in and the key cap unspaced it passes at 0.000%"
+  },
+  {
+    "key": "organisms/settings#sound",
+    "red": "no Notification sounds row: it switches the level-2 attention cues, which the app does not play yet, so the switch would change nothing (PR5 question). With the row stood in it passes at 0.000%"
+  },
+  {
+    "key": "organisms/settings#notifications"
+  },
+  {
+    "key": "organisms/settings#appearance"
+  },
+  {
+    "key": "organisms/settings#appearance-custom"
+  },
+  {
+    "key": "organisms/settings#integrations"
+  },
+  {
+    "key": "organisms/settings#data"
+  },
+  {
+    "key": "organisms/settings#about"
+  },
+  {
+    "key": "molecules/settings-row#toggle-row"
+  },
+  {
+    "key": "molecules/settings-row#shortcut-row"
+  },
+  {
+    "key": "molecules/settings-row#warning-banner"
+  },
+  {
+    "key": "molecules/settings-row#danger-zone"
+  },
+  {
+    "key": "screens/panel#open-the-screen"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {
@@ -195,7 +240,7 @@
   },
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
-    "red": "draws the page header, mine card and bubbles in each preset, which the Panel slice of #635 rebuilds (design lead ruling, tokens-port question 11)"
+    "red": "the presets paint since PR5 (Settings › Appearance), but the specimen draws two chat bubbles in each preset, and molecules/chat-bubble is not a component of its own yet: its markup lives inside HistoryPanel, and extracting it is the message panel slice of #635 (PR5 question)"
   },
   {
     "key": "atoms/button#secondary"

@@ -9,7 +9,7 @@
 import { computed, ref, watch } from 'vue'
 import { sliderClasses, sliderReadout, volume, type SliderOptions } from '../../lib/controls/slider'
 
-const props = withDefaults(defineProps<SliderOptions>(), { disabled: false })
+const props = withDefaults(defineProps<SliderOptions>(), { disabled: false, held: false })
 const emit = defineEmits<{ 'update:value': [value: number] }>()
 
 const current = ref(volume(props.value))
@@ -23,8 +23,9 @@ watch(
 const classes = computed(() => sliderClasses(props))
 
 function move(value: string): void {
-  current.value = volume(Number(value))
-  emit('update:value', current.value)
+  const asked = volume(Number(value))
+  if (!props.held) current.value = asked
+  emit('update:value', asked)
 }
 </script>
 

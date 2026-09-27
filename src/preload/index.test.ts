@@ -1253,45 +1253,49 @@ describe('preload notifications contract (#316)', () => {
  * subscription, because this is the one preference BOTH windows paint with.
  */
 describe('preload typography contract (#370)', () => {
+  /*
+   * AMENDED for the type presets (#635): the document is a font style and four role faces now.
+   * Every test keeps its #370 boundary rule, on the new shape.
+   */
+  const CUSTOM = {
+    style: 'custom',
+    faces: { display: 'tiny5', label: 'roboto', meta: 'arial', talk: 'pixelify-sans' }
+  } as const
+
   it('asks for the stored faces on typography:preferences:get with no payload', async () => {
-    const stored = { interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' }
+    const stored = { ...CUSTOM }
     invoke.mockResolvedValueOnce(stored)
     await expect(api.getTypographyPreferences()).resolves.toEqual(stored)
     expect(invoke).toHaveBeenLastCalledWith('typography:preferences:get')
   })
 
   it('rebuilds the document through the shared parser before it crosses', async () => {
-    invoke.mockResolvedValueOnce({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    invoke.mockResolvedValueOnce(CUSTOM)
     await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
-      interfaceFont: 'roboto',
-      messagingFont: 'arial',
+      ...CUSTOM,
       theme: 'neon'
     })
-    // Two checked values and nothing the caller happened to attach.
-    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
-      interfaceFont: 'roboto',
-      messagingFont: 'arial'
-    })
+    // The checked values and nothing the caller happened to attach.
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', CUSTOM)
   })
 
-  it('refuses Tiny5 for messaging at the bridge, before main ever sees it', async () => {
-    invoke.mockResolvedValueOnce({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+  // AMENDED (#635): was "refuses Tiny5 for messaging…", on the two-face document.
+  it('refuses Tiny5 for messages at the bridge, before main ever sees it', async () => {
+    invoke.mockResolvedValueOnce(CUSTOM)
     await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
-      interfaceFont: 'tiny5',
-      messagingFont: 'tiny5'
+      style: 'custom',
+      faces: { ...CUSTOM.faces, talk: 'tiny5' }
     })
-    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
-      interfaceFont: 'tiny5',
-      messagingFont: 'pixelify-sans'
-    })
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', CUSTOM)
   })
 
   it('hands back what main STORED, never the request', async () => {
-    const stored = { interfaceFont: 'arial', messagingFont: 'arial' }
+    const stored = {
+      style: 'readable',
+      faces: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+    } as const
     invoke.mockResolvedValueOnce(stored)
-    await expect(
-      api.setTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'roboto' })
-    ).resolves.toEqual(stored)
+    await expect(api.setTypographyPreferences(CUSTOM)).resolves.toEqual(stored)
   })
 
   it('subscribes to the change push on typography:preferences:changed', () => {
@@ -1299,8 +1303,8 @@ describe('preload typography contract (#370)', () => {
     const stop = api.onTypographyPreferences(listener)
     expect(on).toHaveBeenLastCalledWith('typography:preferences:changed', expect.any(Function))
     const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
-    wrapped(null, { interfaceFont: 'roboto', messagingFont: 'arial' })
-    expect(listener).toHaveBeenCalledWith({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    wrapped(null, CUSTOM)
+    expect(listener).toHaveBeenCalledWith(CUSTOM)
     stop()
     expect(removeListener).toHaveBeenLastCalledWith('typography:preferences:changed', wrapped)
   })
@@ -1314,8 +1318,13 @@ describe('preload typography contract (#370)', () => {
     const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
     wrapped(null, 'roboto')
     expect(listener).toHaveBeenCalledWith({
-      interfaceFont: 'tiny5',
-      messagingFont: 'pixelify-sans'
+      style: 'dwarfai',
+      faces: {
+        display: 'jacquard-12',
+        label: 'tiny5',
+        meta: 'pixelify-sans',
+        talk: 'pixelify-sans'
+      }
     })
   })
 })

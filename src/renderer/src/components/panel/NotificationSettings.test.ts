@@ -17,15 +17,19 @@ function render(enabled: boolean) {
 }
 
 describe('NotificationSettings — rendering', () => {
+  // AMENDED (#635): the section's name is SettingsPanel's now (its tab and heading, pinned in
+  // SettingsPanel.test.ts); this is the one row, named by its label.
   it('names the section and its one control', () => {
     const wrapper = render(true)
-    expect(wrapper.text()).toContain('Notifications')
-    expect(wrapper.text()).toContain('System notifications')
+    expect(wrapper.get('.dm-srow__label').text()).toBe('System notifications')
+    expect(wrapper.findAll('button')).toHaveLength(1)
   })
 
+  // AMENDED (#635): a switch (role switch, aria-checked) now, where it was a pressed button.
   it('renders the switch as a pressed control that says which state it is in', () => {
-    expect(render(true).find('.notifications-enabled').attributes('aria-pressed')).toBe('true')
-    expect(render(false).find('.notifications-enabled').attributes('aria-pressed')).toBe('false')
+    expect(render(true).find('.notifications-enabled').attributes('role')).toBe('switch')
+    expect(render(true).find('.notifications-enabled').attributes('aria-checked')).toBe('true')
+    expect(render(false).find('.notifications-enabled').attributes('aria-checked')).toBe('false')
   })
 
   it('gives the control an accessible name of its own', () => {
@@ -36,13 +40,15 @@ describe('NotificationSettings — rendering', () => {
     // The two cases #316 admits and no others. A switch labelled only
     // "Notifications" would leave the person guessing whether every poll
     // reaches them.
-    const hint = render(true).find('.hint').text()
+    // AMENDED (#635): the hint is the row's help line.
+    const hint = render(true).find('.dm-srow__help').text()
     expect(hint).toContain('question')
     expect(hint).toContain('turn')
   })
 
   it('says that the mine on screen is never announced', () => {
-    expect(render(true).find('.hint').text().toLowerCase()).toContain('on screen')
+    // AMENDED (#635): the hint is the row's help line.
+    expect(render(true).find('.dm-srow__help').text().toLowerCase()).toContain('on screen')
   })
 })
 
@@ -65,6 +71,7 @@ describe('NotificationSettings — changing it', () => {
     // press that asked for it.
     const wrapper = render(true)
     await wrapper.find('.notifications-enabled').trigger('click')
-    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('true')
+    // AMENDED (#635): aria-checked on the held switch, where it was aria-pressed.
+    expect(wrapper.find('.notifications-enabled').attributes('aria-checked')).toBe('true')
   })
 })
