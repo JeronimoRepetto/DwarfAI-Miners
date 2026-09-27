@@ -122,19 +122,46 @@ const { close: closeMessagePanel } = dock
  * takes the keyboard for itself; a launch handing over to its dwarf's chat keeps the one it had.
  */
 let dockOpener: HTMLElement | null = null
+/** Whether that opener was pressed with the pointer, so taking the keyboard back draws no ring. */
+let dockOpenerPressed = false
+
+/**
+ * The button a pointer press is on, until a key is pressed. A dwarf takes no focus from a mouse
+ * press (`@mousedown.prevent`, so its ring shows only for the keyboard), which leaves the focused
+ * element wherever it was: for a pointer gesture the pressed button is the opener, not the focus.
+ */
+let pressedButton: HTMLElement | null = null
+
+function notePress(event: PointerEvent): void {
+  const target = event.target
+  pressedButton = target instanceof Element ? target.closest<HTMLElement>('button') : null
+}
+
+function forgetPress(): void {
+  pressedButton = null
+}
 
 function rememberDockOpener(): void {
+  const pressed = pressedButton
+  pressedButton = null
+  if (pressed !== null && pressed.isConnected) {
+    dockOpener = pressed
+    dockOpenerPressed = true
+    return
+  }
   const active = document.activeElement
   dockOpener = active instanceof HTMLElement && active !== document.body ? active : null
+  dockOpenerPressed = false
 }
 
 /** The panels' own close, Esc among it: the slot empties and the opener takes the keyboard back. */
 function closeDockToOpener(): void {
   const opener = dockOpener
+  const focusVisible = !dockOpenerPressed
   dockOpener = null
   closeMessagePanel()
   // The opener may have been redrawn away since; a control no longer in the page takes nothing.
-  if (opener !== null) void nextTick(() => opener.isConnected && opener.focus())
+  if (opener !== null) void nextTick(() => opener.isConnected && opener.focus({ focusVisible }))
 }
 const dwarfDelivery = dock.delivery
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
@@ -1186,7 +1213,8 @@ onBeforeUnmount(() => {
       class="panel-dock"
       :class="`edge-${layout.edge}`"
       :data-dock="layout.edge"
-      @pointerdown.capture="raisePanel"
+      @pointerdown.capture="(raisePanel(), notePress($event))"
+      @keydown.capture="forgetPress"
     >
       <!--
         The dock's window slot, first in the DOM because the design's tab order

@@ -2386,4 +2386,29 @@ describe('the rebuilt Add panel, as a person drives it (#635)', () => {
     expect(wrapper.find('.dm-msg').exists()).toBe(false)
     expect(document.activeElement).toBe(dwarf.element)
   })
+
+  /*
+   * From the live re-check: a dwarf takes no focus from a mouse press (`@mousedown.prevent`, so
+   * the ring shows only for the keyboard), so the focused element at the press is not the opener.
+   * The pressed dwarf is, and it takes the keyboard back without the keyboard's ring.
+   */
+  it('gives the keyboard back to a dwarf pressed with the mouse when its chat closes on ×', async () => {
+    const { wrapper } = await mountAttached()
+    const dwarf = wrapper.get('button.dm-dwarf')
+    const focus = vi.spyOn(dwarf.element as HTMLButtonElement, 'focus')
+    await dwarf.trigger('pointerdown')
+    await dwarf.trigger('mousedown')
+    await dwarf.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+
+    const close = wrapper.get('.dm-msg__close')
+    await close.trigger('pointerdown')
+    await close.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
+    expect(document.activeElement).toBe(dwarf.element)
+    expect(focus).toHaveBeenLastCalledWith({ focusVisible: false })
+  })
 })
