@@ -549,6 +549,24 @@ describe('publishing the delivery verdicts', () => {
     expect(last.send['claude:s1']?.phase).toBe('delivered')
   })
 
+  // ADDED for #635 (PANEL-QUESTIONS 16): the history in the shell draws a message that never
+  // arrived from this window's own record of the send.
+  it('reports a message that failed, with its words and send time', async () => {
+    const { wrapper, api } = await openOn(
+      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
+      'claude:s1',
+      { sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, via: 'none', error: 'gone' }) }
+    )
+    await wrapper.find('.panel-input').setValue('dig deeper')
+    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    const last = api.reportDwarfDelivery.mock.lastCall?.[0] as {
+      failed?: Record<string, { text: string; sentAt: number }[]>
+    }
+    expect(last.failed?.['claude:s1']?.map((f) => f.text)).toEqual(['dig deeper'])
+    expect(typeof last.failed?.['claude:s1']?.[0]?.sentAt).toBe('number')
+  })
+
   it('reports plain objects, because a Vue proxy cannot cross the bridge', async () => {
     const { wrapper, api } = await openOn(
       [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],

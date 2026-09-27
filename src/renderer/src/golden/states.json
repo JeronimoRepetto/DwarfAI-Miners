@@ -143,7 +143,7 @@
   },
   {
     "key": "organisms/history-panel#dwarfai-miners",
-    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher (the dwarf names slice), and the fourth reads last 09:13, the time of a message the sample marks failed, which no transcript holds (#635, PR4 question)"
+    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)"
   },
   {
     "key": "molecules/vault-strip#mine-footer"

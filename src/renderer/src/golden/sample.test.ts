@@ -256,3 +256,20 @@ describe('adaptSample histories', () => {
     })
   })
 })
+
+// PANEL-QUESTIONS 16: a message the sample marks failed is the app's own record of the send.
+describe('adaptSample failed sends', () => {
+  it('keeps each failed message as the app records a send, by mine and dwarf', () => {
+    const talker = {
+      ...digger,
+      conversation: [
+        { from: 'user', md: 'Dig here.', mark: 'reacted', time: '09:02' },
+        { from: 'user', md: 'Never arrived.', mark: 'failed', time: '09:13' }
+      ]
+    }
+    const failed = adaptSample(dm({ mines: [shaft], dwarfs: [talker] })).failedSends['north-shaft']!
+    expect(failed.a1!.map((f) => f.text)).toEqual(['Never arrived.'])
+    const at = new Date(failed.a1![0]!.sentAt)
+    expect([at.getHours(), at.getMinutes()]).toEqual([9, 13])
+  })
+})

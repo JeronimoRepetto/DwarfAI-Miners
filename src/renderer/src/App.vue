@@ -1370,6 +1370,7 @@ onBeforeUnmount(() => {
             :mine="currentMine"
             :history="mineHistory"
             :path-refusal="historyPathRefusal"
+            :failed="dwarfDelivery.failed"
             @close="closeHistory"
             @open-path="openHistoryPath"
             @open-link="openHistoryLink"

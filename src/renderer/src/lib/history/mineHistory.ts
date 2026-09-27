@@ -1,5 +1,6 @@
 import {
   MINE_HISTORY_MESSAGE_LIMIT,
+  type FailedSend,
   type FeedMessage,
   type MessageIssuer,
   type MineHistoryResult,
@@ -87,10 +88,20 @@ export function historyLabel(mineName: string): string {
 export const HISTORY_READ_ONLY_NOTE =
   'Read-only · up to the last ' + MINE_HISTORY_MESSAGE_LIMIT + ' messages'
 
-/** "last · HH:MM" under a tab's name, or "no messages" (copy.md, Mine history). */
-export function historyTabLast(speaker: MineHistorySpeaker): string {
-  if (speaker.messages.length === 0) return 'no messages'
-  return 'last · ' + historyClock(speaker.lastMessageAt)
+/*
+ * "last · HH:MM" under a tab's name, or "no messages" (copy.md, Mine history): the last timed entry
+ * of the dwarf's conversation, a message it never received included (PANEL-QUESTIONS 16).
+ */
+export function historyTabLast(
+  speaker: MineHistorySpeaker,
+  failed: readonly FailedSend[] = []
+): string {
+  if (speaker.messages.length === 0 && failed.length === 0) return 'no messages'
+  const last = Math.max(
+    speaker.messages.length === 0 ? -Infinity : speaker.lastMessageAt,
+    ...failed.map((send) => send.sentAt)
+  )
+  return 'last · ' + historyClock(last)
 }
 
 /*
@@ -114,6 +125,8 @@ export interface HistoryRow extends PanelMessage {
   author: MessageIssuer
   /** "HH:MM", or nothing where the transcript gave no time. */
   time: string
+  /** A message the person sent that never reached the session (PANEL-QUESTIONS 16). */
+  failed?: true
 }
 
 /**
@@ -121,16 +134,43 @@ export interface HistoryRow extends PanelMessage {
  * the message panel uses (#175): a prompt another agent issued wears that
  * agent's face, anything else wears the speaker's own.
  */
-export function speakerRows(speaker: MineHistorySpeaker): HistoryRow[] {
-  const messages = latestMessages(speaker.messages)
-  return panelMessagesOf(messages).map((message, index) => ({
+export function speakerRows(
+  speaker: MineHistorySpeaker,
+  failed: readonly FailedSend[] = []
+): HistoryRow[] {
+  /*
+   * A message that never arrived is part of what happened (PANEL-QUESTIONS 16): from the app's own
+   * record of the send, placed among the transcript's messages by when it was sent, the latest
+   * fifty of the two together.
+   */
+  const timed: { at: number; message: FeedMessage; failed: boolean }[] = [
+    ...speaker.messages.map((message) => ({
+      at: Date.parse(message.timestamp),
+      message,
+      failed: false
+    })),
+    ...failed.map((send) => ({
+      at: send.sentAt,
+      message: {
+        role: 'user' as const,
+        text: send.text,
+        timestamp: new Date(send.sentAt).toISOString()
+      },
+      failed: true
+    }))
+  ]
+  // A stable sort, and a row with no time keeps its place in the transcript.
+  const ordered = failed.length === 0 ? timed : [...timed].sort((a, b) => (a.at || 0) - (b.at || 0))
+  const kept = ordered.slice(-MINE_HISTORY_MESSAGE_LIMIT)
+  return panelMessagesOf(kept.map((entry) => entry.message)).map((message, index) => ({
     ...message,
     author: authorOf(message, speaker),
-    time: historyClock(Date.parse(messages[index]!.timestamp))
+    time: historyClock(kept[index]!.at),
+    ...(kept[index]!.failed ? { failed: true as const } : {})
   }))
 }
 
-export type HistoryMark = 'delivered' | 'reacted'
+export type HistoryMark = 'delivered' | 'reacted' | 'failed'
 
 /** A mark as the bubble draws it: text with a name, never colour alone (components.md, Chat bubble). */
 export const HISTORY_MARK: Record<
@@ -138,7 +178,9 @@ export const HISTORY_MARK: Record<
   { mark: HistoryMark; glyph: string; title: string }
 > = {
   delivered: { mark: 'delivered', glyph: '✓', title: 'Handed over to the queue' },
-  reacted: { mark: 'reacted', glyph: '✓✓', title: 'Seen acting on it' }
+  reacted: { mark: 'reacted', glyph: '✓✓', title: 'Seen acting on it' },
+  // Without Retry or Copy: the history is read-only (PANEL-QUESTIONS 16).
+  failed: { mark: 'failed', glyph: '✕ not delivered', title: 'Not delivered' }
 }
 
 /*
@@ -154,7 +196,8 @@ export function historyMarks(rows: readonly HistoryRow[]): (HistoryMark | undefi
   const marks: (HistoryMark | undefined)[] = new Array(rows.length).fill(undefined)
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i]!
-    if (row.from === 'user') marks[i] = actedAfter ? 'reacted' : 'delivered'
+    if (row.failed) marks[i] = 'failed'
+    else if (row.from === 'user') marks[i] = actedAfter ? 'reacted' : 'delivered'
     else if (row.issuer === undefined) actedAfter = true
   }
   return marks

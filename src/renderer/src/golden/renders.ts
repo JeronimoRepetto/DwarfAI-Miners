@@ -984,7 +984,16 @@ const historyPanel: Render = (sample, _texts, attributes) => {
     component: KitFrame,
     props: {
       style: attributes[0]?.attributes.style ?? '',
-      parts: [{ component: HistoryPanel, props: { mine, history: sample.histories[mine.id] } }]
+      parts: [
+        {
+          component: HistoryPanel,
+          props: {
+            mine,
+            history: sample.histories[mine.id],
+            failed: sample.failedSends[mine.id] ?? {}
+          }
+        }
+      ]
     }
   }
 }

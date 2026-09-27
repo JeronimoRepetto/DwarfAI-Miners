@@ -268,3 +268,29 @@ describe('parseAnswerRequest (#125, #481)', () => {
     })
   })
 })
+
+/*
+ * The messages the panel window sent that never reached their session (#635, PANEL-QUESTIONS 16):
+ * the app's own record of the send, which the history draws because no transcript holds them.
+ */
+describe('parseDwarfDeliveryReport, failed sends', () => {
+  it('takes the failed sends, per dwarf, beside the verdicts', () => {
+    const report = {
+      send: {},
+      kick: {},
+      failed: { 'claude:s1': [{ text: 'Also check the table.', sentAt: 1_000 }] }
+    }
+    expect(parseDwarfDeliveryReport(report)).toEqual(report)
+  })
+
+  it('refuses the whole report when a failed send is malformed', () => {
+    expect(
+      parseDwarfDeliveryReport({
+        send: {},
+        kick: {},
+        failed: { a: [{ text: 'x', sentAt: 'soon' }] }
+      })
+    ).toBeNull()
+    expect(parseDwarfDeliveryReport({ send: {}, kick: {}, failed: { a: 'x' } })).toBeNull()
+  })
+})

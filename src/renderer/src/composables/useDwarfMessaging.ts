@@ -14,6 +14,7 @@ import {
   type DwarfSendSettledPush,
   type DwarfSendState,
   type DwarfTextResult,
+  type FailedSend,
   type FeedMessage
 } from '../types'
 
@@ -313,6 +314,22 @@ export function useDwarfMessaging() {
     return echoes[dwarfId] ?? []
   }
 
+  /*
+   * The messages that never reached their session, per dwarf, oldest first (#635, PANEL-QUESTIONS
+   * 16): this store's own record of the send, which the shell's mine history draws because no
+   * transcript holds them. Only as long as the store holds their echo.
+   */
+  function failedSends(): Record<string, FailedSend[]> {
+    const failed: Record<string, FailedSend[]> = {}
+    for (const [dwarfId, list] of Object.entries(echoes)) {
+      const sends = list
+        .filter((echo) => echo.state.phase === 'failed')
+        .map((echo) => ({ text: echo.text, sentAt: echo.sentAt }))
+      if (sends.length > 0) failed[dwarfId] = sends
+    }
+    return failed
+  }
+
   /**
    * Deliver `text` to `dwarfId`. A second call while one is still in flight
    * for the same dwarf is ignored: a double-click must never type the message
@@ -497,6 +514,7 @@ export function useDwarfMessaging() {
     reconcile,
     stateFor,
     echoesFor,
+    failedSends,
     keepEchoesFor,
     clear,
     clearAll
