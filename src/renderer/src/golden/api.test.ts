@@ -158,3 +158,29 @@ describe('goldenApi — the launch view', () => {
     expect(await api.getLaunchView()).toEqual({ area: 'mines', mineId: null })
   })
 })
+
+/*
+ * APPENDED (#635, the MessagePanel slice): a full-screen MessagePanel state reads the open dwarf's
+ * conversation, so the bridge answers each dwarf's feed from the sample, and refuses a dwarf the
+ * sample does not carry rather than answering it with a guess.
+ */
+describe('goldenApi — a dwarf feed', () => {
+  const talker = {
+    id: 'a1',
+    name: 'digger-1',
+    mine: 'north-shaft',
+    role: 'worker',
+    provider: 'Claude',
+    status: 'working',
+    conversation: [{ from: 'dwarf', md: 'Done.', time: '09:07' }]
+  }
+
+  it("answers the dwarf's feed from the sample", async () => {
+    const sample = sampleOf({ mines: [shaft], dwarfs: [talker] })
+    expect(await goldenApi(sample).getDwarfFeed('a1')).toEqual(sample.feeds.a1)
+  })
+
+  it('refuses a dwarf the sample does not carry', async () => {
+    await expect(goldenApi(sampleOf()).getDwarfFeed('nobody')).rejects.toThrow(/nobody/)
+  })
+})

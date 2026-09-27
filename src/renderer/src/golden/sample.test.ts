@@ -435,3 +435,28 @@ describe('swapSample — a prototype sample switch under a running app', () => {
     expect(swapped.mines).toHaveLength(1)
   })
 })
+
+/*
+ * APPENDED (#635, the MessagePanel slice): the MessagePanel reads one dwarf's conversation as the
+ * feed main answers for it, so every dwarf with something said has the same messages its history
+ * speaker carries, readable, by dwarf id. A dwarf with nothing said has an empty readable feed.
+ */
+describe('adaptSample feeds', () => {
+  it("answers each dwarf's conversation as its feed, the messages its history speaker holds", () => {
+    const talker = {
+      ...digger,
+      conversation: [
+        { from: 'user', md: 'Dig here.', mark: 'reacted', time: '09:02' },
+        { from: 'dwarf', md: 'Done.', time: '09:07' }
+      ]
+    }
+    const sample = adaptSample(dm({ mines: [shaft], dwarfs: [talker] }))
+    const speaker = sample.histories['north-shaft']!.speakers[0]!
+    expect(sample.feeds.a1).toEqual({ readable: true, messages: speaker.messages })
+  })
+
+  it('answers a dwarf with nothing said with an empty readable feed', () => {
+    const sample = adaptSample(dm({ mines: [shaft], dwarfs: [digger] }))
+    expect(sample.feeds.a1).toEqual({ readable: true, messages: [] })
+  })
+})

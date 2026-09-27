@@ -149,6 +149,26 @@
     "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)"
   },
   {
+    "key": "organisms/message-panel#conversation",
+    "red": "the redesigned MessagePanel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+  },
+  {
+    "key": "organisms/message-panel#asking",
+    "red": "the redesigned MessagePanel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+  },
+  {
+    "key": "organisms/add-panel#live",
+    "red": "the redesigned Add panel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+  },
+  {
+    "key": "organisms/add-panel#supplier-picked",
+    "red": "the redesigned Add panel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+  },
+  {
+    "key": "organisms/add-panel#custom-command",
+    "red": "the redesigned Add panel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+  },
+  {
     "key": "molecules/vault-strip#mine-footer"
   },
   {
@@ -461,5 +481,17 @@
   {
     "key": "screens-full/panel#map-first-run",
     "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 454, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 458, y 710 and y 760). With the lever drawn it passes at 0.000%"
+  },
+  {
+    "key": "screens-full/message-panel#conversation",
+    "red": "the MessagePanel still opens in its own window beside the shell, so the dock draws nothing where the reference draws it (#635, the MessagePanel slice)"
+  },
+  {
+    "key": "screens-full/message-panel#question",
+    "red": "the MessagePanel still opens in its own window beside the shell, so the dock draws nothing where the reference draws it (#635, the MessagePanel slice)"
+  },
+  {
+    "key": "screens-full/message-panel#permission",
+    "red": "the MessagePanel still opens in its own window beside the shell, so the dock draws nothing where the reference draws it (#635, the MessagePanel slice)"
   }
 ]

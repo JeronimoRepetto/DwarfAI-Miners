@@ -116,7 +116,13 @@ export function goldenApi(sample: GoldenSample): Api {
       }),
     onMinesUpdated: unsubscribe,
     activateDwarf: refuse('activateDwarf'),
-    getDwarfFeed: refuse('getDwarfFeed'),
+    // The open dwarf's conversation (#635, the MessagePanel slice), as the sample carries it.
+    getDwarfFeed: (dwarfId) => {
+      const feed = sample.feeds[dwarfId]
+      return feed === undefined
+        ? Promise.reject(new Error('golden: the sample carries no dwarf ' + dwarfId))
+        : Promise.resolve(feed)
+    },
     getDwarfFeedPage: refuse('getDwarfFeedPage'),
     setWatchedDwarf: none,
     refreshDwarfTelemetry: none,
