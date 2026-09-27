@@ -438,5 +438,25 @@
   },
   {
     "key": "atoms/sprite#still"
+  },
+  {
+    "key": "screens-full/panel#mines",
+    "red": "the full App has not been graded against this full-screen reference yet"
+  },
+  {
+    "key": "screens-full/panel#map",
+    "red": "the full App has not been graded against this full-screen reference yet"
+  },
+  {
+    "key": "screens-full/panel#settings",
+    "red": "the full App has not been graded against this full-screen reference yet"
+  },
+  {
+    "key": "screens-full/panel#mines-first-run",
+    "red": "the full App has not been graded against this full-screen reference yet"
+  },
+  {
+    "key": "screens-full/panel#map-first-run",
+    "red": "the full App has not been graded against this full-screen reference yet"
   }
 ]

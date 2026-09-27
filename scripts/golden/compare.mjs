@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
+import { cropImage } from './screens.mjs'
 
 export const CLUSTER = 3
 export const MAX_DIFF = 1
@@ -81,4 +82,39 @@ export function compareToReference(designRoot, referenceFile, capturePng, name) 
     clusters: clusters.length
   }
   return { stats, verdict: judge(stats), candidateFile, diffFile }
+}
+
+/*
+ * One window of a full-screen reference (#635): the reference and a capture of the whole work area
+ * both cut to the window's box, as compare-ref's --region cuts a screenshot of the whole screen.
+ * The work area is the screen less its taskbar, so the capture is the reference's width and
+ * shorter, and the box must fit inside both. The clusters come back whole, largest first, in the
+ * window's coordinates, so a failing window can say where it differs.
+ */
+export function compareRegion(designRoot, referenceFile, screenPng, region, name) {
+  const tool = loadCompareRef(designRoot)
+  const dir = outputDir()
+  fs.mkdirSync(dir, { recursive: true })
+  const safe = name.replace(/[^\w.-]+/g, '__')
+  const screenFile = path.join(dir, safe + '.screen.png')
+  const candidateFile = path.join(dir, safe + '.png')
+  const diffFile = path.join(dir, safe + '.diff.png')
+  fs.writeFileSync(screenFile, screenPng)
+  const ref = cropImage(tool.decode(referenceFile), region, referenceFile)
+  const cand = cropImage(tool.decode(screenFile), region, screenFile)
+  fs.writeFileSync(candidateFile, tool.encode(cand))
+  const result = tool.compare(ref, cand, 0)
+  const found = tool.clusters(result, CLUSTER)
+  fs.writeFileSync(diffFile, tool.encode(result.diff))
+  const stats = {
+    refWidth: ref.width,
+    refHeight: ref.height,
+    candWidth: cand.width,
+    candHeight: cand.height,
+    differing: result.differing,
+    uncovered: result.uncovered,
+    total: result.total,
+    clusters: found.length
+  }
+  return { stats, verdict: judge(stats), clusters: found, candidateFile, diffFile }
 }
