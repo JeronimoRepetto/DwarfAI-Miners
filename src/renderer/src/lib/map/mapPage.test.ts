@@ -107,11 +107,34 @@ describe('mineTip', () => {
     expect(tip.title).toBe('beta')
   })
 
-  it('counts the dwarfs awake there as working, and how many of them need you', () => {
+  /*
+   * AMENDED for #635 (PANEL-QUESTIONS 11, design lead ruling 2026-09-27; was: "counts the dwarfs
+   * awake there as working, ...", expecting "Dwarfs working" 3). "Dwarfs working" counts only the
+   * dwarfs whose status is working; one that needs you is counted in its own row alone.
+   */
+  it('counts only the working dwarfs as working, and the ones that need you in their own row', () => {
     const tip = mineTip(defaultMine({ dwarfs: [working, asking, asleep, working] }))
     expect(tip.rows).toEqual([
-      { label: 'Dwarfs working', value: '3' },
+      { label: 'Dwarfs working', value: '2' },
       { label: 'Needs you', value: '1' }
+    ])
+  })
+
+  // APPENDED for #635 (PANEL-QUESTIONS 11): asleep and leaving dwarfs are in neither row, and a
+  // working dwarf that asked something needs you rather than counting as working.
+  it('counts a sleeper or a leaver in neither row, and an asking worker only as needing you', () => {
+    const leaving = defaultDwarf({ id: 'bye', status: 'leaving' })
+    const workingAsker = defaultDwarf({
+      id: 'wask',
+      status: 'working',
+      pendingQuestion: {} as NonNullable<Dwarf['pendingQuestion']>
+    })
+    expect(mineTip(defaultMine({ dwarfs: [asleep, leaving] })).rows).toEqual([
+      { label: 'Dwarfs working', value: '0' }
+    ])
+    expect(mineTip(defaultMine({ dwarfs: [workingAsker, permission] })).rows).toEqual([
+      { label: 'Dwarfs working', value: '0' },
+      { label: 'Needs you', value: '2' }
     ])
   })
 

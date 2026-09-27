@@ -104,14 +104,15 @@ export interface MineTip {
 }
 
 /**
- * The mine tooltip: the tier chip and the name, "Dwarfs working" — every dwarf there that is
- * awake, working or waiting on you, a sleeper being the one at rest that asked nobody anything —
- * and "Needs you" while any of them waits on you.
+ * The mine tooltip: the tier chip and the name, "Dwarfs working", and "Needs you" while any dwarf
+ * there waits on you (PANEL-QUESTIONS 11, design lead ruling 2026-09-27). "Dwarfs working" counts
+ * only the dwarfs whose status is working; one that needs you is counted in its own row and never
+ * in both, as the mine card's crew line counts it. Asleep and leaving dwarfs are in neither.
  */
 export function mineTip(mine: Mine, facts: { notEnterable?: boolean } = {}): MineTip {
   const needs = mine.dwarfs.filter(dwarfNeedsYou).length
-  const awake = mine.dwarfs.filter((d) => d.status === 'working' || dwarfNeedsYou(d)).length
-  const rows: TipRow[] = [{ label: 'Dwarfs working', value: String(awake) }]
+  const working = mine.dwarfs.filter((d) => d.status === 'working' && !dwarfNeedsYou(d)).length
+  const rows: TipRow[] = [{ label: 'Dwarfs working', value: String(working) }]
   if (needs > 0) rows.push({ label: 'Needs you', value: String(needs) })
   // A mine whose folder no longer exists (PANEL-QUESTIONS 6; screens/map.md).
   if (facts.notEnterable) rows.push({ label: 'Not enterable', value: '', tone: 'warn' })
