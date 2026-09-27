@@ -418,6 +418,46 @@ export function panelLayout(): PanelLayout {
   return { ...layout, ...held }
 }
 
+/** Which columns a layout names, as one word for a diagnostic line. */
+function columnsWord(columns: Pick<PanelLayout, 'mineOpen' | 'dockOpen'>): string {
+  if (columns.mineOpen && columns.dockOpen) return 'mine+dock'
+  if (columns.mineOpen) return 'mine'
+  if (columns.dockOpen) return 'dock'
+  return 'page'
+}
+
+/**
+ * The line every fit of the shell prints (#635, window fit).
+ *
+ * The cut Panel the PO reported could not be reproduced on the one display it
+ * was checked on, so a run that goes wrong on another has to say why by
+ * itself: the work area, the zoom the page got, the width asked and the width
+ * the window became — in the display's pixels and in the renderer's CSS
+ * pixels, which is where the grid is drawn — the columns asked and held, and
+ * how many displays there are. Geometry and counts only: nothing on it names a
+ * person, a path or a project. Printed on every fit rather than behind
+ * SHELL_DEBUG, because a fit happens on a click, not on a frame.
+ */
+export function formatShellFit(
+  area: ScreenRect,
+  fit: ShellFit,
+  asked: Pick<PanelLayout, 'mineOpen' | 'dockOpen'>,
+  displays: number
+): string {
+  const tenths = (value: number): number => Math.round(value * 10) / 10
+  return formatShellTrace('layout applied', {
+    area,
+    zoom: Math.round(fit.zoom * 10_000) / 10_000,
+    requested: fit.requestedWidth,
+    applied: fit.appliedWidth,
+    requestedCss: tenths(fit.requestedWidth / fit.zoom),
+    appliedCss: tenths(fit.appliedWidth / fit.zoom),
+    asked: columnsWord(asked),
+    held: columnsWord(fit.held),
+    displays
+  })
+}
+
 /**
  * What a display change does to the two windows (#635, window fit).
  *
@@ -446,7 +486,9 @@ export function refitOnDisplayChange(steps: {
 function fitShell(): void {
   if (mainWindow === null) return
   const area = currentScreenArea()
-  held = fitShellWindow(mainWindow, area, layout, currentPlatform()).held
+  const fit = fitShellWindow(mainWindow, area, layout, currentPlatform())
+  held = fit.held
+  console.log(formatShellFit(area, fit, layout, screen.getAllDisplays().length))
 }
 
 /**

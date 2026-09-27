@@ -32,6 +32,7 @@ import {
   applyUiScale,
   buildMainWindowOptions,
   fitShellWindow,
+  formatShellFit,
   refitOnDisplayChange,
   // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
   focusMessagePanelOnSelection,
@@ -521,6 +522,31 @@ describe('fitShellWindow', () => {
  * waited for the next layout change or show. The shell goes first, because the docked panel is
  * placed against the shell's new rectangle.
  */
+/*
+ * ADDED for #635 (window fit). The PO's cut Panel could not be reproduced on the one display it
+ * was checked on, and a run that goes wrong elsewhere has to say why on its own: one line per
+ * fit, geometry and counts only — nothing that names a person, a path or a project.
+ */
+describe('formatShellFit', () => {
+  it('names the work area, the zoom, the width asked and got in both units, and the displays', () => {
+    const line = formatShellFit(
+      { x: 0, y: 0, width: 2560, height: 1392 },
+      {
+        held: { mineOpen: false, dockOpen: false },
+        zoom: 1.288888888888889,
+        requestedWidth: 1062,
+        appliedWidth: 668
+      },
+      { mineOpen: true, dockOpen: false },
+      2
+    )
+    expect(line).toBe(
+      '[shell] layout applied: area=2560x1392@0,0 zoom=1.2889 requested=1062 applied=668 ' +
+        'requestedCss=824 appliedCss=518.3 asked=mine held=page displays=2'
+    )
+  })
+})
+
 describe('refitOnDisplayChange', () => {
   it('refits the shell, then the message panel against it', () => {
     const steps: string[] = []
