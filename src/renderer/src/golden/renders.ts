@@ -33,6 +33,11 @@ import NavSlot from '../components/shell/NavSlot.vue'
 import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import PanelNav from '../components/shell/PanelNav.vue'
 import GuildPage from '../components/shell/GuildPage.vue'
+import DialogCard from '../components/overlay/DialogCard.vue'
+import MenuButton from '../components/overlay/MenuButton.vue'
+import MenuList from '../components/overlay/MenuList.vue'
+import ToastCard from '../components/overlay/ToastCard.vue'
+import type { MenuEntry, MenuItem } from '../lib/overlay/menu'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
@@ -476,6 +481,67 @@ const guildPage =
     }
   })
 
+/*
+ * The menu's rows as its tree prints them: an item per menuitem, danger and forced as its classes
+ * say, its label the next text and its hint the text of its hint line; a rule per separator. An
+ * icon line prints no name a render can read, so a state's icons are its render's, in tree order.
+ */
+const menu =
+  (icons: IconName[]): Render =>
+  (_sample, texts, attributes) => {
+    const items: MenuEntry[] = []
+    let next = 0
+    let icon = 0
+    for (const { element } of attributes.slice(1)) {
+      const last = items.at(-1) as MenuItem | undefined
+      if (element.startsWith('button.dm-menu__item')) {
+        items.push({
+          label: texts[next++]?.text ?? '',
+          ...(element.includes('dm-menu__item--danger') ? { danger: true } : {}),
+          ...(forcedOf(element) === 'hover' ? { state: 'hover' as const } : {})
+        })
+      } else if (element === 'icon' && last) last.icon = icons[icon++]
+      else if (element.startsWith('span.dm-menu__hint') && last) last.hint = texts[next++]?.text
+      else if (element.startsWith('hr.')) items.push({ separator: true })
+    }
+    return { component: MenuList, props: { items } }
+  }
+
+/*
+ * The dialog card drawn in place: its title the name its root prints, its body the paragraph after
+ * the title, and its actions the tree's buttons, each labelled with the next text; the danger
+ * buttons are its danger actions. A field in the tree makes it a typed confirmation, the word read
+ * from the field's placeholder, and its danger action the one the word unlocks.
+ */
+const dialog: Render = (_sample, texts, attributes) => {
+  const root = attributes[0]!
+  // The tree prints a quoted placeholder unescaped, so the word is read from the prompt instead.
+  const prompt = elementsOf(attributes, 'input').length ? texts[2]?.text : undefined
+  const typed = prompt === undefined ? undefined : /"(.+)"/.exec(prompt)?.[1]
+  const buttons = attributes.filter((entry) => entry.element.startsWith('button.dm-btn'))
+  const labels = texts.slice(-buttons.length).map((t) => t.text ?? '')
+  return {
+    component: DialogCard,
+    props: {
+      static: true,
+      danger: root.element.includes('dm-dialog--danger'),
+      title: root.attributes['aria-label'] ?? '',
+      body: texts[1]?.text ?? '',
+      ...(typed === undefined ? {} : { typed }),
+      actions: buttons.map((entry, i) =>
+        entry.element.includes('dm-btn--danger')
+          ? { label: labels[i], variant: 'danger', ...(typed ? { confirms: true } : {}) }
+          : { label: labels[i] }
+      )
+    }
+  }
+}
+
+// The toast's plate with its one line; its icon is the render's, as an icon line names none.
+const toast =
+  (icon: IconName): Render =>
+  (_sample, texts) => ({ component: ToastCard, props: { icon, text: texts[0]?.text ?? '' } })
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -504,15 +570,17 @@ export const RENDERS: Record<string, Render> = {
   'molecules/mine-card#max-tier': unbuilt,
   'organisms/tier-info#content': unbuilt,
   'organisms/tier-info#live': unbuilt,
-  'molecules/dialog#confirm-danger': unbuilt,
-  'molecules/dialog#typed-confirmation': unbuilt,
-  'molecules/dialog#live': unbuilt,
-  'molecules/menu#mine-card': unbuilt,
-  'molecules/menu#danger-hovered': unbuilt,
-  'molecules/menu#live': unbuilt,
-  'molecules/toast#static': unbuilt,
-  'molecules/toast#live': unbuilt,
-  'molecules/toast#shown': unbuilt,
+  // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
+  // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
+  'molecules/menu#mine-card': menu([]),
+  'molecules/menu#danger-hovered': menu(['console']),
+  'molecules/menu#live': () => ({ component: MenuButton, props: { items: [], title: 'More' } }),
+  'molecules/dialog#confirm-danger': dialog,
+  'molecules/dialog#typed-confirmation': dialog,
+  'molecules/dialog#live': button({ labelled: true, variant: 'danger' }),
+  'molecules/toast#static': toast('console'),
+  'molecules/toast#live': button({ labelled: true }),
+  'molecules/toast#shown': toast('info'),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),

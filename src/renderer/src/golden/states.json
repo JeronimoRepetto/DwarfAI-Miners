@@ -85,40 +85,31 @@
     "red": "the Mines page slice of #635 (PR2) rebuilds it"
   },
   {
-    "key": "molecules/dialog#confirm-danger",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/dialog#confirm-danger"
   },
   {
-    "key": "molecules/dialog#typed-confirmation",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/dialog#typed-confirmation"
   },
   {
-    "key": "molecules/dialog#live",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/dialog#live"
   },
   {
-    "key": "molecules/menu#mine-card",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/menu#mine-card"
   },
   {
-    "key": "molecules/menu#danger-hovered",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/menu#danger-hovered"
   },
   {
-    "key": "molecules/menu#live",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/menu#live"
   },
   {
-    "key": "molecules/toast#static",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/toast#static"
   },
   {
-    "key": "molecules/toast#live",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/toast#live"
   },
   {
-    "key": "molecules/toast#shown",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "molecules/toast#shown"
   },
   {
     "key": "foundations/colour#materials"
