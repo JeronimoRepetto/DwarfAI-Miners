@@ -179,20 +179,24 @@ function mine(row: Row): Mine {
 
 /*
  * A mine as the project a browse remembers (#635, full-screen goldens). The sample's score is its
- * weight in kilobytes, the unit its own tier floors are written in, and the wire carries bytes; a
- * mine still being measured has neither a tier nor a weight, which is how the app knows one. A
- * mine not recorded yet has no ledger row, so no ore; one the sample cannot enter has lost its
- * folder, the one reason the app has. recentMines lists the last opened first, a minute apart.
+ * weight in kilobytes, the unit its own tier floors are written in, and the wire carries bytes. A
+ * mine being measured has no weight yet, which is how the app knows one; it keeps its earlier
+ * reading's tier unless the sample marks it `measured: false`, a mine no walk has ever read
+ * (PANEL-QUESTIONS 29). A mine not recorded yet has no ledger row, so no ore; one the sample
+ * cannot enter has lost its folder, the one reason the app has. recentMines lists the last opened
+ * first, a minute apart.
  */
 function project(row: Row, mine: Mine, recent: readonly string[]): ProjectSummary {
   const measuring = row.state === 'measuring'
+  const measuredBefore = row.measured !== false
   const opened = recent.indexOf(mine.id)
   return {
     id: mine.id,
     path: mine.path,
     name: mine.name,
     declared: true,
-    ...(measuring ? {} : { knownTier: mine.tier, weightBytes: Number(row.score ?? 0) * 1024 }),
+    ...(measuredBefore ? { knownTier: mine.tier } : {}),
+    ...(measuring ? {} : { weightBytes: Number(row.score ?? 0) * 1024 }),
     addedAt: 0,
     ...(opened < 0 ? {} : { lastOpenedAt: at('09:00') - opened * 60_000 }),
     ...(row.state === 'unrecorded' ? {} : { materials: mine.materials }),

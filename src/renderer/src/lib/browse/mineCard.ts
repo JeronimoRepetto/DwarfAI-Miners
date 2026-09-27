@@ -8,7 +8,9 @@
  * Every refusal of the card this replaces still holds (browseCards.ts, #41, #90, #165). The tier
  * a card DRAWS may be a placeholder: a mine nobody has measured wears Bronze, as the design rules
  * for a mine just added ("starts Bronze, score 0, state Measuring"). That is `tierOf()`'s
- * provisional bronze, for drawing only — it never reaches anything that records a decision. The
+ * provisional bronze, for drawing only — it never reaches anything that records a decision. A
+ * mine measured before is measuring too while it is re-measured, and keeps its last tier, which
+ * is known rather than a placeholder (PANEL-QUESTIONS 29; isMeasuring in browseCards.ts). The
  * progress bar, the ore and the crew claim only what was measured or seen: no weight, no bar; no
  * ledger row, no capsules; a live mine the board has not caught up with, no pills at all.
  *

@@ -54,6 +54,9 @@
     "key": "molecules/mine-card#measuring"
   },
   {
+    "key": "molecules/mine-card#measuring-never-measured"
+  },
+  {
     "key": "molecules/mine-card#working-not-recorded-yet"
   },
   {
@@ -441,7 +444,7 @@
   },
   {
     "key": "screens-full/panel#mines",
-    "red": "the App opens on the Map with no mine open, where the reference opens on the Mines page with DwarfAI-Miners in the mine column (question: which page and which mine the App opens on); the nav draws no mode lever (App.vue, lever false until a second mode exists; the same PR5 question as organisms/settings#general). With the Mines page and that mine opened by hand and the lever drawn, 22.707% and 102 clusters: each card's next-level figure and bar use the app's tier thresholds (TIER_WEIGHT_THRESHOLDS_KB), where the sample's scores are written against its own illustrative floors (DM.TIER_FLOOR), and sprite-sized clusters sit on the column's dwarfs, whose work points the App chooses itself where the sample names a station for each"
+    "red": "the App opens on the Map with no mine open, where the reference opens on the Mines page with DwarfAI-Miners in the mine column (decision log, Launch restores the last page and mine: not built yet); and the nav draws no mode lever (App.vue, lever false until a second mode exists; the same PR5 question as organisms/settings#general). With the Mines page and that mine opened by hand and the lever drawn it passes at 0.000%, since the re-measured ore-ledger keeps its Copper and its place (PANEL-QUESTIONS 29)"
   },
   {
     "key": "screens-full/panel#map",

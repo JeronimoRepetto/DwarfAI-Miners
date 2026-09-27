@@ -1152,6 +1152,7 @@ export const RENDERS: Record<string, Render> = {
   'molecules/mine-card#open': mineCard,
   'molecules/mine-card#open-and-needs-you': mineCard,
   'molecules/mine-card#measuring': mineCard,
+  'molecules/mine-card#measuring-never-measured': mineCard,
   'molecules/mine-card#working-not-recorded-yet': mineCard,
   'molecules/mine-card#not-enterable': mineCard,
   'molecules/mine-card#max-tier': mineCard,
