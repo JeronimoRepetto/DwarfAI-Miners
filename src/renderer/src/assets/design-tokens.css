@@ -266,8 +266,6 @@
   /* The design's 10px small text, below the scale: a history tab's last time (#635). */
   --fs-small: 10px;
 
-  /* Closed edge rail. */
-  --color-rail: var(--brass);
   /* Selected navigation icon, borders, primary light text, modal border. */
   --color-cream: var(--parchment);
   /* Unselected shell navigation icons. */
@@ -381,8 +379,6 @@
   /* Reset modal outer margin. */
   --space-modal-margin: 12px;
 
-  /* The closed rail, spanning the usable screen height. */
-  --size-rail-width: 20px;
   /* Tray/app icon and every shell navigation SVG. */
   --size-icon: 19px;
   /* Sleep/idle dwarf status icon; the other status icons use --size-icon. */

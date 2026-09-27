@@ -1,11 +1,10 @@
 /**
- * The shell's navigation stack, and which way its arrow points (#90).
+ * The shell's navigation areas (#90).
  *
- * Framework-agnostic on purpose: the order, the names and the arrow rule are
- * the design's, and a component should be able to render them without also
- * being the place they are decided.
+ * Framework-agnostic on purpose: the order and the names are the design's, and
+ * a component should be able to render them without also being the place they
+ * are decided.
  */
-import type { PanelEdge } from '../../types'
 
 /**
  * The six areas the navigation stack selects, in the design's own order.
@@ -54,15 +53,7 @@ export function unavailableAreaOf(area: ShellArea): UnavailableArea | undefined 
     : undefined
 }
 
-/**
- * Which way the rail's arrow points.
- *
- * Closed it points the way the panel will open — inward, away from the edge it
- * hangs on. Open it points back at that edge, which is where the panel goes
- * when it collapses. Both halves are drawn in the verified exports, and the
- * closed one is drawn for both edges.
+/*
+ * `arrowDirection` stood here until #635: which way the closed rail's arrow
+ * pointed. The rail is gone (PO ruling 2026-09-27), and its arrow with it.
  */
-export function arrowDirection(edge: PanelEdge, expanded: boolean): PanelEdge {
-  if (expanded) return edge
-  return edge === 'right' ? 'left' : 'right'
-}

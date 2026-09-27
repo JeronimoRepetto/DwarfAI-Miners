@@ -15,12 +15,19 @@ import {
   shellFoldKeyframes,
   type ShellFoldState
 } from '../lib/shell/shellFold'
-import type { ShellComposition } from '../lib/shell/composition'
 import type { PanelEdge } from '../types'
 
 /**
- * The shell's ground folding into its rail, and unfolding back out of it
- * (#388).
+ * The shell's ground folding around a column that leaves, and unfolding
+ * around one that arrives (#388).
+ *
+ * AMENDED for #635 (PO ruling 2026-09-27): it was first written for the closed
+ * 20px rail, which is gone. The `rail` and `remaining` options went with it —
+ * the rail was one carried column among `carried` since #566 T5b, and the
+ * composition folded TO only ever changed anything for the bare rail. The
+ * sections below still name the rail where it is the history of a rule; every
+ * rule stands for the columns left, the page above all when the mine column
+ * closes or opens beside it.
  *
  * ## Why the ground is the animation
  *
@@ -111,30 +118,19 @@ export interface ShellFoldOptions {
    * and defaulted to none, so a caller with no outside edge is untouched.
    */
   outline?: () => number
-  /** The composition presentation is folding TO. */
-  remaining: () => ShellComposition
   /**
-   * The rail, which travels with the fold (#464).
-   *
-   * It is the one column standing on the FREE side of EVERY composition's
-   * leaving or entering column, so it is the one column that always has to be
-   * asked for — `carried`, below, is what changed once the rail stopped
-   * being the only one that ever could be. `null` is answered honestly where
-   * the component that draws it is not mounted or is not one element: the
-   * ground still folds, and only the travel is lost.
-   */
-  rail: () => HTMLElement | null
-  /**
-   * Every OTHER column that can stand free of a leaving or entering one,
-   * besides the rail — in DOM/row order from the free edge toward the docked
-   * one, `null` for one the current composition does not draw (#566 T5b). The
+   * Every column that can stand free of a leaving or entering one, in
+   * DOM/row order from the free edge toward the docked one, `null` for one the
+   * current composition does not draw (#566 T5b). `null` is answered honestly
+   * where the component that draws it is not mounted or is not one element:
+   * the ground still folds, and only the travel is lost. The
    * secondary panel and the navigation stack are both free of the mine column
    * when IT is what closes or opens beside them; neither is free of anything
    * else, and `begin`/`unfold` work that out themselves by walking this list
    * free-to-docked and asking `foldedColumnOffset` for each one's own rest
    * position, the rail's own formula since #464 generalized rather than
    * restated. Optional and defaulted to none, so a caller with nothing beside
-   * the rail — a test harness among them — is untouched.
+   * nothing to carry — a test harness among them — is untouched.
    */
   carried?: () => (HTMLElement | null)[]
   /**
@@ -439,14 +435,13 @@ export function useShellFold(options: ShellFoldOptions) {
 
   /**
    * Every column standing free of SOME leaving or entering column right now,
-   * the rail first and then whatever `options.carried` hands over, in
-   * free-to-docked order (#464, generalized #566 T5b). `null` and one with no
-   * motion of its own (`still`, the same test `railOf` used to make alone)
+   * whatever `options.carried` hands over, in free-to-docked order (#464,
+   * generalized #566 T5b). `null` and one with no motion of its own (`still`)
    * are dropped — a column that cannot run Web Animations has nothing this
    * fold could carry it with.
    */
   function mountedColumns(): HTMLElement[] {
-    const list = [options.rail(), ...(options.carried?.() ?? [])]
+    const list = options.carried?.() ?? []
     return list.filter((el): el is HTMLElement => el !== null && !motion.still(el))
   }
 
@@ -764,13 +759,10 @@ export function useShellFold(options: ShellFoldOptions) {
     // read off the element rather than restated here.
     const padding = parseFloat(style.paddingLeft) || 0
     const gap = parseFloat(style.columnGap) || 0
-    const remaining = options.remaining()
     const folded = foldedShellWidth({
       width: shell.getBoundingClientRect().width,
       leaving: pending.widths,
-      gap,
-      padding,
-      remaining
+      gap
     })
     const radius = style.borderRadius || '0px'
     const from = painted ?? 'whole'
@@ -794,7 +786,7 @@ export function useShellFold(options: ShellFoldOptions) {
       // a LATER measurement the way `painted` is comparable to a later width
       // — never the travel `carry` runs on, which is only ever a difference
       // of two positions and goes stale the moment the row repacks again.
-      const rest = foldedColumnOffset({ kept: folded, before, gap, own, padding, remaining })
+      const rest = foldedColumnOffset({ kept: folded, before, gap, own, padding })
       const stand = columnStand(shell, column)
       carry(column, 0, stand - rest, transition)
       rests.set(column, rest)

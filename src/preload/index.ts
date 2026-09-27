@@ -146,13 +146,13 @@ export interface DwarfAiMinersApi {
    * slider is only ever drawn at a value really in force.
    */
   setAudioPreferences: (preferences: AudioPreferences) => Promise<AudioPreferences>
-  /** What the docked shell IS: its edge, and whether it is open (see #90). */
+  /** What the docked shell IS: its edge, and what stands beside its page (see #90, #635). */
   getPanelLayout: () => Promise<PanelLayout>
   /**
-   * Open, collapse, or make room for a mine beside the secondary panel (#90).
-   * Resolves with the REAL layout after main moved the window, which is what the
-   * rail's arrow and the shell's columns are drawn from — a display too narrow
-   * for the whole composition answers with what it could actually give.
+   * Make room for a mine column, or for the dock's window slot, beside the page
+   * (#90, #635). Resolves with the REAL layout after main moved the window,
+   * which is what the shell's columns are drawn from — a display too narrow for
+   * the whole composition answers with what it could actually give.
    */
   setPanelLayout: (request: PanelLayoutRequest) => Promise<PanelLayout>
   /**
@@ -630,8 +630,8 @@ const api: DwarfAiMinersApi = {
   // about a real edge or none at all.
   setPanelLayout: (request) =>
     ipcRenderer.invoke(IPC_CHANNELS.setPanelLayout, {
-      expanded: request?.expanded === true,
       mineOpen: request?.mineOpen === true,
+      dockOpen: request?.dockOpen === true,
       ...(request?.edge === 'left' || request?.edge === 'right' ? { edge: request.edge } : {})
     }),
   getMessagePanel: () => ipcRenderer.invoke(IPC_CHANNELS.getMessagePanel),

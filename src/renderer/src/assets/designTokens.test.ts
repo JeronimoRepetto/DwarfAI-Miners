@@ -132,7 +132,8 @@ describe('design-tokens.css against the design foundations', () => {
   }
 
   it.each([
-    ['--color-rail', '#f6b644'],
+    // AMENDED for #635: `--color-rail` (#f6b644) went with EdgeRail.vue, its caller (the rail is
+    // gone, PO ruling 2026-09-27).
     ['--color-cream', '#fae2b6'],
     ['--color-nav-idle', '#110c07'],
     ['--color-panel-deep', '#14100b'],
@@ -180,7 +181,7 @@ describe('design-tokens.css against the design foundations', () => {
   })
 
   it.each([
-    ['--size-rail-width', '20px'],
+    // AMENDED for #635: `--size-rail-width` (20px) went with EdgeRail.vue, its caller.
     ['--size-icon', '19px'],
     // AMENDED for #635 (PR3): `--size-marker-width` (10px) and `--size-tooltip-width` /
     // `--size-tooltip-height` (170px, 60px) went with MineMarker and MapView's tooltip, their callers.
@@ -733,7 +734,7 @@ describe('design-tokens.css against the redesign foundations (#635)', () => {
     ['--color-panel', 'var(--wood)'],
     ['--color-control', 'var(--control)'],
     ['--color-accent', 'var(--gold)'],
-    ['--color-rail', 'var(--brass)'],
+    // AMENDED for #635: the `--color-rail` alias of `--brass` went with EdgeRail.vue, its caller.
     ['--color-cream', 'var(--parchment)']
     // AMENDED for #635 (PR3): the five `--color-marker-*` aliases of `--tier-*` went with
     // MineMarker.vue, the last caller that asked for the old names.

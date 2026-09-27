@@ -15,8 +15,10 @@ import {
 /*
  * The three compositions at the design world's own height (1080), so the
  * arithmetic below can be checked against main's: 1001 is the whole book, 438
- * the mine mock (`mineOnlyWidth`), 645 the open page (`expandedWidth`), and 20
- * the design's bare rail.
+ * the mine mock, 645 the open page, and 20 the design's bare rail. AMENDED for
+ * #635: these are the retired v4 book's widths, kept as a row to fold because
+ * the arithmetic is the subject; `RAIL` is the free-most column of that row and
+ * no longer a composition of its own (the rail is gone, PO ruling 2026-09-27).
  */
 const BOOK = 1001
 const MINE_ONLY = 438
@@ -162,16 +164,12 @@ describe('foldedShellWidth', () => {
    * however much closes inside it.
    */
   it('takes each leaving column’s own width and the gap beside it', () => {
-    expect(
-      foldedShellWidth({ width: BOOK, leaving: [SECONDARY], gap: 8, padding: 8, remaining: 'mine' })
-    ).toBe(MINE_ONLY)
+    expect(foldedShellWidth({ width: BOOK, leaving: [SECONDARY], gap: 8 })).toBe(MINE_ONLY)
     expect(
       foldedShellWidth({
         width: BOOK,
         leaving: [MINE_COLUMN],
-        gap: 8,
-        padding: 8,
-        remaining: 'pages'
+        gap: 8
       })
     ).toBe(PAGES_ONLY)
   })
@@ -181,50 +179,24 @@ describe('foldedShellWidth', () => {
       foldedShellWidth({
         width: BOOK,
         leaving: [SECONDARY, NAVIGATION, MINE_COLUMN],
-        gap: 8,
-        padding: 8,
-        remaining: 'pages'
+        gap: 8
       })
     ).toBe(36)
   })
 
   it('keeps the shell whole when nothing is leaving', () => {
-    expect(
-      foldedShellWidth({ width: BOOK, leaving: [], gap: 8, padding: 8, remaining: 'pages' })
-    ).toBe(BOOK)
+    expect(foldedShellWidth({ width: BOOK, leaving: [], gap: 8 })).toBe(BOOK)
   })
 
   /*
-   * `.shell.is-rail` paints no ground at all: the 8px padding the open
-   * compositions reserve goes with them, and what is left is the design's bare
-   * 20px rail. Folding to the padded 36 would leave an amber strip the
-   * collapsed shell is never going to draw.
+   * REMOVED for #635 (PO ruling 2026-09-27: the rail is gone), stated here rather than passing
+   * unseen: "drops the shell’s own padding when the bare rail is what remains". It held the one
+   * composition that painted no plate; every composition left paints it, which "subtracts every
+   * column leaving in the same change" above now asserts with the padding kept.
    */
-  it('drops the shell’s own padding when the bare rail is what remains', () => {
-    expect(
-      foldedShellWidth({
-        width: BOOK,
-        leaving: [SECONDARY, NAVIGATION, MINE_COLUMN],
-        gap: 8,
-        padding: 8,
-        remaining: 'rail'
-      })
-    ).toBe(20)
-    expect(
-      foldedShellWidth({
-        width: MINE_ONLY,
-        leaving: [NAVIGATION, MINE_COLUMN],
-        gap: 8,
-        padding: 8,
-        remaining: 'rail'
-      })
-    ).toBe(20)
-  })
 
   it('never folds past nothing, whatever it was handed', () => {
-    expect(
-      foldedShellWidth({ width: 40, leaving: [SECONDARY], gap: 8, padding: 8, remaining: 'rail' })
-    ).toBe(0)
+    expect(foldedShellWidth({ width: 40, leaving: [SECONDARY], gap: 8 })).toBe(0)
   })
 })
 
@@ -244,9 +216,7 @@ describe('the fold’s end keyframe', () => {
     const kept = foldedShellWidth({
       width: BOOK,
       leaving: [SECONDARY],
-      gap: 8,
-      padding: 8,
-      remaining: 'mine'
+      gap: 8
     })
     const ends = strip(BOOK, kept)
     expect(holds(ends, ROW.navigation)).toBe(true)
@@ -257,7 +227,7 @@ describe('the fold’s end keyframe', () => {
     const travel =
       BOOK -
       ROW.rail.right -
-      foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'mine' })
+      foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8 })
     expect(holds(ends, moved(ROW.rail, travel))).toBe(true)
     // And it travels exactly what the window is about to stop being: the column
     // leaving and the gap beside it, no more — a rail that overshot would end
@@ -266,43 +236,26 @@ describe('the fold’s end keyframe', () => {
   })
 
   /*
-   * `.shell.is-rail` paints no ground and docks the rail with `flex-end`, so the
-   * rail's resting place is the docked edge itself and the strip is the rail.
+   * REMOVED for #635, stated here rather than passing unseen: "rests the rail against the docked
+   * edge when the bare rail is what remains". `.shell.is-rail` went with the rail; the free-most
+   * column now always rests one padding in, which the case above asserts.
    */
-  it('rests the rail against the docked edge when the bare rail is what remains', () => {
-    const kept = foldedShellWidth({
-      width: BOOK,
-      leaving: [SECONDARY, NAVIGATION, MINE_COLUMN],
-      gap: 8,
-      padding: 8,
-      remaining: 'rail'
-    })
-    expect(
-      foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'rail' })
-    ).toBe(0)
-    const travel = BOOK - ROW.rail.right
-    expect(holds(strip(BOOK, kept), moved(ROW.rail, travel))).toBe(true)
-  })
 
   it('leaves the rail where it stands when nothing is leaving', () => {
     const kept = foldedShellWidth({
       width: BOOK,
       leaving: [],
-      gap: 8,
-      padding: 8,
-      remaining: 'pages'
+      gap: 8
     })
     expect(
       BOOK -
         ROW.rail.right -
-        foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'pages' })
+        foldedColumnOffset({ kept, before: [], gap: 8, own: RAIL, padding: 8 })
     ).toBe(0)
   })
 
   it('never carries the rail past the docked edge, whatever it was handed', () => {
-    expect(
-      foldedColumnOffset({ kept: 12, before: [], gap: 8, own: RAIL, padding: 8, remaining: 'rail' })
-    ).toBe(0)
+    expect(foldedColumnOffset({ kept: 12, before: [], gap: 8, own: RAIL, padding: 8 })).toBe(0)
   })
 
   /*
@@ -319,17 +272,14 @@ describe('the fold’s end keyframe', () => {
     const kept = foldedShellWidth({
       width: BOOK,
       leaving: [MINE_COLUMN],
-      gap: 8,
-      padding: 8,
-      remaining: 'pages'
+      gap: 8
     })
     const navigationRests = foldedColumnOffset({
       kept,
       before: [RAIL, SECONDARY],
       gap: 8,
       own: NAVIGATION,
-      padding: 8,
-      remaining: 'pages'
+      padding: 8
     })
     // Mine was the last column standing, docked, so once it leaves the
     // navigation stack becomes the new docked-most survivor: flush against

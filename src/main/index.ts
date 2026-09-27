@@ -1610,17 +1610,17 @@ async function init(): Promise<void> {
     // Boundary discipline as elsewhere: a malformed payload moves nothing and
     // the caller still gets the real layout back.
     if (typeof payload !== 'object' || payload === null) return panelLayout()
-    const { expanded, mineOpen, edge } = payload as Record<string, unknown>
-    if (typeof expanded !== 'boolean' || typeof mineOpen !== 'boolean') return panelLayout()
+    const { mineOpen, dockOpen, edge } = payload as Record<string, unknown>
+    if (typeof mineOpen !== 'boolean' || typeof dockOpen !== 'boolean') return panelLayout()
     // edge is optional (#138): only the Settings position control ever sends
     // one, and an unrecognised value is treated exactly like an absent one —
-    // the rail toggle and the mine-open resize must never nudge the docked
-    // side by accident.
+    // a mine opening and the dock opening must never nudge the docked side by
+    // accident.
     const requestedEdge: PanelEdge | undefined =
       edge === 'left' || edge === 'right' ? edge : undefined
     const result = setPanelLayout({
-      expanded,
       mineOpen,
+      dockOpen,
       ...(requestedEdge ? { edge: requestedEdge } : {})
     })
     if (requestedEdge !== undefined) {

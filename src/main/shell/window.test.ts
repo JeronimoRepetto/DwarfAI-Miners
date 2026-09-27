@@ -1,8 +1,8 @@
 import type { BrowserWindow } from 'electron'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { emptyMessagePanel } from './messagePanelState'
-import { DESIGN_SCREEN_HEIGHT, RAIL_WIDTH, uiScale } from './panelBounds'
+import { DESIGN_SCREEN_HEIGHT, uiScale } from './panelBounds'
 /*
  * Crosses the main -> renderer boundary only to PIN two copies equal (see
  * AGENTS.md's boundaries section): MESSAGE_PANEL_LEAVE_TIMEOUT_MS below,
@@ -51,11 +51,13 @@ import {
 } from './window'
 
 /**
- * The rail the redesigned shell opens as (#90) — a rectangle main derived from
+ * The Panel the redesigned shell opens as (#90) — a rectangle main derived from
  * the display before the window existed, which this file only has to carry
- * through untouched.
+ * through untouched. AMENDED for #635 (was: `PANEL_BOUNDS`, the closed 20px
+ * rail's rectangle): the rail is gone, so the window opens as the Panel itself,
+ * the nav and the page (`panelBounds.test.ts` derives the width).
  */
-const RAIL_BOUNDS = { x: 1900, y: 0, width: RAIL_WIDTH, height: 1032 }
+const PANEL_BOUNDS = { x: 1402, y: 0, width: 518, height: 1032 }
 
 /**
  * The message panel beside it (#162) — a rectangle main derived from the
@@ -193,7 +195,7 @@ describe('buildMainWindowOptions', () => {
     alwaysOnTop: true,
     preloadPath: 'C:/app/out/preload/index.mjs',
     iconPath: 'C:/app/resources/app-icon.png',
-    bounds: RAIL_BOUNDS
+    bounds: PANEL_BOUNDS
   }
 
   it('applies the stored pin preference at creation', () => {
@@ -286,24 +288,25 @@ describe('buildMainWindowOptions docked bounds', () => {
     alwaysOnTop: true,
     preloadPath: 'C:/app/out/preload/index.mjs',
     iconPath: 'C:/app/resources/app-icon.png',
-    bounds: RAIL_BOUNDS
+    bounds: PANEL_BOUNDS
   }
 
   it('gives the docked panel no size for a user to drag', () => {
     const options = buildMainWindowOptions(input)
     expect(options.resizable).toBe(false)
-    // A floor would fight the rail rather than protect anything: the rail is
-    // 20px wide on purpose, and main is the only thing that sets these bounds.
+    // A floor would protect nothing: main is the only thing that sets these
+    // bounds, and it derives them from what the Panel shows.
     expect(options.minWidth).toBeUndefined()
     expect(options.minHeight).toBeUndefined()
   })
 
-  it('opens exactly on the rail rectangle it was handed', () => {
+  // AMENDED for #635 (was: "…on the rail rectangle…", asserting the rail's 20px width).
+  it('opens exactly on the rectangle it was handed', () => {
     const options = buildMainWindowOptions(input)
-    expect(options.x).toBe(RAIL_BOUNDS.x)
-    expect(options.y).toBe(RAIL_BOUNDS.y)
-    expect(options.width).toBe(RAIL_WIDTH)
-    expect(options.height).toBe(RAIL_BOUNDS.height)
+    expect(options.x).toBe(PANEL_BOUNDS.x)
+    expect(options.y).toBe(PANEL_BOUNDS.y)
+    expect(options.width).toBe(PANEL_BOUNDS.width)
+    expect(options.height).toBe(PANEL_BOUNDS.height)
   })
 
   it('never adjusts those bounds for the pin preference', () => {
@@ -313,7 +316,7 @@ describe('buildMainWindowOptions docked bounds', () => {
     for (const alwaysOnTop of [true, false]) {
       const options = buildMainWindowOptions({ ...input, alwaysOnTop })
       expect({ x: options.x, y: options.y, width: options.width, height: options.height }).toEqual(
-        RAIL_BOUNDS
+        PANEL_BOUNDS
       )
     }
   })
@@ -380,7 +383,7 @@ describe('loadPanelPage (#570)', () => {
 })
 
 /**
- * Moving the docked panel between the rail and the open panel (#90).
+ * Moving the docked panel between its compositions (#90, #635).
  *
  * The read-back is the point, exactly as it is for the pin: Electron forwards a
  * bounds request and a compositor may place the window somewhere else — a
@@ -403,13 +406,13 @@ describe('applyPanelBounds', () => {
 
   it('applies the rectangle and reports what the window read back', () => {
     const { target, calls } = fakeBoundsWindow()
-    expect(applyPanelBounds(target, RAIL_BOUNDS)).toEqual(RAIL_BOUNDS)
-    expect(calls).toEqual([RAIL_BOUNDS])
+    expect(applyPanelBounds(target, PANEL_BOUNDS)).toEqual(PANEL_BOUNDS)
+    expect(calls).toEqual([PANEL_BOUNDS])
   })
 
   it('reports the REAL rectangle, never the wish, when the window manager refuses', () => {
     const { target } = fakeBoundsWindow({ honorsChanges: false })
-    expect(applyPanelBounds(target, RAIL_BOUNDS)).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+    expect(applyPanelBounds(target, PANEL_BOUNDS)).toEqual({ x: 0, y: 0, width: 0, height: 0 })
   })
 })
 
@@ -429,25 +432,38 @@ describe('panel layout edge (#138)', () => {
   })
 
   it('keeps the current edge when a request does not name one', () => {
-    // The rail toggle and the mine-open resize both send bare
-    // expanded/mineOpen requests; neither is the position control, and
-    // neither may nudge the docked side by accident.
+    // A mine opening and the dock opening both send bare mineOpen/dockOpen
+    // requests; neither is the position control, and neither may nudge the
+    // docked side by accident. AMENDED for #635 (was: the rail toggle's
+    // `expanded`, which went with the rail).
     seedPanelEdge('left')
-    expect(setPanelLayout({ expanded: true, mineOpen: false }).edge).toBe('left')
-    expect(setPanelLayout({ expanded: false, mineOpen: false }).edge).toBe('left')
+    expect(setPanelLayout({ mineOpen: true, dockOpen: false }).edge).toBe('left')
+    expect(setPanelLayout({ mineOpen: false, dockOpen: true }).edge).toBe('left')
   })
 
   it('moves to the requested edge when the position control asks for one', () => {
     seedPanelEdge('right')
-    const result = setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+    const result = setPanelLayout({ mineOpen: false, dockOpen: false, edge: 'left' })
     expect(result.edge).toBe('left')
     expect(panelLayout().edge).toBe('left')
   })
 
-  it('carries expanded and mineOpen through unchanged alongside an edge move', () => {
+  // AMENDED for #635 (was: "carries expanded and mineOpen…"): `dockOpen` replaced `expanded`.
+  it('carries mineOpen and dockOpen through unchanged alongside an edge move', () => {
     seedPanelEdge('right')
-    const result = setPanelLayout({ expanded: true, mineOpen: true, edge: 'left' })
-    expect(result).toEqual({ edge: 'left', expanded: true, mineOpen: true })
+    const result = setPanelLayout({ mineOpen: true, dockOpen: true, edge: 'left' })
+    expect(result).toEqual({ edge: 'left', mineOpen: true, dockOpen: true })
+  })
+
+  /*
+   * ADDED for #635 (PO ruling 2026-09-27). The window used to be created as the closed rail,
+   * and the first press on it opened the page. With the rail gone, the window the global
+   * shortcut and the tray first show is the Panel itself: the nav and the page, nothing beside.
+   */
+  it('starts as the Panel with nothing beside its page, before anything is asked of it', async () => {
+    vi.resetModules()
+    const fresh = await import('./window')
+    expect(fresh.panelLayout()).toEqual({ edge: 'right', mineOpen: false, dockOpen: false })
   })
 })
 
@@ -512,7 +528,7 @@ describe('the shell window can be focused at all', () => {
       alwaysOnTop: false,
       preloadPath: 'C:/app/out/preload/index.mjs',
       iconPath: 'C:/app/resources/app-icon.png',
-      bounds: RAIL_BOUNDS
+      bounds: PANEL_BOUNDS
     })
     expect(options.focusable).toBe(true)
   })
