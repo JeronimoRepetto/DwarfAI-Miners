@@ -173,8 +173,8 @@ describe('design-tokens.css against the design foundations', () => {
   it.each([
     ['--space-nav-gap', '8px'],
     ['--space-settings', '10px'],
-    ['--space-modal-margin', '12px'],
-    ['--space-map-pad', '21px']
+    ['--space-modal-margin', '12px']
+    // AMENDED for #635 (PR3): `--space-map-pad` (21px) went with the old map frame, its caller.
   ])('carries the design spacing %s as %s', (name, value) => {
     expect(valueOf(name)).toBe(value)
   })
@@ -182,7 +182,8 @@ describe('design-tokens.css against the design foundations', () => {
   it.each([
     ['--size-rail-width', '20px'],
     ['--size-icon', '19px'],
-    ['--size-marker-width', '10px'],
+    // AMENDED for #635 (PR3): `--size-marker-width` (10px) and `--size-tooltip-width` /
+    // `--size-tooltip-height` (170px, 60px) went with MineMarker and MapView's tooltip, their callers.
     ['--size-sleep-icon', '15px'],
     ['--size-search-height', '30px'],
     ['--size-chip-height', '25px'],
@@ -191,8 +192,6 @@ describe('design-tokens.css against the design foundations', () => {
     ['--size-card-art-width', '120px'],
     ['--size-card-art-height', '90px'],
     ['--size-portrait', '100px'],
-    ['--size-tooltip-width', '170px'],
-    ['--size-tooltip-height', '60px'],
     ['--size-mine-interior-width', '245px'],
     ['--size-feature-panel-width', '487px'],
     ['--size-message-panel-width', '990px'],
@@ -260,13 +259,14 @@ describe('design-tokens.css against the design foundations', () => {
    * change these numbers, never a judgement about which cyan looks right.
    */
   it.each([
-    ['--color-marker-bronze', '#5ce1e6'],
-    ['--color-marker-copper', '#ba6336'],
-    ['--color-marker-silver', '#c7c7c7'],
-    ['--color-marker-gold', '#ffde59'],
-    ['--color-marker-uranium', '#00bf63']
+    ['--tier-bronze', '#5ce1e6'],
+    ['--tier-copper', '#ba6336'],
+    ['--tier-silver', '#c7c7c7'],
+    ['--tier-gold', '#ffde59'],
+    ['--tier-uranium', '#00bf63']
   ])('carries the sampled marker colour %s as %s', (name, value) => {
-    // AMENDED for #635: unchanged value, now held by `--tier-*` and aliased here.
+    // AMENDED for #635: unchanged value, now held by `--tier-*`. AMENDED again in PR3: read on
+    // `--tier-*` itself, since the `--color-marker-*` aliases went with MineMarker, their caller.
     expect(resolvedValueOf(name)).toBe(value)
   })
 
@@ -721,12 +721,9 @@ describe('design-tokens.css against the redesign foundations (#635)', () => {
     ['--color-control', 'var(--control)'],
     ['--color-accent', 'var(--gold)'],
     ['--color-rail', 'var(--brass)'],
-    ['--color-cream', 'var(--parchment)'],
-    ['--color-marker-bronze', 'var(--tier-bronze)'],
-    ['--color-marker-copper', 'var(--tier-copper)'],
-    ['--color-marker-silver', 'var(--tier-silver)'],
-    ['--color-marker-gold', 'var(--tier-gold)'],
-    ['--color-marker-uranium', 'var(--tier-uranium)']
+    ['--color-cream', 'var(--parchment)']
+    // AMENDED for #635 (PR3): the five `--color-marker-*` aliases of `--tier-*` went with
+    // MineMarker.vue, the last caller that asked for the old names.
   ])('keeps the old app name %s as an alias of %s', (name, alias) => {
     expect(rootToken(name)).toBe(alias)
   })
@@ -893,8 +890,8 @@ describe('design-tokens.css spacing, hit targets and layers (#635)', () => {
    * callers, not re-valued here by guesswork. The list may only shrink: each entry must still be
    * odd, so a token fixed in place has to leave it.
    */
+  // AMENDED for #635 (PR3): `--space-map-pad` left the list, retired with the map frame.
   const LEGACY_V4_ODD_SIZES = [
-    '--space-map-pad',
     '--size-icon',
     '--size-sleep-icon',
     '--size-chip-height',

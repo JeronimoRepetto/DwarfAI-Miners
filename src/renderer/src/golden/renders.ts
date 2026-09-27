@@ -37,6 +37,8 @@ import PageHeader from '../components/shell/PageHeader.vue'
 import TierInfo from '../components/browse/TierInfo.vue'
 import MineCard from '../components/browse/MineCard.vue'
 import MinesList from '../components/browse/MinesList.vue'
+import MapPage from '../components/map/MapPage.vue'
+import TooltipCard from '../components/overlay/TooltipCard.vue'
 import type { MineCardState, MineCardView } from '../lib/browse/mineCard'
 import DialogCard from '../components/overlay/DialogCard.vue'
 import MenuButton from '../components/overlay/MenuButton.vue'
@@ -48,7 +50,13 @@ import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
 import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../lib/shell/panelNav'
 import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
-import type { DwarfRole, Material, MineTier } from '../types'
+import {
+  MATERIALS,
+  type DwarfRole,
+  type Material,
+  type MaterialTotals,
+  type MineTier
+} from '../types'
 import type { GoldenSample } from './sample'
 import {
   EnterFrame,
@@ -694,6 +702,60 @@ const minesList: Render = framed((texts, attributes) => {
   return [{ component: MinesList, props: { cards, openId, search: '', tier: null, sort: 'tier' } }]
 })
 
+/*
+ * The Map page as its tree prints it, in its frame: the sample's mines whose markers the tree
+ * draws, each marker naming its mine ("<name>, <Tier>[, needs you]"), the pressed one the open
+ * mine. The totals are the sample's ore summed per material over those mines, each material its
+ * own counter, never across materials, as the design's oreTotals does. The painting is the day's,
+ * the one every reference is taken with; the app's is the clock's (useMapTime).
+ */
+const mapPage: Render = (sample, _texts, attributes) => {
+  const markers = elementsOf(attributes, 'button.dm-marker')
+  const named = (label: string | undefined): string => (label ?? '').split(', ')[0] ?? ''
+  const mines = markers.map((marker) => {
+    const found = sample.mines.find((m) => m.name === named(marker['aria-label']))
+    if (!found) throw new Error('golden: the sample has no mine for ' + marker['aria-label'])
+    return found
+  })
+  const materials = Object.fromEntries(
+    MATERIALS.map((material) => [
+      material,
+      mines.reduce((sum, m) => sum + (m.materials?.[material] ?? 0), 0)
+    ])
+  ) as MaterialTotals
+  const open = markers.find((marker) => marker['aria-pressed'] === 'true')
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: [
+        {
+          component: MapPage,
+          props: {
+            mines,
+            materials,
+            openId: open ? (mines[markers.indexOf(open)]?.id ?? null) : null,
+            variant: 'day'
+          }
+        }
+      ]
+    }
+  }
+}
+
+/*
+ * The mine tooltip card as its tree prints it: the tier its chip carries, then the texts in tree
+ * order — the chip's word, the name, and each row's label and value.
+ */
+const mineTooltip: Render = (_sample, texts, attributes) => {
+  const tier = elementsOf(attributes, 'span.dm-tier')[0]?.['data-tier'] as MineTier | undefined
+  const [, title, ...facts] = texts.map((t) => t.text ?? '')
+  const rows = []
+  for (let i = 0; i + 1 < facts.length; i += 2)
+    rows.push({ label: facts[i]!, value: facts[i + 1]! })
+  return { component: TooltipCard, props: { tier, title, rows } }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -737,6 +799,12 @@ export const RENDERS: Record<string, Render> = {
   'molecules/toast#static': toast('console'),
   'molecules/toast#live': button({ labelled: true }),
   'molecules/toast#shown': toast('info'),
+  // The Map page with the valley's mines, and on a first run; the mine tooltip card, and its
+  // Live state, which is its trigger button.
+  'organisms/map-page#live': mapPage,
+  'organisms/map-page#empty-first-run': mapPage,
+  'molecules/tooltip#mine-tooltip': mineTooltip,
+  'molecules/tooltip#live': button({ labelled: true }),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),

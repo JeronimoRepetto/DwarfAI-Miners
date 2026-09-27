@@ -28,10 +28,6 @@ export type ShellArea = (typeof SHELL_AREAS)[number]
  * redesigned nav's groups are in `panelNav.ts`.
  */
 
-export function isShellArea(value: unknown): value is ShellArea {
-  return typeof value === 'string' && (SHELL_AREAS as readonly string[]).includes(value)
-}
-
 /**
  * The areas the design specifies as intentionally unavailable, and the one place
  * that list is written down (#335).

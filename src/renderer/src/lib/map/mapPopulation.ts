@@ -18,7 +18,7 @@
  * a STORE row with no live mine still needs a marker — which is why it lives
  * beside `boardRows.ts` in spirit but not in the same folder: that module
  * builds `BrowseRow[]` for a list, keyed by whatever filters the panel has set;
- * this one builds `Mine[]` for `MapView`, which draws every remembered project
+ * this one builds `Mine[]` for `MapPage`, which draws every remembered project
  * regardless of any search or tier the Mines panel happens to be showing.
  *
  * ## Matched by id, never by the `live` flag

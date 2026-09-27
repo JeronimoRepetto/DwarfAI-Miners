@@ -11,7 +11,7 @@ import {
 import { MotionConfig } from 'motion-v'
 import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
-import MapView from './components/map/MapView.vue'
+import MapPage from './components/map/MapPage.vue'
 import MineScene from './components/scene/MineScene.vue'
 import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
@@ -24,6 +24,7 @@ import { useAudio } from './composables/useAudio'
 import { useDwarfDelivery } from './composables/useDwarfDelivery'
 import { useMessagePanel } from './composables/useMessagePanel'
 import { useMines } from './composables/useMines'
+import { useMapTime } from './composables/useMapTime'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useShellFold } from './composables/useShellFold'
@@ -94,6 +95,8 @@ const stopWatchingReducedMotion = watchReducedMotion((asked) => {
 onBeforeUnmount(stopWatchingReducedMotion)
 
 const { state, setMines } = useMines()
+/** The painting the Map page wears, by the time of day (#136). */
+const mapVariant = useMapTime()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
 
 /**
@@ -1128,24 +1131,23 @@ onBeforeUnmount(() => {
         <div v-if="visibleLayout.expanded" ref="secondaryEl" class="shell-secondary">
           <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
             <!--
-          The map container from the design: 21px padding on every side, a 2px
-          #fae2b6 border and elevation 5, with the collected-materials totals
-          overlaid in its upper-right corner (VaultChip, inside MapView).
+          The Map page (#635) in the page column, where the Mines page stands: the redesign
+          replaced the 21px map frame, so the painting is no longer letterboxed inside it.
+          Until the first board arrives it claims no empty valley (`loading`).
         -->
-            <PanelFrame v-if="page === 'map'" class="shell-page" variant="map">
-              <div v-if="loading" class="loading" role="status">
-                <span class="spinner" aria-hidden="true"></span>
-                <p>Scanning the hills for active agents...</p>
-              </div>
-              <MapView
-                v-else
-                :mines="state.mines"
-                :projects="projects"
-                :tokens-observed="state.tokensObserved"
-                :materials="state.materials"
-                @open="enterMine"
-              />
-            </PanelFrame>
+            <MapPage
+              v-if="page === 'map'"
+              class="shell-page"
+              :mines="state.mines"
+              :projects="projects"
+              :materials="state.materials"
+              :open-id="viewState.mineId"
+              :variant="mapVariant"
+              :adding="addingProject"
+              :loading="loading"
+              @open="enterMine"
+              @add="addMine"
+            />
 
             <MinesList
               v-else-if="page === 'mines'"
@@ -1562,25 +1564,6 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
 }
-.loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-settings);
-  color: var(--color-tooltip-text);
-}
-.loading p {
-  margin: 0;
-}
-.spinner {
-  width: 25px;
-  height: 25px;
-  border: 3px solid var(--color-control);
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
 .notice {
   position: absolute;
   z-index: 90;
@@ -1594,10 +1577,5 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-default);
   color: var(--danger-hi);
   background: var(--danger-bg);
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>

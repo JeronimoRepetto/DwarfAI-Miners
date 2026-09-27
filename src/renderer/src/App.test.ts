@@ -7,7 +7,9 @@ import type { DOMKeyframesDefinition } from 'motion-v'
 import { MotionConfig } from 'motion-v'
 import App from './App.vue'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
-import MapView from './components/map/MapView.vue'
+// AMENDED for #635 (PR3): the Map page is MapPage, `.dm-mappage` with `.dm-marker`s (was: MapView,
+// `.map-view` with `.mine-marker`s), in every test below that reads the map.
+import MapPage from './components/map/MapPage.vue'
 import MinesList from './components/browse/MinesList.vue'
 import MineScene from './components/scene/MineScene.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
@@ -451,11 +453,11 @@ describe('App panel motion (#164)', () => {
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await flushPromises()
     expect(animations).toHaveLength(2)
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
     expect(wrapper.find('.settings-panel').exists()).toBe(true)
     for (const animation of animations) animation.finish()
     await flushPromises()
-    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
   })
 
@@ -468,7 +470,7 @@ describe('App panel motion (#164)', () => {
       for (const animation of animations.splice(0)) animation.finish()
       await flushPromises()
     }
-    wrapper.findComponent(MapView).vm.$emit('open', mine.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
     await finishAnimations()
     await wrapper.find('.edge-rail').trigger('click')
@@ -503,7 +505,7 @@ describe('App panel motion (#164)', () => {
       for (const animation of animations.splice(0)) animation.finish()
       await flushPromises()
     }
-    wrapper.findComponent(MapView).vm.$emit('open', mine.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
     /*
@@ -610,7 +612,7 @@ describe('App panel motion (#164)', () => {
         clips.push(value)
       }
     })
-    wrapper.findComponent(MapView).vm.$emit('open', mine.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: true })
     expect(clips).toEqual([''])
@@ -1105,7 +1107,7 @@ describe('App mines browse', () => {
   it('shows the map until the browse is asked for', async () => {
     const { wrapper } = await mountOpenApp()
     expect(wrapper.find('.dm-mines').exists()).toBe(false)
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
   /*
@@ -1127,7 +1129,7 @@ describe('App mines browse', () => {
     })
     // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`).
     expect(wrapper.find('.dm-mines').exists()).toBe(false)
-    expect(wrapper.findAll('.mine-marker')).toHaveLength(1)
+    expect(wrapper.findAll('.dm-marker')).toHaveLength(1)
   })
 
   // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`); the read is unchanged.
@@ -1136,7 +1138,7 @@ describe('App mines browse', () => {
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
     expect(wrapper.find('.dm-mines').exists()).toBe(true)
-    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
     expect(api.queryProjects).toHaveBeenCalledWith(
       expect.objectContaining({ sortBy: 'lastOpenedAt', direction: 'desc', offset: 0 })
     )
@@ -1156,7 +1158,7 @@ describe('App mines browse', () => {
     // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`).
     expect(wrapper.find('.dm-mines').exists()).toBe(true)
     await wrapper.find(NAV_MAP).trigger('click')
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
   it('renders a card for every project that was answered', async () => {
@@ -1192,7 +1194,7 @@ describe('App mines browse', () => {
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
     await wrapper.find(NAV_MAP).trigger('click')
-    expect(wrapper.findComponent(MapView).props('projects')).toEqual(projects)
+    expect(wrapper.findComponent(MapPage).props('projects')).toEqual(projects)
   })
 
   /*
@@ -1360,7 +1362,7 @@ describe('App shell', () => {
     const { wrapper } = await mountApp()
     expect(wrapper.find('.edge-rail').exists()).toBe(true)
     expect(wrapper.find('.dm-nav').exists()).toBe(false)
-    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
   })
 
   it('adopts the layout main reports rather than assuming one', async () => {
@@ -1369,7 +1371,7 @@ describe('App shell', () => {
     })
     expect(api.getPanelLayout).toHaveBeenCalledOnce()
     expect(wrapper.find('.shell').classes()).toContain('edge-left')
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
   it('asks main to open, and draws the map it answered with', async () => {
@@ -1377,7 +1379,7 @@ describe('App shell', () => {
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false })
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
     expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
 
@@ -1389,7 +1391,7 @@ describe('App shell', () => {
     })
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
     expect(wrapper.find('.edge-rail').attributes('aria-expanded')).toBe('false')
   })
 
@@ -1458,7 +1460,7 @@ describe('App concurrent mine', () => {
       getMines: vi.fn().mockResolvedValue({ mines: [LIVE_MINE], tokensObserved: 0 }),
       ...overrides
     })
-    mounted.wrapper.findComponent(MapView).vm.$emit('open', LIVE_MINE.id)
+    mounted.wrapper.findComponent(MapPage).vm.$emit('open', LIVE_MINE.id)
     await flushPromises()
     return mounted
   }
@@ -1466,7 +1468,7 @@ describe('App concurrent mine', () => {
   it('keeps the map behind the mine it was entered from', async () => {
     const { wrapper } = await openMine()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
   it('asks main for the mine column, because it is width the window has to have', async () => {
@@ -1495,7 +1497,7 @@ describe('App concurrent mine', () => {
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
-    expect(wrapper.find('.map-view').exists()).toBe(false)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(false)
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
     // The navigation stack stays: it is how the panel comes back.
     expect(wrapper.find('.dm-nav').exists()).toBe(true)
@@ -1570,7 +1572,7 @@ describe('App concurrent mine', () => {
     await wrapper.find('.dm-nav__mark').trigger('click')
     await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
     expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
 
@@ -1589,7 +1591,7 @@ describe('App concurrent mine', () => {
     await wrapper.find('.close-mine').trigger('click')
     await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(false)
-    expect(wrapper.find('.map-view').exists()).toBe(true)
+    expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
   it('gives the window its column back when the mine closes', async () => {
@@ -1646,7 +1648,7 @@ describe('App selecting a dwarf (#162)', () => {
       getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
       ...overrides
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     return { wrapper, api }
   }
@@ -1779,7 +1781,7 @@ describe('App add action (#162)', () => {
       getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
       ...overrides
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     return { wrapper, api }
   }
@@ -1901,7 +1903,7 @@ describe('App exclusive selection (#165)', () => {
     const { wrapper, api } = await mountOpenApp({
       getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     return { wrapper, api }
   }
@@ -2039,7 +2041,7 @@ describe('App mine history', () => {
       getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
       ...overrides
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     return { wrapper, api }
   }
@@ -2311,7 +2313,7 @@ describe('App audio (#174, #173)', () => {
         .fn()
         .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     /*
      * AMENDED for #330. It expected `mine-inside-working` here, "the working
@@ -2338,7 +2340,7 @@ describe('App audio (#174, #173)', () => {
         .fn()
         .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
 
     await wrapper.find('.mute-ambience').trigger('click')
@@ -2355,7 +2357,7 @@ describe('App audio (#174, #173)', () => {
         .fn()
         .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [WORKER] }], tokensObserved: 0 })
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     const before = opened.length
 
@@ -2429,7 +2431,7 @@ describe('App audio (#174, #173)', () => {
         .fn()
         .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [foreman] }], tokensObserved: 0 })
     })
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
 
     await wrapper.find('.dwarf-hit').trigger('click')
@@ -2479,14 +2481,14 @@ describe('App system notifications (#316)', () => {
 
   it('reports the mine once its interior is drawn', async () => {
     const { wrapper, api } = await notifiedApp()
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     expect(reports(api)).toContain(MINE.id)
   })
 
   it('reports none again once the mine is closed', async () => {
     const { wrapper, api } = await notifiedApp()
-    wrapper.findComponent(MapView).vm.$emit('open', MINE.id)
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     api.setOpenMine.mockClear()
     wrapper.findComponent(MineScene).vm.$emit('back')
@@ -2993,5 +2995,63 @@ describe('App Mines page', () => {
     await wrapper.get(NAV_MUSIC).trigger('click')
     await flushPromises()
     expect(toasts(wrapper)).toContain(on ? 'Music off' : 'Music on')
+  })
+})
+
+/*
+ * APPENDED for #635 (PR3): the redesigned Map page in the page column, where the Mines page
+ * stands: no longer letterboxed inside the old 21px map frame. A first run's card offers the same
+ * "Add a mine" as the Mines page, on the same IPC; a marker opens its mine in the mine column.
+ */
+describe('App Map page', () => {
+  beforeEach(() => useView().clear())
+  afterEach(() => useView().clear())
+
+  const ALPHA = {
+    id: 'C:/dev/alpha',
+    path: 'C:/dev/alpha',
+    name: 'alpha',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0,
+    declared: true
+  }
+
+  it('draws the Map page in the page column, not inside a frame of its own', async () => {
+    const { wrapper } = await mountOpenApp()
+    const page = wrapper.get('.dm-mappage')
+    expect(page.classes()).toContain('shell-page')
+    expect(wrapper.find('.panel-frame.is-map').exists()).toBe(false)
+  })
+
+  it('asks main for a folder from the first-run card, and opens the mine it adds', async () => {
+    let push: (snapshot: unknown) => void = () => undefined
+    const { wrapper, api } = await mountOpenApp({
+      onMinesUpdated: vi.fn().mockImplementation((listener: (snapshot: unknown) => void) => {
+        push = listener
+        return () => undefined
+      }),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: ALPHA.id })
+    })
+    await wrapper.get('.dm-mappage__card button').trigger('click')
+    await flushPromises()
+    expect(api.declareMine).toHaveBeenCalledWith()
+    push({ mines: [ALPHA], tokensObserved: 0 })
+    await flushPromises()
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(api.setMessagePanel).not.toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'launch' })
+    )
+  })
+
+  it('opens a mine from its marker, and presses the marker of the mine that is open', async () => {
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [ALPHA], tokensObserved: 0 })
+    })
+    await wrapper.get('.dm-marker').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.get('.dm-marker').attributes('aria-pressed')).toBe('true')
   })
 })

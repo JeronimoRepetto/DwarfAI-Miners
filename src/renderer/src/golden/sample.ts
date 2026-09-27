@@ -22,6 +22,7 @@ import {
   type MineTier
 } from '../types'
 import type { TierThresholds } from '../lib/browse/tierInfo'
+import { MAP_SPAWN_POINTS } from '../lib/map/spawnPoints.generated'
 
 /** The configuration flags a staged state reads; the sample's config has more. */
 export interface SampleConfig {
@@ -71,17 +72,34 @@ function materials(ore: unknown): MaterialTotals {
   return totals
 }
 
+// An asking dwarf's questions, as the app carries an ask it can see: the sample writes each as its
+// text and its option labels.
+function pendingQuestion(row: Row): Pick<Dwarf, 'pendingQuestion'> {
+  if (!Array.isArray(row.question)) return {}
+  return {
+    pendingQuestion: {
+      toolUseId: String(row.id),
+      channel: 'terminal',
+      questions: (row.question as Row[]).map((q) => ({
+        question: String(q.text),
+        multiSelect: false,
+        options: ((q.options ?? []) as unknown[]).map((label) => ({ label: String(label) }))
+      }))
+    }
+  }
+}
+
 // The sample's status words: working, asking (for an answer, or for a permission when `need`
-// says so) and asleep, a session at rest with nobody asked anything.
-function status(row: Row): Pick<Dwarf, 'status' | 'waitingReason'> {
+// says so) and asleep, a session at rest with nobody asked anything. A permission is the app's
+// approval wait, not a question, so only an answer's ask carries the questions.
+function status(row: Row): Pick<Dwarf, 'status' | 'waitingReason' | 'pendingQuestion'> {
   switch (row.status) {
     case 'working':
       return { status: 'working' }
     case 'asking':
-      return {
-        status: 'waiting',
-        waitingReason: row.need === 'permission' ? 'approval' : 'user-input'
-      }
+      return row.need === 'permission'
+        ? { status: 'waiting', waitingReason: 'approval' }
+        : { status: 'waiting', waitingReason: 'user-input', ...pendingQuestion(row) }
     case 'asleep':
       return { status: 'waiting' }
     default:
@@ -110,6 +128,14 @@ function dwarf(row: Row, mine: Mine): Dwarf {
   }
 }
 
+// The sample's site is one of the product's measured spawn points, named by its image percent.
+function mapSite(site: unknown): Pick<Mine, 'mapSite'> {
+  if (site === undefined) return {}
+  const { x, y } = site as { x?: unknown; y?: unknown }
+  const point = MAP_SPAWN_POINTS.find((p) => p.x === x && p.y === y)
+  return point ? { mapSite: point.id } : fail('site', site)
+}
+
 function mine(row: Row): Mine {
   return {
     id: String(row.id),
@@ -120,7 +146,8 @@ function mine(row: Row): Mine {
     tokensObserved: 0,
     materials: materials(row.ore),
     updatedAt: 0,
-    unrecorded: row.state === 'unrecorded' ? true : undefined
+    unrecorded: row.state === 'unrecorded' ? true : undefined,
+    ...mapSite(row.site)
   }
 }
 

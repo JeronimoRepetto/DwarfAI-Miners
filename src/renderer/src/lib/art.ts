@@ -8,7 +8,7 @@
  */
 import type { DwarfRole, Material, MineTier } from '../types'
 import type { MapTimeVariant } from './map/mapTime'
-import type { ShellArea, UnavailableArea } from './shell/shellNav'
+import type { UnavailableArea } from './shell/shellNav'
 
 import foremanEndSleepSheet from '../assets/art/sprites/dwarf-foreman-end-sleep-v3-Sheet.png'
 import foremanIdleSheet from '../assets/art/sprites/dwarf-foreman-long-idle-v3-Sheet.png'
@@ -83,12 +83,6 @@ import laboralUnionArt from '../assets/art/laboral-union/laboral-union.png'
  * byte the designer's file while idle and selected take their colour from the
  * design tokens.
  */
-import iconLab from '../../../../docs/assets/icons/lab.svg?url'
-import iconMap from '../../../../docs/assets/icons/map.svg?url'
-import iconMarket from '../../../../docs/assets/icons/market.svg?url'
-import iconLaboralUnion from '../../../../docs/assets/icons/laboral-union.svg?url'
-import iconMine from '../../../../docs/assets/icons/mine.svg?url'
-import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
 import iconHistory from '../../../../docs/assets/icons/history.svg?url'
 import iconAdd from '../../../../docs/assets/icons/add.svg?url'
@@ -97,7 +91,6 @@ import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 import iconAttach from '../../../../docs/assets/icons/attach.svg?url'
-import iconInfo from '../../../../docs/assets/icons/info.svg?url'
 import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
 import iconKick from '../../../../docs/assets/icons/klck.svg?url'
 import iconMusicOn from '../../../../docs/assets/icons/music_on.svg?url'
@@ -269,7 +262,7 @@ export const NUGGET_SRC: Record<NuggetMaterial, string> = {
  *
  * Here for the same reason `INTERIOR_ART_SIZE` is: the map is drawn `contain`,
  * nothing cropped, into a resizable panel whose own frame carries this exact
- * ratio (#153, #197 — see `.map-frame` in MapView.vue), so this is what
+ * ratio (#153, #197 — see `.dm-mappage__art` in MapPage.vue), so this is what
  * decides where a spawn point authored on the painting actually lands in the
  * box (see mapProjection.ts).
  *
@@ -296,23 +289,6 @@ export const MAP_BG_SRC: Record<MapTimeVariant, string> = {
   day: mapDay,
   sunset: mapSunset,
   night: mapNight
-}
-
-/**
- * The shell navigation icons, keyed by the area each one selects.
- *
- * Every file is the design's own SVG at the path the source names; nothing here
- * is a substitute or a hand-drawn stand-in. Explicit imports for the same reason
- * the paintings use them: a renamed icon fails the build rather than rendering
- * as an empty 19px square nobody notices.
- */
-export const SHELL_ICON_SRC: Record<ShellArea, string> = {
-  settings: iconSettings,
-  map: iconMap,
-  mines: iconMine,
-  lab: iconLab,
-  market: iconMarket,
-  'laboral-union': iconLaboralUnion
 }
 
 /** The design's own close glyph, used by the panel's round close control. */
@@ -379,13 +355,6 @@ export const SLEEP_ICON_SRC = iconSleep
  */
 export const MUSIC_ON_ICON_SRC = iconMusicOn
 export const MUSIC_OFF_ICON_SRC = iconMusicOff
-
-/**
- * The map's material-info trigger (#506): a circle with a lowercase "i",
- * drawn through the same mask as the shell icons so the committed SVG keeps
- * its black fill while the control takes its colour from the tokens.
- */
-export const INFO_ICON_SRC = iconInfo
 
 /**
  * The question-put-to-the-user glyph (#153), and the one icon in this file that

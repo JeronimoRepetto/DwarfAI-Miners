@@ -97,6 +97,18 @@
     "key": "molecules/toast#shown"
   },
   {
+    "key": "organisms/map-page#live"
+  },
+  {
+    "key": "organisms/map-page#empty-first-run"
+  },
+  {
+    "key": "molecules/tooltip#mine-tooltip"
+  },
+  {
+    "key": "molecules/tooltip#live"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {

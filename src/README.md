@@ -83,7 +83,7 @@ src/
     │                  history/   the mine-wide history: tab order, the 50-message cap, the timestamp's spelling
     │                  launch/    starting an agent: the gates, the chips, and whose dwarf arrived
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
-    │                  overlay/   the boxes that float above the panel: speech bubbles and the tooltip over a sprite, and the menus, dialogs and toasts over a page
+    │                  overlay/   the boxes that float above the panel: speech bubbles and the tooltip over a sprite, the tooltip card hover tooltips share, and the menus, dialogs and toasts over a page
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
     │                  typography/ the chosen faces: a stored identifier, the token that draws it, its name
     │                  controls/  the redesign's shared controls: what the options of a button, input, select, toggle, slider or chip decide — classes, native attributes, readouts

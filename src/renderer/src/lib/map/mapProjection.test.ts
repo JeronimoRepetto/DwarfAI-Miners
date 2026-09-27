@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAP_ART_SIZE } from '../art'
-import { clampToMapBox, drawnMapRect, mapFitScale, projectToMapBox } from './mapProjection'
+import { drawnMapRect, mapFitScale, projectToMapBox } from './mapProjection'
 
 /** The delivered map art. Every case below is projected against this. */
 const ART = MAP_ART_SIZE
@@ -81,8 +81,8 @@ describe('projectToMapBox', () => {
     un-clamped. Nothing is cropped any more, so no point can leave the box, and
     what has to be proved instead is the opposite: every corner of the painting
     lands INSIDE the box at every shape, which is the maintainer's ruling stated
-    as a property. `clampToMapBox` below still exists for the marker's own
-    half-width, which is a different reason to hold a point in.
+    as a property. (`clampToMapBox`, which this used to point at, went with #635
+    PR3: see the note at the end of this file.)
   */
   it('keeps every corner of the painting inside the box, at every shape', () => {
     const corners = [
@@ -201,19 +201,11 @@ describe('mapFitScale', () => {
   })
 })
 
-describe('clampToMapBox', () => {
-  /*
-    The design does not say what happens to a marker whose spawn point the crop
-    removed — the panel it was drawn for is exactly the painting's ratio, so
-    nothing is ever cropped there. Ours is resizable, so this is a decision:
-    hold the marker at the edge, the way the cave already holds a dwarf whose
-    rock got cropped away, rather than let a live mine vanish off the panel.
-  */
-  it('holds a cropped point at the edge, a margin in', () => {
-    expect(clampToMapBox({ x: -40, y: 130 }, 2, 3)).toEqual({ x: 2, y: 97 })
-  })
-
-  it('leaves a point that is already inside exactly where it is', () => {
-    expect(clampToMapBox({ x: 45.5, y: 61.25 }, 2, 3)).toEqual({ x: 45.5, y: 61.25 })
-  })
-})
+/*
+ * REMOVED for #635 (PR3): `describe('clampToMapBox')` and its two tests ("holds a cropped point at
+ * the edge, a margin in", "leaves a point that is already inside exactly where it is"). The
+ * redesigned Map page centres each marker on its measured site as it is (components.md, Map
+ * marker: "it takes image percent and centres itself"), so nothing holds a marker in any more and
+ * the function went. Where a marker stands is lib/map/mapPage.test.ts's ("mapMarkers") and
+ * components/map/MapPage.test.ts's.
+ */
