@@ -1,77 +1,55 @@
 /**
- * What the Mines panel is filtering and ordering by, and the query that asks
- * main for one page of it (#92).
+ * What the Mines page is filtering and ordering by, and the query that reads one page of every
+ * project main remembers (#92).
  *
- * Framework-agnostic on purpose: the panel's whole filtering decision is four
- * values and one translation, and neither needs a component to be true.
+ * AMENDED for #635 (PR2): the redesigned page reads every project once and filters and orders the
+ * cards itself (screens/browse.md: "search, tier filter and sort only hide and reorder existing
+ * nodes"; lib/browse/minesList.ts), so the query carries no filter and the order is the page's.
+ * Framework-agnostic on purpose: the whole decision is three values and one translation.
  */
-import type { MineTier, ProjectQuery, ProjectSortDirection } from '../../types'
+import type { MineTier, ProjectQuery } from '../../types'
+import type { MineSort } from './minesList'
 
 /**
- * How many projects one page asks for. The design fixes the batch at ten; main
- * clamps whatever arrives, so this is a request and never a guarantee — which
- * is why hasMorePages() compares against the limit that was actually sent.
+ * How many projects one page asks for: the most main answers at once
+ * (PROJECT_QUERY_MAX_LIMIT in main/projects/projectQuery.ts), since the page reads them all. Main
+ * clamps whatever arrives, so this is a request and never a guarantee — which is why
+ * hasMorePages() compares against the limit that was actually sent.
  */
-export const BROWSE_PAGE_SIZE = 10
+export const BROWSE_PAGE_SIZE = 500
 
 /**
- * The panel's filter state.
+ * The page's filter state.
  *
- * `tier: null` is the All chip: no tier filter at all, which is not the same as
- * a filter that happens to match every tier — an unmeasured project has no
- * stored tier and matches no tier filter, so All is the only chip it appears
- * under.
+ * `tier: null` is the All chip: no tier filter at all, which is not the same as a filter that
+ * happens to match every tier — an unmeasured project has no measured tier and matches no tier
+ * chip, so All is the only chip it appears under.
  */
 export interface BrowseFilters {
   search: string
   tier: MineTier | null
-  direction: ProjectSortDirection
+  sort: MineSort
 }
 
-/** All, nothing typed, most recently active first. */
+/** All, nothing typed, the richest tier first. */
 export function defaultBrowseFilters(): BrowseFilters {
-  return { search: '', tier: null, direction: 'desc' }
-}
-
-export function toggledDirection(direction: ProjectSortDirection): ProjectSortDirection {
-  return direction === 'desc' ? 'asc' : 'desc'
+  return { search: '', tier: null, sort: 'tier' }
 }
 
 /**
- * The filters as one page of a project browse.
- *
- * `nameContains` carries what was TYPED, untouched. Main folds the term with
- * the same normalizer that wrote the stored name column, so trimming,
- * lowercasing or stripping accents here would fold it twice and search for
- * something the user did not type. An empty box is no filter rather than an
- * empty one.
- *
- * The order is always by `lastOpenedAt` (#205): the mine someone is working
- * in right now belongs at the top, not buried under whichever project
- * happened to be declared first. `addedAt` stays a valid `ProjectSortKey` on
- * the wire and main still answers it, but the design's date-sort control
- * offers no second key to choose, so this is the only one the panel ever
- * sends. A project nobody has ever opened has no last-activity date at all —
- * main's NULL-last rule (`projectQuery.ts`) is what puts those at the bottom
- * under this default direction rather than scattering them through the list.
+ * One page of every project, most recently active first (#205): the order the reads arrive in,
+ * which the page then sorts its own way. A project nobody has ever opened has no last-activity
+ * date, and main's NULL-last rule puts those at the end.
  */
-export function projectQueryFor(filters: BrowseFilters, offset: number): ProjectQuery {
-  const query: ProjectQuery = {
-    sortBy: 'lastOpenedAt',
-    direction: filters.direction,
-    limit: BROWSE_PAGE_SIZE,
-    offset
-  }
-  if (filters.tier !== null) query.tier = filters.tier
-  if (filters.search !== '') query.nameContains = filters.search
-  return query
+export function projectQueryFor(offset: number): ProjectQuery {
+  return { sortBy: 'lastOpenedAt', direction: 'desc', limit: BROWSE_PAGE_SIZE, offset }
 }
 
 /**
  * Whether another page is worth asking for.
  *
- * A short page is the end of the list: main fills a page whenever it can, so
- * fewer rows than were asked for means there were no more rows to give.
+ * A short page is the end of the list: main fills a page whenever it can, so fewer rows than were
+ * asked for means there were no more rows to give.
  */
 export function hasMorePages(received: number, limit: number = BROWSE_PAGE_SIZE): boolean {
   return received >= limit

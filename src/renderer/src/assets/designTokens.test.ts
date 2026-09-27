@@ -1071,3 +1071,26 @@ describe('design-tokens.css type roles and scale (#635)', () => {
     expect(entry).toContain("import '@fontsource/jacquard-12/400.css'")
   })
 })
+
+// APPENDED for #635 (PR2): the current-mine mark, four parchment L brackets in the corners with a
+// 2px pixel shadow, hidden until a part sets it on (foundations.md, `.m-brackets::after`; decision
+// log, Selected mine mark). The Panel's open mine card is the first part to draw it.
+describe('design-tokens.css current-mine brackets (#635)', () => {
+  it('draws four L brackets in parchment, hidden until a part turns them on', () => {
+    const at = (name: string) => declared('design-tokens.css', '.m-brackets::after', name)
+    expect(at('--br-c')).toBe('var(--parchment)')
+    expect(at('--br-t')).toBe('4px')
+    expect(at('--br-l')).toBe('20px')
+    expect(at('--br-p')).toBe('var(--px)')
+    expect(at('content')).toMatch(/^(""|'')$/)
+    expect(at('position')).toBe('absolute')
+    expect(at('inset')).toBe('0')
+    expect(at('pointer-events')).toBe('none')
+    expect(at('opacity')).toBe('0')
+    expect(at('filter')).toBe('drop-shadow(var(--px) var(--px) 0 var(--rock-lo))')
+    expect(at('transition')).toBe('opacity var(--dur-fast) var(--ease-step)')
+    expect(
+      at('background')?.match(/linear-gradient\(var\(--br-c\), var\(--br-c\)\)/g)
+    ).toHaveLength(8)
+  })
+})

@@ -551,6 +551,41 @@
 .m-rivets::after {
   right: 4px;
 }
+/*
+ * The current mine's mark (decision log, Selected mine mark): four stepped L brackets in parchment
+ * with a pixel shadow, a shape rather than a hue, so it is never read as needs you. Hidden until a
+ * part turns it on; a part sets its own thickness, arm and inset.
+ */
+.m-brackets::after {
+  --br-c: var(--parchment);
+  --br-t: 4px;
+  --br-l: 20px;
+  --br-p: var(--px);
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(var(--br-c), var(--br-c)) left var(--br-p) top 0 / var(--br-l) var(--br-t)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) left 0 top var(--br-p) / var(--br-t) var(--br-l)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) right var(--br-p) top 0 / var(--br-l) var(--br-t)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) right 0 top var(--br-p) / var(--br-t) var(--br-l)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) left var(--br-p) bottom 0 / var(--br-l) var(--br-t)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) left 0 bottom var(--br-p) / var(--br-t) var(--br-l)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) right var(--br-p) bottom 0 / var(--br-l) var(--br-t)
+      no-repeat,
+    linear-gradient(var(--br-c), var(--br-c)) right 0 bottom var(--br-p) / var(--br-t) var(--br-l)
+      no-repeat;
+  filter: drop-shadow(var(--px) var(--px) 0 var(--rock-lo));
+  transition: opacity var(--dur-fast) var(--ease-step);
+}
 
 /*
  * The type steps (#635): each class sets its role, size and line height in

@@ -35,6 +35,9 @@ import PanelNav from '../components/shell/PanelNav.vue'
 import GuildPage from '../components/shell/GuildPage.vue'
 import PageHeader from '../components/shell/PageHeader.vue'
 import TierInfo from '../components/browse/TierInfo.vue'
+import MineCard from '../components/browse/MineCard.vue'
+import MinesList from '../components/browse/MinesList.vue'
+import type { MineCardState, MineCardView } from '../lib/browse/mineCard'
 import DialogCard from '../components/overlay/DialogCard.vue'
 import MenuButton from '../components/overlay/MenuButton.vue'
 import MenuList from '../components/overlay/MenuList.vue'
@@ -589,6 +592,108 @@ const smallIconButton =
     props: { icon, size: 'sm', title: attributes[0]?.attributes.title ?? '' }
   })
 
+/*
+ * One mine card as its tree prints it, from its article line to the next one: the mine, tier,
+ * state, open and needs-you flags off the article's own attributes, forced look off its classes;
+ * the name off the heading's title, one capsule per ore line as it names itself, the pills of the
+ * crew line in order (a needs-you pill carries its "?" plate), and the progress as its bar's own
+ * aria values give it. Texts run in tree order, so the card's own are read from where it starts.
+ */
+interface CardSpec {
+  props: Record<string, unknown>
+  /** How many texts the card's tree showed, so the next card reads on from there. */
+  used: number
+}
+
+function mineCardSpec(texts: GoldenText[], attributes: GoldenAttributes[]): CardSpec {
+  const [article, ...rest] = attributes
+  const a = article!.attributes
+  // The article's own lines, up to the next card in a list.
+  const end = rest.findIndex((entry) => entry.element.startsWith('article.dm-card'))
+  const lines = end < 0 ? rest : rest.slice(0, end)
+  const card: MineCardView = {
+    id: a['data-mine'] ?? '',
+    name: lines.find((l) => l.element.startsWith('h3.dm-card__name'))?.attributes.title ?? '',
+    tier: a['data-tier'] as MineTier,
+    measured: true,
+    state: a['data-state'] as MineCardState,
+    ore: lines
+      .filter((l) => l.element.startsWith('span.dm-ore'))
+      .map((l) => capsule(l) as { material: Material; units: number }),
+    crew: [],
+    needs: a['data-needs'] === 'true',
+    needsCount: 0,
+    enterable: true,
+    removable: true
+  }
+  const reason = lines.find((l) => l.element.startsWith('button.dm-card__hit'))?.attributes.title
+  if (reason !== undefined) card.reason = reason
+  // Texts in tree order: the chip's word, the name, one per capsule, then the crew line's pills (a
+  // needs-you pill shows its "?" and its words), then the progress or the note.
+  let t = 2 + card.ore.length
+  const next = (): string => texts[t++]?.text ?? ''
+  const crewAt = lines.findIndex((l) => l.element.startsWith('div.dm-card__crew'))
+  for (const { element } of lines.slice(crewAt + 1)) {
+    if (!element.startsWith('span.dm-pill') || element.startsWith('span.dm-pill__q')) {
+      if (!element.startsWith('span.dm-pill')) break
+      continue
+    }
+    if (element.includes('dm-pill--needs')) {
+      next()
+      card.crew.push({ text: next(), tone: 'needs', ask: true })
+    } else card.crew.push({ text: next() })
+  }
+  const progress = lines.find((l) => l.element.startsWith('div.dm-progress'))
+  const bar = lines.find((l) => l.attributes.role === 'progressbar')?.attributes
+  if (progress?.attributes.role === 'status') card.progress = { measuring: true }
+  else if (progress?.element.includes('dm-progress--max')) {
+    next()
+    card.progress = { maxTier: true, value: Number(next().replace(/,/g, '')) }
+  } else if (progress && bar) {
+    card.progress = {
+      nextTier: progress.attributes['data-tier'] as MineTier,
+      value: Number(bar['aria-valuenow']),
+      max: Number(bar['aria-valuemax'])
+    }
+    t += 3
+  } else if (card.state === 'unrecorded') t += 1
+  else if (card.state === 'unenterable') t += 2
+  if (card.progress?.measuring) t += 2
+  return {
+    props: {
+      card,
+      open: a['data-open'] === 'true',
+      ...(forcedOf(article!.element) ? { state: forcedOf(article!.element) } : {})
+    },
+    used: t
+  }
+}
+
+const mineCard: Render = framed((texts, attributes) => [
+  { component: MineCard, props: mineCardSpec(texts, attributes.slice(1)).props }
+])
+
+/*
+ * The Mines page as its tree prints it, in its frame: every card its list draws, in tree order and
+ * each read as a mine card state is, the open one the card the tree marks open. The texts before
+ * the first card are the page header's title and the chips' words, the page's own.
+ */
+const minesList: Render = framed((texts, attributes) => {
+  const cards: MineCardView[] = []
+  let openId: string | null = null
+  let t = 1 + elementsOf(attributes, 'button.dm-chip').length
+  attributes.forEach((entry, i) => {
+    if (!entry.element.startsWith('article.dm-card')) return
+    const { props, used } = mineCardSpec(texts.slice(t), attributes.slice(i))
+    const card = props.card as MineCardView
+    if (card.progress?.value !== undefined) card.score = card.progress.value
+    cards.push(card)
+    if (props.open) openId = card.id
+    t += used
+  })
+  return [{ component: MinesList, props: { cards, openId, search: '', tier: null, sort: 'tier' } }]
+})
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -601,21 +706,23 @@ export const RENDERS: Record<string, Render> = {
   'organisms/guild-page#laboral-union': guildPage('laboral-union'),
   // The Mines page (#635, PR2): not rebuilt yet, so each state draws the unbuilt specimen and
   // fails as it should until its component lands.
-  'organisms/mines-list#live': unbuilt,
-  'organisms/mines-list#empty-first-run': unbuilt,
-  'molecules/mine-card#needs-you': unbuilt,
-  'molecules/mine-card#default': unbuilt,
-  'molecules/mine-card#hover': unbuilt,
-  'molecules/mine-card#pressed': unbuilt,
-  'molecules/mine-card#open': unbuilt,
-  'molecules/mine-card#open-and-needs-you': unbuilt,
-  'molecules/mine-card#measuring': unbuilt,
-  'molecules/mine-card#working-not-recorded-yet': unbuilt,
-  'molecules/mine-card#not-enterable': unbuilt,
-  'molecules/mine-card#max-tier': unbuilt,
   // The page header plate: the Mines page's tools, and a title alone.
   'organisms/page-header#mines': pageHeader,
   'organisms/page-header#title-only': pageHeader,
+  // The Mines page with the valley's mines, and on a first run.
+  'organisms/mines-list#live': minesList,
+  'organisms/mines-list#empty-first-run': minesList,
+  // The mine card in each of its states, every prop read off the state's own tree.
+  'molecules/mine-card#needs-you': mineCard,
+  'molecules/mine-card#default': mineCard,
+  'molecules/mine-card#hover': mineCard,
+  'molecules/mine-card#pressed': mineCard,
+  'molecules/mine-card#open': mineCard,
+  'molecules/mine-card#open-and-needs-you': mineCard,
+  'molecules/mine-card#measuring': mineCard,
+  'molecules/mine-card#working-not-recorded-yet': mineCard,
+  'molecules/mine-card#not-enterable': mineCard,
+  'molecules/mine-card#max-tier': mineCard,
   // The tier and ore explainer, and the button that opens it.
   'organisms/tier-info#content': tierInfo,
   'organisms/tier-info#live': smallIconButton('info'),

@@ -1,18 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { defaultDwarf, defaultMine } from '../../testing/factories'
 import type { ProjectSummary } from '../../types'
-import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
-import {
-  TIER_CHIPS,
-  activeAgentsFor,
-  browseTierLabel,
-  cardArtFor,
-  cardStatusFor,
-  cardTierFor,
-  cardTierLabel,
-  isMeasuring,
-  nextLevelFor
-} from './browseCards'
+import { TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
+import { cardTierFor, isMeasuring, nextLevelFor } from './browseCards'
 
 function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   return {
@@ -26,63 +15,22 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   }
 }
 
-describe('browseTierLabel', () => {
-  // AMENDED for #165: the maintainer reversed the earlier "Cropper is
-  // confirmed and deliberate" ruling on 2026-09-03 — it was never meant to
-  // survive. This pinned 'Cropper'; it now pins the English word instead.
-  it("spells the copper tier 'Copper', as the maintainer ruled (#165)", () => {
-    expect(browseTierLabel('copper')).toBe('Copper')
-  })
-
-  it('names every other tier as the design writes it', () => {
-    expect(browseTierLabel('bronze')).toBe('Bronze')
-    expect(browseTierLabel('silver')).toBe('Silver')
-    expect(browseTierLabel('gold')).toBe('Gold')
-    expect(browseTierLabel('uranium')).toBe('Uranium')
-  })
-
-  // #165: the wire identifier was never 'Cropper' — it has always been the
-  // lowercase 'copper' MineTier value. Only the display label changed; this
-  // pins that the two are independent, so a future label correction never
-  // touches the wire spelling by accident.
-  it("keeps the wire tier spelled 'copper' regardless of what the label says", () => {
-    expect(MINE_TIERS).toContain('copper')
-    expect(cardTierFor(project({ weightBytes: 350 * 1024 }))).toBe('copper')
-  })
-})
-
-describe('TIER_CHIPS', () => {
-  it('leads with All, which filters nothing', () => {
-    expect(TIER_CHIPS[0]).toEqual({ tier: null, label: 'All' })
-  })
-
-  it('lists the tiers poorest first', () => {
-    expect(TIER_CHIPS.map((chip) => chip.label)).toEqual([
-      'All',
-      'Bronze',
-      'Copper',
-      'Silver',
-      'Gold',
-      'Uranium'
-    ])
-  })
-
-  it('offers a chip for every tier a mine can be', () => {
-    expect(TIER_CHIPS.slice(1).map((chip) => chip.tier)).toEqual([...MINE_TIERS])
-  })
-})
-
 /*
- * #153's seventh correction. A declared folder's card drew the level bar and no
- * tier and no art, and the reason was a join: the bar reads `weightBytes`, which
- * the tier walk's own cache publishes for anything it has weighed, while the
- * label and the painting read `knownTier`, which the projects store only fills
- * while a mine is actually being WORKED. So a card could state how far the mine
- * had climbed without being willing to say which tier it was in.
- *
- * A measured weight IS a classification — it is the very number `tierForBytes`
- * classifies in main — so the card derives the tier from it rather than printing
- * half the fact. Absence still claims nothing: no weight, no tier, no art.
+ * REMOVED for #635 (PR2), with the helpers the retired MineCard and MinesPanel were the only
+ * callers of (see browseCards.ts). Where each guarantee lives now:
+ * - browseTierLabel (Copper spelled as ruled, #165; every tier as the design writes it; the wire
+ *   keeps 'copper'): designTierLabel in lib/presentation.ts, whose own tests hold the spelling.
+ * - TIER_CHIPS (All first, poorest first, every tier): MinesList.test.ts, "is a section named
+ *   Mines: the page header, the tier chips, the list and its foot".
+ * - cardTierLabel and cardArtFor (the measured tier, or the weight's; nothing claimed for an
+ *   unmeasured project): lib/browse/mineCard.test.ts, "states a measured mine's tier…" and "draws a
+ *   declared mine nobody has measured as Bronze, measuring, and never as a fact" (the placeholder
+ *   is the design's first-run ruling; `measured` keeps it from answering a tier filter).
+ * - activeAgentsFor and cardStatusFor (the crew from the board, nothing for a project not live or
+ *   not on the board yet, asking and resting read from the board's own fields): the crew line,
+ *   crewPills and mineCardView in lib/browse/mineCard.test.ts ("counts working, needs you and
+ *   asleep…", "claims no crew for a live mine the board has not caught up with yet", "says No
+ *   dwarfs for a remembered mine nobody is working…").
  */
 describe('cardTierFor', () => {
   it('prefers the tier a walk actually recorded', () => {
@@ -125,164 +73,6 @@ describe('cardTierFor', () => {
   })
 })
 
-describe('cardTierLabel', () => {
-  it('names the tier a walk has measured', () => {
-    expect(cardTierLabel(project({ knownTier: 'gold' }))).toBe('Gold')
-  })
-
-  it('names the tier the measured weight puts this project in', () => {
-    expect(cardTierLabel(project({ weightBytes: 2000 * 1024 }))).toBe('Silver')
-  })
-
-  it('claims no tier for a project nobody has measured yet', () => {
-    // tierOf()'s provisional bronze is for drawing a mound, never for stating
-    // a fact on a card (#41): an unmeasured project reads as unmeasured. What
-    // changed with #153 is only what counts as measured — a weight does.
-    expect(cardTierLabel(project())).toBeUndefined()
-  })
-})
-
-describe('cardArtFor', () => {
-  it('paints the entrance of the measured tier', () => {
-    expect(cardArtFor(project({ knownTier: 'uranium' }))).toBeTruthy()
-    expect(cardArtFor(project({ knownTier: 'uranium' }))).not.toBe(
-      cardArtFor(project({ knownTier: 'bronze' }))
-    )
-  })
-
-  it('paints the entrance the weight classifies when the store has no tier', () => {
-    // The same painting either way round, so a card that derived its tier and
-    // one that was told it are the same card — which is what puts the art
-    // column back and lines the level bar up with its neighbours again.
-    expect(cardArtFor(project({ weightBytes: 15000 * 1024 }))).toBe(
-      cardArtFor(project({ knownTier: 'gold' }))
-    )
-  })
-
-  it('paints nothing for an unmeasured project rather than guessing a tier', () => {
-    expect(cardArtFor(project())).toBeUndefined()
-  })
-})
-
-describe('activeAgentsFor', () => {
-  const mines = [
-    defaultMine({
-      id: 'C:/dev/alpha',
-      dwarfs: [defaultDwarf({ id: 'a' }), defaultDwarf({ id: 'b' })]
-    }),
-    defaultMine({ id: 'C:/dev/beta', dwarfs: [] })
-  ]
-
-  it('counts the crew of the matching mine on the board', () => {
-    expect(activeAgentsFor(project({ id: 'C:/dev/alpha', live: true }), mines)).toBe(2)
-  })
-
-  it('reports an empty crew as zero, which the board can honestly say', () => {
-    expect(activeAgentsFor(project({ id: 'C:/dev/beta', live: true }), mines)).toBe(0)
-  })
-
-  it('says nothing about a project that is not live', () => {
-    expect(activeAgentsFor(project({ id: 'C:/dev/alpha', live: false }), mines)).toBeUndefined()
-  })
-
-  it('says nothing when the board has no mine under that id yet', () => {
-    // live is stamped by the poll that answered the browse; the snapshot the
-    // panel holds may be one poll behind, and a count of 0 would then be a
-    // claim the panel cannot back.
-    expect(activeAgentsFor(project({ id: 'C:/dev/gamma', live: true }), mines)).toBeUndefined()
-  })
-})
-
-/*
- * The two status markers the mock puts in a card's lower-right corner (#135).
- * Both are joined off the board exactly as the crew count is, and both read
- * facts the panel ALREADY draws elsewhere — the question the message panel
- * answers, and the `z z z` the sprite floats over a resting dwarf.
- */
-describe('cardStatusFor', () => {
-  const asking = defaultDwarf({
-    id: 'asking',
-    status: 'waiting',
-    // AMENDED for #443 (was: the question's fields flat beside `questionCount: 1`).
-    pendingQuestion: {
-      toolUseId: 'tool-1',
-      channel: 'held',
-      questions: [{ question: 'Which branch?', multiSelect: false, options: [{ label: 'main' }] }]
-    }
-  })
-
-  it('marks a project whose agent is asking its user something', () => {
-    const mines = [defaultMine({ id: 'C:/dev/alpha', dwarfs: [asking] })]
-    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)?.asking).toBe(true)
-  })
-
-  it('marks a project with a resting agent on it', () => {
-    const mines = [
-      defaultMine({ id: 'C:/dev/alpha', dwarfs: [defaultDwarf({ status: 'waiting' })] })
-    ]
-    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)?.resting).toBe(true)
-  })
-
-  it('marks neither for a crew that is simply working', () => {
-    const mines = [
-      defaultMine({ id: 'C:/dev/alpha', dwarfs: [defaultDwarf({ status: 'working' })] })
-    ]
-    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)).toEqual({
-      asking: false,
-      resting: false
-    })
-  })
-
-  it('does not read a departure as rest', () => {
-    const mines = [
-      defaultMine({ id: 'C:/dev/alpha', dwarfs: [defaultDwarf({ status: 'leaving' })] })
-    ]
-    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)?.resting).toBe(false)
-  })
-
-  it('needs only one agent of a crew to raise a marker', () => {
-    const mines = [
-      defaultMine({
-        id: 'C:/dev/alpha',
-        dwarfs: [defaultDwarf({ id: 'busy', status: 'working' }), asking]
-      })
-    ]
-    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: true }), mines)).toEqual({
-      asking: true,
-      resting: true
-    })
-  })
-
-  it('says nothing at all about a project that is not live', () => {
-    const mines = [defaultMine({ id: 'C:/dev/alpha', dwarfs: [asking] })]
-    expect(cardStatusFor(project({ id: 'C:/dev/alpha', live: false }), mines)).toBeUndefined()
-  })
-
-  it('says nothing when the board has no mine under that id yet', () => {
-    // Same one-poll lag activeAgentsFor guards: no mine on the board is an
-    // absence of evidence, and "no markers" would be a claim about a crew the
-    // panel has not seen.
-    expect(cardStatusFor(project({ id: 'C:/dev/gamma', live: true }), [])).toBeUndefined()
-  })
-
-  it('reports an empty crew as neither asking nor resting', () => {
-    const mines = [defaultMine({ id: 'C:/dev/beta', dwarfs: [] })]
-    expect(cardStatusFor(project({ id: 'C:/dev/beta', live: true }), mines)).toEqual({
-      asking: false,
-      resting: false
-    })
-  })
-})
-
-/*
- * The bar/label #135's rebuild left as a seam, closed by #140 landing
- * ProjectSummary.weightBytes (#90). cur is weightBytes rounded to the nearest
- * whole KB (Math.round — ties round up), the same rounding tierService.ts's
- * own debug KB display already uses. The bracket boundaries are the CLEAN
- * TIER_WEIGHT_THRESHOLDS_KB figures (350/1500/12000/100000): the mock's own
- * printed maximums are one off the clean numbers, an inconsistency the
- * foundations table resolves in the clean numbers' favour (#90, #538).
- */
 describe('nextLevelFor', () => {
   it('says nothing for a project no walk has weighed yet', () => {
     // Absence over invention, same as every other unmeasured field on this

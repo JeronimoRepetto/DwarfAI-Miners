@@ -17,7 +17,8 @@ describe('TierInfo', () => {
       'Uranium'
     ])
     expect(rows[1]!.get('.dm-tinfo__range').text()).toBe('100 – 499')
-    expect(rows.every((r) => r.find('img').exists())).toBe(true)
+    // The mound is art: the chip's word already names the tier.
+    expect(rows.every((r) => r.get('img').attributes('alt') === '')).toBe(true)
   })
 
   it('says what one unit of each material is worth, one capsule each, poorest first', () => {
