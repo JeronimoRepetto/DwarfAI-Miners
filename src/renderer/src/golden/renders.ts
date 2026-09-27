@@ -33,6 +33,7 @@ import NavSlot from '../components/shell/NavSlot.vue'
 import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import PanelNav from '../components/shell/PanelNav.vue'
 import GuildPage from '../components/shell/GuildPage.vue'
+import PageHeader from '../components/shell/PageHeader.vue'
 import DialogCard from '../components/overlay/DialogCard.vue'
 import MenuButton from '../components/overlay/MenuButton.vue'
 import MenuList from '../components/overlay/MenuList.vue'
@@ -542,6 +543,25 @@ const toast =
   (icon: IconName): Render =>
   (_sample, texts) => ({ component: ToastCard, props: { icon, text: texts[0]?.text ?? '' } })
 
+/*
+ * The page header as its tree prints it, in its frame: the title the heading's text, a search when
+ * the tree has one, and the sort and add buttons named as they print ("Sort: <label>").
+ */
+const pageHeaderProps = (texts: GoldenText[], attributes: GoldenAttributes[]) => {
+  const buttons = elementsOf(attributes, 'button.dm-btn')
+  const sort = buttons.find((a) => a.title?.startsWith('Sort: '))
+  const add = buttons.find((a) => a !== sort)
+  return {
+    title: texts[0]?.text ?? '',
+    search: elementsOf(attributes, 'div.dm-phead__search').length > 0,
+    ...(sort ? { sortLabel: sort.title!.slice('Sort: '.length) } : {}),
+    ...(add ? { addLabel: add.title } : {})
+  }
+}
+const pageHeader: Render = framed((texts, attributes) => [
+  { component: PageHeader, props: pageHeaderProps(texts, attributes) }
+])
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -554,8 +574,6 @@ export const RENDERS: Record<string, Render> = {
   'organisms/guild-page#laboral-union': guildPage('laboral-union'),
   // The Mines page (#635, PR2): not rebuilt yet, so each state draws the unbuilt specimen and
   // fails as it should until its component lands.
-  'organisms/page-header#mines': unbuilt,
-  'organisms/page-header#title-only': unbuilt,
   'organisms/mines-list#live': unbuilt,
   'organisms/mines-list#empty-first-run': unbuilt,
   'molecules/mine-card#needs-you': unbuilt,
@@ -570,6 +588,9 @@ export const RENDERS: Record<string, Render> = {
   'molecules/mine-card#max-tier': unbuilt,
   'organisms/tier-info#content': unbuilt,
   'organisms/tier-info#live': unbuilt,
+  // The page header plate: the Mines page's tools, and a title alone.
+  'organisms/page-header#mines': pageHeader,
+  'organisms/page-header#title-only': pageHeader,
   // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
   // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
   'molecules/menu#mine-card': menu([]),

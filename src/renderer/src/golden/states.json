@@ -21,12 +21,10 @@
     "key": "organisms/guild-page#laboral-union"
   },
   {
-    "key": "organisms/page-header#mines",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "organisms/page-header#mines"
   },
   {
-    "key": "organisms/page-header#title-only",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "organisms/page-header#title-only"
   },
   {
     "key": "organisms/mines-list#live",
