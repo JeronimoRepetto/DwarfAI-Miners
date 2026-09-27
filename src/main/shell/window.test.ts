@@ -120,7 +120,11 @@ function fakeZoomTarget(options: { honorsChanges?: boolean; roundsTrip?: boolean
      * is a page that does exactly that, which is what any real one does.
      */
     getZoomFactor: () =>
-      options.roundsTrip === true ? Math.pow(1.2, Math.log(real) / Math.log(1.2)) : real
+      options.roundsTrip === true ? Math.pow(1.2, Math.log(real) / Math.log(1.2)) : real,
+    // ADDED for #635 (window fit): a page already on its own zoom; see "each window keeps its own
+    // zoom" for one that is not.
+    getZoomMode: () => 'isolated',
+    setZoomMode: () => undefined
   }
   /** The zoom Electron drops on every navigation, without recording a call. */
   const lose = (): void => {
@@ -128,6 +132,46 @@ function fakeZoomTarget(options: { honorsChanges?: boolean; roundsTrip?: boolean
   }
   return { target, calls, lose }
 }
+
+/*
+ * ADDED for #635 (window fit). Chromium keeps a page's zoom per ORIGIN by default, and the shell
+ * and the message panel load the same page: zooming one zooms the other (Electron's
+ * `setZoomLevel`, whose note points at `setZoomMode('isolated')` for per-webContents zoom). The
+ * message panel is scaled for the display IT is on, so a panel on a display of another height
+ * gave the shell a zoom its window was never sized for. The fake shares one factor between two
+ * pages exactly while neither is isolated.
+ */
+describe('each window keeps its own zoom', () => {
+  function sameOriginPages() {
+    let shared = 1
+    function page(): UiScaleTarget {
+      let mode: 'default' | 'isolated' | 'manual' | 'disabled' = 'default'
+      let own = shared
+      return {
+        getZoomMode: () => mode,
+        setZoomMode: (next) => {
+          if (next === 'isolated' && mode !== 'isolated') own = shared
+          mode = next
+        },
+        setZoomFactor: (factor) => {
+          if (mode === 'isolated') own = factor
+          else shared = factor
+        },
+        getZoomFactor: () => (mode === 'isolated' ? own : shared)
+      }
+    }
+    return { shell: page(), panel: page() }
+  }
+
+  it('keeps the shell’s factor when the message panel is scaled for another display', () => {
+    const { shell, panel } = sameOriginPages()
+    const twoK = { x: 0, y: 0, width: 2560, height: 1392 }
+    applyUiScale(shell, twoK)
+    applyUiScale(panel, { x: 2560, y: 0, width: 1920, height: DESIGN_SCREEN_HEIGHT })
+    expect(shell.getZoomFactor()).toBe(uiScale(twoK))
+    expect(panel.getZoomFactor()).toBe(1)
+  })
+})
 
 describe('applyUiScale', () => {
   it('zooms the page by the display’s own height against the design world', () => {

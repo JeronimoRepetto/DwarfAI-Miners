@@ -260,6 +260,8 @@ export function applyPanelBounds(target: PanelBoundsTarget, bounds: ScreenRect):
 export interface UiScaleTarget {
   setZoomFactor: (factor: number) => void
   getZoomFactor: () => number
+  getZoomMode: () => 'default' | 'isolated' | 'manual' | 'disabled'
+  setZoomMode: (mode: 'default' | 'isolated' | 'manual' | 'disabled') => void
 }
 
 /**
@@ -286,6 +288,11 @@ const ZOOM_FACTOR_EPSILON = 1e-9
  */
 export function applyUiScale(target: UiScaleTarget, area: ScreenRect): number {
   const wanted = uiScale(area)
+  // Per page, not per origin (#635). Chromium shares a zoom between every page of one origin by
+  // default, and the shell and the message panel load the same page — so the panel, scaled for
+  // the display it is on, used to zoom the shell too. Electron's `setZoomLevel` names
+  // `setZoomMode('isolated')` as the way out, and that mode persists across navigations.
+  if (target.getZoomMode() !== 'isolated') target.setZoomMode('isolated')
   // Asked only when the answer would change (#388). `setPanelLayout` re-applies
   // the scale on every layout change, because a layout change can carry the
   // window onto another display — and most of them do not, so most of these
