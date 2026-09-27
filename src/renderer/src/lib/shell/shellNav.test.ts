@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  SHELL_AREAS,
-  UNAVAILABLE_AREAS,
-  arrowDirection,
-  isShellArea,
-  unavailableAreaOf
-} from './shellNav'
+import { SHELL_AREAS, UNAVAILABLE_AREAS, arrowDirection, unavailableAreaOf } from './shellNav'
 
 /*
  * REMOVED for #635, stated here rather than passing unseen: the describe block
@@ -17,17 +11,12 @@ import {
  * The same three guarantees, for the groups, are in lib/shell/panelNav.test.ts.
  */
 
-describe('isShellArea', () => {
-  it('accepts every area the nav offers', () => {
-    for (const area of SHELL_AREAS) expect(isShellArea(area)).toBe(true)
-  })
-
-  it('rejects anything else', () => {
-    for (const value of ['mine', 'Map', '', 'browse', null, 7]) {
-      expect(isShellArea(value), `${String(value)}`).toBe(false)
-    }
-  })
-})
+/*
+ * REMOVED for #635 (PR3): the describe block "isShellArea" and its two cases, "accepts every area
+ * the nav offers" and "rejects anything else". The guard's last caller went with ShellNav.vue in
+ * PR1 and nothing read it since, so it went; the one test below that used it now reads the list
+ * the guard read, SHELL_AREAS, directly.
+ */
 
 /*
  * Which areas the design ships as unavailable (#335).
@@ -50,8 +39,9 @@ describe('unavailableAreaOf', () => {
     }
   })
 
+  // AMENDED for #635 (PR3): reads SHELL_AREAS itself (was: through isShellArea, now removed).
   it('keeps its list inside the areas the navigation offers', () => {
-    for (const area of UNAVAILABLE_AREAS) expect(isShellArea(area)).toBe(true)
+    for (const area of UNAVAILABLE_AREAS) expect(SHELL_AREAS).toContain(area)
   })
 })
 
