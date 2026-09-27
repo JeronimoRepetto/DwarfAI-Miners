@@ -26,7 +26,14 @@ import {
   type MineSort
 } from '../../lib/browse/minesList'
 import type { MineCardView } from '../../lib/browse/mineCard'
-import { MINE_CARD_ENTER, MINE_CARD_EXIT, holdExitFrame } from '../../lib/browse/cardMotion'
+import {
+  MINE_CARD_ENTER,
+  MINE_CARD_EXIT,
+  armExit,
+  holdEnterFrame,
+  holdExitFrame,
+  releaseEnterFrame
+} from '../../lib/browse/cardMotion'
 import { createBoundedMotion, type MotionAnimate } from '../../lib/shell/boundedMotion'
 import { designTierLabel } from '../../lib/presentation'
 import { worktreeQuestionBody } from '../../lib/worktree'
@@ -171,26 +178,72 @@ watch(
  * whose `still` is the reduced-motion 0ms.
  */
 const motion = createBoundedMotion({ animate: props.engine })
-onBeforeUnmount(() => motion.dispose())
+onBeforeUnmount(() => {
+  clearTimeout(releaseTimer)
+  motion.dispose()
+})
 const exitingId = ref<string | null>(null)
 // The added mine whose card has already risen: a filter showing it again is not an arrival.
 let risen: string | null = null
 
+/*
+ * Cards inserted while an add is under way, held at the rise's first frame. An add reloads the
+ * list before it names the mine it made, so its card is inserted, and would be painted at full
+ * opacity, before `revealId` arrives (#635): it is held unseen until then, and rises from there.
+ */
+const held = new Set<HTMLElement>()
+// The mines already listed when the add began: a filter showing one of them again is no arrival.
+let listed = new Set<string>()
+let releaseTimer: ReturnType<typeof setTimeout> | undefined
+
 /** Rise in the card of the mine just added, once, then scroll it into view; false if it did not. */
 function rise(el: HTMLElement, id: string): boolean {
-  if (risen === id || motion.still(el)) return false
+  if (risen === id) return false
+  held.delete(el)
+  if (motion.still(el)) {
+    releaseEnterFrame(el)
+    return false
+  }
   risen = id
+  // Synchronously, before the card's first paint and before the engine's first frame.
+  holdEnterFrame(el)
   void motion
-    .run(el, MINE_CARD_ENTER.keyframes, undefined, MINE_CARD_ENTER.transition)
+    .run(el, MINE_CARD_ENTER.keyframes, () => releaseEnterFrame(el), MINE_CARD_ENTER.transition)
     .then(() => el.scrollIntoView?.({ block: 'nearest' }))
   return true
 }
+
+/*
+ * The add is over. Its caller names the mine it made only after this, so a held card waits one
+ * task for the name; one that is not named (the board catching up alongside) appears at once.
+ */
+watch(
+  () => props.adding,
+  (adding) => {
+    if (adding) listed = new Set(props.cards.map((c) => c.id))
+    if (adding || held.size === 0) return
+    clearTimeout(releaseTimer)
+    releaseTimer = setTimeout(() => {
+      for (const el of held) releaseEnterFrame(el)
+      held.clear()
+    }, 0)
+  },
+  { immediate: true }
+)
 watch(
   () => props.removeError,
   (reason) => {
     if (reason !== null) exitingId.value = null
   }
 )
+
+function cardBeforeEnter(element: Element): void {
+  const el = element as HTMLElement
+  const id = el.dataset.mine ?? ''
+  if (!props.adding || listed.has(id) || id === props.revealId || motion.still(el)) return
+  holdEnterFrame(el)
+  held.add(el)
+}
 
 function cardEnter(element: Element, done: () => void): void {
   const el = element as HTMLElement
@@ -206,6 +259,7 @@ function cardLeave(element: Element, done: () => void): void {
   if (el.dataset.mine !== exitingId.value) return done()
   exitingId.value = null
   if (motion.still(el)) return done()
+  armExit(el)
   void motion
     .run(el, MINE_CARD_EXIT.keyframes, () => holdExitFrame(el), MINE_CARD_EXIT.transition)
     .then(done)
@@ -241,7 +295,12 @@ function cardLeave(element: Element, done: () => void): void {
       <!-- Loading and failure have no design of their own: plain lines, as the page had them. -->
       <p v-if="error" class="dm-mines__notice" role="alert">{{ error }}</p>
       <p v-if="addError" class="dm-mines__notice" role="alert">{{ addError }}</p>
-      <TransitionGroup :css="false" @enter="cardEnter" @leave="cardLeave">
+      <TransitionGroup
+        :css="false"
+        @before-enter="cardBeforeEnter"
+        @enter="cardEnter"
+        @leave="cardLeave"
+      >
         <MineCard
           v-for="view in ordered"
           v-show="shownIds.has(view.id)"
