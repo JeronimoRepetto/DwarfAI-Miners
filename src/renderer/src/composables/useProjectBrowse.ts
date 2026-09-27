@@ -110,6 +110,58 @@ export function useProjectBrowse() {
     }
   }
 
+  let refreshing: Promise<void> | null = null
+  let refreshAgain = false
+
+  /** Every page, or null when any page was refused or the bridge failed. */
+  async function readAll(): Promise<ProjectSummary[] | null> {
+    let read: ProjectSummary[] = []
+    for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
+      const result = await window.api.queryProjects(projectQueryFor(read.length))
+      if (!result.answered) return null
+      read = [...read, ...result.projects]
+      if (!hasMorePages(result.projects.length)) break
+    }
+    return read
+  }
+
+  async function refreshOnce(): Promise<void> {
+    const stamp = latest
+    let read: ProjectSummary[] | null
+    try {
+      read = await readAll()
+    } catch {
+      read = null
+    }
+    // A read the person started meanwhile owns the list; a refused re-read changes nothing.
+    if (read !== null && stamp === latest) projects.value = read
+  }
+
+  /**
+   * Read the list again because what it shows changed on the board while it is on screen (#635,
+   * lib/browse/browseRefresh.ts). Nobody asked for it, so it is quiet: no loading line, no
+   * notice on a refusal (the rows already on screen stand), and the filters, and with them the
+   * search, chip and order, are left exactly as they are. Cards keep their ids, so none enters
+   * again. One runs at a time; whatever asks meanwhile gets one more read after it, never a queue.
+   */
+  function refresh(): Promise<void> {
+    if (refreshing !== null) {
+      refreshAgain = true
+      return refreshing
+    }
+    refreshing = (async () => {
+      try {
+        do {
+          refreshAgain = false
+          await refreshOnce()
+        } while (refreshAgain)
+      } finally {
+        refreshing = null
+      }
+    })()
+    return refreshing
+  }
+
   /** A search, a tier chip and a sort only change what the page shows: none asks main anything. */
   function setSearch(search: string): void {
     filters.value = { ...filters.value, search }
@@ -288,6 +340,7 @@ export function useProjectBrowse() {
     removing,
     removeError,
     load,
+    refresh,
     setSearch,
     setTier,
     setSort,

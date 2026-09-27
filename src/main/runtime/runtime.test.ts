@@ -5796,6 +5796,20 @@ describe('AgentRuntime material vault', () => {
     expect(runtime.getMines()[0]!.tokensObserved).toBe(2_500)
   })
 
+  // ADDED for #635 (PANEL-QUESTIONS 29 live check): the board carries this run's measured weight,
+  // so a walk that answers while the Mines list is on screen reaches it (Mine.weightBytes).
+  it('stamps every published mine with the weight its walk measured', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = await vaultRuntime([provider], ledger)
+
+    setTokens(1_000)
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.weightBytes).toBe(0)
+  })
+
   it('keeps a mine material after its whole crew leaves', async () => {
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()

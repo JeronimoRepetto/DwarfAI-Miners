@@ -31,6 +31,7 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { createAttentionWatch } from './lib/audio/attentionCues'
 import { browseRows } from './lib/browse/boardRows'
+import { createBrowseRefresh } from './lib/browse/browseRefresh'
 import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
@@ -419,6 +420,7 @@ const {
   removing: removingMine,
   removeError: removeMineError,
   load: loadProjects,
+  refresh: refreshProjects,
   setSearch: setProjectSearch,
   setTier: setProjectTier,
   setSort: setProjectSort,
@@ -428,6 +430,8 @@ const {
   dismissWorktreeQuestion,
   removeProject
 } = useProjectBrowse()
+// Reads the list again while Mines is on screen when the board shows a measurement it lacks (#635).
+const browseRefresh = createBrowseRefresh()
 
 /**
  * A shortcut the OS refused is flagged on the navigation stack's Settings
@@ -754,6 +758,9 @@ function raisePanel(): void {
 
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
+  if (viewState.area === 'mines' && browseRefresh.due(snapshot.mines, projects.value)) {
+    void refreshProjects()
+  }
   for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
   boardRead = true
