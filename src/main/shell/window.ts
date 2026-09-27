@@ -391,8 +391,9 @@ export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
     // Re-scaled as well as re-sized: a layout change can move the window onto
     // another display, and the zoom belongs to the display rather than to the
     // window that happens to be on it.
-    applyUiScale(mainWindow.webContents, area)
-    applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout))
+    const zoom = applyUiScale(mainWindow.webContents, area)
+    // Sized with the zoom the page GOT, which is the height its mine column is drawn at (#635).
+    applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout, undefined, zoom))
     // The panel stands beside the shell, so a shell that moved or changed
     // width moved the free edge the panel is placed against (#162) — and a
     // layout change can carry the pair onto another display, which is the
@@ -536,8 +537,8 @@ export function showPanel(): void {
   // otherwise come back sized for a screen that is no longer there — and, since
   // #153, scaled for one too.
   const area = currentScreenArea()
-  applyUiScale(mainWindow.webContents, area)
-  applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout))
+  const zoom = applyUiScale(mainWindow.webContents, area)
+  applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout, undefined, zoom))
   mainWindow.show()
   // Shown is not RAISED (#165): the same frameless-transparent window that a
   // click does not bring forward can also come back underneath whatever had the

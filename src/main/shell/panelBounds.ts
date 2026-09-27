@@ -231,17 +231,27 @@ export function uiScale(area: ScreenRect): number {
  * way. The platform floor is a real pixel count that does not scale: a window
  * cannot be made narrower than it, so a display whose scale would shrink the
  * Panel below it still asks for that floor (#465).
+ *
+ * `zoom` is the factor the page ACTUALLY has (`applyUiScale`'s read-back), and
+ * the mine column is derived at the height that zoom leaves the page — the
+ * window's height over it, which is exactly the renderer's `100vh` (#635). It
+ * is `uiScale`'s own factor on any page that took it, where that height is the
+ * design screen's 1080; a page whose zoom is anything else draws a different
+ * column, and deriving it at 1080 regardless is how main came to reserve a
+ * column the renderer did not draw, cutting the page beside it.
  */
 export function panelWidth(
   area: ScreenRect,
   layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
-  platform?: Platform
+  platform?: Platform,
+  zoom: number = uiScale(area)
 ): number {
+  const viewportHeight = zoom > 0 ? area.height / zoom : DESIGN_SCREEN_HEIGHT
   const design =
-    panelBaseWidth(DESIGN_SCREEN_HEIGHT) +
-    (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0) +
+    panelBaseWidth(viewportHeight) +
+    (layout.mineOpen ? mineColumnWidth(viewportHeight) : 0) +
     (layout.dockOpen ? dockSlotWidth() : 0)
-  const scaled = Math.max(minWindowWidth(platform), Math.round(design * uiScale(area)))
+  const scaled = Math.max(minWindowWidth(platform), Math.round(design * zoom))
   return Math.min(scaled, area.width)
 }
 
@@ -255,9 +265,10 @@ export function panelBounds(
   area: ScreenRect,
   edge: PanelEdge,
   layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
-  platform?: Platform
+  platform?: Platform,
+  zoom: number = uiScale(area)
 ): ScreenRect {
-  const width = panelWidth(area, layout, platform)
+  const width = panelWidth(area, layout, platform, zoom)
   return {
     x: edge === 'right' ? area.x + area.width - width : area.x,
     y: area.y,
