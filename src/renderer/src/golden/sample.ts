@@ -27,7 +27,8 @@ import {
   type Material,
   type MaterialTotals,
   type Mine,
-  type MineTier
+  type MineTier,
+  type ProjectSummary
 } from '../types'
 import type { TierThresholds } from '../lib/browse/tierInfo'
 import { MAP_SPAWN_POINTS } from '../lib/map/spawnPoints.generated'
@@ -58,6 +59,11 @@ export interface GoldenSample {
   histories: Record<string, MineHistoryResult>
   /** The messages the sample marks failed, as the app records a send: by mine id, then dwarf id. */
   failedSends: Record<string, Record<string, FailedSend[]>>
+  /**
+   * The sample's mines as the remembered projects a browse answers (#635, full-screen goldens),
+   * in the sample's order: the full App draws its Mines page from these, not from a kit tree.
+   */
+  projects: ProjectSummary[]
 }
 
 type Row = Record<string, unknown>
@@ -171,6 +177,31 @@ function mine(row: Row): Mine {
   }
 }
 
+/*
+ * A mine as the project a browse remembers (#635, full-screen goldens). The sample's score is its
+ * weight in kilobytes, the unit its own tier floors are written in, and the wire carries bytes; a
+ * mine still being measured has neither a tier nor a weight, which is how the app knows one. A
+ * mine not recorded yet has no ledger row, so no ore; one the sample cannot enter has lost its
+ * folder, the one reason the app has. recentMines lists the last opened first, a minute apart.
+ */
+function project(row: Row, mine: Mine, recent: readonly string[]): ProjectSummary {
+  const measuring = row.state === 'measuring'
+  const opened = recent.indexOf(mine.id)
+  return {
+    id: mine.id,
+    path: mine.path,
+    name: mine.name,
+    declared: true,
+    ...(measuring ? {} : { knownTier: mine.tier, weightBytes: Number(row.score ?? 0) * 1024 }),
+    addedAt: 0,
+    ...(opened < 0 ? {} : { lastOpenedAt: at('09:00') - opened * 60_000 }),
+    ...(row.state === 'unrecorded' ? {} : { materials: mine.materials }),
+    ...(mine.mapSite === undefined ? {} : { mapSite: mine.mapSite }),
+    live: true,
+    ...(row.state === 'unenterable' ? { folderMissing: true as const } : {})
+  }
+}
+
 // A step's verb names its kind, as the app's own activity lines spell them ("Read a.ts"). A step
 // no kind names ("Drafted a migration") is drawn as a plain step with nothing to open, which is
 // what a run draws.
@@ -249,7 +280,9 @@ export function adaptSample(dm: unknown): GoldenSample {
     throw new Error('golden sample: window.DM.data is missing; the sample script did not run')
   }
   const config = (data.config ?? {}) as Row
-  const mines = ((data.mines ?? []) as Row[]).map(mine)
+  const mineRows = (data.mines ?? []) as Row[]
+  const mines = mineRows.map(mine)
+  const recent = ((data.recentMines ?? []) as unknown[]).map(String)
   const byId = new Map(mines.map((m) => [m.id, m]))
   const failedSends: Record<string, Record<string, FailedSend[]>> = {}
   const histories: Record<string, MineHistoryResult> = Object.fromEntries(
@@ -288,6 +321,7 @@ export function adaptSample(dm: unknown): GoldenSample {
     mines,
     histories,
     failedSends,
+    projects: mineRows.map((row, i) => project(row, mines[i]!, recent)),
     ...(floor === undefined
       ? {}
       : {

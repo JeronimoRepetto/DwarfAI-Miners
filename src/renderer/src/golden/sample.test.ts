@@ -315,3 +315,67 @@ describe('adaptSample failed sends', () => {
     expect([at.getHours(), at.getMinutes()]).toEqual([9, 13])
   })
 })
+
+/*
+ * APPENDED (#635, full-screen goldens): the full App reads its Mines page from a project browse,
+ * not from a kit tree, so the sample's mines are also the remembered projects that browse answers.
+ */
+describe('adaptSample projects', () => {
+  it('remembers every mine as a project, last opened in the order recentMines gives, newest first', () => {
+    const sample = adaptSample(
+      dm({
+        mines: [shaft, { ...shaft, id: 'south-shaft', name: 'South-Shaft' }],
+        recentMines: ['south-shaft', 'north-shaft']
+      })
+    )
+    const [north, south] = sample.projects
+    expect(sample.projects.map((p) => [p.id, p.path, p.name, p.declared, p.live])).toEqual([
+      ['north-shaft', 'north-shaft', 'North-Shaft', true, true],
+      ['south-shaft', 'south-shaft', 'South-Shaft', true, true]
+    ])
+    expect(south!.lastOpenedAt).toBeGreaterThan(north!.lastOpenedAt!)
+  })
+
+  it('leaves a mine recentMines never names without an opening, rather than inventing one', () => {
+    const sample = adaptSample(dm({ mines: [shaft], recentMines: [] }))
+    expect(sample.projects[0]).not.toHaveProperty('lastOpenedAt')
+  })
+
+  it('reads a measured mine as its tier and its score in kilobytes, and a measuring one as neither', () => {
+    const sample = adaptSample(
+      dm({
+        mines: [
+          { ...shaft, score: 212 },
+          { ...shaft, id: 'x', state: 'measuring', score: 40 }
+        ]
+      })
+    )
+    const [measured, measuring] = sample.projects
+    expect([measured!.knownTier, measured!.weightBytes]).toEqual(['copper', 212 * 1024])
+    expect(measuring).not.toHaveProperty('knownTier')
+    expect(measuring).not.toHaveProperty('weightBytes')
+  })
+
+  it('carries the ore the ledger holds, none for a mine not recorded yet, and a missing folder', () => {
+    const sample = adaptSample(
+      dm({
+        mines: [
+          { ...shaft, ore: { coal: 2 } },
+          { ...shaft, id: 'y', state: 'unrecorded', ore: { coal: 1 } },
+          { ...shaft, id: 'z', state: 'unenterable' }
+        ]
+      })
+    )
+    const [recorded, unrecorded, missing] = sample.projects
+    expect(recorded!.materials).toEqual(sample.mines[0]!.materials)
+    expect(unrecorded).not.toHaveProperty('materials')
+    expect(missing!.folderMissing).toBe(true)
+    expect(recorded).not.toHaveProperty('folderMissing')
+  })
+
+  it('stands each project where its mine stands on the map', () => {
+    const point = MAP_SPAWN_POINTS[0]!
+    const sample = adaptSample(dm({ mines: [{ ...shaft, site: { x: point.x, y: point.y } }] }))
+    expect(sample.projects[0]!.mapSite).toBe(point.id)
+  })
+})

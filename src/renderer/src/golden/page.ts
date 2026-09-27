@@ -25,6 +25,8 @@ import { createApp, h, nextTick, type App } from 'vue'
 import { FRAME_CLOCK_KEY } from '../composables/useFramePlayer'
 import { createFrameClock, type FrameClock } from '../lib/sprite/frameClock'
 import type { SequencePosition } from '../lib/sprite/spriteSheet'
+import PanelApp from '../App.vue'
+import { goldenApi } from './api'
 import { RENDERS, type GoldenAttributes, type GoldenText } from './renders'
 import { adaptSample, type GoldenSample } from './sample'
 
@@ -228,6 +230,100 @@ async function mountState(frame: StateFrame): Promise<void> {
   for (const declarations of frame.framing) root.style.cssText += ';' + declarations
 }
 
+/*
+ * The full-screen goldens (#635): the real App, as the product's entry mounts it, on the bridge
+ * api.ts answers from the sample, in a page the harness has sized to the app's window. Nothing
+ * frames it: the page's own rules give way to the app's base.css, as in the product, and only the
+ * transparent caret stays (docs/README.md, Full-screen references). Sprites play on the capture's
+ * frame clock, as a kit state's do.
+ */
+
+interface SampleSet {
+  id: string
+  label: string
+}
+
+interface SampleSwitch {
+  SAMPLES?: SampleSet[]
+  useSample?: (id: string) => void
+}
+
+const dmOf = (): SampleSwitch | undefined => (window as unknown as { DM?: SampleSwitch }).DM
+
+// The sample sets the design's sample script offers (DM.SAMPLES): what a prototype control swaps.
+function sampleSets(): SampleSet[] {
+  return (dmOf()?.SAMPLES ?? []).map((s) => ({ id: String(s.id), label: String(s.label) }))
+}
+
+// Swaps in one of those sets with the sample script's own switch (DM.useSample), and re-adapts.
+function useSample(id: string): { mines: number; dwarfs: number } {
+  const dm = dmOf()
+  if (!dm?.useSample) throw new Error('golden: the sample script has no sample switch')
+  dm.useSample(id)
+  sample = adaptSample(dm)
+  return {
+    mines: sample.mines.length,
+    dwarfs: sample.mines.reduce((n, m) => n + m.dwarfs.length, 0)
+  }
+}
+
+async function mountScreen(): Promise<void> {
+  if (!sample) throw new Error('golden: loadSample must run before mountScreen')
+  clear()
+  snap()?.reset()
+  localStorage.clear()
+  sessionStorage.clear()
+  pageStyle.remove()
+  const caret = document.createElement('style')
+  caret.dataset.golden = ''
+  caret.textContent = '*, *::before, *::after { caret-color: transparent !important; }'
+  document.head.appendChild(caret)
+  Object.defineProperty(window, 'api', { configurable: true, value: goldenApi(sample) })
+  const host = document.createElement('div')
+  host.id = 'app'
+  host.dataset.golden = ''
+  document.body.appendChild(host)
+  mounted = createApp(PanelApp)
+  spriteClock?.dispose()
+  spriteClock = captureFrameClock()
+  mounted.provide(FRAME_CLOCK_KEY, spriteClock)
+  mounted.mount(host)
+  await nextTick()
+}
+
+// Every element a recipe's selector matches, in document order: its box and its text.
+function candidates(selector: string): {
+  left: number
+  top: number
+  width: number
+  height: number
+  text: string
+}[] {
+  return [...document.querySelectorAll(selector)].map((el) => {
+    const r = el.getBoundingClientRect()
+    return {
+      left: r.left,
+      top: r.top,
+      width: r.width,
+      height: r.height,
+      text: el.textContent ?? ''
+    }
+  })
+}
+
+// What lies at a click's centre: the matched element or a part of it, or what covers it.
+function hitTest(
+  selector: string,
+  index: number,
+  x: number,
+  y: number
+): { inside: boolean; html: string | null } {
+  const el = document.querySelectorAll(selector)[index]
+  const hit = document.elementFromPoint(x, y)
+  if (el && hit && (hit === el || el.contains(hit))) return { inside: true, html: null }
+  return { inside: false, html: hit ? hit.outerHTML.slice(0, 120) : null }
+}
+
 // After the page has settled: puts the stage on whole pixels as the reference capture does (a
 // fractional height becomes extra bottom padding, a widened stage's fractional width extra right
 // padding; nothing inside moves), then reports its box and what the image could not show.
@@ -283,6 +379,11 @@ const golden = {
   loadSample,
   mountState,
   measureState,
+  sampleSets,
+  useSample,
+  mountScreen,
+  candidates,
+  hitTest,
   /** Holds every sprite at frame 0 of the clip it reached, once the settle's virtual time passed. */
   holdSprites: () => spriteClock?.hold()
 }
