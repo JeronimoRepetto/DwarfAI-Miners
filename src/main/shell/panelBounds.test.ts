@@ -32,6 +32,7 @@ import {
   detachedMessagePanelBounds,
   detachedMessagePanelWidth,
   dockSlotWidth,
+  layoutThatFits,
   messagePanelAnchorOf,
   messagePanelBounds,
   messagePanelPlacement,
@@ -999,5 +1000,119 @@ describe('messagePanelPlacement', () => {
         }
       }
     }
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). The mine column is the one width that depends on the height, and
+ * the renderer derives it from `100vh`: the window's height over the zoom its page ACTUALLY has.
+ * Main used to derive it at the design screen's 1080 instead, which is the same number only while
+ * that zoom is exactly `uiScale` — so any page whose zoom drifted drew a column main never
+ * reserved, and the page beside it, the one column that gives way, was cut.
+ */
+describe('one height for the mine column, on both sides', () => {
+  /** What the renderer's grid needs, in its own CSS pixels, on a page this tall. */
+  function rendererNeeds(
+    layout: { mineOpen: boolean; dockOpen: boolean },
+    viewportHeight: number
+  ): number {
+    return (
+      2 * SHELL_EDGE_MARGIN +
+      2 * SHELL_PADDING +
+      NAV_WIDTH +
+      SHELL_GAP +
+      PAGE_WIDTH +
+      (layout.mineOpen ? interiorColumnWidth(viewportHeight) + SHELL_GAP : 0) +
+      (layout.dockOpen ? dockSlotWidth() : 0)
+    )
+  }
+
+  it('derives the column from the height the page is actually zoomed to', () => {
+    // A page that refused its zoom: 1392 CSS pixels tall, so its painting is wider than 300px.
+    const area = { x: 0, y: 0, width: 2560, height: 1392 }
+    expect(panelWidth(area, OPEN_WITH_MINE, 'win32', 1)).toBe(
+      panelBaseWidth(1392) + mineColumnWidth(1392)
+    )
+  })
+
+  /** The work areas the diagnosis ran, in physical pixels, and the OS scales each is shown at. */
+  const WORK_AREAS = [
+    [1920, 1040],
+    [1366, 728],
+    [2560, 1392],
+    [3840, 2080],
+    [1536, 824],
+    [1280, 680],
+    [1440, 860]
+  ] as const
+  const OS_SCALES = [1, 1.25, 1.5, 2]
+
+  it('gives the renderer the width its grid draws on every display, whatever zoom the page got', () => {
+    for (const [physicalWidth, physicalHeight] of WORK_AREAS) {
+      for (const osScale of OS_SCALES) {
+        const area = {
+          x: 0,
+          y: 0,
+          width: Math.floor(physicalWidth / osScale),
+          height: Math.floor(physicalHeight / osScale)
+        }
+        // The zoom main asks for, and a page whose zoom drifted either way from it.
+        for (const drift of [1, 0.8, 1.25]) {
+          const zoom = uiScale(area) * drift
+          for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
+            const needs = rendererNeeds(layout, area.height / zoom)
+            const window = panelWidth(area, layout, 'win32', zoom)
+            if (window === area.width) continue // the narrow-screen rule, pinned above
+            // Within the rounding of one window pixel: Electron bounds are whole pixels, and half of
+            // one is this many CSS pixels on a page zoomed this far.
+            const halfWindowPixel = 0.5 / zoom + 1e-9
+            expect(
+              Math.abs(window / zoom - needs),
+              `${area.width}x${area.height} drift ${drift}`
+            ).toBeLessThanOrEqual(halfWindowPixel)
+          }
+        }
+      }
+    }
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). The renderer draws the columns main REPORTS, so a window that did
+ * not reach the width asked of it — a window manager refusing the grow, a compositor clamping it —
+ * must be reported as the layout it can hold. Otherwise the renderer draws the mine column into a
+ * window without room for it, and the page, the one column that gives way, is cut.
+ */
+describe('the layout a window can hold', () => {
+  const area = { x: 0, y: 0, width: 2560, height: 1392 }
+  const zoom = uiScale(area)
+  const widthOf = (layout: { mineOpen: boolean; dockOpen: boolean }): number =>
+    panelWidth(area, layout, 'win32', zoom)
+
+  it('keeps every column of a window that got the width it asked for', () => {
+    for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
+      expect(layoutThatFits(area, layout, widthOf(layout), 'win32', zoom)).toEqual(layout)
+    }
+  })
+
+  it('drops the mine column from a window that refused to grow for it', () => {
+    expect(layoutThatFits(area, OPEN_WITH_MINE, widthOf(OPEN), 'win32', zoom)).toEqual(OPEN)
+  })
+
+  it('drops the dock before the mine when the window only grew as far as the mine', () => {
+    expect(layoutThatFits(area, OPEN_WITH_BOTH, widthOf(OPEN_WITH_MINE), 'win32', zoom)).toEqual(
+      OPEN_WITH_MINE
+    )
+  })
+
+  it('never adds a column nobody asked for, however wide the window stayed', () => {
+    expect(layoutThatFits(area, OPEN, widthOf(OPEN_WITH_BOTH), 'win32', zoom)).toEqual(OPEN)
+  })
+
+  it('keeps the narrow-screen rule: a window clamped to its display holds what it was asked', () => {
+    const portrait = { x: 0, y: 0, width: 1080, height: 1880 }
+    const clamped = panelWidth(portrait, OPEN_WITH_BOTH, 'win32')
+    expect(clamped).toBe(portrait.width)
+    expect(layoutThatFits(portrait, OPEN_WITH_BOTH, clamped, 'win32')).toEqual(OPEN_WITH_BOTH)
   })
 })

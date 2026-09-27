@@ -231,18 +231,60 @@ export function uiScale(area: ScreenRect): number {
  * way. The platform floor is a real pixel count that does not scale: a window
  * cannot be made narrower than it, so a display whose scale would shrink the
  * Panel below it still asks for that floor (#465).
+ *
+ * `zoom` is the factor the page ACTUALLY has (`applyUiScale`'s read-back), and
+ * the mine column is derived at the height that zoom leaves the page — the
+ * window's height over it, which is exactly the renderer's `100vh` (#635). It
+ * is `uiScale`'s own factor on any page that took it, where that height is the
+ * design screen's 1080; a page whose zoom is anything else draws a different
+ * column, and deriving it at 1080 regardless is how main came to reserve a
+ * column the renderer did not draw, cutting the page beside it.
  */
 export function panelWidth(
   area: ScreenRect,
   layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
-  platform?: Platform
+  platform?: Platform,
+  zoom: number = uiScale(area)
 ): number {
+  const viewportHeight = zoom > 0 ? area.height / zoom : DESIGN_SCREEN_HEIGHT
   const design =
-    panelBaseWidth(DESIGN_SCREEN_HEIGHT) +
-    (layout.mineOpen ? mineColumnWidth(DESIGN_SCREEN_HEIGHT) : 0) +
+    panelBaseWidth(viewportHeight) +
+    (layout.mineOpen ? mineColumnWidth(viewportHeight) : 0) +
     (layout.dockOpen ? dockSlotWidth() : 0)
-  const scaled = Math.max(minWindowWidth(platform), Math.round(design * uiScale(area)))
+  const scaled = Math.max(minWindowWidth(platform), Math.round(design * zoom))
   return Math.min(scaled, area.width)
+}
+
+/**
+ * The layout a window this wide can actually hold (#635, window fit).
+ *
+ * The renderer draws the columns main reports, so a window that did not reach
+ * the width asked of it — a window manager refusing the grow, a compositor
+ * clamping it — is reported as the widest layout it has room for, never as the
+ * request: drawn into a window without room, the mine column would push the
+ * page, the one column that gives way, off the window's free side.
+ *
+ * The dock goes before the mine, because what it holds today is that mine's
+ * history; the nav and the page are always there. A column nobody asked for is
+ * never added, and the narrow-screen rule is unchanged: a window `panelWidth`
+ * itself clamped to its display was given exactly what it was asked for.
+ */
+export function layoutThatFits(
+  area: ScreenRect,
+  layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
+  appliedWidth: number,
+  platform?: Platform,
+  zoom: number = uiScale(area)
+): Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'> {
+  const candidates = [
+    { mineOpen: layout.mineOpen, dockOpen: layout.dockOpen },
+    { mineOpen: layout.mineOpen, dockOpen: false },
+    { mineOpen: false, dockOpen: false }
+  ]
+  const held = candidates.find(
+    (candidate) => panelWidth(area, candidate, platform, zoom) <= appliedWidth
+  )
+  return held ?? { mineOpen: false, dockOpen: false }
 }
 
 /**
@@ -255,9 +297,10 @@ export function panelBounds(
   area: ScreenRect,
   edge: PanelEdge,
   layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
-  platform?: Platform
+  platform?: Platform,
+  zoom: number = uiScale(area)
 ): ScreenRect {
-  const width = panelWidth(area, layout, platform)
+  const width = panelWidth(area, layout, platform, zoom)
   return {
     x: edge === 'right' ? area.x + area.width - width : area.x,
     y: area.y,

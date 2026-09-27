@@ -31,6 +31,9 @@ import {
   loadPanelPage,
   applyUiScale,
   buildMainWindowOptions,
+  fitShellWindow,
+  formatShellFit,
+  refitOnDisplayChange,
   // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
   focusMessagePanelOnSelection,
   type MessagePanelFocusTarget,
@@ -120,7 +123,11 @@ function fakeZoomTarget(options: { honorsChanges?: boolean; roundsTrip?: boolean
      * is a page that does exactly that, which is what any real one does.
      */
     getZoomFactor: () =>
-      options.roundsTrip === true ? Math.pow(1.2, Math.log(real) / Math.log(1.2)) : real
+      options.roundsTrip === true ? Math.pow(1.2, Math.log(real) / Math.log(1.2)) : real,
+    // ADDED for #635 (window fit): a page already on its own zoom; see "each window keeps its own
+    // zoom" for one that is not.
+    getZoomMode: () => 'isolated',
+    setZoomMode: () => undefined
   }
   /** The zoom Electron drops on every navigation, without recording a call. */
   const lose = (): void => {
@@ -128,6 +135,46 @@ function fakeZoomTarget(options: { honorsChanges?: boolean; roundsTrip?: boolean
   }
   return { target, calls, lose }
 }
+
+/*
+ * ADDED for #635 (window fit). Chromium keeps a page's zoom per ORIGIN by default, and the shell
+ * and the message panel load the same page: zooming one zooms the other (Electron's
+ * `setZoomLevel`, whose note points at `setZoomMode('isolated')` for per-webContents zoom). The
+ * message panel is scaled for the display IT is on, so a panel on a display of another height
+ * gave the shell a zoom its window was never sized for. The fake shares one factor between two
+ * pages exactly while neither is isolated.
+ */
+describe('each window keeps its own zoom', () => {
+  function sameOriginPages() {
+    let shared = 1
+    function page(): UiScaleTarget {
+      let mode: 'default' | 'isolated' | 'manual' | 'disabled' = 'default'
+      let own = shared
+      return {
+        getZoomMode: () => mode,
+        setZoomMode: (next) => {
+          if (next === 'isolated' && mode !== 'isolated') own = shared
+          mode = next
+        },
+        setZoomFactor: (factor) => {
+          if (mode === 'isolated') own = factor
+          else shared = factor
+        },
+        getZoomFactor: () => (mode === 'isolated' ? own : shared)
+      }
+    }
+    return { shell: page(), panel: page() }
+  }
+
+  it('keeps the shell’s factor when the message panel is scaled for another display', () => {
+    const { shell, panel } = sameOriginPages()
+    const twoK = { x: 0, y: 0, width: 2560, height: 1392 }
+    applyUiScale(shell, twoK)
+    applyUiScale(panel, { x: 2560, y: 0, width: 1920, height: DESIGN_SCREEN_HEIGHT })
+    expect(shell.getZoomFactor()).toBe(uiScale(twoK))
+    expect(panel.getZoomFactor()).toBe(1)
+  })
+})
 
 describe('applyUiScale', () => {
   it('zooms the page by the display’s own height against the design world', () => {
@@ -413,6 +460,102 @@ describe('applyPanelBounds', () => {
   it('reports the REAL rectangle, never the wish, when the window manager refuses', () => {
     const { target } = fakeBoundsWindow({ honorsChanges: false })
     expect(applyPanelBounds(target, PANEL_BOUNDS)).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). One pass over the shell window: its zoom, its bounds sized at that
+ * zoom, and the layout the window it ended up as can actually hold — the one the renderer is
+ * told, so that it never draws a column into a window that has no room for it.
+ */
+describe('fitShellWindow', () => {
+  const area = { x: 0, y: 0, width: 2560, height: 1392 }
+  const layout = { edge: 'right' as const, mineOpen: true, dockOpen: false }
+
+  function fakeShell(options: { widest?: number } = {}) {
+    let real = { x: 0, y: 0, width: 0, height: 0 }
+    const asked: number[] = []
+    let zoom = 1
+    return {
+      asked,
+      target: {
+        setBounds: (bounds: { x: number; y: number; width: number; height: number }) => {
+          asked.push(bounds.width)
+          real = { ...bounds, width: Math.min(bounds.width, options.widest ?? Infinity) }
+        },
+        getBounds: () => real,
+        webContents: {
+          setZoomFactor: (factor: number) => {
+            zoom = factor
+          },
+          getZoomFactor: () => zoom,
+          getZoomMode: () => 'isolated' as const,
+          setZoomMode: () => undefined
+        }
+      }
+    }
+  }
+
+  it('holds the whole layout in a window that took the width it was asked', () => {
+    const { target } = fakeShell()
+    const fit = fitShellWindow(target, area, layout, 'win32')
+    expect(fit.held).toEqual({ mineOpen: true, dockOpen: false })
+    expect(fit.appliedWidth).toBe(fit.requestedWidth)
+    expect(fit.zoom).toBe(uiScale(area))
+  })
+
+  it('reports the page alone, sized for it, when the window refused to grow for the mine', () => {
+    const { target, asked } = fakeShell({ widest: 668 })
+    const fit = fitShellWindow(target, area, layout, 'win32')
+    expect(fit.held).toEqual({ mineOpen: false, dockOpen: false })
+    expect(fit.requestedWidth).toBe(1062)
+    // Asked again for the layout it holds, so the docked edge stays where the design puts it.
+    expect(asked).toEqual([1062, 668])
+    expect(fit.appliedWidth).toBe(668)
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). A display that changes under the shell — a resolution or scale
+ * change, a monitor plugged in or out, a taskbar appearing — leaves it sized and zoomed for a
+ * display that is no longer there. Only the moved message panel was refitted (#296); the shell
+ * waited for the next layout change or show. The shell goes first, because the docked panel is
+ * placed against the shell's new rectangle.
+ */
+/*
+ * ADDED for #635 (window fit). The PO's cut Panel could not be reproduced on the one display it
+ * was checked on, and a run that goes wrong elsewhere has to say why on its own: one line per
+ * fit, geometry and counts only — nothing that names a person, a path or a project.
+ */
+describe('formatShellFit', () => {
+  it('names the work area, the zoom, the width asked and got in both units, and the displays', () => {
+    const line = formatShellFit(
+      { x: 0, y: 0, width: 2560, height: 1392 },
+      {
+        held: { mineOpen: false, dockOpen: false },
+        zoom: 1.288888888888889,
+        requestedWidth: 1062,
+        appliedWidth: 668
+      },
+      { mineOpen: true, dockOpen: false },
+      2
+    )
+    expect(line).toBe(
+      '[shell] layout applied: area=2560x1392@0,0 zoom=1.2889 requested=1062 applied=668 ' +
+        'requestedCss=824 appliedCss=518.3 asked=mine held=page displays=2'
+    )
+  })
+})
+
+describe('refitOnDisplayChange', () => {
+  it('refits the shell, then the message panel against it', () => {
+    const steps: string[] = []
+    const refit = refitOnDisplayChange({
+      fitShell: () => steps.push('shell'),
+      placeMessagePanel: () => steps.push('panel')
+    })
+    refit()
+    expect(steps).toEqual(['shell', 'panel'])
   })
 })
 
