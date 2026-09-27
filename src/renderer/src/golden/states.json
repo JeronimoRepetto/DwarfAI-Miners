@@ -21,6 +21,106 @@
     "key": "organisms/guild-page#laboral-union"
   },
   {
+    "key": "organisms/page-header#mines",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "organisms/page-header#title-only",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "organisms/mines-list#live",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "organisms/mines-list#empty-first-run",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#needs-you",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#default",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#hover",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#pressed",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#open",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#open-and-needs-you",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#measuring",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#working-not-recorded-yet",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#not-enterable",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/mine-card#max-tier",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "organisms/tier-info#content",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "organisms/tier-info#live",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/dialog#confirm-danger",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/dialog#typed-confirmation",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/dialog#live",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/menu#mine-card",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/menu#danger-hovered",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/menu#live",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/toast#static",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/toast#live",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
+    "key": "molecules/toast#shown",
+    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {
