@@ -150,8 +150,14 @@ watch(
     if (id === null) return
     await nextTick()
     const el = listEl.value?.querySelector<HTMLElement>('[data-mine="' + CSS.escape(id) + '"]')
-    // A card still entering scrolls into view once it has risen (cardEnter, below).
-    if (el && !motion.running(el)) el.scrollIntoView?.({ block: 'nearest' })
+    if (!el) return
+    /*
+     * An add reloads the list before it names the mine it made, so the new card is usually on
+     * screen already, inserted while it was not yet known to be new: the rise plays here, on the
+     * card that stays (found in the live app, where it never played). A card inserted after the
+     * page knew rises in cardEnter, below; either way it rises once, then scrolls into view.
+     */
+    if (!rise(el, id) && !motion.running(el)) el.scrollIntoView?.({ block: 'nearest' })
   }
 )
 
@@ -169,12 +175,16 @@ onBeforeUnmount(() => motion.dispose())
 const exitingId = ref<string | null>(null)
 // The added mine whose card has already risen: a filter showing it again is not an arrival.
 let risen: string | null = null
-watch(
-  () => props.revealId,
-  () => {
-    risen = null
-  }
-)
+
+/** Rise in the card of the mine just added, once, then scroll it into view; false if it did not. */
+function rise(el: HTMLElement, id: string): boolean {
+  if (risen === id || motion.still(el)) return false
+  risen = id
+  void motion
+    .run(el, MINE_CARD_ENTER.keyframes, undefined, MINE_CARD_ENTER.transition)
+    .then(() => el.scrollIntoView?.({ block: 'nearest' }))
+  return true
+}
 watch(
   () => props.removeError,
   (reason) => {
@@ -184,14 +194,11 @@ watch(
 
 function cardEnter(element: Element, done: () => void): void {
   const el = element as HTMLElement
-  // `v-show` enters a card again as it mounts, beside the group's own insertion: one rise.
-  if (el.dataset.mine !== props.revealId || risen === props.revealId || motion.still(el))
-    return done()
-  risen = props.revealId
-  void motion.run(el, MINE_CARD_ENTER.keyframes, undefined, MINE_CARD_ENTER.transition).then(() => {
-    done()
-    el.scrollIntoView?.({ block: 'nearest' })
-  })
+  // `v-show` enters a card again as it mounts, beside the group's own insertion: `rise` plays once.
+  const id = props.revealId
+  if (id !== null && el.dataset.mine === id) rise(el, id)
+  // The group has nothing of its own to wait for (`:css="false"`); the rise is the runner's.
+  done()
 }
 
 function cardLeave(element: Element, done: () => void): void {

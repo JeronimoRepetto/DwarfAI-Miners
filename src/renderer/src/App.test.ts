@@ -11,6 +11,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 // `.map-view` with `.mine-marker`s), in every test below that reads the map.
 import MapPage from './components/map/MapPage.vue'
 import MinesList from './components/browse/MinesList.vue'
+import { MINE_CARD_ENTER } from './lib/browse/cardMotion'
 import MineColumn from './components/scene/MineColumn.vue'
 import HistoryPanel from './components/history/HistoryPanel.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
@@ -3533,5 +3534,77 @@ describe('App dock (#635)', () => {
     expect(wrapper.get('.panel-dock').classes()).toContain('edge-left')
     const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
     expect(source).toMatch(/\.panel-dock\.edge-left \{\s*flex-direction: row-reverse;/)
+  })
+})
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 9, found in the live app): the card of a mine just added is
+ * the one that rises in. The add reloads the list before it says which mine it made, so the card
+ * is already on screen by the time the page learns it is the new one: the rise has to play on the
+ * card that stays on screen, not only on a card inserted after the page knew.
+ */
+describe('App adding a mine, card motion (#635, PANEL-QUESTIONS 9)', () => {
+  const runs: { element: Element; keyframes: unknown; finish: () => void }[] = []
+  const wrappers: VueWrapper[] = []
+  const engine: MotionAnimate = (element, keyframes: DOMKeyframesDefinition) => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    runs.push({ element, keyframes, finish })
+    return {
+      cancel: () => undefined,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
+  beforeEach(() => {
+    runs.length = 0
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: () => undefined
+    })
+  })
+  afterEach(() => {
+    for (const wrapper of wrappers.splice(0)) wrapper.unmount()
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+  })
+
+  it('rises in on the card that stays on screen once the add has reloaded the list', async () => {
+    const row = {
+      id: 'C:/dev/alpha',
+      path: 'C:/dev/alpha',
+      name: 'alpha',
+      declared: true,
+      addedAt: 1,
+      live: false
+    }
+    let stored: unknown[] = []
+    stubApi({
+      getPanelLayout: vi.fn().mockResolvedValue(OPEN_LAYOUT),
+      queryProjects: vi
+        .fn()
+        .mockImplementation(() => Promise.resolve({ answered: true, projects: stored })),
+      declareMine: vi.fn().mockImplementation(() => {
+        stored = [row]
+        return Promise.resolve({ outcome: 'added', mineId: row.id, project: row })
+      })
+    })
+    const wrapper = mount(App, {
+      props: { engine },
+      global: { stubs: { transition: false, 'transition-group': false } }
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    runs.splice(0).forEach((run) => run.finish())
+    await flushPromises()
+    await wrapper.get('.dm-empty button').trigger('click')
+    await flushPromises()
+    const card = wrapper.get('[data-mine="C:/dev/alpha"]').element
+    const rises = runs.filter((run) => run.element.classList.contains('dm-card'))
+    expect(rises).toHaveLength(1)
+    expect(rises[0]!.element).toBe(card)
+    expect(rises[0]!.keyframes).toEqual(MINE_CARD_ENTER.keyframes)
   })
 })
