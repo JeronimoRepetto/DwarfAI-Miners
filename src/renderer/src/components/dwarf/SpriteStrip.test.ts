@@ -133,3 +133,54 @@ describe('SpriteStrip', () => {
     expect(wrapper.find('img').attributes('src')).toBe('/idle.png')
   })
 })
+
+/*
+ * A dwarf's sequence on the one strip (#635): the dwarf in the scene plays its rank's clips — a
+ * shift cycle, a lying-down then a sleep — through this atom rather than a sprite of its own, so
+ * the scene and the atom can never draw a frame two ways. The box stays one element for life and
+ * swaps its sheet in place as the sequence moves on (components.md, Dwarf in the scene).
+ */
+describe('SpriteStrip playing a sequence', () => {
+  const PICK: SpriteSheet = { src: '/pick.png', frames: 2, frameMs: 100, durations: [50, 50] }
+
+  it('shows the clip the sequence is on, and moves to the next when it ends', () => {
+    const clock = manualClock()
+    const clips = [
+      { sheet: PICK, playback: 'loop' as const },
+      { sheet: SWING, playback: 'loop' as const }
+    ]
+    const wrapper = mountStrip({ clips }, createFrameClock(clock.env))
+    expect(wrapper.find('img').attributes('src')).toBe('/pick.png')
+    clock.advance(100)
+    return wrapper.vm.$nextTick().then(() => {
+      expect(wrapper.find('img').attributes('src')).toBe('/swing.png')
+      expect(wrapper.find('img').attributes('style')).toContain('width: 108px')
+    })
+  })
+
+  it('reports every frame it shows, for whoever keeps time with it', async () => {
+    const clock = manualClock()
+    const clips = [{ sheet: SWING, playback: 'loop' as const }]
+    const wrapper = mountStrip({ clips }, createFrameClock(clock.env))
+    clock.advance(120)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('frame')).toEqual([[{ clip: 0, frame: 0 }], [{ clip: 0, frame: 1 }]])
+  })
+
+  it('keeps its element when the sequence changes', async () => {
+    const wrapper = mountStrip({ clips: [{ sheet: PICK, playback: 'loop' as const }] })
+    const box = wrapper.find('span.dm-sprite').element
+    await wrapper.setProps({ clips: [{ sheet: SWING, playback: 'loop' as const }] })
+    expect(wrapper.find('span.dm-sprite').element).toBe(box)
+    expect(wrapper.find('img').attributes('src')).toBe('/swing.png')
+  })
+})
+
+// A regression the golden atoms/sprite#still caught (#635): the still picture is the strip's first
+// frame of the WHOLE strip, not a one-frame strip squeezed into the cell.
+describe('SpriteStrip still', () => {
+  it('keeps the whole strip behind its one cell', () => {
+    const wrapper = mountStrip({ still: true })
+    expect(wrapper.find('img').attributes('style')).toContain('width: 108px')
+  })
+})

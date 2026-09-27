@@ -55,14 +55,19 @@ export function componentOf(key) {
 }
 
 // The component's section of components.md runs from its anchor to the next level-3 heading after
-// its own; its "UI kit framing" table lists `| \`selector\` | declarations |` rows.
-export function framingFor(componentsMd, component) {
+// its own.
+function sectionOf(componentsMd, component) {
   const anchor = '<a id="' + component.replace(/\//g, '-') + '"></a>'
   const start = componentsMd.indexOf(anchor)
   if (start < 0) throw new Error('framing: components.md does not describe ' + component)
   const heading = componentsMd.indexOf('\n### ', start)
   const next = heading < 0 ? -1 : componentsMd.indexOf('\n### ', heading + 1)
-  const section = componentsMd.slice(start, next < 0 ? undefined : next)
+  return componentsMd.slice(start, next < 0 ? undefined : next)
+}
+
+// A component's "UI kit framing" table lists `| \`selector\` | declarations |` rows.
+export function framingFor(componentsMd, component) {
+  const section = sectionOf(componentsMd, component)
   const at = section.indexOf('**UI kit framing**')
   if (at < 0) return []
   const rules = []
@@ -76,6 +81,26 @@ export function framingFor(componentsMd, component) {
     else if (!line.startsWith('|')) break
   }
   return rules
+}
+
+// A state's root may be another component's part: the dwarf tooltip's card is the tooltip card
+// (#635). Which component styles a class is the state's own section's "Class coverage" line
+// ("Styled by other stylesheets: `.a`, `.b` (`group/name`); ..."); from each component it names,
+// only a single-class rule for a class the root carries is borrowed, so nothing else of it can
+// reach the state.
+export function borrowedFraming(componentsMd, component, rootLine) {
+  const line = /Styled by other stylesheets: ([^\n]*)/.exec(sectionOf(componentsMd, component))
+  const root = new Set(rootLine.split(/\s/)[0].split('.').slice(1))
+  const borrowed = []
+  for (const group of (line?.[1] ?? '').matchAll(/((?:`\.[\w-]+`,?\s*)+)\(`([\w-]+\/[\w-]+)`\)/g)) {
+    const classes = [...group[1].matchAll(/`\.([\w-]+)`/g)].map((m) => m[1])
+    if (!classes.some((c) => root.has(c))) continue
+    for (const rule of framingFor(componentsMd, group[2])) {
+      const single = /^\.([\w-]+)$/.exec(rule.selector)
+      if (single && root.has(single[1])) borrowed.push(rule)
+    }
+  }
+  return borrowed
 }
 
 // anatomy.md gives each state's element tree in a text block after the line linking its image.

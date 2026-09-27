@@ -47,7 +47,7 @@ export function needsYouCount(mines: readonly Mine[]): number {
 }
 
 /** One dwarf waiting on the person: a question it asked, or a permission it needs (see above). */
-export function dwarfNeedsYou(dwarf: Dwarf): boolean {
+export function dwarfNeedsYou(dwarf: Pick<Dwarf, 'pendingQuestion' | 'waitingReason'>): boolean {
   return dwarf.pendingQuestion !== undefined || dwarf.waitingReason === 'approval'
 }
 

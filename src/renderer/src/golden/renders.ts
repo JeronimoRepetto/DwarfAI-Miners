@@ -13,7 +13,7 @@
  * each state, and the captions its tree shows, which the harness reads at run time and hands in as
  * `texts`. A specimen still marked `Unbuilt` has no view yet, so it fails as it should.
  */
-import type { Component } from 'vue'
+import { defineComponent, h, type Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
 import TierProgress from '../components/browse/TierProgress.vue'
 import TierMarker from '../components/map/TierMarker.vue'
@@ -25,6 +25,12 @@ import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
 import OreCapsule from '../components/vault/OreCapsule.vue'
 import VaultStrip from '../components/vault/VaultStrip.vue'
+import CrewRoster from '../components/scene/CrewRoster.vue'
+import DwarfTip from '../components/dwarf/DwarfTip.vue'
+import MineColumn from '../components/scene/MineColumn.vue'
+import SceneDwarf from '../components/scene/SceneDwarf.vue'
+import { INTERIOR_SRC } from '../lib/art'
+import type { Station } from '../lib/scene/mineColumn'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
 import CountBadge from '../components/dwarf/CountBadge.vue'
 import DwarfPortrait from '../components/dwarf/DwarfPortrait.vue'
@@ -53,12 +59,15 @@ import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../lib/shell/panelNav'
 import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
 import {
   MATERIALS,
+  type Dwarf,
+  type DwarfProvider,
+  type DwarfSendState,
   type DwarfRole,
   type Material,
   type MaterialTotals,
   type MineTier
 } from '../types'
-import type { GoldenSample } from './sample'
+import { silenceMs, type GoldenSample } from './sample'
 import {
   EnterFrame,
   IconRow,
@@ -777,6 +786,188 @@ const vaultStrip: Render = (_sample, texts, attributes) => {
   }
 }
 
+/*
+ * A dwarf's state as the tree prints it (`data-status`), in the wire's own words: asking is a
+ * permission it holds open (a proven ask), asleep a session at rest, idle one on its way out.
+ */
+const WIRE_STATUS: Record<string, Pick<Dwarf, 'status' | 'waitingReason'>> = {
+  working: { status: 'working' },
+  asking: { status: 'waiting', waitingReason: 'approval' },
+  asleep: { status: 'waiting' },
+  idle: { status: 'leaving' }
+}
+const SEND_STATE: Record<string, DwarfSendState> = {
+  pending: { phase: 'sending' },
+  delivered: { phase: 'delivered' },
+  reacted: { phase: 'reacted' },
+  failed: { phase: 'failed' }
+}
+function fail(what: string, value: unknown): never {
+  throw new Error('golden: no mapping for ' + what + ' ' + JSON.stringify(value))
+}
+const dwarfOf = (id: string, name: string, role: DwarfRole, status: string): Dwarf => ({
+  id,
+  sessionId: id,
+  name,
+  role,
+  provider: 'claude',
+  ...(WIRE_STATUS[status] ?? fail('status', status))
+})
+const percentOf = (style: string | undefined, name: string): number =>
+  Number(new RegExp('--' + name + ':\\s*([\\d.]+)%').exec(style ?? '')?.[1])
+/*
+ * Each dwarf of the tree as it prints itself: its button's id, state, station, selection, forced
+ * look and mark, its name the tag's text, its rank the one its sprite's sheet names, and its
+ * facing whether that sprite is mirrored.
+ */
+interface TreeDwarf {
+  dwarf: Dwarf
+  station: Station
+  selected: boolean
+  hover: boolean
+  mark?: string
+}
+function treeDwarfs(texts: GoldenText[], attributes: GoldenAttributes[]): TreeDwarf[] {
+  const found: TreeDwarf[] = []
+  let t = 0
+  for (const { element, attributes: a } of attributes) {
+    if (element.startsWith('button.dm-dwarf')) {
+      found.push({
+        dwarf: dwarfOf(a['data-dwarf'] ?? '', '', 'worker', a['data-status'] ?? ''),
+        station: { x: percentOf(a.style, 'x'), y: percentOf(a.style, 'y'), facesLeft: true },
+        selected: a['aria-pressed'] === 'true',
+        hover: forcedOf(element) === 'hover',
+        mark: a['data-mark']
+      })
+    } else if (element.startsWith('span.dm-dwarf__tag')) {
+      // The texts before the tag are the "?", the "z", and a mark's glyph when it has one.
+      const last = found.at(-1)!
+      t += 2 + (last.mark === undefined ? 0 : 1)
+      last.dwarf.name = texts[t++]?.text ?? ''
+    } else if (element.startsWith('span.dm-sprite')) {
+      const last = found.at(-1)!
+      last.dwarf.role = (a['data-sheet'] ?? '').split('/')[0] as DwarfRole
+      last.station.facesLeft = !element.split('.').includes('dm-sprite--flip')
+    }
+  }
+  return found
+}
+
+/*
+ * The dwarf states: each dwarf on the kit's scene. The scene's painting is the render's, the app's
+ * own for the tier its file names: the tree cuts a style holding a quoted URL short.
+ */
+const dwarfScene =
+  (tier: MineTier): Render =>
+  (_sample, texts, attributes) => ({
+    component: KitFrame,
+    props: {
+      classes: 'kit-scene',
+      style: 'background-image: url("' + INTERIOR_SRC[tier] + '")',
+      parts: treeDwarfs(texts, attributes).map(({ dwarf, station, selected, hover, mark }) => ({
+        component: SceneDwarf,
+        props: {
+          dwarf,
+          ...station,
+          selected,
+          ...(hover ? { state: 'hover' } : {}),
+          ...(mark === undefined ? {} : { sendState: SEND_STATE[mark] })
+        }
+      }))
+    }
+  })
+
+// The tooltip card with a dwarf's body in it, the card being the stage's only child.
+const TipCard = defineComponent({
+  props: { dwarf: { type: Object as () => Dwarf, required: true } },
+  setup(props) {
+    return () => h(TooltipCard, null, () => h(DwarfTip, { dwarf: props.dwarf }))
+  }
+})
+
+/*
+ * The dwarf tooltip card as its tree prints it: its lines are the last six texts (a face's mark
+ * glyph may come before them) — the name, the rank, the provider, the model and effort, the
+ * silence and the status — and the state its status line carries. The rank's face is the
+ * render's, as a portrait's is.
+ */
+const dwarfTooltip =
+  (role: DwarfRole): Render =>
+  (_sample, texts, attributes) => {
+    const [name, , provider, tuning, silence] = texts.slice(-6).map((t) => t.text ?? '')
+    const [model, effort] = (tuning ?? '').split(' · ')
+    const status = elementsOf(attributes, 'span.dm-dtip__status')[0]?.['data-status'] ?? ''
+    const dwarf: Dwarf = {
+      ...dwarfOf('tip', name ?? '', role, status),
+      provider: (provider ?? '').toLowerCase() as DwarfProvider,
+      model,
+      effort: effort?.replace(/ effort$/, ''),
+      silentForMs: silenceMs(/silent (\S+)/.exec(silence ?? '')?.[1] ?? '')
+    }
+    return { component: TipCard, props: { dwarf } }
+  }
+
+/*
+ * The roster as its tree prints it, in the kit's wood frame: one dwarf per portrait, named,
+ * stated and selected as each prints, and as many more as its +N names. The ranks are the
+ * render's, as a portrait's face prints none a render can read.
+ */
+const crewRoster =
+  (roles: DwarfRole[]): Render =>
+  (_sample, _texts, attributes) => {
+    const root = attributes[0]!
+    const portraits = elementsOf(attributes, 'button.dm-portrait')
+    const dwarfs = portraits.map((a, i) =>
+      dwarfOf(
+        a['data-dwarf'] ?? '',
+        (a['aria-label'] ?? '').split(', ')[0] ?? '',
+        roles[i] ?? fail('rank', i),
+        a['data-status'] ?? ''
+      )
+    )
+    const moreLabel = elementsOf(attributes, 'button.dm-roster__more')[0]?.['aria-label'] ?? ''
+    const more = Number(/^(\d+)/.exec(moreLabel)?.[1] ?? 0)
+    for (let i = 0; i < more; i++) dwarfs.push(dwarfOf('more' + i, 'more' + i, 'worker', 'working'))
+    const selected = portraits.find((a) => a['aria-pressed'] === 'true')?.['data-dwarf'] ?? null
+    return {
+      component: KitFrame,
+      props: {
+        style: root.attributes.style ?? '',
+        classes: root.element.split('.').slice(1).join(' '),
+        parts: [{ component: CrewRoster, props: { dwarfs, selectedId: selected } }]
+      }
+    }
+  }
+
+/*
+ * The mine column as its tree prints it, in the frame its root prints (the shell's height): the
+ * sample's mine its section names, each dwarf on the station its button prints and facing as its
+ * sprite does, the pressed one selected, the ambience as the section says.
+ */
+const mineColumn: Render = (sample, texts, attributes) => {
+  const section = elementsOf(attributes, 'section.dm-minecol')[0] ?? {}
+  const mine =
+    sample.mines.find((m) => m.id === section['data-mine']) ?? fail('mine', section['data-mine'])
+  const placed = treeDwarfs(texts, attributes)
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: [
+        {
+          component: MineColumn,
+          props: {
+            mine,
+            stations: Object.fromEntries(placed.map((p) => [p.dwarf.id, p.station])),
+            selectedId: placed.find((p) => p.selected)?.dwarf.id ?? null,
+            ambienceMuted: section['data-ambience'] === 'off'
+          }
+        }
+      ]
+    }
+  }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -826,20 +1017,26 @@ export const RENDERS: Record<string, Render> = {
   'organisms/map-page#empty-first-run': mapPage,
   'molecules/tooltip#mine-tooltip': mineTooltip,
   'molecules/tooltip#live': button({ labelled: true }),
-  // The mine column (#635, PR4): not rebuilt yet, so each state draws the unbuilt specimen and
-  // fails as it should until its component lands. The vault strip, built with the Map page, draws
-  // the real strip: a mine's footer, the map's totals plate, and a vault with no ore.
-  'organisms/mine-column#dwarfai-miners': unbuilt,
-  'organisms/mine-column#ai-tools': unbuilt,
-  'molecules/crew-roster#four-dwarfs-one-selected': unbuilt,
-  'molecules/crew-roster#overflow': unbuilt,
-  'molecules/crew-roster#empty': unbuilt,
-  'molecules/dwarf#working-selected-hover': unbuilt,
-  'molecules/dwarf#asking-asleep-idle': unbuilt,
-  'molecules/dwarf#delivery-marks': unbuilt,
-  'molecules/dwarf-tooltip#working': unbuilt,
-  'molecules/dwarf-tooltip#needs-you': unbuilt,
-  'molecules/dwarf-tooltip#asleep': unbuilt,
+  // The mine column (#635, PR4): the column on the sample's mine, the roster, the dwarf on the
+  // kit's scene and its tooltip card, each read off its own tree; the history panel is not rebuilt
+  // yet and draws the unbuilt specimen. The vault strip, built with the Map page, draws the real
+  // strip: a mine's footer, the map's totals plate, and a vault with no ore.
+  'organisms/mine-column#dwarfai-miners': mineColumn,
+  'organisms/mine-column#ai-tools': mineColumn,
+  'molecules/crew-roster#four-dwarfs-one-selected': crewRoster([
+    'worker',
+    'worker2',
+    'foreman',
+    'worker'
+  ]),
+  'molecules/crew-roster#overflow': crewRoster(['worker', 'worker2', 'foreman', 'worker']),
+  'molecules/crew-roster#empty': crewRoster([]),
+  'molecules/dwarf#working-selected-hover': dwarfScene('silver'),
+  'molecules/dwarf#asking-asleep-idle': dwarfScene('silver'),
+  'molecules/dwarf#delivery-marks': dwarfScene('silver'),
+  'molecules/dwarf-tooltip#working': dwarfTooltip('worker'),
+  'molecules/dwarf-tooltip#needs-you': dwarfTooltip('worker2'),
+  'molecules/dwarf-tooltip#asleep': dwarfTooltip('foreman'),
   'organisms/history-panel#dwarfai-miners': unbuilt,
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,

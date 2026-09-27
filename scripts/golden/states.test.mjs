@@ -5,6 +5,7 @@ import {
   anatomyRoot,
   anatomyTexts,
   applicableFraming,
+  borrowedFraming,
   checkFraming,
   checkStates,
   componentOf,
@@ -380,5 +381,52 @@ describe('applicableFraming', () => {
     const stage = { selector: '.kit-stage .dm-lamp::after', declarations: 'x: 0ms' }
     const nested = { selector: '.dm-lamp::after', declarations: 'x: 0ms' }
     expect(applicableFraming([stage, nested], tree)).toEqual([stage, nested])
+  })
+})
+
+/*
+ * A state whose root is another component's part takes that component's framing for it (#635):
+ * the dwarf tooltip's card is the tooltip card, whose `.dm-tip--static` frames it in place. Which
+ * component styles a class is the state's own section's "Class coverage" line; only a single-class
+ * rule for a class the root carries is borrowed, so nothing else of the other component can reach
+ * the state.
+ */
+describe('borrowedFraming', () => {
+  const DOCS = `
+<a id="molecules-card"></a>
+
+### Card
+
+**UI kit framing** · rules that only frame the states.
+
+| Selector | Declarations |
+| --- | --- |
+| \`.dm-card--static\` | position: relative |
+| \`.kit-stage .dm-card\` | width: 9px |
+| \`.dm-card--other\` | height: 1px |
+
+<a id="molecules-card-body"></a>
+
+### Card body
+
+**Class coverage** · every class the rendered states carry. Styled by other stylesheets: \`.dm-card\`, \`.dm-card--static\` (\`molecules/card\`); \`.m-mat\` (\`foundations/materials\`). Every class has at least one rule.
+
+<a id="foundations-materials"></a>
+
+### Materials
+`
+
+  it("takes the other component's single-class rules for classes the root carries, and no more", () => {
+    expect(
+      borrowedFraming(DOCS, 'molecules/card-body', 'div.dm-card.m-mat.dm-card--static [role=x]')
+    ).toEqual([{ selector: '.dm-card--static', declarations: 'position: relative' }])
+  })
+
+  it('borrows nothing for a root that is its own component', () => {
+    expect(borrowedFraming(DOCS, 'molecules/card-body', 'div.dm-body')).toEqual([])
+  })
+
+  it('borrows nothing where the section names no other stylesheet', () => {
+    expect(borrowedFraming(DOCS, 'molecules/card', 'div.dm-card.dm-card--static')).toEqual([])
   })
 })

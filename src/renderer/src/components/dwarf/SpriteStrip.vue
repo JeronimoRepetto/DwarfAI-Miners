@@ -8,38 +8,56 @@
  * `still` is a static picture on frame 0 that never touches the clock. Swapping `sheet` keeps the
  * element and restarts the strip in place. Hidden from assistive tech: the dwarf's button or name
  * carries the meaning (components.md, Sprite, Accessibility).
+ *
+ * `clips` plays a dwarf's whole sequence instead of one sheet (#635): the shift cycle, a lying-down
+ * then the sleep. The strip shows whichever clip the clock is on, in the same element, and reports
+ * every frame it shows, so the dwarf that owns the sequence keeps time with the frames it hears
+ * (its strike and its grind are frames) rather than running a second clock.
  */
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useFramePlayer } from '../../composables/useFramePlayer'
 import {
   SPRITE_FRAME_SIZE,
   loopOf,
   onceOf,
+  type SequencePosition,
   type SpriteClip,
   type SpriteSheet
 } from '../../lib/sprite/spriteSheet'
 
 const props = withDefaults(
   defineProps<{
-    sheet: SpriteSheet
+    sheet?: SpriteSheet
+    /** A sequence to play instead of `sheet`, a clip at a time. */
+    clips?: readonly SpriteClip[]
     scale?: number
     flip?: boolean
     still?: boolean
     once?: boolean
   }>(),
-  { scale: 1, flip: false, still: false, once: false }
+  { sheet: undefined, clips: undefined, scale: 1, flip: false, still: false, once: false }
 )
+const emit = defineEmits<{ frame: [position: SequencePosition] }>()
 
 // A whole number only: a fractional scale resamples the pixel art (components.md, Sprite, Avoid).
 const scale = computed(() => Math.max(1, Math.round(props.scale)))
 
 const clips = computed<readonly SpriteClip[]>(() => {
-  const { sheet } = props
+  if (props.clips !== undefined) return props.clips
+  const sheet = props.sheet!
   // A still picture is its first frame alone: a one-frame strip the clock never schedules.
   if (props.still) return [loopOf({ ...sheet, frames: 1 })]
   return [props.once ? onceOf(sheet) : loopOf(sheet)]
 })
 const position = useFramePlayer(() => clips.value, { phase: true })
+watch(position, (now) => emit('frame', now), { immediate: true })
+
+// The sheet on show: the one given (whole, a still one too), or the clip the sequence is on.
+const shown = computed<SpriteSheet>(() =>
+  props.clips === undefined
+    ? props.sheet!
+    : (props.clips[position.value.clip]?.sheet ?? props.clips[0]!.sheet)
+)
 
 const cellWidth = computed(() => SPRITE_FRAME_SIZE.width * scale.value)
 const cellHeight = computed(() => SPRITE_FRAME_SIZE.height * scale.value)
@@ -49,7 +67,7 @@ const boxStyle = computed(() => ({
   height: `${cellHeight.value}px`
 }))
 const stripStyle = computed(() => ({
-  width: `${cellWidth.value * props.sheet.frames}px`,
+  width: `${cellWidth.value * shown.value.frames}px`,
   height: `${cellHeight.value}px`,
   transform: `translateX(${-cellWidth.value * position.value.frame}px)`
 }))
@@ -62,7 +80,7 @@ const stripStyle = computed(() => ({
     :style="boxStyle"
     aria-hidden="true"
   >
-    <img class="dm-sprite__strip" :src="sheet.src" :style="stripStyle" alt="" draggable="false" />
+    <img class="dm-sprite__strip" :src="shown.src" :style="stripStyle" alt="" draggable="false" />
   </span>
 </template>
 
