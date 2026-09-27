@@ -109,6 +109,63 @@
     "key": "molecules/tooltip#live"
   },
   {
+    "key": "organisms/mine-column#dwarfai-miners",
+    "red": "the mine column is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "organisms/mine-column#ai-tools",
+    "red": "the mine column is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/crew-roster#four-dwarfs-one-selected",
+    "red": "the crew roster is not built yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/crew-roster#overflow",
+    "red": "the crew roster is not built yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/crew-roster#empty",
+    "red": "the crew roster is not built yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/dwarf#working-selected-hover",
+    "red": "the dwarf in the scene is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/dwarf#asking-asleep-idle",
+    "red": "the dwarf in the scene is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/dwarf#delivery-marks",
+    "red": "the dwarf in the scene is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/dwarf-tooltip#working",
+    "red": "the dwarf tooltip is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/dwarf-tooltip#needs-you",
+    "red": "the dwarf tooltip is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/dwarf-tooltip#asleep",
+    "red": "the dwarf tooltip is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "organisms/history-panel#dwarfai-miners",
+    "red": "the mine history is not rebuilt yet (#635, PR4)"
+  },
+  {
+    "key": "molecules/vault-strip#mine-footer"
+  },
+  {
+    "key": "molecules/vault-strip#map-totals"
+  },
+  {
+    "key": "molecules/vault-strip#empty"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {

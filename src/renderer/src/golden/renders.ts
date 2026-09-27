@@ -24,6 +24,7 @@ import MetaChip from '../components/controls/MetaChip.vue'
 import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
 import OreCapsule from '../components/vault/OreCapsule.vue'
+import VaultStrip from '../components/vault/VaultStrip.vue'
 import ToggleSwitch from '../components/controls/ToggleSwitch.vue'
 import CountBadge from '../components/dwarf/CountBadge.vue'
 import DwarfPortrait from '../components/dwarf/DwarfPortrait.vue'
@@ -756,6 +757,26 @@ const mineTooltip: Render = (_sample, texts, attributes) => {
   return { component: TooltipCard, props: { tier, title, rows } }
 }
 
+/*
+ * The vault strip as its tree prints it: one capsule per ore line as it names itself, the label
+ * its label line shows, on the wood plate where its root carries --plate, at the vault size where
+ * its capsules carry --lg.
+ */
+const vaultStrip: Render = (_sample, texts, attributes) => {
+  const root = attributes[0]!
+  const ore = capsules(attributes).map(capsule)
+  const labelled = elementsOf(attributes, 'span.dm-vault__label').length > 0
+  return {
+    component: VaultStrip,
+    props: {
+      ore: ore.map(({ material, units }) => ({ material, units })),
+      plate: root.element.includes('dm-vault--plate'),
+      ...(labelled ? { label: texts[0]?.text ?? '' } : {}),
+      ...(ore.some((o) => o.size === 'lg') ? { size: 'lg' } : {})
+    }
+  }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -805,6 +826,24 @@ export const RENDERS: Record<string, Render> = {
   'organisms/map-page#empty-first-run': mapPage,
   'molecules/tooltip#mine-tooltip': mineTooltip,
   'molecules/tooltip#live': button({ labelled: true }),
+  // The mine column (#635, PR4): not rebuilt yet, so each state draws the unbuilt specimen and
+  // fails as it should until its component lands. The vault strip, built with the Map page, draws
+  // the real strip: a mine's footer, the map's totals plate, and a vault with no ore.
+  'organisms/mine-column#dwarfai-miners': unbuilt,
+  'organisms/mine-column#ai-tools': unbuilt,
+  'molecules/crew-roster#four-dwarfs-one-selected': unbuilt,
+  'molecules/crew-roster#overflow': unbuilt,
+  'molecules/crew-roster#empty': unbuilt,
+  'molecules/dwarf#working-selected-hover': unbuilt,
+  'molecules/dwarf#asking-asleep-idle': unbuilt,
+  'molecules/dwarf#delivery-marks': unbuilt,
+  'molecules/dwarf-tooltip#working': unbuilt,
+  'molecules/dwarf-tooltip#needs-you': unbuilt,
+  'molecules/dwarf-tooltip#asleep': unbuilt,
+  'organisms/history-panel#dwarfai-miners': unbuilt,
+  'molecules/vault-strip#mine-footer': vaultStrip,
+  'molecules/vault-strip#map-totals': vaultStrip,
+  'molecules/vault-strip#empty': vaultStrip,
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),
