@@ -2180,6 +2180,22 @@ export class AgentRuntime {
    * click on an activity line (#279) and a transcript read cannot disagree
    * about which of a project's folders the dwarf is in.
    */
+  /**
+   * The mine a launch starts in, by id: the board's, or else a remembered one (#635,
+   * PANEL-QUESTIONS 5). A remembered mine with no dwarf and no live session is not on the board,
+   * yet its card opens and its + Dwarf is where dwarfs are launched, so the store row the card was
+   * built from names the folder. The folder is still resolved here and never taken from the
+   * request, which keeps every launch inside a folder the panel is showing; a forgotten row is not
+   * one (#169), and a store that does not answer answers nothing.
+   */
+  private async launchTarget(mineId: string): Promise<Pick<Mine, 'id' | 'path'> | undefined> {
+    const onBoard = this.mines.find((item) => item.id === mineId)
+    if (onBoard !== undefined || this.projects === null) return onBoard
+    const row = await this.projects.get(mineId)
+    if (!row.ok || row.value === null || row.value.hiddenAt !== null) return undefined
+    return { id: row.value.id, path: row.value.path }
+  }
+
   private workplaceOf(dwarf: Dwarf, mine: Mine): string {
     return dwarf.workplace?.path ?? mine.path
   }
@@ -3787,7 +3803,7 @@ export class AgentRuntime {
     // so there is no folder for one to start in (#42).
     if (this.simulated) return { launched: false, error: NO_SIMULATED_LAUNCH }
 
-    const mine = this.mines.find((item) => item.id === request.mineId)
+    const mine = await this.launchTarget(request.mineId)
     if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
 
     // #511 T4: issued BEFORE the launch itself is attempted — see
@@ -3881,7 +3897,7 @@ export class AgentRuntime {
     // a demo's mines are invented, so there is no folder to start in (#42).
     if (this.simulated) return { launched: false, error: NO_SIMULATED_LAUNCH }
 
-    const mine = this.mines.find((item) => item.id === request.mineId)
+    const mine = await this.launchTarget(request.mineId)
     if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
 
     const outcome = await this.hosted.launch({
@@ -4910,7 +4926,7 @@ export class AgentRuntime {
     request: AgentLaunchRequest,
     hooks?: LaunchAgentHooks
   ): Promise<AgentLaunchResult> {
-    const mine = this.mines.find((item) => item.id === request.mineId)
+    const mine = await this.launchTarget(request.mineId)
     if (mine === undefined) return { launched: false, provider: 'none', error: NO_SUCH_MINE }
 
     const prompt = prepareLaunchPrompt(request.prompt)
@@ -5063,7 +5079,7 @@ export class AgentRuntime {
   private reportLaunchFailure(
     launchId: string,
     provider: DwarfProvider,
-    mine: Mine,
+    mine: Pick<Mine, 'id'>,
     failure: LaunchFailure
   ): void {
     console.log(`[runtime] Launch of ${provider} in ${mine.id}: failed (exit ${failure.exitCode})`)

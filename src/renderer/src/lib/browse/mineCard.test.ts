@@ -118,10 +118,22 @@ describe('mineCardView', () => {
     expect(mineCardView(row({}), []).crew).toEqual([])
   })
 
-  it('says No dwarfs for a remembered mine nobody is working, which cannot be entered', () => {
+  /*
+   * AMENDED for #635 (PANEL-QUESTIONS 5, design lead ruling 2026-09-27; was: "..., which cannot be
+   * entered", expecting `enterable` false). A remembered mine with no dwarf and no live session is
+   * the ordinary card: it reads "No dwarfs" and opens, onto the empty roster and + Dwarf.
+   */
+  it('says No dwarfs for a remembered mine nobody is working, which still opens', () => {
     const view = mineCardView(row({ live: false }), [])
     expect(view.crew).toEqual([{ text: 'No dwarfs' }])
-    expect(view.enterable).toBe(false)
+    expect(view.state).toBe('active')
+    expect(view.enterable).toBe(true)
+  })
+
+  // APPENDED for #635 (PANEL-QUESTIONS 5 and 6): only a missing folder makes a card not enterable.
+  it('refuses entry for a missing folder alone, live or not', () => {
+    expect(mineCardView(row({ live: false, folderMissing: true }), []).enterable).toBe(false)
+    expect(mineCardView(row({ folderMissing: true }), board([])).enterable).toBe(false)
   })
 })
 

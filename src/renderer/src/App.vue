@@ -31,6 +31,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { browseRows } from './lib/browse/boardRows'
+import { columnMine, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
@@ -675,9 +676,19 @@ const openDwarfId = computed(() =>
  * which dwarf it has open, and it is no longer this window that knows.
  */
 
+/*
+ * The board's mine, or else a remembered one nobody is working (PANEL-QUESTIONS 5): it opens like
+ * any other card, onto the empty roster and + Dwarf, drawn from its store row (lib/browse/columnMine).
+ */
 const currentMine = computed<Mine | undefined>(() =>
-  viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
+  viewState.mineId === null ? undefined : columnMine(viewState.mineId, state.mines, projects.value)
 )
+
+/*
+ * A remembered mine held open has no board push to let it go when it is removed, so a change of the
+ * remembered list asks the same question the board push does (useView.syncWithMines).
+ */
+watch(projects, (list) => syncWithMines(openableMineIds(state.mines, list)))
 
 /**
  * The mine column is width the WINDOW has to be given before anything can be
@@ -742,7 +753,7 @@ function raisePanel(): void {
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   loading.value = false
-  syncWithMines(snapshot.mines.map((mine) => mine.id))
+  syncWithMines(openableMineIds(snapshot.mines, projects.value))
   // A launch in flight is watching for its own dwarf, which arrives on an
   // ordinary poll like every other session's — this is that poll.
   if (import.meta.env.DEV) {

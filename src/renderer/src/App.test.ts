@@ -3158,6 +3158,41 @@ describe('App Mines page', () => {
     expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 
+  /*
+   * APPENDED for #635 (PANEL-QUESTIONS 5, design lead ruling 2026-09-27): a remembered mine with no
+   * dwarf and no live session opens, onto the empty roster and + Dwarf, and stays open while the
+   * board goes on not carrying it. + Dwarf asks main for the Add panel on that mine.
+   */
+  it('opens a remembered mine nobody is working, onto the empty roster, and keeps it open', async () => {
+    let push: (snapshot: unknown) => void = () => undefined
+    const { wrapper, api } = await mountOpenApp({
+      onMinesUpdated: vi.fn((listener: (snapshot: unknown) => void) => {
+        push = listener
+        return () => undefined
+      }),
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [{ ...ALPHA_ROW, declared: false, live: false }]
+      })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    const card = wrapper.get('.dm-card')
+    expect(card.text()).toContain('No dwarfs')
+    await card.get('button.dm-card__hit').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    expect(wrapper.get('.dm-minecol').text()).toContain('No dwarfs here yet.')
+    push({ mines: [], tokensObserved: 0 })
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    wrapper.findComponent(MineColumn).vm.$emit('add')
+    await flushPromises()
+    expect(api.setMessagePanel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ surface: 'launch', mineId: ALPHA_ROW.id })
+    )
+  })
+
   it('says what the Music slot did', async () => {
     const { wrapper } = await mountOpenApp()
     const on = wrapper.get(NAV_MUSIC).attributes('aria-pressed') === 'true'

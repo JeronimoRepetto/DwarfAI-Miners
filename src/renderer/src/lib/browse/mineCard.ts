@@ -144,8 +144,9 @@ export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardVi
     needsCount,
     progress:
       state === 'unrecorded' || state === 'unenterable' ? undefined : progressFor(row, state),
-    // Only a mine on the board can be entered (#85): opening one nobody is working opens nothing.
-    enterable: row.live && state !== 'unenterable',
+    // Only a missing folder refuses entry (PANEL-QUESTIONS 5 and 6, design lead ruling 2026-09-27):
+    // a remembered mine nobody is working opens too, onto the empty roster and + Dwarf.
+    enterable: state !== 'unenterable',
     ...(state === 'unenterable' ? { reason: MINE_UNENTERABLE_REASON } : {}),
     removable: row.unrecorded !== true,
     ...(row.weightBytes === undefined ? {} : { score: row.weightBytes / 1024 })
