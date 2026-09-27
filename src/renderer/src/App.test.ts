@@ -2991,6 +2991,28 @@ describe('App shell packing (#488)', () => {
    * duplicate of the default, and a rule that only ever restates another one is
    * a second opinion waiting to disagree.
    */
+  /*
+   * APPENDED for #635 (live check, 2026-09-27). The plate is as wide as its columns, and the page
+   * column's content is `position: absolute`, so the column's own declared width is the only thing
+   * the plate can size itself from: a flex basis alone is not counted when a flex container is
+   * sized to its content, and the page drew 0px wide inside a window sized for it. jsdom lays
+   * nothing out, so the declarations are pinned here, off the stylesheet, as the packing is above.
+   */
+  it('gives the page column a width of its own, so a plate sized to its columns includes it', () => {
+    const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
+    const tag = '<style scoped>'
+    const style = source.slice(source.indexOf(tag) + tag.length).replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (selector: string): string =>
+      [...style.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+        .filter((match) => match[1]!.split(',').some((one) => one.trim() === selector))
+        .map((match) => match[2]!)
+        .join(';')
+    expect(rule('.shell-secondary')).toMatch(/(^|[;\s])width:\s*var\(--page-width\)/)
+    // And on a screen narrower than the dock the page is still the part that gives way.
+    expect(rule('.shell-secondary')).toMatch(/min-width:\s*0/)
+    expect(rule('.shell')).toMatch(/min-width:\s*0/)
+  })
+
   it('keeps no separate rule for the frames a fold is held over', () => {
     const source = readFileSync(join(import.meta.dirname, 'App.vue'), 'utf8')
     expect(source).not.toContain('is-holding')

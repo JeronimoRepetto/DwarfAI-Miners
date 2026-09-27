@@ -1487,6 +1487,8 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex: 0 1 auto;
+  /* May shrink below its columns on a screen narrower than the dock, so the page gives way. */
+  min-width: 0;
   justify-content: flex-end;
   height: calc(100vh - 2 * var(--dock-inset));
   margin: var(--dock-inset) var(--shell-edge);
@@ -1526,6 +1528,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 0 1 var(--page-width);
   flex-direction: column;
+  /*
+   * A width of its own as well as the basis (#635, live check): the plate is sized to its
+   * columns, and a flex basis is not counted when a container is sized to its content. The
+   * page's own content is absolute, so without this the plate drew the column 0px wide.
+   */
+  width: var(--page-width);
   min-width: 0;
   height: 100%;
   min-height: 0;
