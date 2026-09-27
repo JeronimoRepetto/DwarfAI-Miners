@@ -840,6 +840,45 @@ describe('LaunchedSessionRegistry across a restart (#231)', () => {
 
       expect(nextRun.lastTurnOfDwarf('codex:thread-new')).toBeUndefined()
     })
+
+    /*
+     * #635, PANEL-QUESTIONS Q24: the finished cue is silent for a turn the user
+     * ended from the app. The process's own reading of a Kick is a SIGTERM
+     * like any other, so the registry that sent it marks the outcome.
+     */
+    it('marks the outcome of a turn this panel ended itself (#635)', async () => {
+      const { launched, exiting } = boundHandle()
+      const launchId = launched.launchIdOf('thread-new') as string
+      await expect(launched.end(launchId)).resolves.toBe('ended')
+      exiting.concludeTurn({ kind: 'interrupted', detail: 'SIGTERM', endedAt: 5 })
+      expect(launched.lastTurnOfDwarf('codex:thread-new')).toEqual({
+        kind: 'interrupted',
+        detail: 'SIGTERM',
+        endedAt: 5,
+        cancelledFromApp: true
+      })
+    })
+
+    it('marks nothing when the end was refused, or never asked for (#635)', async () => {
+      const refusing = new LaunchedSessionRegistry({
+        endProcessTree: vi.fn().mockResolvedValue(false)
+      })
+      const exiting = handle(4242)
+      const launchId = refusing.retain({
+        provider: 'codex',
+        minePath: MINE_PATH,
+        process: exiting.process,
+        knownSessionIds: []
+      })
+      refusing.observe([mine(MINE_PATH, [dwarf({ sessionId: 'thread-new' })])])
+      await expect(refusing.end(launchId)).resolves.toBe('refused')
+      exiting.concludeTurn({ kind: 'interrupted', detail: 'SIGTERM', endedAt: 5 })
+      expect(refusing.lastTurnOfDwarf('codex:thread-new')).toEqual({
+        kind: 'interrupted',
+        detail: 'SIGTERM',
+        endedAt: 5
+      })
+    })
   })
   /* --- end of the #510 lastTurnOfDwarf block --------------------------------- */
 

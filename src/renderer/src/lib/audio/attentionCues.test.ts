@@ -128,6 +128,32 @@ describe('createAttentionWatch (#635)', () => {
     ).toEqual(['question', 'permission', 'finished'])
   })
 
+  /*
+   * PANEL-QUESTIONS Q24: every ending plays finished — concluded, capped,
+   * errored, interrupted — except an interruption the user caused from the
+   * app, because the user already knows. One the user did not cause still does.
+   */
+  it('stays silent for a turn the user cancelled from the app, and only for that one', () => {
+    const watch = createAttentionWatch()
+    watch.observe(mines(defaultDwarf({ id: 'a' })))
+    expect(
+      watch.observe(
+        mines(
+          defaultDwarf({
+            id: 'a',
+            lastTurn: { kind: 'errored', endedAt: 100, cancelledFromApp: true }
+          })
+        )
+      )
+    ).toEqual([])
+    expect(
+      watch.observe(mines(defaultDwarf({ id: 'a', lastTurn: turn(200, 'interrupted') })))
+    ).toEqual(['finished'])
+    expect(watch.observe(mines(defaultDwarf({ id: 'a', lastTurn: turn(300, 'capped') })))).toEqual([
+      'finished'
+    ])
+  })
+
   it('forgets a dwarf that left, so its return is judged afresh', () => {
     const watch = createAttentionWatch()
     watch.observe(mines(defaultDwarf({ id: 'a', pendingQuestion: question('q1') })))

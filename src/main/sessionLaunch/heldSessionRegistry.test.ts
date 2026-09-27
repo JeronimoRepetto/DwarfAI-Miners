@@ -1649,6 +1649,56 @@ describe('HeldSessionRegistry lifetime', () => {
   })
 
   /*
+   * #635, PANEL-QUESTIONS Q24: the finished cue is silent for a turn the user
+   * cancelled from the app. The provider's own ending cannot say so — Claude
+   * answers an interrupt with an ordinary error result — so the registry, the
+   * one place the app's own cancel passes through, marks the outcome it caused.
+   */
+  it('marks the turn outcome its own interrupt caused, and only that one (#635)', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    await expect(registry.interrupt('sess-1')).resolves.toBe('interrupted')
+    // An update carrying no ending does not use the mark up.
+    port.reportTelemetry(0, { totalCostUsd: 0.01 })
+    port.reportTelemetry(0, {
+      lastTurn: { kind: 'errored', detail: 'error_during_execution', endedAt: 1_000 }
+    })
+    expect(registry.telemetryState('sess-1')?.lastTurn).toEqual({
+      kind: 'errored',
+      detail: 'error_during_execution',
+      endedAt: 1_000,
+      cancelledFromApp: true
+    })
+
+    // The next turn is the session's own again.
+    expect(registry.sendText('sess-1', 'carry on')).toBe(true)
+    port.reportTelemetry(0, { lastTurn: { kind: 'concluded', text: 'done', endedAt: 2_000 } })
+    expect(registry.telemetryState('sess-1')?.lastTurn).toEqual({
+      kind: 'concluded',
+      text: 'done',
+      endedAt: 2_000
+    })
+  })
+
+  it('marks nothing when the stream would not take the interrupt (#635)', async () => {
+    const port = new FakePort()
+    port.interruptTakes = false
+    const registry = registryOver(port)
+    await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+    port.reportSessionId(0, 'sess-1')
+
+    await expect(registry.interrupt('sess-1')).resolves.toBe('refused')
+    port.reportTelemetry(0, { lastTurn: { kind: 'interrupted', endedAt: 1_000 } })
+    expect(registry.telemetryState('sess-1')?.lastTurn).toEqual({
+      kind: 'interrupted',
+      endedAt: 1_000
+    })
+  })
+
+  /*
    * Issue #237, step 5. The other half of that verdict, and the acceptance
    * gate this registry is responsible for: a held session whose protocol
    * documents no cancellation offers no `interrupt` on its handle at all, and

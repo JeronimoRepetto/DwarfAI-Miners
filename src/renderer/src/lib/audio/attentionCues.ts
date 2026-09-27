@@ -12,7 +12,10 @@
  *   field is the provider's own end-of-turn message (see TurnOutcome), never a
  *   silence this app measured, which is why a dwarf going quiet cues nothing:
  *   a turn that ended is a fact only its provider can state. Only a held
- *   session carries it today, so only a held session can cue it.
+ *   session carries it today, so only a held session can cue it. A turn the
+ *   user cancelled from the app (`cancelledFromApp`) is the one ending that
+ *   cues nothing — the user already knows (PANEL-QUESTIONS Q24) — yet it is
+ *   still SEEN, so the next genuine ending is judged against it.
  *
  * The FIRST observation is a baseline and answers nothing: an app that starts
  * with three dwarfs already asking has heard none of them begin, and chiming
@@ -74,7 +77,10 @@ export function createAttentionWatch(): AttentionWatch {
           const before = seen.get(dwarf.id) ?? {}
           if (began(now.question, before.question)) due.add('question')
           if (began(now.permission, before.permission)) due.add('permission')
-          if (began(now.turnEndedAt, before.turnEndedAt)) due.add('finished')
+          const cancelledFromApp = dwarf.lastTurn?.cancelledFromApp === true
+          if (began(now.turnEndedAt, before.turnEndedAt) && !cancelledFromApp) {
+            due.add('finished')
+          }
         }
       }
       seen = next

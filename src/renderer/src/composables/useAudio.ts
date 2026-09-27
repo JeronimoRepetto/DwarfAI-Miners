@@ -82,6 +82,14 @@ export function useAudio(options: UseAudioOptions = {}) {
    */
   let hidden = false
   let collapsed = false
+  /**
+   * Whether the window's visibility has been READ yet (#635, PANEL-QUESTIONS
+   * Q22). The panel cue answers a transition, and a transition needs a known
+   * state on both sides: the first reading — the pull in `sync`, or a push
+   * that beats it — is where the window started, and it sounds nothing. That
+   * is what keeps a launch into a hidden window silent.
+   */
+  let visibilityKnown = false
   function applyGates(): void {
     engine.setGates({ hidden, collapsed })
   }
@@ -109,6 +117,7 @@ export function useAudio(options: UseAudioOptions = {}) {
       // still HIDDEN: a renderer that assumed it was on screen would start the
       // music behind a window nobody had opened yet.
       hidden = !(await window.api.getPanelVisible())
+      visibilityKnown = true
       applyGates()
     } catch {
       // An unreachable main is not a hidden window. Assuming it was would mean
@@ -131,8 +140,24 @@ export function useAudio(options: UseAudioOptions = {}) {
    */
   function listen(): () => void {
     const unlisten = window.api.onPanelVisibility((visible) => {
+      /*
+       * The panel cue as the window is shown or hidden (#635, PANEL-QUESTIONS
+       * Q22): main publishes on every show, hide, minimise and restore, from
+       * the shortcut, the tray, a second launch and the app mark alike, so this
+       * one push is where every route arrives — and a push that repeats the
+       * state it already stated is not a transition, so it sounds nothing.
+       *
+       * The ORDER is the whole mechanism. Shown: the gate opens first, so the
+       * cue is audible. Hidden: the cue starts while the gate is still open,
+       * then the gate shuts, and the engine lets a sounding panel cue play out
+       * across the hide rather than cutting it.
+       */
+      const transition = visibilityKnown && visible === hidden
+      visibilityKnown = true
+      if (transition && !visible) engine.playSfx('panel')
       hidden = !visible
       applyGates()
+      if (transition && visible) engine.playSfx('panel')
     })
     ticker = setInterval(() => engine.tick(), AUDIO_TICK_MS)
     return () => {
