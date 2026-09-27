@@ -158,14 +158,15 @@ export const KitRow = defineComponent({
 })
 
 // Any other UI kit frame: a plain div with the inline style the state's tree prints on it, read at
-// run time, around the real components in order (#635).
+// run time, around the real components in order (#635). A frame the tree prints with classes (a
+// material, such as `m-mat m-wood`) carries them too.
 export const KitFrame = defineComponent({
-  props: { style: { type: String, default: '' }, parts },
+  props: { style: { type: String, default: '' }, classes: { type: String, default: '' }, parts },
   setup(props) {
     return () =>
       h(
         'div',
-        { style: props.style },
+        { style: props.style, class: props.classes || undefined },
         props.parts.map((part) =>
           h(part.component, part.props, part.text === undefined ? undefined : () => part.text)
         )

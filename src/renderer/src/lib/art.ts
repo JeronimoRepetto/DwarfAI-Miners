@@ -100,7 +100,6 @@ import iconAttach from '../../../../docs/assets/icons/attach.svg?url'
 import iconInfo from '../../../../docs/assets/icons/info.svg?url'
 import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
 import iconKick from '../../../../docs/assets/icons/klck.svg?url'
-import iconDelete from '../../../../docs/assets/icons/delete.svg?url'
 import iconMusicOn from '../../../../docs/assets/icons/music_on.svg?url'
 import iconMusicOff from '../../../../docs/assets/icons/music_off.svg?url'
 
@@ -363,19 +362,6 @@ export const ATTACH_ICON_SRC = iconAttach
 
 export const SORT_ICON_SRC = iconFilter
 export const ADD_ICON_SRC = iconAdd
-/**
- * Removing a mine (#169), and the one glyph here the design source never
- * places.
- *
- * `delete.svg` was delivered with the icon set and used by no screen in the
- * documentation — the only destructive act the source draws is Settings'
- * metrics wipe, and that one is a worded button. So this is the designer's own
- * bin, wired up where the design has a gap rather than a shape invented to fill
- * it (see the amendment recorded in `screens/browse.md`). Masked like the
- * others, so the committed file keeps its bytes and the colour comes from the
- * tokens; its own fill is already the accent amber.
- */
-export const DELETE_ICON_SRC = iconDelete
 export const DIALOG_ICON_SRC = iconDialog
 export const SLEEP_ICON_SRC = iconSleep
 

@@ -8,6 +8,7 @@ import { MotionConfig } from 'motion-v'
 import App from './App.vue'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import MapView from './components/map/MapView.vue'
+import MinesList from './components/browse/MinesList.vue'
 import MineScene from './components/scene/MineScene.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
@@ -1100,9 +1101,10 @@ describe('App mines browse', () => {
     expect(mines.text()).toBe('')
   })
 
+  // AMENDED for #635 (PR2): the page is the redesigned `.dm-mines` (was: `.mines-panel`).
   it('shows the map until the browse is asked for', async () => {
     const { wrapper } = await mountOpenApp()
-    expect(wrapper.find('.mines-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-mines').exists()).toBe(false)
     expect(wrapper.find('.map-view').exists()).toBe(true)
   })
 
@@ -1123,15 +1125,17 @@ describe('App mines browse', () => {
         ]
       })
     })
-    expect(wrapper.find('.mines-panel').exists()).toBe(false)
+    // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`).
+    expect(wrapper.find('.dm-mines').exists()).toBe(false)
     expect(wrapper.findAll('.mine-marker')).toHaveLength(1)
   })
 
+  // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`); the read is unchanged.
   it('opens the browse and reads its first page', async () => {
     const { wrapper, api } = await mountOpenApp()
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    expect(wrapper.find('.mines-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-mines').exists()).toBe(true)
     expect(wrapper.find('.map-view').exists()).toBe(false)
     expect(api.queryProjects).toHaveBeenCalledWith(
       expect.objectContaining({ sortBy: 'lastOpenedAt', direction: 'desc', offset: 0 })
@@ -1149,7 +1153,8 @@ describe('App mines browse', () => {
     // AMENDED for #635: `aria-current` (was `aria-pressed`).
     expect(wrapper.find(NAV_MINES).attributes('aria-current')).toBe('page')
     await wrapper.find(NAV_MINES).trigger('click')
-    expect(wrapper.find('.mines-panel').exists()).toBe(true)
+    // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`).
+    expect(wrapper.find('.dm-mines').exists()).toBe(true)
     await wrapper.find(NAV_MAP).trigger('click')
     expect(wrapper.find('.map-view').exists()).toBe(true)
   })
@@ -1166,7 +1171,8 @@ describe('App mines browse', () => {
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.mine-card')).toHaveLength(2)
+    // AMENDED for #635 (PR2): the redesigned card is `.dm-card` (was: `.mine-card`).
+    expect(wrapper.findAll('.dm-card')).toHaveLength(2)
   })
 
   /*
@@ -1189,15 +1195,29 @@ describe('App mines browse', () => {
     expect(wrapper.findComponent(MapView).props('projects')).toEqual(projects)
   })
 
-  it('sends the typed term straight through to main', async () => {
-    const { wrapper, api } = await mountOpenApp()
+  /*
+   * AMENDED for #635 (PR2), was "sends the typed term straight through to main": the redesigned
+   * page reads every project once and a search only hides cards (screens/browse.md), so what was
+   * typed filters the cards on screen and main is asked nothing more.
+   */
+  it('filters the cards as the term is typed, asking main nothing more', async () => {
+    const { wrapper, api } = await mountOpenApp({
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [
+          { id: 'a', path: 'a', name: 'Lalolanda', declared: false, addedAt: 1, live: false },
+          { id: 'b', path: 'b', name: 'Other', declared: false, addedAt: 2, live: false }
+        ]
+      })
+    })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    await wrapper.find('.search-field').setValue('lalo')
+    const reads = api.queryProjects.mock.calls.length
+    await wrapper.find('.dm-mines input[type="search"]').setValue('lalo')
     await flushPromises()
-    expect(api.queryProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({ nameContains: 'lalo', offset: 0 })
-    )
+    const shown = wrapper.findAll('.dm-card').filter((card) => card.isVisible())
+    expect(shown.map((card) => card.get('.dm-card__name').text())).toEqual(['Lalolanda'])
+    expect(api.queryProjects.mock.calls.length).toBe(reads)
   })
 
   it('enters the mine a live card names', async () => {
@@ -1232,17 +1252,19 @@ describe('App mines browse', () => {
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    await wrapper.find('.mine-card button').trigger('click')
+    // AMENDED for #635 (PR2): the card's own button is `.dm-card__hit` (was: `.mine-card button`).
+    await wrapper.find('.dm-card__hit').trigger('click')
     // The scene enters only after main reserves its native column (#164).
     await flushPromises()
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
   })
 
+  // AMENDED for #635 (PR2): the header's "Add a mine" (was: `.add-control`).
   it('asks main for a folder when the add control is pressed', async () => {
     const { wrapper, api } = await mountOpenApp()
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    await wrapper.find('.add-control').trigger('click')
+    await wrapper.find('.dm-phead button[title="Add a mine"]').trigger('click')
     await flushPromises()
     expect(api.declareMine).toHaveBeenCalledWith()
   })
@@ -1274,21 +1296,25 @@ describe('App mines browse', () => {
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.mine-card')).toHaveLength(0)
-    await wrapper.find('.add-control').trigger('click')
+    // AMENDED for #635 (PR2): `.dm-card` and the header's "Add a mine" (was: `.mine-card`,
+    // `.add-control`).
+    expect(wrapper.findAll('.dm-card')).toHaveLength(0)
+    await wrapper.find('.dm-phead button[title="Add a mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.mine-card')).toHaveLength(1)
+    expect(wrapper.findAll('.dm-card')).toHaveLength(1)
   })
 
   it('says nothing at all when the picker was closed without a choice', async () => {
     const { wrapper } = await mountOpenApp()
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    await wrapper.find('.add-control').trigger('click')
+    // AMENDED for #635 (PR2): the header's "Add a mine", the page's notices, and the first-run
+    // empty state's words (was: `.add-control`, `.add-error`, "Nothing here").
+    await wrapper.find('.dm-phead button[title="Add a mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.add-error').exists()).toBe(false)
+    expect(wrapper.find('.dm-mines [role="alert"]').exists()).toBe(false)
     // Still the invitation to add one, not a complaint about the last attempt.
-    expect(wrapper.get('.panel-empty').text()).toContain('Nothing here')
+    expect(wrapper.get('.dm-empty').text()).toContain('No mines yet.')
   })
 
   it('states why a folder could not be added', async () => {
@@ -1300,9 +1326,13 @@ describe('App mines browse', () => {
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    await wrapper.find('.add-control').trigger('click')
+    // AMENDED for #635 (PR2): the header's "Add a mine" and the page's notice (was:
+    // `.add-control`, `.add-error`).
+    await wrapper.find('.dm-phead button[title="Add a mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('.add-error').text()).toBe('That folder could not be saved as a mine.')
+    expect(wrapper.get('.dm-mines [role="alert"]').text()).toBe(
+      'That folder could not be saved as a mine.'
+    )
   })
 
   it('reports a refused browse as a failure, never as an empty list', async () => {
@@ -1313,8 +1343,10 @@ describe('App mines browse', () => {
     })
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    expect(wrapper.find('.panel-empty').exists()).toBe(false)
-    expect(wrapper.find('.panel-error').text()).toBe('The database is locked.')
+    // AMENDED for #635 (PR2): the page's empty state and notice (was: `.panel-empty`,
+    // `.panel-error`).
+    expect(wrapper.find('.dm-empty').exists()).toBe(false)
+    expect(wrapper.get('.dm-mines [role="alert"]').text()).toBe('The database is locked.')
   })
 })
 
@@ -1446,7 +1478,8 @@ describe('App concurrent mine', () => {
     const { wrapper } = await openMine()
     await wrapper.find(NAV_MINES).trigger('click')
     await flushPromises()
-    expect(wrapper.find('.mines-panel').exists()).toBe(true)
+    // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`).
+    expect(wrapper.find('.dm-mines').exists()).toBe(true)
     expect(wrapper.find('.mine-scene').exists()).toBe(true)
   })
 
@@ -2860,5 +2893,105 @@ describe('OpenCode settings (#588 T6)', () => {
     expect(api.setOpenCodeServerPassword).toHaveBeenCalledWith('hunter2')
     expect(wrapper.find('.password-stored').exists()).toBe(true)
     expect(wrapper.html()).not.toContain('hunter2')
+  })
+})
+
+/*
+ * APPENDED for #635 (PR2): the redesigned Mines page on the existing IPC. A first run's "Add a
+ * mine" opens the OS folder picker (main's declareMine), the folder picked becomes the mine and it
+ * opens in the mine column at once; adding never opens the Add panel (decision log, First run: add
+ * a mine). A change of order, a removal and the Music slot each confirm in a toast.
+ */
+describe('App Mines page', () => {
+  beforeEach(() => useView().clear())
+  afterEach(() => useView().clear())
+
+  const ALPHA = {
+    id: 'C:/dev/alpha',
+    path: 'C:/dev/alpha',
+    name: 'alpha',
+    tier: 'bronze',
+    dwarfs: [],
+    tokensObserved: 0,
+    updatedAt: 0,
+    declared: true
+  }
+  const ALPHA_ROW = {
+    id: 'C:/dev/alpha',
+    path: 'C:/dev/alpha',
+    name: 'alpha',
+    declared: true,
+    addedAt: 1,
+    live: true
+  }
+  const toasts = (wrapper: VueWrapper) => wrapper.findAll('.dm-toast').map((toast) => toast.text())
+
+  it('opens the mine just added in the mine column once main publishes it', async () => {
+    let push: (snapshot: unknown) => void = () => undefined
+    const { wrapper, api } = await mountOpenApp({
+      onMinesUpdated: vi.fn().mockImplementation((listener: (snapshot: unknown) => void) => {
+        push = listener
+        return () => undefined
+      }),
+      declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: ALPHA.id })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.get('.dm-empty button').trigger('click')
+    await flushPromises()
+    expect(api.declareMine).toHaveBeenCalledWith()
+    push({ mines: [ALPHA], tokensObserved: 0 })
+    await flushPromises()
+    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    // Adding a mine never opens the Add panel by itself.
+    expect(api.setMessagePanel).not.toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'launch' })
+    )
+  })
+
+  it('says the new order in a toast when the sort button is pressed', async () => {
+    const { wrapper } = await mountOpenApp()
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.get('.dm-phead button[title^="Sort: "]').trigger('click')
+    await flushPromises()
+    expect(toasts(wrapper)).toContain('Sorted by name')
+    expect(wrapper.get('.dm-phead button[title^="Sort: "]').attributes('title')).toBe('Sort: Name')
+  })
+
+  it('says a mine was removed once main has removed it', async () => {
+    const undeclareMine = vi.fn().mockResolvedValue({ outcome: 'removed' })
+    const { wrapper } = await mountOpenApp({
+      queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [ALPHA_ROW] }),
+      undeclareMine
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.findComponent(MinesList).vm.$emit('remove', ALPHA.id)
+    await flushPromises()
+    expect(undeclareMine).toHaveBeenCalledWith(ALPHA.id)
+    expect(toasts(wrapper)).toContain('alpha removed')
+  })
+
+  it('lists a board mine the store has no row for, as working but not recorded yet', async () => {
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({
+        mines: [{ ...ALPHA, declared: false, unrecorded: true }],
+        tokensObserved: 0
+      })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    const cards = wrapper.findAll('.dm-card')
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.attributes('data-state')).toBe('unrecorded')
+  })
+
+  it('says what the Music slot did', async () => {
+    const { wrapper } = await mountOpenApp()
+    const on = wrapper.get(NAV_MUSIC).attributes('aria-pressed') === 'true'
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    expect(toasts(wrapper)).toContain(on ? 'Music off' : 'Music on')
   })
 })

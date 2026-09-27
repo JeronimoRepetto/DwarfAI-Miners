@@ -5,7 +5,7 @@
  * mode lever, which are not areas). The component draws these; this decides them.
  */
 import type { IconName } from '../icon/iconGrids'
-import type { Mine, ShellArea } from '../../types'
+import type { Dwarf, Mine, ShellArea } from '../../types'
 import { unavailableAreaOf } from './shellNav'
 
 export interface PanelNavSlot {
@@ -42,10 +42,13 @@ export const SYSTEM_SLOTS: readonly PanelNavSlot[] = [
  */
 export function needsYouCount(mines: readonly Mine[]): number {
   let count = 0
-  for (const mine of mines)
-    for (const dwarf of mine.dwarfs)
-      if (dwarf.pendingQuestion !== undefined || dwarf.waitingReason === 'approval') count++
+  for (const mine of mines) for (const dwarf of mine.dwarfs) if (dwarfNeedsYou(dwarf)) count++
   return count
+}
+
+/** One dwarf waiting on the person: a question it asked, or a permission it needs (see above). */
+export function dwarfNeedsYou(dwarf: Dwarf): boolean {
+  return dwarf.pendingQuestion !== undefined || dwarf.waitingReason === 'approval'
 }
 
 /**

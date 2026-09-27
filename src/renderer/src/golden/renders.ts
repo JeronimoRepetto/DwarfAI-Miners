@@ -33,6 +33,16 @@ import NavSlot from '../components/shell/NavSlot.vue'
 import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import PanelNav from '../components/shell/PanelNav.vue'
 import GuildPage from '../components/shell/GuildPage.vue'
+import PageHeader from '../components/shell/PageHeader.vue'
+import TierInfo from '../components/browse/TierInfo.vue'
+import MineCard from '../components/browse/MineCard.vue'
+import MinesList from '../components/browse/MinesList.vue'
+import type { MineCardState, MineCardView } from '../lib/browse/mineCard'
+import DialogCard from '../components/overlay/DialogCard.vue'
+import MenuButton from '../components/overlay/MenuButton.vue'
+import MenuList from '../components/overlay/MenuList.vue'
+import ToastCard from '../components/overlay/ToastCard.vue'
+import type { MenuEntry, MenuItem } from '../lib/overlay/menu'
 import type { BadgeTone, PillTone } from '../lib/dwarf/badge'
 import type { PortraitStatus } from '../lib/dwarf/portrait'
 import type { IconName } from '../lib/icon/iconGrids'
@@ -476,6 +486,214 @@ const guildPage =
     }
   })
 
+/*
+ * The menu's rows as its tree prints them: an item per menuitem, danger and forced as its classes
+ * say, its label the next text and its hint the text of its hint line; a rule per separator. An
+ * icon line prints no name a render can read, so a state's icons are its render's, in tree order.
+ */
+const menu =
+  (icons: IconName[]): Render =>
+  (_sample, texts, attributes) => {
+    const items: MenuEntry[] = []
+    let next = 0
+    let icon = 0
+    for (const { element } of attributes.slice(1)) {
+      const last = items.at(-1) as MenuItem | undefined
+      if (element.startsWith('button.dm-menu__item')) {
+        items.push({
+          label: texts[next++]?.text ?? '',
+          ...(element.includes('dm-menu__item--danger') ? { danger: true } : {}),
+          ...(forcedOf(element) === 'hover' ? { state: 'hover' as const } : {})
+        })
+      } else if (element === 'icon' && last) last.icon = icons[icon++]
+      else if (element.startsWith('span.dm-menu__hint') && last) last.hint = texts[next++]?.text
+      else if (element.startsWith('hr.')) items.push({ separator: true })
+    }
+    return { component: MenuList, props: { items } }
+  }
+
+/*
+ * The dialog card drawn in place: its title the name its root prints, its body the paragraph after
+ * the title, and its actions the tree's buttons, each labelled with the next text; the danger
+ * buttons are its danger actions. A field in the tree makes it a typed confirmation, the word read
+ * from the field's placeholder, and its danger action the one the word unlocks.
+ */
+const dialog: Render = (_sample, texts, attributes) => {
+  const root = attributes[0]!
+  // The tree prints a quoted placeholder unescaped, so the word is read from the prompt instead.
+  const prompt = elementsOf(attributes, 'input').length ? texts[2]?.text : undefined
+  const typed = prompt === undefined ? undefined : /"(.+)"/.exec(prompt)?.[1]
+  const buttons = attributes.filter((entry) => entry.element.startsWith('button.dm-btn'))
+  const labels = texts.slice(-buttons.length).map((t) => t.text ?? '')
+  return {
+    component: DialogCard,
+    props: {
+      static: true,
+      danger: root.element.includes('dm-dialog--danger'),
+      title: root.attributes['aria-label'] ?? '',
+      body: texts[1]?.text ?? '',
+      ...(typed === undefined ? {} : { typed }),
+      actions: buttons.map((entry, i) =>
+        entry.element.includes('dm-btn--danger')
+          ? { label: labels[i], variant: 'danger', ...(typed ? { confirms: true } : {}) }
+          : { label: labels[i] }
+      )
+    }
+  }
+}
+
+// The toast's plate with its one line; its icon is the render's, as an icon line names none.
+const toast =
+  (icon: IconName): Render =>
+  (_sample, texts) => ({ component: ToastCard, props: { icon, text: texts[0]?.text ?? '' } })
+
+/*
+ * The page header as its tree prints it, in its frame: the title the heading's text, a search when
+ * the tree has one, and the sort and add buttons named as they print ("Sort: <label>").
+ */
+const pageHeaderProps = (texts: GoldenText[], attributes: GoldenAttributes[]) => {
+  const buttons = elementsOf(attributes, 'button.dm-btn')
+  const sort = buttons.find((a) => a.title?.startsWith('Sort: '))
+  const add = buttons.find((a) => a !== sort)
+  return {
+    title: texts[0]?.text ?? '',
+    search: elementsOf(attributes, 'div.dm-phead__search').length > 0,
+    ...(sort ? { sortLabel: sort.title!.slice('Sort: '.length) } : {}),
+    ...(add ? { addLabel: add.title } : {})
+  }
+}
+const pageHeader: Render = framed((texts, attributes) => [
+  { component: PageHeader, props: pageHeaderProps(texts, attributes) }
+])
+
+/*
+ * The tier explainer in the kit's wood frame, the classes and style its tree's root prints. Its
+ * ranges are the sample's own floors: the app's thresholds are real ones, and the sample's are an
+ * illustration the reference was drawn from.
+ */
+const tierInfo: Render = (sample, _texts, attributes) => {
+  if (!sample.tierThresholds) throw new Error('golden: the sample carries no DM.TIER_FLOOR')
+  const root = attributes[0]!
+  return {
+    component: KitFrame,
+    props: {
+      style: root.attributes.style ?? '',
+      classes: root.element.split('.').slice(1).join(' '),
+      parts: [{ component: TierInfo, props: { thresholds: sample.tierThresholds } }]
+    }
+  }
+}
+
+// A small icon-only button alone, named as its tree prints it: the trigger a Live state draws.
+const smallIconButton =
+  (icon: IconName): Render =>
+  (_sample, _texts, attributes) => ({
+    component: ActionButton,
+    props: { icon, size: 'sm', title: attributes[0]?.attributes.title ?? '' }
+  })
+
+/*
+ * One mine card as its tree prints it, from its article line to the next one: the mine, tier,
+ * state, open and needs-you flags off the article's own attributes, forced look off its classes;
+ * the name off the heading's title, one capsule per ore line as it names itself, the pills of the
+ * crew line in order (a needs-you pill carries its "?" plate), and the progress as its bar's own
+ * aria values give it. Texts run in tree order, so the card's own are read from where it starts.
+ */
+interface CardSpec {
+  props: Record<string, unknown>
+  /** How many texts the card's tree showed, so the next card reads on from there. */
+  used: number
+}
+
+function mineCardSpec(texts: GoldenText[], attributes: GoldenAttributes[]): CardSpec {
+  const [article, ...rest] = attributes
+  const a = article!.attributes
+  // The article's own lines, up to the next card in a list.
+  const end = rest.findIndex((entry) => entry.element.startsWith('article.dm-card'))
+  const lines = end < 0 ? rest : rest.slice(0, end)
+  const card: MineCardView = {
+    id: a['data-mine'] ?? '',
+    name: lines.find((l) => l.element.startsWith('h3.dm-card__name'))?.attributes.title ?? '',
+    tier: a['data-tier'] as MineTier,
+    measured: true,
+    state: a['data-state'] as MineCardState,
+    ore: lines
+      .filter((l) => l.element.startsWith('span.dm-ore'))
+      .map((l) => capsule(l) as { material: Material; units: number }),
+    crew: [],
+    needs: a['data-needs'] === 'true',
+    needsCount: 0,
+    enterable: true,
+    removable: true
+  }
+  const reason = lines.find((l) => l.element.startsWith('button.dm-card__hit'))?.attributes.title
+  if (reason !== undefined) card.reason = reason
+  // Texts in tree order: the chip's word, the name, one per capsule, then the crew line's pills (a
+  // needs-you pill shows its "?" and its words), then the progress or the note.
+  let t = 2 + card.ore.length
+  const next = (): string => texts[t++]?.text ?? ''
+  const crewAt = lines.findIndex((l) => l.element.startsWith('div.dm-card__crew'))
+  for (const { element } of lines.slice(crewAt + 1)) {
+    if (!element.startsWith('span.dm-pill') || element.startsWith('span.dm-pill__q')) {
+      if (!element.startsWith('span.dm-pill')) break
+      continue
+    }
+    if (element.includes('dm-pill--needs')) {
+      next()
+      card.crew.push({ text: next(), tone: 'needs', ask: true })
+    } else card.crew.push({ text: next() })
+  }
+  const progress = lines.find((l) => l.element.startsWith('div.dm-progress'))
+  const bar = lines.find((l) => l.attributes.role === 'progressbar')?.attributes
+  if (progress?.attributes.role === 'status') card.progress = { measuring: true }
+  else if (progress?.element.includes('dm-progress--max')) {
+    next()
+    card.progress = { maxTier: true, value: Number(next().replace(/,/g, '')) }
+  } else if (progress && bar) {
+    card.progress = {
+      nextTier: progress.attributes['data-tier'] as MineTier,
+      value: Number(bar['aria-valuenow']),
+      max: Number(bar['aria-valuemax'])
+    }
+    t += 3
+  } else if (card.state === 'unrecorded') t += 1
+  else if (card.state === 'unenterable') t += 2
+  if (card.progress?.measuring) t += 2
+  return {
+    props: {
+      card,
+      open: a['data-open'] === 'true',
+      ...(forcedOf(article!.element) ? { state: forcedOf(article!.element) } : {})
+    },
+    used: t
+  }
+}
+
+const mineCard: Render = framed((texts, attributes) => [
+  { component: MineCard, props: mineCardSpec(texts, attributes.slice(1)).props }
+])
+
+/*
+ * The Mines page as its tree prints it, in its frame: every card its list draws, in tree order and
+ * each read as a mine card state is, the open one the card the tree marks open. The texts before
+ * the first card are the page header's title and the chips' words, the page's own.
+ */
+const minesList: Render = framed((texts, attributes) => {
+  const cards: MineCardView[] = []
+  let openId: string | null = null
+  let t = 1 + elementsOf(attributes, 'button.dm-chip').length
+  attributes.forEach((entry, i) => {
+    if (!entry.element.startsWith('article.dm-card')) return
+    const { props, used } = mineCardSpec(texts.slice(t), attributes.slice(i))
+    const card = props.card as MineCardView
+    if (card.progress?.value !== undefined) card.score = card.progress.value
+    cards.push(card)
+    if (props.open) openId = card.id
+    t += used
+  })
+  return [{ component: MinesList, props: { cards, openId, search: '', tier: null, sort: 'tier' } }]
+})
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -486,6 +704,39 @@ export const RENDERS: Record<string, Render> = {
   'organisms/guild-page#lab': guildPage('lab'),
   'organisms/guild-page#market': guildPage('market'),
   'organisms/guild-page#laboral-union': guildPage('laboral-union'),
+  // The Mines page (#635, PR2): not rebuilt yet, so each state draws the unbuilt specimen and
+  // fails as it should until its component lands.
+  // The page header plate: the Mines page's tools, and a title alone.
+  'organisms/page-header#mines': pageHeader,
+  'organisms/page-header#title-only': pageHeader,
+  // The Mines page with the valley's mines, and on a first run.
+  'organisms/mines-list#live': minesList,
+  'organisms/mines-list#empty-first-run': minesList,
+  // The mine card in each of its states, every prop read off the state's own tree.
+  'molecules/mine-card#needs-you': mineCard,
+  'molecules/mine-card#default': mineCard,
+  'molecules/mine-card#hover': mineCard,
+  'molecules/mine-card#pressed': mineCard,
+  'molecules/mine-card#open': mineCard,
+  'molecules/mine-card#open-and-needs-you': mineCard,
+  'molecules/mine-card#measuring': mineCard,
+  'molecules/mine-card#working-not-recorded-yet': mineCard,
+  'molecules/mine-card#not-enterable': mineCard,
+  'molecules/mine-card#max-tier': mineCard,
+  // The tier and ore explainer, and the button that opens it.
+  'organisms/tier-info#content': tierInfo,
+  'organisms/tier-info#live': smallIconButton('info'),
+  // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
+  // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
+  'molecules/menu#mine-card': menu([]),
+  'molecules/menu#danger-hovered': menu(['console']),
+  'molecules/menu#live': () => ({ component: MenuButton, props: { items: [], title: 'More' } }),
+  'molecules/dialog#confirm-danger': dialog,
+  'molecules/dialog#typed-confirmation': dialog,
+  'molecules/dialog#live': button({ labelled: true, variant: 'danger' }),
+  'molecules/toast#static': toast('console'),
+  'molecules/toast#live': button({ labelled: true }),
+  'molecules/toast#shown': toast('info'),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),

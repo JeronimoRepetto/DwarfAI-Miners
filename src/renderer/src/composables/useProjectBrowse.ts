@@ -1,12 +1,8 @@
 import { ref } from 'vue'
 import { declareFailureNotice } from '../lib/browse/addProject'
 import type { BrowseFilters } from '../lib/browse/browseQuery'
-import {
-  defaultBrowseFilters,
-  hasMorePages,
-  projectQueryFor,
-  toggledDirection
-} from '../lib/browse/browseQuery'
+import { defaultBrowseFilters, hasMorePages, projectQueryFor } from '../lib/browse/browseQuery'
+import type { MineSort } from '../lib/browse/minesList'
 import { removeFailureNotice } from '../lib/browse/removeMine'
 import type { MineTier, MineWorktreeOf, ProjectSummary } from '../types'
 
@@ -30,26 +26,23 @@ const UNREACHABLE = 'DwarfAI-Miners could not open the folder picker.'
 const REMOVE_UNREACHABLE = 'The panel lost contact with the app. Nothing was removed.'
 
 /**
- * The Mines panel's state (#92): the filters, the pages loaded so far, and
- * whether the last query was answered.
+ * The Mines page's state (#92): the filters, every project main remembers, and whether the last
+ * read was answered.
  *
- * Fresh refs per call rather than a module-scope singleton, like
- * usePinnedWindow: the panel is the only consumer, so per-call state keeps
- * tests independent without a clearAll() ritual.
+ * Fresh refs per call rather than a module-scope singleton, like usePinnedWindow: the page is the
+ * only consumer, so per-call state keeps tests independent without a clearAll() ritual.
  *
- * There is no debounce. The design filters in real time while the user types,
- * which means several queries are routinely in flight at once — so every
- * request is stamped and a stamp the panel has moved past is dropped rather
- * than rendered. Without that, a slow answer for "la" repaints the results of
- * "lal" with the wrong list.
+ * AMENDED for #635 (PR2): the redesigned page reads every project once and filters and orders
+ * the cards itself (lib/browse/minesList.ts), so a search, a tier chip or a sort changes the
+ * filters and asks main nothing; only a read does. A read goes through every page until a short
+ * one, stamped, so a read the page has moved past is dropped rather than rendered — an older
+ * answer landing last must not repaint older rows.
  */
 export function useProjectBrowse() {
   const filters = ref<BrowseFilters>(defaultBrowseFilters())
   const projects = ref<ProjectSummary[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
-  /** True once a page came back short: there is nothing behind it to ask for. */
-  const exhausted = ref(false)
   /** True while main is showing the folder picker (#85). */
   const adding = ref(false)
   /**
@@ -83,63 +76,51 @@ export function useProjectBrowse() {
 
   let latest = 0
 
-  async function run(offset: number): Promise<void> {
+  /** At most this many pages per read: a store that never came back short cannot hang the page. */
+  const MAX_PAGES = 100
+
+  /**
+   * Read every project, page after page until a short one. A refusal is not an empty list, and
+   * the pages already read were read fine: only the page that failed is missing, and the reason
+   * says so.
+   */
+  async function load(): Promise<void> {
     const stamp = ++latest
     loading.value = true
     error.value = null
-    if (offset === 0) exhausted.value = false
+    let read: ProjectSummary[] = []
     try {
-      const result = await window.api.queryProjects(projectQueryFor(filters.value, offset))
-      if (stamp !== latest) return
-      if (!result.answered) {
-        // A refusal is not an empty list, and the pages already on screen were
-        // read successfully — only the page that failed is missing.
-        if (offset === 0) projects.value = []
-        error.value = result.reason ?? UNREADABLE
-        exhausted.value = true
-        return
+      for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
+        const result = await window.api.queryProjects(projectQueryFor(read.length))
+        if (stamp !== latest) return
+        if (!result.answered) {
+          error.value = result.reason ?? UNREADABLE
+          break
+        }
+        read = [...read, ...result.projects]
+        if (!hasMorePages(result.projects.length)) break
       }
-      projects.value = offset === 0 ? result.projects : [...projects.value, ...result.projects]
-      exhausted.value = !hasMorePages(result.projects.length)
+      projects.value = read
     } catch {
       if (stamp !== latest) return
       error.value = UNREADABLE
-      if (offset === 0) projects.value = []
-      exhausted.value = true
+      projects.value = read
     } finally {
       if (stamp === latest) loading.value = false
     }
   }
 
-  /** Read the first page under the current filters, discarding anything loaded. */
-  function load(): Promise<void> {
-    return run(0)
-  }
-
-  /**
-   * Read the page after the one on screen. Ignored while a page is in flight
-   * and once the list is exhausted, so a scroll sentinel that fires repeatedly
-   * asks for each page exactly once.
-   */
-  function loadMore(): Promise<void> {
-    if (loading.value || exhausted.value) return Promise.resolve()
-    return run(projects.value.length)
-  }
-
-  /** Every filter change restarts at the top: page 2 of the old filter is not page 2 of the new one. */
-  function setSearch(search: string): Promise<void> {
+  /** A search, a tier chip and a sort only change what the page shows: none asks main anything. */
+  function setSearch(search: string): void {
     filters.value = { ...filters.value, search }
-    return load()
   }
 
-  function setTier(tier: MineTier | null): Promise<void> {
+  function setTier(tier: MineTier | null): void {
     filters.value = { ...filters.value, tier }
-    return load()
   }
 
-  function toggleDirection(): Promise<void> {
-    filters.value = { ...filters.value, direction: toggledDirection(filters.value.direction) }
-    return load()
+  function setSort(sort: MineSort): void {
+    filters.value = { ...filters.value, sort }
   }
 
   /**
@@ -173,8 +154,8 @@ export function useProjectBrowse() {
    *
    * The map needs nothing from here: it picks the mine up on its next poll.
    */
-  async function addProject(): Promise<void> {
-    if (adding.value) return
+  async function addProject(): Promise<string | undefined> {
+    if (adding.value) return undefined
     adding.value = true
     addError.value = null
     try {
@@ -187,13 +168,13 @@ export function useProjectBrowse() {
       // until the person answers.
       if (result.outcome === 'worktree-of') {
         worktreeQuestion.value = result.worktreeOf ?? null
-        return
+        return undefined
       }
-      if (result.outcome !== 'added') return
+      if (result.outcome !== 'added') return undefined
       filters.value = defaultBrowseFilters()
       await load()
       const added = result.project
-      if (added === undefined) return
+      if (added === undefined) return result.mineId
       // Prepended rather than sorted in: the list is ordered by last activity
       // (#205), and re-declaring a folder does not touch its last-activity
       // date — this one was not worked in just now, it was re-declared. It
@@ -203,8 +184,10 @@ export function useProjectBrowse() {
       if (!projects.value.some((project) => project.id === added.id)) {
         projects.value = [added, ...projects.value]
       }
+      return result.mineId ?? added.id
     } catch {
       addError.value = UNREACHABLE
+      return undefined
     } finally {
       adding.value = false
     }
@@ -223,24 +206,26 @@ export function useProjectBrowse() {
    * forgotten the project by the time it answers, so a dialog left on screen
    * could only offer a button that no longer works.
    */
-  async function openMainProject(): Promise<void> {
-    if (adding.value) return
+  async function openMainProject(): Promise<string | undefined> {
+    if (adding.value) return undefined
     worktreeQuestion.value = null
     adding.value = true
     addError.value = null
     try {
       const result = await window.api.declareMainProject()
       addError.value = declareFailureNotice(result)
-      if (result.outcome !== 'added') return
+      if (result.outcome !== 'added') return undefined
       filters.value = defaultBrowseFilters()
       await load()
       const added = result.project
-      if (added === undefined) return
+      if (added === undefined) return result.mineId
       if (!projects.value.some((project) => project.id === added.id)) {
         projects.value = [added, ...projects.value]
       }
+      return result.mineId ?? added.id
     } catch {
       addError.value = UNREACHABLE
+      return undefined
     } finally {
       adding.value = false
     }
@@ -298,16 +283,14 @@ export function useProjectBrowse() {
     projects,
     loading,
     error,
-    exhausted,
     adding,
     addError,
     removing,
     removeError,
     load,
-    loadMore,
     setSearch,
     setTier,
-    toggleDirection,
+    setSort,
     addProject,
     worktreeQuestion,
     openMainProject,

@@ -13,7 +13,8 @@ import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapView from './components/map/MapView.vue'
 import MineScene from './components/scene/MineScene.vue'
-import MinesPanel from './components/browse/MinesPanel.vue'
+import MinesList from './components/browse/MinesList.vue'
+import ToastHost from './components/overlay/ToastHost.vue'
 import PanelFrame from './components/shell/PanelFrame.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
@@ -28,6 +29,10 @@ import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useShellFold } from './composables/useShellFold'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
+import { useToasts } from './composables/useToasts'
+import { browseRows } from './lib/browse/boardRows'
+import { mineCardView } from './lib/browse/mineCard'
+import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { useView } from './composables/useView'
@@ -414,16 +419,14 @@ const {
   projects,
   loading: browseLoading,
   error: browseError,
-  exhausted: browseExhausted,
   adding: addingProject,
   addError: addProjectError,
   removing: removingMine,
   removeError: removeMineError,
   load: loadProjects,
-  loadMore: loadMoreProjects,
   setSearch: setProjectSearch,
   setTier: setProjectTier,
-  toggleDirection: toggleProjectOrder,
+  setSort: setProjectSort,
   addProject,
   worktreeQuestion,
   openMainProject,
@@ -507,19 +510,81 @@ function openFromBrowse(projectId: string): void {
 }
 
 /**
- * Remove the mine a card asked about, once MinesPanel has had it confirmed
- * (#169).
+ * Remove the mine a card asked about, once the Mines page has had it confirmed (#169), and say it
+ * happened ("<name> removed", screens/browse.md).
  *
- * Nothing else to do here, and two things deliberately not done. The map is not
- * told: it draws the board, and the poll main publishes as part of the removal
- * no longer carries this mine. Neither is the mine held open beside the list —
- * `syncWithMines` already lets go of an open mine that has left the board, on
- * that same push, and a second path closing it here would be a rule with two
- * homes.
+ * Nothing else to do here, and two things deliberately not done. The map is not told: it draws
+ * the board, and the poll main publishes as part of the removal no longer carries this mine.
+ * Neither is the mine held open beside the list — `syncWithMines` already lets go of an open mine
+ * that has left the board, on that same push, and a second path closing it here would be a rule
+ * with two homes.
  */
-function removeFromBrowse(projectId: string): void {
-  void removeProject(projectId)
+async function removeFromBrowse(projectId: string): Promise<void> {
+  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
+  if (await removeProject(projectId)) showToast(removedToast(name))
 }
+
+/* --- The Mines page (#635) — one block, appended ------------------------- */
+const { showToast } = useToasts()
+
+/**
+ * Every mine as its card, built once per change of the list or the board: the page filters and
+ * orders them itself, so the board rows are joined unfiltered (lib/browse/boardRows.ts).
+ */
+const mineCards = computed(() =>
+  browseRows(projects.value, state.mines, { search: '', tier: null }).map((row) =>
+    mineCardView(row, state.mines)
+  )
+)
+
+function sortProjects(mode: MineSort): void {
+  setProjectSort(mode)
+  showToast(sortToast(mode))
+}
+
+/**
+ * The mine an add just made, until it is on the board (decision log, First run: add a mine: the
+ * folder picked becomes the mine and opens in the mine column at once). Main publishes the new mine
+ * on its next push, so a mine not on the board yet opens as soon as it arrives; the page scrolls
+ * its card into view either way. Adding a mine never opens the Add panel.
+ */
+const pendingOpen = ref<string | null>(null)
+const revealMine = ref<string | null>(null)
+
+function openAdded(mineId: string | undefined): void {
+  if (mineId === undefined) return
+  revealMine.value = mineId
+  if (state.mines.some((mine) => mine.id === mineId)) openFromBrowse(mineId)
+  else pendingOpen.value = mineId
+}
+
+watch(
+  () => state.mines,
+  (mines) => {
+    const id = pendingOpen.value
+    if (id === null || !mines.some((mine) => mine.id === id)) return
+    pendingOpen.value = null
+    openFromBrowse(id)
+  }
+)
+
+async function addMine(): Promise<void> {
+  openAdded(await addProject())
+}
+
+async function adoptMainProject(): Promise<void> {
+  openAdded(await openMainProject())
+}
+
+/** The Music slot says what it did: "Music on" or "Music off", with that icon (components.md, Nav). */
+function toggleMusicAndSay(): void {
+  toggleMusic()
+  showToast(
+    musicPlaying.value ? 'Music on' : 'Music off',
+    musicPlaying.value ? 'music-on' : 'music-off'
+  )
+}
+/* --- end of the #635 block ----------------------------------------------- */
 
 /**
  * Which build is running (see #79). Read from main once on mount, because a
@@ -1082,32 +1147,31 @@ onBeforeUnmount(() => {
               />
             </PanelFrame>
 
-            <PanelFrame v-else-if="page === 'mines'" class="shell-page">
-              <MinesPanel
-                :projects="projects"
-                :mines="state.mines"
-                :search="browseFilters.search"
-                :tier="browseFilters.tier"
-                :direction="browseFilters.direction"
-                :loading="browseLoading"
-                :error="browseError"
-                :exhausted="browseExhausted"
-                :adding="addingProject"
-                :add-error="addProjectError"
-                :removing="removingMine"
-                :remove-error="removeMineError"
-                :worktree-question="worktreeQuestion"
-                @search="setProjectSearch"
-                @tier="setProjectTier"
-                @toggle-direction="toggleProjectOrder"
-                @load-more="loadMoreProjects"
-                @add="addProject"
-                @open="openFromBrowse"
-                @remove="removeFromBrowse"
-                @open-main-project="openMainProject"
-                @dismiss-worktree="dismissWorktreeQuestion"
-              />
-            </PanelFrame>
+            <MinesList
+              v-else-if="page === 'mines'"
+              class="shell-page"
+              :cards="mineCards"
+              :open-id="viewState.mineId"
+              :search="browseFilters.search"
+              :tier="browseFilters.tier"
+              :sort="browseFilters.sort"
+              :loading="browseLoading"
+              :error="browseError"
+              :adding="addingProject"
+              :add-error="addProjectError"
+              :removing="removingMine"
+              :remove-error="removeMineError"
+              :worktree-question="worktreeQuestion"
+              :reveal-id="revealMine"
+              @search="setProjectSearch"
+              @tier="setProjectTier"
+              @sort="sortProjects"
+              @add="addMine"
+              @open="openFromBrowse"
+              @remove="removeFromBrowse"
+              @open-main-project="adoptMainProject"
+              @dismiss-worktree="dismissWorktreeQuestion"
+            />
 
             <!--
           Settings, rebuilt to the design's own screen (#138): the heavy 4px
@@ -1255,7 +1319,7 @@ onBeforeUnmount(() => {
           :lever="false"
           @nav="selectArea"
           @mark="hidePanel"
-          @music="toggleMusic"
+          @music="toggleMusicAndSay"
         />
       </PanelTransition>
 
@@ -1293,6 +1357,7 @@ onBeforeUnmount(() => {
         </div>
       </PanelTransition>
     </div>
+    <ToastHost />
   </MotionConfig>
 </template>
 

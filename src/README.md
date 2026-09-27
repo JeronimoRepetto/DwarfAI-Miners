@@ -72,7 +72,7 @@ src/
     ├── App.vue      the SHELL window's root; types.ts beside it is this process's type barrel
     ├── MessagePanelWindow.vue  the message panel's own window (#162) — the second root, one entry
     ├── assets/      processed art, css, and fonts/ — the one face this repo carries files for
-    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ · controls/ · icon/ — thin, and decide nothing
+    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ · controls/ · icon/ · overlay/ · browse/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
     │                  shell/     the frame every screen sits in: the areas the rail opens onto, how its ground folds into the rail, the one bounded runner every panel's motion goes through and the motion-v engine it drives, the timing that runner derives from that engine, and the presence vocabulary popups and tooltips animate through instead
@@ -83,7 +83,7 @@ src/
     │                  history/   the mine-wide history: tab order, the 50-message cap, the timestamp's spelling
     │                  launch/    starting an agent: the gates, the chips, and whose dwarf arrived
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
-    │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
+    │                  overlay/   the boxes that float above the panel: speech bubbles and the tooltip over a sprite, and the menus, dialogs and toasts over a page
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
     │                  typography/ the chosen faces: a stored identifier, the token that draws it, its name
     │                  controls/  the redesign's shared controls: what the options of a button, input, select, toggle, slider or chip decide — classes, native attributes, readouts
@@ -93,5 +93,5 @@ src/
 ```
 
 `components/` and `lib/` share the family names `shell`, `map`, `scene`, `message`, `history`,
-`launch`, `vault`, `controls` and `icon` on purpose: a component may read from several `lib/` families, but when a name exists in
+`launch`, `vault`, `controls`, `icon`, `overlay` and `browse` on purpose: a component may read from several `lib/` families, but when a name exists in
 both, it means the same thing in both.

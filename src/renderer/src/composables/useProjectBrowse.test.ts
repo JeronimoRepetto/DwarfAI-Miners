@@ -81,21 +81,28 @@ describe('useProjectBrowse first page', () => {
   })
 })
 
+/*
+ * AMENDED for #635 (PR2): a read goes through every page by itself, so the page no longer asks
+ * for the next one as it is scrolled. Removed with the scroll trigger: "asks for nothing more once
+ * the list is exhausted" (a short page ends a read: "stops at the first short page") and "ignores
+ * a second scroll trigger while a page is still in flight" (there is no second trigger; two reads
+ * in flight are "never lets a slower earlier answer overwrite a newer one", below).
+ */
 describe('useProjectBrowse paging', () => {
+  // AMENDED for #635: the read asks for the next page itself (was: loadMore).
   it('asks for the next page from where the loaded list ends', async () => {
     const queryProjects = vi
       .fn()
       .mockResolvedValueOnce(page(BROWSE_PAGE_SIZE))
-      .mockResolvedValueOnce(page(BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE))
+      .mockResolvedValueOnce(page(2, BROWSE_PAGE_SIZE))
     stubQuery(queryProjects)
-    const { load, loadMore } = useProjectBrowse()
-    await load()
-    await loadMore()
+    await useProjectBrowse().load()
     expect(queryProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({ offset: BROWSE_PAGE_SIZE })
     )
   })
 
+  // AMENDED for #635: one read, both pages (was: load, then loadMore).
   it('appends the next page rather than replacing the list', async () => {
     stubQuery(
       vi
@@ -103,101 +110,78 @@ describe('useProjectBrowse paging', () => {
         .mockResolvedValueOnce(page(BROWSE_PAGE_SIZE))
         .mockResolvedValueOnce(page(2, BROWSE_PAGE_SIZE))
     )
-    const { projects, load, loadMore } = useProjectBrowse()
+    const { projects, load } = useProjectBrowse()
     await load()
-    await loadMore()
     expect(projects.value).toHaveLength(BROWSE_PAGE_SIZE + 2)
     expect(projects.value.at(BROWSE_PAGE_SIZE)?.id).toBe(`p${BROWSE_PAGE_SIZE}`)
   })
 
+  // AMENDED for #635: a full page is read past (was: `exhausted` stayed false).
   it('keeps paging while a page comes back full', async () => {
-    stubQuery(vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE)))
-    const { exhausted, load } = useProjectBrowse()
-    await load()
-    expect(exhausted.value).toBe(false)
-  })
-
-  it('stops at the first short page', async () => {
-    stubQuery(vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE - 1)))
-    const { exhausted, load } = useProjectBrowse()
-    await load()
-    expect(exhausted.value).toBe(true)
-  })
-
-  it('asks for nothing more once the list is exhausted', async () => {
-    const queryProjects = vi.fn().mockResolvedValue(page(1))
-    stubQuery(queryProjects)
-    const { load, loadMore } = useProjectBrowse()
-    await load()
-    await loadMore()
-    expect(queryProjects).toHaveBeenCalledTimes(1)
-  })
-
-  it('ignores a second scroll trigger while a page is still in flight', async () => {
-    const pending = deferred<ProjectQueryResult>()
     const queryProjects = vi
       .fn()
       .mockResolvedValueOnce(page(BROWSE_PAGE_SIZE))
-      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(page(0, BROWSE_PAGE_SIZE))
     stubQuery(queryProjects)
-    const { load, loadMore } = useProjectBrowse()
-    await load()
-    const first = loadMore()
-    await loadMore()
+    await useProjectBrowse().load()
     expect(queryProjects).toHaveBeenCalledTimes(2)
-    pending.release(page(0, BROWSE_PAGE_SIZE))
-    await first
+  })
+
+  // AMENDED for #635: a short page ends the read (was: `exhausted` turned true).
+  it('stops at the first short page', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE - 1))
+    stubQuery(queryProjects)
+    await useProjectBrowse().load()
+    expect(queryProjects).toHaveBeenCalledTimes(1)
   })
 })
 
+/*
+ * AMENDED for #635 (PR2): a search, a tier chip and a sort only change what the page shows
+ * (lib/browse/minesList.ts filters and orders the cards), so none of them asks main anything.
+ * Removed: "replaces the list on a filter change rather than appending to it" - a filter no longer
+ * changes the list it reads; what it hides is filterCards' ("keeps the names holding what was
+ * typed", "keeps the mines of the chosen tier" in lib/browse/minesList.test.ts).
+ */
 describe('useProjectBrowse filters', () => {
-  it('sends what was typed and starts again from the top', async () => {
-    const queryProjects = vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE))
+  // AMENDED for #635: what was typed is kept for the page, and main is not asked (was: sent as
+  // nameContains, from the top).
+  it('keeps what was typed without asking main again', async () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(3))
     stubQuery(queryProjects)
-    const { load, setSearch } = useProjectBrowse()
+    const { filters, load, setSearch } = useProjectBrowse()
     await load()
-    await setSearch('Café')
-    expect(queryProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({ nameContains: 'Café', offset: 0 })
-    )
+    setSearch('Café')
+    expect(filters.value.search).toBe('Café')
+    expect(queryProjects).toHaveBeenCalledTimes(1)
   })
 
-  it('replaces the list on a filter change rather than appending to it', async () => {
-    stubQuery(
-      vi.fn().mockResolvedValueOnce(page(BROWSE_PAGE_SIZE)).mockResolvedValueOnce(page(1, 99))
-    )
-    const { projects, load, setSearch } = useProjectBrowse()
-    await load()
-    await setSearch('p99')
-    expect(projects.value.map((project) => project.id)).toEqual(['p99'])
-  })
-
-  it('queries on every keystroke — the design filters in real time', async () => {
+  // AMENDED for #635: real-time filtering needs no query at all (was: one query per keystroke).
+  it('asks main nothing per keystroke — the page filters in real time itself', () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubQuery(queryProjects)
     const { setSearch } = useProjectBrowse()
-    await setSearch('l')
-    await setSearch('la')
-    await setSearch('lal')
-    expect(queryProjects).toHaveBeenCalledTimes(3)
+    setSearch('l')
+    setSearch('la')
+    setSearch('lal')
+    expect(queryProjects).not.toHaveBeenCalled()
   })
 
-  it('filters by the chosen tier', async () => {
-    const queryProjects = vi.fn().mockResolvedValue(page(0))
-    stubQuery(queryProjects)
-    const { setTier } = useProjectBrowse()
-    await setTier('copper')
-    expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ tier: 'copper' }))
+  // AMENDED for #635: the chip is kept for the page (was: sent as the query's tier).
+  it('filters by the chosen tier', () => {
+    const { filters, setTier } = useProjectBrowse()
+    setTier('copper')
+    expect(filters.value.tier).toBe('copper')
   })
 
+  // AMENDED for #635: no chip ever reaches the query (was: only the All chip sent none).
   it('sends no tier at all for the All chip', async () => {
     const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubQuery(queryProjects)
-    const { setTier } = useProjectBrowse()
-    await setTier('gold')
-    await setTier(null)
-    // Asserted as the WHOLE query, so an All chip that quietly sent a tier
-    // key with an undefined value would still fail here.
+    const { setTier, load } = useProjectBrowse()
+    setTier('gold')
+    await load()
+    // Asserted as the WHOLE query, so a chip that quietly sent a tier key would still fail here.
     expect(queryProjects).toHaveBeenLastCalledWith({
       sortBy: 'lastOpenedAt',
       direction: 'desc',
@@ -206,21 +190,18 @@ describe('useProjectBrowse filters', () => {
     })
   })
 
-  it('flips the date order and re-queries from the top', async () => {
-    const queryProjects = vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE))
+  // AMENDED for #635: the order is the page's sort (was: flipping the date order re-queried).
+  it('keeps the order the page asks for, without a query', () => {
+    const queryProjects = vi.fn().mockResolvedValue(page(0))
     stubQuery(queryProjects)
-    const { filters, load, toggleDirection } = useProjectBrowse()
-    await load()
-    await toggleDirection()
-    expect(filters.value.direction).toBe('asc')
-    expect(queryProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({ direction: 'asc', offset: 0 })
-    )
+    const { filters, setSort } = useProjectBrowse()
+    setSort('name')
+    expect(filters.value.sort).toBe('name')
+    expect(queryProjects).not.toHaveBeenCalled()
   })
 
+  // AMENDED for #635: two reads in flight (was: two keystrokes' queries).
   it('never lets a slower earlier answer overwrite a newer one', async () => {
-    // Real-time search fires a query per keystroke, so two are routinely in
-    // flight; the older one landing last must not repaint the older results.
     const slow = deferred<ProjectQueryResult>()
     stubQuery(
       vi
@@ -231,9 +212,9 @@ describe('useProjectBrowse filters', () => {
           projects: [defaultProject({ id: 'newest', name: 'newest' })]
         })
     )
-    const { projects, setSearch } = useProjectBrowse()
-    const stale = setSearch('la')
-    await setSearch('lal')
+    const { projects, load } = useProjectBrowse()
+    const stale = load()
+    await load()
     slow.release({ answered: true, projects: [defaultProject({ id: 'stale', name: 'stale' })] })
     await stale
     expect(projects.value.map((project) => project.id)).toEqual(['newest'])
@@ -263,12 +244,11 @@ describe('useProjectBrowse failures', () => {
     expect(error.value).toBeTruthy()
   })
 
+  // AMENDED for #635: the read stops itself at the refusal (was: loadMore after it asked nothing).
   it('stops paging after a refusal rather than hammering a closed door', async () => {
     const queryProjects = vi.fn().mockResolvedValue({ answered: false, projects: [], reason: 'no' })
     stubQuery(queryProjects)
-    const { load, loadMore } = useProjectBrowse()
-    await load()
-    await loadMore()
+    await useProjectBrowse().load()
     expect(queryProjects).toHaveBeenCalledTimes(1)
   })
 
@@ -279,9 +259,9 @@ describe('useProjectBrowse failures', () => {
         .mockResolvedValueOnce(page(BROWSE_PAGE_SIZE))
         .mockResolvedValueOnce({ answered: false, projects: [], reason: 'no' })
     )
-    const { projects, error, load, loadMore } = useProjectBrowse()
+    // AMENDED for #635: one read meets the refusal on its second page (was: load, then loadMore).
+    const { projects, error, load } = useProjectBrowse()
     await load()
-    await loadMore()
     expect(projects.value).toHaveLength(BROWSE_PAGE_SIZE)
     expect(error.value).toBe('no')
   })
@@ -298,9 +278,10 @@ describe('useProjectBrowse failures', () => {
     stubQuery(
       vi.fn().mockRejectedValueOnce(new Error('bridge is gone')).mockResolvedValueOnce(page(1))
     )
-    const { error, load, setSearch } = useProjectBrowse()
+    // AMENDED for #635: the second read is a read (was: a search, which re-queried).
+    const { error, load } = useProjectBrowse()
     await load()
-    await setSearch('a')
+    await load()
     expect(error.value).toBeNull()
   })
 })
@@ -316,15 +297,15 @@ describe('useProjectBrowse add project', () => {
     expect(declareMine).toHaveBeenCalledWith()
   })
 
+  // AMENDED for #635: a read is every page at once, so there is no later page to have been on.
   it('reads the list again from the top once a folder is adopted', async () => {
-    const queryProjects = vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE))
+    const queryProjects = vi.fn().mockResolvedValue(page(3))
     stubApi({
       queryProjects,
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: 'C:/dev/alpha' })
     })
-    const { load, loadMore, addProject } = useProjectBrowse()
+    const { load, addProject } = useProjectBrowse()
     await load()
-    await loadMore()
     await addProject()
     expect(queryProjects).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
   })
@@ -360,7 +341,8 @@ describe('useProjectBrowse add project', () => {
     const asked = queryProjects.mock.lastCall![0] as Record<string, unknown>
     expect(asked.tier).toBeUndefined()
     expect(asked.nameContains).toBeUndefined()
-    expect(filters.value).toEqual({ search: '', tier: null, direction: 'desc' })
+    // AMENDED for #635: the default order is the page's sort (was: direction 'desc').
+    expect(filters.value).toEqual({ search: '', tier: null, sort: 'tier' })
   })
 
   it('keeps the filters when the picker was closed without a choice', async () => {
@@ -384,8 +366,9 @@ describe('useProjectBrowse add project', () => {
    */
   it('surfaces a folder that was already known, wherever it sat in the list', async () => {
     const known = defaultProject({ id: 'mine:c:/dev/known', name: 'known' })
+    // AMENDED for #635: a short page, since a full one is now read past (was: one full page).
     stubApi({
-      queryProjects: vi.fn().mockResolvedValue(page(BROWSE_PAGE_SIZE)),
+      queryProjects: vi.fn().mockResolvedValue(page(3)),
       declareMine: vi.fn().mockResolvedValue({ outcome: 'added', mineId: known.id, project: known })
     })
     const { projects, addProject } = useProjectBrowse()

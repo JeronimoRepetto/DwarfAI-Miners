@@ -4,6 +4,7 @@ import {
   anatomyAttributes,
   anatomyRoot,
   anatomyTexts,
+  applicableFraming,
   checkFraming,
   checkStates,
   componentOf,
@@ -352,5 +353,32 @@ describe('stage-scoped framing', () => {
       root: ['a: 1'],
       css: ''
     })
+  })
+})
+
+// APPENDED for #635 (PR2): a state that draws only a component's trigger, such as the dialog's
+// Live button, carries none of the classes its component's framing names. A single-class rule no
+// element of the tree carries frames nothing there, so it is dropped rather than refused, and
+// never lands on a root it does not describe.
+describe('applicableFraming', () => {
+  const tree = [
+    { element: 'button.dm-btn.m-mat.dm-btn--danger', attributes: {} },
+    { element: 'span.dm-btn__label', attributes: {} }
+  ]
+  const rule = { selector: '.dm-dialog--static', declarations: 'position: relative' }
+
+  it('drops a single-class rule that no element of the tree carries', () => {
+    expect(applicableFraming([rule], tree)).toEqual([])
+  })
+
+  it('keeps a rule whose class the tree does carry, for checkFraming to judge', () => {
+    const card = [{ element: 'div.dm-dialog.m-mat.dm-dialog--static', attributes: {} }]
+    expect(applicableFraming([rule], card)).toEqual([rule])
+  })
+
+  it('keeps every rule that is not a single class, which checkFraming still judges', () => {
+    const stage = { selector: '.kit-stage .dm-lamp::after', declarations: 'x: 0ms' }
+    const nested = { selector: '.dm-lamp::after', declarations: 'x: 0ms' }
+    expect(applicableFraming([stage, nested], tree)).toEqual([stage, nested])
   })
 })

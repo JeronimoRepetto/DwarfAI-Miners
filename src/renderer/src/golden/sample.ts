@@ -21,6 +21,7 @@ import {
   type Mine,
   type MineTier
 } from '../types'
+import type { TierThresholds } from '../lib/browse/tierInfo'
 
 /** The configuration flags a staged state reads; the sample's config has more. */
 export interface SampleConfig {
@@ -31,6 +32,11 @@ export interface SampleConfig {
 export interface GoldenSample {
   config: SampleConfig
   mines: Mine[]
+  /**
+   * The sample's own illustrative tier floors (`DM.TIER_FLOOR`), in the app's threshold shape, for
+   * the explainer a golden draws from the sample; absent when the sample carries none.
+   */
+  tierThresholds?: TierThresholds
 }
 
 type Row = Record<string, unknown>
@@ -131,11 +137,22 @@ export function adaptSample(dm: unknown): GoldenSample {
     const home = byId.get(String(row.mine)) ?? fail('mine', row.mine)
     home.dwarfs.push(dwarf(row, home))
   }
+  const floor = (dm as { TIER_FLOOR?: Record<string, unknown> }).TIER_FLOOR
   return {
     config: {
       shortcutFailed: config.shortcutFailed === true,
       guildEnabled: config.guildEnabled === true
     },
-    mines
+    mines,
+    ...(floor === undefined
+      ? {}
+      : {
+          tierThresholds: {
+            copperKb: Number(floor.copper),
+            silverKb: Number(floor.silver),
+            goldKb: Number(floor.gold),
+            uraniumKb: Number(floor.uranium)
+          }
+        })
   }
 }

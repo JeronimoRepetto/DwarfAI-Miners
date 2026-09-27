@@ -21,6 +21,82 @@
     "key": "organisms/guild-page#laboral-union"
   },
   {
+    "key": "organisms/page-header#mines"
+  },
+  {
+    "key": "organisms/page-header#title-only"
+  },
+  {
+    "key": "organisms/mines-list#live"
+  },
+  {
+    "key": "organisms/mines-list#empty-first-run"
+  },
+  {
+    "key": "molecules/mine-card#needs-you"
+  },
+  {
+    "key": "molecules/mine-card#default"
+  },
+  {
+    "key": "molecules/mine-card#hover"
+  },
+  {
+    "key": "molecules/mine-card#pressed"
+  },
+  {
+    "key": "molecules/mine-card#open"
+  },
+  {
+    "key": "molecules/mine-card#open-and-needs-you"
+  },
+  {
+    "key": "molecules/mine-card#measuring"
+  },
+  {
+    "key": "molecules/mine-card#working-not-recorded-yet"
+  },
+  {
+    "key": "molecules/mine-card#not-enterable",
+    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the app cannot reach this state yet, having no folder-missing fact on the wire (PR2 question)"
+  },
+  {
+    "key": "molecules/mine-card#max-tier"
+  },
+  {
+    "key": "organisms/tier-info#content"
+  },
+  {
+    "key": "organisms/tier-info#live"
+  },
+  {
+    "key": "molecules/dialog#confirm-danger"
+  },
+  {
+    "key": "molecules/dialog#typed-confirmation"
+  },
+  {
+    "key": "molecules/dialog#live"
+  },
+  {
+    "key": "molecules/menu#mine-card"
+  },
+  {
+    "key": "molecules/menu#danger-hovered"
+  },
+  {
+    "key": "molecules/menu#live"
+  },
+  {
+    "key": "molecules/toast#static"
+  },
+  {
+    "key": "molecules/toast#live"
+  },
+  {
+    "key": "molecules/toast#shown"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {

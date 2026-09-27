@@ -146,3 +146,19 @@ describe('silenceMs', () => {
     expect(() => silenceMs('soon')).toThrow(/silence "soon"/)
   })
 })
+
+// APPENDED for #635 (PR2): the tier explainer's ranges come from the thresholds it is given, and
+// the design's sample carries its own illustrative floors on `DM.TIER_FLOOR`, beside `DM.data`.
+describe('adaptSample tier floors', () => {
+  it('reads the sample’s tier floors as the app’s threshold shape', () => {
+    const sample = adaptSample({
+      ...(dm({}) as object),
+      TIER_FLOOR: { bronze: 0, copper: 10, silver: 20, gold: 30, uranium: 40 }
+    })
+    expect(sample.tierThresholds).toEqual({ copperKb: 10, silverKb: 20, goldKb: 30, uraniumKb: 40 })
+  })
+
+  it('has none when the sample carries none, rather than inventing any', () => {
+    expect(adaptSample(dm({})).tierThresholds).toBeUndefined()
+  })
+})
