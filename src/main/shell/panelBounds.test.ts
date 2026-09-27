@@ -32,6 +32,7 @@ import {
   detachedMessagePanelBounds,
   detachedMessagePanelWidth,
   dockSlotWidth,
+  layoutThatFits,
   messagePanelAnchorOf,
   messagePanelBounds,
   messagePanelPlacement,
@@ -1073,5 +1074,45 @@ describe('one height for the mine column, on both sides', () => {
         }
       }
     }
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). The renderer draws the columns main REPORTS, so a window that did
+ * not reach the width asked of it — a window manager refusing the grow, a compositor clamping it —
+ * must be reported as the layout it can hold. Otherwise the renderer draws the mine column into a
+ * window without room for it, and the page, the one column that gives way, is cut.
+ */
+describe('the layout a window can hold', () => {
+  const area = { x: 0, y: 0, width: 2560, height: 1392 }
+  const zoom = uiScale(area)
+  const widthOf = (layout: { mineOpen: boolean; dockOpen: boolean }): number =>
+    panelWidth(area, layout, 'win32', zoom)
+
+  it('keeps every column of a window that got the width it asked for', () => {
+    for (const layout of [OPEN, OPEN_WITH_MINE, OPEN_WITH_DOCK, OPEN_WITH_BOTH]) {
+      expect(layoutThatFits(area, layout, widthOf(layout), 'win32', zoom)).toEqual(layout)
+    }
+  })
+
+  it('drops the mine column from a window that refused to grow for it', () => {
+    expect(layoutThatFits(area, OPEN_WITH_MINE, widthOf(OPEN), 'win32', zoom)).toEqual(OPEN)
+  })
+
+  it('drops the dock before the mine when the window only grew as far as the mine', () => {
+    expect(layoutThatFits(area, OPEN_WITH_BOTH, widthOf(OPEN_WITH_MINE), 'win32', zoom)).toEqual(
+      OPEN_WITH_MINE
+    )
+  })
+
+  it('never adds a column nobody asked for, however wide the window stayed', () => {
+    expect(layoutThatFits(area, OPEN, widthOf(OPEN_WITH_BOTH), 'win32', zoom)).toEqual(OPEN)
+  })
+
+  it('keeps the narrow-screen rule: a window clamped to its display holds what it was asked', () => {
+    const portrait = { x: 0, y: 0, width: 1080, height: 1880 }
+    const clamped = panelWidth(portrait, OPEN_WITH_BOTH, 'win32')
+    expect(clamped).toBe(portrait.width)
+    expect(layoutThatFits(portrait, OPEN_WITH_BOTH, clamped, 'win32')).toEqual(OPEN_WITH_BOTH)
   })
 })

@@ -16,12 +16,13 @@ import type {
   PanelLayoutRequest
 } from '../domain/types'
 import { MESSAGE_PANEL_SURFACE, RENDERER_SURFACE_PARAM } from '../domain/types'
-import { currentPlatform } from '../platform/platform'
+import { currentPlatform, type Platform } from '../platform/platform'
 import { panelScreenArea, type ScreenRect } from '../platform/screenArea'
 import { emptyMessagePanel } from './messagePanelState'
 import {
   clampMessagePanelBounds,
   detachedMessagePanelBounds,
+  layoutThatFits,
   messagePanelAnchorOf,
   messagePanelPlacement,
   panelBounds,
@@ -42,6 +43,15 @@ const DEFAULT_PANEL_EDGE: PanelEdge = 'right'
  * copy that could disagree with the bounds Electron actually applied.
  */
 let layout: PanelLayout = { edge: DEFAULT_PANEL_EDGE, mineOpen: false, dockOpen: false }
+
+/**
+ * The columns the window, as it last ended up, can actually hold (#635, window fit): `layout`
+ * less whatever a refused grow left no room for. What the renderer is told, so it never draws a
+ * column into a window without room for it; `layout` stays the request, so the next fit — a
+ * show, a display change — asks for the whole of it again. `null` while no window has been
+ * fitted to the current request, when the request is all there is to report.
+ */
+let held: Pick<PanelLayout, 'mineOpen' | 'dockOpen'> | null = null
 
 /** Flip the close handler from "hide" to "really close" (called on before-quit). */
 export function markQuitting(): void {
@@ -304,6 +314,46 @@ export function applyUiScale(target: UiScaleTarget, area: ScreenRect): number {
   return target.getZoomFactor()
 }
 
+/** The slice of BrowserWindow a whole fit needs: its bounds and its page's zoom. */
+export interface ShellWindowTarget extends PanelBoundsTarget {
+  webContents: UiScaleTarget
+}
+
+/** What one fit of the shell window came to, in the display's own pixels. */
+export interface ShellFit {
+  /** The columns the window it ended up as can hold, which is what the renderer is told. */
+  held: Pick<PanelLayout, 'mineOpen' | 'dockOpen'>
+  /** The zoom the page actually has. */
+  zoom: number
+  requestedWidth: number
+  appliedWidth: number
+}
+
+/**
+ * Fit the shell window to a layout, and report what it can hold (#635, window fit).
+ *
+ * The zoom first, because the mine column is derived at the height it leaves
+ * the page; then the bounds sized at that zoom; then the read-back. A window
+ * that did not reach the width is asked once more for the layout it CAN hold,
+ * so the docked edge stays against the screen and no column is drawn into room
+ * that is not there (see `layoutThatFits`).
+ */
+export function fitShellWindow(
+  target: ShellWindowTarget,
+  area: ScreenRect,
+  layout: PanelLayout,
+  platform?: Platform
+): ShellFit {
+  const zoom = applyUiScale(target.webContents, area)
+  const requested = panelBounds(area, layout.edge, layout, platform, zoom)
+  let applied = applyPanelBounds(target, requested)
+  const held = layoutThatFits(area, layout, applied.width, platform, zoom)
+  if (held.mineOpen !== layout.mineOpen || held.dockOpen !== layout.dockOpen) {
+    applied = applyPanelBounds(target, panelBounds(area, layout.edge, held, platform, zoom))
+  }
+  return { held, zoom, requestedWidth: requested.width, appliedWidth: applied.width }
+}
+
 /**
  * The slice of BrowserWindow a raise needs. Narrow for the reason the three
  * above are: the whole of the decision is testable with a fake that records
@@ -365,7 +415,18 @@ function currentScreenArea(): ScreenRect {
 
 /** What the shell window is right now (see #90) — read, never requested. */
 export function panelLayout(): PanelLayout {
-  return { ...layout }
+  return { ...layout, ...held }
+}
+
+/**
+ * Fit the shell window to the current layout on the display it is on, and hold what it can
+ * hold (#635). The one path every resize of the shell takes — a layout change, a show, a
+ * display change — so the renderer is never told a layout the window was not given.
+ */
+function fitShell(): void {
+  if (mainWindow === null) return
+  const area = currentScreenArea()
+  held = fitShellWindow(mainWindow, area, layout, currentPlatform()).held
 }
 
 /**
@@ -393,14 +454,13 @@ export function setPanelLayout(request: PanelLayoutRequest): PanelLayout {
     mineOpen: request.mineOpen,
     dockOpen: request.dockOpen
   }
+  held = null
   if (mainWindow !== null) {
-    const area = currentScreenArea()
     // Re-scaled as well as re-sized: a layout change can move the window onto
     // another display, and the zoom belongs to the display rather than to the
-    // window that happens to be on it.
-    const zoom = applyUiScale(mainWindow.webContents, area)
-    // Sized with the zoom the page GOT, which is the height its mine column is drawn at (#635).
-    applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout, undefined, zoom))
+    // window that happens to be on it. Sized with the zoom the page GOT, and
+    // reported as what the window it became can hold (#635).
+    fitShell()
     // The panel stands beside the shell, so a shell that moved or changed
     // width moved the free edge the panel is placed against (#162) — and a
     // layout change can carry the pair onto another display, which is the
@@ -543,9 +603,7 @@ export function showPanel(): void {
   // resolution change, a docking event or a display being unplugged would
   // otherwise come back sized for a screen that is no longer there — and, since
   // #153, scaled for one too.
-  const area = currentScreenArea()
-  const zoom = applyUiScale(mainWindow.webContents, area)
-  applyPanelBounds(mainWindow, panelBounds(area, layout.edge, layout, undefined, zoom))
+  fitShell()
   mainWindow.show()
   // Shown is not RAISED (#165): the same frameless-transparent window that a
   // click does not bring forward can also come back underneath whatever had the

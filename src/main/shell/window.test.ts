@@ -31,6 +31,7 @@ import {
   loadPanelPage,
   applyUiScale,
   buildMainWindowOptions,
+  fitShellWindow,
   // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
   focusMessagePanelOnSelection,
   type MessagePanelFocusTarget,
@@ -457,6 +458,58 @@ describe('applyPanelBounds', () => {
   it('reports the REAL rectangle, never the wish, when the window manager refuses', () => {
     const { target } = fakeBoundsWindow({ honorsChanges: false })
     expect(applyPanelBounds(target, PANEL_BOUNDS)).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+  })
+})
+
+/*
+ * ADDED for #635 (window fit). One pass over the shell window: its zoom, its bounds sized at that
+ * zoom, and the layout the window it ended up as can actually hold — the one the renderer is
+ * told, so that it never draws a column into a window that has no room for it.
+ */
+describe('fitShellWindow', () => {
+  const area = { x: 0, y: 0, width: 2560, height: 1392 }
+  const layout = { edge: 'right' as const, mineOpen: true, dockOpen: false }
+
+  function fakeShell(options: { widest?: number } = {}) {
+    let real = { x: 0, y: 0, width: 0, height: 0 }
+    const asked: number[] = []
+    let zoom = 1
+    return {
+      asked,
+      target: {
+        setBounds: (bounds: { x: number; y: number; width: number; height: number }) => {
+          asked.push(bounds.width)
+          real = { ...bounds, width: Math.min(bounds.width, options.widest ?? Infinity) }
+        },
+        getBounds: () => real,
+        webContents: {
+          setZoomFactor: (factor: number) => {
+            zoom = factor
+          },
+          getZoomFactor: () => zoom,
+          getZoomMode: () => 'isolated' as const,
+          setZoomMode: () => undefined
+        }
+      }
+    }
+  }
+
+  it('holds the whole layout in a window that took the width it was asked', () => {
+    const { target } = fakeShell()
+    const fit = fitShellWindow(target, area, layout, 'win32')
+    expect(fit.held).toEqual({ mineOpen: true, dockOpen: false })
+    expect(fit.appliedWidth).toBe(fit.requestedWidth)
+    expect(fit.zoom).toBe(uiScale(area))
+  })
+
+  it('reports the page alone, sized for it, when the window refused to grow for the mine', () => {
+    const { target, asked } = fakeShell({ widest: 668 })
+    const fit = fitShellWindow(target, area, layout, 'win32')
+    expect(fit.held).toEqual({ mineOpen: false, dockOpen: false })
+    expect(fit.requestedWidth).toBe(1062)
+    // Asked again for the layout it holds, so the docked edge stays where the design puts it.
+    expect(asked).toEqual([1062, 668])
+    expect(fit.appliedWidth).toBe(668)
   })
 })
 

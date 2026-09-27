@@ -256,6 +256,38 @@ export function panelWidth(
 }
 
 /**
+ * The layout a window this wide can actually hold (#635, window fit).
+ *
+ * The renderer draws the columns main reports, so a window that did not reach
+ * the width asked of it — a window manager refusing the grow, a compositor
+ * clamping it — is reported as the widest layout it has room for, never as the
+ * request: drawn into a window without room, the mine column would push the
+ * page, the one column that gives way, off the window's free side.
+ *
+ * The dock goes before the mine, because what it holds today is that mine's
+ * history; the nav and the page are always there. A column nobody asked for is
+ * never added, and the narrow-screen rule is unchanged: a window `panelWidth`
+ * itself clamped to its display was given exactly what it was asked for.
+ */
+export function layoutThatFits(
+  area: ScreenRect,
+  layout: Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'>,
+  appliedWidth: number,
+  platform?: Platform,
+  zoom: number = uiScale(area)
+): Pick<PanelLayoutRequest, 'mineOpen' | 'dockOpen'> {
+  const candidates = [
+    { mineOpen: layout.mineOpen, dockOpen: layout.dockOpen },
+    { mineOpen: layout.mineOpen, dockOpen: false },
+    { mineOpen: false, dockOpen: false }
+  ]
+  const held = candidates.find(
+    (candidate) => panelWidth(area, candidate, platform, zoom) <= appliedWidth
+  )
+  return held ?? { mineOpen: false, dockOpen: false }
+}
+
+/**
  * The window rectangle for this layout on this display.
  *
  * The docked edge never moves: a right-docked panel keeps its right edge against
