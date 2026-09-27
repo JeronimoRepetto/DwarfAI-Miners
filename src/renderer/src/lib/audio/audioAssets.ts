@@ -27,6 +27,9 @@ import trackWhimsicalTheatricalCircus from '../../assets/audio/music/whimsical-t
 
 import sfxClick from '../../assets/audio/sfx/ui-click.mp3'
 import sfxPanel from '../../assets/audio/sfx/panel-open-close.mp3'
+import sfxQuestion from '../../assets/audio/sfx/attention-question.mp3'
+import sfxPermission from '../../assets/audio/sfx/attention-permission.mp3'
+import sfxFinished from '../../assets/audio/sfx/attention-finished.mp3'
 
 import sfxPickaxe from '../../assets/audio/sfx/pickaxe-strike.mp3'
 import sfxGrind from '../../assets/audio/sfx/worker2-grind.mp3'
@@ -92,7 +95,7 @@ export const DWARF_VOICE_SRC = {
 } satisfies Record<DwarfRole, string>
 
 /**
- * The two interface sounds (#323), under `assets/audio/sfx/` beside the music
+ * The interface sounds (#323) and the three attention cues (#635), under `assets/audio/sfx/` beside the music
  * rather than under the art tree the mine beds live in: these answer a press on
  * the shell's own chrome, and nothing about them belongs to a mine.
  *
@@ -102,7 +105,10 @@ export const DWARF_VOICE_SRC = {
  */
 export const UI_SFX_SRC = {
   click: sfxClick,
-  panel: sfxPanel
+  panel: sfxPanel,
+  question: sfxQuestion,
+  permission: sfxPermission,
+  finished: sfxFinished
 } satisfies Record<UiSfx, string>
 
 /**
