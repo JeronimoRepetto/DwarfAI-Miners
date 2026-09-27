@@ -1095,7 +1095,8 @@ const settings: Render = (sample, _texts, attributes) => {
               musicAtStartup: switchOn('Play music at startup', true),
               musicVolume: volume('Music volume', 0.1),
               ambienceVolume: volume('Mine ambience volume', 0.35),
-              voiceVolume: volume('Dwarf voice and interface sound volume', 0.7)
+              voiceVolume: volume('Dwarf voice and interface sound volume', 0.7),
+              notificationSounds: switchOn('Play notification sounds', true)
             },
             notificationsEnabled: switchOn('Show system notifications', true),
             typography: custom

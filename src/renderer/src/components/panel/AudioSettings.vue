@@ -5,7 +5,8 @@ import VolumeSlider from '../controls/VolumeSlider.vue'
 import SettingsRow from './SettingsRow.vue'
 
 /**
- * Settings › Sound (#174, #173, #635): music at startup, and the three volumes.
+ * Settings › Sound (#174, #173, #635): music at startup, the attention cues' switch, and the three
+ * volumes.
  *
  * The third row is `Effects` rather than `Voices` since #323: the slider it draws scales the
  * interface sounds as well as the dwarf barks, because they are one channel (see volume.ts), and a
@@ -14,9 +15,10 @@ import SettingsRow from './SettingsRow.vue'
  * be a migration bought for nothing.
  *
  * The rows are the design's (screens/settings.md, W6: "Sound is music at startup and the three
- * sliders"); the copy is today's. The design's "Notification sounds" row is not drawn: it switches
- * the attention cues of a later slice, which the app does not play yet, and a switch that changes
- * nothing is a control that lies (PR5 question).
+ * sliders"); the copy is today's, except the "Notification sounds" row, whose copy is the design's
+ * (copy.md, Sound) because the app had none. That switch is the ONE control that turns the
+ * attention cues off (sound.md, "Attention cues are global") — a mine's own mute never does — and it
+ * ships with the cues it switches, not before them (PANEL-QUESTIONS Q18).
  *
  * Presentational, like every settings piece: the stored settings arrive as a prop and every intent
  * leaves as one `change` event carrying only the field that moved, so App.vue keeps owning the IPC
@@ -61,6 +63,19 @@ function ask(field: Volume, value: number): void {
           : 'DwarfAI-Miners launches silent; the shell button starts the music'
       "
       @update:on="emit('change', { musicAtStartup: $event })"
+    />
+  </SettingsRow>
+  <SettingsRow
+    label="Notification sounds"
+    help="Plays a soft sound when a dwarf asks a question, asks for a permission or finishes its turn. Off, those moments stay silent; the rest of the sound is unchanged."
+  >
+    <ToggleSwitch
+      class="notification-sounds"
+      label="Play notification sounds"
+      held
+      :on="props.settings.notificationSounds"
+      title="A soft sound when a dwarf asks, needs a permission or finishes its turn"
+      @update:on="emit('change', { notificationSounds: $event })"
     />
   </SettingsRow>
   <SettingsRow label="Music" stack>
