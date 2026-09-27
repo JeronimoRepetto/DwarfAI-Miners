@@ -50,6 +50,14 @@ import SceneDwarf from './SceneDwarf.vue'
  * "z" replace them), bubble stacking, the red halo tint, the walk and its arrival gate, the
  * departure walk, pick sparks, the strike glow and its side, per-depth sizing, and the
  * "activating" dim nothing fed since #162.
+ *
+ * Went with them, whole, their subjects retired by the same design: lib/overlay/bubbles.test.ts
+ * (the talk bubble's board, its time-to-live and its hold) and lib/overlay/bubbleLayout.test.ts
+ * (stacking bubbles that share a station), since nothing floats over a dwarf but its "?"; and
+ * VaultChip.test.ts (the vault chip on the interior's bottom edge, its token total and its
+ * per-material piles), whose place is the footer's vault strip (VaultStrip.test.ts, and "shows
+ * the mine's ore in its footer strip" above). DwarfTooltip.test.ts's guarantees are listed in
+ * DwarfTip.test.ts.
  */
 
 afterEach(() => {

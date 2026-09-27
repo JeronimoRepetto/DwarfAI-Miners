@@ -46,7 +46,8 @@ import pageSource from './MapPage.vue?raw'
  *   paints whichever variant it is handed.
  * - the vault (the whole ledger by material, an empty vault said rather than hidden): here, on the
  *   totals plate, and lib/map/mapPage.test.ts ("mapTotals"). The raw token total VaultChip showed
- *   beside it is not on the redesigned plate; VaultChip stays in the mine interior.
+ *   beside it is not on the redesigned plate; VaultChip went with the old mine interior (#635,
+ *   PR4), whose footer is the same vault strip.
  * - material info (the info button, opening and closing the explainer): here, as "Tiers and ore",
  *   which opens the merged TierInfo (TierInfo.test.ts and lib/browse/tierInfo.test.ts have every
  *   material's grain in order, which MaterialInfoModal's two table tests pinned). Its Esc and its

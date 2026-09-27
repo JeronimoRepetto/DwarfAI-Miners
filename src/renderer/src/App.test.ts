@@ -11,7 +11,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 // `.map-view` with `.mine-marker`s), in every test below that reads the map.
 import MapPage from './components/map/MapPage.vue'
 import MinesList from './components/browse/MinesList.vue'
-import MineScene from './components/scene/MineScene.vue'
+import MineColumn from './components/scene/MineColumn.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
@@ -120,8 +120,8 @@ const GUILD_ON = { getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnable
  *
  * So the rule for this stub: anything the app awaits resolves the shape its
  * contract declares, and anything fire-and-forget with no return (`retireDwarf`
- * is `ipcRenderer.send`) is a plain spy. The same discipline
- * MineScene.test.ts's own stub states in as many words.
+ * is `ipcRenderer.send`) is a plain spy. The same discipline MineScene.test.ts's own stub stated
+ * in as many words, before that file went with its scene (#635).
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
@@ -478,7 +478,7 @@ describe('App panel motion (#164)', () => {
     await finishAnimations()
     // The design's own mine mock: a mine alone on the amber ground.
     expect(wrapper.find('.shell').classes()).toContain('is-mine')
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     api.setPanelLayout.mockClear()
     // The window is occluded from here on, so not one of the leaves this
     // snapshot starts will ever report itself finished. Before #266 that left
@@ -491,7 +491,7 @@ describe('App panel motion (#164)', () => {
     await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
     expect(wrapper.find('.shell').classes()).toContain('is-rail')
   })
 
@@ -517,10 +517,10 @@ describe('App panel motion (#164)', () => {
      */
     expect(animated()).toEqual([])
     await finishAnimations()
-    const scene = wrapper.findComponent(MineScene).vm
+    const scene = wrapper.findComponent(MineColumn).vm
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await finishAnimations()
-    expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
+    expect(wrapper.findComponent(MineColumn).vm.$).toBe(scene.$)
     /*
      * AMENDED for #162 (was: 'add' animating the dock, then 'history' and
      * 'select' each crossfading two panels in it). Two of the three panels
@@ -540,19 +540,19 @@ describe('App panel motion (#164)', () => {
     await flushPromises()
     expect(animated()).toEqual(['message-dock'])
     await finishAnimations()
-    expect(wrapper.findComponent(MineScene).vm.$).toBe(scene.$)
+    expect(wrapper.findComponent(MineColumn).vm.$).toBe(scene.$)
     api.setPanelLayout.mockClear()
-    scene.$emit('back')
+    scene.$emit('close')
     await flushPromises()
     // AMENDED for #388 (was: `['shell-mine']`). The mine column is still held
     // standing while the motion runs — that is what the next line asserts — but
     // the motion is the shell folding over it, not a fade of its own.
     expect(animated()).toEqual(['shell'])
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(api.setPanelLayout).not.toHaveBeenCalled()
     await finishAnimations()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: false })
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 
   /*
@@ -1258,7 +1258,7 @@ describe('App mines browse', () => {
     await wrapper.find('.dm-card__hit').trigger('click')
     // The scene enters only after main reserves its native column (#164).
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
   })
 
   // AMENDED for #635 (PR2): the header's "Add a mine" (was: `.add-control`).
@@ -1467,7 +1467,7 @@ describe('App concurrent mine', () => {
 
   it('keeps the map behind the mine it was entered from', async () => {
     const { wrapper } = await openMine()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
@@ -1482,7 +1482,7 @@ describe('App concurrent mine', () => {
     await flushPromises()
     // AMENDED for #635 (PR2): `.dm-mines` (was: `.mines-panel`).
     expect(wrapper.find('.dm-mines').exists()).toBe(true)
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
   })
 
   /*
@@ -1498,7 +1498,7 @@ describe('App concurrent mine', () => {
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
     expect(wrapper.find('.dm-mappage').exists()).toBe(false)
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     // The navigation stack stays: it is how the panel comes back.
     expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
@@ -1526,7 +1526,7 @@ describe('App concurrent mine', () => {
     expect(wrapper.find('.shell').classes()).toContain('is-pages')
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.shell').classes()).toContain('is-rail')
   })
@@ -1544,7 +1544,7 @@ describe('App concurrent mine', () => {
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
     expect(marks()).toBe(1)
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
     expect(marks()).toBe(1)
   })
@@ -1571,7 +1571,7 @@ describe('App concurrent mine', () => {
     const { wrapper } = await openMine()
     await wrapper.find('.dm-nav__mark').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(wrapper.find('.dm-mappage').exists()).toBe(true)
     expect(wrapper.find('.dm-nav').exists()).toBe(true)
   })
@@ -1580,23 +1580,23 @@ describe('App concurrent mine', () => {
     const { wrapper, api } = await openMine()
     await wrapper.find('.edge-rail').trigger('click')
     await flushPromises()
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: false })
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 
   it('closes the mine from the design’s round close, leaving the panel behind it', async () => {
     const { wrapper } = await openMine()
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
     expect(wrapper.find('.dm-mappage').exists()).toBe(true)
   })
 
   it('gives the window its column back when the mine closes', async () => {
     const { wrapper, api } = await openMine()
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: true, mineOpen: false })
   })
@@ -1608,7 +1608,7 @@ describe('App concurrent mine', () => {
     const push = api.onMinesUpdated.mock.calls[0]![0] as (snapshot: unknown) => void
     push({ mines: [], tokensObserved: 0 })
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 })
 
@@ -1657,7 +1657,7 @@ describe('App selecting a dwarf (#162)', () => {
     const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
     expect(api.setMessagePanel).not.toHaveBeenCalled()
 
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
     // Naming the mine as well as the dwarf: the panel window is opened on a
@@ -1669,14 +1669,14 @@ describe('App selecting a dwarf (#162)', () => {
     })
     // The mine is still drawn, and its crew still in it: the panel is beside
     // the shell now, not over it.
-    expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
   })
 
   it('draws the halo from the state main reported, never from the click', async () => {
     const { wrapper } = await openMineWith([OBSERVED_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.dwarf-sprite').classes()).toContain('is-selected')
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('true')
   })
 
   it('leaves the halo off a dwarf main refused to open the panel on', async () => {
@@ -1686,21 +1686,21 @@ describe('App selecting a dwarf (#162)', () => {
     const { wrapper } = await openMineWith([OBSERVED_DWARF], {
       setMessagePanel: vi.fn().mockResolvedValue(CLOSED_PANEL)
     })
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.dwarf-sprite').classes()).not.toContain('is-selected')
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
   })
 
   it('closes the panel when the same dwarf is clicked a second time', async () => {
     const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
     expect(api.setMessagePanel).toHaveBeenLastCalledWith(CLOSED_PANEL)
-    expect(wrapper.find('.dwarf-sprite').classes()).not.toContain('is-selected')
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
   })
 
   it('halos a dwarf the panel window opened on by itself', async () => {
@@ -1711,7 +1711,7 @@ describe('App selecting a dwarf (#162)', () => {
     const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
     push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
     await flushPromises()
-    expect(wrapper.find('.dwarf-sprite').classes()).toContain('is-selected')
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('true')
   })
 
   it('draws the delivery marker the panel window published', async () => {
@@ -1719,13 +1719,14 @@ describe('App selecting a dwarf (#162)', () => {
     // travels; a second store in this window could only disagree with the one
     // that is actually watching for a reaction.
     const { wrapper, api } = await openMineWith([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }])
-    expect(wrapper.find('.send-result').exists()).toBe(false)
+    // AMENDED for #635: the mark is the redesigned dwarf's own (data-mark), not the old badge.
+    expect(wrapper.find('button.dm-dwarf').attributes('data-mark')).toBeUndefined()
 
     const push = api.onDwarfDeliveryReport.mock.calls[0]![0] as (report: unknown) => void
     push({ send: { 'claude:s1': { phase: 'delivered', via: 'terminal' } }, kick: {} })
     await flushPromises()
 
-    expect(wrapper.find('.send-result').classes()).toContain('is-delivered')
+    expect(wrapper.find('button.dm-dwarf').attributes('data-mark')).toBe('delivered')
   })
 
   it('clears a marker the panel window stopped reporting', async () => {
@@ -1735,22 +1736,22 @@ describe('App selecting a dwarf (#162)', () => {
     const push = api.onDwarfDeliveryReport.mock.calls[0]![0] as (report: unknown) => void
     push({ send: { 'claude:s1': { phase: 'delivered', via: 'terminal' } }, kick: {} })
     await flushPromises()
-    expect(wrapper.find('.send-result').exists()).toBe(true)
+    expect(wrapper.find('button.dm-dwarf').attributes('data-mark')).toBe('delivered')
 
     push({ send: {}, kick: {} })
     await flushPromises()
 
-    expect(wrapper.find('.send-result').exists()).toBe(false)
+    expect(wrapper.find('button.dm-dwarf').attributes('data-mark')).toBeUndefined()
   })
 
   it('still lets go of the panel with the mine it was opened in', async () => {
     // The panel outlives its dwarf, not its mine: closing the mine is the
     // person's own act, and a conversation beside nothing has no place.
     const { wrapper, api } = await openMineWith([OBSERVED_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
 
     expect(api.setMessagePanel).toHaveBeenLastCalledWith(CLOSED_PANEL)
@@ -1789,7 +1790,7 @@ describe('App add action (#162)', () => {
   it('asks main for the launch surface, mine still standing', async () => {
     const { wrapper, api } = await openMine()
 
-    await wrapper.find('.add-agent').trigger('click')
+    await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
     await flushPromises()
 
     // A launch names the mine and no dwarf: there is none yet.
@@ -1798,16 +1799,16 @@ describe('App add action (#162)', () => {
       mineId: MINE.id,
       dwarfId: ''
     })
-    expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
   })
 
   it('puts the mine History panel away, which is the one panel still docked here', async () => {
     const { wrapper } = await openMine()
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-panel').exists()).toBe(true)
 
-    await wrapper.find('.add-agent').trigger('click')
+    await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.history-panel').exists()).toBe(false)
@@ -1911,8 +1912,8 @@ describe('App exclusive selection (#165)', () => {
   /** Every sprite currently wearing the selection halo. */
   function selectedSprites(wrapper: VueWrapper) {
     return wrapper
-      .findAll('.dwarf-sprite')
-      .filter((sprite) => sprite.classes().includes('is-selected'))
+      .findAll('button.dm-dwarf')
+      .filter((sprite) => sprite.attributes('aria-pressed') === 'true')
   }
 
   /**
@@ -1924,8 +1925,8 @@ describe('App exclusive selection (#165)', () => {
    */
   function hitFor(wrapper: VueWrapper, name: string) {
     const hit = wrapper
-      .findAll('.dwarf-hit')
-      .find((candidate) => candidate.attributes('aria-label')?.startsWith(`Select ${name} `))
+      .findAll('button.dm-dwarf')
+      .find((candidate) => candidate.attributes('aria-label')?.startsWith(`${name}, `))
     if (hit === undefined) throw new Error(`no dwarf named ${name} is on the floor`)
     return hit
   }
@@ -2056,7 +2057,7 @@ describe('App mine history', () => {
     })
     expect(wrapper.find('.history-panel').exists()).toBe(false)
 
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
     expect(api.getMineHistory).toHaveBeenCalledWith(MINE.id)
@@ -2065,12 +2066,12 @@ describe('App mine history', () => {
     expect(wrapper.find('.bubble').text()).toBe('Done long ago.')
     expect(wrapper.find('.history-timestamp').text()).toBe('September 04, 2026 09:05')
     // The mine stays visible underneath.
-    expect(wrapper.find('.mine-scene .interior').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
   })
 
   it('reads history for a mine with no crew at all — that is the point of the panel', async () => {
     const { wrapper, api } = await openMineWith([])
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
@@ -2084,7 +2085,7 @@ describe('App mine history', () => {
 
   it("re-reads when a crew member's transcript moves, and not on a poll that changes nothing", async () => {
     const { wrapper, api } = await openMineWith([CREW_DWARF])
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
 
@@ -2105,7 +2106,7 @@ describe('App mine history', () => {
 
   it('re-reads when a dwarf leaves the mine, since its last words land with its exit', async () => {
     const { wrapper, api } = await openMineWith([CREW_DWARF])
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
     pushFrom(api)({ mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
@@ -2122,7 +2123,7 @@ describe('App mine history', () => {
       .mockResolvedValueOnce({ readable: true, speakers: [SPEAKER] })
       .mockImplementationOnce(() => new Promise((resolve) => (release = resolve)))
     const { wrapper, api } = await openMineWith([CREW_DWARF], { getMineHistory })
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
     pushFrom(api)({
@@ -2147,10 +2148,10 @@ describe('App mine history', () => {
    */
   it('keeps one conversation surface at a time, across the two windows', async () => {
     const { wrapper, api } = await openMineWith([CREW_DWARF])
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
     expect(api.setMessagePanel).toHaveBeenLastCalledWith({
       surface: 'none',
@@ -2159,7 +2160,7 @@ describe('App mine history', () => {
     })
     expect(wrapper.find('.history-panel').exists()).toBe(true)
 
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-panel').exists()).toBe(false)
     expect(api.setMessagePanel).toHaveBeenLastCalledWith({
@@ -2171,15 +2172,15 @@ describe('App mine history', () => {
 
   it('closes from its own control, and from the mine closing', async () => {
     const { wrapper } = await openMineWith([])
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
     await wrapper.find('.history-close').trigger('click')
     expect(wrapper.find('.history-panel').exists()).toBe(false)
 
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-panel').exists()).toBe(true)
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-panel').exists()).toBe(false)
   })
@@ -2188,7 +2189,7 @@ describe('App mine history', () => {
     const { wrapper } = await openMineWith([], {
       getMineHistory: vi.fn().mockRejectedValue(new Error('bridge down'))
     })
-    await wrapper.find('.mine-history').trigger('click')
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.history-empty').text()).toBe("This mine's history could not be read.")
   })
@@ -2329,9 +2330,9 @@ describe('App audio (#174, #173)', () => {
     expect(opened.some((src) => src.includes('mine-inside-room-tone'))).toBe(true)
     expect(opened.some((src) => src.includes('mine-inside-working'))).toBe(false)
 
-    await wrapper.find('.close-mine').trigger('click')
+    await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.findComponent(MineScene).exists()).toBe(false)
+    expect(wrapper.findComponent(MineColumn).exists()).toBe(false)
   })
 
   it('mutes the ambience from the interior, and says so on the control', async () => {
@@ -2343,9 +2344,13 @@ describe('App audio (#174, #173)', () => {
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
 
-    await wrapper.find('.mute-ambience').trigger('click')
+    // AMENDED for #635: the toggle is on the mine toolbar now, and the design presses it while the
+    // ambience plays, so muting it takes the press off.
+    await wrapper.find('button[aria-label="Mine ambience"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.mute-ambience').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('button[aria-label="Mine ambience"]').attributes('aria-pressed')).toBe(
+      'false'
+    )
     // The music is untouched, which is the whole point of a mute that names
     // one channel (#173).
     expect(wrapper.find(NAV_MUSIC).attributes('aria-pressed')).toBe('true')
@@ -2361,7 +2366,7 @@ describe('App audio (#174, #173)', () => {
     await flushPromises()
     const before = opened.length
 
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
     const voices = opened.slice(before).filter((src) => src.includes('voice'))
@@ -2434,7 +2439,7 @@ describe('App audio (#174, #173)', () => {
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
 
-    await wrapper.find('.dwarf-hit').trigger('click')
+    await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
 
     expect(opened.some((src) => src.includes('dwarf-foreman-voice'))).toBe(true)
@@ -2491,7 +2496,7 @@ describe('App system notifications (#316)', () => {
     wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
     await flushPromises()
     api.setOpenMine.mockClear()
-    wrapper.findComponent(MineScene).vm.$emit('back')
+    wrapper.findComponent(MineColumn).vm.$emit('close')
     await flushPromises()
     expect(reports(api)).toContain(null)
     expect(reports(api)).not.toContain(MINE.id)
@@ -2512,7 +2517,7 @@ describe('App system notifications (#316)', () => {
     const open = api.onShowMine.mock.calls[0]![0] as (mineId: string) => void
     open(MINE.id)
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(api.setPanelLayout).toHaveBeenLastCalledWith(expect.objectContaining({ mineOpen: true }))
   })
 
@@ -2944,7 +2949,7 @@ describe('App Mines page', () => {
     expect(api.declareMine).toHaveBeenCalledWith()
     push({ mines: [ALPHA], tokensObserved: 0 })
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     // Adding a mine never opens the Add panel by itself.
     expect(api.setMessagePanel).not.toHaveBeenCalledWith(
       expect.objectContaining({ surface: 'launch' })
@@ -3039,7 +3044,7 @@ describe('App Map page', () => {
     expect(api.declareMine).toHaveBeenCalledWith()
     push({ mines: [ALPHA], tokensObserved: 0 })
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(api.setMessagePanel).not.toHaveBeenCalledWith(
       expect.objectContaining({ surface: 'launch' })
     )
@@ -3051,7 +3056,7 @@ describe('App Map page', () => {
     })
     await wrapper.get('.dm-marker').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.mine-scene').exists()).toBe(true)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
     expect(wrapper.get('.dm-marker').attributes('aria-pressed')).toBe('true')
   })
 })

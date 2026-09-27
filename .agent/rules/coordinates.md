@@ -9,7 +9,9 @@ paths:
   - '**/sceneSizing.ts'
   - '**/mapPage.ts'
   - '**/MapPage.vue'
-  - '**/MineScene.vue'
+  - '**/mineColumn.ts'
+  - '**/MineColumn.vue'
+  - '**/SceneDwarf.vue'
   - '**/TierMarker.vue'
 ---
 
@@ -38,8 +40,10 @@ marker is centred on its site as it is: nothing holds it in by its own half-widt
 
 **The mine interior.** `interiorMap.ts` carries every workstation and corridor as percentages of
 the painting, because the interiors are a 1184 x 3622 tower. A box-percent point would sit on a
-different gallery at every column height. `sceneGeometry.projectToBox` converts; `MineScene.vue`
-and `sceneSizing.ts` call it. One thing more to know before touching a number:
+different gallery at every column height. Since #635 the mine column draws the painting in an art
+box of its own aspect (`.dm-minecol__art`), so `mineColumn.ts` stands each dwarf on its station's
+image percent unchanged, as the map does its sites; `sceneGeometry.projectToBox` is left for a box
+of any other shape. One thing more to know before touching a number:
 
 - **Distances are painting pixels, never percent** (`paintingDistance` in `interiorRoute.ts`).
   The art is three times taller than it is wide, so a percent of height is three times a percent
