@@ -105,22 +105,24 @@ Everything the app keeps lives in Electron's per-user data directory:
 | macOS    | `~/Library/Application Support/DwarfAI-Miners` |
 | Linux    | `~/.config/DwarfAI-Miners`                     |
 
-Fifteen entries: fourteen the app writes, and one (`config-v1.json`) it only reads. All but
+Eighteen entries: seventeen the app writes, and one (`config-v1.json`) it only reads. All but
 `hook-token` and the SQLite database are plain JSON or an empty marker, so you can read them in any
 text editor.
 
 **Your preferences** — one tiny JSON document each, so a corrupt one can only cost you that one
 setting:
 
-| File                             | Purpose                                                                                                                                                                                                                                |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pin-preference-v1.json`         | Whether you left the panel pinned always-on-top (`src/main/shell/pinPreference.ts`).                                                                                                                                                   |
-| `shortcut-preference-v1.json`    | The global panel-toggle accelerator you chose (`src/main/shell/shortcutPreference.ts`).                                                                                                                                                |
-| `panel-edge-v1.json`             | Which screen edge the docked shell opens on (`src/main/shell/panelEdgePreference.ts`).                                                                                                                                                 |
-| `message-panel-position-v1.json` | Where you last dragged the message panel's window (`src/main/shell/messagePanelPosition.ts`).                                                                                                                                          |
-| `audio-preferences-v1.json`      | Whether music starts on launch, and the three volumes (`src/main/shell/audioPreference.ts`).                                                                                                                                           |
-| `jev-preferences-v1.json`        | Your Jev routing profile (`economy` / `balanced` / `premium`) and default launch (provider, model, effort) — plain JSON, not a secret; re-validated against the launch gate before it is written (`src/main/shell/jevPreferences.ts`). |
-| `launch-view-v1.json`            | The page and the mine that were open when the app last closed, so it opens on them again (`src/main/shell/launchViewPreference.ts`).                                                                                                   |
+| File                              | Purpose                                                                                                                                                                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pin-preference-v1.json`          | Whether you left the panel pinned always-on-top (`src/main/shell/pinPreference.ts`).                                                                                                                                                   |
+| `shortcut-preference-v1.json`     | The global panel-toggle accelerator you chose (`src/main/shell/shortcutPreference.ts`).                                                                                                                                                |
+| `panel-edge-v1.json`              | Which screen edge the docked shell opens on (`src/main/shell/panelEdgePreference.ts`).                                                                                                                                                 |
+| `message-panel-position-v1.json`  | Where you last dragged the message panel's window (`src/main/shell/messagePanelPosition.ts`).                                                                                                                                          |
+| `audio-preferences-v1.json`       | Whether music starts on launch, the three volumes, and whether the notification sounds play (`src/main/shell/audioPreference.ts`).                                                                                                     |
+| `jev-preferences-v1.json`         | Your Jev routing profile (`economy` / `balanced` / `premium`) and default launch (provider, model, effort) — plain JSON, not a secret; re-validated against the launch gate before it is written (`src/main/shell/jevPreferences.ts`). |
+| `launch-view-v1.json`             | The page and the mine that were open when the app last closed, so it opens on them again (`src/main/shell/launchViewPreference.ts`).                                                                                                   |
+| `typography-preferences-v2.json`  | The font style you chose in Settings › Appearance, and the face each type role is drawn in (`src/main/shell/typographyPreference.ts`).                                                                                                 |
+| `notification-preference-v1.json` | Whether the app may raise system notifications at all — Settings' System notifications switch (`src/main/notifications/notificationPreference.ts`).                                                                                    |
 
 **Markers and secrets:**
 
@@ -147,7 +149,10 @@ about:
 | `projects-v1.db`        | One SQLite file holding the projects list (name, **absolute path**, measured tier, when it was added, when it was last active, and whether you have removed it from the list), the material vault, and the sessions this app has launched (`src/main/appDatabase/appDatabase.ts`, `src/main/projects/projectsStore.ts`, `src/main/ledger/sqliteLedgerStore.ts`). Opened read-write; nothing else reads it. |
 | `coal-backfill-v1.json` | The history scan's bookmark: when it first ran, whether it has finished, and — while it has not — the absolute paths of the transcript directories it has already read (`src/main/ledger/coalBackfill.ts`).                                                                                                                                                                                                |
 
-One more file may be there from an older version. `material-ledger-v1.json` was the vault before it
+Two more files may be there from an older version. `typography-preferences-v1.json` held the two
+faces an earlier Settings offered; it is read once, only while `typography-preferences-v2.json` does
+not exist yet, to carry that choice over, and never written again
+(`src/main/shell/typographyPreference.ts`). `material-ledger-v1.json` was the vault before it
 moved into the database. It holds the same thing — cumulative tokens per material, keyed by absolute
 project path, plus a last-seen counter per session id. On the first launch after the move it is read
 once and then **kept as a backup and ignored forever**; nothing in the app ever writes to, renames,
