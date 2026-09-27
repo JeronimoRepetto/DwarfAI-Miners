@@ -27,7 +27,10 @@ export interface TierRange {
   range: string
 }
 
-/** Each tier's range: below the first floor, from one floor to just under the next, then up. */
+/**
+ * Each tier's range: below the first floor, from one floor to just under the next, then up, in the
+ * unit a tier measures, KB of source weight (PANEL-QUESTIONS 7, design lead ruling 2026-09-27).
+ */
 export function tierRanges(thresholds: TierThresholds = TIER_WEIGHT_THRESHOLDS_KB): TierRange[] {
   const { copperKb, silverKb, goldKb, uraniumKb } = thresholds
   const floors = [0, copperKb, silverKb, goldKb, uraniumKb]
@@ -36,10 +39,10 @@ export function tierRanges(thresholds: TierThresholds = TIER_WEIGHT_THRESHOLDS_K
     const next = floors[i + 1]
     const range =
       i === 0
-        ? 'below ' + groupDigits(next!)
+        ? 'below ' + groupDigits(next!) + ' KB'
         : next === undefined
-          ? groupDigits(floor) + ' and up'
-          : groupDigits(floor) + ' – ' + groupDigits(next - 1)
+          ? groupDigits(floor) + ' KB and up'
+          : groupDigits(floor) + ' – ' + groupDigits(next - 1) + ' KB'
     return { tier, range }
   })
 }

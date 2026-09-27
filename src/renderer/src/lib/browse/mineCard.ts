@@ -108,12 +108,25 @@ function progressFor(row: BrowseRow, state: MineCardState): TierProgressOptions 
   }
 }
 
+/*
+ * Why a mine cannot be entered, and the one reason there is (PANEL-QUESTIONS 6, design lead ruling
+ * 2026-09-27): its folder no longer exists (`folderMissing`, which main asks the disk).
+ */
+export const MINE_UNENTERABLE_REASON = 'Folder not found. It was moved or deleted.'
+
+/** The toast a press on a mine that cannot be entered raises: "<name>: <reason>". */
+export function mineRefusalToast(name: string): string {
+  return name + ': ' + MINE_UNENTERABLE_REASON
+}
+
 export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardView {
-  const state: MineCardState = row.unrecorded
-    ? 'unrecorded'
-    : isMeasuring(row)
-      ? 'measuring'
-      : 'active'
+  const state: MineCardState = row.folderMissing
+    ? 'unenterable'
+    : row.unrecorded
+      ? 'unrecorded'
+      : isMeasuring(row)
+        ? 'measuring'
+        : 'active'
   const onBoard = mines.find((mine) => mine.id === row.id)
   // Not live: nobody is working it, which the board can say. Live but not on the board yet: the
   // board is a poll behind, and a count it does not have is not a count of zero.
@@ -129,9 +142,11 @@ export function mineCardView(row: BrowseRow, mines: readonly Mine[]): MineCardVi
     crew,
     needs: needsCount > 0,
     needsCount,
-    progress: state === 'unrecorded' ? undefined : progressFor(row, state),
+    progress:
+      state === 'unrecorded' || state === 'unenterable' ? undefined : progressFor(row, state),
     // Only a mine on the board can be entered (#85): opening one nobody is working opens nothing.
-    enterable: row.live,
+    enterable: row.live && state !== 'unenterable',
+    ...(state === 'unenterable' ? { reason: MINE_UNENTERABLE_REASON } : {}),
     removable: row.unrecorded !== true,
     ...(row.weightBytes === undefined ? {} : { score: row.weightBytes / 1024 })
   }

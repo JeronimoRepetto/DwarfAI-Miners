@@ -72,6 +72,8 @@ const emit = defineEmits<{
   sort: [mode: MineSort]
   add: []
   open: [id: string]
+  /** A press on a card that cannot be entered, for the shell to say why (PANEL-QUESTIONS 6). */
+  refuse: [id: string]
   remove: [id: string]
   'open-main-project': []
   'dismiss-worktree': []
@@ -182,6 +184,7 @@ watch(
         :card="view"
         :open="view.id === openId"
         @open="emit('open', $event)"
+        @refuse="emit('refuse', $event)"
         @remove="removingId = $event"
       />
       <div v-if="empty" class="dm-empty">

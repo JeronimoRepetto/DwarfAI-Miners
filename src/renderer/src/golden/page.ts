@@ -23,7 +23,8 @@ import '../assets/design-tokens.css'
 import '../assets/theme.css'
 import { createApp, h, nextTick, type App } from 'vue'
 import { FRAME_CLOCK_KEY } from '../composables/useFramePlayer'
-import { stoppedFrameClock } from '../lib/sprite/frameClock'
+import { createFrameClock, type FrameClock } from '../lib/sprite/frameClock'
+import type { SequencePosition } from '../lib/sprite/spriteSheet'
 import { RENDERS, type GoldenAttributes, type GoldenText } from './renders'
 import { adaptSample, type GoldenSample } from './sample'
 
@@ -73,7 +74,67 @@ html, body { margin: 0; padding: 0; height: auto; overflow: visible; }
 *, *::before, *::after { caret-color: transparent !important; }
 `
 
+/** The design's deterministic runtime (tools/snap-runtime.js), which the harness loads first. */
+interface SnapRuntime {
+  reset(): void
+  clock(): { now: number }
+}
+const snap = (): SnapRuntime | undefined =>
+  (window as unknown as { __snapRuntime?: SnapRuntime }).__snapRuntime
+
+/*
+ * The capture's frame clock (#635). A reference is taken after SETTLE_MS of the runtime's virtual
+ * time, with its seeded Math.random, and then every looping animation is held at its first
+ * keyframe (docs/README.md, What a capture holds still). So the sprites play here on that same
+ * virtual time and seeded random — a dwarf found at work draws its start frame as the prototype
+ * does, and its shift reaches the clip the prototype's reached — and `hold`, run once the settle
+ * has passed, holds each at frame 0 of the clip it is on, as the runtime's freeze holds a loop.
+ */
+interface CaptureClock extends FrameClock {
+  hold(): void
+}
+
+function captureFrameClock(): CaptureClock {
+  const clock = createFrameClock({
+    now: () => snap()?.clock().now ?? 0,
+    setTimer: (run, ms) => window.setTimeout(run, ms),
+    clearTimer: (handle) => window.clearTimeout(handle as number),
+    hidden: () => false,
+    onVisibilityChange: () => () => {},
+    reducedMotion: () => false,
+    onReducedMotionChange: () => () => {},
+    random: () => Math.random()
+  })
+  const playing = new Set<{ last: SequencePosition; onFrame: (p: SequencePosition) => void }>()
+  return {
+    player(onFrame) {
+      const entry = { last: { clip: 0, frame: 0 }, onFrame }
+      const inner = clock.player((position) => {
+        entry.last = position
+        onFrame(position)
+      })
+      return {
+        play(clips, options) {
+          playing.add(entry)
+          inner.play(clips, options)
+        },
+        stop() {
+          playing.delete(entry)
+          inner.stop()
+        }
+      }
+    },
+    dispose: () => clock.dispose(),
+    hold() {
+      const held = [...playing]
+      clock.dispose()
+      for (const entry of held) entry.onFrame({ clip: entry.last.clip, frame: 0 })
+    }
+  }
+}
+
 let mounted: App | null = null
+let spriteClock: CaptureClock | null = null
 let sample: GoldenSample | null = null
 
 function boxOf(element: Element): GoldenBox {
@@ -143,22 +204,21 @@ function loadSample(source: string): { mines: number; dwarfs: number } {
 }
 
 // The real component for a state, mounted as the stage's only child so it is the stage's flex
-// item, as the kit's component is. Every state starts from the same clock and empty storage, and
-// every sprite plays on a frame clock stopped at t = 0: every reference holds every sprite on frame
-// 0, whatever its phase (components.md, Sprite, Anatomy), and the harness's virtual timers would
-// otherwise carry the shared clock on through the settle.
+// item, as the kit's component is. Every state starts from the same clock, the same random sequence
+// and empty storage, and every sprite plays on the capture's frame clock (captureFrameClock).
 async function mountState(frame: StateFrame): Promise<void> {
   const render = RENDERS[frame.id]
   if (!render) throw new Error('golden: renders.ts has no entry for ' + frame.id)
   if (!sample) throw new Error('golden: loadSample must run before mountState')
   const { component, props } = render(sample, frame.texts, frame.attributes)
-  const runtime = (window as unknown as { __snapRuntime?: { reset(): void } }).__snapRuntime
-  runtime?.reset()
+  snap()?.reset()
   localStorage.clear()
   sessionStorage.clear()
   const stage = stageElement(frame.css, frame.x, frame.y, frame.width)
   mounted = createApp({ render: () => h(component, props) })
-  mounted.provide(FRAME_CLOCK_KEY, stoppedFrameClock())
+  spriteClock?.dispose()
+  spriteClock = captureFrameClock()
+  mounted.provide(FRAME_CLOCK_KEY, spriteClock)
   mounted.mount(stage)
   await nextTick()
   const root = stage.firstElementChild
@@ -222,7 +282,9 @@ const golden = {
   frameStage,
   loadSample,
   mountState,
-  measureState
+  measureState,
+  /** Holds every sprite at frame 0 of the clip it reached, once the settle's virtual time passed. */
+  holdSprites: () => spriteClock?.hold()
 }
 
 declare global {

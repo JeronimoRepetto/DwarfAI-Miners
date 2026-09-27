@@ -151,3 +151,19 @@ describe('MineCard', () => {
     card.unmount()
   })
 })
+
+/*
+ * PANEL-QUESTIONS 6 (design lead ruling 2026-09-27): a mine is not enterable only when its folder
+ * no longer exists, and the reason is "Folder not found. It was moved or deleted." — after the
+ * "Not enterable" pill on its card, as the card button's title, and in the toast "<name>: <reason>".
+ */
+describe('MineCard not enterable', () => {
+  it('reports a press on a mine that cannot be entered, so the page can say why', async () => {
+    const card = mount(MineCard, {
+      props: { card: view({ state: 'unenterable', enterable: false, reason: 'Folder not found.' }) }
+    })
+    await card.get('button.dm-card__hit').trigger('click')
+    expect(card.emitted('open')).toBeUndefined()
+    expect(card.emitted('refuse')).toEqual([['m1']])
+  })
+})

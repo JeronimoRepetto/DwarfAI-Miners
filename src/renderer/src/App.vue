@@ -9,10 +9,10 @@ import {
   type ComponentPublicInstance
 } from 'vue'
 import { MotionConfig } from 'motion-v'
-import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
+import HistoryPanel from './components/history/HistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapPage from './components/map/MapPage.vue'
-import MineScene from './components/scene/MineScene.vue'
+import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
 import PanelFrame from './components/shell/PanelFrame.vue'
@@ -32,7 +32,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { browseRows } from './lib/browse/boardRows'
-import { mineCardView } from './lib/browse/mineCard'
+import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
@@ -78,7 +78,7 @@ const props = defineProps<{
 
 /**
  * Whether this viewer asked their operating system for less movement (#71),
- * read and watched the same way `DwarfSprite` already does — the one query
+ * read and watched the same way the old `DwarfSprite` did — the one query
  * lives in `sceneMotion`, and this is a second place that asks it rather
  * than a second query, the same relationship `boundedMotion.ts`'s own
  * `still()` and `PanelTransition`'s watch already have with it.
@@ -540,6 +540,15 @@ const mineCards = computed(() =>
   )
 )
 
+/*
+ * A press on a mine that cannot be entered (PANEL-QUESTIONS 6): nothing opens, and a toast says
+ * why, "<name>: <reason>", with the warning icon, from the Mines page and the map alike.
+ */
+function refuseMine(projectId: string): void {
+  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
+  showToast(mineRefusalToast(name), 'warning')
+}
+
 function sortProjects(mode: MineSort): void {
   setProjectSort(mode)
   showToast(sortToast(mode))
@@ -617,6 +626,12 @@ const versionHint = computed(() => (build.value === null ? '' : versionTitle(bui
 const mineColumnWidth =
   `max(${MINE_COLUMN_MIN_WIDTH}px, calc((100vh - ${SHELL_CONTENT_INSET + MINE_COLUMN_CHROME_HEIGHT}px)` +
   ` * ${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height} + ${MINE_COLUMN_ART_INSET}px))`
+
+/**
+ * The shell's own height, which the mine column derives its art from (#635): the window's less
+ * the dock inset and the plate's padding, the same inset main reserves the column with.
+ */
+const shellHeight = `calc(100vh - ${SHELL_CONTENT_INSET}px)`
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -863,6 +878,19 @@ async function openHistoryPath(payload: { key: string; target: string }): Promis
 }
 
 /**
+ * A link in a history message (#635): relayed to main, which validates it again and owns the only
+ * `shell.openExternal` in the app, as the MessagePanel's are (#347). A refusal has nowhere to be
+ * said in a read-only panel, and the link stays where it was.
+ */
+async function openHistoryLink(href: string): Promise<void> {
+  try {
+    await window.api.openExternalLink(href)
+  } catch {
+    // The bridge is the only way out; nothing else can open it.
+  }
+}
+
+/**
  * The signal the history re-reads on while open: the SAME two the message
  * panel's feed watches (#183, see the watch below it), over every dwarf in the
  * mine rather than the one selected — `lastMessage` for an agent that spoke,
@@ -962,8 +990,8 @@ watch(
  * raised. The click that starts that is in the other window now, so dimming a
  * sprite here would be feedback in the place nobody is looking; the panel says
  * out loud when the console could not be opened, which is the part that
- * mattered. DwarfSprite keeps its own `activating` prop and its test — nothing
- * feeds it today, and reviving it would mean publishing the activation the way
+ * mattered. DwarfSprite's own `activating` prop went with DwarfSprite (#635):
+ * nothing fed it, and reviving it would mean publishing the activation the way
  * the delivery verdicts are published.
  */
 
@@ -1099,7 +1127,7 @@ onBeforeUnmount(() => {
       class="shell"
       :class="[`edge-${layout.edge}`, `is-${composition}`, { 'm-mat': composition !== 'rail' }]"
       :data-dock="layout.edge"
-      :style="{ '--mine-column-width': mineColumnWidth }"
+      :style="{ '--mine-column-width': mineColumnWidth, '--shell-h': shellHeight }"
       @pointerdown.capture="raisePanel"
     >
       <!--
@@ -1146,6 +1174,7 @@ onBeforeUnmount(() => {
               :adding="addingProject"
               :loading="loading"
               @open="enterMine"
+              @refuse="refuseMine"
               @add="addMine"
             />
 
@@ -1170,6 +1199,7 @@ onBeforeUnmount(() => {
               @sort="sortProjects"
               @add="addMine"
               @open="openFromBrowse"
+              @refuse="refuseMine"
               @remove="removeFromBrowse"
               @open-main-project="adoptMainProject"
               @dismiss-worktree="dismissWorktreeQuestion"
@@ -1264,30 +1294,28 @@ onBeforeUnmount(() => {
         @leave="trackPanelLeave"
       >
         <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
-          <PanelFrame>
-            <!--
-            Keyed by the mine, so switching from one to another is a fresh
-            scene rather than the same one handed different dwarfs (#153). The
-            walk board tells an arrival from the opening crew by which snapshot
-            it first saw them, and a reused board would parade a whole new
-            crew across the interior every time the user changed mine.
+          <!--
+            The redesigned mine column (#635), on the plate itself as the design
+            draws it. Keyed by the mine, so switching from one to another is a
+            fresh column rather than the same one handed different dwarfs (#153):
+            a dwarf already there when a column opens is drawn settled in its
+            state, and only a later arrival fades in.
           -->
-            <MineScene
-              :key="currentMine.id"
-              :mine="currentMine"
-              :arrived="state.arrived"
-              :send-states="dwarfDelivery.send"
-              :kick-states="dwarfDelivery.kick"
-              :selected-id="openDwarfId"
-              :ambience-muted="ambienceMuted"
-              @back="leaveMine"
-              @select="selectDwarf"
-              @add="openLaunch(currentMine.id)"
-              @history="openHistory"
-              @toggle-ambience-mute="toggleAmbienceMute"
-              @crew-sound="playCrew"
-            />
-          </PanelFrame>
+          <MineColumn
+            :key="currentMine.id"
+            :mine="currentMine"
+            :arrived="state.arrived"
+            :send-states="dwarfDelivery.send"
+            :kick-states="dwarfDelivery.kick"
+            :selected-id="openDwarfId"
+            :ambience-muted="ambienceMuted"
+            @close="leaveMine"
+            @select="selectDwarf"
+            @add="openLaunch(currentMine.id)"
+            @history="openHistory"
+            @toggle-ambience-mute="toggleAmbienceMute"
+            @crew-sound="playCrew"
+          />
         </div>
       </PanelTransition>
 
@@ -1348,13 +1376,15 @@ onBeforeUnmount(() => {
           :key="`history:${currentMine.id}`"
           class="message-dock"
         >
-          <MineHistoryPanel
+          <HistoryPanel
             :key="currentMine.id"
             :mine="currentMine"
             :history="mineHistory"
             :path-refusal="historyPathRefusal"
+            :failed="dwarfDelivery.failed"
             @close="closeHistory"
             @open-path="openHistoryPath"
+            @open-link="openHistoryLink"
           />
         </div>
       </PanelTransition>
@@ -1507,6 +1537,13 @@ onBeforeUnmount(() => {
   pointer-events: auto;
 }
 /*
+ * The redesigned history (#635) fills the height it is given, so it is given today's: the dock slot
+ * beside the shell that the design opens it in is the window slice's to build.
+ */
+.message-dock > .dm-hist {
+  height: min(var(--size-history-panel-max-height), calc(100vh - 2 * var(--space-nav-gap)));
+}
+/*
  * The page column (#635): 440px, and on a screen narrower than the dock it is
  * the part that gives way (decision log, Narrow screen). The column shrinks and
  * clips, and the page inside keeps its 440px anchored against the mine column
@@ -1547,9 +1584,8 @@ onBeforeUnmount(() => {
  * the column's height less its chrome, plus 16px, never under 300px — the
  * `--mine-column-width` the script binds. main reserves the same number in the
  * window; see mineColumnWidth in main/shell/panelBounds.ts and
- * interiorColumnWidth in lib/scene/sceneSizing. Today's scene draws its
- * painting `contain` inside it until the mine column organism brings the chrome
- * that height is kept for.
+ * interiorColumnWidth in lib/scene/sceneSizing. The mine column inside
+ * declares the same width from the same constants and `--shell-h`.
  */
 .shell-mine {
   position: relative;
@@ -1560,7 +1596,7 @@ onBeforeUnmount(() => {
   height: 100%;
   min-width: 0;
 }
-.shell-mine > .panel-frame {
+.shell-mine > .dm-minecol {
   flex: 1;
   min-height: 0;
 }

@@ -1,27 +1,7 @@
-import type {
-  DwarfAttendance,
-  DwarfRole,
-  DwarfStatus,
-  Material,
-  MaterialTotals,
-  MineTier
-} from '../types'
+import type { DwarfAttendance, DwarfRole, Material, MineTier } from '../types'
 import { dwarfSilenceWindowMs } from '../types'
 import { formatTokens } from './vault/economy'
-import { materialUnits, vaultRows } from './vault/vault'
-
-/** CSS modifier class driving each dwarf animation state. */
-export type DwarfAnimationClass = 'is-working' | 'is-waiting' | 'is-leaving'
-
-const STATUS_CLASS: Record<DwarfStatus, DwarfAnimationClass> = {
-  working: 'is-working',
-  waiting: 'is-waiting',
-  leaving: 'is-leaving'
-}
-
-export function statusAnimationClass(status: DwarfStatus): DwarfAnimationClass {
-  return STATUS_CLASS[status]
-}
+import { materialUnits } from './vault/vault'
 
 /**
  * A material's name as the panel writes it: "Coal", "Uranium".
@@ -75,25 +55,6 @@ export function designTierLabel(tier: MineTier): string {
   return DESIGN_TIER_LABELS[tier]
 }
 
-/** Character budget for speech bubbles (truncated with an ellipsis). */
-export const BUBBLE_MAX_CHARS = 70
-
-/**
- * How long a leaving dwarf takes to leave the screen (#153).
- *
- * It used to be 16 seconds, chosen to fill the runtime's own 20-second grace
- * window (`dwarfLeaveGraceS` in main/config) — and the fade held full opacity
- * for the first 85% of it, so a dwarf reached its exit and then stood there for
- * the best part of fourteen seconds. That is what the maintainer saw.
- *
- * The two clocks are separate now, because they answer different questions. How
- * long a departed session stays in the board is main's: it is a claim about the
- * session, and shortening it would start dropping dwarfs that are only briefly
- * quiet. How long the dwarf takes to LEAVE is the panel's, and prompt is the
- * only honest answer — the session is already gone.
- */
-export const LEAVING_EXIT_MS = 1_200
-
 /*
  * WHERE THE FRAME LOOPS WENT (issues #74, #87).
  *
@@ -112,9 +73,24 @@ export const LEAVING_EXIT_MS = 1_200
  * Two things stayed behind on purpose. `isDwarfSilent` below is a rule about
  * the provider's windows rather than about drawing, and is unchanged — what
  * changed is that no sheet has been drawn for a silent dwarf yet, so nothing
- * currently selects a picture from it (#74 will). And `statusAnimationClass`
- * and `LEAVING_EXIT_MS` never named a frame at all.
+ * currently selects a picture from it (#74 will).
+ *
+ * REMOVED for #635, with the scene they served: `statusAnimationClass` and `BUBBLE_MAX_CHARS`
+ * (the old sprite's status class and the talk bubble's budget), `describeSilence` (the old
+ * tooltip's sentence; the redesigned tooltip writes `compactSilence`, lib/dwarf/dwarfTip.ts) and
+ * `vaultLabel` (the retired vault chip's name).
  */
+
+/**
+ * How long a leaving dwarf takes to fade once it has walked out (#153), RESTORED with today's walk
+ * (#635, PANEL-QUESTIONS 14).
+ *
+ * The two clocks are separate, because they answer different questions. How long a departed
+ * session stays in the board is main's (`dwarfLeaveGraceS`): it is a claim about the session. How
+ * long the dwarf takes to LEAVE is the panel's, and prompt is the only honest answer — the session
+ * is already gone. The fade starts on arriving at the way out, never on a clock (#156).
+ */
+export const LEAVING_EXIT_MS = 1_200
 
 /**
  * Has this dwarf gone quiet for long enough to be worth showing as such?
@@ -144,32 +120,6 @@ export function isDwarfSilent(
 }
 
 /**
- * How long this dwarf has produced nothing, as the tooltip says it out loud:
- * "no output for 25 minutes".
- *
- * The wording is the affordance, which is why it lives here rather than in the
- * template — the sprite can only say "something is wrong with this one", and
- * the sentence is what turns that into something a person can act on. A user
- * who has read "no output for 25 minutes" needs no explanation when the dwarf
- * leaves at thirty.
- *
- * It rounds DOWN throughout and never counts seconds: claiming more silence
- * than was observed would be the app arguing on the pessimistic side, and no
- * one reads a figure that ticks every second anyway.
- */
-export function describeSilence(silentForMs: number): string {
-  const totalMinutes = Math.floor(Math.max(0, silentForMs) / 60_000)
-  if (totalMinutes < 1) return 'no output for less than a minute'
-
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  const parts: string[] = []
-  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`)
-  if (minutes > 0) parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`)
-  return `no output for ${parts.join(' ')}`
-}
-
-/**
  * What one ore pile says when the pointer rests on it, and what a screen reader
  * is told it is.
  *
@@ -186,24 +136,6 @@ export function orePileLabel(material: Material, tokens: number): string {
   const units = materialUnits(tokens, material)
   if (units === 0) return `${materialLabel(material)} ore — none mined yet`
   return `${materialLabel(material)} ore — ${units} mined (${formatTokens(tokens)} tokens)`
-}
-
-/**
- * The vault chip's accessible name: every material the vault holds, one by one.
- *
- * It lists and never sums. Adding the units up would produce a single figure
- * that only means anything if a coal nugget can be traded for a gold one, and
- * the whole point of the material vault is that it cannot (see vault.ts). The
- * token count is a separate sentence for the same reason — tokens are the raw
- * substance underneath every pile, not a currency the piles convert into.
- */
-export function vaultLabel(totals: MaterialTotals | undefined, tokensObserved: number): string {
-  const rows = vaultRows(totals)
-  const mined =
-    rows.length === 0
-      ? 'nothing mined yet'
-      : rows.map((row) => `${row.units} ${row.material}`).join(', ')
-  return `Vault: ${mined}. ${formatTokens(tokensObserved)} tokens observed.`
 }
 
 /*

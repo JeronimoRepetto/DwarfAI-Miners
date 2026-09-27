@@ -13,6 +13,7 @@ import {
   anatomyRoot,
   anatomyTexts,
   applicableFraming,
+  borrowedFraming,
   checkFraming,
   checkStates,
   componentOf,
@@ -131,14 +132,17 @@ describe.runIf(runnable)('golden harness', () => {
     const title = state.red ? state.key + ' (red: ' + state.red + ')' : state.key
     it(title, async () => {
       const row = manifest[state.key]
+      const componentsMd = readDesign('docs', 'components.md')
+      const root = anatomyRoot(readDesign('docs', 'anatomy.md'), row.file)
+      // Its own framing, and the framing of a component whose part its root is (#635).
       const framing = applicableFraming(
-        framingFor(readDesign('docs', 'components.md'), componentOf(state.key)),
+        [
+          ...framingFor(componentsMd, componentOf(state.key)),
+          ...borrowedFraming(componentsMd, componentOf(state.key), root)
+        ],
         anatomyAttributes(readDesign('docs', 'anatomy.md'), row.file)
       )
-      const framingError = checkFraming(
-        framing,
-        anatomyRoot(readDesign('docs', 'anatomy.md'), row.file)
-      )
+      const framingError = checkFraming(framing, root)
       if (framingError) throw new Error(framingError)
       const split = splitFraming(framing)
       const frame = {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfRole, DwarfStatus } from '../../types'
 import { DWARF_CREW, DWARF_SHEETS } from './dwarfSheets'
-import { dwarfClips, isResting, stillFrameOf } from './dwarfSequence'
+import { dwarfClips, isResting, settledClips, stillFrameOf } from './dwarfSequence'
 import {
   isImpactFrame,
   loopOf,
@@ -841,5 +841,44 @@ describe('the shift swings as many times as the rank declares (#330)', () => {
     expect(sheetsOf(dwarfClips('foreman', false, false, true, false))).toEqual(
       sheetsOf([loopOf(FOREMAN.idle)])
     )
+  })
+})
+
+/*
+ * A dwarf already in its state when the mine column opens (#635). The design builds each dwarf on
+ * the sheet its status plays and swaps sheets in place from then on (components.md, Dwarf in the
+ * scene): a mine opened on a sleeping foreman shows him asleep, and one opened on a working dwarf
+ * shows him mid-shift, at the swing. Only a later change of state plays a transition, which
+ * dwarfClips keeps answering.
+ */
+describe('settledClips', () => {
+  it('shows a resting dwarf asleep, with no lying-down first', () => {
+    expect(sheetsOf(settledClips('foreman', true, false))).toEqual(
+      sheetsOf([loopOf(FOREMAN.sleeping!)])
+    )
+  })
+
+  it('opens a working shift on its first swing, the same cycle dwarfClips plays', () => {
+    for (const role of ['worker', 'worker2'] as const) {
+      const cycle = dwarfClips(role, false, false, true, false)
+      const settled = settledClips(role, false, true)
+      expect(settled[0]?.sheet.src, role).toBe(DWARF_SHEETS[role].working!.src)
+      // The same clips in the same loop, entered at the swing rather than at the pick-up.
+      const at = cycle.findIndex((clip) => clip.sheet.src === DWARF_SHEETS[role].working!.src)
+      expect(sheetsOf(settled), role).toEqual([
+        ...sheetsOf(cycle).slice(at),
+        ...sheetsOf(cycle).slice(0, at)
+      ])
+    }
+  })
+
+  it('shows anyone else on the idle loop, as dwarfClips does', () => {
+    for (const role of ['worker', 'worker2', 'foreman'] as const) {
+      expect(sheetsOf(settledClips(role, false, false)), role).toEqual(
+        sheetsOf(dwarfClips(role, false, undefined))
+      )
+    }
+    // The foreman has no swing drawn, so at work he idles, as in dwarfClips.
+    expect(sheetsOf(settledClips('foreman', false, true))).toEqual(sheetsOf([loopOf(FOREMAN.idle)]))
   })
 })

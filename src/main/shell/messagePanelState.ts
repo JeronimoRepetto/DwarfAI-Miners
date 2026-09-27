@@ -21,6 +21,7 @@
 import {
   MAX_DWARF_TEXT_CHARS,
   type DwarfDeliveryReport,
+  type FailedSend,
   type DwarfQuestionAnswerRequest,
   type MessagePanelState,
   type MessagePanelSurface
@@ -144,7 +145,31 @@ export function parseDwarfDeliveryReport(payload: unknown): DwarfDeliveryReport 
   const send = parseVerdicts(record.send, SEND_PHASES)
   const kick = parseVerdicts(record.kick, KICK_PHASES)
   if (send === null || kick === null) return null
-  return { send, kick }
+  if (record.failed === undefined) return { send, kick }
+  const failed = parseFailedSends(record.failed)
+  return failed === null ? null : { send, kick, failed }
+}
+
+/*
+ * The failed sends (#635, PANEL-QUESTIONS 16), by the same rule as the verdicts: one malformed
+ * entry refuses the whole report rather than a history quietly missing a message.
+ */
+function parseFailedSends(payload: unknown): Record<string, FailedSend[]> | null {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null
+  const parsed: Record<string, FailedSend[]> = {}
+  for (const [dwarfId, list] of Object.entries(payload as Record<string, unknown>)) {
+    if (!Array.isArray(list)) return null
+    const sends: FailedSend[] = []
+    for (const entry of list as unknown[]) {
+      const one = entry as Record<string, unknown> | null
+      if (typeof one !== 'object' || one === null) return null
+      if (typeof one.text !== 'string' || typeof one.sentAt !== 'number') return null
+      if (!Number.isFinite(one.sentAt)) return null
+      sends.push({ text: one.text, sentAt: one.sentAt })
+    }
+    parsed[dwarfId] = sends
+  }
+  return parsed
 }
 
 /** The record form: every key and value a string pair, or no answer at all. */

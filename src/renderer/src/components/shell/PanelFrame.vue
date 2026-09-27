@@ -8,16 +8,17 @@
  * a corrected border weight is one edit, and a new screen cannot invent a
  * seventh way to draw the same box.
  *
- * `settings` is the heavy 4px frame the settings panel sits in. `plain` is the
- * default frame the mine column sits in. The `map` variant, the old 21px map
- * container, went with #635: the redesigned Map page stands in the page column
- * on its own, as the Mines page does.
+ * `settings` is the heavy 4px frame the settings panel sits in, and the one
+ * variant left until the Settings slice of #635 rebuilds that page. The `map`
+ * variant, the old 21px map container, went with #635's Map page, and `plain`,
+ * the frame the mine column sat in, with its mine column: both stand on the
+ * shell's plate on their own now.
  */
 withDefaults(
   defineProps<{
-    variant?: 'settings' | 'plain'
+    variant?: 'settings'
   }>(),
-  { variant: 'plain' }
+  { variant: 'settings' }
 )
 </script>
 

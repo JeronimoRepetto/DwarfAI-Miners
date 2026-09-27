@@ -30,6 +30,7 @@ export type {
   DwarfCapabilities,
   DwarfContextUsage,
   DwarfDeliveryReport,
+  FailedSend,
   DwarfFeedPage,
   DwarfFeedPageRequest,
   DwarfFeedResult,

@@ -27,6 +27,15 @@ import type { PanelMessage } from './conversation'
  */
 export const ACTIVITY_WORKING_LABEL = 'Working...'
 
+/**
+ * The design's own label for a folded run (#635; copy.md, Activity disclosure): "{stepsCount}
+ * step[s] · activity". The redesigned mine history draws it; the MessagePanel keeps the label
+ * below until its own slice rebuilds it.
+ */
+export function activityStepsLabel(count: number): string {
+  return count + (count === 1 ? ' step' : ' steps') + ' · activity'
+}
+
 /** One run of consecutive tool calls, drawn as a single disclosure row. */
 export interface ActivityGroup<Row extends PanelMessage = PanelMessage> {
   kind: 'activity'

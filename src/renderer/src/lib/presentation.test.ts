@@ -1,32 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfStatus, MineTier } from '../types'
+import type { MineTier } from '../types'
 import { DWARF_SILENCE_WINDOW_MS, MATERIALS } from '../types'
-import { emptyMaterialTotals } from './vault/vault'
 import {
-  BUBBLE_MAX_CHARS,
   LEAVING_EXIT_MS,
-  describeSilence,
   groupDigits,
   isDwarfSilent,
   materialLabel,
   orePileLabel,
-  statusAnimationClass,
-  tierLabel,
-  vaultLabel
+  tierLabel
 } from './presentation'
 
-describe('statusAnimationClass', () => {
-  it('maps every dwarf status to its animation class', () => {
-    const expected: Record<DwarfStatus, string> = {
-      working: 'is-working',
-      waiting: 'is-waiting',
-      leaving: 'is-leaving'
-    }
-    for (const status of Object.keys(expected) as DwarfStatus[]) {
-      expect(statusAnimationClass(status)).toBe(expected[status])
-    }
-  })
-})
+/*
+ * REMOVED for #635, stated rather than passing unseen, with the scene they served (the mine
+ * column replaced MineScene, DwarfSprite, DwarfTooltip and VaultChip):
+ * - statusAnimationClass, "maps every dwarf status to its animation class": the redesigned dwarf
+ *   says its state on `data-status` (SceneDwarf.test.ts, "says which state it is in").
+ * - BUBBLE_MAX_CHARS, "keeps speech bubbles around seventy characters": the talk bubble is retired
+ *   by the design (MineColumn.test.ts's note).
+ * - LEAVING_EXIT_MS and its two tests went too, and came back with today's walk (PANEL-QUESTIONS
+ *   14): RESTORED below under their old names.
+ * - vaultLabel, its three cases: the vault chip went; each capsule names its own material and
+ *   count (VaultStrip.test.ts, OreCapsule.test.ts).
+ * - describeSilence, its five cases: the redesigned tooltip writes "silent 25m"
+ *   (lib/dwarf/dwarfTip.test.ts, compactSilence), rounding down as this did.
+ */
 
 describe('tierLabel', () => {
   it('capitalizes each tier for display', () => {
@@ -40,12 +37,6 @@ describe('tierLabel', () => {
     for (const tier of Object.keys(cases) as MineTier[]) {
       expect(tierLabel(tier)).toBe(cases[tier])
     }
-  })
-})
-
-describe('BUBBLE_MAX_CHARS', () => {
-  it('keeps speech bubbles around seventy characters', () => {
-    expect(BUBBLE_MAX_CHARS).toBe(70)
   })
 })
 
@@ -77,7 +68,7 @@ describe('BUBBLE_MAX_CHARS', () => {
  * five awaiting-answer cases and their three scene twins, the three that held
  * the painted `z` retired (#72), and the seven behind stillDwarfAnimation.
  *
- * What did NOT go: `isDwarfSilent` and `describeSilence` below are untouched,
+ * What did NOT go: `isDwarfSilent` below is untouched (and `describeSilence` was, until #635),
  * because #47's windows and #68's attendance rule are about the provider and
  * not about drawing. What changed for them is only that no sheet has been
  * drawn for a silent dwarf yet, so nothing currently selects a picture.
@@ -91,31 +82,9 @@ describe('BUBBLE_MAX_CHARS', () => {
  * which is the coverage that replaces this one, in
  * lib/sprite/sheetFacing.test.ts — so a leaver reaches the exit drawn exactly as
  * painted and the function had no case left to decide. The mirror is now the
- * scene's own facing, pinned in DwarfSprite.test.ts ("draws a dwarf facing left
- * as painted, and mirrors only one facing right").
+ * scene's own facing, pinned in SceneDwarf.test.ts ("mirrors a dwarf facing right and draws
+ * one facing left as painted") since #635 replaced DwarfSprite.
  */
-
-/*
- * AMENDED for #153's tenth correction. This asserted 16 seconds, chosen to fill
- * the runtime's own 20-second grace window — and the maintainer watched a dwarf
- * reach its exit and then stand there, because the fade held full opacity for
- * the first 85% of that window and only faded over the last 2.4 seconds.
- *
- * The two are no longer the same clock. How long a departed session stays in the
- * board is main's business (`dwarfLeaveGraceS`, still 20s); how long its dwarf
- * takes to leave the screen is the panel's, and it is now prompt.
- */
-describe('LEAVING_EXIT_MS', () => {
-  it('takes a leaving dwarf off the screen promptly', () => {
-    expect(LEAVING_EXIT_MS).toBe(1_200)
-  })
-
-  it('is far shorter than the grace window it used to fill', () => {
-    // 20 seconds is `dwarfLeaveGraceS` in main/config — the runtime keeps the
-    // dwarf that long, and the panel must not make the user watch it.
-    expect(LEAVING_EXIT_MS).toBeLessThan(20_000 / 4)
-  })
-})
 
 /*
  * The CSS nuggets read as anonymous grey balls, so the pile has to say what it
@@ -166,36 +135,6 @@ describe('materialLabel', () => {
  * The vault chip's accessible name. Materials never convert into one another,
  * so this lists them one by one and deliberately never adds their units up: a
  * single combined figure would imply exactly the exchange rate #22 refuses.
- */
-describe('vaultLabel', () => {
-  it('names each material separately, poorest first, and never sums them', () => {
-    const totals = { ...emptyMaterialTotals(), coal: 25_000, gold: 300_000 }
-    expect(vaultLabel(totals, 125_000)).toBe('Vault: 10 coal, 3 gold. 125K tokens observed.')
-  })
-
-  it('says the vault is empty rather than showing a bare zero', () => {
-    expect(vaultLabel(emptyMaterialTotals(), 0)).toBe(
-      'Vault: nothing mined yet. 0 tokens observed.'
-    )
-  })
-
-  it('treats a snapshot that carries no breakdown as an empty vault', () => {
-    expect(vaultLabel(undefined, 500)).toBe('Vault: nothing mined yet. 500 tokens observed.')
-  })
-})
-
-/*
- * Issue #47 — a dwarf that had produced nothing for twenty-nine minutes looked
- * exactly like one that finished a tool call a second ago, right up until it
- * vanished at thirty. The provider now puts the figure on the wire; these pin
- * what the panel is allowed to do with it.
- *
- * Two properties are load-bearing throughout. The windows are the PROVIDER's
- * own staleness windows (#40), read rather than re-invented, so the panel can
- * never say "still working" about a dwarf the provider is already judging. And
- * silence is a presentation layer over `working` — never a fourth DwarfStatus,
- * which the ledger, the delivery channels and the capability matrix all key
- * off.
  */
 describe('isDwarfSilent', () => {
   const { attended, unattended } = DWARF_SILENCE_WINDOW_MS
@@ -276,34 +215,6 @@ describe('isDwarfSilent', () => {
  * same reason orePileLabel does: the wording is the affordance — "no output
  * for 25 minutes" is what makes a dwarf leaving at thirty need no explanation.
  */
-describe('describeSilence', () => {
-  it('says how long the dwarf has produced nothing, in plain words', () => {
-    expect(describeSilence(25 * 60_000)).toBe('no output for 25 minutes')
-    expect(describeSilence(90 * 60_000)).toBe('no output for 1 hour 30 minutes')
-  })
-
-  it('keeps the singular singular', () => {
-    expect(describeSilence(60_000)).toBe('no output for 1 minute')
-    expect(describeSilence(60 * 60_000)).toBe('no output for 1 hour')
-  })
-
-  it('drops an empty minutes tail from a whole number of hours', () => {
-    expect(describeSilence(2 * 60 * 60_000)).toBe('no output for 2 hours')
-  })
-
-  it('rounds down, so it never claims more silence than was observed', () => {
-    expect(describeSilence(25 * 60_000 + 59_999)).toBe('no output for 25 minutes')
-    expect(describeSilence(60 * 60_000 + 59_999)).toBe('no output for 1 hour')
-  })
-
-  it('says less than a minute rather than counting seconds nobody reads', () => {
-    expect(describeSilence(0)).toBe('no output for less than a minute')
-    expect(describeSilence(59_999)).toBe('no output for less than a minute')
-  })
-})
-
-// APPENDED for #635: the redesigned atoms write whole numbers with comma thousands (the tier
-// progress "1,630 / 2,048", an ore capsule's name "Coal: 280,612"), whatever the machine's locale.
 describe('groupDigits', () => {
   it('writes a whole number with comma thousands', () => {
     expect(groupDigits(0)).toBe('0')
@@ -315,5 +226,20 @@ describe('groupDigits', () => {
 
   it('never writes a fraction', () => {
     expect(groupDigits(1630.7)).toBe('1,630')
+  })
+})
+
+/*
+ * RESTORED for #635 (PANEL-QUESTIONS 14: today's walk stays), as they stood at 88ee3fc. How long a
+ * departed session stays in the board is main's (`dwarfLeaveGraceS`, 20s); how long its dwarf
+ * takes to fade once it has walked out is the panel's, and it is prompt (#153).
+ */
+describe('LEAVING_EXIT_MS', () => {
+  it('takes a leaving dwarf off the screen promptly', () => {
+    expect(LEAVING_EXIT_MS).toBe(1_200)
+  })
+
+  it('is far shorter than the grace window it used to fill', () => {
+    expect(LEAVING_EXIT_MS).toBeLessThan(20_000 / 4)
   })
 })

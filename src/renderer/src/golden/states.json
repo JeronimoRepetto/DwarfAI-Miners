@@ -58,7 +58,7 @@
   },
   {
     "key": "molecules/mine-card#not-enterable",
-    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the app cannot reach this state yet, having no folder-missing fact on the wire (PR2 question)"
+    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the state is reachable since the folder check (PANEL-QUESTIONS 6)"
   },
   {
     "key": "molecules/mine-card#max-tier"
@@ -107,6 +107,52 @@
   },
   {
     "key": "molecules/tooltip#live"
+  },
+  {
+    "key": "organisms/mine-column#dwarfai-miners"
+  },
+  {
+    "key": "organisms/mine-column#ai-tools"
+  },
+  {
+    "key": "molecules/crew-roster#four-dwarfs-one-selected"
+  },
+  {
+    "key": "molecules/crew-roster#overflow"
+  },
+  {
+    "key": "molecules/crew-roster#empty"
+  },
+  {
+    "key": "molecules/dwarf#working-selected-hover"
+  },
+  {
+    "key": "molecules/dwarf#asking-asleep-idle"
+  },
+  {
+    "key": "molecules/dwarf#delivery-marks"
+  },
+  {
+    "key": "molecules/dwarf-tooltip#working"
+  },
+  {
+    "key": "molecules/dwarf-tooltip#needs-you"
+  },
+  {
+    "key": "molecules/dwarf-tooltip#asleep"
+  },
+  {
+    "key": "organisms/history-panel#dwarfai-miners",
+    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)"
+  },
+  {
+    "key": "molecules/vault-strip#mine-footer"
+  },
+  {
+    "key": "molecules/vault-strip#map-totals"
+  },
+  {
+    "key": "molecules/vault-strip#empty"
   },
   {
     "key": "foundations/colour#materials"

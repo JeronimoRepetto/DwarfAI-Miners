@@ -32,14 +32,16 @@ export function sharedFrameClock(): FrameClock {
  */
 export function useFramePlayer(
   clips: () => readonly SpriteClip[],
-  options: PlayOptions = {}
+  options: PlayOptions | (() => PlayOptions) = {}
 ): Ref<SequencePosition> {
   const clock = inject(FRAME_CLOCK_KEY, null) ?? sharedFrameClock()
   const position = shallowRef<SequencePosition>({ clip: 0, frame: 0 })
   const player = clock.player((next) => {
     position.value = next
   })
-  watch(clips, (next) => player.play(next, options), { immediate: true })
+  // Read as each sequence starts, so a sprite's phase can depend on what it is starting.
+  const optionsNow = (): PlayOptions => (typeof options === 'function' ? options() : options)
+  watch(clips, (next) => player.play(next, optionsNow()), { immediate: true })
   onBeforeUnmount(() => player.stop())
   return position
 }

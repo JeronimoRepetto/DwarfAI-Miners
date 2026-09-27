@@ -261,6 +261,8 @@
   --fs-section: 16px;
   --fs-title: 21px;
   --fs-headline: 21px;
+  /* The design's 10px small text, below the scale: a history tab's last time (#635). */
+  --fs-small: 10px;
 
   /* Closed edge rail. */
   --color-rail: var(--brass);
@@ -644,11 +646,13 @@
 }
 /*
  * Under reduced motion these loops stop outright, as foundations/motion stops them: the scan band
- * holds still, and so does the map marker's pulse (#635), whose steady halo TierMarker.vue draws
- * in its own reduced-motion rule. Each atom's own looping part joins this list as it is built.
+ * holds still, and so do the map marker's pulse (#635), whose steady halo TierMarker.vue draws
+ * in its own reduced-motion rule, and an asking dwarf's "?", which stays up without bobbing. Each
+ * atom's own looping part joins this list as it is built.
  */
 @media (prefers-reduced-motion: reduce) {
   .dm-marker__pulse,
+  .dm-dwarf__ask,
   .dm-progress__scan {
     animation: none !important;
   }

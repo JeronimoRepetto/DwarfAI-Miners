@@ -290,3 +290,17 @@ describe('MinesList', () => {
     expect(list.get('[role="alert"]').text()).toBe('That folder could not be added.')
   })
 })
+
+// PANEL-QUESTIONS 6: a press on a card that cannot be entered is passed up for the page to say why.
+describe('MinesList refusing a mine', () => {
+  it('passes up a press on a card that cannot be entered', async () => {
+    const list = mount(MinesList, {
+      props: {
+        ...base,
+        cards: [card({ name: 'old', state: 'unenterable', enterable: false, reason: 'gone' })]
+      }
+    })
+    await list.get('button.dm-card__hit').trigger('click')
+    expect(list.emitted('refuse')).toEqual([['old']])
+  })
+})

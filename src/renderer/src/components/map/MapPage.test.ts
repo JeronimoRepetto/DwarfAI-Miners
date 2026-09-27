@@ -46,7 +46,8 @@ import pageSource from './MapPage.vue?raw'
  *   paints whichever variant it is handed.
  * - the vault (the whole ledger by material, an empty vault said rather than hidden): here, on the
  *   totals plate, and lib/map/mapPage.test.ts ("mapTotals"). The raw token total VaultChip showed
- *   beside it is not on the redesigned plate; VaultChip stays in the mine interior.
+ *   beside it is not on the redesigned plate; VaultChip went with the old mine interior (#635,
+ *   PR4), whose footer is the same vault strip.
  * - material info (the info button, opening and closing the explainer): here, as "Tiers and ore",
  *   which opens the merged TierInfo (TierInfo.test.ts and lib/browse/tierInfo.test.ts have every
  *   material's grain in order, which MaterialInfoModal's two table tests pinned). Its Esc and its
@@ -426,5 +427,30 @@ describe('MapPage mine tooltip', () => {
     await wrapper.get('.dm-marker').trigger('pointerenter')
     wrapper.unmount()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+/*
+ * PANEL-QUESTIONS 6: a marker for a mine whose folder no longer exists opens nothing; the page
+ * reports the press so the shell can say why, and its tooltip adds "Not enterable".
+ */
+describe('MapPage, a mine that cannot be entered', () => {
+  const gone = defaultProject({ id: 'C:/dev/old', name: 'old', folderMissing: true })
+
+  it('reports a press on its marker instead of opening it', async () => {
+    const wrapper = mount(MapPage, { props: { ...base, mines: [], projects: [gone] } })
+    await markerFor(wrapper, 'old').trigger('click')
+    expect(wrapper.emitted('open')).toBeUndefined()
+    expect(wrapper.emitted('refuse')).toEqual([['C:/dev/old']])
+  })
+
+  it('adds "Not enterable" to its tooltip', async () => {
+    const wrapper = mount(MapPage, {
+      props: { ...base, mines: [], projects: [gone] },
+      attachTo: document.body
+    })
+    await markerFor(wrapper, 'old').trigger('focus')
+    await wrapper.vm.$nextTick()
+    expect(document.body.querySelector('.dm-tip')?.textContent).toContain('Not enterable')
   })
 })
