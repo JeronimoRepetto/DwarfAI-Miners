@@ -27,9 +27,10 @@ import SceneDwarf from './SceneDwarf.vue'
  *   distinct positions", "leaves a lone bubble where it sits"): RETIRED by the design, which floats
  *   only a dwarf's "?" over it; what a dwarf said is the MessagePanel's.
  * - as a place ("stands every dwarf on its own spot", "leaves a waiting dwarf where it was
- *   working", "paints the crew high to low", "keeps every dwarf inside", "gives the same crew the
+ *   working", "keeps every dwarf inside", "gives the same crew the
  *   same spots on every poll"): here and in lib/scene/mineColumn.test.ts. "sends a leaving dwarf
- *   to a spawn point": REPLACED, a leaving dwarf keeps its station and fades there.
+ *   to a spawn point": REPLACED, a leaving dwarf keeps its station, idle. "paints the
+ *   crew high to low": REPLACED by the design's crew order at one z-index.
  * - reduced motion ("marks the floor still", "animates the walks"): RETIRED with the walk.
  * - sprite scaling (four tests): RETIRED, the design draws every dwarf at 1x (36 x 38).
  * - interior shell: the painting per tier and the placeholder tier's own painting, here; "fits the
@@ -262,10 +263,15 @@ describe('MineColumn', () => {
       expect(wrapper.find('button.dm-dwarf').attributes('style')).toBe(before)
     })
 
-    it('paints the crew high to low, so a nearer dwarf overlaps one above it', () => {
+    // AMENDED for #635 (was: "paints the crew high to low"): the design's own order, see
+    // lib/scene/mineColumn.test.ts.
+    it('draws the crew in the board’s order, as the roster does', () => {
       const wrapper = mountColumn({ mine: defaultMine({ dwarfs: crew }) })
-      const ys = wrapper.findAllComponents(SceneDwarf).map((d) => d.props('y'))
-      expect([...ys].sort((a, b) => a - b)).toEqual(ys)
+      expect(wrapper.findAll('button.dm-dwarf').map((d) => d.attributes('data-dwarf'))).toEqual([
+        'a',
+        'b',
+        'c'
+      ])
     })
 
     it('stands a dwarf on the station its caller names, as the design’s sample does', () => {

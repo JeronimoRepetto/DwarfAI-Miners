@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import { assignScene } from './sceneAssignment'
-import { depthOrder, sceneLayout } from './sceneLayout'
+import { sceneLayout } from './sceneLayout'
 import { ADD_DWARF_LABEL, interiorLabel, mineColumnLabel, mineCrew, mineStands } from './mineColumn'
 
 describe('the mine column copy', () => {
@@ -57,11 +57,15 @@ describe('mineStands', () => {
   })
 
   // A nearer gallery paints over a farther one, in DOM order as in z-index (depthOrder).
-  it('paints them high to low, ties broken by id so a poll cannot reshuffle them', () => {
+  /*
+   * AMENDED for #635 (was: "paints them high to low, ties broken by id"). The design draws the
+   * crew in the board's order, every dwarf at the one z-index (anatomy.md, Mine column: d53, d54,
+   * d55, d56 whatever their galleries; components.md, Dwarf: z-index 2). The board's order is
+   * already stable across polls (mineCrew), which is what the id tie-break was for.
+   */
+  it('stands them in the crew’s own order, whatever their galleries', () => {
     const stands = mineStands(crew, 'silver')
-    for (const stand of stands) expect(stand.z).toBe(depthOrder(stand.y))
-    const ys = stands.map((s) => s.y)
-    expect([...ys].sort((a, b) => a - b)).toEqual(ys)
+    expect(stands.map((s) => s.dwarf.id)).toEqual(crew.map((d) => d.id))
   })
 
   /*

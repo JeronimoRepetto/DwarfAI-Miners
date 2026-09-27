@@ -14,7 +14,7 @@
  * dwarf on its way out keeps the station it had rather than jumping to a spawn point.
  */
 import { assignScene, type SceneOccupant } from './sceneAssignment'
-import { depthOrder, sceneLayout } from './sceneLayout'
+import { sceneLayout } from './sceneLayout'
 import type { Dwarf, Mine, MineTier } from '../../types'
 
 export const ADD_DWARF_LABEL = '+ Dwarf'
@@ -54,8 +54,6 @@ export interface Station {
 
 export interface DwarfStand extends Station {
   dwarf: Dwarf
-  /** Paint order: a nearer gallery (lower on the art) over a farther one (depthOrder). */
-  z: number
 }
 
 /*
@@ -71,9 +69,11 @@ function occupantOf(dwarf: Dwarf): SceneOccupant {
 }
 
 /**
- * Every dwarf on its station, painted high to low. `stations` names a station per dwarf where the
- * caller decides it (the design's own sample does); every other dwarf takes the one the scene
- * assigns deterministically from its id.
+ * Every dwarf on its station, in the crew's own order: the design draws the crew as the board
+ * lists it, every dwarf at the one z-index (anatomy.md, Mine column; components.md, Dwarf), and
+ * the board's order is already stable across polls (mineCrew). `stations` names a station per
+ * dwarf where the caller decides it (the design's own sample does); every other dwarf takes the one
+ * the scene assigns deterministically from its id.
  */
 export function mineStands(
   crew: readonly Dwarf[],
@@ -88,11 +88,7 @@ export function mineStands(
     const at: Station | undefined =
       named ?? (placed && { x: placed.point.x, y: placed.point.y, facesLeft: placed.facesLeft })
     if (!at) continue
-    stands.push({ dwarf, ...at, z: depthOrder(at.y) })
+    stands.push({ dwarf, ...at })
   }
-  /*
-   * DOM order matches depth, so the scene still reads right if anything flattens the z-indexes.
-   * Ties break on id, never on the order a poll listed them, which would reshuffle the DOM.
-   */
-  return stands.sort((a, b) => a.y - b.y || a.dwarf.id.localeCompare(b.dwarf.id))
+  return stands
 }

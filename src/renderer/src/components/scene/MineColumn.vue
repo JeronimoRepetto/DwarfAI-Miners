@@ -132,7 +132,6 @@ function crewSound(dwarf: Dwarf, signal: CrewSoundSignal): void {
           :dwarf="stand.dwarf"
           :x="stand.x"
           :y="stand.y"
-          :z="stand.z"
           :faces-left="stand.facesLeft"
           :selected="stand.dwarf.id === selectedId"
           :entering="arrived.has(stand.dwarf.id)"
