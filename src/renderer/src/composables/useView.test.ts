@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { restoreLaunchView, useView } from './useView'
+import { restoreLaunchView, takeLaunchMine, useView } from './useView'
 
 /*
  * Every test in this file kept its subject through #90 and changed the shape it
@@ -129,17 +129,22 @@ describe('restoreLaunchView (#635, PANEL-QUESTIONS 25)', () => {
     useView().clear()
   })
 
-  it('opens on the page and the mine main remembers', async () => {
+  // AMENDED in this change (was: the mine opened at once): the mine waits for App to know its
+  // folder is still there, so a gone one never opens and closes on screen.
+  it('opens on the page main remembers, and holds its mine until App knows it still opens', async () => {
     await restoreLaunchView({
       getLaunchView: () => Promise.resolve({ area: 'mines', mineId: 'north-shaft' })
     })
-    expect(useView().state).toEqual({ area: 'mines', mineId: 'north-shaft' })
+    expect(useView().state).toEqual({ area: 'mines', mineId: null })
+    expect(takeLaunchMine()).toBe('north-shaft')
+    expect(takeLaunchMine()).toBeNull()
   })
 
   it('opens the default view when main remembers nothing', async () => {
     useView().showArea('settings')
     await restoreLaunchView({ getLaunchView: () => Promise.resolve({ area: 'map', mineId: null }) })
     expect(useView().state).toEqual({ area: 'map', mineId: null })
+    expect(takeLaunchMine()).toBeNull()
   })
 
   it('reads what came back through the shared parser, so a stray answer opens the Map', async () => {

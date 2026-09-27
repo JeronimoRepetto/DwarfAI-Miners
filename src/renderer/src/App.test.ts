@@ -3720,7 +3720,8 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
       }
     )
     // The board has answered without the mine; the remembered projects have not answered yet.
-    expect(useView().state.mineId).toBe(NORTH.id)
+    // AMENDED in this change (was: the mine already open): it waits for the projects, unopened.
+    expect(useView().state.mineId).toBeNull()
     answerProjects({ answered: true, projects: [NORTH_ROW] })
     await flushPromises()
     expect(useView().state).toEqual({ area: 'mines', mineId: NORTH.id })
@@ -3760,14 +3761,54 @@ describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
         queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
       }
     )
-    expect(api.setLaunchView).not.toHaveBeenCalled()
+    // AMENDED in this change (was: nothing reported): the mine opens once it is known to, and that
+    // opening reports the very view restored, which main's store writes nothing for.
+    expect(api.setLaunchView).toHaveBeenCalledTimes(1)
+    expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'mines', mineId: NORTH.id })
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await flushPromises()
     expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'settings', mineId: NORTH.id })
     useView().closeMine()
     await flushPromises()
     expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'settings', mineId: null })
-    expect(api.setLaunchView).toHaveBeenCalledTimes(2)
+    expect(api.setLaunchView).toHaveBeenCalledTimes(3)
+  })
+
+  it('opens nothing for a mine a session still puts on the board after its folder was deleted', async () => {
+    const { wrapper, api } = await launchOn(
+      { area: 'mines', mineId: NORTH.id },
+      {
+        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        queryProjects: vi.fn().mockResolvedValue({
+          answered: true,
+          projects: [{ ...NORTH_ROW, folderMissing: true }]
+        })
+      }
+    )
+    expect(useView().state).toEqual({ area: 'mines', mineId: null })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+    expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'mines', mineId: null })
+  })
+
+  it('never opens a remembered mine on screen before it is known to open', async () => {
+    let answerProjects: (value: unknown) => void = () => undefined
+    const { wrapper, api } = await launchOn(
+      { area: 'mines', mineId: NORTH.id },
+      {
+        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        queryProjects: vi.fn(
+          () =>
+            new Promise((resolve) => {
+              answerProjects = resolve
+            })
+        )
+      }
+    )
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+    answerProjects({ answered: true, projects: [{ ...NORTH_ROW, folderMissing: true }] })
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+    expect(api.setPanelLayout).not.toHaveBeenCalledWith(expect.objectContaining({ mineOpen: true }))
   })
 
   it('reports a remembered mine it let go of, so the next launch does not look for it again', async () => {

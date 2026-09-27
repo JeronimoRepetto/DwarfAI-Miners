@@ -31,12 +31,12 @@ import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { createAttentionWatch } from './lib/audio/attentionCues'
 import { browseRows } from './lib/browse/boardRows'
-import { columnMine, openableMineIds } from './lib/browse/columnMine'
+import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
-import { useView } from './composables/useView'
+import { takeLaunchMine, useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
@@ -689,7 +689,24 @@ const currentMine = computed<Mine | undefined>(() =>
 let boardRead = false
 let projectsRead = false
 function pruneOpenMine(): void {
-  if (boardRead && projectsRead) syncWithMines(openableMineIds(state.mines, projects.value))
+  if (!boardRead || !projectsRead) return
+  syncWithMines(openableMineIds(state.mines, projects.value))
+  settleLaunchMine()
+}
+
+/*
+ * The mine the launch remembered (#635, PANEL-QUESTIONS 25) is judged here, once, with both lists
+ * read: it opens only if it still does, its folder included (launchMineOpens), and it never opens
+ * first to close a moment later. One the person has already replaced by opening another mine stays
+ * unopened. A mine that no longer opens is forgotten in main at once, so the next launch does not
+ * look for it again.
+ */
+function settleLaunchMine(): void {
+  const remembered = takeLaunchMine()
+  if (remembered === null) return
+  if (viewState.mineId !== null) return
+  if (launchMineOpens(remembered, state.mines, projects.value)) openMine(remembered)
+  else window.api.setLaunchView({ area: viewState.area, mineId: null })
 }
 watch(projects, () => {
   projectsRead = true
@@ -1085,15 +1102,7 @@ onMounted(() => {
   void loadProjects()
   // Adopts the window's REAL shape: which edge it is docked to decides which
   // way the columns run, and the renderer never chose it.
-  void syncLayout().then(() => {
-    // A mine the launch restored (#635, PANEL-QUESTIONS 25) was open before this window's shape
-    // was ever asked for, so the watch that widens the window for a mine never saw it open. Asked
-    // after the sync, which is not queued behind a request and would otherwise report the narrow
-    // shape main created the window as over the wide one.
-    if (viewState.mineId !== null) {
-      void applyLayout({ mineOpen: true, dockOpen: dockItem.value !== null })
-    }
-  })
+  void syncLayout()
   // The button's initial "pinned" guess matches main's default; this adopts
   // the real BrowserWindow state (the user may have unpinned on a past run).
   void syncPinned()
