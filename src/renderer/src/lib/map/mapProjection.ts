@@ -37,7 +37,7 @@
  * The cave already does this arithmetic, and this is deliberately a second copy
  * rather than a shared one. The two now agree on the fit, but they do not agree
  * on what they are for: this module is authored against the map painting and
- * consumed by `MapView`, `sceneGeometry` against the interior tower. Generalising
+ * consumed by `MapPage`, `sceneGeometry` against the interior tower. Generalising
  * one function over both would put the map's coordinates inside the cave's
  * module, and the whole point of the coordinate rule is that a reader is never
  * in doubt which space they are standing in. `components/` and `lib/` already
@@ -116,8 +116,9 @@ export function drawnMapRect(box: MapBoxSize, image: MapBoxSize): MapDrawnRect {
  * Nothing can leave the box any more: under `contain` the whole painting is
  * drawn, so every authored point lands inside 0-100 at every shape. That is the
  * correction (#153), and it is why the "off the visible painting" reading this
- * used to support is gone. `clampToMapBox` stays for a different reason — the
- * marker's own half-width, which can still hang over an edge.
+ * used to support is gone. Nor is a marker held in by its own half-width any
+ * more (#635): the redesign centres each marker on its measured site as it is,
+ * and `clampToMapBox`, which moved an edge marker off its site, went with it.
  */
 export function projectToMapBox(point: MapPoint, box: MapBoxSize, image: MapBoxSize): MapPoint {
   // Returned untouched rather than run through the whole-box rect, which is the
@@ -129,22 +130,5 @@ export function projectToMapBox(point: MapPoint, box: MapBoxSize, image: MapBoxS
   return {
     x: rect.x0 + (point.x / 100) * (rect.x1 - rect.x0),
     y: rect.y0 + (point.y / 100) * (rect.y1 - rect.y0)
-  }
-}
-
-/**
- * Hold a projected point inside the box, leaving a margin for the marker's own
- * width and height.
- *
- * Nothing is cropped since #153, so no spawn point can leave the box on its
- * own. What can still hang over an edge is the MARKER: it is 22px of hit box
- * centred on a point that may sit at image x 3.4 or 96.8, so half of it would
- * be off the panel. A marker held at the edge is a pixel or two out of place and
- * readable; a marker off the edge is a live project the user cannot see.
- */
-export function clampToMapBox(point: MapPoint, marginX: number, marginY: number): MapPoint {
-  return {
-    x: Math.min(Math.max(point.x, marginX), 100 - marginX),
-    y: Math.min(Math.max(point.y, marginY), 100 - marginY)
   }
 }

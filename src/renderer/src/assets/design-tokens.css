@@ -323,24 +323,10 @@
   --color-question-dark: #13100a;
 
   /*
-   * The five mine-marker colours (#136).
-   *
-   * The only values in this file that were not transcribed from a table: the
-   * design source names the families and says outright that the PDF carries no
-   * hex values, pointing at its verified marker export instead. So these were
-   * MEASURED off that export by `scripts/extract-map-markers.mjs` — the five
-   * flat-fill discs on the map, each read as its own exact RGB rather than as
-   * an average with the painting under it. They are product colours now, which
-   * is why they live here beside the transcribed ones rather than in a
-   * component. Keyed by the tier's CODE name: the panel LABELS this second
-   * tier `Copper` (#165), which is UI copy (see presentation.ts) and not an
-   * identifier the type system knows.
+   * The five mine-marker colours (#136) were measured off the design's marker export by
+   * `scripts/extract-map-markers.mjs`; the values are the `--tier-*` tokens now. Their old
+   * `--color-marker-*` aliases went with MineMarker.vue, their last caller (#635).
    */
-  --color-marker-bronze: var(--tier-bronze);
-  --color-marker-copper: var(--tier-copper);
-  --color-marker-silver: var(--tier-silver);
-  --color-marker-gold: var(--tier-gold);
-  --color-marker-uranium: var(--tier-uranium);
 
   /*
    * Every rung raised 2px over the source table (#198, maintainer ruling
@@ -390,15 +376,11 @@
   --space-settings: 10px;
   /* Reset modal outer margin. */
   --space-modal-margin: 12px;
-  /* Map padding on every side. */
-  --space-map-pad: 21px;
 
   /* The closed rail, spanning the usable screen height. */
   --size-rail-width: 20px;
   /* Tray/app icon and every shell navigation SVG. */
   --size-icon: 19px;
-  /* Mine map marker, a hexagon with a pulsing light. */
-  --size-marker-width: 10px;
   /* Sleep/idle dwarf status icon; the other status icons use --size-icon. */
   --size-sleep-icon: 15px;
   --size-search-height: 30px;
@@ -409,8 +391,6 @@
   --size-card-art-height: 90px;
   /* Dwarf/user portrait in the message UI. */
   --size-portrait: 100px;
-  --size-tooltip-width: 170px;
-  --size-tooltip-height: 60px;
   --size-mine-interior-width: 245px;
   /* Lab and Market. */
   --size-feature-panel-width: 487px;

@@ -190,7 +190,8 @@ describe('MotionConfig reducedMotion="always": what it actually skips', () => {
  * `motionEngine.test.ts` already established this for the bounded runner).
  * Only `AnimatePresence`'s EXIT path depends on a layout primitive jsdom
  * never implements. Surfaced rather than worked around: `MinesPanel.test.ts`
- * and `MapView.test.ts` verify each wrapped popup opens and closes on the
+ * and `MapView.test.ts` (both gone with #635, whose popups enter and leave
+ * by CSS transitions instead) verified each wrapped popup opens and closes on the
  * expected trigger (the assertion the design and #506/#538/#169/#348 all
  * actually care about); real Electron confirmation that the exit genuinely
  * fades rather than snapping is `T5`'s job, per the parent task document.

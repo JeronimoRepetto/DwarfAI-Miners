@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
+import { MAP_SPAWN_POINTS } from '../lib/map/spawnPoints.generated'
 import { adaptSample, silenceMs } from './sample'
 
 /*
@@ -127,6 +128,48 @@ describe('adaptSample', () => {
     expect(() =>
       adaptSample(dm({ mines: [shaft], dwarfs: [{ ...digger, mine: 'gone' }] }))
     ).toThrow(/mine "gone"/)
+  })
+
+  /*
+   * ADDED for #635 (PR3). The sample's sites are the product's own measured spawn points, in
+   * percent of the painting; a mine stands on the one whose point it names, as main's store would
+   * remember it. A site that is no spawn point is a sample the app cannot draw.
+   */
+  it('stands each mine on the spawn point its site names', () => {
+    const point = MAP_SPAWN_POINTS[12]!
+    const sample = adaptSample(dm({ mines: [{ ...shaft, site: { x: point.x, y: point.y } }] }))
+    expect(sample.mines[0]?.mapSite).toBe(point.id)
+    expect(adaptSample(dm({ mines: [shaft] })).mines[0]?.mapSite).toBeUndefined()
+    expect(() => adaptSample(dm({ mines: [{ ...shaft, site: { x: 1, y: 1 } }] }))).toThrow(
+      /site \{"x":1,"y":1\}/
+    )
+  })
+
+  // ADDED for #635 (PR3): an asking dwarf's questions are what makes it need you in the app.
+  it('carries an asking dwarf’s questions as its pending question, and a permission as none', () => {
+    const question = [{ text: 'Which database?', options: ['Postgres', 'SQLite'] }]
+    const sample = adaptSample(
+      dm({
+        mines: [shaft],
+        dwarfs: [
+          { ...digger, id: 'q', status: 'asking', question },
+          { ...digger, id: 'p', status: 'asking', need: 'permission', question }
+        ]
+      })
+    )
+    const [q, p] = sample.mines[0]?.dwarfs ?? []
+    expect(q?.pendingQuestion).toEqual({
+      toolUseId: 'q',
+      channel: 'terminal',
+      questions: [
+        {
+          question: 'Which database?',
+          multiSelect: false,
+          options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+        }
+      ]
+    })
+    expect(p?.pendingQuestion).toBeUndefined()
   })
 
   it('fails when the sample script did not define its data', () => {

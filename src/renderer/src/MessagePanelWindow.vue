@@ -1045,7 +1045,7 @@ function dockWindow(event: MouseEvent): void {
  * handle resizes the WINDOW with nothing extra wired to it.
  *
  * Guarded because ResizeObserver is a browser API a test environment need not
- * have, the same guard MineScene and MapView hold. Reported in design pixels:
+ * have, the same guard MineScene and MapPage hold. Reported in design pixels:
  * the page is zoomed by main, so what the renderer measures is the design
  * world, which is the only unit main will accept.
  */

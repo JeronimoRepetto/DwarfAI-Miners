@@ -255,10 +255,13 @@ export {
 /** Root state for the mines store. */
 export interface MinesState {
   mines: Mine[]
-  /** Sum of every mine's tokensObserved — the vault total for the map-view chip. */
+  /**
+   * Sum of every mine's tokensObserved, as main publishes it. The map's chip read it until #635;
+   * the redesigned totals plate shows units per material, so no view reads it now.
+   */
   tokensObserved: number
   /**
-   * The whole vault by material, for the map-view breakdown (see #22).
+   * The whole vault by material, for the Map page's totals (see #22).
    *
    * Deliberately NOT the sum of `mines[].materials`: main sums it over the
    * entire persisted ledger, so it includes projects with no crew today — which

@@ -8,14 +8,14 @@
  * a corrected border weight is one edit, and a new screen cannot invent a
  * seventh way to draw the same box.
  *
- * `map` is the map container from `screens/map.md` — 21px padding on every
- * side, a 2px border and elevation 5. `settings` is the heavy 4px frame the
- * settings and unavailable panels share. `plain` is the default frame the mine
- * column and the browse list sit in.
+ * `settings` is the heavy 4px frame the settings panel sits in. `plain` is the
+ * default frame the mine column sits in. The `map` variant, the old 21px map
+ * container, went with #635: the redesigned Map page stands in the page column
+ * on its own, as the Mines page does.
  */
 withDefaults(
   defineProps<{
-    variant?: 'map' | 'settings' | 'plain'
+    variant?: 'settings' | 'plain'
   }>(),
   { variant: 'plain' }
 )
@@ -38,10 +38,6 @@ withDefaults(
   border: var(--border-highlight);
   border-radius: var(--radius-default);
   background: var(--color-panel-deep);
-}
-.panel-frame.is-map {
-  padding: var(--space-map-pad);
-  box-shadow: var(--elevation-5);
 }
 .panel-frame.is-settings {
   border: var(--border-heavy);
