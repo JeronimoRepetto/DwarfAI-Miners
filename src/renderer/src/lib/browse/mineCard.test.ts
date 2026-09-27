@@ -52,6 +52,13 @@ describe('crewPills', () => {
     ])
   })
 
+  // APPENDED for #635 (PANEL-QUESTIONS 8, design lead ruling 2026-09-27): "1 needs you", and
+  // "{n} need you" for any other count, as the nav badge's accessible name already reads.
+  it('says "need you" for more than one dwarf waiting on you', () => {
+    const asking = dwarf({ status: 'waiting', waitingReason: 'approval' })
+    expect(crewPills([asking, asking])).toEqual([{ text: '2 need you', tone: 'needs', ask: true }])
+  })
+
   it('says No dwarfs for an empty crew', () => {
     expect(crewPills([])).toEqual([{ text: 'No dwarfs' }])
   })

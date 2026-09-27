@@ -40,10 +40,18 @@ export function navSlotClasses(options: NavSlotOptions): string[] {
   return classes
 }
 
+/**
+ * "1 needs you", and "{n} need you" for any other count (PANEL-QUESTIONS 8, design lead ruling
+ * 2026-09-27): the one wording every count of dwarfs waiting on you in the Panel uses.
+ */
+export function needsYouCount(count: number): string {
+  return count + (count === 1 ? ' needs you' : ' need you')
+}
+
 // The full count, never the badge's overflowed "99+": the name is where the number reads whole.
 export function navSlotName(label: string, badge = 0): string {
   if (badge <= 0) return label
-  return label + ', ' + badge + (badge === 1 ? ' needs you' : ' need you')
+  return label + ', ' + needsYouCount(badge)
 }
 
 export function navSlotAttributes(options: NavSlotOptions): NavSlotAttributes {
