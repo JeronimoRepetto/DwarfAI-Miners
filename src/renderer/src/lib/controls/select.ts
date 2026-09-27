@@ -18,6 +18,11 @@ export interface SelectOptions {
   label?: string
   disabled?: boolean
   state?: SelectState
+  /**
+   * The host holds the value: a pick only asks, and the select shows `value` alone until the host
+   * answers (#635, Settings draws what main stored, never what was picked).
+   */
+  held?: boolean
 }
 
 // Class order follows the kit's: the select, the recipe, then the states.

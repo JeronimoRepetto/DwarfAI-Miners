@@ -2,7 +2,8 @@
 /*
  * The redesigned toggle (#635), `atoms/toggle` in the design: a <button role="switch"> with a
  * sunken track, a steel knob that slides to brass when on, and On or Off beside it. The label is
- * the accessible name only. A disabled native button fires no click, so it never changes. What
+ * the accessible name only. A disabled native button fires no click, so it never changes; a held
+ * one only asks, and changes when its host says so. What
  * the options decide is in lib/controls/toggle; this only draws it and holds the state.
  */
 import { computed, ref, watch } from 'vue'
@@ -13,7 +14,11 @@ import {
   type ToggleOptions
 } from '../../lib/controls/toggle'
 
-const props = withDefaults(defineProps<ToggleOptions>(), { on: false, disabled: false })
+const props = withDefaults(defineProps<ToggleOptions>(), {
+  on: false,
+  disabled: false,
+  held: false
+})
 const emit = defineEmits<{ 'update:on': [on: boolean] }>()
 
 const current = ref(props.on)
@@ -28,6 +33,10 @@ const classes = computed(() => toggleClasses(props))
 const attributes = computed(() => toggleAttributes({ ...props, on: current.value }))
 
 function flip(): void {
+  if (props.held) {
+    emit('update:on', !current.value)
+    return
+  }
   current.value = !current.value
   emit('update:on', current.value)
 }

@@ -3,7 +3,7 @@
  * The redesigned select (#635), `atoms/select` in the design: a wood face over the native
  * <select> and a chevron. The native control stays, so the platform keeps its keyboard and
  * screen-reader behaviour, and its popup list is the platform's own. What the options decide is
- * in lib/controls/select; this only draws it.
+ * in lib/controls/select; this only draws it. A held select only asks.
  */
 import { computed } from 'vue'
 import PixelIcon from '../icon/PixelIcon.vue'
@@ -14,22 +14,24 @@ import {
   type SelectOptions
 } from '../../lib/controls/select'
 
-const props = withDefaults(defineProps<SelectOptions>(), { disabled: false })
+const props = withDefaults(defineProps<SelectOptions>(), { disabled: false, held: false })
 const emit = defineEmits<{ 'update:value': [value: string] }>()
 
 const classes = computed(() => selectClasses(props))
 const list = computed(() => selectOptions(props.options))
 const shown = computed(() => selectedValue(props))
+
+function pick(event: Event): void {
+  const control = event.target as HTMLSelectElement
+  emit('update:value', control.value)
+  // Held: the native control goes back to what the host holds; the host's answer moves it.
+  if (props.held) control.value = shown.value
+}
 </script>
 
 <template>
   <span :class="classes">
-    <select
-      :aria-label="label"
-      :disabled="disabled"
-      :value="shown"
-      @change="emit('update:value', ($event.target as HTMLSelectElement).value)"
-    >
+    <select :aria-label="label" :disabled="disabled" :value="shown" @change="pick">
       <option v-for="option in list" :key="option.value" :value="option.value">
         {{ option.label }}
       </option>

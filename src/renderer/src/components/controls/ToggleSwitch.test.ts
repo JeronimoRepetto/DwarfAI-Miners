@@ -42,4 +42,15 @@ describe('ToggleSwitch', () => {
     expect(toggle.attributes('aria-checked')).toBe('true')
     expect(toggle.emitted('update:on')).toBeUndefined()
   })
+
+  // APPENDED (#635): Settings draws a switch only as main answered it, never as the press asked.
+  it('only asks while held, showing the state its host sets and nothing else', async () => {
+    const toggle = mount(ToggleSwitch, { props: { label: 'x', on: false, held: true } })
+    await toggle.trigger('click')
+    expect(toggle.emitted('update:on')).toEqual([[true]])
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(toggle.get('.dm-toggle__state').text()).toBe('Off')
+    await toggle.setProps({ on: true })
+    expect(toggle.attributes('aria-checked')).toBe('true')
+  })
 })
