@@ -2266,6 +2266,24 @@ describe('App mine history', () => {
     expect(openExternalLink).toHaveBeenCalledWith('https://example.com/')
   })
 
+  // ADDED for #635 (PANEL-QUESTIONS 16): a message that never arrived is drawn from the panel
+  // window's own record of the send, which reaches this window with the delivery verdicts.
+  it("draws a failed message from the panel window's record of the send", async () => {
+    const { wrapper, api } = await openMineWith([], {
+      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] })
+    })
+    const push = api.onDwarfDeliveryReport.mock.calls[0]![0] as (report: unknown) => void
+    push({
+      send: {},
+      kick: {},
+      failed: { 'claude:older': [{ text: 'Never got there.', sentAt: SPOKE_AT + 60_000 }] }
+    })
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
+    await flushPromises()
+    const failed = wrapper.find('.dm-bubble__mark[data-mark="failed"]')
+    expect(failed.text()).toBe('✕ not delivered')
+  })
+
   it('says the mine could not be read when the bridge itself fails', async () => {
     const { wrapper } = await openMineWith([], {
       getMineHistory: vi.fn().mockRejectedValue(new Error('bridge down'))
@@ -3122,6 +3140,22 @@ describe('App Mines page', () => {
     const cards = wrapper.findAll('.dm-card')
     expect(cards).toHaveLength(1)
     expect(cards[0]!.attributes('data-state')).toBe('unrecorded')
+  })
+
+  // ADDED for #635 (PANEL-QUESTIONS 6): a press on a mine whose folder is gone says why.
+  it('says why a mine whose folder is gone cannot be entered', async () => {
+    const { wrapper } = await mountOpenApp({
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [{ ...ALPHA_ROW, name: 'old-shaft', live: false, folderMissing: true }]
+      })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.get('.dm-card button.dm-card__hit').trigger('click')
+    await flushPromises()
+    expect(toasts(wrapper)).toContain('old-shaft: Folder not found. It was moved or deleted.')
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
   })
 
   it('says what the Music slot did', async () => {

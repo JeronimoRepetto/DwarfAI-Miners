@@ -36,7 +36,7 @@ import { isOpenablePath } from '../../lib/message/openablePath'
 import { mineCrew } from '../../lib/scene/mineColumn'
 import { sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
 import type { PortraitStatus } from '../../lib/dwarf/portrait'
-import type { Mine, MineHistoryResult } from '../../types'
+import type { FailedSend, Mine, MineHistoryResult } from '../../types'
 
 const props = defineProps<{
   mine: Mine
@@ -44,6 +44,8 @@ const props = defineProps<{
   history?: MineHistoryResult
   /** The refusal main gave for the last path this panel asked it to open (#279), by row key. */
   pathRefusal?: { key: string; reason: string }
+  /** The messages the app sent that never arrived, by dwarf id (PANEL-QUESTIONS 16). */
+  failed?: Record<string, FailedSend[]>
 }>()
 
 const emit = defineEmits<{
@@ -69,7 +71,10 @@ const ordered = computed(() =>
 const chosenId = ref<string | null>(null)
 const selectedId = computed(() => selectedSpeakerId(ordered.value, chosenId.value))
 const selected = computed(() => ordered.value.find((speaker) => speaker.id === selectedId.value))
-const rows = computed(() => (selected.value === undefined ? [] : speakerRows(selected.value)))
+const failedOf = (id: string): FailedSend[] => props.failed?.[id] ?? []
+const rows = computed(() =>
+  selected.value === undefined ? [] : speakerRows(selected.value, failedOf(selected.value.id))
+)
 const marks = computed(() => {
   const byKey = new Map<string, (typeof HISTORY_MARK)[keyof typeof HISTORY_MARK]>()
   historyMarks(rows.value).forEach((mark, i) => {
@@ -198,7 +203,7 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
         <DwarfPortrait :role="speaker.role" :status="tabStatus(speaker.id)" size="sm" />
         <span>
           <span class="dm-hist__name">{{ speaker.name }}</span>
-          <small>{{ historyTabLast(speaker) }}</small>
+          <small>{{ historyTabLast(speaker, failedOf(speaker.id)) }}</small>
         </span>
       </button>
     </div>
@@ -444,6 +449,9 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
 }
 .dm-bubble__mark[data-mark='reacted'] {
   color: var(--ok-lo);
+}
+.dm-bubble__mark[data-mark='failed'] {
+  color: var(--danger-ink);
 }
 .dm-bubble.is-new {
   animation: dm-pop-in var(--dur-base) var(--ease-out) both;

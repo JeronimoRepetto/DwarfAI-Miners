@@ -16,7 +16,8 @@ describe('TierInfo', () => {
       'Gold',
       'Uranium'
     ])
-    expect(rows[1]!.get('.dm-tinfo__range').text()).toBe('100 – 499')
+    // AMENDED for #635 (PANEL-QUESTIONS 7): the range says its unit, KB.
+    expect(rows[1]!.get('.dm-tinfo__range').text()).toBe('100 – 499 KB')
     // The mound is art: the chip's word already names the tier.
     expect(rows.every((r) => r.get('img').attributes('alt') === '')).toBe(true)
   })

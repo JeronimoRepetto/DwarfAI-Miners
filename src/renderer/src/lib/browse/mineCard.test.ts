@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { crewPills, dwarfNeedsYou, mineCardLabel, mineCardMenu, mineCardView } from './mineCard'
+import {
+  MINE_UNENTERABLE_REASON,
+  crewPills,
+  dwarfNeedsYou,
+  mineCardLabel,
+  mineCardMenu,
+  mineCardView,
+  mineRefusalToast
+} from './mineCard'
 import type { BrowseRow, Dwarf, Mine } from '../../types'
 
 const KB = 1024
@@ -136,5 +144,31 @@ describe('mineCardMenu', () => {
     expect(mineCardMenu(mineCardView(row({ unrecorded: true }), board([])))).toEqual([
       { label: 'Remove mine…', danger: true, disabled: true }
     ])
+  })
+})
+
+/*
+ * PANEL-QUESTIONS 6 (design lead ruling 2026-09-27): a mine is not enterable only when its folder
+ * no longer exists, and the reason is "Folder not found. It was moved or deleted." — after the
+ * "Not enterable" pill on its card, as the card button's title, and in the toast "<name>: <reason>".
+ */
+describe('mineCardView, a folder that no longer exists', () => {
+  it('is not enterable, and says why', () => {
+    const view = mineCardView(row({ live: false, folderMissing: true }), [])
+    expect(view.state).toBe('unenterable')
+    expect(view.enterable).toBe(false)
+    expect(view.reason).toBe(MINE_UNENTERABLE_REASON)
+    expect(MINE_UNENTERABLE_REASON).toBe('Folder not found. It was moved or deleted.')
+    expect(view.progress).toBeUndefined()
+  })
+
+  it('names the toast "<name>: <reason>"', () => {
+    expect(mineRefusalToast('old-shaft')).toBe(
+      'old-shaft: Folder not found. It was moved or deleted.'
+    )
+  })
+
+  it('leaves a mine whose folder is there as it was', () => {
+    expect(mineCardView(row({}), []).state).toBe('active')
   })
 })

@@ -101,7 +101,8 @@ const {
   observe: observeSends,
   reconcile: reconcileEchoes,
   listenHeld: listenHeldMessages,
-  keepEchoesFor
+  keepEchoesFor,
+  failedSends
 } = useDwarfMessaging()
 /**
  * The pages of conversation older than the newest feed (#364) — held beside
@@ -761,9 +762,16 @@ function plainVerdicts<T extends DwarfSendState | DwarfKickState>(
  * up, and the shell has nothing else that could tell it that.
  */
 watch(
-  [() => messagingState.byDwarfId, () => kickingState.byDwarfId],
+  [() => messagingState.byDwarfId, () => kickingState.byDwarfId, () => sentEchoes],
   ([send, kick]) => {
-    window.api.reportDwarfDelivery({ send: plainVerdicts(send), kick: plainVerdicts(kick) })
+    // The failed sends ride along when there are any (#635): the history draws them from this
+    // record of the send, and a report with none says nothing about echoes (#309).
+    const failed = failedSends()
+    window.api.reportDwarfDelivery({
+      send: plainVerdicts(send),
+      kick: plainVerdicts(kick),
+      ...(Object.keys(failed).length === 0 ? {} : { failed })
+    })
   },
   { deep: true }
 )

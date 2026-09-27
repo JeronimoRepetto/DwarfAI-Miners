@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { INTERIOR_ART_SIZE, INTERIOR_SRC } from '../../lib/art'
 import type { CrewSoundEvent } from '../../lib/audio/crew'
 import { MINE_FOOTER_ORE_MAX } from '../../lib/scene/mineColumn'
 import { MINE_COLUMN_CHROME_HEIGHT, MINE_COLUMN_MIN_WIDTH } from '../../lib/scene/sceneSizing'
 import { defaultDwarf, defaultMaterials, defaultMine } from '../../testing/factories'
 import { MATERIAL_TOKENS_PER_UNIT, type Mine, type MineTier } from '../../types'
+import { assignScene } from '../../lib/scene/sceneAssignment'
+import { sceneLayout } from '../../lib/scene/sceneLayout'
 import MineColumn from './MineColumn.vue'
 import SceneDwarf from './SceneDwarf.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 /*
  * The mine column (#635), `organisms/mine-column` in the design, which replaces MineScene inside
@@ -286,13 +292,15 @@ describe('MineColumn', () => {
       })
     })
 
-    it('fades in a dwarf that arrived after the column opened, and no other', () => {
+    // AMENDED for #635 (PANEL-QUESTIONS 14; was: "fades in a dwarf that arrived after the column
+    // opened"): an arrival walks in from the mine's spawn point, as today (arrivals, below).
+    it('walks in a dwarf that arrived after the column opened, and no other', () => {
       const wrapper = mountColumn({ mine: defaultMine({ dwarfs: crew }), arrived: new Set(['c']) })
-      const entering = wrapper
-        .findAll('button.dm-dwarf')
-        .filter((d) => d.classes().includes('is-entering'))
-        .map((d) => d.attributes('data-dwarf'))
-      expect(entering).toEqual(['c'])
+      const walking = wrapper
+        .findAllComponents(SceneDwarf)
+        .filter((d) => d.props('walking'))
+        .map((d) => d.props('dwarf').id)
+      expect(walking).toEqual(['c'])
     })
 
     it('lists the crew in its roster, in the order the board gives it', () => {
@@ -380,5 +388,194 @@ describe('MineColumn', () => {
         [{ cue: 'shift', ending: true, gain: 0.5, mineId: 'mine-1', dwarfId: 'b', role: 'worker2' }]
       ])
     })
+  })
+})
+
+/*
+ * The walk (#635, PANEL-QUESTIONS 14, PO ruling 2026-09-27): today's walk stays, from the mine's
+ * spawn point along the painted corridors, at today's speed. RESTORED from MineScene.test.ts
+ * (88ee3fc), each under its old name: "places the crew that was already working when the mine
+ * opened", "walks in a dwarf that turns up in a later snapshot", "walks in the first dwarf to reach
+ * a mine that was opened empty", "starts that dwarf at a spawn point rather than on its
+ * workstation", "leaves an arrival in place for a viewer who asked for less movement", and from its
+ * reduced-motion block "still places the crew in the cave, but marks the floor still" and "animates
+ * the walks for everyone who did not ask it to stop", read off the dwarfs' own walk now.
+ */
+describe('MineColumn arrivals', () => {
+  const first = defaultDwarf({ id: 'first', name: 'first', status: 'working' })
+  const later = defaultDwarf({ id: 'later', name: 'later', status: 'working' })
+  const dwarfOf = (wrapper: ReturnType<typeof mountColumn>, id: string) =>
+    wrapper.findAllComponents(SceneDwarf).find((d) => d.props('dwarf').id === id)!
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  it('places the crew that was already working when the mine opened', async () => {
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'first').props('walking')).toBe(false)
+  })
+
+  it('walks in a dwarf that turns up in a later snapshot', async () => {
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(true)
+    expect(dwarfOf(wrapper, 'later').props('walkMs')).toBeGreaterThan(0)
+  })
+
+  it('walks in the first dwarf to reach a mine that was opened empty', async () => {
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(true)
+  })
+
+  it('starts that dwarf at a spawn point rather than on its workstation', async () => {
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [later] }) })
+    await wrapper.vm.$nextTick()
+    const target = assignScene([later], sceneLayout('bronze')).get(later.id)!
+    const at = dwarfOf(wrapper, 'later').props()
+    // Somewhere on its route rather than parked on the rock it is walking to.
+    expect([at.x, at.y]).not.toEqual([target.point.x, target.point.y])
+  })
+
+  it('leaves an arrival in place for a viewer who asked for less movement', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: true })
+    })
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(false)
+    expect(dwarfOf(wrapper, 'later').props('walkMs')).toBe(0)
+  })
+
+  it('still places the crew in the cave, but marks the floor still', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: true })
+    })
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    expect(wrapper.findAll('button.dm-dwarf')).toHaveLength(1)
+    expect(wrapper.find('.dm-minecol__art').classes()).toContain('is-still')
+  })
+
+  it('animates the walks for everyone who did not ask it to stop', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: false })
+    })
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    expect(wrapper.find('.dm-minecol__art').classes()).not.toContain('is-still')
+  })
+
+  /*
+   * ADDED for #635: a live run turned reduced motion on with a mine open, and its dwarfs kept
+   * walking and their footsteps kept playing, because the column read the preference once. It is
+   * watched now, as the frame clock watches it (#71): a walk under way snaps to its station and
+   * its footsteps end, and a viewer who lets motion back gets the walk for the next arrival.
+   */
+  function changingMotionQuery(reduced: boolean) {
+    const listeners = new Set<() => void>()
+    const query = {
+      matches: reduced,
+      addEventListener: (_: 'change', listener: () => void) => void listeners.add(listener),
+      removeEventListener: (_: 'change', listener: () => void) => void listeners.delete(listener)
+    }
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => query })
+    return {
+      listeners,
+      set(next: boolean) {
+        query.matches = next
+        for (const listener of [...listeners]) listener()
+      }
+    }
+  }
+
+  it('stops a walk under way, on its station, once the viewer asks for less movement', async () => {
+    const motion = changingMotionQuery(false)
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(true)
+    motion.set(true)
+    await wrapper.vm.$nextTick()
+    const target = assignScene([first, later], sceneLayout('bronze')).get(later.id)!
+    const at = dwarfOf(wrapper, 'later').props()
+    expect(at.walking).toBe(false)
+    expect(at.walkMs).toBe(0)
+    expect([at.x, at.y]).toEqual([target.point.x, target.point.y])
+    expect(wrapper.find('.dm-minecol__art').classes()).toContain('is-still')
+    const sent = (wrapper.emitted('crew-sound') ?? []) as CrewSoundEvent[][]
+    expect(sent.some(([e]) => e?.cue === 'walk' && e.ending === true)).toBe(true)
+  })
+
+  it('walks the next arrival again once the viewer lets motion back', async () => {
+    const motion = changingMotionQuery(true)
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    await wrapper.vm.$nextTick()
+    motion.set(false)
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'first').props('walking')).toBe(false)
+    await wrapper.setProps({ mine: defaultMine({ dwarfs: [first, later] }) })
+    await wrapper.vm.$nextTick()
+    expect(dwarfOf(wrapper, 'later').props('walking')).toBe(true)
+  })
+
+  it('stops watching the preference once it closes', () => {
+    const motion = changingMotionQuery(false)
+    const wrapper = mountColumn({ mine: defaultMine({ dwarfs: [first] }) })
+    expect(motion.listeners.size).toBeGreaterThan(0)
+    wrapper.unmount()
+    expect(motion.listeners.size).toBe(0)
+  })
+})
+
+/*
+ * ADDED for #635: a column closed mid-walk takes every walk leg, footstep and fade with it. CI
+ * caught a walk leg updating a column after its test had torn the page down; nothing the column,
+ * its dwarfs, the walk board or the tooltip started may run once it is gone.
+ */
+describe('MineColumn closing mid-walk', () => {
+  it('runs nothing after it is unmounted, mid-walk, mid-fade and mid-tooltip', async () => {
+    vi.useFakeTimers()
+    const errors: unknown[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => errors.push(args))
+    try {
+      const walker = defaultDwarf({ id: 'later', status: 'working' })
+      const leaver = defaultDwarf({ id: 'leaver', status: 'leaving' })
+      const wrapper = mount(MineColumn, {
+        props: { mine: defaultMine({ dwarfs: [] }) },
+        attachTo: document.body,
+        global: { config: { errorHandler: (err) => void errors.push(err) } }
+      })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ mine: defaultMine({ dwarfs: [walker, leaver] }) })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAllComponents(SceneDwarf).some((d) => d.props('walking'))).toBe(true)
+      // The pointer resting on a dwarf leaves its tooltip's delay pending too.
+      await wrapper.find('button.dm-dwarf').trigger('pointerenter')
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+      wrapper.unmount()
+      // Closed means nothing left pending: a leg or a delay that merely runs out harmlessly still
+      // holds the column's state alive past it.
+      expect(vi.getTimerCount()).toBe(0)
+      document.body.innerHTML = ''
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(errors).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
   })
 })

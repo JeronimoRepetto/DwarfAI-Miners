@@ -2548,9 +2548,18 @@ export class AgentRuntime {
     // A set rather than a scan per row: the board is small but a page is not
     // one id, and a find() inside the map would be O(page × board).
     const onBoard = new Set(this.mines.map((mine) => mine.id))
+    /*
+     * Whether each folder is still there (#635, PANEL-QUESTIONS 6): asked through the fs adapter,
+     * so every OS answers it the same way. Every row is asked, the board's included: a mine added
+     * with no session is on the board too, and a session can outlive the folder it was started in.
+     * One stat per row of the page asked for, and only when the panel asks, never per poll.
+     */
+    const missing = await Promise.all(
+      result.value.map(async (project) => !(await this.fs.exists(project.path)))
+    )
     return {
       answered: true,
-      projects: result.value.map((project) => this.toSummary(project, onBoard))
+      projects: result.value.map((project, i) => this.toSummary(project, onBoard, missing[i]))
     }
   }
 
@@ -2562,7 +2571,11 @@ export class AgentRuntime {
    * screen itself, and a second shaping of the same row here is a second place
    * for the wire's absent-means-unmeasured rules to drift.
    */
-  private toSummary(project: ProjectRecord, onBoard: ReadonlySet<string>): ProjectSummary {
+  private toSummary(
+    project: ProjectRecord,
+    onBoard: ReadonlySet<string>,
+    folderMissing = false
+  ): ProjectSummary {
     // O(1) per row off the ledger already held in memory (#90) — no query,
     // same id scheme (mineIdForPath) the board and the ledger both key by.
     const materials = this.ledger.knownMineTotals(project.id)
@@ -2589,7 +2602,8 @@ export class AgentRuntime {
       // Straight off the row, so a browse and the map can never disagree
       // about where a mine stands (#136).
       ...(project.mapSite === null ? {} : { mapSite: project.mapSite }),
-      live: onBoard.has(project.id)
+      live: onBoard.has(project.id),
+      ...(folderMissing ? { folderMissing: true as const } : {})
     }
   }
 

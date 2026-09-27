@@ -157,3 +157,14 @@ describe('the first-run card', () => {
     expect(MAP_ADD_LABEL).toBe('Add a mine')
   })
 })
+
+// PANEL-QUESTIONS 6: the marker's tooltip adds "Not enterable" for a mine whose folder is gone.
+describe('mineTip, a mine that cannot be entered', () => {
+  it('adds the row "Not enterable", warned', () => {
+    const tip = mineTip(defaultMine({ name: 'old' }), { notEnterable: true })
+    expect(tip.rows.at(-1)).toEqual({ label: 'Not enterable', value: '', tone: 'warn' })
+    expect(
+      mineTip(defaultMine({ name: 'old' })).rows.some((r) => r.label === 'Not enterable')
+    ).toBe(false)
+  })
+})

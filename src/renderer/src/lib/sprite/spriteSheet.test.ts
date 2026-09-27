@@ -6,7 +6,6 @@ import {
   backgroundSizePercent,
   frameDurationMs,
   framePositionPercent,
-  isGlowFrame,
   isImpactFrame,
   loopOf,
   onceOf,
@@ -282,28 +281,11 @@ describe('isImpactFrame', () => {
   })
 })
 
-describe('isGlowFrame', () => {
-  /*
-   * A separate declaration from impactFrames, deliberately: the strike that
-   * throws debris and the frames bright enough to earn a glow are two
-   * different artistic calls (#74) — a swing can draw more brightness than
-   * it draws hits, and marking every bright frame a hit would retrigger the
-   * whole spark burst on each of them instead of showing a light.
-   */
-  it('is true only on a frame the sheet names as glowing', () => {
-    const swing: SpriteSheet = { src: 'swing.png', frames: 9, frameMs: 100, glowFrames: [4, 5] }
-    expect(isGlowFrame(swing, 4)).toBe(true)
-    expect(isGlowFrame(swing, 5)).toBe(true)
-    expect(isGlowFrame(swing, 6)).toBe(false)
-    expect(isGlowFrame(swing, 3)).toBe(false)
-  })
-
-  it('is false throughout a sheet that names none, rather than guessing one', () => {
-    for (let frame = 0; frame < SIX.frames; frame++) {
-      expect(isGlowFrame(SIX, frame), String(frame)).toBe(false)
-    }
-  })
-})
+/*
+ * REMOVED for #635, stated rather than passing unseen: isGlowFrame and its two tests ("is true
+ * only on a frame the sheet names as glowing", "is false throughout a sheet that names none"),
+ * with the strike glow they served: the PO removed the strike glow and the sparks from the redesign on every rank (PANEL-QUESTIONS 15, 2026-09-27); the pick strike sound on the impact frame stays.
+ */
 
 describe('loopOf and onceOf', () => {
   it('carry the sheet and say how it is played', () => {

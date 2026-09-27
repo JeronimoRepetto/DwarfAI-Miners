@@ -2979,6 +2979,18 @@ export interface DwarfDeliveryReport {
   send: Record<string, DwarfSendState>
   /** Kick verdicts, keyed by dwarf id. */
   kick: Record<string, DwarfKickState>
+  /**
+   * The messages this panel sent that never reached their session, per dwarf, oldest first
+   * (#635, PANEL-QUESTIONS 16): the app's own record of the send, which the mine history draws
+   * because no transcript holds them. Absent from a report that has none to give.
+   */
+  failed?: Record<string, FailedSend[]>
+}
+
+/** A message that never reached its session: its words, and when it was sent (epoch ms). */
+export interface FailedSend {
+  text: string
+  sentAt: number
 }
 
 /**
@@ -4146,6 +4158,12 @@ export interface ProjectSummary {
    */
   mapSite?: number
   live: boolean
+  /**
+   * True when the project's folder no longer exists (#635, PANEL-QUESTIONS 6): the one reason a mine
+   * is not enterable. Absent when the folder is there, the wire saying "nothing to report" by
+   * saying nothing.
+   */
+  folderMissing?: true
 }
 
 /**

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   HISTORY_EMPTY_NOTE,
   HISTORY_READING_NOTE,
@@ -12,6 +12,10 @@ import {
 import { defaultDwarf, defaultMine } from '../../testing/factories'
 import { MINE_HISTORY_MESSAGE_LIMIT, type MineHistorySpeaker } from '../../types'
 import HistoryPanel from './HistoryPanel.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 /*
  * The mine history (#635), `organisms/history-panel` in the design, which replaces
@@ -423,5 +427,27 @@ describe('HistoryPanel arrivals', () => {
       }
     })
     expect(newBubbles(wrapper).map((b) => b.text())).toEqual([expect.stringContaining('reply new')])
+  })
+})
+
+// PANEL-QUESTIONS 16: a message that never arrived is part of what happened in the mine.
+describe('HistoryPanel failed sends', () => {
+  it('draws a failed message "✕ not delivered", read-only, and counts it in the tab time', () => {
+    const wrapper = panel({
+      history: { readable: true, speakers: [OLDER] },
+      failed: {
+        'claude:s1': [{ text: 'never got there', sentAt: new Date(2026, 8, 3, 18, 40).getTime() }]
+      }
+    })
+    const last = wrapper.findAll('.dm-bubble').at(-1)!
+    expect(last.classes()).toContain('dm-bubble--user')
+    expect(last.find('.dm-bubble__text').text()).toBe('never got there')
+    const mark = last.find('.dm-bubble__mark')
+    expect(mark.text()).toBe('✕ not delivered')
+    expect(mark.attributes('data-mark')).toBe('failed')
+    expect(mark.attributes('title')).toBe('Not delivered')
+    // No Retry, no Copy: the history is read-only.
+    expect(last.find('button').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist__tab small').text()).toBe('last · 18:40')
   })
 })

@@ -75,11 +75,22 @@ export function designTierLabel(tier: MineTier): string {
  * changed is that no sheet has been drawn for a silent dwarf yet, so nothing
  * currently selects a picture from it (#74 will).
  *
- * REMOVED for #635, with the scene they served: `statusAnimationClass`, `LEAVING_EXIT_MS` and
- * `BUBBLE_MAX_CHARS` (the old sprite's status class, its departure fade and the talk bubble's
- * budget), `describeSilence` (the old tooltip's sentence; the redesigned tooltip writes
- * `compactSilence`, lib/dwarf/dwarfTip.ts) and `vaultLabel` (the retired vault chip's name).
+ * REMOVED for #635, with the scene they served: `statusAnimationClass` and `BUBBLE_MAX_CHARS`
+ * (the old sprite's status class and the talk bubble's budget), `describeSilence` (the old
+ * tooltip's sentence; the redesigned tooltip writes `compactSilence`, lib/dwarf/dwarfTip.ts) and
+ * `vaultLabel` (the retired vault chip's name).
  */
+
+/**
+ * How long a leaving dwarf takes to fade once it has walked out (#153), RESTORED with today's walk
+ * (#635, PANEL-QUESTIONS 14).
+ *
+ * The two clocks are separate, because they answer different questions. How long a departed
+ * session stays in the board is main's (`dwarfLeaveGraceS`): it is a claim about the session. How
+ * long the dwarf takes to LEAVE is the panel's, and prompt is the only honest answer — the session
+ * is already gone. The fade starts on arriving at the way out, never on a clock (#156).
+ */
+export const LEAVING_EXIT_MS = 1_200
 
 /**
  * Has this dwarf gone quiet for long enough to be worth showing as such?

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { config, mount } from '@vue/test-utils'
+import { config, enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FRAME_CLOCK_KEY } from '../../composables/useFramePlayer'
 import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
@@ -15,6 +15,10 @@ import { defaultDwarf } from '../../testing/factories'
 import type { Dwarf } from '../../types'
 import SpriteStrip from '../dwarf/SpriteStrip.vue'
 import SceneDwarf from './SceneDwarf.vue'
+
+// Every mounted wrapper is unmounted after its test, so no walk leg, fade or timer it started
+// outlives the page a later test tears down (#635: CI caught one updating a removed column).
+enableAutoUnmount(afterEach)
 
 /*
  * The dwarf in the scene (#635), `molecules/dwarf` in the design, which replaces DwarfSprite in
@@ -190,9 +194,11 @@ describe('SceneDwarf', () => {
     })
 
     // An arrival fades in (`.is-entering`) and plays its way into its state, as dwarfClips does.
-    it('fades an arrival in and plays it into its state from the transition', () => {
+    // AMENDED for #635 (PANEL-QUESTIONS 14): an arrival walks in as today's dwarf does, so it no
+    // longer fades in; what stays is that it plays its way into its state.
+    it('plays an arrival into its state from the transition', () => {
       const worker = mountDwarf(defaultDwarf({ status: 'working' }), { entering: true }).wrapper
-      expect(worker.find('.dm-dwarf').classes()).toContain('is-entering')
+      expect(worker.find('.dm-dwarf').classes()).not.toContain('is-entering')
       expect(sheetSrc(worker)).toBe(DWARF_SHEETS.worker['start-working']!.src)
       const foreman = mountDwarf(defaultDwarf({ role: 'foreman', status: 'waiting' }), {
         entering: true
@@ -210,17 +216,15 @@ describe('SceneDwarf', () => {
     })
 
     /*
-     * The design's Panel draws no departure: a dwarf on its way out is idle where it stood, still
-     * a press away from its chat (the conversation is worth reading then, #192), until the board
-     * drops it.
+     * AMENDED for #635 (PANEL-QUESTIONS 14; was: "draws a dwarf on its way out idle, where it
+     * stood, still pressable"): a dwarf on its way out walks to the way out as today's does, drawn
+     * idle and taking no presses, and fades once it is there (below).
      */
-    it('draws a dwarf on its way out idle, where it stood, still pressable', async () => {
-      const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }))
+    it('draws a dwarf on its way out idle, and takes no more presses', () => {
+      const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: true })
       const button = wrapper.find('.dm-dwarf')
       expect(button.attributes('data-status')).toBe('idle')
-      expect(button.attributes('style')).toContain('--x: 20%')
-      await button.trigger('click')
-      expect(wrapper.emitted('select')).toHaveLength(1)
+      expect(button.classes()).toContain('is-leaving')
     })
   })
 
@@ -424,5 +428,176 @@ describe('SceneDwarf found at work', () => {
     } finally {
       clock.dispose()
     }
+  })
+})
+
+/*
+ * The walk (#635, PANEL-QUESTIONS 14: today's walk stays in the mine column). RESTORED from
+ * DwarfSprite.test.ts (88ee3fc), each under its old name: "keeps its own idle loop while crossing
+ * the floor, having arrived at nothing yet", "starts the working sequence only once it arrives, not
+ * on the status alone", "holds a leaver at full strength for as long as it is still walking out",
+ * "fades a leaver only once it has reached the way out", "never calls a working dwarf departed,
+ * however still it is standing". The column owns where it walks; the dwarf moves by transform
+ * alone (motion.md: transform and opacity only).
+ */
+describe('SceneDwarf in the scene', () => {
+  it('keeps its own idle loop while crossing the floor, having arrived at nothing yet', () => {
+    const working = mountDwarf(defaultDwarf({ status: 'working' }), { walking: true }).wrapper
+    expect(sheetSrc(working)).toBe(DWARF_SHEETS.worker.idle.src)
+    const waiting = mountDwarf(defaultDwarf({ status: 'waiting' }), { walking: true }).wrapper
+    expect(sheetSrc(waiting)).toBe(DWARF_SHEETS.worker.idle.src)
+  })
+
+  it('starts the working sequence only once it arrives, not on the status alone', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'working' }), { walking: true })
+    expect(sheetSrc(wrapper)).toBe(DWARF_SHEETS.worker.idle.src)
+    await wrapper.setProps({ walking: false })
+    expect(sheetSrc(wrapper)).toBe(DWARF_SHEETS.worker['start-working']!.src)
+  })
+
+  it('holds a leaver at full strength for as long as it is still walking out', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: true })
+    expect(wrapper.find('.dm-dwarf').classes()).not.toContain('is-departed')
+  })
+
+  // AMENDED for #635 (was: mounted already at rest): the fade marks arriving at the way out, so the
+  // leaver walks there first, as the column walks it.
+  it('fades a leaver only once it has reached the way out', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: true })
+    await wrapper.setProps({ walking: false })
+    expect(wrapper.find('.dm-dwarf').classes()).toContain('is-departed')
+  })
+
+  /*
+   * ADDED for #635: a live run tabbed onto "Freya, idle" after she had faded out. A dwarf that has
+   * reached the way out is gone to the eye, so it is gone to the keyboard and the screen reader
+   * too, at once rather than when the board next drops it; one still walking out is still there.
+   */
+  it('takes a departed leaver out of the tab order and the accessibility tree at once', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: true })
+    const button = () => wrapper.find('.dm-dwarf')
+    expect(button().attributes('inert')).toBeUndefined()
+    expect(button().attributes('aria-hidden')).toBeUndefined()
+    await wrapper.setProps({ walking: false })
+    expect(button().attributes('inert')).toBeDefined()
+    expect(button().attributes('tabindex')).toBe('-1')
+    expect(button().attributes('aria-hidden')).toBe('true')
+  })
+
+  /*
+   * ADDED for #635: a session that comes back under the same id (DwarfLifecycleTracker's
+   * "Reappeared", and every turn of the simulation's status cycle) is real again, so its next
+   * departure fades only once that walk out has reached the way out, not from its first step.
+   */
+  it('fades a returning leaver only once its next walk out arrives', async () => {
+    const leaver = defaultDwarf({ status: 'leaving' })
+    const { wrapper } = mountDwarf(leaver, { walking: true })
+    const button = () => wrapper.find('.dm-dwarf')
+    await wrapper.setProps({ walking: false })
+    expect(button().classes()).toContain('is-departed')
+    await wrapper.setProps({ dwarf: { ...leaver, status: 'working' }, walking: true })
+    await wrapper.setProps({ walking: false })
+    await wrapper.setProps({ dwarf: leaver, walking: true })
+    expect(button().classes()).not.toContain('is-departed')
+    expect(button().attributes('inert')).toBeUndefined()
+    await wrapper.setProps({ walking: false })
+    expect(button().classes()).toContain('is-departed')
+  })
+
+  /*
+   * ADDED for #635. A dwarf at rest draws at its station as it did before the walk came back: one
+   * the column never walked (drawn on its way out when the column opened, or under reduced motion)
+   * has reached no way out, so it stays drawn, idle, rather than fading where it stands.
+   */
+  it('draws a leaver it never walked at full strength, idle on its station', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: false })
+    const button = wrapper.find('.dm-dwarf')
+    expect(button.classes()).not.toContain('is-departed')
+    expect(button.attributes('data-status')).toBe('idle')
+  })
+
+  it('never calls a working dwarf departed, however still it is standing', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'working' }), { walking: false })
+    expect(wrapper.find('.dm-dwarf').classes()).not.toContain('is-departed')
+  })
+
+  /*
+   * ADDED for #635. Where it stood when it was first drawn is its anchor, and every step after is
+   * a transform from there over the leg's own duration: never a change of left or top, so a walk
+   * animates only transform (motion.md) and a dwarf at rest is drawn exactly as the design places it.
+   */
+  it('walks by transform from where it was first drawn, over each leg’s own duration', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf(), { x: 20, y: 80, walking: true, walkMs: 400 })
+    const button = () => wrapper.find('.dm-dwarf')
+    expect(button().attributes('style')).toContain('--x: 20%')
+    expect(button().attributes('style')).toContain('--dx: 0')
+    await wrapper.setProps({ x: 30, y: 60 })
+    const style = button().attributes('style') ?? ''
+    expect(style).toContain('--x: 20%')
+    expect(style).toContain('--y: 80%')
+    expect(style).toContain('--dx: 10')
+    expect(style).toContain('--dy: -20')
+    expect(style).toContain('--walk-ms: 400ms')
+  })
+})
+
+/*
+ * The footsteps (#330), for exactly as long as the column walks a dwarf. RESTORED from
+ * DwarfSprite.test.ts (88ee3fc), each under its old name: "says nothing at all while the dwarf is
+ * still walking to the vein", "starts the footsteps when a dwarf sets off and ends them when it
+ * arrives", "walks every rank, the foreman included", "ends the grind when its worker2 walks away
+ * from the rock", "takes the footsteps with it too, mid-walk". NOT restored: "still walks audibly
+ * under reduced motion, the walk being a position" — the ruling plays no footsteps under reduced
+ * motion, and the column walks nobody then (MineColumn.test.ts).
+ */
+describe('SceneDwarf footsteps (#330)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('says nothing at all while the dwarf is still walking to the vein', async () => {
+    const { wrapper, cues } = mountDwarf(defaultDwarf({ status: 'working' }), { walking: true })
+    vi.advanceTimersByTime(5000)
+    await wrapper.vm.$nextTick()
+    expect(cues).toEqual([{ cue: 'walk', gain: 0.05 }])
+  })
+
+  it('starts the footsteps when a dwarf sets off and ends them when it arrives', async () => {
+    const { wrapper, cues } = mountDwarf(defaultDwarf({ status: 'waiting' }), { walking: false })
+    expect(cues).toEqual([])
+    await wrapper.setProps({ walking: true })
+    expect(cues).toEqual([{ cue: 'walk', gain: 0.05 }])
+    await wrapper.setProps({ walking: false })
+    expect(cues).toEqual([
+      { cue: 'walk', gain: 0.05 },
+      { cue: 'walk', ending: true }
+    ])
+  })
+
+  it('walks every rank, the foreman included', () => {
+    for (const role of ['worker', 'worker2', 'foreman'] as const) {
+      const { cues } = mountDwarf(defaultDwarf({ role, status: 'working' }), { walking: true })
+      expect(cues, role).toEqual([{ cue: 'walk', gain: 0.05 }])
+    }
+  })
+
+  it('ends the grind when its worker2 walks away from the rock', async () => {
+    const { wrapper, cues } = mountDwarf(defaultDwarf({ role: 'worker2', status: 'working' }), {
+      entering: true
+    })
+    await wrapper.setProps({ walking: true })
+    expect(cues).toEqual([
+      { cue: 'shift' },
+      { cue: 'shift', ending: true },
+      { cue: 'walk', gain: 0.05 }
+    ])
+  })
+
+  it('takes the footsteps with it too, mid-walk', () => {
+    const { wrapper, cues } = mountDwarf(defaultDwarf({ status: 'working' }), { walking: true })
+    wrapper.unmount()
+    expect(cues).toEqual([
+      { cue: 'walk', gain: 0.05 },
+      { cue: 'walk', ending: true }
+    ])
   })
 })

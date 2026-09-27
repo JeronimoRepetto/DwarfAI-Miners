@@ -18,6 +18,7 @@ import {
   MINE_TIERS,
   type Dwarf,
   type DwarfProvider,
+  type FailedSend,
   type FeedActivityKind,
   type FeedMessage,
   type MineHistoryResult,
@@ -55,6 +56,8 @@ export interface GoldenSample {
   tierThresholds?: TierThresholds
   /** Each mine's history, by mine id, as its dwarfs' transcripts would give it (#635). */
   histories: Record<string, MineHistoryResult>
+  /** The messages the sample marks failed, as the app records a send: by mine id, then dwarf id. */
+  failedSends: Record<string, Record<string, FailedSend[]>>
 }
 
 type Row = Record<string, unknown>
@@ -190,7 +193,11 @@ function at(time: unknown): number {
  * and each step as one activity row by its verb. A message the sample marks failed never reached
  * the session, so no transcript holds it; the marks the panel draws are its own reading.
  */
-function speakerOf(row: Row, dwarf: Dwarf): MineHistorySpeaker | undefined {
+function speakerOf(
+  row: Row,
+  dwarf: Dwarf,
+  failedOut: FailedSend[] = []
+): MineHistorySpeaker | undefined {
   const messages: FeedMessage[] = []
   let last = 0
   let stepAt = 0
@@ -209,7 +216,10 @@ function speakerOf(row: Row, dwarf: Dwarf): MineHistorySpeaker | undefined {
       }
       continue
     }
-    if (entry.mark === 'failed') continue
+    if (entry.mark === 'failed') {
+      failedOut.push({ text: String(entry.md), sentAt: at(entry.time) })
+      continue
+    }
     const time = at(entry.time)
     stepAt = time
     last = Math.max(last, time)
@@ -241,6 +251,7 @@ export function adaptSample(dm: unknown): GoldenSample {
   const config = (data.config ?? {}) as Row
   const mines = ((data.mines ?? []) as Row[]).map(mine)
   const byId = new Map(mines.map((m) => [m.id, m]))
+  const failedSends: Record<string, Record<string, FailedSend[]>> = {}
   const histories: Record<string, MineHistoryResult> = Object.fromEntries(
     mines.map((m) => [m.id, { readable: true, speakers: [] as MineHistorySpeaker[] }])
   )
@@ -248,8 +259,10 @@ export function adaptSample(dm: unknown): GoldenSample {
     const home = byId.get(String(row.mine)) ?? fail('mine', row.mine)
     const adapted = dwarf(row, home)
     home.dwarfs.push(adapted)
-    const speaker = speakerOf(row, adapted)
+    const failed: FailedSend[] = []
+    const speaker = speakerOf(row, adapted, failed)
     if (speaker) histories[home.id]!.speakers.push(speaker)
+    if (failed.length > 0) (failedSends[home.id] ??= {})[adapted.id] = failed
   }
   const floor = (dm as { TIER_FLOOR?: Record<string, unknown> }).TIER_FLOOR
   const providers = ((data.providers ?? []) as Row[]).map((row) =>
@@ -274,6 +287,7 @@ export function adaptSample(dm: unknown): GoldenSample {
     })),
     mines,
     histories,
+    failedSends,
     ...(floor === undefined
       ? {}
       : {

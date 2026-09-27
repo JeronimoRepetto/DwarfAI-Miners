@@ -170,15 +170,10 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
      * rather than as impacts" — exactly what declaring the whole spark span
      * here would do, since each named frame retriggers the debris burst.
      *
-     * `glowFrames` is the separate, maintainer-delegated design call: index
-     * 4-5 are the two brightest frames the artist drew, and the sprite lights
-     * only those beside the art's own sparks. The frames after them disperse
-     * and fade — the art carries that alone. The v3 export keeps those frames
-     * and their order, so the glow stays where it was: the impact frame and
-     * the one before it (design lead ruling 2026-09-26, SPRITE-QUESTIONS.md
-     * question 3).
+     * The frame now names the pick strike's sound alone (#330): the PO removed the strike glow and the sparks from the redesign on every rank (PANEL-QUESTIONS 15, 2026-09-27); the pick strike sound on the impact frame stays, so
+     * `glowFrames` [4, 5] went, and nothing throws debris off it.
      */
-    working: sheet('worker', 'working', { impactFrames: [5], glowFrames: [4, 5] }),
+    working: sheet('worker', 'working', { impactFrames: [5] }),
     'end-working': sheet('worker', 'end-working')
   },
   /*
@@ -201,7 +196,7 @@ export const DWARF_SHEETS: Record<DwarfRole, DwarfSheetSet> = {
    * takes two before it sets the pick down and starts over (#325, and see the
    * note on order at the top of this file).
    *
-   * NO `impactFrames` AND NO `glowFrames` ON ANY OF THE THREE, and that is a
+   * NO `impactFrames` ON ANY OF THE THREE, and that is a
    * SETTLED DECISION rather than art still owed — maintainer ruling on #211.
    * THE WORKER2 CARRIES NO PICK. The worker's two fields exist because its loop
    * lands a strike that bites the rock, throwing debris and lighting sparks;

@@ -15,11 +15,15 @@
  * frame is showing: the strike and the grind are frames. Which mine and which dwarf a cue came from
  * is the column's to add; whether anything is heard is the audio engine's.
  *
- * WHAT DID NOT COME OVER FROM DwarfSprite, stated rather than passing unseen: the walk and its
- * footsteps (the design's Panel dwarf stands at its station; lib/scene/mineColumn.ts), the talk
- * glyph and its expanded full message (the design floats only the "?" over a dwarf; the words are
- * the MessagePanel's), the departure fade (a dwarf on its way out is idle where it stood until the
- * board drops it; the design's Panel draws no departure), the pick sparks and the strike glow (not in the design's dwarf), the red
+ * The walk is today's (PANEL-QUESTIONS 14): the column walks a dwarf leg by leg and says so
+ * (`walking`, `walkMs`); the dwarf plays its idle sheet on the way, its status sheet on arrival
+ * (a working dwarf through its pick-up first), makes its footsteps for as long as it walks, and
+ * moves by transform alone from where it was first drawn (motion.md). A leaver fades once it has
+ * reached the way out, never on a clock (#156).
+ *
+ * WHAT DID NOT COME OVER FROM DwarfSprite, stated rather than passing unseen: the talk glyph and
+ * its expanded full message (the design floats only the "?" over a dwarf; the words are the
+ * MessagePanel's), the pick sparks and the strike glow (removed by the PO, PANEL-QUESTIONS 15), the red
  * tint of a selected sprite (the design's brass halo replaces it), and the per-depth and
  * per-column scaling (the design draws every dwarf at 1x, 36 x 38).
  */
@@ -38,8 +42,10 @@ import {
 import {
   crewEndingSignal,
   crewFrameSignals,
+  crewWalkSignal,
   type CrewSoundSignal
 } from '../../lib/sprite/crewSound'
+import { LEAVING_EXIT_MS } from '../../lib/presentation'
 import { DWARF_CREW, DWARF_SHEETS } from '../../lib/sprite/dwarfSheets'
 import { dwarfClips, settledClips } from '../../lib/sprite/dwarfSequence'
 import type { SequencePosition, SpriteClip } from '../../lib/sprite/spriteSheet'
@@ -56,8 +62,12 @@ const props = withDefaults(
     /** Paint order, nearer galleries over farther ones. */
     z?: number
     selected?: boolean
-    /** It arrived after the column opened: it fades in and plays its way into its state. */
+    /** It arrived after the column opened: it plays its way into its state. */
     entering?: boolean
+    /** The column is walking it (#19); `x`/`y` are then its current leg's end. */
+    walking?: boolean
+    /** How long the current leg takes. */
+    walkMs?: number
     sendState?: DwarfSendState
     kickState?: DwarfKickState
     /** A look forced without the pointer, as the UI kit's own states show it. */
@@ -67,6 +77,8 @@ const props = withDefaults(
     z: undefined,
     selected: false,
     entering: false,
+    walking: false,
+    walkMs: 0,
     sendState: undefined,
     kickState: undefined,
     state: undefined
@@ -86,8 +98,12 @@ const status = computed(() => sceneDwarfStatus(props.dwarf))
 const label = computed(() => sceneDwarfLabel(props.dwarf.name, status.value))
 const mark = computed(() => sceneDwarfMark(props.sendState, props.kickState))
 const resting = computed(() => sceneDwarfResting(props.dwarf))
-// At the rock: working and not asking, since an asking dwarf stops (screens/mine.md, W3·2).
-const atWork = computed(() => status.value === 'working')
+// Arrival gates the working sequence (#262): a dwarf still walking has arrived at nothing yet.
+const arrived = computed(() => props.walking !== true)
+// Working and not asking, since an asking dwarf stops (screens/mine.md, W3·2).
+const working = computed(() => status.value === 'working')
+// At the rock: working and arrived.
+const atWork = computed(() => working.value && arrived.value)
 
 /*
  * The sequence. On the first reading a dwarf that was already here when the column opened is drawn
@@ -104,12 +120,12 @@ const phaseClips = ref<number | undefined>(undefined)
 // Vue hands the immediate first run an empty list of old values, so the first reading is flagged.
 let firstReading = true
 watch(
-  [resting, atWork, () => props.dwarf.role] as const,
-  ([nowResting, nowWorking, role], previous) => {
-    const settled = firstReading && !props.entering
+  [resting, working, () => props.dwarf.role, arrived, atWork] as const,
+  ([nowResting, nowWorking, role, nowArrived], previous) => {
+    const settled = firstReading && !props.entering && nowArrived
     clips.value = settled
       ? settledClips(role, nowResting, nowWorking)
-      : dwarfClips(role, nowResting, previous?.[0], nowWorking, previous?.[1])
+      : dwarfClips(role, nowResting, previous?.[0], nowWorking, previous?.[4], nowArrived)
     const swings = DWARF_SHEETS[role].working === undefined ? undefined : DWARF_CREW[role].swings
     phaseClips.value = settled && nowWorking && !nowResting ? swings : undefined
     firstReading = false
@@ -141,23 +157,84 @@ watch(atWork, (working, was) => {
   if (signal !== undefined) emit('crew-sound', signal)
 })
 
-// A dwarf dropping out of the crew between polls takes its grind with it.
+/*
+ * The footsteps, for exactly as long as the column walks this dwarf; `immediate`, because an
+ * arrival mounts already walking. Only a walk seen under way ends.
+ */
+watch(
+  () => props.walking === true,
+  (walking, was) => {
+    const signal = walking
+      ? crewWalkSignal(props.dwarf.role)
+      : was === true
+        ? crewEndingSignal(props.dwarf.role, 'walk')
+        : undefined
+    if (signal !== undefined) emit('crew-sound', signal)
+  },
+  { immediate: true }
+)
+
+/*
+ * Arrived at the way out (#156): a leaver fades once the column has walked it there, never on a
+ * clock, and one it never walked (drawn on its way out when the column opened, or under reduced
+ * motion) has reached no way out, so it stays drawn idle on its station as before the walk.
+ */
+const walkedOut = ref(false)
+watch(
+  () => props.walking === true,
+  (walking, was) => {
+    if (!walking && was === true && props.dwarf.status === 'leaving') walkedOut.value = true
+  }
+)
+// One that comes back under the same id is real again: its next departure has a walk of its own.
+watch(
+  () => props.dwarf.status === 'leaving',
+  (leaving) => {
+    if (!leaving) walkedOut.value = false
+  }
+)
+const departed = computed(() => walkedOut.value && props.dwarf.status === 'leaving')
+
+// A dwarf dropping out of the crew between polls takes its grind and its footsteps with it.
 onBeforeUnmount(() => {
-  if (!atWork.value) return
-  const signal = crewEndingSignal(props.dwarf.role, 'shift')
-  if (signal !== undefined) emit('crew-sound', signal)
+  for (const cue of ['walk', 'shift'] as const) {
+    if (cue === 'walk' && props.walking !== true) continue
+    if (cue === 'shift' && !atWork.value) continue
+    const signal = crewEndingSignal(props.dwarf.role, cue)
+    if (signal !== undefined) emit('crew-sound', signal)
+  }
 })
 
 const tip = useHoverTip<string>()
+
+/*
+ * A dwarf that has reached the way out is gone to the eye (#156), so it is gone to the keyboard and
+ * the screen reader at once too (#635): the button turns inert, leaves the tab order and the
+ * accessibility tree, and takes its card with it, rather than waiting for the board to drop it.
+ */
+watch(departed, (gone) => {
+  if (gone) tip.hide()
+})
 
 function press(): void {
   tip.hide()
   emit('select')
 }
 
+/*
+ * Where it stood when first drawn is its anchor (`--x`, `--y`, image percent, as the design places
+ * it); every step of a walk is a transform from there (`--dx`, `--dy`, in percent of the art box),
+ * over the leg's own duration. The anchor never moves, so a walk animates transform alone and a
+ * change of destination mid-walk carries on from where the dwarf is.
+ */
+const anchor = { x: props.x, y: props.y }
 const rootStyle = computed(() => ({
-  '--x': props.x + '%',
-  '--y': props.y + '%',
+  '--x': anchor.x + '%',
+  '--y': anchor.y + '%',
+  '--dx': String(Math.round((props.x - anchor.x) * 1000) / 1000),
+  '--dy': String(Math.round((props.y - anchor.y) * 1000) / 1000),
+  '--walk-ms': (props.walking ? props.walkMs : 0) + 'ms',
+  '--exit-ms': LEAVING_EXIT_MS + 'ms',
   ...(props.z === undefined ? {} : { zIndex: props.z })
 }))
 </script>
@@ -166,7 +243,8 @@ const rootStyle = computed(() => ({
   <button
     class="dm-dwarf"
     :class="{
-      'is-entering': entering,
+      'is-leaving': dwarf.status === 'leaving',
+      'is-departed': departed,
       'is-hover': state === 'hover'
     }"
     type="button"
@@ -176,6 +254,9 @@ const rootStyle = computed(() => ({
     :aria-label="label"
     :data-mark="mark?.mark"
     :style="rootStyle"
+    :inert="departed || undefined"
+    :tabindex="departed ? -1 : undefined"
+    :aria-hidden="departed ? 'true' : undefined"
     @click="press"
     @pointerenter="tip.hover(dwarf.id, $event)"
     @pointerleave="tip.leave"
@@ -213,8 +294,12 @@ const rootStyle = computed(() => ({
   padding: 0;
   z-index: 2;
   justify-items: center;
-  /* left/top mark the feet's centre, not the box's corner. */
-  transform: translate(-50%, -100%);
+  /*
+   * left/top mark the feet's centre, not the box's corner; a walk adds its offset in percent of the
+   * art box (a size container), which is 0 at rest.
+   */
+  transform: translate(calc(var(--dx, 0) * 1cqw), calc(var(--dy, 0) * 1cqh)) translate(-50%, -100%);
+  transition: transform var(--walk-ms, 0ms) linear;
 }
 .dm-dwarf__halo {
   width: 30px;
@@ -339,15 +424,28 @@ const rootStyle = computed(() => ({
 .dm-dwarf[data-mark='failed'] .dm-dwarf__mark {
   color: var(--danger-hi);
 }
-.dm-dwarf.is-entering {
-  animation: dm-fade-in var(--dur-panel) var(--ease-out) both;
+/* On its way out it takes no presses, and once it has reached the way out it fades (#156). */
+.dm-dwarf.is-leaving {
+  pointer-events: none;
 }
-@keyframes dm-fade-in {
+.dm-dwarf.is-departed {
+  animation: dm-dwarf-exit var(--exit-ms) linear forwards;
+}
+@keyframes dm-dwarf-exit {
   from {
-    opacity: 0;
+    opacity: 1;
   }
   to {
-    opacity: 1;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm-dwarf {
+    transition: none;
+  }
+  .dm-dwarf.is-departed {
+    animation: none;
+    opacity: 0.55;
   }
 }
 /* The tooltip's entry and exit (motion.md, Overlays): transform and opacity only. */

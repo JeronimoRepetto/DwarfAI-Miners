@@ -8235,9 +8235,10 @@ describe('AgentRuntime project queries (#92)', () => {
     providers?: Provider[]
     ledger?: MaterialLedger
     tiers?: TierService
+    fs?: FakeFs
   }): AgentRuntime {
     return new AgentRuntime({
-      fs: new FakeFs(),
+      fs: options.fs ?? new FakeFs(),
       // AMENDED for #470: see worktreePlatformAdapters above.
       platformAdapters: worktreePlatformAdapters(),
 
@@ -8268,7 +8269,11 @@ describe('AgentRuntime project queries (#92)', () => {
   it('answers with what was remembered, on the wire shape rather than the row shape', async () => {
     const projects = queryStore()
     await projects.upsertObserved({ path: WORKED, at: 4_000, provider: 'codex', knownTier: 'gold' })
-    const runtime = queryRuntime({ projects })
+    // AMENDED for #635: the folder is on disk, as a remembered project's is, so the wire says
+    // nothing about it being missing (PANEL-QUESTIONS 6, pinned below).
+    const fake = new FakeFs()
+    fake.addFile(WORKED + '\\README.md', '# x')
+    const runtime = queryRuntime({ projects, fs: fake })
 
     const result = await runtime.queryProjects(newest)
     runtime.stop()
@@ -8291,6 +8296,51 @@ describe('AgentRuntime project queries (#92)', () => {
         live: false
       }
     ])
+  })
+
+  /*
+   * ADDED for #635 (PANEL-QUESTIONS 6, design lead ruling 2026-09-27): a mine is not enterable
+   * when its folder no longer exists, and that is the only cause. Asked through the fs adapter,
+   * so the same answer holds on every OS; said only when true, the wire's absent-means-no rule.
+   */
+  it('says a remembered folder that no longer exists is missing', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const runtime = queryRuntime({ projects, fs: new FakeFs() })
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    expect(result.projects[0]?.folderMissing).toBe(true)
+  })
+
+  it('says nothing about a folder that is still there', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const fake = new FakeFs()
+    fake.addFile(WORKED + '\\README.md', '# x')
+    const runtime = queryRuntime({ projects, fs: fake })
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    expect(result.projects[0]).not.toHaveProperty('folderMissing')
+  })
+
+  /*
+   * ADDED for #635: a live Electron run added a mine, deleted its folder and still entered it,
+   * because a mine on the board was never asked. Being on the board says nothing about the folder
+   * (a mine added with no session is on it too), so the folder decides, board or not.
+   */
+  it('says a folder is missing even for a mine on the board', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const { provider, setWorking } = toggleProvider(WORKED)
+    setWorking(true)
+    const runtime = queryRuntime({ projects, providers: [provider], fs: new FakeFs() })
+    await runtime.refresh()
+    await runtime.settleProjects()
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    const worked = result.projects.find((project) => project.path === WORKED)
+    expect(worked?.live).toBe(true)
+    expect(worked?.folderMissing).toBe(true)
   })
 
   it('carries the map placement the store chose, so a browse and the map agree (#136)', async () => {

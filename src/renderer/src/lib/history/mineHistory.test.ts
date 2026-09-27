@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { MINE_HISTORY_MESSAGE_LIMIT, type FeedMessage, type MineHistorySpeaker } from '../../types'
 import {
   HISTORY_EMPTY_NOTE,
+  HISTORY_MARK,
   HISTORY_READING_NOTE,
   HISTORY_TRUNCATED_NOTE,
   HISTORY_READ_ONLY_NOTE,
@@ -324,5 +325,46 @@ describe('speakerRows, each with its time', () => {
     const timestamp = new Date(2026, 8, 4, 9, 2).toISOString()
     const rows = speakerRows(speaker({ messages: [{ role: 'user', text: 'x', timestamp }] }))
     expect(rows[0]!.time).toBe('09:02')
+  })
+})
+
+/*
+ * PANEL-QUESTIONS 16 (design lead ruling 2026-09-27): a history tab's time is the last timed entry
+ * of the dwarf's conversation, a failed message included, and the history draws that message with
+ * "✕ not delivered", from the app's own record of the send — no transcript holds it.
+ */
+describe('failed sends in the history', () => {
+  const at = (h: number, m: number) => new Date(2026, 8, 4, h, m).getTime()
+  const talker = speaker({
+    lastMessageAt: at(9, 10),
+    messages: [
+      { role: 'user', text: 'Regenerate.', timestamp: new Date(at(9, 10)).toISOString() },
+      { role: 'assistant', text: 'Done.', timestamp: new Date(at(9, 10)).toISOString() }
+    ]
+  })
+  const failed = [{ text: 'Also check the sort.', sentAt: at(9, 13) }]
+
+  it("counts a failed message in the tab's last time", () => {
+    expect(historyTabLast(talker, failed)).toBe('last · 09:13')
+    expect(historyTabLast(talker, [])).toBe('last · 09:10')
+  })
+
+  it('puts a failed message among the rows at its send time, a prompt of its own', () => {
+    const rows = speakerRows(talker, failed)
+    expect(rows.map((r) => [r.from, r.text, r.failed === true])).toEqual([
+      ['user', 'Regenerate.', false],
+      ['agent', 'Done.', false],
+      ['user', 'Also check the sort.', true]
+    ])
+    expect(rows[2]!.time).toBe('09:13')
+  })
+
+  it('marks it failed, never delivered: it reached nothing', () => {
+    expect(historyMarks(speakerRows(talker, failed))).toEqual(['reacted', undefined, 'failed'])
+    expect(HISTORY_MARK.failed).toEqual({
+      mark: 'failed',
+      glyph: '✕ not delivered',
+      title: 'Not delivered'
+    })
   })
 })

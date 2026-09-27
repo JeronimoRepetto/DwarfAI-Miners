@@ -52,9 +52,18 @@ const props = withDefaults(
   }>(),
   { projects: () => [], materials: undefined, adding: false, loading: false }
 )
-const emit = defineEmits<{ open: [id: string]; add: [] }>()
+const emit = defineEmits<{
+  open: [id: string]
+  add: []
+  /** A press on a marker whose mine cannot be entered, for the shell to say why (PANEL-QUESTIONS 6). */
+  refuse: [id: string]
+}>()
 
 const population = computed(() => mapMines(props.mines, props.projects))
+// The mines whose folder no longer exists: main asks the disk (ProjectSummary.folderMissing).
+const unenterable = computed(
+  () => new Set(props.projects.filter((p) => p.folderMissing).map((p) => p.id))
+)
 const empty = computed(() => !props.loading && population.value.length === 0)
 const totals = computed(() => mapTotals(props.materials))
 const artStyle = computed(() => ({ backgroundImage: `url("${MAP_BG_SRC[props.variant]}")` }))
@@ -95,7 +104,11 @@ let hoverTimer: ReturnType<typeof setTimeout> | null = null
 let dismissed = false
 
 const tipMine = computed(() => population.value.find((mine) => mine.id === tipId.value))
-const tip = computed(() => (tipMine.value === undefined ? undefined : mineTip(tipMine.value)))
+const tip = computed(() =>
+  tipMine.value === undefined
+    ? undefined
+    : mineTip(tipMine.value, { notEnterable: unenterable.value.has(tipMine.value.id) })
+)
 const tipStyle = computed(() => ({
   left: tipPlace.value.left + 'px',
   top: tipPlace.value.top + 'px',
@@ -152,7 +165,8 @@ function press(): void {
 
 function open(id: string): void {
   hideTip()
-  emit('open', id)
+  if (unenterable.value.has(id)) emit('refuse', id)
+  else emit('open', id)
 }
 
 function escape(event: KeyboardEvent): void {

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { MineTier } from '../types'
 import { DWARF_SILENCE_WINDOW_MS, MATERIALS } from '../types'
-import { groupDigits, isDwarfSilent, materialLabel, orePileLabel, tierLabel } from './presentation'
+import {
+  LEAVING_EXIT_MS,
+  groupDigits,
+  isDwarfSilent,
+  materialLabel,
+  orePileLabel,
+  tierLabel
+} from './presentation'
 
 /*
  * REMOVED for #635, stated rather than passing unseen, with the scene they served (the mine
@@ -10,9 +17,8 @@ import { groupDigits, isDwarfSilent, materialLabel, orePileLabel, tierLabel } fr
  *   says its state on `data-status` (SceneDwarf.test.ts, "says which state it is in").
  * - BUBBLE_MAX_CHARS, "keeps speech bubbles around seventy characters": the talk bubble is retired
  *   by the design (MineColumn.test.ts's note).
- * - LEAVING_EXIT_MS, "takes a leaving dwarf off the screen promptly" and "is far shorter than the
- *   grace window it used to fill": the departure fade is retired; a leaving dwarf stays idle where
- *   it stood (SceneDwarf.test.ts, "draws a dwarf on its way out idle").
+ * - LEAVING_EXIT_MS and its two tests went too, and came back with today's walk (PANEL-QUESTIONS
+ *   14): RESTORED below under their old names.
  * - vaultLabel, its three cases: the vault chip went; each capsule names its own material and
  *   count (VaultStrip.test.ts, OreCapsule.test.ts).
  * - describeSilence, its five cases: the redesigned tooltip writes "silent 25m"
@@ -220,5 +226,20 @@ describe('groupDigits', () => {
 
   it('never writes a fraction', () => {
     expect(groupDigits(1630.7)).toBe('1,630')
+  })
+})
+
+/*
+ * RESTORED for #635 (PANEL-QUESTIONS 14: today's walk stays), as they stood at 88ee3fc. How long a
+ * departed session stays in the board is main's (`dwarfLeaveGraceS`, 20s); how long its dwarf
+ * takes to fade once it has walked out is the panel's, and it is prompt (#153).
+ */
+describe('LEAVING_EXIT_MS', () => {
+  it('takes a leaving dwarf off the screen promptly', () => {
+    expect(LEAVING_EXIT_MS).toBe(1_200)
+  })
+
+  it('is far shorter than the grace window it used to fill', () => {
+    expect(LEAVING_EXIT_MS).toBeLessThan(20_000 / 4)
   })
 })

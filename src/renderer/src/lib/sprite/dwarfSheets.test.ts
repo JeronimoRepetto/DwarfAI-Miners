@@ -302,7 +302,6 @@ describe('DWARF_SHEETS', () => {
        */
       for (const name of ['idle', 'start-working', 'working', 'end-working'] as const) {
         expect(DWARF_SHEETS.worker2[name]?.impactFrames, name).toBeUndefined()
-        expect(DWARF_SHEETS.worker2[name]?.glowFrames, name).toBeUndefined()
       }
     })
   })
@@ -342,13 +341,14 @@ describe('DWARF_SHEETS', () => {
       expect(swing.durations?.[5]).toBe(200)
     })
 
-    it("glows only the artist's two brightest frames, 5-6 (index 4-5), never the dispersal", () => {
-      // Frames 7-9 (index 6-8) disperse and fade in the art alone (maintainer's
-      // design call) — a separate declaration from impactFrames above,
-      // because retriggering the debris burst across all five spark frames
-      // is exactly the "permanent glow" the old single-hit comment warned
-      // against, not a light on the strike.
-      expect(DWARF_SHEETS.worker.working?.glowFrames).toEqual([4, 5])
+    /*
+     * REPLACED for #635 (was: "glows only the artist's two brightest frames, 5-6 (index 4-5)"):
+     * the PO removed the strike glow and the sparks from the redesign on every rank (PANEL-QUESTIONS 15, 2026-09-27); the pick strike sound on the impact frame stays. What stays pinned is that no sheet lights anything.
+     */
+    it('declares no glow on the swing, or on any sheet', () => {
+      for (const { where, sheet } of everySheet()) {
+        expect('glowFrames' in sheet, where).toBe(false)
+      }
     })
   })
 
@@ -356,7 +356,6 @@ describe('DWARF_SHEETS', () => {
     for (const name of Object.keys(DWARF_SHEETS.foreman) as (keyof typeof DWARF_SHEETS.foreman)[]) {
       const sheet = DWARF_SHEETS.foreman[name]
       expect(sheet?.impactFrames, name).toBeUndefined()
-      expect(sheet?.glowFrames, name).toBeUndefined()
     }
   })
 
@@ -367,7 +366,6 @@ describe('DWARF_SHEETS', () => {
     for (const { where, sheet } of everySheet()) {
       if (where === 'worker/working') continue
       expect(sheet.impactFrames, where).toBeUndefined()
-      expect(sheet.glowFrames, where).toBeUndefined()
     }
   })
 })

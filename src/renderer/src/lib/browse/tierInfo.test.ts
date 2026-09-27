@@ -3,22 +3,23 @@ import { TIER_NOTE, grainRows, tierRanges } from './tierInfo'
 import { MATERIAL_TOKENS_PER_UNIT, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 
 describe('tierRanges', () => {
-  it('lists the five tiers in canonical order, each with its range', () => {
+  // AMENDED for #635 (PANEL-QUESTIONS 7, design lead ruling 2026-09-27): the ranges say their unit, KB.
+  it('lists the five tiers in canonical order, each with its range in KB', () => {
     const floors = { copperKb: 100, silverKb: 500, goldKb: 2048, uraniumKb: 8192 }
     expect(tierRanges(floors)).toEqual([
-      { tier: 'bronze', range: 'below 100' },
-      { tier: 'copper', range: '100 – 499' },
-      { tier: 'silver', range: '500 – 2,047' },
-      { tier: 'gold', range: '2,048 – 8,191' },
-      { tier: 'uranium', range: '8,192 and up' }
+      { tier: 'bronze', range: 'below 100 KB' },
+      { tier: 'copper', range: '100 – 499 KB' },
+      { tier: 'silver', range: '500 – 2,047 KB' },
+      { tier: 'gold', range: '2,048 – 8,191 KB' },
+      { tier: 'uranium', range: '8,192 KB and up' }
     ])
   })
 
   it('reads the app’s own thresholds by default, never the design’s sample', () => {
     const { copperKb, uraniumKb } = TIER_WEIGHT_THRESHOLDS_KB
     const ranges = tierRanges()
-    expect(ranges[0]!.range).toBe('below ' + copperKb.toLocaleString('en-US'))
-    expect(ranges[4]!.range).toBe(uraniumKb.toLocaleString('en-US') + ' and up')
+    expect(ranges[0]!.range).toBe('below ' + copperKb.toLocaleString('en-US') + ' KB')
+    expect(ranges[4]!.range).toBe(uraniumKb.toLocaleString('en-US') + ' KB and up')
   })
 })
 

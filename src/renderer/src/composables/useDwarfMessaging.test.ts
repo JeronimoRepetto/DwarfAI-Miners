@@ -853,3 +853,28 @@ describe('useDwarfMessaging holding a message for a busy thread', () => {
     expect(stateFor('codex:t1')?.phase).toBe('held')
   })
 })
+
+/*
+ * The app's own record of a message that never reached its session (#635, PANEL-QUESTIONS 16),
+ * which the shell's history draws: the words and when they were sent, for every echo whose verdict
+ * is failed, per dwarf, oldest first. Nothing else is in it.
+ */
+describe('useDwarfMessaging failed sends', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfMessaging().clearAll()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('lists each failed message with its words and send time, and no other', async () => {
+    const { send, failedSends } = useDwarfMessaging()
+    stubApi(async () => ({ delivered: true, via: 'terminal' }))
+    await send('claude:s1', 'arrived', true)
+    stubApi(async () => ({ delivered: false, via: 'none', error: 'gone' }))
+    vi.setSystemTime(5_000)
+    await send('claude:s1', 'never arrived', true)
+    expect(failedSends()).toEqual({ 'claude:s1': [{ text: 'never arrived', sentAt: 5_000 }] })
+  })
+})

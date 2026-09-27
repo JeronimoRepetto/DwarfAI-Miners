@@ -117,10 +117,11 @@ describe('sheetFromSidecar', () => {
     expect(() => sheetFromSidecar('/swing.png', sidecar, { tag: 'missing' })).toThrow(/missing/)
   })
 
-  it('passes impact and glow frames through untouched', () => {
-    const sheet = sheetFromSidecar('/swing.png', sidecar, { impactFrames: [2], glowFrames: [1, 2] })
+  // AMENDED for #635 (was: "passes impact and glow frames through untouched"): the glow went
+  // with the strike glow itself (PANEL-QUESTIONS 15); the impact frame the strike sound reads stays.
+  it('passes the impact frames through untouched', () => {
+    const sheet = sheetFromSidecar('/swing.png', sidecar, { impactFrames: [2] })
     expect(sheet.impactFrames).toEqual([2])
-    expect(sheet.glowFrames).toEqual([1, 2])
   })
 })
 

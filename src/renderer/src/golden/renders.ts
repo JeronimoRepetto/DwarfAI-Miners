@@ -592,19 +592,18 @@ const pageHeader: Render = framed((texts, attributes) => [
 ])
 
 /*
- * The tier explainer in the kit's wood frame, the classes and style its tree's root prints. Its
- * ranges are the sample's own floors: the app's thresholds are real ones, and the sample's are an
- * illustration the reference was drawn from.
+ * The tier explainer in the kit's wood frame, the classes and style its tree's root prints, on the
+ * app's own thresholds: since PANEL-QUESTIONS 7 the reference prints the configured ones in KB, and
+ * the sample's floors were only ever an illustration.
  */
-const tierInfo: Render = (sample, _texts, attributes) => {
-  if (!sample.tierThresholds) throw new Error('golden: the sample carries no DM.TIER_FLOOR')
+const tierInfo: Render = (_sample, _texts, attributes) => {
   const root = attributes[0]!
   return {
     component: KitFrame,
     props: {
       style: root.attributes.style ?? '',
       classes: root.element.split('.').slice(1).join(' '),
-      parts: [{ component: TierInfo, props: { thresholds: sample.tierThresholds } }]
+      parts: [{ component: TierInfo, props: {} }]
     }
   }
 }
@@ -987,7 +986,16 @@ const historyPanel: Render = (sample, _texts, attributes) => {
     component: KitFrame,
     props: {
       style: attributes[0]?.attributes.style ?? '',
-      parts: [{ component: HistoryPanel, props: { mine, history: sample.histories[mine.id] } }]
+      parts: [
+        {
+          component: HistoryPanel,
+          props: {
+            mine,
+            history: sample.histories[mine.id],
+            failed: sample.failedSends[mine.id] ?? {}
+          }
+        }
+      ]
     }
   }
 }

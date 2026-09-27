@@ -529,11 +529,14 @@ describe('renderer components against the type scale tokens', () => {
    * the redesign's light step, instead — reading the new `--danger-ink` there would be dark red on
    * dark. The first rule that sets red text on parchment names itself here.
    */
-  it('reads the parchment-only --danger-ink in no renderer component yet', () => {
-    const readers = vueFiles(RENDERER_SRC).filter((file) =>
-      readFileSync(file, 'utf8').includes('var(--danger-ink)')
-    )
-    expect(readers).toEqual([])
+  // AMENDED for #635 (was: "reads the parchment-only --danger-ink in no renderer component yet"):
+  // the mine history's failed mark is the first red text on parchment (chat-bubble.css,
+  // .dm-bubble__mark[data-mark="failed"]), and it names itself here.
+  it('reads the parchment-only --danger-ink only in a parchment bubble', () => {
+    const readers = vueFiles(RENDERER_SRC)
+      .filter((file) => readFileSync(file, 'utf8').includes('var(--danger-ink)'))
+      .map((file) => file.replace(/^.*[\\/]/, ''))
+    expect(readers).toEqual(['HistoryPanel.vue'])
   })
 
   /*
