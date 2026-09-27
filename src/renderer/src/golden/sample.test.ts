@@ -205,3 +205,54 @@ describe('adaptSample tier floors', () => {
     expect(adaptSample(dm({})).tierThresholds).toBeUndefined()
   })
 })
+
+/*
+ * A mine's history as its transcripts would give it (#635): each dwarf's conversation as the app's
+ * own messages, at the sample's clock times of an arbitrary day, its steps as activity rows by
+ * their verb. A message the sample marks failed never reached the session's transcript, so it is
+ * not in the history; the marks are the history panel's own reading (historyMarks).
+ */
+describe('adaptSample histories', () => {
+  const talker = {
+    ...digger,
+    conversation: [
+      { from: 'user', md: 'Dig here.', mark: 'reacted', time: '09:02' },
+      {
+        from: 'activity',
+        steps: ['Read a.ts', 'Edited b.ts', 'Ran vitest', 'Searched for x', 'Drafted it']
+      },
+      { from: 'dwarf', md: 'Done.', time: '09:07' },
+      { from: 'user', md: 'Never arrived.', mark: 'failed', time: '09:13' }
+    ]
+  }
+
+  it('reads each conversation as a speaker of its mine, oldest first, a failed message left out', () => {
+    const history = adaptSample(dm({ mines: [shaft], dwarfs: [talker] })).histories['north-shaft']!
+    expect(history.readable).toBe(true)
+    const [speaker] = history.speakers
+    expect(speaker).toMatchObject({
+      id: 'a1',
+      name: 'digger-1',
+      role: 'worker',
+      provider: 'claude'
+    })
+    expect(speaker!.messages.map((m) => [m.role, m.text, m.activity?.kind])).toEqual([
+      ['user', 'Dig here.', undefined],
+      ['assistant', 'Read a.ts', 'read'],
+      ['assistant', 'Edited b.ts', 'edit'],
+      ['assistant', 'Ran vitest', 'run'],
+      ['assistant', 'Searched for x', 'search'],
+      ['assistant', 'Drafted it', 'run'],
+      ['assistant', 'Done.', undefined]
+    ])
+    const at = new Date(speaker!.lastMessageAt)
+    expect([at.getHours(), at.getMinutes()]).toEqual([9, 7])
+  })
+
+  it('draws no speaker for a dwarf with nothing said', () => {
+    expect(adaptSample(dm({ mines: [shaft], dwarfs: [digger] })).histories['north-shaft']).toEqual({
+      readable: true,
+      speakers: []
+    })
+  })
+})

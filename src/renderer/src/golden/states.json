@@ -146,7 +146,7 @@
   },
   {
     "key": "organisms/history-panel#dwarfai-miners",
-    "red": "the mine history is not rebuilt yet (#635, PR4)"
+    "red": "14.1% differing: a tab shows the custom name Watcher (the dwarf names slice), d56 last time counts a failed message no transcript holds, and the bubbles body is the app Markdown renderer until the MessagePanel slice rebuilds the chat bubble (#635, PR4)"
   },
   {
     "key": "molecules/vault-strip#mine-footer"

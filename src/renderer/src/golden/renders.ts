@@ -28,6 +28,7 @@ import VaultStrip from '../components/vault/VaultStrip.vue'
 import CrewRoster from '../components/scene/CrewRoster.vue'
 import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
+import HistoryPanel from '../components/history/HistoryPanel.vue'
 import SceneDwarf from '../components/scene/SceneDwarf.vue'
 import { INTERIOR_SRC } from '../lib/art'
 import type { Station } from '../lib/scene/mineColumn'
@@ -968,6 +969,23 @@ const mineColumn: Render = (sample, texts, attributes) => {
   }
 }
 
+/*
+ * The mine history as its tree prints it, in the frame its root prints: the sample's mine its
+ * title names, with the history its dwarfs' conversations would give (sample.ts).
+ */
+const historyPanel: Render = (sample, _texts, attributes) => {
+  const label = elementsOf(attributes, 'section.dm-hist')[0]?.['aria-label'] ?? ''
+  const name = label.replace(/^Mine history, /, '')
+  const mine = sample.mines.find((m) => m.name === name) ?? fail('mine', name)
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: [{ component: HistoryPanel, props: { mine, history: sample.histories[mine.id] } }]
+    }
+  }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -1018,8 +1036,8 @@ export const RENDERS: Record<string, Render> = {
   'molecules/tooltip#mine-tooltip': mineTooltip,
   'molecules/tooltip#live': button({ labelled: true }),
   // The mine column (#635, PR4): the column on the sample's mine, the roster, the dwarf on the
-  // kit's scene and its tooltip card, each read off its own tree; the history panel is not rebuilt
-  // yet and draws the unbuilt specimen. The vault strip, built with the Map page, draws the real
+  // kit's scene and its tooltip card, and the mine history, each read off its own tree. The vault
+  // strip, built with the Map page, draws the real
   // strip: a mine's footer, the map's totals plate, and a vault with no ore.
   'organisms/mine-column#dwarfai-miners': mineColumn,
   'organisms/mine-column#ai-tools': mineColumn,
@@ -1037,7 +1055,7 @@ export const RENDERS: Record<string, Render> = {
   'molecules/dwarf-tooltip#working': dwarfTooltip('worker'),
   'molecules/dwarf-tooltip#needs-you': dwarfTooltip('worker2'),
   'molecules/dwarf-tooltip#asleep': dwarfTooltip('foreman'),
-  'organisms/history-panel#dwarfai-miners': unbuilt,
+  'organisms/history-panel#dwarfai-miners': historyPanel,
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,

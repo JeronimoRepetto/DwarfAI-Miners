@@ -12,6 +12,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import MapPage from './components/map/MapPage.vue'
 import MinesList from './components/browse/MinesList.vue'
 import MineColumn from './components/scene/MineColumn.vue'
+import HistoryPanel from './components/history/HistoryPanel.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
@@ -1806,12 +1807,12 @@ describe('App add action (#162)', () => {
     const { wrapper } = await openMine()
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.history-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-hist').exists()).toBe(true)
 
     await wrapper.find('.dm-minecol__foot .dm-btn--primary').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.history-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
   })
 })
 
@@ -2055,16 +2056,17 @@ describe('App mine history', () => {
     const { wrapper, api } = await openMineWith([], {
       getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] })
     })
-    expect(wrapper.find('.history-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
 
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
 
     expect(api.getMineHistory).toHaveBeenCalledWith(MINE.id)
-    expect(wrapper.find('.history-panel').exists()).toBe(true)
-    expect(wrapper.find('.history-tab').text()).toBe('older-se')
-    expect(wrapper.find('.bubble').text()).toBe('Done long ago.')
-    expect(wrapper.find('.history-timestamp').text()).toBe('September 04, 2026 09:05')
+    expect(wrapper.find('.dm-hist').exists()).toBe(true)
+    expect(wrapper.find('.dm-hist__tab .dm-hist__name').text()).toBe('older-se')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Done long ago.')
+    // AMENDED for #635: the redesigned history prints no footer; the tab says its last time.
+    expect(wrapper.find('.dm-hist__tab small').text()).toBe('last · 09:05')
     // The mine stays visible underneath.
     expect(wrapper.find('.dm-minecol .dm-minecol__art').exists()).toBe(true)
   })
@@ -2075,7 +2077,8 @@ describe('App mine history', () => {
     await flushPromises()
 
     expect(api.getMineHistory).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('.history-empty').text()).toBe('Nobody has spoken in this mine yet.')
+    // AMENDED for #635: the design's own words.
+    expect(wrapper.find('.dm-hist__note').text()).toBe('Nobody has worked here yet.')
   })
 
   it('does not read anything until the panel is opened', async () => {
@@ -2113,7 +2116,7 @@ describe('App mine history', () => {
     await flushPromises()
     expect(api.getMineHistory).toHaveBeenCalledTimes(2)
     // And the panel is still there: it follows the mine, not the crew.
-    expect(wrapper.find('.history-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-hist').exists()).toBe(true)
   })
 
   it('keeps showing the last answer while a re-read is in flight rather than flashing "reading"', async () => {
@@ -2131,11 +2134,11 @@ describe('App mine history', () => {
       tokensObserved: 0
     })
     await flushPromises()
-    expect(wrapper.find('.bubble').text()).toBe('Done long ago.')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Done long ago.')
 
     release!({ readable: true, speakers: [] })
     await flushPromises()
-    expect(wrapper.find('.history-empty').exists()).toBe(true)
+    expect(wrapper.find('.dm-hist__note').text()).toBe('Nobody has worked here yet.')
   })
 
   /*
@@ -2158,11 +2161,11 @@ describe('App mine history', () => {
       mineId: '',
       dwarfId: ''
     })
-    expect(wrapper.find('.history-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-hist').exists()).toBe(true)
 
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.history-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
     expect(api.setMessagePanel).toHaveBeenLastCalledWith({
       surface: 'message',
       mineId: MINE.id,
@@ -2174,15 +2177,30 @@ describe('App mine history', () => {
     const { wrapper } = await openMineWith([])
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
-    await wrapper.find('.history-close').trigger('click')
-    expect(wrapper.find('.history-panel').exists()).toBe(false)
+    await wrapper.find('button[aria-label="Close history"]').trigger('click')
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
 
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.history-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-hist').exists()).toBe(true)
     await wrapper.find('button[aria-label="Close mine"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.history-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-hist').exists()).toBe(false)
+  })
+
+  // ADDED for #635: the redesigned history draws Markdown, links included, and hands a pressed
+  // one to main, which validates it again and opens it (#347), as the MessagePanel's are.
+  it('relays a link pressed in the history to main', async () => {
+    const openExternalLink = vi.fn().mockResolvedValue({ opened: true })
+    const { wrapper } = await openMineWith([], {
+      getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [SPEAKER] }),
+      openExternalLink
+    })
+    await wrapper.find('button[aria-label="Mine history"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(HistoryPanel).vm.$emit('open-link', 'https://example.com/')
+    await flushPromises()
+    expect(openExternalLink).toHaveBeenCalledWith('https://example.com/')
   })
 
   it('says the mine could not be read when the bridge itself fails', async () => {
@@ -2191,7 +2209,7 @@ describe('App mine history', () => {
     })
     await wrapper.find('button[aria-label="Mine history"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.history-empty').text()).toBe("This mine's history could not be read.")
+    expect(wrapper.find('.dm-hist__note').text()).toBe("This mine's history could not be read.")
   })
 })
 

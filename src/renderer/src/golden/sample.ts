@@ -15,6 +15,10 @@ import {
   MINE_TIERS,
   type Dwarf,
   type DwarfProvider,
+  type FeedActivityKind,
+  type FeedMessage,
+  type MineHistoryResult,
+  type MineHistorySpeaker,
   type DwarfRole,
   type Material,
   type MaterialTotals,
@@ -38,6 +42,8 @@ export interface GoldenSample {
    * the explainer a golden draws from the sample; absent when the sample carries none.
    */
   tierThresholds?: TierThresholds
+  /** Each mine's history, by mine id, as its dwarfs' transcripts would give it (#635). */
+  histories: Record<string, MineHistoryResult>
 }
 
 type Row = Record<string, unknown>
@@ -151,6 +157,70 @@ function mine(row: Row): Mine {
   }
 }
 
+// A step's verb names its kind, as the app's own activity lines spell them ("Read a.ts"). A step
+// no kind names ("Drafted a migration") is drawn as a plain step with nothing to open, which is
+// what a run draws.
+const STEP_KIND: Record<string, FeedActivityKind> = {
+  Read: 'read',
+  Edited: 'edit',
+  Ran: 'run',
+  Searched: 'search'
+}
+
+// The sample writes a message's clock time ("09:07"); the day is arbitrary and local, as the panel's.
+function at(time: unknown): number {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(time))
+  if (!m) return fail('time', time)
+  return new Date(2026, 8, 27, Number(m[1]), Number(m[2])).getTime()
+}
+
+/*
+ * One dwarf's conversation as its transcript would carry it: the person's words and the dwarf's,
+ * and each step as one activity row by its verb. A message the sample marks failed never reached
+ * the session, so no transcript holds it; the marks the panel draws are its own reading.
+ */
+function speakerOf(row: Row, dwarf: Dwarf): MineHistorySpeaker | undefined {
+  const messages: FeedMessage[] = []
+  let last = 0
+  let stepAt = 0
+  for (const entry of (row.conversation ?? []) as Row[]) {
+    if (entry.from === 'activity') {
+      for (const step of (entry.steps ?? []) as string[]) {
+        const verb = step.split(' ')[0] ?? ''
+        const kind = STEP_KIND[verb] ?? 'run'
+        const target = step.slice(verb.length + 1).replace(/^for /, '')
+        messages.push({
+          role: 'assistant',
+          text: step,
+          timestamp: new Date(stepAt).toISOString(),
+          activity: { kind, target }
+        })
+      }
+      continue
+    }
+    if (entry.mark === 'failed') continue
+    const time = at(entry.time)
+    stepAt = time
+    last = Math.max(last, time)
+    const role =
+      entry.from === 'user'
+        ? 'user'
+        : entry.from === 'dwarf'
+          ? 'assistant'
+          : fail('from', entry.from)
+    messages.push({ role, text: String(entry.md), timestamp: new Date(time).toISOString() })
+  }
+  if (messages.length === 0) return undefined
+  return {
+    id: dwarf.id,
+    provider: dwarf.provider as DwarfProvider,
+    role: dwarf.role,
+    name: dwarf.name,
+    lastMessageAt: last,
+    messages
+  }
+}
+
 /** Adapts `window.DM` after the design's sample-data.js has run. */
 export function adaptSample(dm: unknown): GoldenSample {
   const data = (dm as { data?: Row } | undefined)?.data
@@ -160,9 +230,15 @@ export function adaptSample(dm: unknown): GoldenSample {
   const config = (data.config ?? {}) as Row
   const mines = ((data.mines ?? []) as Row[]).map(mine)
   const byId = new Map(mines.map((m) => [m.id, m]))
+  const histories: Record<string, MineHistoryResult> = Object.fromEntries(
+    mines.map((m) => [m.id, { readable: true, speakers: [] as MineHistorySpeaker[] }])
+  )
   for (const row of (data.dwarfs ?? []) as Row[]) {
     const home = byId.get(String(row.mine)) ?? fail('mine', row.mine)
-    home.dwarfs.push(dwarf(row, home))
+    const adapted = dwarf(row, home)
+    home.dwarfs.push(adapted)
+    const speaker = speakerOf(row, adapted)
+    if (speaker) histories[home.id]!.speakers.push(speaker)
   }
   const floor = (dm as { TIER_FLOOR?: Record<string, unknown> }).TIER_FLOOR
   return {
@@ -171,6 +247,7 @@ export function adaptSample(dm: unknown): GoldenSample {
       guildEnabled: config.guildEnabled === true
     },
     mines,
+    histories,
     ...(floor === undefined
       ? {}
       : {

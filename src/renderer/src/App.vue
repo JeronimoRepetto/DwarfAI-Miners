@@ -9,7 +9,7 @@ import {
   type ComponentPublicInstance
 } from 'vue'
 import { MotionConfig } from 'motion-v'
-import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
+import HistoryPanel from './components/history/HistoryPanel.vue'
 import EdgeRail from './components/shell/EdgeRail.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
@@ -869,6 +869,19 @@ async function openHistoryPath(payload: { key: string; target: string }): Promis
 }
 
 /**
+ * A link in a history message (#635): relayed to main, which validates it again and owns the only
+ * `shell.openExternal` in the app, as the MessagePanel's are (#347). A refusal has nowhere to be
+ * said in a read-only panel, and the link stays where it was.
+ */
+async function openHistoryLink(href: string): Promise<void> {
+  try {
+    await window.api.openExternalLink(href)
+  } catch {
+    // The bridge is the only way out; nothing else can open it.
+  }
+}
+
+/**
  * The signal the history re-reads on while open: the SAME two the message
  * panel's feed watches (#183, see the watch below it), over every dwarf in the
  * mine rather than the one selected — `lastMessage` for an agent that spoke,
@@ -1352,13 +1365,14 @@ onBeforeUnmount(() => {
           :key="`history:${currentMine.id}`"
           class="message-dock"
         >
-          <MineHistoryPanel
+          <HistoryPanel
             :key="currentMine.id"
             :mine="currentMine"
             :history="mineHistory"
             :path-refusal="historyPathRefusal"
             @close="closeHistory"
             @open-path="openHistoryPath"
+            @open-link="openHistoryLink"
           />
         </div>
       </PanelTransition>
@@ -1509,6 +1523,13 @@ onBeforeUnmount(() => {
 }
 .message-dock > * {
   pointer-events: auto;
+}
+/*
+ * The redesigned history (#635) fills the height it is given, so it is given today's: the dock slot
+ * beside the shell that the design opens it in is the window slice's to build.
+ */
+.message-dock > .dm-hist {
+  height: min(var(--size-history-panel-max-height), calc(100vh - 2 * var(--space-nav-gap)));
 }
 /*
  * The page column (#635): 440px, and on a screen narrower than the dock it is

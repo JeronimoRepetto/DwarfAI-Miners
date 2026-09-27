@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { FeedActivityKind } from '../../types'
 import type { PanelMessage } from './conversation'
-import { ACTIVITY_WORKING_LABEL, groupActivity } from './activityGroup'
+import { ACTIVITY_WORKING_LABEL, activityStepsLabel, groupActivity } from './activityGroup'
 
 function spoken(key: string, text = 'Found the seam.'): PanelMessage {
   return { from: 'agent', text, key }
@@ -135,5 +135,17 @@ describe('groupActivity', () => {
       const labels = entries.flatMap((entry) => (entry.kind === 'activity' ? [entry.label] : []))
       expect(labels).toEqual(['1 step — Ran one', ACTIVITY_WORKING_LABEL])
     })
+  })
+})
+
+/*
+ * The design's own label for a folded run (#635, copy.md, Activity disclosure: "{stepsCount}
+ * step[s] · activity"), which the redesigned mine history draws; the MessagePanel keeps its label
+ * above until its own slice.
+ */
+describe('activityStepsLabel', () => {
+  it('counts the steps, singular for one', () => {
+    expect(activityStepsLabel(5)).toBe('5 steps · activity')
+    expect(activityStepsLabel(1)).toBe('1 step · activity')
   })
 })
