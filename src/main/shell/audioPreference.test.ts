@@ -38,9 +38,13 @@ describe('serializeAudioPreferences', () => {
         musicAtStartup: false,
         musicVolume: 0.5,
         ambienceVolume: 0.25,
-        voiceVolume: 1
+        voiceVolume: 1,
+        notificationSounds: false
       })
-    ).toBe('{"musicAtStartup":false,"musicVolume":0.5,"ambienceVolume":0.25,"voiceVolume":1}\n')
+    ).toBe(
+      // AMENDED for #635: the Notification sounds switch is the fifth field.
+      '{"musicAtStartup":false,"musicVolume":0.5,"ambienceVolume":0.25,"voiceVolume":1,"notificationSounds":false}\n'
+    )
   })
 
   it('round-trips through the shared parser, so what is written can be read', () => {
@@ -49,7 +53,8 @@ describe('serializeAudioPreferences', () => {
       musicAtStartup: false,
       musicVolume: 0.3,
       ambienceVolume: 0.6,
-      voiceVolume: 0.9
+      voiceVolume: 0.9,
+      notificationSounds: false
     }
     return store
       .save(chosen)
@@ -75,7 +80,10 @@ describe('createAudioPreferenceStore', () => {
       musicAtStartup: false,
       musicVolume: 0.2,
       ambienceVolume: 0.4,
-      voiceVolume: 0.6
+      voiceVolume: 0.6,
+      // AMENDED for #635: that file predates the Notification sounds switch,
+      // and a stored document without it reads as on — the additive default.
+      notificationSounds: true
     })
   })
 

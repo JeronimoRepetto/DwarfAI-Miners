@@ -3706,6 +3706,15 @@ export interface AudioPreferences {
    * wants the panel to stop talking back means both.
    */
   voiceVolume: number
+  /**
+   * Whether the three attention cues — a question, a permission, a finished
+   * turn — play at all (#635; sound.md, "Attention cues are global"). This is
+   * the ONLY thing that turns them off: never a mine's own mute, never the
+   * focused mine, and not Notifications › "System notifications", which is the
+   * operating system's notification centre and a different ladder rung. Off,
+   * nothing else changes; the cues still ride the `Effects` slider when on.
+   */
+  notificationSounds: boolean
 }
 
 /**
@@ -3729,7 +3738,10 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   musicAtStartup: true,
   musicVolume: 0.1,
   ambienceVolume: 1,
-  voiceVolume: 0.7
+  voiceVolume: 0.7,
+  // On: a document written before the switch existed reads as on, so an
+  // upgrade is silent about it rather than silencing the cues it adds.
+  notificationSounds: true
 }
 
 /**
@@ -3774,7 +3786,11 @@ export function parseAudioPreferences(document: unknown): AudioPreferences {
       record.ambienceVolume,
       DEFAULT_AUDIO_PREFERENCES.ambienceVolume
     ),
-    voiceVolume: clampAudioVolume(record.voiceVolume, DEFAULT_AUDIO_PREFERENCES.voiceVolume)
+    voiceVolume: clampAudioVolume(record.voiceVolume, DEFAULT_AUDIO_PREFERENCES.voiceVolume),
+    notificationSounds:
+      typeof record.notificationSounds === 'boolean'
+        ? record.notificationSounds
+        : DEFAULT_AUDIO_PREFERENCES.notificationSounds
   }
 }
 
