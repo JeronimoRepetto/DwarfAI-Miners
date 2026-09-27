@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
 import { MAP_SPAWN_POINTS } from '../lib/map/spawnPoints.generated'
-import { adaptSample, silenceMs } from './sample'
+import { adaptSample, silenceMs, swapSample } from './sample'
 
 /*
  * The golden page reads the design's sample data at run time and adapts it to the app's own
@@ -377,5 +377,54 @@ describe('adaptSample projects', () => {
     const point = MAP_SPAWN_POINTS[0]!
     const sample = adaptSample(dm({ mines: [{ ...shaft, site: { x: point.x, y: point.y } }] }))
     expect(sample.projects[0]!.mapSite).toBe(point.id)
+  })
+})
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 25, PO ruling 2026-09-27): the sample names the view the app
+ * remembers (`DM.data.launch`), the one the references show as the screen opens; the first-run
+ * sample remembers nothing.
+ */
+describe('adaptSample — the remembered launch', () => {
+  it('reads the remembered page and mine as the view main would have stored', () => {
+    const sample = adaptSample(dm({ launch: { page: 'mines', mine: 'north-shaft' } }))
+    expect(sample.launch).toEqual({ area: 'mines', mineId: 'north-shaft' })
+  })
+
+  it("keeps a remembered mine the sample does not carry: whether it opens is the app's to decide", () => {
+    const sample = adaptSample(dm({ mines: [shaft], launch: { page: 'map', mine: 'gone-shaft' } }))
+    expect(sample.launch).toEqual({ area: 'map', mineId: 'gone-shaft' })
+  })
+
+  it('reads a page with no mine open', () => {
+    const sample = adaptSample(dm({ launch: { page: 'settings', mine: null } }))
+    expect(sample.launch).toEqual({ area: 'settings', mineId: null })
+  })
+
+  it('remembers nothing when the sample names no launch, as the first-run sample does', () => {
+    expect(adaptSample(dm({ launch: null }))).not.toHaveProperty('launch')
+    expect(adaptSample(dm({}))).not.toHaveProperty('launch')
+  })
+
+  it('refuses a page the app has no area for, naming it', () => {
+    expect(() => adaptSample(dm({ launch: { page: 'vault', mine: null } }))).toThrow(/page "vault"/)
+  })
+})
+
+describe('swapSample — a prototype sample switch under a running app', () => {
+  it('keeps the launch the screen opened with: the switch swaps the data, it relaunches nothing', () => {
+    const booted = adaptSample(
+      dm({ mines: [shaft], launch: { page: 'mines', mine: 'north-shaft' } })
+    )
+    const firstRun = adaptSample(dm({ launch: null }))
+    const swapped = swapSample(booted, firstRun)
+    expect(swapped.mines).toEqual([])
+    expect(swapped.launch).toEqual({ area: 'mines', mineId: 'north-shaft' })
+  })
+
+  it('remembers nothing after the switch when the screen opened remembering nothing', () => {
+    const swapped = swapSample(adaptSample(dm({})), adaptSample(dm({ mines: [shaft] })))
+    expect(swapped).not.toHaveProperty('launch')
+    expect(swapped.mines).toHaveLength(1)
   })
 })
