@@ -533,11 +533,13 @@ describe('renderer components against the type scale tokens', () => {
   // AMENDED for #635 (was: "reads the parchment-only --danger-ink in no renderer component yet"):
   // the mine history's failed mark is the first red text on parchment (chat-bubble.css,
   // .dm-bubble__mark[data-mark="failed"]), and it names itself here.
+  // AMENDED again for #635, the MessagePanel slice (was: HistoryPanel.vue): the bubble is its own
+  // component now, shared by the history and the MessagePanel, and the failed mark went with it.
   it('reads the parchment-only --danger-ink only in a parchment bubble', () => {
     const readers = vueFiles(RENDERER_SRC)
       .filter((file) => readFileSync(file, 'utf8').includes('var(--danger-ink)'))
       .map((file) => file.replace(/^.*[\\/]/, ''))
-    expect(readers).toEqual(['HistoryPanel.vue'])
+    expect(readers).toEqual(['ChatBubble.vue'])
   })
 
   /*
@@ -547,8 +549,19 @@ describe('renderer components against the type scale tokens', () => {
    * one surface at a time, because "the crew's own words" is a judgement about
    * WHICH element, not a pattern a regex could find on its own.
    */
+  /*
+   * AMENDED for #635 (was: `components/message/DwarfMessagePanel.vue`, which carried `.bubble`,
+   * reading `var(--font-conversation)`). The MessagePanel's bubbles are ChatBubble's, drawn in the
+   * redesign's Messages role, `--f-talk`, which `--font-conversation` itself follows
+   * (design-tokens.css), so the pin reads that role in the file that draws the words.
+   */
+  it('sets components/message/ChatBubble.vue, which carries .dm-bubble, in the Messages role', () => {
+    expect(readFileSync(join(RENDERER_SRC, 'components/message/ChatBubble.vue'), 'utf8')).toContain(
+      'var(--f-talk)'
+    )
+  })
+
   it.each([
-    ['components/message/DwarfMessagePanel.vue', '.bubble'],
     ['components/dwarf/DwarfQuestionCard.vue', '.question-text'],
     ['components/dwarf/DwarfPermissionCard.vue', '.permission-description'],
     // APPENDED for #370: the Add Panel joins the list. It is where the person

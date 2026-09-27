@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
 import { MAP_SPAWN_POINTS } from '../lib/map/spawnPoints.generated'
 import { adaptSample, silenceMs, swapSample } from './sample'
@@ -458,5 +458,40 @@ describe('adaptSample feeds', () => {
   it('answers a dwarf with nothing said with an empty readable feed', () => {
     const sample = adaptSample(dm({ mines: [shaft], dwarfs: [digger] }))
     expect(sample.feeds.a1).toEqual({ readable: true, messages: [] })
+  })
+})
+
+/*
+ * APPENDED (#635, the MessagePanel slice): the prototype's chat takes a message and a file from any
+ * dwarf, so each sample dwarf is a session the panel can write to, attach to and stop, on the
+ * console channel the app's own terminal-held sessions use. The day of the conversation is the
+ * one the page is on, as the prototype's is always today.
+ */
+describe('adaptSample, the dwarfs the MessagePanel talks to', () => {
+  it('gives each dwarf the console channel for words, files and a stop', () => {
+    const [dwarf] = adaptSample(dm({ mines: [shaft], dwarfs: [digger] })).mines[0]!.dwarfs
+    expect(dwarf!.textDelivery).toBe('terminal')
+    expect(dwarf!.capabilities).toEqual({
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null,
+      attach: 'terminal'
+    })
+  })
+
+  it('dates the conversation on the day the page is on', () => {
+    // A fixed day, as the design's capture runtime fixes the page's clock.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 0, 15, 10, 30))
+    try {
+      const talker = { ...digger, conversation: [{ from: 'dwarf', md: 'Done.', time: '09:07' }] }
+      const [message] = adaptSample(dm({ mines: [shaft], dwarfs: [talker] })).feeds.a1!.messages
+      const said = new Date(message!.timestamp)
+      expect([said.getFullYear(), said.getMonth(), said.getDate(), said.getHours()]).toEqual([
+        2026, 0, 15, 9
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

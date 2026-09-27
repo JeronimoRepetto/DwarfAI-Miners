@@ -167,7 +167,16 @@ function dwarf(row: Row, mine: Mine): Dwarf {
     ...status(row),
     silentForMs: typeof row.silence === 'string' ? silenceMs(row.silence) : undefined,
     workplace:
-      typeof row.worktree === 'string' ? { path: mine.path, branch: row.worktree } : undefined
+      typeof row.worktree === 'string' ? { path: mine.path, branch: row.worktree } : undefined,
+    // The prototype's chat takes words and a file from every dwarf and stops any of them (#635):
+    // each is a session on the console channel the app's terminal-held sessions use.
+    textDelivery: 'terminal',
+    capabilities: {
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null,
+      attach: 'terminal'
+    }
   }
 }
 
@@ -233,11 +242,23 @@ const STEP_KIND: Record<string, FeedActivityKind> = {
   Searched: 'search'
 }
 
-// The sample writes a message's clock time ("09:07"); the day is arbitrary and local, as the panel's.
+/*
+ * The sample writes a message's clock time ("09:07") on the day the page is on, as the prototype's
+ * conversation is always today (its day divider reads TODAY). The capture runtime fixes the page's
+ * clock, so the day is the same in every run. AMENDED for #635, the MessagePanel slice (was: a
+ * fixed arbitrary day, which the history never showed and the MessagePanel's divider does).
+ */
 function at(time: unknown): number {
   const m = /^(\d{2}):(\d{2})$/.exec(String(time))
   if (!m) return fail('time', time)
-  return new Date(2026, 8, 27, Number(m[1]), Number(m[2])).getTime()
+  const today = new Date()
+  return new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+    Number(m[1]),
+    Number(m[2])
+  ).getTime()
 }
 
 /*

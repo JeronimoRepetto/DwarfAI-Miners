@@ -1391,7 +1391,8 @@ export const RENDERS: Record<string, Render> = {
   'foundations/motion#enter': (_sample, texts) => ({ component: EnterFrame, props: { texts } }),
   'foundations/motion#press': button({ labelled: true, variant: 'primary' }),
   // Specimens with no view yet. The presets draw the page header, the mine card and two bubbles
-  // in each preset, none rebuilt yet.
+  // in each preset: all three are components now (ChatBubble since #635's MessagePanel slice),
+  // and the specimen that sets them side by side is not built yet.
   'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt,
 
   // The icon registry at both scales, and the tones on the close and check icons.

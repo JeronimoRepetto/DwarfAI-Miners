@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
+import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
+import MenuButton from './components/overlay/MenuButton.vue'
+import ModalDialog from './components/overlay/ModalDialog.vue'
+import { MENU_STOP } from './lib/message/panelChrome'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
@@ -208,6 +212,14 @@ function pushSnapshot(api: Record<string, ReturnType<typeof vi.fn>>, snapshot: u
   push(snapshot)
 }
 
+/** Stop dwarf… from the chat's ⋯ menu, confirmed, as a person stops one (#635). */
+async function stopDwarf(wrapper: VueWrapper): Promise<void> {
+  wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_STOP)
+  await flushPromises()
+  wrapper.findComponent(DwarfMessagePanel).findComponent(ModalDialog).vm.$emit('action', 1)
+  await flushPromises()
+}
+
 /** The toasts the shell is showing, where it says what a panel could not do (#635). */
 function toastTexts(wrapper: VueWrapper): string[] {
   return wrapper.findAll('.dm-toast').map((toast) => toast.text())
@@ -272,7 +284,7 @@ describe('the docked message panel', () => {
   // AMENDED for #635 (was: 'draws nothing at all until main says what to show').
   it('draws no panel until a dwarf or the Add action asks for one', async () => {
     const { wrapper } = await mountPanel(CLOSED)
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
     expect(wrapper.find('.add-panel').exists()).toBe(false)
   })
 
@@ -283,8 +295,8 @@ describe('the docked message panel', () => {
    */
   it('opens on the dwarf that was clicked, the mine still beside it', async () => {
     const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg__rename').text()).toBe('Foreman')
     expect(wrapper.find('.dm-minecol').exists()).toBe(true)
   })
 
@@ -303,10 +315,10 @@ describe('the docked message panel', () => {
   it('closes itself, and the sprite lets its halo go', async () => {
     const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
 
-    await wrapper.find('.panel-close').trigger('click')
+    await wrapper.find('.dm-msg__close').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
     expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
   })
 
@@ -325,8 +337,8 @@ describe('the docked message panel', () => {
     })
 
     expect(api.getDwarfFeed).toHaveBeenCalledWith('claude:s1')
-    expect(wrapper.find('.bubble').text()).toBe('Blasting the last metre')
-    expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Blasting the last metre')
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('Latest activity')
   })
 
   /*
@@ -341,8 +353,8 @@ describe('the docked message panel', () => {
     const { wrapper, api } = await openOn([HELD_DWARF], 'claude:s2', heldFeedStub(HELD_EXCHANGE))
 
     expect(api.getDwarfFeed).toHaveBeenCalledWith('claude:s2')
-    expect(wrapper.find('.bubble').text()).toBe('dig here')
-    expect(wrapper.find('.panel-note').text()).toContain('holding this session')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('dig here')
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('holding this session')
   })
 
   it('sends what was typed over the ordinary message channel', async () => {
@@ -351,8 +363,8 @@ describe('the docked message panel', () => {
       'claude:s1'
     )
 
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
     expect(api.sendDwarfText).toHaveBeenCalledWith({
@@ -364,7 +376,9 @@ describe('the docked message panel', () => {
     // makes a stub that resolves the wrong shape fail this test outright,
     // instead of rejecting into the void after it has already passed: the send
     // is fire-and-forget, so nothing else in the app would ever notice.
-    expect(wrapper.find('.panel-status').text()).toContain('Handed over via terminal')
+    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain(
+      'Handed over via terminal'
+    )
   })
 
   it('kicks through the panel, and the verdict lands where it was asked for', async () => {
@@ -391,14 +405,17 @@ describe('the docked message panel', () => {
       { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
     )
 
-    // One click since #293: the arm-then-fire confirmation is gone.
-    await wrapper.find('.control-kick').trigger('click')
-    await flushPromises()
+    // AMENDED for #635 (was: one click since #293): Stop dwarf… in the ⋯ menu, confirmed first.
+    await stopDwarf(wrapper)
 
     expect(api.kickDwarf).toHaveBeenCalledWith({ dwarfId: 'claude:s1' })
     // Handed over, never "reacted": only a session SEEN stopping earns that.
-    expect(wrapper.find('.panel-status').text()).toContain('Kick handed over via claude-relay')
-    expect(wrapper.find('.panel-status').text()).not.toContain('the session reacted')
+    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain(
+      'Kick handed over via claude-relay'
+    )
+    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).not.toContain(
+      'the session reacted'
+    )
   })
 
   /*
@@ -419,19 +436,19 @@ describe('the docked message panel', () => {
         })
       }
     )
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.dm-composer textarea').attributes('disabled')).toBeUndefined()
 
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
 
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
-    expect(wrapper.find('.bubble').text()).toBe('Blasting the last metre')
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg__rename').text()).toBe('Foreman')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Blasting the last metre')
     // Ended is said in words, and typing into a session that is gone is
     // refused with the same words rather than handed to main to refuse.
-    expect(wrapper.find('.panel-note').text()).toContain('ended')
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.panel-input').attributes('title')).toContain('ended')
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('ended')
+    expect(wrapper.find('.dm-composer textarea').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.dm-composer .dm-field').attributes('title')).toContain('ended')
   })
 
   it("leaves closing an ended session's panel to the person", async () => {
@@ -439,11 +456,11 @@ describe('the docked message panel', () => {
 
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
 
-    await wrapper.find('.panel-close').trigger('click')
+    await wrapper.find('.dm-msg__close').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
   })
 
   it('says out loud when the session’s own console could not be brought forward', async () => {
@@ -454,7 +471,8 @@ describe('the docked message panel', () => {
       activateDwarf: vi.fn().mockResolvedValue({ focused: false, openedTerminal: false, feed: [] })
     })
 
-    await wrapper.find('.panel-agent').trigger('click')
+    // AMENDED for #635 (was: the dwarf's name): the header's Console tool.
+    await wrapper.find('.dm-msg__console').trigger('click')
     await flushPromises()
 
     // AMENDED for #635 (was: the `.notice` line above the panel in its own window): said in a
@@ -489,8 +507,9 @@ describe('opening an activity line’s path', () => {
    * it claimed before.
    */
   async function openLine(wrapper: VueWrapper): Promise<void> {
-    await wrapper.find('.activity-disclosure').trigger('click')
-    await wrapper.find('.activity-line').trigger('click')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
+    // AMENDED for #635: the step's own path button inside its list item.
+    await wrapper.find('.dm-activity__path').trigger('click')
   }
 
   it('asks main with the current mine id and the exact target, not the display text', async () => {
@@ -554,8 +573,8 @@ describe('handing the delivery verdicts to the mine', () => {
   it('hands the mine a send the moment its verdict lands', async () => {
     const { wrapper } = await openOn([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }], 'claude:s1')
 
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
     const send = wrapper.findComponent(MineColumn).props('sendStates') as Record<
@@ -574,8 +593,8 @@ describe('handing the delivery verdicts to the mine', () => {
       'claude:s1',
       { sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, via: 'none', error: 'gone' }) }
     )
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     const failed = useDwarfMessaging().failedSends()
     expect(failed['claude:s1']?.map((f) => f.text)).toEqual(['dig deeper'])
@@ -615,8 +634,8 @@ describe('handing the delivery verdicts to the mine', () => {
       'claude:s1',
       { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
     )
-    await wrapper.find('.control-kick').trigger('click')
-    await flushPromises()
+    // AMENDED for #635: the kick is Stop dwarf… in the ⋯ menu, confirmed first.
+    await stopDwarf(wrapper)
     expect(useDwarfKicking().stateFor('claude:s1')?.phase).toBe('delivered')
 
     pushSnapshot(api, {
@@ -633,8 +652,8 @@ describe('handing the delivery verdicts to the mine', () => {
       [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
       'claude:s1'
     )
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     expect(useDwarfMessaging().stateFor('claude:s1')?.phase).toBe('delivered')
 
@@ -670,8 +689,8 @@ describe('handing the delivery verdicts to the mine', () => {
       'claude:s1',
       { kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'claude-relay' }) }
     )
-    await wrapper.find('.control-kick').trigger('click')
-    await flushPromises()
+    // AMENDED for #635: the kick is Stop dwarf… in the ⋯ menu, confirmed first.
+    await stopDwarf(wrapper)
 
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
     await flushPromises()
@@ -896,8 +915,8 @@ describe('feed refresh (#183)', () => {
   }
 
   async function sendFromPanel(wrapper: VueWrapper, text: string) {
-    await wrapper.find('.panel-input').setValue(text)
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue(text)
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
   }
 
@@ -968,11 +987,11 @@ describe('feed refresh (#183)', () => {
     const { wrapper, api } = await openRefreshDwarf({ sendDwarfText })
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
 
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
-    await wrapper.find('.panel-close').trigger('click')
+    await wrapper.find('.dm-msg__close').trigger('click')
     await flushPromises()
     resolveSend({ delivered: true, via: 'terminal' })
     await flushPromises()
@@ -1031,13 +1050,13 @@ describe('feed refresh (#183)', () => {
     await flushPromises()
 
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Seam exhausted, packing up.')
 
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [] }], tokensObserved: 0 })
     await flushPromises()
 
     expect(api.getDwarfFeed).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Seam exhausted, packing up.')
   })
 
   /*
@@ -1066,7 +1085,7 @@ describe('feed refresh (#183)', () => {
           })
       )
     const { wrapper, api } = await openRefreshDwarf({ getDwarfFeed })
-    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Halfway down the shaft')
 
     pushSnapshot(api, {
       // lastMessage cleared: conversationOf falls back to it while feed is
@@ -1083,8 +1102,8 @@ describe('feed refresh (#183)', () => {
     // The second read is in flight and unresolved: the previous message must
     // stay on screen, and the note must not flash back to "reading" — a
     // re-read for the SAME dwarf is not a first read.
-    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
-    expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Halfway down the shaft')
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('Latest activity')
 
     resolveSecond({
       readable: true,
@@ -1092,7 +1111,7 @@ describe('feed refresh (#183)', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.bubble').text()).toBe('Seam exhausted, packing up.')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Seam exhausted, packing up.')
   })
 
   it('blanks back to the reading note when the panel switches to a different dwarf', async () => {
@@ -1127,21 +1146,21 @@ describe('feed refresh (#183)', () => {
     const { wrapper } = await openOn([FIRST_DWARF, SECOND_DWARF], 'claude:s1', {
       getDwarfFeed
     })
-    expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Halfway down the shaft')
 
     // The switch is the person selecting somebody else in the mine. AMENDED for
     // #635 (was: a state pushed from the shell to the panel's own window).
     await selectOn(wrapper, 'claude:s3')
 
-    expect(wrapper.find('.bubble').exists()).toBe(false)
-    expect(wrapper.find('.panel-note').text()).toContain('Reading')
+    expect(wrapper.find('.dm-bubble__text').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('Reading')
 
     resolveSecondDwarfFeed({
       readable: true,
       messages: [{ role: 'assistant', text: 'Just arrived at the seam.', timestamp: 't2' }]
     })
     await flushPromises()
-    expect(wrapper.find('.bubble').text()).toBe('Just arrived at the seam.')
+    expect(wrapper.find('.dm-bubble__text').text()).toBe('Just arrived at the seam.')
   })
 
   /**
@@ -1173,7 +1192,7 @@ describe('feed refresh (#183)', () => {
       // The very signal that would ordinarily trigger a pull already arrived
       // WITH its feed, so the watch must not pull a second time for it.
       expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
-      expect(wrapper.find('.bubble').text()).toBe('Pushed straight from the poll')
+      expect(wrapper.find('.dm-bubble__text').text()).toBe('Pushed straight from the poll')
     })
 
     it('still pulls once on the first selection, before any push has arrived', async () => {
@@ -1187,7 +1206,7 @@ describe('feed refresh (#183)', () => {
       const { wrapper, api } = await openRefreshDwarf()
       expect(api.getDwarfFeed).toHaveBeenCalledTimes(1)
 
-      await wrapper.find('.panel-close').trigger('click')
+      await wrapper.find('.dm-msg__close').trigger('click')
       await flushPromises()
 
       pushSnapshot(api, {
@@ -1203,7 +1222,7 @@ describe('feed refresh (#183)', () => {
       })
       await flushPromises()
 
-      expect(wrapper.find('.message-panel').exists()).toBe(false)
+      expect(wrapper.find('.dm-msg').exists()).toBe(false)
     })
 
     it('still falls back to a pull when the snapshot carries no watched feed', async () => {
@@ -1315,13 +1334,13 @@ describe('the add panel', () => {
    */
   it('takes the place of an open MessagePanel', async () => {
     const { wrapper } = await openOn([OTHER_DWARF], 'claude:s1')
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
 
     wrapper.findComponent(MineColumn).vm.$emit('add')
     await flushPromises()
 
     expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
   })
 
   it('gives it back when a dwarf is selected instead', async () => {
@@ -1338,7 +1357,7 @@ describe('the add panel', () => {
     await selectOn(wrapper, 'claude:s1')
 
     expect(wrapper.find('.add-panel').exists()).toBe(false)
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
   })
 
   // AMENDED for #635 (was: 'closes from its own close control, through main', with the
@@ -1410,8 +1429,8 @@ describe('the add panel', () => {
     await flushPromises()
 
     expect(wrapper.find('.add-panel').exists()).toBe(false)
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Newcomer')
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg__rename').text()).toBe('Newcomer')
   })
 
   /*
@@ -1459,7 +1478,7 @@ describe('the add panel', () => {
     await flushPromises()
 
     const said = wrapper
-      .findAll('.message .bubble')
+      .findAll('.dm-bubble .dm-bubble__text')
       .filter((bubble) => bubble.text() === 'dig the east gallery')
     expect(said).toHaveLength(1)
   })
@@ -1474,7 +1493,7 @@ describe('the add panel', () => {
     await flushPromises()
 
     expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg').exists()).toBe(false)
   })
 
   it('stays open with main own reason when the launch is refused', async () => {
@@ -1581,8 +1600,8 @@ describe('the sent message, drawn at once (#309)', () => {
   const ECHO_DWARF = { ...OBSERVED_DWARF, lastMessage: '', textDelivery: 'terminal' }
 
   async function sendFrom(wrapper: VueWrapper, text: string) {
-    await wrapper.find('.panel-input').setValue(text)
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue(text)
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
   }
 
   it('draws the message before any channel has answered, and clears the composer with it', async () => {
@@ -1594,9 +1613,9 @@ describe('the sent message, drawn at once (#309)', () => {
 
     await sendFrom(wrapper, 'dig deeper')
 
-    expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
-    expect(wrapper.find('.bubble-marker').text()).toBe('…')
-    expect((wrapper.find('.panel-input').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.find('.dm-bubble--user .dm-bubble__text').text()).toBe('dig deeper')
+    expect(wrapper.find('.dm-bubble__mark').text()).toBe('…')
+    expect((wrapper.find('.dm-composer textarea').element as HTMLTextAreaElement).value).toBe('')
   })
 
   it("turns the bubble's own marker into one tick when the delivery lands", async () => {
@@ -1605,7 +1624,7 @@ describe('the sent message, drawn at once (#309)', () => {
     await sendFrom(wrapper, 'dig deeper')
     await flushPromises()
 
-    const marker = wrapper.find('.bubble-marker')
+    const marker = wrapper.find('.dm-bubble__mark')
     expect(marker.text()).toBe('✓')
     expect(marker.attributes('title')).toContain('Handed to the session')
   })
@@ -1622,11 +1641,12 @@ describe('the sent message, drawn at once (#309)', () => {
     await sendFrom(wrapper, 'dig deeper')
     await flushPromises()
 
-    expect(wrapper.find('.bubble-marker').text()).toBe('✕')
-    expect(wrapper.find('.bubble-marker').attributes('title')).toBe(
+    // AMENDED for #635 (was: '✕'): spelled as the design writes it.
+    expect(wrapper.find('.dm-bubble__mark').text()).toBe('✕ not delivered')
+    expect(wrapper.find('.dm-bubble__mark').attributes('title')).toBe(
       'The terminal would not come forward.'
     )
-    expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
+    expect(wrapper.find('.dm-bubble--user .dm-bubble__text').text()).toBe('dig deeper')
   })
 
   it('sends a failed message again from its own bubble, and keeps the failed one marked', async () => {
@@ -1639,7 +1659,7 @@ describe('the sent message, drawn at once (#309)', () => {
     await sendFrom(wrapper, 'dig deeper')
     await flushPromises()
 
-    await wrapper.find('.bubble-retry').trigger('click')
+    await wrapper.find('.dm-bubble__actions .dm-btn').trigger('click')
     await flushPromises()
 
     expect(api.sendDwarfText).toHaveBeenCalledTimes(2)
@@ -1648,8 +1668,9 @@ describe('the sent message, drawn at once (#309)', () => {
       text: 'dig deeper',
       pressEnter: true
     })
-    const markers = wrapper.findAll('.bubble-marker')
-    expect(markers.map((marker) => marker.text())).toEqual(['✕', '✓'])
+    const markers = wrapper.findAll('.dm-bubble__mark')
+    // AMENDED for #635 (was: '✕'): the failure spelled as the design writes it.
+    expect(markers.map((marker) => marker.text())).toEqual(['✕ not delivered', '✓'])
   })
 
   it('shows the words once, not twice, when the transcript catches up', async () => {
@@ -1679,11 +1700,12 @@ describe('the sent message, drawn at once (#309)', () => {
     await sendFrom(wrapper, 'dig deeper')
     await flushPromises()
 
-    const bubbles = wrapper.findAll('.message.is-user .bubble')
+    const bubbles = wrapper.findAll('.dm-bubble--user .dm-bubble__text')
     expect(bubbles.map((bubble) => bubble.text())).toEqual(['dig deeper'])
     // The row that survived is the transcript's, which carries no verdict of
-    // its own: the session HAS the message now.
-    expect(wrapper.find('.bubble-marker').exists()).toBe(false)
+    // its own: the session HAS the message now. AMENDED for #635 (was: no mark
+    // at all): it wears the record's mark, handed over and nothing seen yet.
+    expect(wrapper.find('.dm-bubble__mark').attributes('data-mark')).toBe('delivered')
   })
 
   it('keeps the echo when the transcript carries an older turn with the same words', async () => {
@@ -1700,8 +1722,8 @@ describe('the sent message, drawn at once (#309)', () => {
     await sendFrom(wrapper, 'dig deeper')
     await flushPromises()
 
-    expect(wrapper.findAll('.message.is-user .bubble')).toHaveLength(2)
-    expect(wrapper.find('.bubble-marker').text()).toBe('✓')
+    expect(wrapper.findAll('.dm-bubble--user .dm-bubble__text')).toHaveLength(2)
+    expect(wrapper.find('.dm-bubble__mark').text()).toBe('✓')
   })
 
   it('forgets the echoes when the panel moves to another dwarf, and coming back does not revive them', async () => {
@@ -1714,14 +1736,14 @@ describe('the sent message, drawn at once (#309)', () => {
     })
 
     await sendFrom(wrapper, 'dig deeper')
-    expect(wrapper.find('.message.is-user .bubble').exists()).toBe(true)
+    expect(wrapper.find('.dm-bubble--user .dm-bubble__text').exists()).toBe(true)
 
     // AMENDED for #635 (was: states pushed to the panel's own window): clicks in the mine.
     await selectOn(wrapper, 'claude:s3')
-    expect(wrapper.find('.message.is-user .bubble').exists()).toBe(false)
+    expect(wrapper.find('.dm-bubble--user .dm-bubble__text').exists()).toBe(false)
 
     await selectOn(wrapper, 'claude:s1')
-    expect(wrapper.find('.message.is-user .bubble').exists()).toBe(false)
+    expect(wrapper.find('.dm-bubble--user .dm-bubble__text').exists()).toBe(false)
   })
 
   // AMENDED for #635 (was: 'reports nothing about an echo to the shell', reading the report the
@@ -1767,7 +1789,7 @@ describe('opening a link inside a bubble', () => {
       openExternalLink: vi.fn().mockResolvedValue({ opened: true })
     })
 
-    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await wrapper.find('.dm-bubble__text .markdown-link').trigger('click')
     await flushPromises()
 
     expect(api.openExternalLink).toHaveBeenCalledWith('https://example.test/347')
@@ -1781,7 +1803,7 @@ describe('opening a link inside a bubble', () => {
         .mockResolvedValue({ opened: false, reason: 'That link could not be opened.' })
     })
 
-    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await wrapper.find('.dm-bubble__text .markdown-link').trigger('click')
     await flushPromises()
 
     // AMENDED for #635 (was: the `.notice` line): a toast, as above.
@@ -1795,7 +1817,7 @@ describe('opening a link inside a bubble', () => {
     })
 
     const before = toastTexts(wrapper).length
-    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await wrapper.find('.dm-bubble__text .markdown-link').trigger('click')
     await flushPromises()
 
     // No toast of its own: the queue is the window's, so what counts is what this press added.
@@ -1845,14 +1867,14 @@ describe('paging back through the conversation (#364)', () => {
 
   /** The reader running out of conversation at the top of the list. */
   async function scrollToTop(wrapper: VueWrapper) {
-    const list = wrapper.find('.panel-conversation')
+    const list = wrapper.find('.dm-msg__log')
     list.element.scrollTop = 0
     await list.trigger('scroll')
     await flushPromises()
   }
 
   function textsOf(wrapper: VueWrapper): string[] {
-    return wrapper.findAll('.bubble').map((bubble) => bubble.text())
+    return wrapper.findAll('.dm-bubble__text').map((bubble) => bubble.text())
   }
 
   it('asks main for the page before the oldest row it holds', async () => {
@@ -1911,7 +1933,7 @@ describe('paging back through the conversation (#364)', () => {
     const { wrapper } = await openPaged({ getDwarfFeedPage })
 
     await scrollToTop(wrapper)
-    expect(wrapper.find('.panel-note').text()).toContain(CONVERSATION_START_NOTE)
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain(CONVERSATION_START_NOTE)
 
     await scrollToTop(wrapper)
     expect(getDwarfFeedPage).toHaveBeenCalledTimes(1)
@@ -1926,7 +1948,7 @@ describe('paging back through the conversation (#364)', () => {
 
     await scrollToTop(wrapper)
 
-    const note = wrapper.find('.panel-note').text()
+    const note = wrapper.find('.dm-msg__log').attributes('title')
     expect(note).toContain(NO_OLDER_PAGES_NOTE)
     expect(note).not.toContain(CONVERSATION_START_NOTE)
   })
@@ -1942,7 +1964,7 @@ describe('paging back through the conversation (#364)', () => {
 
     await scrollToTop(wrapper)
 
-    const note = wrapper.find('.panel-note').text()
+    const note = wrapper.find('.dm-msg__log').attributes('title')
     expect(note).toContain(BEYOND_REACH_NOTE)
     expect(note).not.toContain(CONVERSATION_START_NOTE)
 
@@ -2103,14 +2125,14 @@ describe('paging back through a held conversation (#430)', () => {
   }
 
   async function scrollToTop(wrapper: VueWrapper) {
-    const list = wrapper.find('.panel-conversation')
+    const list = wrapper.find('.dm-msg__log')
     list.element.scrollTop = 0
     await list.trigger('scroll')
     await flushPromises()
   }
 
   function textsOf(wrapper: VueWrapper): string[] {
-    return wrapper.findAll('.bubble').map((bubble) => bubble.text())
+    return wrapper.findAll('.dm-bubble__text').map((bubble) => bubble.text())
   }
 
   it('asks main for the page before the oldest turn its agent took', async () => {
@@ -2212,7 +2234,7 @@ describe('paging back through a held conversation (#430)', () => {
     await scrollToTop(wrapper)
 
     expect(api.getDwarfFeedPage).toHaveBeenCalled()
-    const note = wrapper.find('.panel-note').text()
+    const note = wrapper.find('.dm-msg__log').attributes('title')
     expect(note).toContain(NO_OLDER_PAGES_NOTE)
     expect(note).not.toContain(CONVERSATION_START_NOTE)
   })

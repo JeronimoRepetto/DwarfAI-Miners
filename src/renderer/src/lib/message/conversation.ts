@@ -51,6 +51,12 @@ export interface PanelMessage {
    * re-deriving "is this a line" from `text` shape.
    */
   activity?: FeedActivity
+  /**
+   * When it was said, as epoch milliseconds (#635): the wire's own stamp, present only when it is a
+   * time. The redesigned bubbles print it and the log divides the days by it; the poll's
+   * `lastMessage` has no stamp, so its bubble carries none rather than a guessed moment.
+   */
+  at?: number
 }
 
 export interface PanelConversation {
@@ -87,12 +93,14 @@ export function panelMessagesOf(messages: readonly FeedMessage[]): PanelMessage[
     // who took it — a coordinator's instruction to its worker is the worker's
     // user turn and was never the user's.
     const from = message.role === 'assistant' || message.issuer !== undefined ? 'agent' : 'user'
+    const at = Date.parse(message.timestamp)
     return {
       from,
       text: message.text,
       key: `${from}-${index}-${message.timestamp}`,
       ...(message.issuer === undefined ? {} : { issuer: message.issuer }),
-      ...(message.activity === undefined ? {} : { activity: message.activity })
+      ...(message.activity === undefined ? {} : { activity: message.activity }),
+      ...(Number.isFinite(at) ? { at } : {})
     }
   })
 }

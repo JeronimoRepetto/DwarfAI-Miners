@@ -1222,6 +1222,7 @@ onBeforeUnmount(() => {
               :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
               :kick-state="dock.kickingState.byDwarfId[dock.selectedDwarf.value.id]"
               :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
+              focus-on-open
               @draft="dock.setDraft(dock.selectedDwarf.value.id, $event)"
               @send="dock.sendText(dock.selectedDwarf.value, $event)"
               @send-again="dock.sendAgain(dock.selectedDwarf.value, $event)"
