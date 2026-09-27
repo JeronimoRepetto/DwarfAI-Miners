@@ -54,7 +54,7 @@ const helpId = useId()
   color: var(--parchment);
 }
 .dm-srow__help,
-.dm-srow :slotted(.dm-srow__help) {
+:slotted(.dm-srow__help) {
   grid-column: 1;
   font: 400 var(--fs-meta) / 1.35 var(--f-meta);
   color: var(--ink-faint);
@@ -93,7 +93,8 @@ const helpId = useId()
 .dm-srow--danger .dm-srow__label {
   color: var(--danger-hi);
 }
-.dm-srow--danger .dm-srow__help {
+.dm-srow--danger .dm-srow__help,
+.dm-srow--danger :slotted(.dm-srow__help) {
   color: var(--ink-soft);
 }
 </style>

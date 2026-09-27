@@ -1,176 +1,207 @@
 <script setup lang="ts">
-import type { InterfaceFont, MessagingFont, TypographyPreferences } from '../../types'
-import { INTERFACE_FONTS, MESSAGING_FONTS } from '../../types'
-import { fontFamilyLabel } from '../../lib/typography/fontFamilies'
+import { ref } from 'vue'
+import type { FontStyle, TypeFace, TypeRole, TypographyPreferences } from '../../types'
+import { TYPE_ROLE_FACES } from '../../types'
+import SelectField from '../controls/SelectField.vue'
+import SettingsRow from './SettingsRow.vue'
+import { fontFamilyLabel, fontFamilyReference } from '../../lib/typography/fontFamilies'
+import {
+  FONT_STYLE_OPTIONS,
+  ROLE_ROWS,
+  fontStyleSample,
+  pickFontStyle,
+  pickRoleFace,
+  steppedFontStyle
+} from '../../lib/settings/fontStyle'
 
 /**
- * The Typography section of the Settings screen (#370).
+ * Settings › Appearance (#370, #635): the Font style list — DwarfAI, Pixel clean, Readable and
+ * Custom, one row each previewing its own title, label and message faces — and, when Custom is in
+ * force, one select per role under it, each listing only the faces that work in that role
+ * (screens/settings.md, As built; foundations.md, Presets and Custom).
  *
- * A maintainer-specified EXTENSION of `screens/settings.md`, like Audio (#174)
- * and Notifications (#316) before it — but unlike those two it has a home the
- * source names: after Position and before Audio. Everything drawn reuses the
- * design's existing vocabulary rather than inventing one: the section label
- * Position, Audio and Data Base share, and the segmented control Position
- * already draws, because these are the same kind of choice.
+ * A radiogroup moved with the arrow keys (components.md, Settings, Accessibility): an arrow picks
+ * the next style, as a click would, and the focus follows it. What a press means is
+ * lib/settings/fontStyle's; this only draws.
  *
- * TWO rows and not one theme. That is the acceptance criterion itself: somebody
- * may want the pixel identity on the chrome and a text face for an agent's
- * paragraphs, and a single control could not say that. Picking one family in
- * both rows is how the whole app becomes that face.
+ * The real enforcement is at the wire boundary all the same (see `parseTypographyPreferences`): a
+ * hand-edited userData document reaches the renderer without passing through this component, so
+ * leaving Tiny5 out of the Messages list here is not what keeps it out of a message.
  *
- * Messaging is offered a NARROWER list, and the omission is the point: Tiny5
- * has one display weight, and #347's ruling — which this section carries
- * forward rather than reopening — is that a single-weight pixel face cannot
- * draw bold or carry a paragraph. It is absent rather than disabled, because a
- * disabled segment still reads as a choice somebody might make. The real
- * enforcement is at the wire boundary all the same (see
- * `parseTypographyPreferences`): a hand-edited userData document reaches the
- * renderer without passing through this component.
- *
- * Presentational, like every settings piece: the stored faces arrive as a prop
- * and the intent leaves as one `change` event carrying only the role that
- * moved, so App.vue keeps owning the IPC and the "render only what main
- * verified" rule stays in exactly one place.
+ * Presentational, like every settings piece: the stored choice arrives as a prop and the intent
+ * leaves as one `change` event carrying the WHOLE choice the press asks for, so App.vue keeps
+ * owning the IPC and the "render only what main verified" rule stays in exactly one place.
  */
-defineProps<{
+const props = defineProps<{
   /** What main STORED, never what was last pressed. */
   preferences: TypographyPreferences
-  /** True while a change is in flight; locks every segment (see useTypography.applying). */
+  /** True while a change is in flight; locks every row (see useTypography.applying). */
   applying: boolean
 }>()
 
 const emit = defineEmits<{
-  /**
-   * One role should take this face. A PATCH rather than the whole document: the
-   * owner merges it onto what is currently in force, so a row cannot revert a
-   * change to the other role that landed between the press and this event.
-   */
-  change: [patch: Partial<TypographyPreferences>]
+  /** The whole choice a press asks for: a style, and the faces its roles take. */
+  change: [preferences: TypographyPreferences]
 }>()
 
-function selectInterface(font: InterfaceFont): void {
-  emit('change', { interfaceFont: font })
+const list = ref<HTMLElement | null>(null)
+
+function choose(style: FontStyle): void {
+  emit('change', pickFontStyle(props.preferences, style))
 }
 
-function selectMessaging(font: MessagingFont): void {
-  emit('change', { messagingFont: font })
+function step(event: KeyboardEvent): void {
+  const next = steppedFontStyle(props.preferences.style, event.key)
+  if (next === undefined) return
+  event.preventDefault()
+  choose(next)
+  list.value?.querySelector<HTMLElement>(`[data-id="${next}"]`)?.focus()
 }
+
+function chooseFace(role: TypeRole, face: string): void {
+  emit('change', pickRoleFace(props.preferences, role, face as TypeFace))
+}
+
+const faceOptions = (role: TypeRole) =>
+  TYPE_ROLE_FACES[role].map((face) => ({ value: face, label: fontFamilyLabel(face) }))
 </script>
 
 <template>
-  <section class="typography-settings">
-    <span class="field-label">Typography</span>
-
-    <div class="font-row">
-      <span class="row-label">Interface</span>
-      <div class="segments">
+  <div class="dm-settings__type">
+    <SettingsRow label="Font style" stack>
+      <div
+        ref="list"
+        class="dm-fontstyle"
+        role="radiogroup"
+        aria-label="Font style"
+        @keydown="step"
+      >
         <button
-          v-for="font in INTERFACE_FONTS"
-          :key="font"
-          class="interface-font"
+          v-for="option in FONT_STYLE_OPTIONS"
+          :key="option.id"
+          class="dm-fontstyle__opt m-mat"
+          :class="{ 'is-on': preferences.style === option.id }"
           type="button"
-          :data-font="font"
-          :class="{ 'is-selected': preferences.interfaceFont === font }"
-          :aria-pressed="preferences.interfaceFont === font ? 'true' : 'false'"
+          role="radio"
+          :aria-checked="preferences.style === option.id ? 'true' : 'false'"
+          :tabindex="preferences.style === option.id ? 0 : -1"
+          :data-id="option.id"
           :disabled="applying"
-          @click="selectInterface(font)"
+          @click="choose(option.id)"
         >
-          {{ fontFamilyLabel(font) }}
+          <span class="dm-fontstyle__dot" aria-hidden="true"></span>
+          <span class="dm-fontstyle__text">
+            <b>{{ option.label }}</b>
+            <span>{{ option.note }}</span>
+          </span>
+          <span class="dm-fontstyle__sample" aria-hidden="true">
+            <span
+              v-for="(face, index) in fontStyleSample(option.id, preferences)"
+              :key="index"
+              :style="{ fontFamily: fontFamilyReference(face) }"
+              >Aa</span
+            >
+          </span>
         </button>
       </div>
-    </div>
-
-    <div class="font-row">
-      <span class="row-label">Messaging</span>
-      <div class="segments">
-        <button
-          v-for="font in MESSAGING_FONTS"
-          :key="font"
-          class="messaging-font"
-          type="button"
-          :data-font="font"
-          :class="{ 'is-selected': preferences.messagingFont === font }"
-          :aria-pressed="preferences.messagingFont === font ? 'true' : 'false'"
+    </SettingsRow>
+    <template v-if="preferences.style === 'custom'">
+      <SettingsRow v-for="row in ROLE_ROWS" :key="row.role" :label="row.label" :help="row.help">
+        <SelectField
+          held
+          :class="'role-font role-font-' + row.role"
+          :label="row.label + ' font'"
+          :value="preferences.faces[row.role]"
+          :options="faceOptions(row.role)"
           :disabled="applying"
-          @click="selectMessaging(font)"
-        >
-          {{ fontFamilyLabel(font) }}
-        </button>
-      </div>
-    </div>
-
-    <p class="hint">
-      Interface sets every label, control and headline. Messaging sets what a dwarf or you says —
-      the message panel and the launch panel. Tiny5 has one weight, so it is not offered for
-      messages.
-    </p>
-  </section>
+          @update:value="chooseFace(row.role, $event)"
+        />
+      </SettingsRow>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-/* The Position section's own layout, because this sits beside it and a second
-   spacing rule for the same kind of choice would read as a different kind of
-   section. */
-.typography-settings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-settings);
+/* The design's settings.css Font style rules, rule for rule. */
+.dm-fontstyle {
+  display: grid;
+  gap: 10px;
+  width: 100%;
 }
-.field-label {
-  padding-top: var(--space-settings);
-  color: var(--color-cream);
-  font-size: var(--text-section);
-}
-/* Label then segments, stacked rather than in Audio's fixed label column: a
-   font name is as wide as the family is called, and four of them beside a
-   72px column would wrap into two ragged lines at the panel's own width. */
-.font-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.row-label {
-  color: var(--color-cream);
-  font-size: var(--text-meta);
-}
-.segments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-settings);
-}
-/* The shared button/segmented-control model (components.md), identical to
-   Position: the selected segment reads as an active control, the others fade
-   to the deep background — all of them stay clickable, since changing face is
-   the point. Segments share the row rather than each taking a fixed width, and
-   wrap when a narrow panel cannot hold four. */
-.segments button {
-  flex: 1 1 auto;
-  padding: 6px var(--space-settings);
-  border: 2px solid var(--color-control-idle);
-  border-radius: var(--radius-default);
-  color: var(--color-control-idle);
+.dm-fontstyle__opt {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 8px 12px;
+  width: 100%;
+  text-align: left;
   cursor: pointer;
-  background: var(--color-panel-deep);
-  font: inherit;
-  font-size: var(--text-meta);
-  white-space: nowrap;
+  border: 0;
+  color: var(--ink);
+  background: var(--wood-lo);
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood),
+    inset -2px -2px 0 0 var(--rock-lo);
 }
-.segments button.is-selected {
-  border: var(--border-active);
-  color: var(--color-cream);
-  background: var(--color-control);
+.dm-fontstyle__opt:hover {
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood),
+    inset -2px -2px 0 0 var(--rock-lo),
+    0 0 0 2px var(--brass-lo);
 }
-.segments button:disabled {
-  cursor: default;
+.dm-fontstyle__opt:active {
+  transform: translateY(2px);
 }
-.segments button:focus-visible {
-  outline: 2px solid var(--color-cream);
+.dm-fontstyle__opt.is-on {
+  background: var(--wood-hi);
+  box-shadow:
+    inset 2px 2px 0 0 var(--gold-hi),
+    inset -2px -2px 0 0 var(--gold-lo),
+    0 0 0 2px var(--gold);
+}
+.dm-fontstyle__opt:focus-visible {
+  outline: 2px solid var(--parchment);
   outline-offset: 2px;
 }
-.hint {
-  margin: 0;
-  color: var(--color-cream);
-  font-size: var(--text-helper);
-  line-height: 1.4;
+.dm-fontstyle__dot {
+  width: 10px;
+  height: 10px;
+  background: var(--rock-lo);
+  box-shadow: 0 0 0 2px var(--wood-hi);
+}
+.dm-fontstyle__opt.is-on .dm-fontstyle__dot {
+  background: var(--brass);
+  box-shadow: 0 0 0 2px var(--brass-lo);
+}
+.dm-fontstyle__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.dm-fontstyle__text b {
+  font: 400 var(--fs-section) / 1.1 var(--f-label);
+  color: var(--parchment);
+}
+.dm-fontstyle__text span {
+  font: 400 var(--fs-meta) / 1.35 var(--f-meta);
+  color: var(--ink-faint);
+}
+.dm-fontstyle__sample {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: var(--fs-title);
+  line-height: 1;
+  color: var(--gold);
+}
+.dm-fontstyle__sample span:nth-child(2) {
+  font-size: var(--fs-section);
+  color: var(--ink-soft);
+}
+.dm-fontstyle__sample span:nth-child(3) {
+  font-size: var(--fs-body);
+  color: var(--ink-soft);
 }
 </style>

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 /* --- Typography preferences (#370) — one block, appended ------------------- */
-import { DEFAULT_TYPOGRAPHY_PREFERENCES, INTERFACE_FONTS } from '../types'
+import { DEFAULT_TYPOGRAPHY_PREFERENCES, TYPE_FACES, TYPE_ROLES } from '../types'
 /* --- end of the #370 block ------------------------------------------------- */
 
 /**
@@ -306,7 +306,8 @@ describe('design-tokens.css against the design foundations', () => {
    * a declaration the browser drops — the element would silently keep whatever
    * it inherited, which is the failure mode hardest to see.
    */
-  it.each([...INTERFACE_FONTS])('declares a stack for the %s face Settings offers', (font) => {
+  // AMENDED (#635): was every interface face; now every face any role offers.
+  it.each([...TYPE_FACES])('declares a stack for the %s face Settings offers', (font) => {
     const family = valueOf(`--font-family-${font}`)
     expect(family).toBeTruthy()
     // The same fallback rule --font-pixel has held since #90: a face that
@@ -314,16 +315,25 @@ describe('design-tokens.css against the design foundations', () => {
     expect(family!.split(',').length).toBeGreaterThan(1)
   })
 
-  it('leaves the two roles pointing at the faces the defaults name', () => {
+  // AMENDED (#635): was the two #370 roles against the two-face default; the four role tokens
+  // now hold the default, and the two #370 roles follow Labels and Messages.
+  it('leaves the roles pointing at the faces the defaults name', () => {
     // The stylesheet is what paints before main answers, so its own values are
     // DEFAULT_TYPOGRAPHY_PREFERENCES spelled in CSS. A drift here would show
     // the wrong face for one frame on every launch.
-    expect(valueOf('--font-pixel')).toBe(
-      `var(--font-family-${DEFAULT_TYPOGRAPHY_PREFERENCES.interfaceFont})`
-    )
-    expect(valueOf('--font-conversation')).toBe(
-      `var(--font-family-${DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont})`
-    )
+    const ROLE_TOKEN = {
+      display: '--f-display',
+      label: '--f-label',
+      meta: '--f-meta',
+      talk: '--f-talk'
+    }
+    for (const role of TYPE_ROLES) {
+      expect(valueOf(ROLE_TOKEN[role])).toBe(
+        `var(--font-family-${DEFAULT_TYPOGRAPHY_PREFERENCES.faces[role]})`
+      )
+    }
+    expect(valueOf('--font-pixel')).toBe('var(--f-label)')
+    expect(valueOf('--font-conversation')).toBe('var(--f-talk)')
   })
 
   it('spells Arial as the platform face with a sans-serif fallback, not as a bundled one', () => {

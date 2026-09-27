@@ -6,14 +6,17 @@ import DataBaseSection from './DataBaseSection.vue'
 /**
  * The Data Base section of the redesigned Settings screen (#138,
  * screens/settings.md): the section label plus the action that opens the
- * reset-metrics confirmation modal. The modal itself is a sibling
- * (ResetMetricsModal), opened by SettingsPanel — this component only asks.
+ * reset-metrics confirmation. The confirmation itself is the dialog SettingsPanel
+ * opens (#635; it was the ResetMetricsModal sibling) — this component only asks.
  */
 describe('DataBaseSection', () => {
+  // AMENDED (#635): the action is "Reset metrics…" now, its ellipsis saying it asks first
+  // (screens/settings.md, As built: Data), and it stands in the danger zone.
   it('names the section and the action', () => {
     const wrapper = mount(DataBaseSection)
     expect(wrapper.text()).toContain('Data Base')
-    expect(wrapper.find('.reset-metrics').text()).toBe('Reset metrics')
+    expect(wrapper.find('.reset-metrics').text()).toBe('Reset metrics…')
+    expect(wrapper.classes()).toContain('dm-srow--danger')
   })
 
   it('is a real, keyboard-operable button', () => {

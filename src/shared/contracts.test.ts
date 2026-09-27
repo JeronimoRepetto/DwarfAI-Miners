@@ -26,10 +26,12 @@ import {
   parseAudioPreferences,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   DEFAULT_TYPOGRAPHY_PREFERENCES,
-  INTERFACE_FONTS,
-  MESSAGING_FONTS,
-  isInterfaceFont,
-  isMessagingFont,
+  TYPE_FACES,
+  TYPE_PRESET_FACES,
+  TYPE_PRESET_IDS,
+  TYPE_ROLES,
+  TYPE_ROLE_FACES,
+  isTypeFaceFor,
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
   /* --- Message attachments (#408) — one block, appended -------------------- */
@@ -438,83 +440,123 @@ describe('DEFAULT_AUDIO_PREFERENCES', () => {
 /*
  * Typography preferences (#370) — APPENDED, nothing above changed.
  *
- * Two independent choices behind one document, and the asymmetry
- * `config-layering` names applies to it exactly as it does to the audio
- * document above: a bad DOCUMENT reads as the defaults, and a bad VALUE inside
- * a readable one degrades FIELD BY FIELD.
- *
- * The one rule that is not shared with any other preference: Tiny5 is a legal
- * interface face and an illegal messaging one. The design's reasoning (#347,
- * carried forward by #370) is that Tiny5 has a single display weight, and a
- * message paragraph needs real bold — so the exclusion is enforced at the
- * BOUNDARY rather than only hidden in the Settings UI, because a document
- * hand-edited under userData reaches the renderer through this parser too.
+ * AMENDED for the type presets (#635, handoff.md "Typography preference migration"): the two
+ * stored faces, Interface and Messaging, became a font style — a preset or Custom — and the four
+ * faces its roles are drawn in. Every guarantee the two-face document carried is kept here in its
+ * new shape, each test marked with what it was: the lists are one vocabulary with per-role
+ * exclusions, a bad DOCUMENT reads as the defaults, a bad VALUE inside a readable one degrades
+ * FIELD BY FIELD, and a face a role cannot carry is refused at the BOUNDARY rather than only
+ * hidden in Settings, because a document hand-edited under userData reaches the renderer through
+ * this parser too. The old document's own vocabulary is no longer on the wire: reading it is the
+ * one-time migration's, and its tests went with it to main/shell/typographyPreference.test.ts.
  */
-describe('INTERFACE_FONTS and MESSAGING_FONTS', () => {
-  it('offers the four interface faces the design names, in its own order', () => {
-    expect(INTERFACE_FONTS).toEqual(['tiny5', 'pixelify-sans', 'roboto', 'arial'])
+describe('TYPE_ROLE_FACES', () => {
+  // AMENDED (#635): was "offers the four interface faces the design names, in its own order".
+  it("offers titles every face, blackletter first, in the design's own order", () => {
+    expect(TYPE_ROLE_FACES.display).toEqual([
+      'jacquard-12',
+      'tiny5',
+      'pixelify-sans',
+      'roboto',
+      'arial'
+    ])
+    expect(TYPE_ROLE_FACES.label).toEqual(['tiny5', 'pixelify-sans', 'roboto', 'arial'])
   })
 
-  it('offers the same faces for messaging minus Tiny5, which cannot carry a paragraph', () => {
-    expect(MESSAGING_FONTS).toEqual(['pixelify-sans', 'roboto', 'arial'])
-    expect(MESSAGING_FONTS).not.toContain('tiny5')
+  // AMENDED (#635): was "offers the same faces for messaging minus Tiny5, which cannot carry a
+  // paragraph". Small text loses Tiny5 too: below label size it blurs.
+  it('offers small text and messages no Tiny5, which blurs small and cannot carry a paragraph', () => {
+    expect(TYPE_ROLE_FACES.meta).toEqual(['pixelify-sans', 'roboto', 'arial'])
+    expect(TYPE_ROLE_FACES.talk).toEqual(['pixelify-sans', 'roboto', 'arial'])
   })
 
-  it('names no messaging face the interface cannot also use', () => {
-    // One vocabulary with one exclusion, never two lists that could drift: a
-    // face offered for messages and not for the interface would be a third
-    // rule nobody wrote down.
-    for (const font of MESSAGING_FONTS) expect(INTERFACE_FONTS).toContain(font)
+  // AMENDED (#635): was "names no messaging face the interface cannot also use".
+  it('names only known faces, and blackletter in titles alone', () => {
+    // One vocabulary with per-role exclusions, never lists that could drift: a face a role offers
+    // that the vocabulary lacks would be a rule nobody wrote down.
+    for (const role of TYPE_ROLES) {
+      for (const face of TYPE_ROLE_FACES[role]) expect(TYPE_FACES).toContain(face)
+      if (role !== 'display') expect(TYPE_ROLE_FACES[role]).not.toContain('jacquard-12')
+    }
   })
 })
 
-describe('isInterfaceFont and isMessagingFont', () => {
-  it.each([...INTERFACE_FONTS])('reads %s as an interface face', (font) => {
-    expect(isInterfaceFont(font)).toBe(true)
+describe('isTypeFaceFor', () => {
+  // AMENDED (#635): was "reads %s as an interface face".
+  it.each(TYPE_ROLES.flatMap((role) => TYPE_ROLE_FACES[role].map((face) => [role, face] as const)))(
+    'reads %s as able to carry %s',
+    (role, face) => {
+      expect(isTypeFaceFor(role, face)).toBe(true)
+    }
+  )
+
+  // AMENDED (#635): was "refuses Tiny5 as a messaging face, and everything else it does not know".
+  it('refuses Tiny5 for small text and messages, and blackletter outside titles', () => {
+    expect(isTypeFaceFor('talk', 'tiny5')).toBe(false)
+    expect(isTypeFaceFor('meta', 'tiny5')).toBe(false)
+    expect(isTypeFaceFor('label', 'tiny5')).toBe(true)
+    expect(isTypeFaceFor('label', 'jacquard-12')).toBe(false)
+    expect(isTypeFaceFor('display', 'jacquard-12')).toBe(true)
   })
 
-  it('refuses Tiny5 as a messaging face, and everything else it does not know', () => {
-    expect(isMessagingFont('tiny5')).toBe(false)
-    expect(isInterfaceFont('tiny5')).toBe(true)
-  })
-
+  // AMENDED (#635): was the same list, read by isInterfaceFont and isMessagingFont.
   it.each([undefined, null, '', 'Tiny5', 'comic sans', 42, {}, []])(
-    'reads %j as neither, because a face this build cannot draw is not a choice',
+    'reads %j as no face at all, because a face this build cannot draw is not a choice',
     (value) => {
-      expect(isInterfaceFont(value)).toBe(false)
-      expect(isMessagingFont(value)).toBe(false)
+      for (const role of TYPE_ROLES) expect(isTypeFaceFor(role, value)).toBe(false)
     }
   )
 })
 
 describe('parseTypographyPreferences', () => {
+  // AMENDED (#635): was "reads a document it wrote itself", on the two-face document.
   it('reads a document it wrote itself', () => {
-    expect(parseTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'arial' })).toEqual(
-      { interfaceFont: 'roboto', messagingFont: 'arial' }
+    const custom = {
+      style: 'custom',
+      faces: { display: 'tiny5', label: 'roboto', meta: 'arial', talk: 'pixelify-sans' }
+    } as const
+    expect(parseTypographyPreferences(custom)).toEqual(custom)
+    expect(parseTypographyPreferences(DEFAULT_TYPOGRAPHY_PREFERENCES)).toEqual(
+      DEFAULT_TYPOGRAPHY_PREFERENCES
     )
   })
 
-  it('keeps the two choices independent, which is the whole point of the feature', () => {
-    expect(parseTypographyPreferences({ interfaceFont: 'tiny5', messagingFont: 'roboto' })).toEqual(
-      { interfaceFont: 'tiny5', messagingFont: 'roboto' }
-    )
-  })
-
-  it('refuses Tiny5 for messaging at the boundary, not only in the Settings UI', () => {
-    // A document hand-edited under userData reaches the renderer through this
-    // parser, so hiding the option in Settings would not be the enforcement.
-    expect(parseTypographyPreferences({ interfaceFont: 'arial', messagingFont: 'tiny5' })).toEqual({
-      interfaceFont: 'arial',
-      messagingFont: DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+  // AMENDED (#635): was "keeps the two choices independent, which is the whole point of the
+  // feature". Custom keeps all four independent.
+  it('keeps each role independent under Custom, which is the whole point of Custom', () => {
+    const faces = { display: 'arial', label: 'tiny5', meta: 'roboto', talk: 'roboto' } as const
+    expect(parseTypographyPreferences({ style: 'custom', faces })).toEqual({
+      style: 'custom',
+      faces
     })
   })
 
-  it('falls back field by field, so one unreadable face cannot take the other with it', () => {
+  // AMENDED (#635): was "refuses Tiny5 for messaging at the boundary, not only in the Settings UI".
+  it('refuses a face its role cannot carry at the boundary, not only in the Settings UI', () => {
+    // A document hand-edited under userData reaches the renderer through this parser, so leaving
+    // the face out of a list in Settings would not be the enforcement.
     expect(
-      parseTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'papyrus' })
+      parseTypographyPreferences({
+        style: 'custom',
+        faces: { display: 'roboto', label: 'jacquard-12', meta: 'tiny5', talk: 'tiny5' }
+      })
     ).toEqual({
-      interfaceFont: 'roboto',
-      messagingFont: DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+      style: 'custom',
+      faces: { display: 'roboto', label: 'tiny5', meta: 'pixelify-sans', talk: 'pixelify-sans' }
+    })
+  })
+
+  // AMENDED (#635): was "falls back field by field, so one unreadable face cannot take the other
+  // with it". Each role falls back to the DwarfAI preset's face for it.
+  it('falls back role by role, so one unreadable face cannot take the others with it', () => {
+    expect(
+      parseTypographyPreferences({
+        style: 'custom',
+        faces: { display: 'papyrus', label: 'arial', talk: 'roboto' }
+      })
+    ).toEqual({
+      style: 'custom',
+      faces: { display: 'jacquard-12', label: 'arial', meta: 'pixelify-sans', talk: 'roboto' }
     })
   })
 
@@ -524,13 +566,74 @@ describe('parseTypographyPreferences', () => {
       expect(parseTypographyPreferences(document)).toEqual(DEFAULT_TYPOGRAPHY_PREFERENCES)
     }
   )
+
+  it('draws a preset in its own faces, whatever faces the document carries beside it', () => {
+    // A preset is exactly its four faces: a stored preset whose faces disagree would paint a style
+    // Settings could not name.
+    expect(
+      parseTypographyPreferences({
+        style: 'readable',
+        faces: { display: 'jacquard-12', label: 'tiny5', meta: 'arial', talk: 'arial' }
+      })
+    ).toEqual({ style: 'readable', faces: TYPE_PRESET_FACES.readable })
+    expect(parseTypographyPreferences({ style: 'pixel-clean' })).toEqual({
+      style: 'pixel-clean',
+      faces: TYPE_PRESET_FACES['pixel-clean']
+    })
+  })
+
+  it('reads a style it does not know as the default preset', () => {
+    expect(parseTypographyPreferences({ style: 'gothic', faces: {} })).toEqual(
+      DEFAULT_TYPOGRAPHY_PREFERENCES
+    )
+  })
+
+  it('hands back a fresh document, so a caller that edits it cannot edit a preset', () => {
+    const read = parseTypographyPreferences({ style: 'dwarfai' })
+    read.faces.label = 'arial'
+    expect(TYPE_PRESET_FACES.dwarfai.label).toBe('tiny5')
+    expect(DEFAULT_TYPOGRAPHY_PREFERENCES.faces.label).toBe('tiny5')
+  })
+})
+
+describe('TYPE_PRESET_FACES', () => {
+  it('holds the three presets foundations.md defines, each face one its role offers', () => {
+    expect(TYPE_PRESET_IDS).toEqual(['dwarfai', 'pixel-clean', 'readable'])
+    expect(TYPE_PRESET_FACES).toEqual({
+      dwarfai: {
+        display: 'jacquard-12',
+        label: 'tiny5',
+        meta: 'pixelify-sans',
+        talk: 'pixelify-sans'
+      },
+      'pixel-clean': {
+        display: 'pixelify-sans',
+        label: 'pixelify-sans',
+        meta: 'pixelify-sans',
+        talk: 'pixelify-sans'
+      },
+      readable: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+    })
+    for (const id of TYPE_PRESET_IDS) {
+      for (const role of TYPE_ROLES) {
+        expect(isTypeFaceFor(role, TYPE_PRESET_FACES[id][role])).toBe(true)
+      }
+    }
+  })
 })
 
 describe('DEFAULT_TYPOGRAPHY_PREFERENCES', () => {
-  it('preserves the look #347 settled, so nobody has to choose to keep it', () => {
+  // AMENDED (#635): was the two-face default, Tiny5 and Pixelify Sans. DwarfAI keeps both where
+  // they were (Tiny5 labels, Pixelify Sans small text and messages) and adds the blackletter titles.
+  it('is the DwarfAI preset, so nobody has to choose to keep the default look', () => {
     expect(DEFAULT_TYPOGRAPHY_PREFERENCES).toEqual({
-      interfaceFont: 'tiny5',
-      messagingFont: 'pixelify-sans'
+      style: 'dwarfai',
+      faces: {
+        display: 'jacquard-12',
+        label: 'tiny5',
+        meta: 'pixelify-sans',
+        talk: 'pixelify-sans'
+      }
     })
   })
 })

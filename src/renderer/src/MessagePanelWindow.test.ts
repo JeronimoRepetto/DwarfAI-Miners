@@ -2873,30 +2873,34 @@ describe('rising into place and settling before the window goes', () => {
  * than wait for a reload it may never get.
  */
 describe('typography preferences (#370)', () => {
+  // AMENDED (#635): the choice is a font style and four role faces now; the message face is the
+  // --f-talk role, which --font-conversation follows in the stylesheet.
   it('adopts the stored faces on mount, painting its own document root', async () => {
     await mountPanel(CLOSED, {
-      getTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'roboto' })
+      getTypographyPreferences: vi.fn().mockResolvedValue({
+        style: 'custom',
+        faces: { display: 'jacquard-12', label: 'tiny5', meta: 'pixelify-sans', talk: 'roboto' }
+      })
     })
-    expect(document.documentElement.style.getPropertyValue('--font-conversation')).toBe(
+    expect(document.documentElement.style.getPropertyValue('--f-talk')).toBe(
       'var(--font-family-roboto)'
     )
   })
 
   it('follows a change made in the shell, which is the only window with Settings', async () => {
     const { api } = await mountPanel(CLOSED)
-    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: {
-      interfaceFont: string
-      messagingFont: string
-    }) => void
-    push({ interfaceFont: 'arial', messagingFont: 'arial' })
+    // AMENDED (#635): a style pushed from the shell repaints the four roles here.
+    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: unknown) => void
+    push({
+      style: 'readable',
+      faces: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+    })
     await flushPromises()
-    expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
-      'var(--font-family-arial)'
+    expect(document.documentElement.style.getPropertyValue('--f-label')).toBe(
+      'var(--font-family-roboto)'
     )
-    expect(document.documentElement.style.getPropertyValue('--font-conversation')).toBe(
-      'var(--font-family-arial)'
+    expect(document.documentElement.style.getPropertyValue('--f-talk')).toBe(
+      'var(--font-family-roboto)'
     )
   })
 

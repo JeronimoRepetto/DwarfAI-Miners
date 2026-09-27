@@ -202,14 +202,17 @@
   --font-family-roboto: 'Roboto Variable', 'Segoe UI', system-ui, sans-serif;
   --font-family-arial: Arial, Helvetica, 'Segoe UI', system-ui, sans-serif;
   /*
-   * The titles face (#635), under the family its package registers. Not one
-   * of the faces the Interface and Messaging choices offer: it is blackletter,
-   * for titles only.
+   * The titles face (#635), under the family its package registers. Custom
+   * offers it for the Titles role alone: it is blackletter, for titles only.
    */
   --font-family-jacquard-12: 'Jacquard 12', 'Segoe UI', system-ui, sans-serif;
 
-  /* The Pixel UI role: everything outside messaging. */
-  --font-pixel: var(--font-family-tiny5);
+  /*
+   * The Pixel UI role of #370: everything outside messaging. Since the type presets (#635) it
+   * follows the Labels role, the one today's Interface choice migrated into, so the pieces their
+   * slices have not rebuilt yet keep following the person's choice without reading a preference.
+   */
+  --font-pixel: var(--f-label);
   /*
    * The face for what a dwarf or the person SAYS (#347, maintainer amendment
    * 2026-09-09): the bubbles, the echoes, the question and permission cards'
@@ -222,7 +225,7 @@
    * synthesised one. That constraint is why Tiny5 is not among the messaging
    * choices #370 offers.
    */
-  --font-conversation: var(--font-family-pixelify-sans);
+  --font-conversation: var(--f-talk);
   /*
    * Code, wherever this app shows any: a permission prompt's own redacted
    * input, and the inline and fenced code inside a bubble (#347). Not a design
@@ -240,9 +243,8 @@
    * and a test there keeps this block equal to its default. `--f-ui` is not a
    * role and no preset repoints it.
    *
-   * They sit beside --font-pixel and --font-conversation rather than
-   * replacing them: today's Interface and Messaging choices still repoint
-   * those two, until the Panel slice migrates that preference to a preset.
+   * A stored choice repoints these four on the document root (useTypography);
+   * --font-pixel and --font-conversation above follow Labels and Messages.
    */
   --f-ui: var(--font-family-tiny5);
   --f-display: var(--font-family-jacquard-12);

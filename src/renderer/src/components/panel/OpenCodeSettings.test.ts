@@ -8,7 +8,14 @@ import OpenCodeSettings from './OpenCodeSettings.vue'
  * Settings' OpenCode section (#588 T6): the consent to the permission relay,
  * and the optional server password. Presentational like every settings
  * piece — main's verdict in, intents out.
+ *
+ * AMENDED (#635): drawn as the design's two rows of Settings › Integrations. The switch is a
+ * switch (aria-checked), the consent and the password hint are the rows' help lines, and the
+ * field is the design's input, its native control inside the `.opencode-password-input` well.
  */
+const CONSENT = '.opencode-settings .dm-srow__help'
+const PASSWORD_HINT = '.opencode-password .dm-srow__help'
+const FIELD = '.opencode-password-input input'
 function render(settings: Partial<Settings> = {}, applying = false) {
   return mount(OpenCodeSettings, {
     props: { settings: { ...DEFAULT_OPENCODE_SETTINGS, ...settings }, applying }
@@ -18,14 +25,14 @@ function render(settings: Partial<Settings> = {}, applying = false) {
 describe('OpenCodeSettings — the relay consent (#588 T6)', () => {
   it('names the section and draws the switch in the state main stored', () => {
     expect(render().text()).toContain('OpenCode')
-    expect(render().find('.opencode-plugin-enabled').attributes('aria-pressed')).toBe('false')
+    expect(render().find('.opencode-plugin-enabled').attributes('aria-checked')).toBe('false')
     expect(
-      render({ pluginEnabled: true }).find('.opencode-plugin-enabled').attributes('aria-pressed')
+      render({ pluginEnabled: true }).find('.opencode-plugin-enabled').attributes('aria-checked')
     ).toBe('true')
   })
 
   it('says what turning it on writes, and where, before the person consents', () => {
-    const consent = render().find('.consent').text()
+    const consent = render().find(CONSENT).text()
     expect(consent).toMatch(/plugin file/i)
     expect(consent).toMatch(/OpenCode/)
   })
@@ -34,7 +41,7 @@ describe('OpenCodeSettings — the relay consent (#588 T6)', () => {
     // The file holds, in plain text, the token the Claude route also trusts:
     // reading it is enough to forge Claude events. That has to be said where
     // the person decides, not only in a code comment.
-    const consent = render().find('.consent').text()
+    const consent = render().find(CONSENT).text()
     expect(consent).toMatch(/plain text/i)
     expect(consent).toMatch(/same token/i)
     expect(consent).toMatch(/Claude Code/)
@@ -58,14 +65,14 @@ describe('OpenCodeSettings — the relay consent (#588 T6)', () => {
 
 describe('OpenCodeSettings — the server password (#588 T6, F1)', () => {
   it('is optional: an empty field says no password is needed by default', () => {
-    const hint = render().find('.password-hint').text()
+    const hint = render().find(PASSWORD_HINT).text()
     expect(hint).toContain('OPENCODE_SERVER_PASSWORD')
     expect(hint).toMatch(/empty/i)
   })
 
   it('offers a masked input while none is stored, and submits what was typed', async () => {
     const wrapper = render()
-    const input = wrapper.find('.opencode-password-input')
+    const input = wrapper.find(FIELD)
     expect(input.attributes('type')).toBe('password')
     await input.setValue('hunter2')
     await wrapper.find('.opencode-password-save').trigger('click')
@@ -78,17 +85,17 @@ describe('OpenCodeSettings — the server password (#588 T6, F1)', () => {
 
   it('once stored, shows only that one is stored -- never the password -- with replace and clear', async () => {
     const wrapper = render({ passwordConfigured: true })
-    expect(wrapper.find('.opencode-password-input').exists()).toBe(false)
+    expect(wrapper.find(FIELD).exists()).toBe(false)
     expect(wrapper.text()).toContain('Password stored')
     await wrapper.find('.opencode-password-clear').trigger('click')
     expect(wrapper.emitted('password-clear')).toHaveLength(1)
     await wrapper.find('.opencode-password-replace').trigger('click')
-    expect(wrapper.find('.opencode-password-input').exists()).toBe(true)
+    expect(wrapper.find(FIELD).exists()).toBe(true)
   })
 
   it('says why the field cannot be set on a machine that offers no encryption', () => {
     const wrapper = render({ passwordUnavailableReason: 'encryption-unavailable' })
-    expect(wrapper.find('.opencode-password-input').exists()).toBe(false)
+    expect(wrapper.find(FIELD).exists()).toBe(false)
     expect(wrapper.find('.password-unavailable').text()).toMatch(/encrypt/i)
   })
 })

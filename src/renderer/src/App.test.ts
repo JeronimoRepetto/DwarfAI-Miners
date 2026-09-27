@@ -364,6 +364,17 @@ async function mountOpenApp(overrides: Record<string, unknown> = {}) {
 }
 
 /*
+ * APPENDED (#635): Settings opens on General; every other section is a tab away (the page's
+ * vertical tablist, screens/settings.md W6).
+ */
+async function openSection(
+  wrapper: Awaited<ReturnType<typeof mountApp>>['wrapper'],
+  section: string
+): Promise<void> {
+  await wrapper.find(`[role="tab"][data-s="${section}"]`).trigger('click')
+}
+
+/*
  * useView is a module-scope singleton, and since #90 it holds the AREA as well
  * as the open mine — so a test that visits settings leaves the next one already
  * there, looking for a map that is not drawn. Two blocks below already reset it
@@ -455,7 +466,8 @@ describe('App panel motion (#164)', () => {
     await flushPromises()
     expect(animations).toHaveLength(2)
     expect(wrapper.find('.dm-mappage').exists()).toBe(true)
-    expect(wrapper.find('.settings-panel').exists()).toBe(true)
+    // AMENDED (#635): the Settings page's root is `.dm-settings` (was `.settings-panel`).
+    expect(wrapper.find('.dm-settings').exists()).toBe(true)
     for (const animation of animations) animation.finish()
     await flushPromises()
     expect(wrapper.find('.dm-mappage').exists()).toBe(false)
@@ -649,11 +661,14 @@ describe('App pin control', () => {
 
   it('is a real keyboard-reachable button with a stable name, tooltip and pressed state', async () => {
     const { wrapper } = await openSettings()
+    // AMENDED (#635): the design's switch in General's "Always on top" row, named by that row
+    // (was "Keep panel on top"), its state aria-checked (was aria-pressed).
     const pin = wrapper.find('.pin')
     expect(pin.attributes('type')).toBe('button')
-    expect(pin.attributes('aria-label')).toBe('Keep panel on top')
+    expect(pin.attributes('role')).toBe('switch')
+    expect(pin.attributes('aria-label')).toBe('Always on top')
     expect(pin.attributes('title')).toBeTruthy()
-    expect(pin.attributes('aria-pressed')).toBe('true')
+    expect(pin.attributes('aria-checked')).toBe('true')
   })
 
   it('says what it is in words, now that it is a settings control', async () => {
@@ -661,15 +676,18 @@ describe('App pin control', () => {
     // text. It was a 16px glyph in a titlebar with no room for a label; in a
     // settings panel a labelled control is the honest form, and the pressed
     // state still carries the meaning.
+    // AMENDED (#635): the words are the row's label; the switch itself reads On or Off.
     const { wrapper } = await openSettings()
-    expect(wrapper.find('.pin').text()).toBe('Always on top')
+    expect(wrapper.find('.pin').element.closest('.dm-srow')!.textContent).toContain('Always on top')
+    expect(wrapper.find('.pin').text()).toBe('On')
   })
 
   it('reflects the real state synced from the window on mount', async () => {
     const { wrapper } = await openSettings({
       getAlwaysOnTop: vi.fn().mockResolvedValue(false)
     })
-    expect(wrapper.find('.pin').attributes('aria-pressed')).toBe('false')
+    // AMENDED (#635): aria-checked on the switch.
+    expect(wrapper.find('.pin').attributes('aria-checked')).toBe('false')
   })
 
   it('asks main for the opposite state on click and renders the returned verdict', async () => {
@@ -678,7 +696,8 @@ describe('App pin control', () => {
     await wrapper.find('.pin').trigger('click')
     await flushPromises()
     expect(setAlwaysOnTop).toHaveBeenCalledWith(false)
-    expect(wrapper.find('.pin').attributes('aria-pressed')).toBe('false')
+    // AMENDED (#635): aria-checked on the switch.
+    expect(wrapper.find('.pin').attributes('aria-checked')).toBe('false')
   })
 
   it('re-renders the actual window state after a failed toggle', async () => {
@@ -690,7 +709,8 @@ describe('App pin control', () => {
     })
     await wrapper.find('.pin').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.pin').attributes('aria-pressed')).toBe('true')
+    // AMENDED (#635): aria-checked on the switch.
+    expect(wrapper.find('.pin').attributes('aria-checked')).toBe('true')
   })
 
   it('keeps a way to hide the panel entirely, beside the pin', async () => {
@@ -701,7 +721,9 @@ describe('App pin control', () => {
     // caller of hidePanel. Dropping it would have removed the capability
     // rather than relocated it, so it moved here with the pin. Hiding also
     // remains on the tray and the global shortcut, both in main.
+    // AMENDED (#635): Hide panel lives in About now (screens/settings.md W6).
     const { wrapper, api } = await openSettings()
+    await openSection(wrapper, 'About')
     await wrapper.find('.hide-panel').trigger('click')
     expect(api.hidePanel).toHaveBeenCalledOnce()
   })
@@ -743,16 +765,18 @@ describe('App settings entry point', () => {
     // and is what "settings is open" now means.
     // AMENDED a third time for #635: the page shown carries
     // `aria-current="page"` (was `aria-pressed`), as the design's slot does.
+    // AMENDED a fourth time for #635 (PR5): the page's root is `.dm-settings`, the redesigned
+    // Settings page (was `.settings-panel`).
     const { wrapper } = await mountOpenApp()
-    expect(wrapper.find('.settings-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-settings').exists()).toBe(false)
     expect(wrapper.find(NAV_SETTINGS).attributes('aria-current')).toBeUndefined()
 
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    expect(wrapper.find('.settings-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-settings').exists()).toBe(true)
     expect(wrapper.find(NAV_SETTINGS).attributes('aria-current')).toBe('page')
 
     await wrapper.find(NAV_MAP).trigger('click')
-    expect(wrapper.find('.settings-panel').exists()).toBe(false)
+    expect(wrapper.find('.dm-settings').exists()).toBe(false)
     expect(wrapper.find(NAV_SETTINGS).attributes('aria-current')).toBeUndefined()
   })
 
@@ -907,8 +931,9 @@ describe('App position settings', () => {
     const { wrapper } = await openSettings({
       getPanelLayout: vi.fn().mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
     })
-    expect(wrapper.find('.position-left').attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('.position-right').attributes('aria-pressed')).toBe('false')
+    // AMENDED (#635): radio chips, aria-checked (was aria-pressed).
+    expect(wrapper.find('.position-left').attributes('aria-checked')).toBe('true')
+    expect(wrapper.find('.position-right').attributes('aria-checked')).toBe('false')
   })
 
   it('asks main to redock when the other side is chosen', async () => {
@@ -921,7 +946,8 @@ describe('App position settings', () => {
     await flushPromises()
 
     expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false, edge: 'left' })
-    expect(wrapper.find('.position-left').attributes('aria-pressed')).toBe('true')
+    // AMENDED (#635): aria-checked on the radio chip.
+    expect(wrapper.find('.position-left').attributes('aria-checked')).toBe('true')
   })
 
   it('renders the edge main actually applied, never the one clicked', async () => {
@@ -935,14 +961,15 @@ describe('App position settings', () => {
     await wrapper.find('.position-left').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.position-right').attributes('aria-pressed')).toBe('true')
+    // AMENDED (#635): aria-checked on the radio chip.
+    expect(wrapper.find('.position-right').attributes('aria-checked')).toBe('true')
   })
 })
 
 /**
  * Settings' "Reset metrics" action (#138): the Data Base section opens the
  * typed confirmation modal, and Confirm only reaches main once the gate
- * (isValidResetConfirmation) is satisfied.
+ * (the dialog's typed "yes", since #635) is satisfied.
  */
 describe('App reset metrics', () => {
   async function openSettings(overrides: Record<string, unknown> = {}) {
@@ -951,19 +978,41 @@ describe('App reset metrics', () => {
     return mounted
   }
 
+  /*
+   * AMENDED (#635): the typed confirmation is the design's dialog now, over its scrim in <body>,
+   * opened from Settings › Data: Cancel, then "Reset metrics", which stays disabled until "yes" is
+   * typed. Each test keeps its round trip; the dialog is read where it is drawn.
+   */
+  const dialog = () => document.body.querySelector<HTMLElement>('.dm-scrim [role="dialog"]')
+  const confirmButton = () =>
+    document.body.querySelectorAll<HTMLButtonElement>('.dm-scrim .dm-dialog__actions button')[1]!
+  async function typeWord(value: string): Promise<void> {
+    const field = dialog()!.querySelector<HTMLInputElement>('input')!
+    field.value = value
+    field.dispatchEvent(new Event('input'))
+    await flushPromises()
+  }
+  async function openReset(wrapper: Awaited<ReturnType<typeof mountApp>>['wrapper']) {
+    await openSection(wrapper, 'Data')
+    await wrapper.find('.reset-metrics').trigger('click')
+    await flushPromises()
+  }
+
   it('opens the modal from Data Base and confirms only once "yes" is typed', async () => {
     const resetMetrics = vi.fn().mockResolvedValue({ outcome: 'reset' })
     const { wrapper } = await openSettings({ resetMetrics })
 
-    await wrapper.find('.reset-metrics').trigger('click')
-    expect(wrapper.find('.modal-confirm').attributes('disabled')).toBeDefined()
+    await openReset(wrapper)
+    expect(confirmButton().disabled).toBe(true)
 
-    await wrapper.find('.modal-input').setValue('yes')
-    expect(wrapper.find('.modal-confirm').attributes('disabled')).toBeUndefined()
+    await typeWord('yes')
+    expect(confirmButton().disabled).toBe(false)
 
-    await wrapper.find('.modal-confirm').trigger('click')
+    confirmButton().click()
     await flushPromises()
     expect(resetMetrics).toHaveBeenCalledOnce()
+    // APPENDED (#635): a reset that went through closes its dialog, as the design's does.
+    expect(dialog()).toBeNull()
   })
 
   it('shows main’s refusal reason without closing the modal', async () => {
@@ -972,23 +1021,24 @@ describe('App reset metrics', () => {
       .mockResolvedValue({ outcome: 'failed', reason: 'Nothing was deleted.' })
     const { wrapper } = await openSettings({ resetMetrics })
 
-    await wrapper.find('.reset-metrics').trigger('click')
-    await wrapper.find('.modal-input').setValue('yes')
-    await wrapper.find('.modal-confirm').trigger('click')
+    await openReset(wrapper)
+    await typeWord('yes')
+    confirmButton().click()
     await flushPromises()
 
-    expect(wrapper.find('[role="alert"]').text()).toBe('Nothing was deleted.')
-    expect(wrapper.find('.reset-modal').exists()).toBe(true)
+    expect(dialog()!.querySelector('[role="alert"]')!.textContent).toBe('Nothing was deleted.')
+    expect(dialog()).not.toBeNull()
   })
 
   it('closes the modal from its own close control without asking main anything', async () => {
     const resetMetrics = vi.fn()
     const { wrapper } = await openSettings({ resetMetrics })
 
-    await wrapper.find('.reset-metrics').trigger('click')
-    await wrapper.find('.modal-close').trigger('click')
+    await openReset(wrapper)
+    document.body.querySelector<HTMLButtonElement>('.dm-scrim .dm-dialog__actions button')!.click()
+    await flushPromises()
 
-    expect(wrapper.find('.reset-modal').exists()).toBe(false)
+    expect(dialog()).toBeNull()
     expect(resetMetrics).not.toHaveBeenCalled()
   })
 })
@@ -1010,11 +1060,13 @@ describe('App version label', () => {
     return mounted
   }
 
+  // AMENDED (#635): in About, as the design's line "DwarfAI-Miners · version <version>".
   it('prints the version main reported, in the settings panel', async () => {
     const { wrapper } = await openSettings({
       getAppBuild: vi.fn().mockResolvedValue({ version: '0.4.1', packaged: true })
     })
-    expect(wrapper.find('.version').text()).toBe('0.4.1')
+    await openSection(wrapper, 'About')
+    expect(wrapper.find('.version').text()).toBe('DwarfAI-Miners · version 0.4.1')
   })
 
   it('asks main once on mount rather than deriving it in the renderer', async () => {
@@ -1032,13 +1084,17 @@ describe('App version label', () => {
     const { wrapper } = await openSettings({
       getAppBuild: vi.fn().mockResolvedValue({ version: '0.3.0', packaged: false })
     })
-    expect(wrapper.find('.version').text()).toBe('0.3.0-dev')
+    // AMENDED (#635): in About, inside the design's line.
+    await openSection(wrapper, 'About')
+    expect(wrapper.find('.version').text()).toBe('DwarfAI-Miners · version 0.3.0-dev')
   })
 
   it('says which of the two builds it is in the hover line', async () => {
     const { wrapper } = await openSettings({
       getAppBuild: vi.fn().mockResolvedValue({ version: '0.3.0', packaged: false })
     })
+    // AMENDED (#635): in About.
+    await openSection(wrapper, 'About')
     expect(wrapper.find('.version').attributes('title')).toMatch(/checkout/i)
   })
 
@@ -1049,9 +1105,13 @@ describe('App version label', () => {
     // into SettingsPanel's own "Application" section, `.application-controls`
     // — the version is still a monitor, not an affordance, and must not be
     // drawn as something clickable among the two real buttons it sits with.
+    // AMENDED a third time (#635): About holds the version line and one button, Hide panel; the
+    // line is a paragraph of text, never a control.
     const { wrapper } = await openSettings()
-    expect(wrapper.find('.version').element.tagName).toBe('SPAN')
-    expect(wrapper.find('.application-controls').findAll('button')).toHaveLength(2)
+    await openSection(wrapper, 'About')
+    expect(wrapper.find('.version').element.tagName).toBe('P')
+    expect(wrapper.find('.version').findAll('button')).toHaveLength(0)
+    expect(wrapper.find('.dm-settings__about').findAll('button')).toHaveLength(1)
   })
 
   it('prints nothing at all when main cannot be asked', async () => {
@@ -1061,9 +1121,12 @@ describe('App version label', () => {
     const { wrapper } = await openSettings({
       getAppBuild: vi.fn().mockRejectedValue(new Error('bridge unavailable'))
     })
+    // AMENDED (#635): in About.
+    await openSection(wrapper, 'About')
     expect(wrapper.find('.version').exists()).toBe(false)
-    // The rest of the settings panel is untouched by the failure.
-    expect(wrapper.find('.pin').exists()).toBe(true)
+    // The rest of the settings panel is untouched by the failure. AMENDED (#635): About's own
+    // button, beside where the version would be (the pin is in General now).
+    expect(wrapper.find('.hide-panel').exists()).toBe(true)
   })
 })
 
@@ -2312,9 +2375,11 @@ describe('App audio (#174, #173)', () => {
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
     await flushPromises()
+    // AMENDED (#635): on the Sound tab; the slider speaks whole percentages.
+    await openSection(wrapper, 'Sound')
 
-    const slider = wrapper.find('.music-volume')
-    ;(slider.element as HTMLInputElement).value = '0.25'
+    const slider = wrapper.find('.music-volume input')
+    ;(slider.element as HTMLInputElement).value = '25'
     await slider.trigger('input')
     await flushPromises()
 
@@ -2323,7 +2388,7 @@ describe('App audio (#174, #173)', () => {
       musicVolume: 0.25
     })
     // Main answered 0.5; the slider shows the value in force, not the drag.
-    expect(wrapper.find('.music-readout').text()).toBe('50%')
+    expect(wrapper.find('.music-volume .dm-slider__value').text()).toBe('50%')
   })
 
   it('plays the mine ambience while an interior is open, and stops it on the way out', async () => {
@@ -2561,17 +2626,21 @@ describe('App system notifications (#316)', () => {
       getNotificationsEnabled: vi.fn().mockResolvedValue(false)
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('false')
+    // AMENDED (#635): on the Notifications tab, a switch.
+    await openSection(wrapper, 'Notifications')
+    expect(wrapper.find('.notifications-enabled').attributes('aria-checked')).toBe('false')
   })
 
   it('asks main for the opposite state on a press, and renders the verdict', async () => {
     const setNotificationsEnabled = vi.fn().mockResolvedValue(false)
     const { wrapper, api } = await mountOpenApp({ setNotificationsEnabled })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Notifications tab, a switch.
+    await openSection(wrapper, 'Notifications')
     await wrapper.find('.notifications-enabled').trigger('click')
     await flushPromises()
     expect(api.setNotificationsEnabled).toHaveBeenCalledWith(false)
-    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('.notifications-enabled').attributes('aria-checked')).toBe('false')
   })
 
   it('renders what main STORED, never the press, when a change does not take', async () => {
@@ -2580,9 +2649,11 @@ describe('App system notifications (#316)', () => {
       setNotificationsEnabled: vi.fn().mockResolvedValue(true)
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Notifications tab, a switch.
+    await openSection(wrapper, 'Notifications')
     await wrapper.find('.notifications-enabled').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.notifications-enabled').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('.notifications-enabled').attributes('aria-checked')).toBe('true')
   })
 })
 
@@ -2594,88 +2665,109 @@ describe('App system notifications (#316)', () => {
  * the stored faces are adopted on mount, a segment asks main for a face, and
  * what main answered with is what the section draws.
  */
+/*
+ * AMENDED for the type presets (#635): the choice is a font style — DwarfAI, Pixel clean, Readable
+ * or Custom — and four role faces, on Settings › Appearance, painted through --f-display,
+ * --f-label, --f-meta and --f-talk (which --font-pixel and --font-conversation follow). Each test
+ * keeps its round trip and says what it was.
+ */
+const READABLE = {
+  style: 'readable',
+  faces: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+}
+const style = (wrapper: Awaited<ReturnType<typeof mountApp>>['wrapper'], id: string) =>
+  wrapper.find(`.dm-fontstyle__opt[data-id="${id}"]`)
+
 describe('typography preferences (#370)', () => {
+  // AMENDED (#635): was the two stored faces drawn as pressed segments.
   it('adopts the stored faces on mount and draws them in Settings', async () => {
     const { wrapper } = await mountOpenApp({
-      getTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'roboto', messagingFont: 'arial' })
+      getTypographyPreferences: vi.fn().mockResolvedValue(READABLE)
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('aria-pressed')).toBe(
-      'true'
-    )
-    expect(wrapper.find('.messaging-font[data-font="arial"]').attributes('aria-pressed')).toBe(
-      'true'
-    )
+    await openSection(wrapper, 'Appearance')
+    expect(style(wrapper, 'readable').attributes('aria-checked')).toBe('true')
+    expect(style(wrapper, 'dwarfai').attributes('aria-checked')).toBe('false')
   })
 
+  // AMENDED (#635): was the two #370 properties; the four roles are what a choice repoints now.
   it('paints the chosen faces onto the document root, where every component reads them', async () => {
-    // The whole mechanism: two custom properties, so no component below App
-    // learns that a preference exists.
+    // The whole mechanism: custom properties on the root, so no component below App learns that a
+    // preference exists.
     await mountOpenApp({
-      getTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'arial', messagingFont: 'roboto' })
+      getTypographyPreferences: vi.fn().mockResolvedValue({
+        style: 'custom',
+        faces: { display: 'arial', label: 'arial', meta: 'roboto', talk: 'roboto' }
+      })
     })
-    expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
+    expect(document.documentElement.style.getPropertyValue('--f-label')).toBe(
       'var(--font-family-arial)'
     )
-    expect(document.documentElement.style.getPropertyValue('--font-conversation')).toBe(
+    expect(document.documentElement.style.getPropertyValue('--f-talk')).toBe(
       'var(--font-family-roboto)'
     )
   })
 
+  // AMENDED (#635): a press on a font style, and main's older answer is what stays drawn.
   it('asks main for a face on a press, and renders the verdict rather than the press', async () => {
     const { wrapper, api } = await mountOpenApp({
-      setTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+      setTypographyPreferences: vi.fn().mockResolvedValue({
+        style: 'dwarfai',
+        faces: {
+          display: 'jacquard-12',
+          label: 'tiny5',
+          meta: 'pixelify-sans',
+          talk: 'pixelify-sans'
+        }
+      })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    await wrapper.find('.messaging-font[data-font="roboto"]').trigger('click')
+    await openSection(wrapper, 'Appearance')
+    await style(wrapper, 'readable').trigger('click')
     await flushPromises()
-    expect(api.setTypographyPreferences).toHaveBeenCalledWith({
-      interfaceFont: 'tiny5',
-      messagingFont: 'roboto'
-    })
-    // Main answered with the old pair, so that is what has to be drawn.
-    expect(
-      wrapper.find('.messaging-font[data-font="pixelify-sans"]').attributes('aria-pressed')
-    ).toBe('true')
+    expect(api.setTypographyPreferences).toHaveBeenCalledWith(READABLE)
+    // Main answered with the old style, so that is what has to be drawn.
+    expect(style(wrapper, 'dwarfai').attributes('aria-checked')).toBe('true')
   })
 
+  // AMENDED (#635): was "leaves the interface face alone when only the messaging one is chosen";
+  // under Custom, choosing the message face leaves every other role where it was.
   it('leaves the interface face alone when only the messaging one is chosen', async () => {
+    const custom = {
+      style: 'custom',
+      faces: {
+        display: 'jacquard-12',
+        label: 'tiny5',
+        meta: 'pixelify-sans',
+        talk: 'pixelify-sans'
+      }
+    }
     const { wrapper, api } = await mountOpenApp({
-      getTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+      getTypographyPreferences: vi.fn().mockResolvedValue(custom)
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    await wrapper.find('.messaging-font[data-font="arial"]').trigger('click')
+    await openSection(wrapper, 'Appearance')
+    await wrapper.find('.role-font-talk select').setValue('arial')
     await flushPromises()
     expect(api.setTypographyPreferences).toHaveBeenCalledWith({
-      interfaceFont: 'tiny5',
-      messagingFont: 'arial'
+      style: 'custom',
+      faces: { ...custom.faces, talk: 'arial' }
     })
-    expect(wrapper.find('.interface-font[data-font="tiny5"]').attributes('aria-pressed')).toBe(
-      'true'
+    expect((wrapper.find('.role-font-label select').element as HTMLSelectElement).value).toBe(
+      'tiny5'
     )
   })
 
   it('follows a change the OTHER window made, without anybody pressing anything here', async () => {
     const { wrapper, api } = await mountOpenApp()
-    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: {
-      interfaceFont: string
-      messagingFont: string
-    }) => void
-    push({ interfaceFont: 'roboto', messagingFont: 'roboto' })
+    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: unknown) => void
+    push(READABLE)
     await flushPromises()
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    expect(wrapper.find('.interface-font[data-font="roboto"]').attributes('aria-pressed')).toBe(
-      'true'
-    )
-    expect(document.documentElement.style.getPropertyValue('--font-pixel')).toBe(
+    // AMENDED (#635): the style list on Appearance, and the --f-label role.
+    await openSection(wrapper, 'Appearance')
+    expect(style(wrapper, 'readable').attributes('aria-checked')).toBe('true')
+    expect(document.documentElement.style.getPropertyValue('--f-label')).toBe(
       'var(--font-family-roboto)'
     )
   })
@@ -2695,6 +2787,8 @@ describe('Jev API-key setting (#509)', () => {
       getJevSettings: vi.fn().mockResolvedValue({ configured: true })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Integrations tab.
+    await openSection(wrapper, 'Integrations')
     expect(wrapper.find('.jev-configured').exists()).toBe(true)
   })
 
@@ -2702,7 +2796,9 @@ describe('Jev API-key setting (#509)', () => {
     const setJevApiKey = vi.fn().mockResolvedValue({ configured: true })
     const { wrapper, api } = await mountOpenApp({ setJevApiKey })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    const input = wrapper.find('.jev-key-input')
+    // AMENDED (#635): on the Integrations tab, the design's input.
+    await openSection(wrapper, 'Integrations')
+    const input = wrapper.find('.jev-key-input input')
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
     await wrapper.find('.jev-save').trigger('click')
@@ -2718,7 +2814,9 @@ describe('Jev API-key setting (#509)', () => {
         .mockResolvedValue({ configured: false, unavailableReason: 'encryption-unavailable' })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    const input = wrapper.find('.jev-key-input')
+    // AMENDED (#635): on the Integrations tab, the design's input.
+    await openSection(wrapper, 'Integrations')
+    const input = wrapper.find('.jev-key-input input')
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
     await wrapper.find('.jev-save').trigger('click')
@@ -2733,6 +2831,8 @@ describe('Jev API-key setting (#509)', () => {
       clearJevApiKey
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Integrations tab.
+    await openSection(wrapper, 'Integrations')
     await wrapper.find('.jev-clear').trigger('click')
     await flushPromises()
     expect(api.clearJevApiKey).toHaveBeenCalled()
@@ -2756,11 +2856,14 @@ describe('Jev routing profiles (#509 follow-up)', () => {
         .mockResolvedValue({ configured: true, preferences: DEFAULT_JEV_PREFERENCES })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Integrations tab, by the name people know the tool by (was
+    // "Claude Code").
+    await openSection(wrapper, 'Integrations')
     const options = wrapper
       .find('[aria-label="Default provider"]')
       .findAll('option')
       .map((node) => node.text())
-    expect(options).toEqual(['None', 'Claude Code'])
+    expect(options).toEqual(['None', 'Claude'])
   })
 
   it('asks main to save a profile choice, and renders the verdict', async () => {
@@ -2775,6 +2878,8 @@ describe('Jev routing profiles (#509 follow-up)', () => {
       setJevPreferences
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Integrations tab.
+    await openSection(wrapper, 'Integrations')
     const options = wrapper.findAll('.profile-option')
     await options[2]?.trigger('click')
     await flushPromises()
@@ -2783,10 +2888,11 @@ describe('Jev routing profiles (#509 follow-up)', () => {
       default: {},
       delegation: false
     })
+    // AMENDED (#635): radio chips, aria-checked (was the is-selected class).
     const selected = wrapper
       .findAll('.profile-option')
-      .filter((node) => node.classes('is-selected'))
-    expect(selected[0]?.find('.profile-name').text()).toBe('Premium')
+      .filter((node) => node.attributes('aria-checked') === 'true')
+    expect(selected[0]?.text()).toBe('Premium')
   })
 })
 
@@ -2890,7 +2996,9 @@ describe('OpenCode settings (#588 T6)', () => {
         .mockResolvedValue({ pluginEnabled: true, passwordConfigured: true })
     })
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-pressed')).toBe('true')
+    // AMENDED (#635): on the Integrations tab, a switch.
+    await openSection(wrapper, 'Integrations')
+    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-checked')).toBe('true')
     expect(wrapper.find('.password-stored').exists()).toBe(true)
   })
 
@@ -2902,17 +3010,21 @@ describe('OpenCode settings (#588 T6)', () => {
     })
     const { wrapper, api } = await mountOpenApp({ setOpenCodePluginEnabled })
     await wrapper.find(NAV_SETTINGS).trigger('click')
+    // AMENDED (#635): on the Integrations tab, a switch.
+    await openSection(wrapper, 'Integrations')
     await wrapper.find('.opencode-plugin-enabled').trigger('click')
     await flushPromises()
     expect(api.setOpenCodePluginEnabled).toHaveBeenCalledWith(true)
-    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('.opencode-plugin-enabled').attributes('aria-checked')).toBe('false')
     expect(wrapper.find('.plugin-error').text()).toContain('EADDRINUSE')
   })
 
   it('hands the typed password to main and then shows only that one is stored', async () => {
     const { wrapper, api } = await mountOpenApp()
     await wrapper.find(NAV_SETTINGS).trigger('click')
-    await wrapper.find('.opencode-password-input').setValue('hunter2')
+    // AMENDED (#635): on the Integrations tab, the design's input.
+    await openSection(wrapper, 'Integrations')
+    await wrapper.find('.opencode-password-input input').setValue('hunter2')
     await wrapper.find('.opencode-password-save').trigger('click')
     await flushPromises()
     expect(api.setOpenCodeServerPassword).toHaveBeenCalledWith('hunter2')

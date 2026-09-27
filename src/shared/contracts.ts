@@ -4195,114 +4195,142 @@ export type OpenMineId = string | null
 
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 
-/**
- * The faces Settings offers for the INTERFACE (#370, maintainer amendment
- * 2026-09-10) — everything outside messaging: labels, controls, metadata,
- * headlines, the activity lines.
- *
- * Identifiers rather than family names, and that is deliberate: what crosses
- * the wire and lands in a userData document has to survive a font's own name
- * being spelled differently by whoever hosts it (the variable cuts are
- * `Pixelify Sans Variable` and `Roboto Variable`, not `Pixelify Sans` and
- * `Roboto`). The renderer maps an identifier to a stack once, in
- * `lib/typography/fontFamilies.ts`, against tokens declared in
- * design-tokens.css.
- *
- * Ordered as the design's amendment lists them, because Settings draws the
- * segments in this order and a second ordering somewhere else would be a
- * second answer.
+/*
+ * AMENDED for the type presets (#635): the two faces #370 stored, Interface and Messaging, are
+ * now a FONT STYLE — one of three presets, or Custom — and the four faces the type roles are drawn
+ * in (foundations.md, Typography). The document on disk migrates once (handoff.md, "Typography
+ * preference migration"); reading the old one is main's alone, in
+ * main/shell/typographyPreference.ts, because it no longer crosses any boundary.
  */
-export const INTERFACE_FONTS = ['tiny5', 'pixelify-sans', 'roboto', 'arial'] as const
-
-export type InterfaceFont = (typeof INTERFACE_FONTS)[number]
 
 /**
- * The faces Settings offers for MESSAGING — what a dwarf or the person SAYS,
- * plus the Add Panel, which composes exactly that.
+ * Every face a role may be drawn in (foundations.md, Presets and Custom).
  *
- * The same list MINUS Tiny5, and the omission is the load-bearing part. Tiny5
- * has one display weight, and #347's ruling is that a single-weight pixel face
- * cannot draw bold or carry a paragraph; #370 keeps that constraint rather
- * than reopening it. So messaging is a NARROWER vocabulary than the interface,
- * not a second one — everything here is also an interface face.
+ * Identifiers rather than family names, and that is deliberate: what crosses the wire and lands in
+ * a userData document has to survive a font's own name being spelled differently by whoever hosts
+ * it (the variable cuts are `Pixelify Sans Variable` and `Roboto Variable`, not `Pixelify Sans`
+ * and `Roboto`). The renderer maps an identifier to a stack once, in
+ * `lib/typography/fontFamilies.ts`, against tokens declared in design-tokens.css.
  */
-export const MESSAGING_FONTS = ['pixelify-sans', 'roboto', 'arial'] as const
+export const TYPE_FACES = ['jacquard-12', 'tiny5', 'pixelify-sans', 'roboto', 'arial'] as const
 
-export type MessagingFont = (typeof MESSAGING_FONTS)[number]
+export type TypeFace = (typeof TYPE_FACES)[number]
 
-/** Whether a value is a face this build can draw the interface in. */
-export function isInterfaceFont(value: unknown): value is InterfaceFont {
-  return INTERFACE_FONTS.includes(value as InterfaceFont)
+/**
+ * The four type roles, in the order Settings lists them: Titles, Labels, Small text, Messages. A
+ * component names a role and a size, never a face; each role is one custom property the renderer
+ * repoints (`--f-display`, `--f-label`, `--f-meta`, `--f-talk`).
+ */
+export const TYPE_ROLES = ['display', 'label', 'meta', 'talk'] as const
+
+export type TypeRole = (typeof TYPE_ROLES)[number]
+
+export type TypeRoleFaces = Record<TypeRole, TypeFace>
+
+/**
+ * The faces each role offers under Custom, in the design's order, and the omissions are the
+ * load-bearing part: blackletter cannot be read at label size, Tiny5 blurs below it, and a
+ * single-weight pixel face cannot draw bold or hold a paragraph — the reason Tiny5 was never
+ * offered for messages (#347). They are checked here, at the boundary, rather than only in
+ * Settings, because the userData document is a file a person can edit.
+ */
+export const TYPE_ROLE_FACES: Readonly<Record<TypeRole, readonly TypeFace[]>> = {
+  display: ['jacquard-12', 'tiny5', 'pixelify-sans', 'roboto', 'arial'],
+  label: ['tiny5', 'pixelify-sans', 'roboto', 'arial'],
+  meta: ['pixelify-sans', 'roboto', 'arial'],
+  talk: ['pixelify-sans', 'roboto', 'arial']
+}
+
+/** Whether a value is a face this build may draw the role in. */
+export function isTypeFaceFor(role: TypeRole, value: unknown): value is TypeFace {
+  return TYPE_ROLE_FACES[role].includes(value as TypeFace)
+}
+
+/** The three presets, in the order Settings lists them. */
+export const TYPE_PRESET_IDS = ['dwarfai', 'pixel-clean', 'readable'] as const
+
+export type TypePresetId = (typeof TYPE_PRESET_IDS)[number]
+
+/**
+ * Each preset's faces (foundations.md, Presets and Custom). Here rather than beside the sizes in
+ * the renderer's typePresets.ts, because main's migration reads them too: a pair that is exactly a
+ * preset becomes that preset, and two copies of what a preset is could disagree.
+ */
+export const TYPE_PRESET_FACES: Readonly<Record<TypePresetId, Readonly<TypeRoleFaces>>> = {
+  dwarfai: { display: 'jacquard-12', label: 'tiny5', meta: 'pixelify-sans', talk: 'pixelify-sans' },
+  'pixel-clean': {
+    display: 'pixelify-sans',
+    label: 'pixelify-sans',
+    meta: 'pixelify-sans',
+    talk: 'pixelify-sans'
+  },
+  readable: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+}
+
+/** What Settings › Appearance › Font style offers: a preset, or Custom. */
+export type FontStyle = TypePresetId | 'custom'
+
+export function isTypePresetId(value: unknown): value is TypePresetId {
+  return TYPE_PRESET_IDS.includes(value as TypePresetId)
 }
 
 /**
- * Whether a value is a face this build may set a MESSAGE in.
- *
- * `'tiny5'` answers false here and true above, which is the whole exclusion in
- * one line. It is checked at the boundary rather than only in Settings because
- * the userData document is a file a person can edit, and the parser below is
- * the one thing every process reads it through.
- */
-export function isMessagingFont(value: unknown): value is MessagingFont {
-  return MESSAGING_FONTS.includes(value as MessagingFont)
-}
-
-/**
- * What the person chose in Settings' Typography section (#370).
- *
- * Two INDEPENDENT choices rather than one theme, which is the acceptance
- * criterion itself: the pixel identity is worth keeping on the chrome while an
- * agent's reply — paragraphs, bold, lists — reads better in a text face, and a
- * single control could not say that. Picking the same family in both is how
- * the whole app becomes one face.
+ * What the person chose in Settings › Appearance (#370, #635): the font style, and the face each
+ * role is drawn in. For a preset the faces are that preset's own, always; only Custom holds faces
+ * of the person's choosing, and it starts from the faces in force when it was picked.
  */
 export interface TypographyPreferences {
-  /** Everything outside messaging. */
-  interfaceFont: InterfaceFont
-  /** The bubbles, the echoes, the question and permission prose, and the Add Panel. */
-  messagingFont: MessagingFont
+  style: FontStyle
+  faces: TypeRoleFaces
 }
 
 /**
- * What Settings' Typography section reads before anybody has chosen.
- *
- * Exactly the look #347 settled — Tiny5 for the chrome, Pixelify Sans for what
- * the crew says — so shipping this feature changes nothing for a person who
- * never opens the section. Here rather than in the store beside it, for the
- * reason DEFAULT_AUDIO_PREFERENCES is here: the renderer paints before main has
- * answered, and two copies of the starting value could disagree.
+ * What Settings reads before anybody has chosen: the DwarfAI preset, which keeps the look #347
+ * settled where it was — Tiny5 labels, Pixelify Sans for small text and for what the crew says —
+ * and adds the blackletter titles. Here rather than in the store, for the reason
+ * DEFAULT_AUDIO_PREFERENCES is here: the renderer paints before main has answered, and two copies
+ * of the starting value could disagree.
  */
 export const DEFAULT_TYPOGRAPHY_PREFERENCES: TypographyPreferences = {
-  interfaceFont: 'tiny5',
-  messagingFont: 'pixelify-sans'
+  style: 'dwarfai',
+  faces: { ...TYPE_PRESET_FACES.dwarfai }
 }
 
 /**
  * Stored or wire document -> preferences, degrading field by field.
  *
- * The same asymmetry `parseAudioPreferences` carries, and for the same reasons
- * (see the `config-layering` skill): a document that is not an object at all is
- * corruption and reads as the defaults, while a readable document with one
- * unusable field keeps the other. A person who moved the interface to Roboto
- * must not lose that because the messaging field arrived as a face this build
- * cannot draw.
+ * The same asymmetry `parseAudioPreferences` carries, and for the same reasons (see the
+ * `config-layering` skill): a document that is not an object at all is corruption and reads as the
+ * defaults, while a readable document with one unusable field keeps the others. A style this
+ * build does not know reads as the default preset; a preset is drawn in its own faces whatever
+ * the document says beside it; under Custom each role that holds a face it cannot carry falls back
+ * to the DwarfAI face for that role, and the other three are kept.
  *
- * Used by main (what it stores), by the preload (what may cross) and by the
- * renderer (what it paints with), which is why it is declared here.
+ * Used by main (what it stores), by the preload (what may cross) and by the renderer (what it
+ * paints with), which is why it is declared here. A fresh record every call, so a caller that
+ * edits what it got cannot edit a preset.
  */
 export function parseTypographyPreferences(document: unknown): TypographyPreferences {
   if (typeof document !== 'object' || document === null || Array.isArray(document)) {
-    return { ...DEFAULT_TYPOGRAPHY_PREFERENCES }
+    return { style: DEFAULT_TYPOGRAPHY_PREFERENCES.style, faces: { ...TYPE_PRESET_FACES.dwarfai } }
   }
   const record = document as Record<string, unknown>
-  return {
-    interfaceFont: isInterfaceFont(record.interfaceFont)
-      ? record.interfaceFont
-      : DEFAULT_TYPOGRAPHY_PREFERENCES.interfaceFont,
-    messagingFont: isMessagingFont(record.messagingFont)
-      ? record.messagingFont
-      : DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+  if (isTypePresetId(record.style)) {
+    return { style: record.style, faces: { ...TYPE_PRESET_FACES[record.style] } }
   }
+  if (record.style !== 'custom') {
+    return { style: DEFAULT_TYPOGRAPHY_PREFERENCES.style, faces: { ...TYPE_PRESET_FACES.dwarfai } }
+  }
+  const stored =
+    typeof record.faces === 'object' && record.faces !== null
+      ? (record.faces as Record<string, unknown>)
+      : {}
+  const faces = { ...TYPE_PRESET_FACES.dwarfai }
+  for (const role of TYPE_ROLES) {
+    const face = stored[role]
+    if (isTypeFaceFor(role, face)) faces[role] = face
+  }
+  return { style: 'custom', faces }
 }
 
 /* --- end of the #370 block ------------------------------------------------- */

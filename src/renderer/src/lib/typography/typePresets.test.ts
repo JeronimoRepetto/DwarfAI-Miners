@@ -5,7 +5,9 @@ import {
   DEFAULT_TYPE_PRESET,
   TYPE_PRESETS,
   TYPE_ROLE_PROPERTIES,
-  resolveTypePreset
+  crispSize,
+  resolveTypePreset,
+  resolveTypography
 } from './typePresets'
 
 /**
@@ -129,5 +131,79 @@ describe('the presets against design-tokens.css', () => {
       expect(stack, face).toBeTruthy()
       expect(stack!.split(',').length, face).toBeGreaterThan(1)
     }
+  })
+})
+
+/*
+ * The crisp-size rule (foundations.md, The crisp-size rule), which Custom applies role by role
+ * (#635): a pixel face is sharp only at whole multiples of its em grid, so each step snaps to the
+ * nearest one and keeps rising until the x-height reaches 7 screen pixels. Vector faces are sharp
+ * at any size. The table below is the design's, cell for cell.
+ */
+describe('crispSize', () => {
+  it.each([
+    ['tiny5', 12, 16],
+    ['tiny5', 14, 16],
+    ['tiny5', 16, 16],
+    ['tiny5', 21, 24],
+    ['tiny5', 26, 24],
+    ['jacquard-12', 12, 21],
+    ['jacquard-12', 14, 21],
+    ['jacquard-12', 16, 21],
+    ['jacquard-12', 21, 21],
+    ['jacquard-12', 26, 21]
+  ] as const)('snaps %s asked at %ipx to %ipx', (face, asked, sharp) => {
+    expect(crispSize(face, asked)).toBe(sharp)
+  })
+
+  it.each(['pixelify-sans', 'roboto', 'arial'] as const)(
+    'leaves %s at the size asked, since a vector face is sharp at any size',
+    (face) => {
+      for (const asked of [12, 14, 16, 21, 26]) expect(crispSize(face, asked)).toBe(asked)
+    }
+  )
+
+  it('gives every preset the sizes its own faces are sharp at, so the presets obey the rule', () => {
+    for (const preset of TYPE_PRESETS) {
+      expect(preset.sizes.title).toBe(crispSize(preset.faces.display, 21))
+      expect(preset.sizes.headline).toBe(crispSize(preset.faces.display, 21))
+      expect(preset.sizes.section).toBe(crispSize(preset.faces.label, 16))
+      expect(preset.sizes.meta).toBe(crispSize(preset.faces.meta, 12))
+      expect(preset.sizes.body).toBe(crispSize(preset.faces.talk, 14))
+    }
+  })
+})
+
+/*
+ * What a stored choice paints (#635): a preset resolves as the preset does, and Custom repoints each
+ * role to its own face with crisp sizes on ("Custom sets one role at a time, also with crisp sizes
+ * on", foundations.md, How a role gets its face).
+ */
+describe('resolveTypography', () => {
+  it.each(['dwarfai', 'pixel-clean', 'readable'] as const)(
+    'paints the %s style exactly as its preset resolves',
+    (style) => {
+      const faces = TYPE_PRESETS.find((preset) => preset.id === style)!.faces
+      expect(resolveTypography({ style, faces: { ...faces } })).toEqual(resolveTypePreset(style))
+    }
+  )
+
+  it('paints Custom in its own faces, each step at the size its face is sharp at', () => {
+    expect(
+      resolveTypography({
+        style: 'custom',
+        faces: { display: 'tiny5', label: 'roboto', meta: 'arial', talk: 'pixelify-sans' }
+      })
+    ).toEqual({
+      '--f-display': 'var(--font-family-tiny5)',
+      '--f-label': 'var(--font-family-roboto)',
+      '--f-meta': 'var(--font-family-arial)',
+      '--f-talk': 'var(--font-family-pixelify-sans)',
+      '--fs-title': '24px',
+      '--fs-headline': '24px',
+      '--fs-section': '16px',
+      '--fs-meta': '12px',
+      '--fs-body': '14px'
+    })
   })
 })
