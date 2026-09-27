@@ -164,6 +164,15 @@ export function anatomyAttributes(anatomyMd, file) {
 const onStage = (r) =>
   /^\.kit-stage\s+\S/.test(r.selector) && !/[{}]/.test(r.selector + r.declarations)
 
+// A state that draws only its component's trigger (the dialog's Live button) carries none of the
+// classes the component's framing names: a single-class rule no element of the tree carries frames
+// nothing in that state, so it is dropped before checkFraming judges the rest (#635). Anything else
+// stays for checkFraming to accept or refuse.
+export function applicableFraming(framing, tree) {
+  const carried = new Set(tree.flatMap((entry) => entry.element.split('.').slice(1)))
+  return framing.filter((r) => !/^\.[\w-]+$/.test(r.selector) || carried.has(r.selector.slice(1)))
+}
+
 export function checkFraming(framing, rootLine) {
   const classes = rootLine.split(/\s/)[0].split('.').slice(1)
   const stray = framing.filter(

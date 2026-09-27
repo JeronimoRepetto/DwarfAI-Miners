@@ -12,6 +12,7 @@ import {
   anatomyAttributes,
   anatomyRoot,
   anatomyTexts,
+  applicableFraming,
   checkFraming,
   checkStates,
   componentOf,
@@ -130,7 +131,10 @@ describe.runIf(runnable)('golden harness', () => {
     const title = state.red ? state.key + ' (red: ' + state.red + ')' : state.key
     it(title, async () => {
       const row = manifest[state.key]
-      const framing = framingFor(readDesign('docs', 'components.md'), componentOf(state.key))
+      const framing = applicableFraming(
+        framingFor(readDesign('docs', 'components.md'), componentOf(state.key)),
+        anatomyAttributes(readDesign('docs', 'anatomy.md'), row.file)
+      )
       const framingError = checkFraming(
         framing,
         anatomyRoot(readDesign('docs', 'anatomy.md'), row.file)
