@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { dockWindowMotion } from './dockMotion'
+import { dockReplaceMotion, dockWindowMotion } from './dockMotion'
 
 const css = readFileSync(join(import.meta.dirname, '../../assets/design-tokens.css'), 'utf8')
 /** A token's value at rest, outside the reduced-motion block. */
@@ -62,5 +62,26 @@ describe('the dock window when its mine closes', () => {
     expect(dockWindowMotion(true, 'right', { withMine: false })).toEqual(
       dockWindowMotion(true, 'right')
     )
+  })
+})
+
+/*
+ * APPENDED (#635, the MessagePanel slice), motion.md, "MessagePanel window (Panel)": what an open
+ * slot holds replaced — a chat for the history, the Add panel for a chat — is a fade in with no
+ * travel over --dur-base with --ease-out, the old content removed at once.
+ */
+describe('the dock window when what it holds is replaced', () => {
+  it('fades the new content in with no travel, over --dur-base', () => {
+    expect(dockReplaceMotion(false)).toEqual({
+      keyframes: { opacity: [0, 1] },
+      transition: { duration: ms('dur-base') / 1000, ease: bezier('ease-out') }
+    })
+  })
+
+  it('removes the old content at once', () => {
+    expect(dockReplaceMotion(true)).toEqual({
+      keyframes: { opacity: [1, 0] },
+      transition: { duration: 0 }
+    })
   })
 })

@@ -2828,3 +2828,21 @@ describe('DwarfMessagePanel withholds the gesture from a disabled control', () =
     expect(attach.attributes('title')).toBeTruthy()
   })
 })
+
+/*
+ * APPENDED (#635, the MessagePanel slice): one draft per dwarf (decision log, Drafts per dwarf).
+ * The panel is mounted per dwarf, so the half-written message is held by its host: the panel
+ * opens on the draft it is handed, reports every change to it, and a send empties it.
+ */
+describe('DwarfMessagePanel keeps its draft with its host', () => {
+  it('opens with the draft it is handed in the composer', () => {
+    const wrapper = panel({ draft: 'half a thought' })
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('half a thought')
+  })
+
+  it('reports each change to the draft', async () => {
+    const wrapper = panel()
+    await wrapper.find('textarea').setValue('dig')
+    expect(wrapper.emitted('draft')?.at(-1)).toEqual(['dig'])
+  })
+})

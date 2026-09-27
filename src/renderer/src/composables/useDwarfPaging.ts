@@ -8,7 +8,7 @@ import type { DwarfFeedPage, FeedMessage, FeedPageCursor } from '../types'
  *
  * ## Why they are not in the feed
  *
- * `selectedFeed` in MessagePanelWindow is the newest page and nothing else: it
+ * `selectedFeed` in useMessageDock is the newest page and nothing else: it
  * is replaced whole by every re-read and by every feed the poll pushes for the
  * watched dwarf (#196), which is exactly the behaviour the panel wants for the
  * end of a live conversation. A reader who has paged back four pages must not

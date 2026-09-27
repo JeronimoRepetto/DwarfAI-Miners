@@ -3,9 +3,7 @@ import { WATCHDOG_MARGIN_MS, motionBoundMs } from './motionTiming'
 
 /**
  * The vertical hidden offset every rising or leaving panel starts or ends at,
- * in CSS pixels — read off by `MessagePanelWindow`, which holds the surface at
- * this same keyframe between reports rather than running a motion to get
- * there (see `holdHidden`).
+ * in CSS pixels — and the rise every popup and tooltip takes (presence.ts).
  */
 export const PANEL_MOTION_Y = 12
 

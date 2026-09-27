@@ -164,10 +164,9 @@ export interface AgentLaunch {
   observe: (mines: readonly Mine[]) => void
   /**
    * Subscribe to main's launch-failure push (#263). Returns the unsubscribe,
-   * exactly like every other `window.api.on*` member — the caller (the
-   * message-panel window, which owns this composable's lifetime) holds it
-   * and calls it on unmount, the same pattern `useDwarfDelivery.listen()`
-   * already uses.
+   * exactly like every other `window.api.on*` member — the caller
+   * (useMessageDock, which the shell holds for its lifetime) holds it and
+   * calls it on unmount.
    */
   listenFailures: () => () => void
 }
@@ -491,8 +490,8 @@ export function useAgentLaunch(): AgentLaunch {
   }
 
   /**
-   * Main's launch-failure push (#263), subscribed exactly like
-   * `useDwarfDelivery.listen()` subscribes `onDwarfDeliveryReport`. Applies
+   * Main's launch-failure push (#263), subscribed like every other
+   * `window.api.on*` member, returning the unsubscribe. Applies
    * `launchFailed` unconditionally — its own launchId/launchedDwarfId guard
    * is what keeps a push for a closed, retried or already-adopted launch
    * from touching this panel, so nothing here has to re-check what state

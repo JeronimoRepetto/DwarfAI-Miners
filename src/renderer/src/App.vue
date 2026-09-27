@@ -10,6 +10,8 @@ import {
 } from 'vue'
 import { MotionConfig } from 'motion-v'
 import HistoryPanel from './components/history/HistoryPanel.vue'
+import AddPanel from './components/launch/AddPanel.vue'
+import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
 import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
@@ -19,8 +21,7 @@ import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
 import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
-import { useDwarfDelivery } from './composables/useDwarfDelivery'
-import { useMessagePanel } from './composables/useMessagePanel'
+import { useMessageDock } from './composables/useMessageDock'
 import { useMines } from './composables/useMines'
 import { useMapTime } from './composables/useMapTime'
 import { usePanelLayout } from './composables/usePanelLayout'
@@ -51,7 +52,7 @@ import {
 } from './lib/scene/sceneSizing'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
-import { dockWindowMotion } from './lib/shell/dockMotion'
+import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
@@ -101,35 +102,18 @@ const mapVariant = useMapTime()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
 
 /**
- * What the message panel's own window is showing (#162).
+ * The MessagePanel and the Add panel, anchored in the dock's window slot (#635).
  *
- * The conversation left this window. The MessagePanel and the Add Panel — which
- * share one slot, because submitting a launch replaces the first with the
- * second — are a second BrowserWindow beside the shell now, the way the design
- * draws them, and everything they need to DO lives there with them: the launch,
- * the send, the kick, the answers, the observed session's transcript. See
- * MessagePanelWindow.vue.
- *
- * What is left here is the request and one reading. The shell asks for a
- * surface when a dwarf is clicked or the mine's Add action is pressed, and it
- * reads this state back to draw the selected dwarf's red halo — including for a
- * dwarf the shell never chose, because a launch handing over is something only
- * that window can know. Main holds the state for both.
+ * AMENDED for #635 (was: a second BrowserWindow beside the shell, #162, whose surface main held
+ * for both windows and whose delivery verdicts were published back here). The decision log
+ * anchors both panels in the Panel, and the PO chose one OS window for it (2026-09-27), so the
+ * slot the history stands in holds them too, one thing at a time. Everything they DO — the
+ * launch, the send, the kick, the answers, the observed session's feed, one draft per dwarf — is
+ * useMessageDock's, alive as long as this shell is; the halo and the sprite markers read it here.
  */
-const {
-  state: messagePanel,
-  sync: syncMessagePanel,
-  listen: listenMessagePanel,
-  openMessage,
-  openLaunch: openLaunchPanel,
-  close: closeMessagePanel
-} = useMessagePanel()
-
-/**
- * The send and kick verdicts that window holds (#162), so the mine can draw
- * each one on the sprite it belongs to. Read-only here — see useDwarfDelivery.
- */
-const { report: dwarfDelivery, listen: listenDwarfDelivery } = useDwarfDelivery()
+const dock = useMessageDock()
+const { close: closeMessagePanel } = dock
+const dwarfDelivery = dock.delivery
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
 /* --- System notifications (#316) — one block, appended --------------------- */
@@ -632,44 +616,23 @@ const shellHeight = `calc(100vh - ${SHELL_CONTENT_INSET}px)`
 const loading = ref(true)
 const error = ref<string | null>(null)
 let unsubscribe: (() => void) | undefined
-let unlistenMessagePanel: (() => void) | undefined
-let unlistenDwarfDelivery: (() => void) | undefined
 let unlistenAudio: (() => void) | undefined
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 let unlistenTypography: (() => void) | undefined
 /* --- end of the #370 block ------------------------------------------------- */
 
 /**
- * The dwarf the message panel is open on (#159, #162).
- *
- * At most one in the whole app, which is why it never lived in a sprite: the
- * design puts the panel beside the mine rather than beside the dwarf, so no
- * sprite can hold the fact that it is the selected one.
- *
- * READ from the state main holds rather than kept here, since #162. The panel
- * is another window now, and it is the one that learns which dwarf a launch
- * turned out to have started — so a local copy would be a second answer to a
- * question that already has one, and the halo would be drawn from the older of
- * the two.
+ * The dwarf the chat is open on (#159, #162), for the halo on its sprite: at most one in the whole
+ * app. Read off the dock, which is the one that learns which dwarf a launch turned out to have
+ * started — so the halo is drawn from the same answer the chat is.
  */
-const openDwarfId = computed(() =>
-  messagePanel.value.surface === 'message' && messagePanel.value.dwarfId !== ''
-    ? messagePanel.value.dwarfId
-    : null
-)
+const openDwarfId = dock.openDwarfId
 
 /*
- * WHAT WENT WITH THE PANEL (#162).
- *
- * The observed session's transcript and everything around it — `selectedFeed`,
- * its token, the dwarf it answers for, the pushed-feed signal (#196), the
- * shrink log (#249) and both re-read watches (#183, #195) — moved to
- * MessagePanelWindow.vue, whole. They belong to the surface that shows the
- * words, and that surface is a window of its own; reading a transcript here to
- * push it across a process boundary would be a round trip for nothing.
- *
- * `setWatchedDwarf` went with them for the same reason: it is the panel saying
- * which dwarf it has open, and it is no longer this window that knows.
+ * WHAT CAME BACK WITH THE PANEL (#635): the observed session's feed and everything around it —
+ * `selectedFeed`, its token, the pushed-feed signal (#196), the shrink log (#249), both re-read
+ * watches (#183, #195), `setWatchedDwarf` — went to MessagePanelWindow.vue for #162 and live in
+ * useMessageDock now, which this shell calls once.
  */
 
 /*
@@ -766,7 +729,9 @@ function update(snapshot: MinesSnapshot): void {
   boardRead = true
   pruneOpenMine()
   // A launch in flight is watching for its own dwarf, which arrives on an
-  // ordinary poll like every other session's — this is that poll.
+  // ordinary poll like every other session's — this is that poll — and the
+  // open chat adopts the feed main pushed with it (#196).
+  dock.observeSnapshot(snapshot)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
@@ -813,19 +778,15 @@ function selectDwarf(dwarf: Dwarf): void {
   // selected dwarf again closes its panel and is still a click on the dwarf.
   playVoice(dwarf.role)
   // The dock's window slot holds one thing at a time (screens/shell.md,
-  // Layout): opening a chat replaces the history in it. The chat is still the
-  // MessagePanel's own window until its slice docks it here, so the history
-  // leaves the slot and the slot closes (#635).
+  // Layout): opening a chat replaces the history in it (#635).
   historyOpen.value = false
   if (openDwarfId.value === dwarf.id) {
-    void closeMessagePanel()
+    closeMessagePanel()
     return
   }
-  // Naming the mine as well as the dwarf, because the panel window is opened
-  // on a surface rather than handed a selection: the Add Panel that shares its
-  // slot needs the mine, and a message panel that could not name one would be
-  // a window with no way back to the board it came from.
-  if (viewState.mineId !== null) void openMessage(viewState.mineId, dwarf.id)
+  // Naming the mine as well as the dwarf: the Add panel that shares the slot
+  // needs the mine, and the chat follows its mine rather than the board.
+  if (viewState.mineId !== null) dock.openMessage(viewState.mineId, dwarf.id)
 }
 
 /**
@@ -850,12 +811,11 @@ const mineHistory = ref<MineHistoryResult | undefined>(undefined)
 let historyToken = 0
 
 /**
- * The mine's History action (#192): the history opens in the dock's window
- * slot beside the shell (#635), which holds one thing at a time, so whatever
- * the MessagePanel's window has open is put away.
+ * The mine's History action (#192), and the MessagePanel's (#635): the history opens in the dock's
+ * window slot, which holds one thing at a time, so the chat or the Add panel is put away.
  */
 function openHistory(): void {
-  void closeMessagePanel()
+  closeMessagePanel()
   historyOpen.value = true
 }
 
@@ -864,17 +824,20 @@ function openHistory(): void {
  * no width (#635, screens/shell.md, Layout: "the window slot none while no
  * chat, Add panel or history is open in it").
  *
- * One thing at a time, keyed so that replacing one with another is a fresh
- * slot. The history is the one it holds today; the MessagePanel and the Add
- * panel join it when their own slice docks them, and until then they keep the
- * window of their own, which opening either of them closes the history for
- * (`selectDwarf`, `openLaunch`).
+ * One thing at a time: the Add panel while a launch is the dock's (through its
+ * spawn, until its dwarf is handed over), the chat while it is open on a dwarf,
+ * or the history. Keyed so that replacing one with another — a chat for the
+ * history, one dwarf's chat for another's — is fresh content in the same slot.
  */
-const dockItem = computed<{ kind: 'history'; key: string } | null>(() =>
-  historyOpen.value && currentMine.value !== undefined
-    ? { kind: 'history', key: `history:${currentMine.value.id}` }
-    : null
-)
+type DockItem = { kind: 'history' | 'launch' | 'message'; key: string }
+const dockItem = computed<DockItem | null>(() => {
+  const mine = currentMine.value
+  if (mine === undefined) return null
+  if (dock.launchOpen.value) return { kind: 'launch', key: `launch:${mine.id}` }
+  const dwarf = dock.selectedDwarf.value
+  if (dwarf !== undefined) return { kind: 'message', key: `message:${dwarf.id}` }
+  return historyOpen.value ? { kind: 'history', key: `history:${mine.id}` } : null
+})
 
 /*
  * The window is exactly as wide as what the Panel shows (#635, PO ruling
@@ -902,6 +865,16 @@ watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOp
 function closeHistory(): void {
   historyOpen.value = false
 }
+
+/*
+ * What the chat or the launch could not do (#159, #279, #347): the console that could not be
+ * brought forward, a path or a link main refused. Said in a toast with the warning icon, where the
+ * app says every other refusal (PANEL-QUESTIONS 10), since the anchored panel has no line of its
+ * own for it; AMENDED for #635 (was: a notice above the panel in its own window).
+ */
+watch(dock.error, (text) => {
+  if (text !== null) showToast(text, 'warning')
+})
 
 async function readMineHistory(mineId: string): Promise<void> {
   const token = ++historyToken
@@ -1013,14 +986,13 @@ watch(() => viewState.mineId, setAudioScene, { immediate: true })
  *
  * Re-opening the panel already open on this mine is left alone rather than
  * treated as a toggle: `open()` starts a fresh panel, so a second click would
- * silently discard a prompt somebody was half-way through typing. That guard
- * moved to the panel window with the launch itself (#162) — it is the side
- * that knows whether a prompt is half typed. The panel has its own close, and
+ * silently discard a prompt somebody was half-way through typing. That guard is
+ * useMessageDock's, beside the launch itself. The panel has its own close, and
  * Escape.
  */
 function openLaunch(mineId: string): void {
   historyOpen.value = false
-  void openLaunchPanel(mineId)
+  dock.openLaunch(mineId)
 }
 
 /*
@@ -1035,22 +1007,19 @@ watch(
     // The history panel follows its mine the same way (#192): a person closing
     // the mine, or the board dropping it, takes the history with it.
     historyOpen.value = false
-    // Closes whatever the panel window has open, the launch included: a launch
-    // whose mine went away has nowhere to put the dwarf it is waiting for.
-    if (messagePanel.value.surface !== 'none') void closeMessagePanel()
+    // Closes whatever the dock has open, the launch included: a launch whose
+    // mine went away has nowhere to put the dwarf it is waiting for.
+    if (dock.surface.value.surface !== 'none') closeMessagePanel()
   }
 )
 
 /*
- * WHAT WENT WITH THE PANEL, PART TWO (#162): `activate` (bringing a session's
- * own console forward, and the sentence said when it could not be), `sendText`
- * and `deliverText`, `kickDwarf`, `answerQuestion` and `decidePermission`.
+ * WHAT CAME BACK WITH THE PANEL, PART TWO (#635): `activate` (bringing a
+ * session's own console forward), `sendText`, `kickDwarf`, `answerQuestion`
+ * and `decidePermission` went to the panel's own window for #162 and are
+ * useMessageDock's now, drawn into the dock slot below.
  *
- * Every one of them was the panel acting on the dwarf it had open, so all six
- * moved to the window that now holds that panel. The verdicts come back here
- * as `dwarfDelivery`, because the marker they draw is on the sprite.
- *
- * REMOVED with them, stated rather than passing unseen: MineScene's
+ * REMOVED for #162, stated rather than passing unseen: MineScene's
  * `activatingId` prop, which dimmed a sprite while its console was being
  * raised. The click that starts that is in the other window now, so dimming a
  * sprite here would be feedback in the place nobody is looking; the panel says
@@ -1090,7 +1059,7 @@ let unlistenShowMine: (() => void) | undefined
  */
 function showMineFromNotification(mineId: string): void {
   error.value = null
-  if (messagePanel.value.surface !== 'none') void closeMessagePanel()
+  if (dock.surface.value.surface !== 'none') closeMessagePanel()
   historyOpen.value = false
   openMine(mineId)
 }
@@ -1125,12 +1094,6 @@ onMounted(() => {
   // Hears the window being shown or hidden, and gives the engine its tick.
   unlistenAudio = listenAudio()
   unsubscribe = window.api.onMinesUpdated(update)
-  // Listening BEFORE the pull, deliberately: the panel window can change what
-  // it is showing at any moment, and a state set between the two would
-  // otherwise be the one change the halo never heard.
-  unlistenMessagePanel = listenMessagePanel()
-  void syncMessagePanel()
-  unlistenDwarfDelivery = listenDwarfDelivery()
   /* --- System notifications (#316) — one block, appended ------------------- */
   // Adopts the stored switch, and listens for a click on a notification main
   // raised. Subscribed rather than pulled, like the message panel above: a
@@ -1159,8 +1122,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
-  unlistenMessagePanel?.()
-  unlistenDwarfDelivery?.()
   unlistenAudio?.()
   /* --- System notifications (#316) — one block, appended ------------------- */
   unlistenShowMine?.()
@@ -1206,26 +1167,88 @@ onBeforeUnmount(() => {
         The dock's window slot, first in the DOM because the design's tab order
         starts there (screens/shell.md, Left to right: the window, then the nav,
         the page and the open mine). It holds one thing at a time and takes no
-        width while it holds nothing. Today that is the mine's history; the
-        MessagePanel and the Add panel keep their own window until their slice
-        docks them here, and opening either closes the history (`selectDwarf`,
-        `openLaunch`), so the two never stand at once. Drawn only once main has
-        given the window the slot's width (`visibleLayout`), as the mine column
-        is, and retained while it leaves so the shrink waits for it.
+        width while it holds nothing: the chat, the Add panel or the mine's
+        history (#635), never two of them. Drawn only once main has given the
+        window the slot's width (`visibleLayout`), as the mine column is, and
+        retained while it leaves so the shrink waits for it. What it holds is
+        replaced in place (`dockReplaceMotion`): the old content goes at once
+        and the new one fades in, so two panels never share a 440px slot.
       -->
       <PanelTransition :motion="dockMotion" :engine="props.engine" @leave="trackPanelLeave">
-        <div v-if="dockItem && visibleLayout.dockOpen" :key="dockItem.key" class="dock-window">
-          <HistoryPanel
-            v-if="dockItem.kind === 'history' && currentMine"
-            :key="currentMine.id"
-            :mine="currentMine"
-            :history="mineHistory"
-            :path-refusal="historyPathRefusal"
-            :failed="dwarfDelivery.failed"
-            @close="closeHistory"
-            @open-path="openHistoryPath"
-            @open-link="openHistoryLink"
-          />
+        <div v-if="dockItem && visibleLayout.dockOpen" class="dock-window dm-window">
+          <PanelTransition :motion="dockReplaceMotion" :engine="props.engine" mode="out-in">
+            <AddPanel
+              v-if="dockItem.kind === 'launch' && currentMine"
+              :key="dockItem.key"
+              :mine-name="currentMine.name"
+              :chips="dock.launch.chips.value"
+              :phase="dock.launch.phase.value"
+              :enabled="dock.launch.enabled.value"
+              :placeholder="dock.launch.placeholder.value"
+              :command="dock.launch.state.value.command"
+              :prompt="dock.launch.state.value.prompt"
+              :refusal="dock.launch.refusal.value"
+              :error="dock.launch.state.value.error"
+              :model-picker="dock.launch.modelPicker.value"
+              :effort-picker="dock.launch.effortPicker.value"
+              :permissions-visible="dock.launch.permissionsVisible.value"
+              :jev="dock.launch.jev.value"
+              @choose="dock.launch.choose"
+              @command="dock.launch.setCommand"
+              @commit="dock.launch.commit"
+              @prompt="dock.launch.setPrompt"
+              @model="dock.launch.setModel"
+              @effort="dock.launch.setEffort"
+              @permission-mode="dock.launch.setPermissionMode"
+              @toggle-jev="dock.launch.toggleJevEnabled"
+              @toggle-jev-auto="dock.launch.toggleJevAutoAccept"
+              @dismiss-jev="dock.launch.dismissJevDecision"
+              @submit="dock.launch.submit"
+              @close="closeMessagePanel"
+            />
+            <!--
+              Keyed by dwarf, so opening the chat on another one is a fresh
+              panel. The half-written message is the dock's, per dwarf
+              (decision log, Drafts per dwarf), so a switch keeps it.
+            -->
+            <DwarfMessagePanel
+              v-else-if="dockItem.kind === 'message' && dock.selectedDwarf.value"
+              :key="dockItem.key"
+              :dwarf="dock.selectedDwarf.value"
+              :feed="dock.drawnFeed.value"
+              :paging-note="dock.pagingNote.value ?? undefined"
+              :draft="dock.drafts.value[dock.selectedDwarf.value.id]"
+              :send-state="dock.messagingState.byDwarfId[dock.selectedDwarf.value.id]"
+              :echoes="dock.sentEchoes[dock.selectedDwarf.value.id]"
+              :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
+              :kick-state="dock.kickingState.byDwarfId[dock.selectedDwarf.value.id]"
+              :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
+              @draft="dock.setDraft(dock.selectedDwarf.value.id, $event)"
+              @send="dock.sendText(dock.selectedDwarf.value, $event)"
+              @send-again="dock.sendAgain(dock.selectedDwarf.value, $event)"
+              @kick="dock.kickDwarf(dock.selectedDwarf.value)"
+              @answer="dock.answerQuestion(dock.selectedDwarf.value, $event)"
+              @answer-text="dock.answerQuestionInWords(dock.selectedDwarf.value, $event)"
+              @decide="dock.decidePermission(dock.selectedDwarf.value, $event)"
+              @open-console="dock.activate(dock.selectedDwarf.value)"
+              @open-path="dock.openPath"
+              @open-link="dock.openLink"
+              @page-back="dock.pageBack"
+              @history="openHistory"
+              @close="closeMessagePanel"
+            />
+            <HistoryPanel
+              v-else-if="dockItem.kind === 'history' && currentMine"
+              :key="dockItem.key"
+              :mine="currentMine"
+              :history="mineHistory"
+              :path-refusal="historyPathRefusal"
+              :failed="dwarfDelivery.failed"
+              @close="closeHistory"
+              @open-path="openHistoryPath"
+              @open-link="openHistoryLink"
+            />
+          </PanelTransition>
         </div>
       </PanelTransition>
 

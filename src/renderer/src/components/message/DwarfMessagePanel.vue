@@ -144,6 +144,12 @@ const props = defineProps<{
    * share one store, because a verdict is about a toolUseId either way.
    */
   answerState?: DwarfAnswerState
+  /**
+   * The half-written message its host keeps for this dwarf (#635; decision log, Drafts per
+   * dwarf). The panel is mounted per dwarf, so a draft held here would go with a switch; it is
+   * taken once, on mount, and every change to it is reported back as `draft`.
+   */
+  draft?: string
 }>()
 
 const emit = defineEmits<{
@@ -207,9 +213,12 @@ const emit = defineEmits<{
    * deciding whether anything opens.
    */
   'page-back': []
+  /** The composer's text changed, for the host that keeps the draft (#635). */
+  draft: [text: string]
 }>()
 
-const message = ref('')
+const message = ref(props.draft ?? '')
+watch(message, (text) => emit('draft', text))
 const historyOpen = ref(false)
 
 const conversation = computed(() => conversationOf(props.dwarf, props.feed))
@@ -320,7 +329,7 @@ async function focusComposer(): Promise<void> {
 }
 
 /*
- * The panel is keyed by dwarf id (MessagePanelWindow.vue), so MOUNTING is the
+ * The panel is keyed by dwarf id (App.vue, the dock slot), so MOUNTING is the
  * moment a person selected one. Never on a control the panel is already
  * explaining as dead (#217): focusing a disabled textarea is a no-op, and the
  * refusal line beside it already says why it cannot receive.
@@ -874,12 +883,11 @@ function onKick(): void {
     ></div>
 
     <!--
-      `data-window-drag` marks this row as the handle that moves the panel's
-      own WINDOW (#296). Only a marker: the gesture and the geometry belong to
-      MessagePanelWindow.vue and to main, and the three controls below stay
-      controls — see lib/shell/windowDrag.
+      The header does not drag and a double-click does nothing (#635): the
+      panel is anchored in the dock (decision log, MessagePanel and Add panel
+      anchored), so the drag handle #296 marked here is gone with its window.
     -->
-    <header class="panel-bar" data-window-drag>
+    <header class="panel-bar">
       <!--
         The design draws the dwarf's name here and no fourth icon, so the name
         IS the control that focuses this session's console — which is where

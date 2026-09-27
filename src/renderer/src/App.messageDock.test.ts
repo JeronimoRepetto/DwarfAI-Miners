@@ -1,131 +1,140 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DOMKeyframesDefinition } from 'motion-v'
-import { MotionConfig } from 'motion-v'
-import MessagePanelWindow from './MessagePanelWindow.vue'
-import type { MotionAnimate, ScheduleAfterRender } from './lib/shell/boundedMotion'
+import App from './App.vue'
+import MapPage from './components/map/MapPage.vue'
+import MineColumn from './components/scene/MineColumn.vue'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
 import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
+import { useView } from './composables/useView'
 import {
   BEYOND_REACH_NOTE,
   CONVERSATION_START_NOTE,
   NO_OLDER_PAGES_NOTE
 } from './lib/message/feedPages'
-// ADDED for #389 — the deadline the window's own leave is bounded by.
-import { motionBoundMs } from './lib/shell/motionTiming'
-// ADDED for #566 T3 — the root's own MotionConfig transition override.
-import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
-// ADDED for #370 — the faces this window paints with before main answers.
-import { DEFAULT_TYPOGRAPHY_PREFERENCES } from './types'
+import {
+  DEFAULT_AUDIO_PREFERENCES,
+  DEFAULT_JEV_SETTINGS,
+  DEFAULT_TYPOGRAPHY_PREFERENCES
+} from './types'
 
 /*
- * The message panel's own window (#162).
+ * The MessagePanel and the Add panel, docked in the shell's window slot (#635).
  *
- * MOVED HERE FROM App.test.ts, whole and by subject, because the surfaces they
- * are about moved: the MessagePanel and the Add Panel are a second
- * BrowserWindow beside the shell now, the way the design draws them, so a test
- * that clicked a dwarf in the mine and then looked at the panel was asserting
- * across two processes. The blocks that came over are named in App.test.ts's
- * own header where they stood.
+ * MOVED HERE, whole and by subject, from MessagePanelWindow.test.ts, which the child window took
+ * with it: these were App.test.ts's own blocks until #162 made the two panels a second
+ * BrowserWindow, and they come back to the shell now that the decision log anchors both panels in
+ * the Panel and the PO chose one OS window for it (2026-09-27). In a file of their own rather than
+ * back inside App.test.ts because they are one subject — the dock's panels — and App.test.ts is
+ * already the longest file in the renderer.
  *
- * What changed in each of them is the OPENING GESTURE and nothing else. The
- * shell no longer hands this window a selection; it asks main for a surface,
- * and main tells this window (see MessagePanelState). So `openOn` below stands
- * in for "a dwarf was clicked over there", and every assertion about what the
- * panel then shows, reads, sends and refuses is the one that was already there.
+ * What changed in each is the OPENING GESTURE and nothing else, as it was the gesture that changed
+ * for #162: the shell no longer asks main for a surface, so `openOn` below mounts the real App,
+ * opens the mine and clicks the dwarf, and every assertion about what the panel then shows,
+ * reads, sends and refuses is the one that was already there. The blocks that could only be true
+ * of a second window went with it, each said where it stood.
+ *
+ * Five suites went WHOLE with the modules they tested, which served only that window, and are
+ * said here because their files are gone: lib/shell/surface.test.ts (which root a page mounts:
+ * there is one), composables/useMessagePanel.test.ts (the surface main held for both windows,
+ * serialized: the surface is useMessageDock's own, asserted through the dock in this file and in
+ * App.test.ts's 'App message dock (#635)'), composables/useDwarfDelivery.test.ts (the verdicts
+ * published back to the shell: 'handing the delivery verdicts to the mine' below reads what the
+ * mine is handed), lib/message/surfaceMotion.test.ts (the second window's enter, leave or cut:
+ * the dock slot's motion, App.test.ts's 'App panel motion (#164)' and dockMotion.test.ts) and
+ * lib/shell/windowDrag.test.ts (the header as a window-drag handle: the header does not drag,
+ * decision log, MessagePanel and Add panel anchored).
  */
 
 const CLOSED = { surface: 'none' as const, mineId: '', dwarfId: '' }
 
 /**
- * Full window.api stub, on the same rule App.test.ts states at length: anything
- * the window AWAITS resolves the shape its contract declares, and anything
- * fire-and-forget is a plain spy.
+ * Full window.api stub for the shell, on the rule App.test.ts states at length: anything the app
+ * AWAITS resolves the shape its contract declares, and anything fire-and-forget is a plain spy.
  *
- * A bare `vi.fn()` resolves `undefined`, and both delivery stores read their
- * verdict off the result the moment it lands — outside the `catch`, which means
- * "the panel lost contact with the app" rather than "what came back was
- * garbage". Since the send is fired without being awaited, the throw one line
- * later becomes an unhandled rejection that lands after the test has already
+ * A bare `vi.fn()` resolves `undefined`, and both delivery stores read their verdict off the result
+ * the moment it lands — outside the `catch`, which means "the panel lost contact with the app"
+ * rather than "what came back was garbage". Since the send is fired without being awaited, the
+ * throw one line later becomes an unhandled rejection that lands after the test has already
  * passed: `Errors 1 error`, exit 1, every test green.
+ *
+ * AMENDED for #635 (was: the panel window's own members, with `getMessagePanel`,
+ * `setMessagePanel`, `onMessagePanel`, `setMessagePanelHeight`, `reportMessagePanelSettled` and
+ * `reportDwarfDelivery`, none of which exists any more). The shell's own members join the panel's
+ * because it is the shell that is mounted now.
  */
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
-    // Fire-and-forget: this window reports its own presses so main can raise
-    // it, and there is no verdict to render (#162, #165).
     raisePanel: vi.fn(),
-    getMines: vi.fn().mockResolvedValue({ mines: [], tokensObserved: 0 }),
+    // The mine the panels open in, crewless: a test about a dwarf names its own crew.
+    getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 }),
     onMinesUpdated: vi.fn().mockReturnValue(() => undefined),
-    // The launch-failure push (#263), subscribed unconditionally on mount —
-    // see useAgentLaunch's listenFailures. Not wrapped in a try/catch the way
-    // the awaited launch members are, so a missing stub here would break
-    // every test in this file rather than just the ones about a launch.
+    // The launch-failure push (#263), subscribed unconditionally on mount.
     onLaunchFailed: vi.fn().mockReturnValue(() => undefined),
     // Answers "a window was focused", the verdict that leaves the panel alone.
     activateDwarf: vi.fn().mockResolvedValue({ focused: true, openedTerminal: false, feed: [] }),
-    // An observed session's transcript, read on selection (#159); a
-    // readable-but-empty answer is the quiet default.
+    // An observed session's transcript, read on selection (#159): readable and empty.
     getDwarfFeed: vi.fn().mockResolvedValue({ readable: true, messages: [] }),
-    // One page of scrollback (#364), asked for when the reader reaches the top
-    // of what the panel holds. A readable answer with nothing older is the
-    // quiet default, on the same rule as the feed above.
+    // One page of scrollback (#364): readable, with nothing older.
     getDwarfFeedPage: vi
       .fn()
       .mockResolvedValue({ readable: true, messages: [], reachedStart: true }),
     setWatchedDwarf: vi.fn(),
     sendDwarfText: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
-    /*
-     * ADDED for #457 (was: absent). The verdict of a message main HELD arrives
-     * on its own push, and this window subscribes to it unconditionally on
-     * mount — exactly like `onLaunchFailed` above, and like it, a missing stub
-     * would break every test in this file rather than the ones about a hold.
-     * The default hears nothing, which is what a delivered send produces.
-     */
+    // The verdict of a message main HELD (#457), subscribed unconditionally on mount.
     onDwarfSendSettled: vi.fn().mockReturnValue(() => undefined),
     kickDwarf: vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' }),
     retireDwarf: vi.fn(),
     answerDwarfQuestion: vi.fn().mockResolvedValue({ answered: true }),
     answerDwarfPermission: vi.fn().mockResolvedValue({ answered: true }),
-    // The state main holds for both windows (#162). Answering with the request
-    // is what main does when it can satisfy it.
-    getMessagePanel: vi.fn().mockResolvedValue(CLOSED),
-    setMessagePanel: vi.fn().mockImplementation((state: unknown) => Promise.resolve(state)),
-    onMessagePanel: vi.fn().mockReturnValue(() => undefined),
-    setMessagePanelHeight: vi.fn(),
-    // ADDED for #389: the one report behind the deferred hide. Fire-and-forget
-    // like the height above — main either had a hide waiting on it or did not,
-    // and there is no verdict for this window to draw either way.
-    reportMessagePanelSettled: vi.fn(),
-    reportDwarfDelivery: vi.fn(),
-    // The launch surface (#86). Claude detected and launchable is the ordinary
-    // machine; a launch answers "started", which claims no dwarf.
+    // The launch surface (#86): Claude detected and launchable; a launch answers "started".
     listAgentProviders: vi.fn().mockResolvedValue({
       providers: [{ provider: 'claude', installed: true, launchable: true }]
     }),
+    listAgentModels: vi.fn().mockResolvedValue({ catalogs: [] }),
     launchHeldSession: vi.fn().mockResolvedValue({ launched: true }),
-    // A click on an activity line's own path (#279). Opened is the quiet
-    // default; individual tests override it to assert the refusal path.
     openMinePath: vi.fn().mockResolvedValue({ opened: true }),
-    // A press on a link inside a bubble (#347), on the same rule as the line
-    // above: opened is the quiet default, and the refusal path is asserted by
-    // the tests that override it.
     openExternalLink: vi.fn().mockResolvedValue({ opened: true }),
-    /*
-     * AMENDED for #370 (was: absent). This window paints the messaging face, so
-     * it adopts the stored faces on mount and subscribes to the change the
-     * SHELL makes — both members have to exist even in tests that never open
-     * Settings, and `onTypographyPreferences` in particular is subscribed
-     * unconditionally like `onLaunchFailed` above. The defaults answer with what
-     * the stylesheet already carries. No existing assertion changed.
-     */
     getTypographyPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
+    setTypographyPreferences: vi.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
     onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
+    // The shell's own surfaces, answered as main answers them on a fresh install.
+    getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [] }),
+    getAlwaysOnTop: vi.fn().mockResolvedValue(true),
+    setAlwaysOnTop: vi.fn().mockResolvedValue(true),
+    getPanelLayout: vi.fn().mockResolvedValue({ edge: 'right', mineOpen: false, dockOpen: false }),
+    setPanelLayout: vi
+      .fn()
+      .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
+        Promise.resolve({ edge: 'right', ...request })
+      ),
+    getToggleShortcut: vi.fn().mockResolvedValue({
+      accelerator: 'Control+Alt+Shift+P',
+      registered: true,
+      platform: 'win32'
+    }),
+    getAppBuild: vi.fn().mockResolvedValue({ version: '1.2.3', packaged: true }),
+    getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnabled: false }),
+    queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [] }),
+    refreshDwarfTelemetry: vi.fn(),
+    getAudioPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_AUDIO_PREFERENCES }),
+    setAudioPreferences: vi.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
+    // Hidden, as main creates the window: nothing opens a media element jsdom cannot play.
+    getPanelVisible: vi.fn().mockResolvedValue(false),
+    onPanelVisibility: vi.fn().mockReturnValue(() => undefined),
+    setOpenMine: vi.fn(),
+    onShowMine: vi.fn().mockReturnValue(() => undefined),
+    getNotificationsEnabled: vi.fn().mockResolvedValue(true),
+    getJevSettings: vi.fn().mockResolvedValue({ ...DEFAULT_JEV_SETTINGS }),
+    getOpenCodeSettings: vi
+      .fn()
+      .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
+    setLaunchView: vi.fn(),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -133,8 +142,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
 }
 
 const MINE = {
-  id: 'mine:c:\\x\\anvil',
-  path: 'C:\\x\\anvil',
+  id: 'mine:c:/x/anvil',
+  path: 'C:/x/anvil',
   name: 'anvil',
   tier: 'bronze',
   dwarfs: [],
@@ -143,60 +152,65 @@ const MINE = {
 }
 
 /**
- * Every mounted window, so afterEach can take it down again.
- *
- * Unmounting is not tidiness here, it is correctness: the mines store is a
- * module-scope singleton, so a window left mounted still holds the dwarf it was
- * opened on and still answers the next test's snapshot pushes — reading a feed
- * through whatever api stub happens to be installed by then. Which is one
- * test's assertion counting another test's reads.
+ * Every mounted shell, so afterEach can take it down again: the stores are module-scope
+ * singletons, so a shell left mounted still answers the next test's snapshot pushes.
  */
 const mounted: VueWrapper[] = []
 
 /**
- * `props` is new in #566, optional and last so every call above it is
- * untouched: only the motion suite near the bottom of this file ever passes
- * `engine`, to hand the window a hand-written fake in place of the real
- * motion-v import. `afterRender` is its sibling (#566 hotfix), for a test
- * that needs to decide exactly when a scheduled re-apply fires rather than
- * racing motion-v's real `frame.postRender`.
+ * The shell, and the surface a person would have asked for: nothing, the Add panel on a mine (its
+ * Add action), or the chat on one dwarf of it (a click on the dwarf). The mine is opened as a
+ * person opens it, from the map.
  */
 async function mountPanel(
   panel: { surface: string; mineId: string; dwarfId: string },
-  overrides: Record<string, unknown> = {},
-  props: { engine?: MotionAnimate; afterRender?: ScheduleAfterRender } = {}
+  overrides: Record<string, unknown> = {}
 ) {
-  const api = stubApi({ getMessagePanel: vi.fn().mockResolvedValue(panel), ...overrides })
-  const wrapper = mount(MessagePanelWindow, { props })
+  const api = stubApi(overrides)
+  const wrapper = mount(App)
   mounted.push(wrapper)
   await flushPromises()
+  if (panel.surface !== 'none') {
+    wrapper.findComponent(MapPage).vm.$emit('open', panel.mineId)
+    await flushPromises()
+    if (panel.surface === 'launch') wrapper.findComponent(MineColumn).vm.$emit('add')
+    else await selectOn(wrapper, panel.dwarfId)
+    await flushPromises()
+  }
   return { wrapper, api }
 }
 
-/**
- * The window as it comes up when a dwarf was clicked in the shell: main was
- * asked for the message surface on that dwarf, and this window reads it back.
- */
-async function openOn(
-  dwarfs: unknown[],
-  dwarfId: string,
-  overrides: Record<string, unknown> = {},
-  props: { engine?: MotionAnimate; afterRender?: ScheduleAfterRender } = {}
-) {
+/** A click on a dwarf of the open mine, as the board last drew it. */
+async function selectOn(wrapper: VueWrapper, dwarfId: string) {
+  const column = wrapper.findComponent(MineColumn)
+  const dwarf = (column.props('mine') as { dwarfs: { id: string }[] }).dwarfs.find(
+    (candidate) => candidate.id === dwarfId
+  )
+  if (dwarf === undefined) throw new Error(`no dwarf ${dwarfId} is in the open mine`)
+  column.vm.$emit('select', dwarf)
+  await flushPromises()
+}
+
+/** The shell as it comes up once a dwarf was clicked in its mine. */
+async function openOn(dwarfs: unknown[], dwarfId: string, overrides: Record<string, unknown> = {}) {
   return mountPanel(
     { surface: 'message', mineId: MINE.id, dwarfId },
     {
       getMines: vi.fn().mockResolvedValue({ mines: [{ ...MINE, dwarfs }], tokensObserved: 0 }),
       ...overrides
-    },
-    props
+    }
   )
 }
 
-/** The poll, as main publishes it to this window too (#162). */
+/** The poll, as main publishes it to the shell. */
 function pushSnapshot(api: Record<string, ReturnType<typeof vi.fn>>, snapshot: unknown) {
   const push = api.onMinesUpdated!.mock.calls[0]![0] as (snapshot: unknown) => void
   push(snapshot)
+}
+
+/** The toasts the shell is showing, where it says what a panel could not do (#635). */
+function toastTexts(wrapper: VueWrapper): string[] {
+  return wrapper.findAll('.dm-toast').map((toast) => toast.text())
 }
 
 const OBSERVED_DWARF = {
@@ -240,6 +254,7 @@ beforeEach(() => {
   // verdict for a minute while they watch for a reaction — so a test that sent,
   // kicked, answered or launched would leave its state in the next one.
   useMines().clear()
+  useView().clear()
   // The pages a reader scrolled back to are a singleton too (#364), and one
   // left standing would be drawn under the next test's dwarf.
   useDwarfPaging().clear()
@@ -253,60 +268,53 @@ afterEach(() => {
   for (const wrapper of mounted.splice(0)) wrapper.unmount()
 })
 
-describe('the message panel window', () => {
-  it('draws nothing at all until main says what to show', async () => {
+describe('the docked message panel', () => {
+  // AMENDED for #635 (was: 'draws nothing at all until main says what to show').
+  it('draws no panel until a dwarf or the Add action asks for one', async () => {
     const { wrapper } = await mountPanel(CLOSED)
     expect(wrapper.find('.message-panel').exists()).toBe(false)
     expect(wrapper.find('.add-panel').exists()).toBe(false)
   })
 
-  it('opens on the dwarf main named, with no mine anywhere near it', async () => {
-    // The mine stays in the shell: that is the whole point of the second
-    // window, and the design's own mock draws the two side by side.
+  /*
+   * AMENDED for #635 (was: 'opens on the dwarf main named, with no mine anywhere near it'). The
+   * mine is beside it again, in the same window: the chat is in the dock's slot and the mine
+   * column stands where it stood.
+   */
+  it('opens on the dwarf that was clicked, the mine still beside it', async () => {
     const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
     expect(wrapper.find('.message-panel').exists()).toBe(true)
     expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
-    expect(wrapper.find('.mine-scene').exists()).toBe(false)
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
   })
 
-  it('adopts a surface main pushes after it is already up', async () => {
-    // The shell can select a dwarf while this window is open on another one,
-    // or on nothing: the push is how it hears, and there is no other route.
-    const { wrapper, api } = await mountPanel(CLOSED, {
-      getMines: vi
-        .fn()
-        .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
-    })
-    expect(wrapper.find('.message-panel').exists()).toBe(false)
+  /*
+   * REMOVED for #635, stated rather than passing unseen: "adopts a surface main pushes after it is
+   * already up". The push was how the second window heard the shell select a dwarf; the selection
+   * is this window's own now, and 'blanks back to the reading note when the panel switches to a
+   * different dwarf' below still switches an open panel to another dwarf.
+   */
 
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-    await flushPromises()
-
-    expect(wrapper.find('.message-panel').exists()).toBe(true)
-    expect(wrapper.find('.panel-agent').text()).toBe('Foreman')
-  })
-
-  it('closes itself through main, so the shell hears about it', async () => {
-    // The halo on the sprite is drawn from the state main holds, so a panel
-    // that closed only locally would leave a dwarf marked selected forever.
-    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
+  /*
+   * AMENDED for #635 (was: 'closes itself through main, so the shell hears about it', asserting the
+   * `setMessagePanel` request). The halo is drawn from the same state as the chat now, so a
+   * close is heard by the sprite in the same frame.
+   */
+  it('closes itself, and the sprite lets its halo go', async () => {
+    const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
 
     await wrapper.find('.panel-close').trigger('click')
     await flushPromises()
 
-    expect(api.setMessagePanel).toHaveBeenLastCalledWith(CLOSED)
     expect(wrapper.find('.message-panel').exists()).toBe(false)
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
   })
 
-  it('raises its OWN window on a press, never the shell', async () => {
-    // Both are frameless transparent windows the platform does not reliably
-    // bring forward (#165), and main answers for the sender — so a press on
-    // the composer must not raise the other window instead of this one.
-    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
-    await wrapper.find('.message-window').trigger('pointerdown')
-    expect(api.raisePanel).toHaveBeenCalledOnce()
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: "raises its OWN window on a press, never
+   * the shell". There is one window; a press anywhere on it raises it, which App.test.ts's 'App
+   * raise on click (#165)' asserts on the dock that holds this panel.
+   */
 
   it("reads an observed session's transcript, and shows what came back", async () => {
     const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
@@ -449,7 +457,9 @@ describe('the message panel window', () => {
     await wrapper.find('.panel-agent').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.notice').text()).toContain('could not be opened')
+    // AMENDED for #635 (was: the `.notice` line above the panel in its own window): said in a
+    // toast with the warning icon, where the shell says every other refusal.
+    expect(toastTexts(wrapper).join(' ')).toContain('could not be opened')
   })
 })
 
@@ -511,16 +521,19 @@ describe('opening an activity line’s path', () => {
     await openLine(wrapper)
     await flushPromises()
 
-    expect(wrapper.find('.notice').text()).toBe("That path is outside this mine's folder.")
+    // AMENDED for #635 (was: the `.notice` line): a toast, as above.
+    expect(toastTexts(wrapper)).toContain("That path is outside this mine's folder.")
   })
 
   it('says nothing when the file opened successfully', async () => {
     const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id, EDIT_FEED)
 
+    const before = toastTexts(wrapper).length
     await openLine(wrapper)
     await flushPromises()
 
-    expect(wrapper.find('.notice').exists()).toBe(false)
+    // No toast of its own: the queue is the window's, so what counts is what this press added.
+    expect(toastTexts(wrapper)).toHaveLength(before)
   })
 })
 
@@ -532,27 +545,31 @@ describe('opening an activity line’s path', () => {
  * They live here now because this window is the one that sends and kicks, and a
  * watch for a reaction can only be resolved where it was opened.
  */
-describe('publishing the delivery verdicts', () => {
-  it('reports a send the moment its verdict lands', async () => {
-    const { wrapper, api } = await openOn(
-      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
-      'claude:s1'
-    )
+/*
+ * AMENDED for #635 (was: 'publishing the delivery verdicts', each case reading the report the
+ * panel window sent across the bridge). The mine and the stores are one page now, so each case
+ * reads what the mine column is handed — the one thing the report was for.
+ */
+describe('handing the delivery verdicts to the mine', () => {
+  it('hands the mine a send the moment its verdict lands', async () => {
+    const { wrapper } = await openOn([{ ...OBSERVED_DWARF, textDelivery: 'terminal' }], 'claude:s1')
 
     await wrapper.find('.panel-input').setValue('dig deeper')
     await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
-    const last = api.reportDwarfDelivery.mock.lastCall?.[0] as {
-      send: Record<string, { phase: string }>
-    }
-    expect(last.send['claude:s1']?.phase).toBe('delivered')
+    const send = wrapper.findComponent(MineColumn).props('sendStates') as Record<
+      string,
+      { phase: string }
+    >
+    expect(send['claude:s1']?.phase).toBe('delivered')
   })
 
-  // ADDED for #635 (PANEL-QUESTIONS 16): the history in the shell draws a message that never
-  // arrived from this window's own record of the send.
-  it('reports a message that failed, with its words and send time', async () => {
-    const { wrapper, api } = await openOn(
+  // ADDED for #635 (PANEL-QUESTIONS 16): the history draws a message that never arrived from the
+  // app's own record of the send. AMENDED for the MessagePanel slice (was: read off the report):
+  // the record is the messaging store the history is handed from, in this window.
+  it('records a message that failed, with its words and send time', async () => {
+    const { wrapper } = await openOn(
       [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
       'claude:s1',
       { sendDwarfText: vi.fn().mockResolvedValue({ delivered: false, via: 'none', error: 'gone' }) }
@@ -560,28 +577,16 @@ describe('publishing the delivery verdicts', () => {
     await wrapper.find('.panel-input').setValue('dig deeper')
     await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    const last = api.reportDwarfDelivery.mock.lastCall?.[0] as {
-      failed?: Record<string, { text: string; sentAt: number }[]>
-    }
-    expect(last.failed?.['claude:s1']?.map((f) => f.text)).toEqual(['dig deeper'])
-    expect(typeof last.failed?.['claude:s1']?.[0]?.sentAt).toBe('number')
+    const failed = useDwarfMessaging().failedSends()
+    expect(failed['claude:s1']?.map((f) => f.text)).toEqual(['dig deeper'])
+    expect(typeof failed['claude:s1']?.[0]?.sentAt).toBe('number')
   })
 
-  it('reports plain objects, because a Vue proxy cannot cross the bridge', async () => {
-    const { wrapper, api } = await openOn(
-      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
-      'claude:s1'
-    )
-
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-
-    // structuredClone is what Electron's IPC does with the payload: a reactive
-    // proxy throws there, and the throw would land in main rather than here.
-    const last = api.reportDwarfDelivery.mock.lastCall?.[0]
-    expect(() => structuredClone(last)).not.toThrow()
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: "reports plain objects, because a Vue
+   * proxy cannot cross the bridge". Nothing about a verdict crosses a bridge any more: the mine is
+   * handed the store's own state in the same page.
+   */
 
   /*
    * MOVED from MineScene.test.ts's 'MineScene reaction feed' block (#162),
@@ -676,188 +681,14 @@ describe('publishing the delivery verdicts', () => {
   })
 })
 
-/**
- * How tall the window is (#162).
- *
- * The design's four sizing rules are still `lib/message/panelHeight`'s; what
- * this window adds is that the answer becomes the WINDOW's height. It measures
- * the surface it drew, which is the one reading that covers both panels — the
- * MessagePanel sets its own height and can be dragged, the Add Panel is
- * content-driven — and it means a drag on the panel's own handle resizes the
- * window with nothing extra wired to it.
+/*
+ * REMOVED for #635, stated rather than passing unseen: the whole 'reporting its own height' block
+ * (six cases: the measured surface reported in design pixels, the observer, a report on every
+ * change of surface and of content, none before layout, one per dwarf). They sized the panel's
+ * own window, which is gone: the panel fills the dock's slot, whose height is the dock's
+ * (decision log, MessagePanel and Add panel anchored), and whose width main reserves with the
+ * slot (panelBounds.test.ts, and App.test.ts's 'App dock (#635)').
  */
-describe('reporting its own height', () => {
-  /** jsdom lays nothing out and ships no ResizeObserver; both are faked here. */
-  function fakeMeasurement(height: number) {
-    const observers: { callback: () => void; target: HTMLElement | null }[] = []
-    class FakeResizeObserver {
-      target: HTMLElement | null = null
-      constructor(public callback: () => void) {
-        observers.push(this)
-      }
-      observe(element: HTMLElement) {
-        this.target = element
-      }
-      disconnect() {
-        this.target = null
-      }
-    }
-    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
-    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
-      configurable: true,
-      get() {
-        return height
-      }
-    })
-    return {
-      observers,
-      restore: () => {
-        vi.unstubAllGlobals()
-        Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight')
-      }
-    }
-  }
-
-  it('reports the surface it measured, in design pixels', async () => {
-    const measured = fakeMeasurement(235)
-    try {
-      const { api } = await openOn([OBSERVED_DWARF], 'claude:s1')
-      // The page is zoomed by main, so what the renderer measures IS the
-      // design world — which is the only unit main will take.
-      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(235)
-    } finally {
-      measured.restore()
-    }
-  })
-
-  it('observes the surface, so a drag on the panel’s handle resizes the window', async () => {
-    const measured = fakeMeasurement(578)
-    try {
-      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
-      const observer = measured.observers[0]
-      expect(observer?.target).toBe(wrapper.find('.message-surface').element)
-
-      api.setMessagePanelHeight.mockClear()
-      observer?.callback()
-      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(578)
-    } finally {
-      measured.restore()
-    }
-  })
-
-  it('reports again whenever the surface changes, so a hidden window is revealed', async () => {
-    // The window is created HIDDEN and the first height report is what reveals
-    // the window — see setMessagePanelHeight in main/shell/window.ts. Leaving that to
-    // the ResizeObserver alone would leave the window hidden whenever the new
-    // surface happens to be exactly as tall as the last one — a panel that
-    // looks as though the click did nothing.
-    const measured = fakeMeasurement(235)
-    try {
-      const { api } = await mountPanel(CLOSED, {
-        getMines: vi
-          .fn()
-          .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
-      })
-      api.setMessagePanelHeight.mockClear()
-
-      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-      await flushPromises()
-
-      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(235)
-    } finally {
-      measured.restore()
-    }
-  })
-
-  it('reports nothing at all before anything has been laid out', async () => {
-    // A height of zero is not a height: main refuses it, and a window of no
-    // height is a panel that looks as though it never opened.
-    const { api } = await openOn([OBSERVED_DWARF], 'claude:s1')
-    expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
-  })
-
-  /**
-   * A surface that measures what it actually CONTAINS, with no observer
-   * watching it change (#312).
-   *
-   * `fakeMeasurement` above answers one constant height whatever is on the
-   * page, and that is what hid the first open of a run: it makes the report
-   * fired from `onMounted` succeed before either panel exists, so the ORDER
-   * the two answers arrive in never mattered. A real surface is 0 tall until
-   * it holds a panel, and this getter says so.
-   *
-   * No ResizeObserver on purpose, and jsdom shipping none is the real
-   * situation rather than an approximation of it: the panel window is created
-   * hidden, a hidden window's frames are not drawn, and the observer callback
-   * is delivered as part of drawing one. So the observer that backs up a
-   * VISIBLE window is exactly what the open that has to reveal it cannot have.
-   */
-  function fakeContentMeasurement(height: number) {
-    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.querySelector('.message-panel, .add-panel') === null ? 0 : height
-      }
-    })
-    return { restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight') }
-  }
-
-  /** An answer from main this test holds back, so the two can land in one order. */
-  function deferred<T>() {
-    let settle: (value: T) => void = () => undefined
-    const promise = new Promise<T>((resolve) => {
-      settle = resolve
-    })
-    return { promise, settle }
-  }
-
-  it('reports the height once the dwarf’s panel mounts, not only when the surface changes', async () => {
-    // The first open of a run, in the order the two answers actually arrive
-    // (#312): main names the surface, and the board that decides WHICH dwarf
-    // is drawn lands afterwards. So the report the surface change fires
-    // measures a surface with nothing in it yet, and the one thing that
-    // reveals the window is a report — which makes the panel that appears when
-    // the board lands the moment there is finally something to say.
-    const measured = fakeContentMeasurement(426)
-    const board = deferred<unknown>()
-    try {
-      const { wrapper, api } = await mountPanel(
-        { surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' },
-        { getMines: vi.fn().mockReturnValue(board.promise) }
-      )
-      expect(wrapper.find('.message-panel').exists()).toBe(false)
-      expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
-
-      board.settle({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
-      await flushPromises()
-
-      expect(wrapper.find('.message-panel').exists()).toBe(true)
-      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
-    } finally {
-      measured.restore()
-    }
-  })
-
-  it('reports again for the next dwarf, whose panel is a fresh one of its own height', async () => {
-    // Selecting another dwarf never changes the SURFACE — it stays 'message' —
-    // so the watch that only followed the surface left this to the observer,
-    // which says nothing when the two panels happen to be the same height.
-    const measured = fakeContentMeasurement(300)
-    try {
-      const { api } = await openOn([OBSERVED_DWARF, HELD_DWARF], 'claude:s1')
-      api.setMessagePanelHeight.mockClear()
-
-      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
-      await flushPromises()
-
-      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(300)
-    } finally {
-      measured.restore()
-    }
-  })
-})
 
 /**
  * The whole answer loop through the real components (#125): a question reaches
@@ -1293,16 +1124,14 @@ describe('feed refresh (#183)', () => {
         resolveSecondDwarfFeed = resolve
       })
     })
-    const { wrapper, api } = await openOn([FIRST_DWARF, SECOND_DWARF], 'claude:s1', {
+    const { wrapper } = await openOn([FIRST_DWARF, SECOND_DWARF], 'claude:s1', {
       getDwarfFeed
     })
     expect(wrapper.find('.bubble').text()).toBe('Halfway down the shaft')
 
-    // The switch is the shell selecting somebody else, which reaches this
-    // window as a pushed state rather than as a click in the mine.
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s3' })
-    await flushPromises()
+    // The switch is the person selecting somebody else in the mine. AMENDED for
+    // #635 (was: a state pushed from the shell to the panel's own window).
+    await selectOn(wrapper, 'claude:s3')
 
     expect(wrapper.find('.bubble').exists()).toBe(false)
     expect(wrapper.find('.panel-note').text()).toContain('Reading')
@@ -1459,7 +1288,8 @@ describe('the add panel', () => {
     await flushPromises()
   }
 
-  it('opens on the launch surface main was asked for', async () => {
+  // AMENDED for #635 (was: 'opens on the launch surface main was asked for').
+  it('opens on the mine its Add action was pressed in', async () => {
     const { wrapper } = await openAddPanel()
     expect(wrapper.find('.add-panel').exists()).toBe(true)
   })
@@ -1479,13 +1309,15 @@ describe('the add panel', () => {
    * replacing the other — so they cannot both be there. Which of them is drawn
    * follows the surface main holds, and this window is the only place that
    * decision is made.
+   *
+   * AMENDED for #635: the surface is the dock's own, asked for by the mine's
+   * Add action and by a click on a dwarf (was: states pushed from main).
    */
   it('takes the place of an open MessagePanel', async () => {
-    const { wrapper, api } = await openOn([OTHER_DWARF], 'claude:s1')
+    const { wrapper } = await openOn([OTHER_DWARF], 'claude:s1')
     expect(wrapper.find('.message-panel').exists()).toBe(true)
 
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'launch', mineId: MINE.id, dwarfId: '' })
+    wrapper.findComponent(MineColumn).vm.$emit('add')
     await flushPromises()
 
     expect(wrapper.find('.add-panel').exists()).toBe(true)
@@ -1493,7 +1325,7 @@ describe('the add panel', () => {
   })
 
   it('gives it back when a dwarf is selected instead', async () => {
-    const { wrapper, api } = await mountPanel(
+    const { wrapper } = await mountPanel(
       { surface: 'launch', mineId: MINE.id, dwarfId: '' },
       {
         getMines: vi
@@ -1503,35 +1335,35 @@ describe('the add panel', () => {
     )
     expect(wrapper.find('.add-panel').exists()).toBe(true)
 
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-    await flushPromises()
+    await selectOn(wrapper, 'claude:s1')
 
     expect(wrapper.find('.add-panel').exists()).toBe(false)
     expect(wrapper.find('.message-panel').exists()).toBe(true)
   })
 
-  it('closes from its own close control, through main', async () => {
-    const { wrapper, api } = await openAddPanel()
+  // AMENDED for #635 (was: 'closes from its own close control, through main', with the
+  // `setMessagePanel` request): the dock lets the launch go in this window.
+  it('closes from its own close control', async () => {
+    const { wrapper } = await openAddPanel()
 
     await wrapper.find('.launch-close').trigger('click')
     await flushPromises()
 
-    expect(api.setMessagePanel).toHaveBeenLastCalledWith(CLOSED)
     expect(wrapper.find('.add-panel').exists()).toBe(false)
+    expect(useAgentLaunch().phase.value).toBe('closed')
   })
 
   it('does not start a fresh panel when the same surface arrives twice', async () => {
-    // `open()` starts a FRESH panel, so a repeated state — the shell
-    // re-publishing, a push landing after the pull — would silently discard a
-    // prompt somebody was half-way through typing.
-    const { wrapper, api } = await openAddPanel()
+    // `open()` starts a FRESH panel, so a repeated request — AMENDED for #635
+    // (was: the shell re-publishing, a push landing after the pull): the Add
+    // action pressed again — would silently discard a prompt somebody was
+    // half-way through typing.
+    const { wrapper } = await openAddPanel()
     await wrapper.findAll('.provider-chip')[0]!.trigger('click')
     await wrapper.find('.launch-input').setValue('dig the east gallery')
     await flushPromises()
 
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'launch', mineId: MINE.id, dwarfId: '' })
+    wrapper.findComponent(MineColumn).vm.$emit('add')
     await flushPromises()
 
     expect(wrapper.find<HTMLTextAreaElement>('.launch-input').element.value).toBe(
@@ -1582,11 +1414,15 @@ describe('the add panel', () => {
     expect(wrapper.find('.panel-agent').text()).toBe('Newcomer')
   })
 
-  it('tells main which dwarf the launch produced, so the mine can halo it', async () => {
-    // Only this window can know: the handover is decided by the launch's own
-    // arrival rules, from the board, here. The shell draws its halo from the
-    // state main holds, so a handover nobody published is a dwarf that starts
-    // work with no mark on it.
+  /*
+   * AMENDED for #635 (was: 'tells main which dwarf the launch produced, so the mine can halo it',
+   * asserting the `setMessagePanel` request). The halo is drawn in this window from the dwarf the
+   * dock adopted, so the case asserts the halo itself.
+   */
+  it('halos the dwarf the launch produced', async () => {
+    // The handover is decided by the launch's own arrival rules, from the
+    // board: a handover the halo missed is a dwarf that starts work with no
+    // mark on it.
     const { wrapper, api } = await openAddPanel({
       getMines: vi.fn().mockResolvedValue({ mines: [MINE], tokensObserved: 0 })
     })
@@ -1598,11 +1434,8 @@ describe('the add panel', () => {
     })
     await flushPromises()
 
-    expect(api.setMessagePanel).toHaveBeenLastCalledWith({
-      surface: 'message',
-      mineId: MINE.id,
-      dwarfId: 'claude:s9'
-    })
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-label')).toContain('Newcomer')
   })
 
   /*
@@ -1876,36 +1709,36 @@ describe('the sent message, drawn at once (#309)', () => {
     // these anyway — going away and coming back is what proves the store let
     // go of them rather than the component merely not asking.
     const SECOND = { ...ECHO_DWARF, id: 'claude:s3', sessionId: 's3', name: 'Digger' }
-    const { wrapper, api } = await openOn([ECHO_DWARF, SECOND], 'claude:s1', {
+    const { wrapper } = await openOn([ECHO_DWARF, SECOND], 'claude:s1', {
       sendDwarfText: vi.fn(() => new Promise(() => {}))
     })
 
     await sendFrom(wrapper, 'dig deeper')
     expect(wrapper.find('.message.is-user .bubble').exists()).toBe(true)
 
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s3' })
-    await flushPromises()
+    // AMENDED for #635 (was: states pushed to the panel's own window): clicks in the mine.
+    await selectOn(wrapper, 'claude:s3')
     expect(wrapper.find('.message.is-user .bubble').exists()).toBe(false)
 
-    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-    await flushPromises()
+    await selectOn(wrapper, 'claude:s1')
     expect(wrapper.find('.message.is-user .bubble').exists()).toBe(false)
   })
 
-  it('reports nothing about an echo to the shell: a dwarf still has one verdict', async () => {
-    // #309 adds no wire shape. The sprite marker reads the same two maps it
-    // always did, and an echo is renderer-only state that never crosses.
-    const { wrapper, api } = await openOn([ECHO_DWARF], 'claude:s1')
+  // AMENDED for #635 (was: 'reports nothing about an echo to the shell', reading the report the
+  // panel window published): the mine is handed the same one verdict per dwarf, in this window.
+  it('hands the mine nothing about an echo: a dwarf still has one verdict', async () => {
+    // #309 adds no shape to the sprite. The marker reads the same two maps it
+    // always did, and an echo is the chat's own state.
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1')
 
     await sendFrom(wrapper, 'dig deeper')
     await flushPromises()
 
-    const last = api.reportDwarfDelivery.mock.lastCall?.[0] as Record<string, unknown>
-    expect(Object.keys(last).sort()).toEqual(['kick', 'send'])
-    expect(last.send).toEqual({
+    const column = wrapper.findComponent(MineColumn)
+    expect(column.props('sendStates')).toEqual({
       'claude:s1': { phase: 'delivered', via: 'terminal', awaitingReaction: true }
     })
+    expect(column.props('kickStates')).toEqual({})
   })
 })
 
@@ -1951,7 +1784,8 @@ describe('opening a link inside a bubble', () => {
     await wrapper.find('.bubble .markdown-link').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.notice').text()).toBe('That link could not be opened.')
+    // AMENDED for #635 (was: the `.notice` line): a toast, as above.
+    expect(toastTexts(wrapper)).toContain('That link could not be opened.')
   })
 
   it('says nothing when the browser took it', async () => {
@@ -1960,10 +1794,12 @@ describe('opening a link inside a bubble', () => {
       openExternalLink: vi.fn().mockResolvedValue({ opened: true })
     })
 
+    const before = toastTexts(wrapper).length
     await wrapper.find('.bubble .markdown-link').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.notice').exists()).toBe(false)
+    // No toast of its own: the queue is the window's, so what counts is what this press added.
+    expect(toastTexts(wrapper)).toHaveLength(before)
   })
 })
 
@@ -2186,7 +2022,7 @@ describe('paging back through the conversation (#364)', () => {
             : [{ role: 'assistant', text: 'Just arrived at the seam', timestamp: 'u0' }]
       })
     )
-    const { wrapper, api } = await openOn([PAGED_DWARF, SECOND], 'claude:s1', {
+    const { wrapper } = await openOn([PAGED_DWARF, SECOND], 'claude:s1', {
       getDwarfFeed,
       getDwarfFeedPage: vi
         .fn()
@@ -2195,9 +2031,8 @@ describe('paging back through the conversation (#364)', () => {
     await scrollToTop(wrapper)
     expect(textsOf(wrapper)).toHaveLength(4)
 
-    const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-    push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s3' })
-    await flushPromises()
+    // AMENDED for #635 (was: a state pushed to the panel's own window): a click in the mine.
+    await selectOn(wrapper, 'claude:s3')
 
     expect(textsOf(wrapper)).toEqual(['Just arrived at the seam'])
   })
@@ -2383,545 +2218,26 @@ describe('paging back through a held conversation (#430)', () => {
   })
 })
 
-/**
- * ADDED for #389. The window's own motion: the surface rises when the window
- * arrives, and settles before it goes.
- *
- * The two halves are asymmetric on purpose, because the window's two moments
- * are. Main creates or re-places it HIDDEN and the first height report is what
- * reveals it (#312), so an entering surface has somewhere to wait: it holds its
- * hidden keyframe from the moment the surface opens and rises in the same turn
- * as the report that shows the window. A LEAVE has nothing equivalent — main
- * would hide the window in the frame the state changed — so main defers the
- * hide until this window says the surface has settled, which is what
- * `reportMessagePanelSettled` is.
- *
- * What jsdom cannot prove is the part a compositor owns: that the first painted
- * frame after `show()` is the hidden keyframe rather than the panel popping in
- * and then animating. Nothing here lays out, paints, or runs a real animation.
- * What these hold is the ORDER the renderer puts the two in, which is the whole
- * of what the renderer controls.
+/*
+ * REMOVED for #635, stated rather than passing unseen: the whole 'rising into place and settling
+ * before the window goes' block (#389, #566: the surface held hidden until its window was shown,
+ * the rise and the settle through the bounded runner, the settled report main's hide waited on,
+ * reduced motion, a cut between two dwarfs, a reopen inside a leave, the withdrawn re-applies).
+ * Every one of them was the second window's motion. The panel now moves as the dock's window slot
+ * does, through the same runner: App.test.ts's 'App panel motion (#164)' asserts the slot opening
+ * from its far side and closing toward the shell, what it holds replaced with a fade, a leave the
+ * shrink waits on and a leave that never reports (#266); dockMotion.test.ts pins the timings.
  */
-describe('rising into place and settling before the window goes', () => {
-  /**
-   * A surface as tall as what it contains, and 0 while it contains nothing —
-   * `fakeContentMeasurement`'s rule above, restated here because the enter
-   * hangs off the FIRST report and a constant height would fire one before
-   * either panel exists.
-   */
-  function fakeContentHeight(height: number) {
-    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.querySelector('.message-panel, .add-panel') === null ? 0 : height
-      }
-    })
-    return { restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'offsetHeight') }
-  }
-
-  /**
-   * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
-   * (was: stubbing `HTMLElement.prototype.animate`, WAAPI's own entry point,
-   * which the runner no longer calls). `engine` is handed to
-   * `mountPanel`/`openOn` as a prop (`createBoundedMotion({ animate })`);
-   * `HTMLElement.prototype.animate` still gets a bare stub below, because
-   * `still()` reads its mere PRESENCE as the app's proxy for "a real
-   * Chromium window" and never calls it.
-   *
-   * AMENDED again for #566: no `timing` argument any more — the runner
-   * passes `animate()` no transition at all now, so a fake that recorded one
-   * would be recording something the real call site never sends.
-   */
-  function fakeAnimations(order: string[] = []) {
-    const runs: {
-      element: Element
-      keyframes: DOMKeyframesDefinition
-      finish: () => void
-      cancel: ReturnType<typeof vi.fn>
-    }[] = []
-    const animate: MotionAnimate = (element, keyframes) => {
-      order.push('animate')
-      let finish!: () => void
-      const finished = new Promise<void>((resolve) => {
-        finish = resolve
-      })
-      const cancel = vi.fn()
-      runs.push({ element, keyframes, finish, cancel })
-      return {
-        cancel,
-        then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
-      }
-    }
-    Object.defineProperty(HTMLElement.prototype, 'animate', {
-      configurable: true,
-      value: () => undefined
-    })
-    return {
-      runs,
-      order,
-      engine: animate,
-      restore: () => Reflect.deleteProperty(HTMLElement.prototype, 'animate')
-    }
-  }
-
-  /** Reduced motion, or the ordinary machine that has not asked for it. */
-  function prefersReducedMotion(reduced: boolean) {
-    const media = new EventTarget() as MediaQueryList
-    Object.defineProperty(media, 'matches', { configurable: true, value: reduced })
-    vi.stubGlobal('matchMedia', () => media)
-    return media
-  }
-
-  const RISE: DOMKeyframesDefinition = { opacity: [0, 1], y: [12, 0] }
-  const SETTLE: DOMKeyframesDefinition = { opacity: [1, 0], y: [0, 12] }
-
-  /** The close both windows make, which is the only close there is. */
-  function closePanel(api: Record<string, ReturnType<typeof vi.fn>>): void {
-    const push = api.onMessagePanel!.mock.calls[0]![0] as (state: unknown) => void
-    push(CLOSED)
-  }
-
-  /**
-   * A hand-written stand-in for the scheduler `run`'s ender uses to re-apply
-   * `settle` after the engine's own deferred render (#566 T2b), mirroring
-   * `boundedMotion.test.ts`'s own `fakeAfterRender`: it only RECORDS what it
-   * was asked to schedule, so a test can decide exactly when a re-apply fires
-   * instead of racing jsdom's `requestAnimationFrame`.
-   */
-  function fakeAfterRender() {
-    const scheduled: (() => void)[] = []
-    const afterRender: ScheduleAfterRender = (callback) => {
-      scheduled.push(callback)
-    }
-    return { afterRender, scheduled }
-  }
-
-  /** Report the window as Chromium sees it once main has actually hidden it. */
-  function occludeWindow(hidden: boolean): void {
-    Object.defineProperty(document, 'hidden', { configurable: true, value: hidden })
-  }
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.useRealTimers()
-    Reflect.deleteProperty(document, 'hidden')
-  })
-
-  it('holds the surface at its hidden keyframe while the window is still hidden', async () => {
-    // The board that decides which dwarf to draw lands after the surface does
-    // (#312), so this is the real gap between "a surface opened" and "there is
-    // something to measure" — and the window is hidden for all of it.
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    let settleBoard!: (snapshot: unknown) => void
-    const board = new Promise<unknown>((resolve) => {
-      settleBoard = resolve
-    })
-    try {
-      const { wrapper, api } = await mountPanel(
-        { surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' },
-        { getMines: vi.fn().mockReturnValue(board) },
-        { engine: animated.engine }
-      )
-      const surface = wrapper.find('.message-surface').element as HTMLElement
-      expect(surface.style.opacity).toBe('0')
-      expect(surface.style.transform).toBe('translateY(12px)')
-      expect(api.setMessagePanelHeight).not.toHaveBeenCalled()
-      expect(animated.runs).toHaveLength(0)
-
-      settleBoard({ mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
-      await flushPromises()
-
-      expect(animated.runs).toHaveLength(1)
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('rises on the surface itself, with the shell’s own timing, once the report has gone', async () => {
-    const measured = fakeContentHeight(426)
-    const order: string[] = []
-    const animated = fakeAnimations(order)
-    try {
-      const { wrapper, api } = await openOn(
-        [OBSERVED_DWARF],
-        'claude:s1',
-        { setMessagePanelHeight: vi.fn(() => order.push('report')) },
-        { engine: animated.engine }
-      )
-      expect(api.setMessagePanelHeight).toHaveBeenCalledWith(426)
-      // The report is what reveals the window, so the rise may only be started
-      // after it: started first, the surface would spend part of its motion
-      // animating inside a window nobody can see yet.
-      expect(order).toEqual(['report', 'animate'])
-      expect(animated.runs[0]!.element).toBe(wrapper.find('.message-surface').element)
-      // No transition is asked for any more (#566) — the runner hands
-      // motion-v only the keyframes, and lets `getDefaultTransition` pick.
-      expect(animated.runs[0]!.keyframes).toEqual(RISE)
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('leaves the surface drawn at full strength once the rise has finished', async () => {
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    try {
-      const { wrapper } = await openOn(
-        [OBSERVED_DWARF],
-        'claude:s1',
-        {},
-        { engine: animated.engine }
-      )
-      const surface = wrapper.find('.message-surface').element as HTMLElement
-      animated.runs[0]!.finish()
-      await flushPromises()
-      // Cleared BEFORE the run is let go: this window's own `releaseHidden`
-      // owns writing that state, exactly as it did under WAAPI's `fill:
-      // 'both'` — motion-v would otherwise leave its own last frame sitting
-      // on the element with nothing to hand it back (`releaseWritten` in
-      // `boundedMotion.ts` only does that for a caller with no `settle`).
-      expect(surface.style.opacity).toBe('')
-      expect(surface.style.transform).toBe('')
-      expect(animated.runs[0]!.cancel).toHaveBeenCalledOnce()
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('keeps the conversation on screen through the leave, and tells main only when it has settled', async () => {
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    try {
-      const { wrapper, api } = await openOn(
-        [OBSERVED_DWARF],
-        'claude:s1',
-        {},
-        { engine: animated.engine }
-      )
-      animated.runs[0]!.finish()
-      await flushPromises()
-
-      closePanel(api)
-      await flushPromises()
-
-      // The window is still up, so what it draws has to be the panel itself:
-      // an empty surface fading is the content vanishing and a transparent box
-      // settling after it.
-      expect(wrapper.find('.message-panel').exists()).toBe(true)
-      expect(animated.runs[1]!.keyframes).toEqual(SETTLE)
-      expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
-
-      animated.runs[1]!.finish()
-      await flushPromises()
-
-      expect(wrapper.find('.message-panel').exists()).toBe(false)
-      expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('still tells main when the leave never reports finishing (#266)', async () => {
-    // Chromium freezes the document timeline for an occluded window, so the
-    // settle lands on the compositor and `finished` never resolves. Main bounds
-    // the hide on its own side too; this is the renderer not being the reason
-    // it has to.
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    try {
-      const { api } = await openOn([OBSERVED_DWARF], 'claude:s1', {}, { engine: animated.engine })
-      animated.runs[0]!.finish()
-      await flushPromises()
-      vi.useFakeTimers()
-
-      closePanel(api)
-      await flushPromises()
-      expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
-
-      await vi.advanceTimersByTimeAsync(motionBoundMs(SETTLE))
-      await flushPromises()
-
-      expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('takes the instant path under reduced motion, in both directions', async () => {
-    prefersReducedMotion(true)
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    try {
-      const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
-      const surface = wrapper.find('.message-surface').element as HTMLElement
-      expect(animated.runs).toHaveLength(0)
-      expect(surface.style.opacity).toBe('')
-
-      closePanel(api)
-      await flushPromises()
-
-      expect(animated.runs).toHaveLength(0)
-      expect(wrapper.find('.message-panel').exists()).toBe(false)
-      // Immediately, and that is the point of the report rather than a fixed
-      // deferral: a window left up for a third of a second with nothing drawn
-      // in it is a transparent rectangle taking clicks off whatever is behind.
-      expect(api.reportMessagePanelSettled).toHaveBeenCalledOnce()
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('cuts between two dwarfs of one open window, rather than animating the swap', async () => {
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    try {
-      const { wrapper, api } = await openOn(
-        [OBSERVED_DWARF, HELD_DWARF],
-        'claude:s1',
-        {},
-        { engine: animated.engine }
-      )
-      animated.runs[0]!.finish()
-      await flushPromises()
-
-      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s2' })
-      await flushPromises()
-
-      expect(wrapper.find('.panel-agent').text()).toBe('Held')
-      expect(animated.runs).toHaveLength(1)
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  it('gives a reopen inside the leave the window that is still there', async () => {
-    // Main defers the hide, so a second click landing inside that wait finds
-    // the window still up. The leave loses its say — reporting it settled would
-    // hide a window that is open again — and the surface it had been taking
-    // away is drawn at full strength.
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    try {
-      const { wrapper, api } = await openOn(
-        [OBSERVED_DWARF],
-        'claude:s1',
-        {},
-        { engine: animated.engine }
-      )
-      animated.runs[0]!.finish()
-      await flushPromises()
-
-      closePanel(api)
-      await flushPromises()
-
-      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-      await flushPromises()
-      animated.runs[1]!.finish()
-      await flushPromises()
-
-      const surface = wrapper.find('.message-surface').element as HTMLElement
-      expect(wrapper.find('.message-panel').exists()).toBe(true)
-      expect(surface.style.opacity).toBe('')
-      expect(api.reportMessagePanelSettled).not.toHaveBeenCalled()
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  /*
-   * ADDED for the #566 hotfix. User-visible on main and in release 0.12.1:
-   * open a mine, click a dwarf, click again to close, repeat — on about the
-   * third open/close the reopened panel is invisible. The leave that closes
-   * this window ends with `settle = holdHidden` and a re-apply left pending
-   * (#566 T2b); main hides the actual window before that scheduled frame
-   * ever renders, so it stays outstanding. On reopen `armRise` releases the
-   * element and writes `holdHidden` itself, then `riseWhenRevealed` takes
-   * the INSTANT path (`motion.still` is true while `document.hidden`) and
-   * writes `releaseHidden` directly — it never calls `run()`, which used to
-   * be the only thing that withdrew a stale re-apply. Once frames resume,
-   * the leave's stale re-apply fired anyway and wrote `holdHidden` back over
-   * the now-revealed surface.
-   */
-  it('withdraws the closed leave’s pending re-apply on reopen, so a late frame cannot re-hide the risen surface', async () => {
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    const after = fakeAfterRender()
-    try {
-      const { wrapper, api } = await openOn(
-        [OBSERVED_DWARF],
-        'claude:s1',
-        {},
-        { engine: animated.engine, afterRender: after.afterRender }
-      )
-      animated.runs[0]!.finish()
-      await flushPromises()
-
-      // The rise's own completion schedules a re-apply too (T2b); it stays in
-      // `after.scheduled` — the fake never removes what it recorded, same
-      // rule as `boundedMotion.test.ts`'s own `fakeAfterRender` — so the
-      // LEAVE's own re-apply, scheduled below, is whichever entry lands last.
-      const beforeLeave = after.scheduled.length
-
-      // The leave: settles at `holdHidden` and ends with a re-apply pending —
-      // main hides the real window before that scheduled frame ever runs.
-      closePanel(api)
-      await flushPromises()
-      animated.runs[1]!.finish()
-      await flushPromises()
-      expect(after.scheduled.length).toBe(beforeLeave + 1)
-      const staleReapply = after.scheduled[after.scheduled.length - 1]!
-
-      const surface = wrapper.find('.message-surface').element as HTMLElement
-      expect(surface.style.opacity).toBe('0')
-
-      occludeWindow(true)
-
-      // Reopen while the window is still hidden: `armRise` -> height report
-      // -> `riseWhenRevealed`'s instant path, never `run()`.
-      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-      await flushPromises()
-
-      expect(surface.style.opacity).toBe('')
-      expect(surface.style.transform).toBe('')
-
-      // Frames resume and the leave's stale re-apply fires. It must not
-      // write the panel invisible over the reopened surface.
-      occludeWindow(false)
-      staleReapply()
-
-      expect(surface.style.opacity).toBe('')
-      expect(surface.style.transform).toBe('')
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-
-  /*
-   * ADDED for the follow-up to the #566 hotfix. A reopen (same dwarf, or a
-   * different one — the two examples that motivated `claim`) landing while
-   * the leave it is reopening on top of is STILL IN FLIGHT lands on the CUT
-   * branch of the `panel` watch, below (verified: `drawn.value.surface`
-   * stays whatever it was before the leave, since only `settleAndLeave`'s
-   * OWN completion ever sets it to `'none'` — a leave still running has not
-   * reached that yet, so `messageSurfaceMotion` reads both sides as
-   * non-`'none'` and returns `'cut'`, never `'enter'`). The cut branch used
-   * to call `release`, which — once ending an active run stopped
-   * withdrawing its own fresh re-apply (the fold's own need, above) — would
-   * leave THIS leave's re-apply standing to fire `holdHidden` later, right
-   * over the `releaseHidden` the cut branch itself had just written. `claim`
-   * closes that: it withdraws the re-apply its own ending schedules too.
-   */
-  it('withdraws even an in-flight leave’s own re-apply when a reopen cuts it off, so a late frame cannot re-hide it', async () => {
-    const measured = fakeContentHeight(426)
-    const animated = fakeAnimations()
-    const after = fakeAfterRender()
-    try {
-      const { wrapper, api } = await openOn(
-        [OBSERVED_DWARF],
-        'claude:s1',
-        {},
-        { engine: animated.engine, afterRender: after.afterRender }
-      )
-      animated.runs[0]!.finish()
-      await flushPromises()
-
-      closePanel(api)
-      await flushPromises()
-      // The leave's own run (animated.runs[1]) is deliberately left
-      // unfinished: it is still ACTIVE when the reopen below lands, exactly
-      // like a fast double-click. The rise's own completion, above, already
-      // scheduled its own re-apply into `after.scheduled` — the fake never
-      // removes what it recorded, the same rule as `boundedMotion.test.ts`'s
-      // own `fakeAfterRender` — so the leave's own re-apply, checked below,
-      // is whichever entry lands last.
-      expect(animated.runs).toHaveLength(2)
-      const beforeCut = after.scheduled.length
-
-      const push = api.onMessagePanel.mock.calls[0]![0] as (state: unknown) => void
-      push({ surface: 'message', mineId: MINE.id, dwarfId: 'claude:s1' })
-      await flushPromises()
-
-      // No third `animate()` call: the cut branch never runs a new motion,
-      // it only ends the leave and writes the element's state directly —
-      // confirming this reopen really did land on the CUT branch.
-      expect(animated.runs).toHaveLength(2)
-      // Ending the in-flight leave through `claim` still schedules a
-      // re-apply of its OWN settle (T2b) — `claim` withdraws it right after,
-      // rather than never scheduling one at all.
-      expect(after.scheduled.length).toBe(beforeCut + 1)
-      const staleReapply = after.scheduled[after.scheduled.length - 1]!
-
-      const surface = wrapper.find('.message-surface').element as HTMLElement
-      // The cut branch's own write stands: released, never held hidden.
-      expect(surface.style.opacity).toBe('')
-      expect(surface.style.transform).toBe('')
-
-      // Frames resume and the leave's own re-apply fires. It must not write
-      // `holdHidden` back over what the cut branch just released.
-      staleReapply()
-
-      expect(surface.style.opacity).toBe('')
-      expect(surface.style.transform).toBe('')
-    } finally {
-      animated.restore()
-      measured.restore()
-    }
-  })
-})
 
 /**
  * Typography preferences (#370) — APPENDED, nothing above changed.
  *
- * The SECOND root, and the reason the preference needs a push at all. Settings
- * is in the shell; the bubbles and the Add Panel are here, and this window has
- * its own document — so a face chosen over there has to reach this page rather
- * than wait for a reload it may never get.
+ * REMOVED for #635, stated rather than passing unseen: 'adopts the stored faces on mount,
+ * painting its own document root' and 'follows a change made in the shell, which is the only
+ * window with Settings'. They held for a SECOND document; the panels are drawn in the shell's own
+ * now, whose faces App.test.ts's typography cases assert.
  */
 describe('typography preferences (#370)', () => {
-  // AMENDED (#635): the choice is a font style and four role faces now; the message face is the
-  // --f-talk role, which --font-conversation follows in the stylesheet.
-  it('adopts the stored faces on mount, painting its own document root', async () => {
-    await mountPanel(CLOSED, {
-      getTypographyPreferences: vi.fn().mockResolvedValue({
-        style: 'custom',
-        faces: { display: 'jacquard-12', label: 'tiny5', meta: 'pixelify-sans', talk: 'roboto' }
-      })
-    })
-    expect(document.documentElement.style.getPropertyValue('--f-talk')).toBe(
-      'var(--font-family-roboto)'
-    )
-  })
-
-  it('follows a change made in the shell, which is the only window with Settings', async () => {
-    const { api } = await mountPanel(CLOSED)
-    // AMENDED (#635): a style pushed from the shell repaints the four roles here.
-    const push = api.onTypographyPreferences.mock.calls[0]![0] as (preferences: unknown) => void
-    push({
-      style: 'readable',
-      faces: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
-    })
-    await flushPromises()
-    expect(document.documentElement.style.getPropertyValue('--f-label')).toBe(
-      'var(--font-family-roboto)'
-    )
-    expect(document.documentElement.style.getPropertyValue('--f-talk')).toBe(
-      'var(--font-family-roboto)'
-    )
-  })
-
   it('draws the Add Panel in the messaging face, the same one the bubbles use', async () => {
     // #370's own complaint: the launch panel was the one conversation surface
     // still on the Pixel UI face. Asserted through the class the stylesheet
@@ -2933,35 +2249,8 @@ describe('typography preferences (#370)', () => {
   })
 })
 
-/**
- * APPENDED for #566 T3. This window's own `<MotionConfig>` — see `reduced`,
- * `MessagePanelWindow.vue`'s own comment. Stubbed the way `App.test.ts`'s
- * matching root test does, for the one query `sceneMotion` owns.
+/*
+ * REMOVED for #635, stated rather than passing unseen: 'MessagePanelWindow MotionConfig root
+ * (#566 T3)', the second root's own `<MotionConfig>`. The panels are under the shell's root now,
+ * whose MotionConfig cases in App.test.ts hold the same two answers.
  */
-describe('MessagePanelWindow MotionConfig root (#566 T3)', () => {
-  afterEach(() => {
-    Reflect.deleteProperty(window, 'matchMedia')
-  })
-
-  function stubReducedMotion(matches: boolean): void {
-    const media = new EventTarget() as MediaQueryList
-    Object.defineProperty(media, 'matches', { configurable: true, value: matches })
-    vi.stubGlobal('matchMedia', () => media)
-  }
-
-  it('hands MotionConfig "never" and no transition override when the viewer asked for no such thing', async () => {
-    stubReducedMotion(false)
-    const { wrapper } = await mountPanel(CLOSED)
-    const config = wrapper.findComponent(MotionConfig)
-    expect(config.props('reducedMotion')).toBe('never')
-    expect(config.props('transition')).toBeUndefined()
-  })
-
-  it('hands MotionConfig "always" and REDUCED_MOTION_TRANSITION once sceneMotion reports reduced motion', async () => {
-    stubReducedMotion(true)
-    const { wrapper } = await mountPanel(CLOSED)
-    const config = wrapper.findComponent(MotionConfig)
-    expect(config.props('reducedMotion')).toBe('always')
-    expect(config.props('transition')).toEqual(REDUCED_MOTION_TRANSITION)
-  })
-})

@@ -6,9 +6,9 @@
  * below are those tokens, which dockMotion.test.ts pins to design-tokens.css.
  *
  * Transform and opacity only, through the bounded runner. Under reduced motion the runner answers
- * `still` and the caller takes its instant path. Replacing what an open slot holds is a fade with
- * no travel in the design; the slot holds only the history today, which never replaces itself (it
- * closes with its mine), so that motion arrives with the MessagePanel and the Add panel.
+ * `still` and the caller takes its instant path. Replacing what an open slot holds — a chat for the
+ * history, the Add panel for a chat, one dwarf's chat for another's — is a fade with no travel, the
+ * old content removed at once (dockReplaceMotion).
  */
 import type { DOMKeyframesDefinition } from 'motion-v'
 import type { MotionTransition } from './motionTiming'
@@ -57,4 +57,19 @@ export function dockWindowMotion(
     keyframes: { opacity: [0, 1], x: [-towardShell * OPEN.travel, 0] },
     transition: OPEN.transition
   }
+}
+
+/** --dur-base and --ease-out: the slot's content replaced, a fade with no travel. */
+const REPLACE: DockWindowMotion = {
+  keyframes: { opacity: [0, 1] },
+  transition: { duration: 0.14, ease: [0.2, 0.7, 0.1, 1] }
+}
+
+/**
+ * What an open slot does when what it holds is replaced (motion.md, "MessagePanel window
+ * (Panel)", "its content replaced"): the old content is removed at once, and the new one fades in
+ * where it stood, with no travel.
+ */
+export function dockReplaceMotion(leaving: boolean): DockWindowMotion {
+  return leaving ? AT_ONCE : REPLACE
 }

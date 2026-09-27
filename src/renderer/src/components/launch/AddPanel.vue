@@ -401,8 +401,8 @@ function onCommandKeydown(event: KeyboardEvent): void {
     @keydown.escape="emit('close')"
     @click.stop
   >
-    <!-- The same window-drag handle the message panel's header carries (#296). -->
-    <header class="panel-bar" data-window-drag>
+    <!-- Anchored like the MessagePanel (#635): the header does not drag. -->
+    <header class="panel-bar">
       <h2 class="panel-title">{{ COMPOSER_DISABLED_PLACEHOLDER }}</h2>
       <motion.button
         class="launch-close"

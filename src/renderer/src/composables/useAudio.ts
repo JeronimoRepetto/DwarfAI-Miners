@@ -136,7 +136,7 @@ export function useAudio(options: UseAudioOptions = {}) {
    *
    * Both in one call because both are "while this surface is alive", and
    * App.vue has one mount to start them from and one unmount to stop them at.
-   * Returns the stop, exactly as `useMessagePanel().listen` does.
+   * Returns the stop, like every other `listen` here.
    */
   function listen(): () => void {
     const unlisten = window.api.onPanelVisibility((visible) => {

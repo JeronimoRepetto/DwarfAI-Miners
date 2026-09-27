@@ -15,26 +15,19 @@ import '@fontsource-variable/pixelify-sans'
 // nowhere — the design's amendment says to use the platform's own.
 import './assets/fonts/roboto/roboto.css'
 import App from './App.vue'
-import MessagePanelWindow from './MessagePanelWindow.vue'
 import './assets/base.css'
 import './assets/design-tokens.css'
 import './assets/theme.css'
-import { rendererSurface } from './lib/shell/surface'
 import { restoreLaunchView } from './composables/useView'
 
 /*
- * Which of the app's two windows this is (#162). The message panel is a window
- * of its own beside the shell, and it is the SAME page: main loads it again
- * with the surface query, so one bundle, one stylesheet and one CSP serve
- * both roots. See lib/shell/surface for why that beats a second entry.
+ * One window, one root (#635). The message panel had a window of its own beside the shell (#162),
+ * loaded from this same page with a surface query and rooted in MessagePanelWindow.vue; the
+ * decision log anchors it in the Panel, and it mounts in the shell's dock slot now, so this page
+ * has the shell's root and no other.
+ *
+ * The shell opens on the page and the mine it last closed on (#635, PANEL-QUESTIONS 25), read
+ * before it mounts so its first paint is that page, never the Map corrected a frame later.
+ * restoreLaunchView never rejects: a bridge that cannot answer opens the default view.
  */
-const surface = rendererSurface(window.location.search)
-
-if (surface === 'message-panel') {
-  createApp(MessagePanelWindow).mount('#app')
-} else {
-  // The shell opens on the page and the mine it last closed on (#635, PANEL-QUESTIONS 25), read
-  // before it mounts so its first paint is that page, never the Map corrected a frame later.
-  // restoreLaunchView never rejects: a bridge that cannot answer opens the default view.
-  void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
-}
+void restoreLaunchView(window.api).then(() => createApp(App).mount('#app'))
