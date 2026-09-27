@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, test } from 'vitest'
 import { compareToReference } from './compare.mjs'
 import { decide, locateDesign, nodeFs } from './design.mjs'
 import { openPage, openRenderer, recordedRenderer, rendererMismatch } from './renderer.mjs'
+import { isScreenState } from './screens.mjs'
 import { startGoldenServer } from './server.mjs'
 import { readStageCss } from './stage.mjs'
 import {
@@ -128,7 +129,8 @@ describe.runIf(runnable)('golden harness', () => {
     expect(checkStates(states, manifest)).toEqual([])
   })
 
-  for (const state of states) {
+  // A full-screen reference is the whole App, graded by screens.golden.test.mjs (#635).
+  for (const state of states.filter((s) => !isScreenState(s.key))) {
     const title = state.red ? state.key + ' (red: ' + state.red + ')' : state.key
     it(title, async () => {
       const row = manifest[state.key]

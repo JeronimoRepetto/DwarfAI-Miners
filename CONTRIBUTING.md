@@ -148,6 +148,13 @@ pnpm test:golden
   The stage, and a component's "UI kit framing" rules on its root, come from the design's docs at
   run time; a framing rule the kit writes against its stage (`.kit-stage …`) joins the stage CSS,
   and a state whose framing targets any other element is refused until the harness learns it.
+- **Full-screen states are the whole App.** A `screens-full/<screen>#<state>` key in `states.json`
+  needs no entry in `renders.ts`: `screens.golden.test.mjs` mounts the real `App.vue` on a bridge
+  answered from the sample (`golden/api.ts`), in a page sized to the reference screen's work area,
+  replays the recipe's steps from the manifest row with the design's own click rules
+  (`screens.mjs`), and grades every window box of the row against the reference cut to that box.
+  A click on the prototype's own controls is not replayed: a sample switch is stood in by the
+  sample set it names, and anything else is refused.
 - **Output stays out of the tree.** Captures and diffs go to `dwarfai-golden/` under the system
   temp directory. They picture the private references: never commit one, and never paste an image
   or an output path into an issue or a pull request.

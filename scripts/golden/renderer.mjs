@@ -117,11 +117,55 @@ export async function openPage({ browser, capture, runtime }) {
         R.freeze()
         return true
       })()`),
-    async shot(box) {
+    // The page as a window of this size (#635): a full-screen golden sizes it to the work area.
+    resize: (width, height) =>
+      page.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: capture.DEVICE_SCALE_FACTOR,
+        mobile: false
+      }),
+    // A real input event over the DevTools protocol, as the design's recipes send them.
+    mouse: (type, x, y, extra = {}) =>
+      page.send('Input.dispatchMouseEvent', {
+        type,
+        x,
+        y,
+        button: 'none',
+        buttons: 0,
+        clickCount: 0,
+        ...extra
+      }),
+    key: (type, event) => page.send('Input.dispatchKeyEvent', { type, ...event }),
+    // What a full-screen reference holds still between two steps (docs/README.md, Full-screen
+    // references): SETTLE_MS of virtual time with every finite animation the step started finished.
+    settleStep: () => evaluate('window.__snapRuntime.settle(' + Number(capture.SETTLE_MS) + ')'),
+    // And before its capture: the step's settle, the sprites held as a kit state holds them, fonts
+    // and images decoded, everything frozen, and painted.
+    settleScreen: () =>
+      evaluate(`(async () => {
+        const R = window.__snapRuntime
+        await R.settle(${Number(capture.SETTLE_MS)})
+        window.golden?.holdSprites?.()
+        await document.fonts.ready
+        await R.images(document.body)
+        await R.advance(0)
+        R.freeze()
+        await R.frame()
+        await R.frame()
+        R.freeze()
+        await document.fonts.ready
+        await R.frame()
+        await R.frame()
+        return true
+      })()`),
+    // `beyond` false keeps the viewport as it is (#635): capturing beyond it resizes the page for
+    // the shot, and a full App answers a resize (useShellFold) as a window would.
+    async shot(box, { beyond = true } = {}) {
       const { data } = await page.send('Page.captureScreenshot', {
         format: 'png',
         clip: { ...box, scale: 1 },
-        captureBeyondViewport: true,
+        captureBeyondViewport: beyond,
         fromSurface: true
       })
       return Buffer.from(data, 'base64')
