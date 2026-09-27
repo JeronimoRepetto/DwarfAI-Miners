@@ -8323,6 +8323,26 @@ describe('AgentRuntime project queries (#92)', () => {
     expect(result.projects[0]).not.toHaveProperty('folderMissing')
   })
 
+  /*
+   * ADDED for #635: a live Electron run added a mine, deleted its folder and still entered it,
+   * because a mine on the board was never asked. Being on the board says nothing about the folder
+   * (a mine added with no session is on it too), so the folder decides, board or not.
+   */
+  it('says a folder is missing even for a mine on the board', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const { provider, setWorking } = toggleProvider(WORKED)
+    setWorking(true)
+    const runtime = queryRuntime({ projects, providers: [provider], fs: new FakeFs() })
+    await runtime.refresh()
+    await runtime.settleProjects()
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    const worked = result.projects.find((project) => project.path === WORKED)
+    expect(worked?.live).toBe(true)
+    expect(worked?.folderMissing).toBe(true)
+  })
+
   it('carries the map placement the store chose, so a browse and the map agree (#136)', async () => {
     const projects = queryStore()
     const written = await projects.upsertObserved({ path: WORKED, at: 4_000 })

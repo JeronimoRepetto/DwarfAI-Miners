@@ -2550,13 +2550,12 @@ export class AgentRuntime {
     const onBoard = new Set(this.mines.map((mine) => mine.id))
     /*
      * Whether each folder is still there (#635, PANEL-QUESTIONS 6): asked through the fs adapter,
-     * so every OS answers it the same way. A mine on the board has a session working in its folder,
-     * so only the rest are asked.
+     * so every OS answers it the same way. Every row is asked, the board's included: a mine added
+     * with no session is on the board too, and a session can outlive the folder it was started in.
+     * One stat per row of the page asked for, and only when the panel asks, never per poll.
      */
     const missing = await Promise.all(
-      result.value.map(async (project) =>
-        onBoard.has(project.id) ? false : !(await this.fs.exists(project.path))
-      )
+      result.value.map(async (project) => !(await this.fs.exists(project.path)))
     )
     return {
       answered: true,
