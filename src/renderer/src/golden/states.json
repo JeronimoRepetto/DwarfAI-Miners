@@ -97,6 +97,21 @@
     "key": "molecules/toast#shown"
   },
   {
+    "key": "organisms/map-page#live",
+    "red": "the Map page is not rebuilt yet (#635, PR3)"
+  },
+  {
+    "key": "organisms/map-page#empty-first-run",
+    "red": "the Map page is not rebuilt yet (#635, PR3)"
+  },
+  {
+    "key": "molecules/tooltip#mine-tooltip",
+    "red": "the shared tooltip card is not built yet (#635, PR3)"
+  },
+  {
+    "key": "molecules/tooltip#live"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {

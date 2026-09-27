@@ -737,6 +737,12 @@ export const RENDERS: Record<string, Render> = {
   'molecules/toast#static': toast('console'),
   'molecules/toast#live': button({ labelled: true }),
   'molecules/toast#shown': toast('info'),
+  // The Map page (#635, PR3): not rebuilt yet, so each state draws the unbuilt specimen and fails
+  // as it should until its component lands. The tooltip card's Live state is its trigger button.
+  'organisms/map-page#live': unbuilt,
+  'organisms/map-page#empty-first-run': unbuilt,
+  'molecules/tooltip#mine-tooltip': unbuilt,
+  'molecules/tooltip#live': button({ labelled: true }),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),
