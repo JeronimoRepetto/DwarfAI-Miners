@@ -313,7 +313,7 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
 }
 .dm-hist__tab small {
   display: block;
-  font-size: 10px;
+  font-size: var(--fs-small);
   color: var(--ink-faint);
 }
 .dm-hist__tab:hover {

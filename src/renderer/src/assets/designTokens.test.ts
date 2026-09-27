@@ -1018,7 +1018,9 @@ describe('design-tokens.css type roles and scale (#635)', () => {
     ['--fs-section', '16px'],
     ['--fs-title', '21px'],
     // Never 26px: Jacquard 12 is drawn on 21 units and smears anywhere between its multiples.
-    ['--fs-headline', '21px']
+    ['--fs-headline', '21px'],
+    // ADDED for #635: the design's 10px small text (a history tab's last time), named once.
+    ['--fs-small', '10px']
   ])('carries the type size %s as %s', (name, value) => {
     expect(rootToken(name)).toBe(value)
   })

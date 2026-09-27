@@ -261,6 +261,8 @@
   --fs-section: 16px;
   --fs-title: 21px;
   --fs-headline: 21px;
+  /* The design's 10px small text, below the scale: a history tab's last time (#635). */
+  --fs-small: 10px;
 
   /* Closed edge rail. */
   --color-rail: var(--brass);
