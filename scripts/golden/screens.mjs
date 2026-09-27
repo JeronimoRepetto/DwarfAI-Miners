@@ -15,7 +15,9 @@
  * selectors, such as the Panel page's controls plate) is not a step on the screen: it swaps the
  * prototype's sample set. The app has no such control, so the golden stands the sample set it
  * names in for it at mount and drops the click. Only a sample switch has a stand-in, and only
- * before any step on the app: anything else is refused rather than skipped.
+ * before any step on the app: anything else is refused rather than skipped. The switch swaps the
+ * data under a running app and relaunches nothing, so the app still opens on the launch the booted
+ * sample remembers (golden/sample.ts, swapSample); the first-run references show exactly that.
  *
  * Pure; screens.golden.test.mjs reads the files and drives the browser.
  */

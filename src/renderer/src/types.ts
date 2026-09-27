@@ -4,12 +4,10 @@ import type {
   DwarfSendState,
   MaterialTotals,
   Mine,
-  ProjectSummary
+  ProjectSummary,
+  LaunchView
 } from '../../shared/contracts'
-import type { ShellArea } from './lib/shell/shellNav'
-
-/** The six areas the shell's navigation stack selects (#90, #335). */
-export type { ShellArea }
+import { DEFAULT_LAUNCH_VIEW } from '../../shared/contracts'
 
 /** Renderer uses the shared IPC contract instead of maintaining a drift-prone copy. */
 export type {
@@ -21,6 +19,9 @@ export type {
   AppBuild,
   FeatureFlags,
   AudioPreferences,
+  /* The launch view (#635, PANEL-QUESTIONS 25). */
+  LaunchView,
+  ShellArea,
   Dwarf,
   DwarfActivation,
   DwarfAskQuestion,
@@ -202,6 +203,10 @@ export {
   isMineTier,
   isPanelObserved,
   parseAudioPreferences,
+  /* The launch view (#635, PANEL-QUESTIONS 25). */
+  DEFAULT_LAUNCH_VIEW,
+  SHELL_AREAS,
+  parseLaunchView,
   maxTextCharsFor,
   messageTooLongReason,
   stripRelayProvenance,
@@ -392,15 +397,15 @@ export function defaultDwarfQuestionState(): DwarfQuestionState {
  * the board and can vanish under the panel, while the areas are fixed furniture
  * — 'mines' in particular carries no state of its own, because its filters and
  * pages belong to useProjectBrowse.
+ *
+ * AMENDED for #635 (PANEL-QUESTIONS 25): the app opens on the view it last closed on, which main
+ * stores, so this is the wire's `LaunchView` itself rather than a copy of its shape.
  */
-export interface ViewState {
-  area: ShellArea
-  /** The mine held open beside the secondary panel, or null when none is. */
-  mineId: string | null
-}
+export type ViewState = LaunchView
 
+/** A first run's view: the Map page with no mine open (`DEFAULT_LAUNCH_VIEW`). */
 export function defaultViewState(): ViewState {
-  return { area: 'map', mineId: null }
+  return { ...DEFAULT_LAUNCH_VIEW }
 }
 
 /**

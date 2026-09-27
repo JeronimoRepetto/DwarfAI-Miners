@@ -51,6 +51,7 @@ import TierInfo from '../components/browse/TierInfo.vue'
 import MineCard from '../components/browse/MineCard.vue'
 import MinesList from '../components/browse/MinesList.vue'
 import MapPage from '../components/map/MapPage.vue'
+import { mapVariantAt } from '../lib/map/mapTime'
 import TooltipCard from '../components/overlay/TooltipCard.vue'
 import type { MineCardState, MineCardView } from '../lib/browse/mineCard'
 import DialogCard from '../components/overlay/DialogCard.vue'
@@ -722,8 +723,11 @@ const minesList: Render = framed((texts, attributes) => {
  * The Map page as its tree prints it, in its frame: the sample's mines whose markers the tree
  * draws, each marker naming its mine ("<name>, <Tier>[, needs you]"), the pressed one the open
  * mine. The totals are the sample's ore summed per material over those mines, each material its
- * own counter, never across materials, as the design's oreTotals does. The painting is the day's,
- * the one every reference is taken with; the app's is the clock's (useMapTime).
+ * own counter, never across materials, as the design's oreTotals does. The painting is the capture
+ * clock's, through the app's own rule (design lead ruling 2026-09-27, PANEL-QUESTIONS 26): the
+ * prototype reads the local hour as mapVariantAt does, and the harness holds Date at the capture's
+ * 10:30 in its zone, so both draw the morning painting. It stood forced to the day painting until
+ * the prototype adopted the rule.
  */
 const mapPage: Render = (sample, _texts, attributes) => {
   const markers = elementsOf(attributes, 'button.dm-marker')
@@ -751,7 +755,7 @@ const mapPage: Render = (sample, _texts, attributes) => {
             mines,
             materials,
             openId: open ? (mines[markers.indexOf(open)]?.id ?? null) : null,
-            variant: 'day'
+            variant: mapVariantAt(new Date())
           }
         }
       ]

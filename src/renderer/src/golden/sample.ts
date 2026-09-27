@@ -12,6 +12,9 @@ import {
   DWARF_PROVIDERS,
   type AgentModelCatalog,
   type AgentProviderOption,
+  type LaunchView,
+  SHELL_AREAS,
+  type ShellArea,
   type PanelEdge,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
@@ -64,6 +67,13 @@ export interface GoldenSample {
    * in the sample's order: the full App draws its Mines page from these, not from a kit tree.
    */
   projects: ProjectSummary[]
+  /**
+   * The view the sample remembers the app last closed on (`DM.data.launch`, #635, PANEL-QUESTIONS
+   * 25), as main would have stored it; absent when it remembers nothing, as the first-run sample
+   * does. The mine is the sample's claim, never checked here: a remembered mine the board no longer
+   * carries is the app's to let go of, exactly as a stored one is.
+   */
+  launch?: LaunchView
 }
 
 type Row = Record<string, unknown>
@@ -277,6 +287,31 @@ function speakerOf(
   }
 }
 
+// The sample writes the remembered view as `{ page, mine }`, a page by the nav's own area names.
+function launchOf(row: unknown): LaunchView | undefined {
+  if (row === null || row === undefined) return undefined
+  const launch = row as Row
+  return {
+    area: oneOf<ShellArea>('page', launch.page, SHELL_AREAS),
+    mineId: launch.mine === null || launch.mine === undefined ? null : String(launch.mine)
+  }
+}
+
+/**
+ * The sample a prototype control swapped in under a running app (#635): the panel page's First run
+ * switch. It swaps the data and relaunches nothing (panel.js: the page shown stays, and the mine
+ * column is dropped because its mine is gone), so the view the screen opened with is still the one
+ * the app restored: the launch is the booted sample's, never the swapped one's. The references
+ * confirm the reading: panel#mines-first-run opens on the Mines page with no mine in the column, and
+ * both first-run full screens match theirs at 0.000% once the hidden mode lever is stood in.
+ */
+export function swapSample(booted: GoldenSample, swapped: GoldenSample): GoldenSample {
+  const next: GoldenSample = { ...swapped }
+  delete next.launch
+  if (booted.launch !== undefined) next.launch = booted.launch
+  return next
+}
+
 /** Adapts `window.DM` after the design's sample-data.js has run. */
 export function adaptSample(dm: unknown): GoldenSample {
   const data = (dm as { data?: Row } | undefined)?.data
@@ -302,6 +337,7 @@ export function adaptSample(dm: unknown): GoldenSample {
     if (failed.length > 0) (failedSends[home.id] ??= {})[adapted.id] = failed
   }
   const floor = (dm as { TIER_FLOOR?: Record<string, unknown> }).TIER_FLOOR
+  const launch = launchOf(data.launch)
   const providers = ((data.providers ?? []) as Row[]).map((row) =>
     oneOf<DwarfProvider>('provider', row.id, DWARF_PROVIDERS)
   )
@@ -326,6 +362,7 @@ export function adaptSample(dm: unknown): GoldenSample {
     histories,
     failedSends,
     projects: mineRows.map((row, i) => project(row, mines[i]!, recent)),
+    ...(launch === undefined ? {} : { launch }),
     ...(floor === undefined
       ? {}
       : {

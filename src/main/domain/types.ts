@@ -19,6 +19,9 @@ export type {
   AgentProviderList,
   AgentProviderOption,
   AudioPreferences,
+  /* The launch view (#635, PANEL-QUESTIONS 25). */
+  LaunchView,
+  ShellArea,
   Dwarf,
   DwarfActivation,
   DwarfAskQuestion,
@@ -206,6 +209,10 @@ export {
   isMineTier,
   isPanelObserved,
   parseAudioPreferences,
+  /* The launch view (#635, PANEL-QUESTIONS 25). */
+  DEFAULT_LAUNCH_VIEW,
+  SHELL_AREAS,
+  parseLaunchView,
   parseDwarfText,
   maxTextCharsFor,
   messageTooLongReason,

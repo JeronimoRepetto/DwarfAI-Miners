@@ -7,7 +7,10 @@
  * remembered layout and every preference at its default, so each read answers what main answers
  * on a fresh install, and each preference write answers with the request, as main does when it
  * can store it. The sample decides only what it carries: the board, the projects, the edge, the
- * version, the guild flag, the shortcut's registration and the providers.
+ * version, the guild flag, the shortcut's registration and the providers — and, since the PO's
+ * ruling on PANEL-QUESTIONS 25, the view the app remembers it last closed on (`DM.data.launch`),
+ * which is the one stored thing a reference does not start without: a state with no steps is the
+ * sample's remembered launch.
  *
  * Anything a state could only reach by acting on the world (a launch, a send, a kick, a folder
  * picker) is refused with its name, never answered with a guess: a recipe that reaches it is one
@@ -17,6 +20,7 @@ import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DEFAULT_JEV_SETTINGS,
+  DEFAULT_LAUNCH_VIEW,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_OPENCODE_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
@@ -165,6 +169,10 @@ export function goldenApi(sample: GoldenSample): Api {
     setOpenCodePluginEnabled: (enabled) =>
       Promise.resolve({ ...DEFAULT_OPENCODE_SETTINGS, pluginEnabled: enabled }),
     setOpenCodeServerPassword: refuse('setOpenCodeServerPassword'),
-    clearOpenCodeServerPassword: refuse('clearOpenCodeServerPassword')
+    clearOpenCodeServerPassword: refuse('clearOpenCodeServerPassword'),
+    // The sample's remembered launch (#635, PANEL-QUESTIONS 25): a state with no steps opens where
+    // the references open. A reported view is taken and changes nothing: a golden never relaunches.
+    getLaunchView: () => Promise.resolve({ ...(sample.launch ?? DEFAULT_LAUNCH_VIEW) }),
+    setLaunchView: none
   }
 }

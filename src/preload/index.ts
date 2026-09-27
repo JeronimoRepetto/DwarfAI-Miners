@@ -61,13 +61,18 @@ import type {
   JevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  OpenCodeSettings
+  OpenCodeSettings,
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  LaunchView
+  /* --- end of the #635 launch view block --------------------------------------- */
 } from '../shared/contracts'
 import {
   IPC_CHANNELS,
   isDwarfProvider,
   parseAudioPreferences,
+  /* The launch view (#635, PANEL-QUESTIONS 25). */
+  parseLaunchView,
   isMessagePanelDragPhase,
   isMessagePanelSurface,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
@@ -596,6 +601,15 @@ export interface DwarfAiMinersApi {
   /** Forget the server password. Resolves with what main STORED. */
   clearOpenCodeServerPassword: () => Promise<OpenCodeSettings>
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  /** The page and the mine the shell last closed on, or the default view on a first run. */
+  getLaunchView: () => Promise<LaunchView>
+  /**
+   * Report the page and the mine the shell now shows, so the next launch opens on them. One-way,
+   * like `setOpenMine`: main stores the latest, and there is no verdict to wait for.
+   */
+  setLaunchView: (view: LaunchView) => void
+  /* --- end of the #635 launch view block --------------------------------------- */
 }
 
 const api: DwarfAiMinersApi = {
@@ -1027,8 +1041,14 @@ const api: DwarfAiMinersApi = {
       return Promise.reject(error)
     }
   },
-  clearOpenCodeServerPassword: () => ipcRenderer.invoke(IPC_CHANNELS.clearOpenCodeServerPassword)
+  clearOpenCodeServerPassword: () => ipcRenderer.invoke(IPC_CHANNELS.clearOpenCodeServerPassword),
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  getLaunchView: () => ipcRenderer.invoke(IPC_CHANNELS.getLaunchView),
+  // Rebuilt through the SHARED parser before it crosses, the reasoning setAudioPreferences
+  // carries: what crosses is a page the nav draws and a mine id or null, and nothing else.
+  setLaunchView: (view) => ipcRenderer.send(IPC_CHANNELS.setLaunchView, parseLaunchView(view))
+  /* --- end of the #635 launch view block --------------------------------------- */
 }
 
 contextBridge.exposeInMainWorld('api', api)

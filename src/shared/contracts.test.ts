@@ -77,8 +77,13 @@ import {
   parseJevPreferences,
   /* --- end of the #509 follow-up block --------------------------------------- */
   /* --- Turn outcome (#510) — one block, appended ---------------------------- */
-  boundTurnText
+  boundTurnText,
   /* --- end of the #510 block ------------------------------------------------- */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  DEFAULT_LAUNCH_VIEW,
+  SHELL_AREAS,
+  parseLaunchView
+  /* --- end of the #635 launch view block --------------------------------------- */
 } from './contracts'
 
 /*
@@ -1553,3 +1558,57 @@ describe('DEFAULT_OPENCODE_SETTINGS (#588 T6)', () => {
   })
 })
 /* --- end of the #588 T6 block ------------------------------------------------ */
+
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+describe('parseLaunchView (#635, PANEL-QUESTIONS 25)', () => {
+  it('opens on the Map with no mine open when nothing is remembered', () => {
+    expect(DEFAULT_LAUNCH_VIEW).toEqual({ area: 'map', mineId: null })
+    expect(parseLaunchView(undefined)).toEqual({ area: 'map', mineId: null })
+  })
+
+  it('reads back every page the nav can select, and the mine held open beside it', () => {
+    for (const area of SHELL_AREAS) {
+      expect(parseLaunchView({ area, mineId: 'north-shaft' })).toEqual({
+        area,
+        mineId: 'north-shaft'
+      })
+    }
+    expect(parseLaunchView({ area: 'mines', mineId: null })).toEqual({
+      area: 'mines',
+      mineId: null
+    })
+  })
+
+  it('reads a document that is not an object as nothing remembered, never as a failure', () => {
+    for (const document of [null, 'mines', 7, ['mines', 'north-shaft']]) {
+      expect(parseLaunchView(document)).toEqual(DEFAULT_LAUNCH_VIEW)
+    }
+  })
+
+  it('degrades field by field: a page no build draws opens the Map, the mine still opens', () => {
+    expect(parseLaunchView({ area: 'vault', mineId: 'north-shaft' })).toEqual({
+      area: 'map',
+      mineId: 'north-shaft'
+    })
+  })
+
+  it('opens no mine for an id that is not a non-empty string', () => {
+    for (const mineId of ['', 42, true, {}, undefined]) {
+      expect(parseLaunchView({ area: 'mines', mineId })).toEqual({ area: 'mines', mineId: null })
+    }
+  })
+
+  it('carries nothing the caller attached beyond the two fields', () => {
+    expect(parseLaunchView({ area: 'settings', mineId: null, extra: 'x' })).toEqual({
+      area: 'settings',
+      mineId: null
+    })
+  })
+
+  it('hands back a fresh default, so a caller changing it cannot change the next reading', () => {
+    const first = parseLaunchView(undefined)
+    first.area = 'settings'
+    expect(parseLaunchView(undefined)).toEqual({ area: 'map', mineId: null })
+  })
+})
+/* --- end of the #635 launch view block --------------------------------------- */

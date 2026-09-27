@@ -135,3 +135,26 @@ describe('goldenApi — the window and the app', () => {
     expect(await api.listAgentModels()).toEqual({ catalogs: sample.catalogs })
   })
 })
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 25): the stored view is the sample's remembered launch, so a
+ * state with no steps opens where the references open; with nothing remembered it is main's
+ * first-run answer, the Map with no mine open.
+ */
+describe('goldenApi — the launch view', () => {
+  it("answers the sample's remembered launch as the stored view", async () => {
+    const api = goldenApi(sampleOf({ launch: { page: 'mines', mine: 'north-shaft' } }))
+    expect(await api.getLaunchView()).toEqual({ area: 'mines', mineId: 'north-shaft' })
+  })
+
+  it('answers the default view when the sample remembers nothing', async () => {
+    const api = goldenApi(sampleOf({ launch: null }))
+    expect(await api.getLaunchView()).toEqual({ area: 'map', mineId: null })
+  })
+
+  it('takes a reported view and changes nothing it answers: a golden never relaunches', async () => {
+    const api = goldenApi(sampleOf({ launch: { page: 'mines', mine: null } }))
+    api.setLaunchView({ area: 'settings', mineId: null })
+    expect(await api.getLaunchView()).toEqual({ area: 'mines', mineId: null })
+  })
+})

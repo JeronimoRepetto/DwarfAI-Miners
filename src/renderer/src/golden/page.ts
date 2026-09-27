@@ -27,8 +27,9 @@ import { createFrameClock, type FrameClock } from '../lib/sprite/frameClock'
 import type { SequencePosition } from '../lib/sprite/spriteSheet'
 import PanelApp from '../App.vue'
 import { goldenApi } from './api'
+import { restoreLaunchView } from '../composables/useView'
 import { RENDERS, type GoldenAttributes, type GoldenText } from './renders'
-import { adaptSample, type GoldenSample } from './sample'
+import { adaptSample, swapSample, type GoldenSample } from './sample'
 
 export interface GoldenBox {
   x: number
@@ -260,7 +261,8 @@ function useSample(id: string): { mines: number; dwarfs: number } {
   const dm = dmOf()
   if (!dm?.useSample) throw new Error('golden: the sample script has no sample switch')
   dm.useSample(id)
-  sample = adaptSample(dm)
+  // The switch swaps the data under a running app; the launch the screen opened with stands.
+  sample = sample === null ? adaptSample(dm) : swapSample(sample, adaptSample(dm))
   return {
     mines: sample.mines.length,
     dwarfs: sample.mines.reduce((n, m) => n + m.dwarfs.length, 0)
@@ -279,6 +281,9 @@ async function mountScreen(): Promise<void> {
   caret.textContent = '*, *::before, *::after { caret-color: transparent !important; }'
   document.head.appendChild(caret)
   Object.defineProperty(window, 'api', { configurable: true, value: goldenApi(sample) })
+  // As the product's entry does before it mounts the shell (#635, PANEL-QUESTIONS 25): the App
+  // opens on the view the bridge answers as stored, the sample's remembered launch.
+  await restoreLaunchView(window.api)
   const host = document.createElement('div')
   host.id = 'app'
   host.dataset.golden = ''

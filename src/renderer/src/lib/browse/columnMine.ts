@@ -51,3 +51,20 @@ export function openableMineIds(
     ...projects.filter(openable).map((project) => project.id)
   ]
 }
+
+/**
+ * Whether the mine the app last closed on opens again (#635, PANEL-QUESTIONS 25): one the board or
+ * the remembered projects could draw, unless its folder is gone. The folder is checked even for a
+ * board mine: a session can outlive the folder it was started in, so the board still carrying a
+ * mine says nothing about its folder, and main's browse answers that for every row it lists.
+ */
+export function launchMineOpens(
+  mineId: string,
+  board: readonly Mine[],
+  projects: readonly ProjectSummary[]
+): boolean {
+  if (projects.some((project) => project.id === mineId && project.folderMissing === true)) {
+    return false
+  }
+  return openableMineIds(board, projects).includes(mineId)
+}
