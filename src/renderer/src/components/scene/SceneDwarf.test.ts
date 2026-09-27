@@ -456,9 +456,24 @@ describe('SceneDwarf in the scene', () => {
     expect(wrapper.find('.dm-dwarf').classes()).not.toContain('is-departed')
   })
 
-  it('fades a leaver only once it has reached the way out', () => {
-    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: false })
+  // AMENDED for #635 (was: mounted already at rest): the fade marks arriving at the way out, so the
+  // leaver walks there first, as the column walks it.
+  it('fades a leaver only once it has reached the way out', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: true })
+    await wrapper.setProps({ walking: false })
     expect(wrapper.find('.dm-dwarf').classes()).toContain('is-departed')
+  })
+
+  /*
+   * ADDED for #635. A dwarf at rest draws at its station as it did before the walk came back: one
+   * the column never walked (drawn on its way out when the column opened, or under reduced motion)
+   * has reached no way out, so it stays drawn, idle, rather than fading where it stands.
+   */
+  it('draws a leaver it never walked at full strength, idle on its station', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: false })
+    const button = wrapper.find('.dm-dwarf')
+    expect(button.classes()).not.toContain('is-departed')
+    expect(button.attributes('data-status')).toBe('idle')
   })
 
   it('never calls a working dwarf departed, however still it is standing', () => {

@@ -871,10 +871,7 @@ const dwarfScene =
           ...station,
           selected,
           ...(hover ? { state: 'hover' } : {}),
-          ...(mark === undefined ? {} : { sendState: SEND_STATE[mark] }),
-          // An idle dwarf is one on its way out (WIRE_STATUS), which the app draws idle while it
-          // walks there; standing at the way out, it would be fading (PANEL-QUESTIONS 14).
-          ...(dwarf.status === 'leaving' ? { walking: true } : {})
+          ...(mark === undefined ? {} : { sendState: SEND_STATE[mark] })
         }
       }))
     }

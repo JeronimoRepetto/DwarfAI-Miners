@@ -174,6 +174,20 @@ watch(
   { immediate: true }
 )
 
+/*
+ * Arrived at the way out (#156): a leaver fades once the column has walked it there, never on a
+ * clock, and one it never walked (drawn on its way out when the column opened, or under reduced
+ * motion) has reached no way out, so it stays drawn idle on its station as before the walk.
+ */
+const walkedOut = ref(false)
+watch(
+  () => props.walking === true,
+  (walking, was) => {
+    if (!walking && was === true && props.dwarf.status === 'leaving') walkedOut.value = true
+  }
+)
+const departed = computed(() => walkedOut.value && props.dwarf.status === 'leaving')
+
 // A dwarf dropping out of the crew between polls takes its grind and its footsteps with it.
 onBeforeUnmount(() => {
   for (const cue of ['walk', 'shift'] as const) {
@@ -214,7 +228,7 @@ const rootStyle = computed(() => ({
     class="dm-dwarf"
     :class="{
       'is-leaving': dwarf.status === 'leaving',
-      'is-departed': dwarf.status === 'leaving' && !walking,
+      'is-departed': departed,
       'is-hover': state === 'hover'
     }"
     type="button"
