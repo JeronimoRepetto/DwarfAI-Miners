@@ -388,6 +388,30 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
     list.unmount()
   })
 
+  // APPENDED for #635 (found in the live app): the add reloads the list before it names the new
+  // mine, so its card is on screen before revealId arrives; the rise plays on that same card.
+  it('rises in a card already on screen once it is named as the mine just added', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.setProps({ cards: [...valley, card({ name: 'gamma' })] })
+    await flushPromises()
+    expect(runs).toEqual([])
+    const onScreen = list.get('[data-mine="gamma"]').element
+    await list.setProps({ revealId: 'gamma' })
+    await flushPromises()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.element).toBe(onScreen)
+    expect(runs[0]!.keyframes).toEqual(MINE_CARD_ENTER.keyframes)
+    expect(scrolled).not.toContain('gamma')
+    runs[0]!.finish()
+    await flushPromises()
+    expect(scrolled).toContain('gamma')
+    list.unmount()
+  })
+
   it('moves no card that arrives by any other road', async () => {
     const list = mount(MinesList, { props: { ...base, cards: [], engine }, global: UNSTUBBED })
     await list.setProps({ cards: valley })
