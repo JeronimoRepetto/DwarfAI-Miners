@@ -200,6 +200,15 @@ onBeforeUnmount(() => {
 
 const tip = useHoverTip<string>()
 
+/*
+ * A dwarf that has reached the way out is gone to the eye (#156), so it is gone to the keyboard and
+ * the screen reader at once too (#635): the button turns inert, leaves the tab order and the
+ * accessibility tree, and takes its card with it, rather than waiting for the board to drop it.
+ */
+watch(departed, (gone) => {
+  if (gone) tip.hide()
+})
+
 function press(): void {
   tip.hide()
   emit('select')
@@ -238,6 +247,9 @@ const rootStyle = computed(() => ({
     :aria-label="label"
     :data-mark="mark?.mark"
     :style="rootStyle"
+    :inert="departed || undefined"
+    :tabindex="departed ? -1 : undefined"
+    :aria-hidden="departed ? 'true' : undefined"
     @click="press"
     @pointerenter="tip.hover(dwarf.id, $event)"
     @pointerleave="tip.leave"

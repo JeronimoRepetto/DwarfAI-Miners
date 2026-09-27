@@ -469,6 +469,22 @@ describe('SceneDwarf in the scene', () => {
   })
 
   /*
+   * ADDED for #635: a live run tabbed onto "Freya, idle" after she had faded out. A dwarf that has
+   * reached the way out is gone to the eye, so it is gone to the keyboard and the screen reader
+   * too, at once rather than when the board next drops it; one still walking out is still there.
+   */
+  it('takes a departed leaver out of the tab order and the accessibility tree at once', async () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ status: 'leaving' }), { walking: true })
+    const button = () => wrapper.find('.dm-dwarf')
+    expect(button().attributes('inert')).toBeUndefined()
+    expect(button().attributes('aria-hidden')).toBeUndefined()
+    await wrapper.setProps({ walking: false })
+    expect(button().attributes('inert')).toBeDefined()
+    expect(button().attributes('tabindex')).toBe('-1')
+    expect(button().attributes('aria-hidden')).toBe('true')
+  })
+
+  /*
    * ADDED for #635. A dwarf at rest draws at its station as it did before the walk came back: one
    * the column never walked (drawn on its way out when the column opened, or under reduced motion)
    * has reached no way out, so it stays drawn, idle, rather than fading where it stands.
