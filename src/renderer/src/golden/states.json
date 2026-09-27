@@ -191,20 +191,16 @@
     "red": "the redesigned Settings page is not built yet (#635, PR5)"
   },
   {
-    "key": "molecules/settings-row#toggle-row",
-    "red": "the settings row molecule is not built yet (#635, PR5)"
+    "key": "molecules/settings-row#toggle-row"
   },
   {
-    "key": "molecules/settings-row#shortcut-row",
-    "red": "the settings row molecule is not built yet (#635, PR5)"
+    "key": "molecules/settings-row#shortcut-row"
   },
   {
-    "key": "molecules/settings-row#warning-banner",
-    "red": "the settings row molecule is not built yet (#635, PR5)"
+    "key": "molecules/settings-row#warning-banner"
   },
   {
-    "key": "molecules/settings-row#danger-zone",
-    "red": "the settings row molecule is not built yet (#635, PR5)"
+    "key": "molecules/settings-row#danger-zone"
   },
   {
     "key": "screens/panel#open-the-screen"

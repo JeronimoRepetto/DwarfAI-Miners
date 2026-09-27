@@ -25,6 +25,9 @@ import SelectField from '../components/controls/SelectField.vue'
 import TierChip from '../components/controls/TierChip.vue'
 import OreCapsule from '../components/vault/OreCapsule.vue'
 import VaultStrip from '../components/vault/VaultStrip.vue'
+import KeyCap from '../components/panel/KeyCap.vue'
+import SettingsBanner from '../components/panel/SettingsBanner.vue'
+import SettingsRow from '../components/panel/SettingsRow.vue'
 import CrewRoster from '../components/scene/CrewRoster.vue'
 import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
@@ -986,6 +989,51 @@ const historyPanel: Render = (sample, _texts, attributes) => {
   }
 }
 
+/*
+ * The settings row as its tree prints it, in the kit's frame: danger and stacked as its classes
+ * say, its label and help the first texts, then each control in tree order — a switch named and
+ * set as it prints, a key cap showing the next text, a button labelled with the next text in the
+ * variant its classes carry. The warning banner is the banner alone, its line the one text.
+ */
+const settingsRow: Render = (_sample, texts, attributes) => {
+  const style = attributes[0]?.attributes.style ?? ''
+  if (elementsOf(attributes, 'div.dm-banner').length) {
+    return {
+      component: KitFrame,
+      props: { style, parts: [{ component: SettingsBanner, props: { text: texts[0]?.text } }] }
+    }
+  }
+  const root = attributes.find((entry) => entry.element.startsWith('div.dm-srow'))!
+  const helped = elementsOf(attributes, 'p.dm-srow__help').length > 0
+  let next = helped ? 2 : 1
+  const controls: FramedPart[] = []
+  for (const { element, attributes: a } of attributes) {
+    if (element.startsWith('button.dm-toggle')) {
+      controls.push({
+        component: ToggleSwitch,
+        props: { label: a['aria-label'] ?? '', on: a['aria-checked'] === 'true' }
+      })
+    } else if (element.startsWith('span.dm-kbd')) {
+      controls.push({ component: KeyCap, props: {}, text: texts[next++]?.text })
+    } else if (element.startsWith('button.dm-btn')) {
+      controls.push({
+        component: ActionButton,
+        props: { label: texts[next++]?.text ?? '', variant: modifierOf(element, 'dm-btn') }
+      })
+    }
+  }
+  const row = {
+    label: texts[0]?.text ?? '',
+    ...(helped ? { help: texts[1]?.text } : {}),
+    ...(root.element.includes('dm-srow--danger') ? { tone: 'danger' } : {}),
+    stack: root.element.includes('dm-srow--stack')
+  }
+  return {
+    component: KitFrame,
+    props: { style, parts: [{ component: SettingsRow, props: row, children: controls }] }
+  }
+}
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -1070,10 +1118,12 @@ export const RENDERS: Record<string, Render> = {
   'organisms/settings#integrations': unbuilt,
   'organisms/settings#data': unbuilt,
   'organisms/settings#about': unbuilt,
-  'molecules/settings-row#toggle-row': unbuilt,
-  'molecules/settings-row#shortcut-row': unbuilt,
-  'molecules/settings-row#warning-banner': unbuilt,
-  'molecules/settings-row#danger-zone': unbuilt,
+  // The settings row: a switch row, the shortcut's key cap and Reset, the warning banner, and the
+  // danger zone, each read off its own tree.
+  'molecules/settings-row#toggle-row': settingsRow,
+  'molecules/settings-row#shortcut-row': settingsRow,
+  'molecules/settings-row#warning-banner': settingsRow,
+  'molecules/settings-row#danger-zone': settingsRow,
   // The Panel screen's kit cell: the two buttons that open the screen and the prototype, each
   // labelled with the next text, the primary first, in the frame its tree prints.
   'screens/panel#open-the-screen': framed((texts) => [
