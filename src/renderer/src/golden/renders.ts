@@ -1059,6 +1059,27 @@ export const RENDERS: Record<string, Render> = {
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,
+  // The Settings page (#635, PR5): not rebuilt yet, so each state draws the unbuilt specimen and
+  // fails as it should until its component lands.
+  'organisms/settings#general': unbuilt,
+  'organisms/settings#general-shortcut-failed': unbuilt,
+  'organisms/settings#sound': unbuilt,
+  'organisms/settings#notifications': unbuilt,
+  'organisms/settings#appearance': unbuilt,
+  'organisms/settings#appearance-custom': unbuilt,
+  'organisms/settings#integrations': unbuilt,
+  'organisms/settings#data': unbuilt,
+  'organisms/settings#about': unbuilt,
+  'molecules/settings-row#toggle-row': unbuilt,
+  'molecules/settings-row#shortcut-row': unbuilt,
+  'molecules/settings-row#warning-banner': unbuilt,
+  'molecules/settings-row#danger-zone': unbuilt,
+  // The Panel screen's kit cell: the two buttons that open the screen and the prototype, each
+  // labelled with the next text, the primary first, in the frame its tree prints.
+  'screens/panel#open-the-screen': framed((texts) => [
+    { component: ActionButton, props: { label: texts[0]?.text ?? '', variant: 'primary' } },
+    { component: ActionButton, props: { label: texts[1]?.text ?? '' } }
+  ]),
 
   'foundations/colour#materials': swatches([
     ...ramp('rock'),

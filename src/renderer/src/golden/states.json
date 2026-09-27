@@ -155,6 +155,61 @@
     "key": "molecules/vault-strip#empty"
   },
   {
+    "key": "organisms/settings#general",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#general-shortcut-failed",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#sound",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#notifications",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#appearance",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#appearance-custom",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#integrations",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#data",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "organisms/settings#about",
+    "red": "the redesigned Settings page is not built yet (#635, PR5)"
+  },
+  {
+    "key": "molecules/settings-row#toggle-row",
+    "red": "the settings row molecule is not built yet (#635, PR5)"
+  },
+  {
+    "key": "molecules/settings-row#shortcut-row",
+    "red": "the settings row molecule is not built yet (#635, PR5)"
+  },
+  {
+    "key": "molecules/settings-row#warning-banner",
+    "red": "the settings row molecule is not built yet (#635, PR5)"
+  },
+  {
+    "key": "molecules/settings-row#danger-zone",
+    "red": "the settings row molecule is not built yet (#635, PR5)"
+  },
+  {
+    "key": "screens/panel#open-the-screen"
+  },
+  {
     "key": "foundations/colour#materials"
   },
   {
