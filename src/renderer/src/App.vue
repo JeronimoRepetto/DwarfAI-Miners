@@ -1321,6 +1321,12 @@ onBeforeUnmount(() => {
           </PanelTransition>
 
           <p v-if="error" class="notice" role="alert">{{ error }}</p>
+          <!--
+            Toasts stand in the page column, centred 56px from its bottom, whatever raised them
+            (PANEL-QUESTIONS 10, PO ruling 2026-09-27): never over the painting, the dwarfs or the
+            MessagePanel's composer. The column is the containing block.
+          -->
+          <ToastHost />
         </div>
       </PanelTransition>
 
@@ -1400,7 +1406,6 @@ onBeforeUnmount(() => {
         </div>
       </PanelTransition>
     </div>
-    <ToastHost />
   </MotionConfig>
 </template>
 

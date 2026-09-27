@@ -3318,3 +3318,43 @@ describe('App tab order (#635, PANEL-QUESTIONS 2)', () => {
     expect(mine).toBeLessThan(nav!)
   })
 })
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 10, PO ruling 2026-09-27): a toast is centred on the page
+ * column, 56px from its bottom, whatever raised it, so it never covers the painting, the dwarfs or
+ * the MessagePanel's composer. The host stands in the page column; ToastHost.test.ts pins its
+ * placement there.
+ */
+describe('App toast position (#635, PANEL-QUESTIONS 10)', () => {
+  const hostsWithToasts = (wrapper: VueWrapper) =>
+    wrapper.findAll('.dm-toasts').filter((host) => host.find('.dm-toast').exists())
+
+  it('raises a toast in the page column, even from the nav beside an open mine', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await wrapper.get(NAV_MUSIC).trigger('click')
+    await flushPromises()
+    const hosts = hostsWithToasts(wrapper)
+    expect(hosts).toHaveLength(1)
+    expect(hosts[0]!.element.closest('.shell-secondary')).not.toBeNull()
+  })
+
+  // Under the PO rule of 2026-09-27, the old window-wide host is not in the design and is gone:
+  // there is one host, and it is the page column's.
+  it('draws no toast host but the page column’s', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper } = await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    await wrapper.find('.edge-rail').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.shell-secondary').exists()).toBe(false)
+    expect(wrapper.find('.dm-toasts').exists()).toBe(false)
+  })
+})
