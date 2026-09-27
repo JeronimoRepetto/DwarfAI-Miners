@@ -34,6 +34,7 @@ import SpriteStrip from '../components/dwarf/SpriteStrip.vue'
 import PanelNav from '../components/shell/PanelNav.vue'
 import GuildPage from '../components/shell/GuildPage.vue'
 import PageHeader from '../components/shell/PageHeader.vue'
+import TierInfo from '../components/browse/TierInfo.vue'
 import DialogCard from '../components/overlay/DialogCard.vue'
 import MenuButton from '../components/overlay/MenuButton.vue'
 import MenuList from '../components/overlay/MenuList.vue'
@@ -562,6 +563,32 @@ const pageHeader: Render = framed((texts, attributes) => [
   { component: PageHeader, props: pageHeaderProps(texts, attributes) }
 ])
 
+/*
+ * The tier explainer in the kit's wood frame, the classes and style its tree's root prints. Its
+ * ranges are the sample's own floors: the app's thresholds are real ones, and the sample's are an
+ * illustration the reference was drawn from.
+ */
+const tierInfo: Render = (sample, _texts, attributes) => {
+  if (!sample.tierThresholds) throw new Error('golden: the sample carries no DM.TIER_FLOOR')
+  const root = attributes[0]!
+  return {
+    component: KitFrame,
+    props: {
+      style: root.attributes.style ?? '',
+      classes: root.element.split('.').slice(1).join(' '),
+      parts: [{ component: TierInfo, props: { thresholds: sample.tierThresholds } }]
+    }
+  }
+}
+
+// A small icon-only button alone, named as its tree prints it: the trigger a Live state draws.
+const smallIconButton =
+  (icon: IconName): Render =>
+  (_sample, _texts, attributes) => ({
+    component: ActionButton,
+    props: { icon, size: 'sm', title: attributes[0]?.attributes.title ?? '' }
+  })
+
 export const RENDERS: Record<string, Render> = {
   // The Panel's nav in each of its states, every prop read off the state's own tree.
   'organisms/nav#default': nav,
@@ -586,11 +613,12 @@ export const RENDERS: Record<string, Render> = {
   'molecules/mine-card#working-not-recorded-yet': unbuilt,
   'molecules/mine-card#not-enterable': unbuilt,
   'molecules/mine-card#max-tier': unbuilt,
-  'organisms/tier-info#content': unbuilt,
-  'organisms/tier-info#live': unbuilt,
   // The page header plate: the Mines page's tools, and a title alone.
   'organisms/page-header#mines': pageHeader,
   'organisms/page-header#title-only': pageHeader,
+  // The tier and ore explainer, and the button that opens it.
+  'organisms/tier-info#content': tierInfo,
+  'organisms/tier-info#live': smallIconButton('info'),
   // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
   // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
   'molecules/menu#mine-card': menu([]),

@@ -75,12 +75,10 @@
     "red": "the Mines page slice of #635 (PR2) rebuilds it"
   },
   {
-    "key": "organisms/tier-info#content",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "organisms/tier-info#content"
   },
   {
-    "key": "organisms/tier-info#live",
-    "red": "the Mines page slice of #635 (PR2) rebuilds it"
+    "key": "organisms/tier-info#live"
   },
   {
     "key": "molecules/dialog#confirm-danger"
