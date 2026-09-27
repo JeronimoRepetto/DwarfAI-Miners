@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import MinesList from './MinesList.vue'
 import type { MineCardView } from '../../lib/browse/mineCard'
+import { MINE_CARD_ENTER, MINE_CARD_EXIT } from '../../lib/browse/cardMotion'
+import type { MotionAnimate } from '../../lib/shell/boundedMotion'
 
 /*
  * The redesigned Mines page (#635), organisms/mines-list. It replaces MinesPanel (#92, #85, #165,
@@ -302,5 +304,139 @@ describe('MinesList refusing a mine', () => {
     })
     await list.get('button.dm-card__hit').trigger('click')
     expect(list.emitted('refuse')).toEqual([['old']])
+  })
+})
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 9, design lead ruling 2026-09-27): an added mine's card
+ * enters rising from transparent and then scrolls into view; a removed mine's card slides left to
+ * transparent and holds its last frame until it is removed, the cards below closing the gap at
+ * once. Every other card that comes or goes (the first read, the board catching up) has no motion.
+ * Driven through the bounded runner with a hand-written engine, as PanelTransition.test.ts does;
+ * `HTMLElement.prototype.animate` is stubbed only because `still()` reads its presence.
+ */
+describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
+  const runs: { element: Element; keyframes: unknown; transition: unknown; finish: () => void }[] =
+    []
+  const engine: MotionAnimate = (element, keyframes, transition) => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    runs.push({ element, keyframes, transition, finish })
+    return {
+      cancel: () => undefined,
+      then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
+    }
+  }
+  // test-utils stubs TransitionGroup by default, which would never call the page's hooks.
+  const UNSTUBBED = { stubs: { 'transition-group': false } }
+  const scrolled: string[] = []
+  beforeEach(() => {
+    runs.length = 0
+    scrolled.length = 0
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: () => undefined
+    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value(this: HTMLElement) {
+        scrolled.push(this.dataset.mine ?? '')
+      }
+    })
+  })
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+  })
+
+  it('enters an added mine’s card rising from transparent, then scrolls it into view', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    const added = card({ name: 'gamma', tier: 'bronze' })
+    await list.setProps({ cards: [...valley, added], revealId: 'gamma' })
+    await flushPromises()
+    expect(runs).toHaveLength(1)
+    expect((runs[0]!.element as HTMLElement).dataset.mine).toBe('gamma')
+    expect(runs[0]!.keyframes).toEqual(MINE_CARD_ENTER.keyframes)
+    expect(runs[0]!.transition).toEqual(MINE_CARD_ENTER.transition)
+    expect(scrolled).not.toContain('gamma')
+    runs[0]!.finish()
+    await flushPromises()
+    expect(scrolled).toContain('gamma')
+    list.unmount()
+  })
+
+  it('rises once: a filter hiding and showing the added card again moves nothing', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.setProps({ cards: [...valley, card({ name: 'gamma' })], revealId: 'gamma' })
+    await flushPromises()
+    runs.splice(0).forEach((run) => run.finish())
+    await flushPromises()
+    await list.setProps({ tier: 'gold' })
+    await list.setProps({ tier: null })
+    await flushPromises()
+    expect(runs).toEqual([])
+    list.unmount()
+  })
+
+  it('moves no card that arrives by any other road', async () => {
+    const list = mount(MinesList, { props: { ...base, cards: [], engine }, global: UNSTUBBED })
+    await list.setProps({ cards: valley })
+    await flushPromises()
+    expect(runs).toEqual([])
+    expect(list.findAll('.dm-card')).toHaveLength(2)
+  })
+
+  it('slides a removed mine’s card out, holding its last frame until it is gone', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    await flushPromises()
+    expect(runs).toHaveLength(1)
+    const leaving = runs[0]!.element as HTMLElement
+    expect(leaving.dataset.mine).toBe('beta')
+    expect(runs[0]!.keyframes).toEqual(MINE_CARD_EXIT.keyframes)
+    expect(runs[0]!.transition).toEqual(MINE_CARD_EXIT.transition)
+    expect(list.find('[data-mine="beta"]').exists()).toBe(true)
+    runs[0]!.finish()
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(false)
+    list.unmount()
+  })
+
+  it('removes the card at once where there is no motion to run', async () => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'animate')
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    await flushPromises()
+    expect(runs).toEqual([])
+    expect(list.find('[data-mine="beta"]').exists()).toBe(false)
+    list.unmount()
   })
 })

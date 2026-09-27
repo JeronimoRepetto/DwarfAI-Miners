@@ -1241,6 +1241,7 @@ onBeforeUnmount(() => {
               :remove-error="removeMineError"
               :worktree-question="worktreeQuestion"
               :reveal-id="revealMine"
+              :engine="props.engine"
               @search="setProjectSearch"
               @tier="setProjectTier"
               @sort="sortProjects"

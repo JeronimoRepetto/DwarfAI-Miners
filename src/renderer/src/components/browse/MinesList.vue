@@ -7,7 +7,7 @@
  * worktree picked by Add asks which project was meant (#348). What is shown is
  * lib/browse/minesList's; the reads and writes are the host's, through useProjectBrowse.
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import PageHeader from '../shell/PageHeader.vue'
 import ChoiceChip from '../controls/ChoiceChip.vue'
 import ActionButton from '../controls/ActionButton.vue'
@@ -26,6 +26,8 @@ import {
   type MineSort
 } from '../../lib/browse/minesList'
 import type { MineCardView } from '../../lib/browse/mineCard'
+import { MINE_CARD_ENTER, MINE_CARD_EXIT, holdExitFrame } from '../../lib/browse/cardMotion'
+import { createBoundedMotion, type MotionAnimate } from '../../lib/shell/boundedMotion'
 import { designTierLabel } from '../../lib/presentation'
 import { worktreeQuestionBody } from '../../lib/worktree'
 import { MINE_TIERS } from '../../types'
@@ -51,8 +53,10 @@ const props = withDefaults(
     removeError?: string | null
     /** The worktree the last add landed on, while the page asks about it (#348). */
     worktreeQuestion?: MineWorktreeOf | null
-    /** A mine just added: its card scrolls into view. */
+    /** A mine just added: its card enters, then scrolls into view. */
     revealId?: string | null
+    /** The engine the card motion's bounded runner drives, for a test's hand-written fake. */
+    engine?: MotionAnimate
   }>(),
   {
     adding: false,
@@ -62,7 +66,8 @@ const props = withDefaults(
     removing: false,
     removeError: null,
     worktreeQuestion: null,
-    revealId: null
+    revealId: null,
+    engine: undefined
   }
 )
 
@@ -120,7 +125,10 @@ const removeActions = computed(() => [
 
 function removalAction(index: number): void {
   if (index === 0) removingId.value = null
-  else if (pendingRemoval.value && !props.removing) emit('remove', pendingRemoval.value.id)
+  else if (pendingRemoval.value && !props.removing) {
+    exitingId.value = pendingRemoval.value.id
+    emit('remove', pendingRemoval.value.id)
+  }
 }
 
 const worktreeActions = computed(() => [
@@ -142,9 +150,59 @@ watch(
     if (id === null) return
     await nextTick()
     const el = listEl.value?.querySelector<HTMLElement>('[data-mine="' + CSS.escape(id) + '"]')
-    el?.scrollIntoView?.({ block: 'nearest' })
+    // A card still entering scrolls into view once it has risen (cardEnter, below).
+    if (el && !motion.running(el)) el.scrollIntoView?.({ block: 'nearest' })
   }
 )
+
+/*
+ * A card enters or leaves with motion only for the two acts the design animates (PANEL-QUESTIONS 9,
+ * design lead ruling 2026-09-27): the mine just added (`revealId`) rises in and then scrolls into
+ * view, and the mine whose removal the page confirmed slides out, holding its last frame until it
+ * is removed. Every other card that comes or goes (the first read, the board catching up, a
+ * removal made elsewhere) appears or goes at once. The cards below close the gap at once: no FLIP.
+ * Every run goes through the bounded runner (AGENTS.md: never trust `animation.finished` alone),
+ * whose `still` is the reduced-motion 0ms.
+ */
+const motion = createBoundedMotion({ animate: props.engine })
+onBeforeUnmount(() => motion.dispose())
+const exitingId = ref<string | null>(null)
+// The added mine whose card has already risen: a filter showing it again is not an arrival.
+let risen: string | null = null
+watch(
+  () => props.revealId,
+  () => {
+    risen = null
+  }
+)
+watch(
+  () => props.removeError,
+  (reason) => {
+    if (reason !== null) exitingId.value = null
+  }
+)
+
+function cardEnter(element: Element, done: () => void): void {
+  const el = element as HTMLElement
+  // `v-show` enters a card again as it mounts, beside the group's own insertion: one rise.
+  if (el.dataset.mine !== props.revealId || risen === props.revealId || motion.still(el))
+    return done()
+  risen = props.revealId
+  void motion.run(el, MINE_CARD_ENTER.keyframes, undefined, MINE_CARD_ENTER.transition).then(() => {
+    done()
+    el.scrollIntoView?.({ block: 'nearest' })
+  })
+}
+
+function cardLeave(element: Element, done: () => void): void {
+  const el = element as HTMLElement
+  if (el.dataset.mine !== exitingId.value) return done()
+  exitingId.value = null
+  if (motion.still(el)) return done()
+  void motion
+    .run(el, MINE_CARD_EXIT.keyframes, () => holdExitFrame(el), MINE_CARD_EXIT.transition)
+    .then(done)
+}
 </script>
 
 <template>
@@ -176,17 +234,19 @@ watch(
       <!-- Loading and failure have no design of their own: plain lines, as the page had them. -->
       <p v-if="error" class="dm-mines__notice" role="alert">{{ error }}</p>
       <p v-if="addError" class="dm-mines__notice" role="alert">{{ addError }}</p>
-      <MineCard
-        v-for="view in ordered"
-        v-show="shownIds.has(view.id)"
-        :key="view.id"
-        role="listitem"
-        :card="view"
-        :open="view.id === openId"
-        @open="emit('open', $event)"
-        @refuse="emit('refuse', $event)"
-        @remove="removingId = $event"
-      />
+      <TransitionGroup :css="false" @enter="cardEnter" @leave="cardLeave">
+        <MineCard
+          v-for="view in ordered"
+          v-show="shownIds.has(view.id)"
+          :key="view.id"
+          role="listitem"
+          :card="view"
+          :open="view.id === openId"
+          @open="emit('open', $event)"
+          @refuse="emit('refuse', $event)"
+          @remove="removingId = $event"
+        />
+      </TransitionGroup>
       <div v-if="empty" class="dm-empty">
         <p class="dm-empty__title">{{ empty.title }}</p>
         <p class="dm-empty__text">{{ empty.text }}</p>
