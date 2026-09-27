@@ -88,6 +88,51 @@ describe('shellFoldClip', () => {
   })
 })
 
+/*
+ * ADDED for #635. The redesigned plate draws its 2px edge OUTSIDE the shell's
+ * box (`.m-mat`), and a zero inset cuts it: a live run showed the outline gone
+ * on top, bottom and the docked side for the whole fold and unfold. Handed the
+ * outline's width, the clip leaves that much room on every side it does not
+ * fold — and on the free side too once the ground is whole — so the outline
+ * stays continuous. The folded free side stays exactly where it was: that is
+ * the edge the window is about to take away (#388).
+ */
+describe('shellFoldClip with the plate’s outline', () => {
+  it('leaves the outline room on every side of the whole ground', () => {
+    expect(shellFoldClip('whole', 'right', '0px', 2)).toBe('inset(-2px -2px -2px -2px round 0px)')
+    expect(shellFoldClip('whole', 'left', '0px', 2)).toBe('inset(-2px -2px -2px -2px round 0px)')
+  })
+
+  it('keeps the top, the bottom and the docked side whole while folded, and cuts the free side as before', () => {
+    expect(shellFoldClip(36, 'right', '0px', 2)).toBe(
+      'inset(-2px -2px -2px calc(100% - 36px) round 0px)'
+    )
+    expect(shellFoldClip(36, 'left', '0px', 2)).toBe(
+      'inset(-2px calc(100% - 36px) -2px -2px round 0px)'
+    )
+  })
+
+  it('carries the outline through both ends of a fold and an unfold', () => {
+    expect(shellFoldKeyframes('whole', 36, 'right', '0px', 2)).toEqual({
+      clipPath: [
+        'inset(-2px -2px -2px -2px round 0px)',
+        'inset(-2px -2px -2px calc(100% - 36px) round 0px)'
+      ]
+    })
+    expect(shellFoldKeyframes(20, 'whole', 'left', '0px', 2)).toEqual({
+      clipPath: [
+        'inset(-2px calc(100% - 20px) -2px -2px round 0px)',
+        'inset(-2px -2px -2px -2px round 0px)'
+      ]
+    })
+  })
+
+  it('is the zero inset it always was with no outline to keep', () => {
+    expect(shellFoldClip('whole', 'right', '12px', 0)).toBe(shellFoldClip('whole', 'right', '12px'))
+    expect(shellFoldClip(36, 'left', '12px', 0)).toBe(shellFoldClip(36, 'left', '12px'))
+  })
+})
+
 describe('shellFoldKeyframes', () => {
   it('folds from what is painted now to what survives the change', () => {
     expect(shellFoldKeyframes('whole', 36, 'right', '12px')).toEqual({

@@ -9,6 +9,9 @@ import {
   DESIGN_INTERIOR_WIDTH,
   DWARF_PAINTING_HEIGHT,
   INTERIOR_FIT,
+  MINE_COLUMN_ART_INSET,
+  MINE_COLUMN_CHROME_HEIGHT,
+  MINE_COLUMN_MIN_WIDTH,
   SHELL_CONTENT_INSET,
   interiorColumnWidth,
   spriteFootprintPx,
@@ -178,28 +181,47 @@ describe('DWARF_PAINTING_HEIGHT', () => {
  * the stylesheet.
  */
 describe('interiorColumnWidth', () => {
-  it('is the painting’s own aspect applied to the height the shell leaves', () => {
+  // AMENDED for #635 (was: the painting's aspect applied to the whole height
+  // the shell leaves). The redesigned column draws the painting at that height
+  // less its chrome, adds 16px, and is never narrower than 300px
+  // (screens/shell.md, Layout).
+  it('is the painting’s own aspect applied to the height its chrome leaves, plus 16px', () => {
+    expect(SHELL_CONTENT_INSET).toBe(36)
+    expect(MINE_COLUMN_CHROME_HEIGHT).toBe(196)
+    expect(MINE_COLUMN_ART_INSET).toBe(16)
     for (const windowHeight of [600, 768, 1032, 1392, 2160]) {
-      const content = windowHeight - SHELL_CONTENT_INSET
+      const art = windowHeight - SHELL_CONTENT_INSET - MINE_COLUMN_CHROME_HEIGHT
       expect(interiorColumnWidth(windowHeight)).toBe(
-        Math.round((content * INTERIOR_PAINTING_SIZE.width) / INTERIOR_PAINTING_SIZE.height)
+        Math.max(
+          MINE_COLUMN_MIN_WIDTH,
+          Math.round((art * INTERIOR_PAINTING_SIZE.width) / INTERIOR_PAINTING_SIZE.height) +
+            MINE_COLUMN_ART_INSET
+        )
       )
     }
   })
 
-  it('reproduces the design’s own 245px column at the design’s own 768-tall composition', () => {
-    // 245 was never a constant: it is this rule read off the mock's own height,
-    // which is why the design's number is checked here instead of copied.
-    expect(interiorColumnWidth(768)).toBeCloseTo(DESIGN_INTERIOR_WIDTH, -0.5)
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "reproduces the
+   * design’s own 245px column at the design’s own 768-tall composition". 245
+   * was the retired v4 mock's column; at the design screen the redesign's
+   * column is its 300px floor, asserted below. DESIGN_INTERIOR_WIDTH itself
+   * stays: the sprite scale is still calibrated against it.
+   */
+  it('is its 300px floor at the design screen', () => {
+    expect(interiorColumnWidth(1080)).toBe(MINE_COLUMN_MIN_WIDTH)
   })
 
   it('grows with the display rather than staying the mock’s width on a taller one', () => {
     expect(interiorColumnWidth(1392)).toBeGreaterThan(interiorColumnWidth(768))
   })
 
-  it('never returns a negative column for a window shorter than its own chrome', () => {
-    expect(interiorColumnWidth(0)).toBe(0)
-    expect(interiorColumnWidth(SHELL_CONTENT_INSET - 4)).toBe(0)
+  // AMENDED for #635 (was: zero for a window shorter than its chrome). The
+  // column has a floor now, and a short window gets it: rock letterboxes the
+  // painting rather than the column vanishing.
+  it('never returns a column narrower than its floor for a window shorter than its own chrome', () => {
+    expect(interiorColumnWidth(0)).toBe(MINE_COLUMN_MIN_WIDTH)
+    expect(interiorColumnWidth(SHELL_CONTENT_INSET - 4)).toBe(MINE_COLUMN_MIN_WIDTH)
   })
 })
 

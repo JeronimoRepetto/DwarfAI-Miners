@@ -22,20 +22,11 @@ export const SHELL_AREAS = ['settings', 'map', 'mines', 'lab', 'market', 'labora
 
 export type ShellArea = (typeof SHELL_AREAS)[number]
 
-export interface ShellNavItem {
-  area: ShellArea
-  /** The accessible name; the design's buttons carry an icon and no visible label. */
-  label: string
-}
-
-export const SHELL_NAV: readonly ShellNavItem[] = [
-  { area: 'settings', label: 'Settings' },
-  { area: 'map', label: 'Map' },
-  { area: 'mines', label: 'Mines' },
-  { area: 'lab', label: 'Lab' },
-  { area: 'market', label: 'Market' },
-  { area: 'laboral-union', label: 'Laboral Union' }
-]
+/*
+ * `SHELL_NAV`, the v4 nav's single stack of the six areas in the source's
+ * order, stood here until #635 and went with ShellNav.vue, its only reader. The
+ * redesigned nav's groups are in `panelNav.ts`.
+ */
 
 export function isShellArea(value: unknown): value is ShellArea {
   return typeof value === 'string' && (SHELL_AREAS as readonly string[]).includes(value)
@@ -45,7 +36,7 @@ export function isShellArea(value: unknown): value is ShellArea {
  * The areas the design specifies as intentionally unavailable, and the one place
  * that list is written down (#335).
  *
- * All three carry the SAME overlay — `UnavailablePanel` — so the only thing that
+ * All three carry the SAME page — `GuildPage` since #635 — so the only thing that
  * distinguishes them is a painting and a sentence. Which is exactly why the list
  * is here rather than inferred in the shell's template: the fallback used to be
  * `area === 'lab' ? 'lab' : 'market'`, which answers "market" for every area

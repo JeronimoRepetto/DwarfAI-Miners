@@ -19,6 +19,7 @@ export type {
   AgentProviderList,
   AgentProviderOption,
   AppBuild,
+  FeatureFlags,
   AudioPreferences,
   Dwarf,
   DwarfActivation,

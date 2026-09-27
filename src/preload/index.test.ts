@@ -171,6 +171,20 @@ describe('preload app build contract', () => {
 })
 
 /**
+ * The features that ship hidden (#635). Read-only and payload-free, like the
+ * build: main resolves the flags from its configuration layers once, and the
+ * renderer only ever draws what main answered.
+ */
+describe('preload feature flags contract', () => {
+  it('asks for the flags on the app:features channel with no payload', async () => {
+    const flags = { guildAreasEnabled: true }
+    invoke.mockResolvedValueOnce(flags)
+    await expect(api.getFeatureFlags()).resolves.toEqual(flags)
+    expect(invoke).toHaveBeenLastCalledWith('app:features')
+  })
+})
+
+/**
  * Adding and removing a user-declared mine (#85). The folder picker is opened
  * in MAIN, so this side carries no path in either direction — it asks, and it
  * names a mine by the id both processes already agree on.

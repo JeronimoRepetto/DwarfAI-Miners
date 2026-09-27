@@ -3900,6 +3900,20 @@ export interface AppBuild {
 }
 
 /**
+ * The features that ship hidden, as main resolved them (#635).
+ *
+ * Each is designed in full and switched by a configuration flag, off by
+ * default and never a Settings row, so an installed app turns one on through
+ * its userData configuration file. Resolved once at startup and pull-only, like
+ * the build: nothing changes it while the process lives. While a flag is off,
+ * nothing anywhere points at its feature — no dead buttons.
+ */
+export interface FeatureFlags {
+  /** The nav's Guild group, and the Lab, Market and Laboral Union pages. */
+  guildAreasEnabled: boolean
+}
+
+/**
  * Verdict of asking main to adopt a folder as a mine (#85, #127).
  *
  * There is no request payload: the OS folder picker is opened in MAIN, so the
@@ -5114,6 +5128,11 @@ export const IPC_CHANNELS = {
    * push and nothing to keep in step.
    */
   getAppBuild: 'app:build',
+  /**
+   * The features that ship hidden (#635). Pull-only, for the reason the build
+   * is: main resolves them from configuration once at startup.
+   */
+  getFeatureFlags: 'app:features',
   /**
    * Adopting a folder as a mine, and removing one (#85, #169).
    *

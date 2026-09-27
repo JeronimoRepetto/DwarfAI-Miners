@@ -301,6 +301,10 @@ and a development checkout with a `.env` behaves exactly as it always has.
 The config file's location per platform, every setting with its default, and the diagnostic
 switches are in the [configuration reference](docs/guide.md#configuration-reference).
 
+**Features that ship hidden** are flags in those same layers, off by default and never a Settings
+row: `GUILD_AREAS_ENABLED` shows the nav's Guild group and the Lab, Market and Laboral Union pages
+while they are being built. The configuration reference has the accepted values.
+
 **The Jev API key is not one of those layers.** It is a secret you type into Settings, not an
 operator value, so it is never read from `.env` or written into `config-v1.json` — enter, replace
 or clear it from the Jev section of Settings only, on either setup. It is stored encrypted on this

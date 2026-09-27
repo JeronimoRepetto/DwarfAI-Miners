@@ -104,6 +104,13 @@ export interface ShellFoldOptions {
   shell: () => HTMLElement | null
   /** The docked side, which the fold is mirrored around. */
   edge: () => PanelEdge
+  /**
+   * How far the ground's own edge is drawn outside its box, in px (#635): the
+   * redesigned plate's `.m-mat` edge. The fold's clip leaves that much room on
+   * every side it does not cut, so the edge is never clipped mid-run. Optional
+   * and defaulted to none, so a caller with no outside edge is untouched.
+   */
+  outline?: () => number
   /** The composition presentation is folding TO. */
   remaining: () => ShellComposition
   /**
@@ -409,8 +416,13 @@ export function useShellFold(options: ShellFoldOptions) {
     return motion.still(shell)
   }
 
+  function outlineOf(): number {
+    return options.outline?.() ?? 0
+  }
+
   function apply(shell: HTMLElement, state: ShellFoldState, radius: string): void {
-    shell.style.clipPath = state === 'whole' ? '' : shellFoldClip(state, options.edge(), radius)
+    shell.style.clipPath =
+      state === 'whole' ? '' : shellFoldClip(state, options.edge(), radius, outlineOf())
   }
 
   /**
@@ -653,7 +665,10 @@ export function useShellFold(options: ShellFoldOptions) {
     to: ShellFoldState,
     radius: string
   ): MotionTransition {
-    const clip = shellFoldKeyframes(from, to, options.edge(), radius).clipPath as [string, string]
+    const clip = shellFoldKeyframes(from, to, options.edge(), radius, outlineOf()).clipPath as [
+      string,
+      string
+    ]
     return getDefaultTransition('clipPath', { keyframes: clip as unknown as number[] })
   }
 
@@ -688,38 +703,42 @@ export function useShellFold(options: ShellFoldOptions) {
     // land inside one test's own timers.
     let settled = false
     const generation = ++folds
-    void motion.run(shell, shellFoldKeyframes(from, to, options.edge(), radius), () => {
-      // A run the ground has already replaced writes nothing at all (#585
-      // round 2): the fold that took over owns `painted`, the pin, the clip
-      // and every column this one was carrying, and it is about to say so
-      // itself. Ending is not finishing, and only the last fold standing may
-      // answer for the ground.
-      if (generation !== folds) return
-      apply(shell, to, radius)
-      if (settled) return
-      settled = true
-      done()
-      resolve()
-      // Drain anything `enter` queued WHILE this run was in flight (#566 T5b,
-      // real-window probe evidence): the ground's own fold/unfold occupies
-      // `motion.running(shell)` for its own run — 300ms and more, under a
-      // spring — and every `settle` that would otherwise have caught a freshly
-      // pre-placed column up returns at the FIRST guard for as long as it does.
-      // Nothing external is guaranteed to ask again once it is free: the
-      // `flush: 'post'` watch already fired for the change that started THIS
-      // run, and the next one is whatever the user does next, which could be
-      // seconds away or a different column's request entirely — a pre-placed
-      // column left waiting for either stayed invisible for good, live in a
-      // real window. This run just became the one thing that reliably knows
-      // the ground is free again, so it asks on that column's behalf.
-      //
-      // A BACKSTOP since #585, where it used to be the ordinary path: a column
-      // of the same change registers before the unfold is measured now, so
-      // what is left here is a column that genuinely arrived after one — a
-      // second grow landing inside the first one's run — which is a second
-      // change and honestly a second run.
-      if (pendingReveal()) settle(false)
-    })
+    void motion.run(
+      shell,
+      shellFoldKeyframes(from, to, options.edge(), radius, outlineOf()),
+      () => {
+        // A run the ground has already replaced writes nothing at all (#585
+        // round 2): the fold that took over owns `painted`, the pin, the clip
+        // and every column this one was carrying, and it is about to say so
+        // itself. Ending is not finishing, and only the last fold standing may
+        // answer for the ground.
+        if (generation !== folds) return
+        apply(shell, to, radius)
+        if (settled) return
+        settled = true
+        done()
+        resolve()
+        // Drain anything `enter` queued WHILE this run was in flight (#566 T5b,
+        // real-window probe evidence): the ground's own fold/unfold occupies
+        // `motion.running(shell)` for its own run — 300ms and more, under a
+        // spring — and every `settle` that would otherwise have caught a freshly
+        // pre-placed column up returns at the FIRST guard for as long as it does.
+        // Nothing external is guaranteed to ask again once it is free: the
+        // `flush: 'post'` watch already fired for the change that started THIS
+        // run, and the next one is whatever the user does next, which could be
+        // seconds away or a different column's request entirely — a pre-placed
+        // column left waiting for either stayed invisible for good, live in a
+        // real window. This run just became the one thing that reliably knows
+        // the ground is free again, so it asks on that column's behalf.
+        //
+        // A BACKSTOP since #585, where it used to be the ordinary path: a column
+        // of the same change registers before the unfold is measured now, so
+        // what is left here is a column that genuinely arrived after one — a
+        // second grow landing inside the first one's run — which is a second
+        // change and honestly a second run.
+        if (pendingReveal()) settle(false)
+      }
+    )
   }
 
   /** Measure the batch the leaving columns registered, and fold the ground. */
