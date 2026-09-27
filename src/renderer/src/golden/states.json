@@ -157,16 +157,13 @@
     "red": "the question card in place of the composer is the old card, restyled with the question and permission cards in the next slice of #635 (PR3); the frame, the header, the outcome line and the conversation above it are the rebuilt ones"
   },
   {
-    "key": "organisms/add-panel#live",
-    "red": "the redesigned Add panel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+    "key": "organisms/add-panel#live"
   },
   {
-    "key": "organisms/add-panel#supplier-picked",
-    "red": "the redesigned Add panel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+    "key": "organisms/add-panel#supplier-picked"
   },
   {
-    "key": "organisms/add-panel#custom-command",
-    "red": "the redesigned Add panel is not built yet: the app still draws the old panel (#635, the MessagePanel slice)"
+    "key": "organisms/add-panel#custom-command"
   },
   {
     "key": "molecules/vault-strip#mine-footer"

@@ -70,6 +70,7 @@ import type { IconName } from '../lib/icon/iconGrids'
 import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../lib/shell/panelNav'
 import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
 import {
+  DEFAULT_JEV_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type Dwarf,
@@ -1035,7 +1036,16 @@ const LaunchStage = defineComponent({
     choice: { type: String as () => LaunchChoice | null, default: null }
   },
   setup(props) {
-    Object.defineProperty(window, 'api', { configurable: true, value: goldenApi(props.sample) })
+    // The kit draws Jev as a choice the person can make, which is the app with a TypeSafe key set:
+    // the bridge answers the stored verdict main keeps once one is (#509).
+    const api = goldenApi(props.sample)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        ...api,
+        getJevSettings: () => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, configured: true })
+      }
+    })
     const launch = useAgentLaunch()
     launch.close()
     void launch.open(props.mineId).then(() => {
@@ -1047,7 +1057,6 @@ const LaunchStage = defineComponent({
         chips: launch.chips.value,
         phase: launch.phase.value,
         enabled: launch.enabled.value,
-        placeholder: launch.placeholder.value,
         command: launch.state.value.command,
         prompt: launch.state.value.prompt,
         refusal: launch.refusal.value,

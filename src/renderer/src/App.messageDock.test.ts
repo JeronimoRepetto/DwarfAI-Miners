@@ -1266,6 +1266,17 @@ describe('feed refresh (#183)', () => {
  * up on an ordinary poll.
  */
 describe('the add panel', () => {
+  /*
+   * AMENDED for #635 throughout this block: the redesigned Add panel (organisms/add-panel) is
+   * `.dm-add`, its suppliers ChoiceChip radios, its prompt the design's four-row field, which
+   * takes line breaks and launches on Ctrl+Enter (Cmd+Enter on a Mac), and its Jev pair two
+   * switches. What the panel says — main's refusal among it — is the line beside Send the dwarf
+   * in. Each case whose meaning changed says so where it stands.
+   */
+  const ADD = '.dm-add'
+  const CHIPS = '.dm-add__chips .dm-chip'
+  const PROMPT = '.dm-add__prompt textarea'
+
   const OTHER_DWARF = {
     id: 'claude:s1',
     provider: 'claude',
@@ -1301,26 +1312,24 @@ describe('the add panel', () => {
   }
 
   async function submitPrompt(wrapper: VueWrapper, prompt: string) {
-    await wrapper.findAll('.provider-chip')[0]!.trigger('click')
-    await wrapper.find('.launch-input').setValue(prompt)
-    await wrapper.find('.launch-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.findAll(CHIPS)[0]!.trigger('click')
+    await wrapper.find(PROMPT).setValue(prompt)
+    await wrapper.find(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
   }
 
   // AMENDED for #635 (was: 'opens on the launch surface main was asked for').
   it('opens on the mine its Add action was pressed in', async () => {
     const { wrapper } = await openAddPanel()
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find(ADD).exists()).toBe(true)
   })
 
   it('asks main which providers this machine has when it opens', async () => {
     const { api, wrapper } = await openAddPanel()
 
     expect(api.listAgentProviders).toHaveBeenCalled()
-    expect(wrapper.findAll('.provider-chip').map((chip) => chip.text())).toEqual([
-      'claude',
-      'Other'
-    ])
+    // AMENDED for #635 (was: ['claude', 'Other']): the tool's own name, and Other….
+    expect(wrapper.findAll(CHIPS).map((chip) => chip.text())).toEqual(['Claude', 'Other…'])
   })
 
   /*
@@ -1339,7 +1348,7 @@ describe('the add panel', () => {
     wrapper.findComponent(MineColumn).vm.$emit('add')
     await flushPromises()
 
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find(ADD).exists()).toBe(true)
     expect(wrapper.find('.dm-msg').exists()).toBe(false)
   })
 
@@ -1352,11 +1361,11 @@ describe('the add panel', () => {
           .mockResolvedValue({ mines: [{ ...MINE, dwarfs: [OTHER_DWARF] }], tokensObserved: 0 })
       }
     )
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find(ADD).exists()).toBe(true)
 
     await selectOn(wrapper, 'claude:s1')
 
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
+    expect(wrapper.find(ADD).exists()).toBe(false)
     expect(wrapper.find('.dm-msg').exists()).toBe(true)
   })
 
@@ -1365,10 +1374,10 @@ describe('the add panel', () => {
   it('closes from its own close control', async () => {
     const { wrapper } = await openAddPanel()
 
-    await wrapper.find('.launch-close').trigger('click')
+    await wrapper.find('.dm-add__close').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
+    expect(wrapper.find(ADD).exists()).toBe(false)
     expect(useAgentLaunch().phase.value).toBe('closed')
   })
 
@@ -1378,16 +1387,14 @@ describe('the add panel', () => {
     // action pressed again — would silently discard a prompt somebody was
     // half-way through typing.
     const { wrapper } = await openAddPanel()
-    await wrapper.findAll('.provider-chip')[0]!.trigger('click')
-    await wrapper.find('.launch-input').setValue('dig the east gallery')
+    await wrapper.findAll(CHIPS)[0]!.trigger('click')
+    await wrapper.find(PROMPT).setValue('dig the east gallery')
     await flushPromises()
 
     wrapper.findComponent(MineColumn).vm.$emit('add')
     await flushPromises()
 
-    expect(wrapper.find<HTMLTextAreaElement>('.launch-input').element.value).toBe(
-      'dig the east gallery'
-    )
+    expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
   })
 
   it('starts a held session in the mine it was opened from', async () => {
@@ -1412,8 +1419,11 @@ describe('the add panel', () => {
 
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.launch-first-message').text()).toBe('dig the east gallery')
+    // AMENDED for #635 (was: the spawning view's `.launch-first-message`). The redesign keeps
+    // the panel as it is while the dwarf is sent in: the prompt in its field, and the line.
+    expect(wrapper.find(ADD).exists()).toBe(true)
+    expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
+    expect(wrapper.find('.dm-add__why').text()).toBe('Sending the dwarf in…')
   })
 
   it('hands over to the MessagePanel when the launched dwarf arrives', async () => {
@@ -1428,7 +1438,7 @@ describe('the add panel', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.add-panel').exists()).toBe(false)
+    expect(wrapper.find(ADD).exists()).toBe(false)
     expect(wrapper.find('.dm-msg').exists()).toBe(true)
     expect(wrapper.find('.dm-msg__rename').text()).toBe('Newcomer')
   })
@@ -1492,7 +1502,7 @@ describe('the add panel', () => {
     pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OTHER_DWARF] }], tokensObserved: 0 })
     await flushPromises()
 
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find(ADD).exists()).toBe(true)
     expect(wrapper.find('.dm-msg').exists()).toBe(false)
   })
 
@@ -1505,8 +1515,8 @@ describe('the add panel', () => {
 
     await submitPrompt(wrapper, 'dig the east gallery')
 
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
-    expect(wrapper.find('.launch-alert').text()).toBe('Claude Code is not installed.')
+    expect(wrapper.find(ADD).exists()).toBe(true)
+    expect(wrapper.find('.dm-add__why.is-alert').text()).toBe('Claude Code is not installed.')
   })
 
   /*
@@ -1526,9 +1536,10 @@ describe('the add panel', () => {
     })
 
     await submitPrompt(wrapper, 'dig the east gallery')
-    // The detached wait, before anything failed.
-    expect(wrapper.find('.launch-note').exists()).toBe(true)
-    expect(wrapper.find('.launch-alert').exists()).toBe(false)
+    // The detached wait, before anything failed. AMENDED for #635 (was: `.launch-note` present
+    // and `.launch-alert` absent): the line says it, and is not an alert yet.
+    expect(wrapper.find('.dm-add__why').text()).toContain('The session started.')
+    expect(wrapper.find('.dm-add__why.is-alert').exists()).toBe(false)
 
     const fail = api.onLaunchFailed.mock.calls[0]![0] as (push: unknown) => void
     fail({
@@ -1540,11 +1551,11 @@ describe('the add panel', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.launch-alert').text()).toBe('codex: another instance is already running')
-    // The composer is back, prompt intact, so a retry costs one click.
-    expect(wrapper.find<HTMLTextAreaElement>('.launch-input').element.value).toBe(
-      'dig the east gallery'
+    expect(wrapper.find('.dm-add__why.is-alert').text()).toBe(
+      'codex: another instance is already running'
     )
+    // The composer is back, prompt intact, so a retry costs one click.
+    expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
   })
 
   /*
@@ -1569,10 +1580,10 @@ describe('the add panel', () => {
       routeJevLaunch: askJev
     })
 
-    await wrapper.get('.jev-toggle').trigger('click')
-    await wrapper.get('.jev-auto').setValue(true)
-    await wrapper.find('.launch-input').setValue('dig the east gallery')
-    await wrapper.find('.launch-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.get('button[aria-label="Let Jev choose"]').trigger('click')
+    await wrapper.get('button[aria-label="Auto-accept Jev"]').trigger('click')
+    await wrapper.find(PROMPT).setValue('dig the east gallery')
+    await wrapper.find(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
 
     expect(askJev).toHaveBeenCalledWith({ prompt: 'dig the east gallery' })
@@ -2266,8 +2277,12 @@ describe('typography preferences (#370)', () => {
     // hangs `var(--font-conversation)` on, because a `<style scoped>` block has
     // no import a test could read (see designTokens.test.ts, which pins the
     // declaration itself).
+    //
+    // AMENDED for #635 (was: `.add-panel` present, the class that stylesheet hung the face on).
+    // The redesigned panel's prompt is the design's field area, drawn in the Messages role, which
+    // designTokens.test.ts pins on the field and on the panel's Jev card.
     const { wrapper } = await mountPanel({ surface: 'launch', mineId: MINE.id, dwarfId: '' })
-    expect(wrapper.find('.add-panel').exists()).toBe(true)
+    expect(wrapper.find('.dm-add .dm-field--area textarea').exists()).toBe(true)
   })
 })
 

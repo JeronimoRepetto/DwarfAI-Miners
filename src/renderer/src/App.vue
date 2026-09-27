@@ -1183,7 +1183,6 @@ onBeforeUnmount(() => {
               :chips="dock.launch.chips.value"
               :phase="dock.launch.phase.value"
               :enabled="dock.launch.enabled.value"
-              :placeholder="dock.launch.placeholder.value"
               :command="dock.launch.state.value.command"
               :prompt="dock.launch.state.value.prompt"
               :refusal="dock.launch.refusal.value"

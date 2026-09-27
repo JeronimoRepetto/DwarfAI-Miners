@@ -563,14 +563,26 @@ describe('renderer components against the type scale tokens', () => {
 
   it.each([
     ['components/dwarf/DwarfQuestionCard.vue', '.question-text'],
-    ['components/dwarf/DwarfPermissionCard.vue', '.permission-description'],
-    // APPENDED for #370: the Add Panel joins the list. It is where the person
-    // composes the first thing they SAY to a session, and the issue's own
-    // wording is that it must resolve the same messaging family MessagePanel
-    // does — it was the one conversation surface still on the Pixel UI face.
-    ['components/launch/AddPanel.vue', '.add-panel']
+    ['components/dwarf/DwarfPermissionCard.vue', '.permission-description']
+    // AMENDED for #635 (was: ['components/launch/AddPanel.vue', '.add-panel'], added for #370).
+    // The redesigned Add panel draws its prompt with the design's field, so the #370 guarantee —
+    // the first thing the person says to a session is in the messaging family — is pinned on the
+    // field's area and on the panel's Jev card in the case below.
   ])('sets %s, which carries %s, in the conversation family', (file) => {
     expect(readFileSync(join(RENDERER_SRC, file), 'utf8')).toContain('var(--font-conversation)')
+  })
+
+  /*
+   * APPENDED for #635, carrying #370's guarantee for the redesigned Add panel: its prompt is an
+   * InputField area, whose textarea reads the Messages role, and its Jev card says what Jev chose in
+   * the same role. `--font-conversation` follows `--f-talk` (design-tokens.css).
+   */
+  it('sets the Add panel’s prompt and its Jev card in the Messages role', () => {
+    const field = readFileSync(join(RENDERER_SRC, 'components/controls/InputField.vue'), 'utf8')
+    expect(field).toMatch(/\.dm-field--area textarea \{[^}]*var\(--f-talk\)/)
+    const panel = readFileSync(join(RENDERER_SRC, 'components/launch/AddPanel.vue'), 'utf8')
+    expect(panel).toMatch(/<InputField[^>]*class="dm-add__prompt"[^>]*\barea\b/)
+    expect(panel).toMatch(/\.dm-add__jev \{[^}]*var\(--f-talk\)/)
   })
 
   /*

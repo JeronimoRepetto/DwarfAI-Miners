@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import { motion } from 'motion-v'
-import { pressHoverVariants } from '../../lib/shell/presence'
 import {
-  COMMAND_PLACEHOLDER,
-  COMPOSER_DISABLED_PLACEHOLDER,
   COMPOSER_ENABLED_PLACEHOLDER,
   OTHER_CHOICE,
   type LaunchPhase
@@ -42,14 +38,20 @@ const CODEX: AgentProviderOption = {
   reason: 'Only Claude can be started from the panel today.'
 }
 
+/*
+ * AMENDED for #635: the redesigned panel (organisms/add-panel) names its mine, and draws the
+ * design's own placeholder on the prompt in every state, so the launch model's composer
+ * placeholder is no longer one of its props; `placeholder` overrides are accepted and ignored so
+ * the cases that set it read as they did.
+ */
 function panel(overrides: Partial<Record<string, unknown>> = {}) {
   const chosen = (overrides.chosen ?? null) as 'claude' | 'codex' | typeof OTHER_CHOICE | null
   return mount(AddPanel, {
     props: {
+      mineName: 'DwarfAI-Miners',
       chips: providerChips([CLAUDE, CODEX], chosen),
       phase: (overrides.phase ?? 'provider-selection') as LaunchPhase,
       enabled: (overrides.enabled ?? false) as boolean,
-      placeholder: (overrides.placeholder ?? COMPOSER_DISABLED_PLACEHOLDER) as string,
       command: (overrides.command ?? '') as string,
       prompt: (overrides.prompt ?? '') as string,
       refusal: (overrides.refusal ?? null) as string | null,
@@ -62,56 +64,81 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
   })
 }
 
-describe('the chip row', () => {
-  it('draws one chip per detected provider, with Other last', () => {
-    const chips = panel().findAll('.provider-chip')
+/*
+ * AMENDED for #635 throughout this file: the redesigned panel draws the design's parts —
+ * ChoiceChip radios in a radiogroup, the InputField prompt and command, SelectField selects, the
+ * ToggleSwitch pair and Send the dwarf in — so the selectors and the words are the design's, and
+ * each case that changed meaning says what it pinned before.
+ */
+const CHIPS = '.dm-add__chips .dm-chip'
+const PROMPT = '.dm-add__prompt textarea'
+const COMMAND = '.dm-add__command input'
+const LAUNCH = '.dm-add__launch'
+const WHY = '.dm-add__why'
+const CLOSE = '.dm-add__close'
+const JEV_TOGGLE = 'button[aria-label="Let Jev choose"]'
+const JEV_AUTO = 'button[aria-label="Auto-accept Jev"]'
 
-    expect(chips.map((chip) => chip.text())).toEqual(['claude', 'codex', 'Other'])
+describe('the chip row', () => {
+  // AMENDED for #635 (was: ['claude', 'codex', 'Other']): the tools' own names, and Other….
+  it('draws one chip per detected provider, with Other last', () => {
+    const chips = panel().findAll(CHIPS)
+
+    expect(chips.map((chip) => chip.text())).toEqual(['Claude', 'Codex', 'Other…'])
   })
 
-  it('publishes each chip’s state, so the design’s three treatments are drawable', () => {
-    const chips = panel({ chosen: 'claude' }).findAll('.provider-chip')
+  // AMENDED for #635 (was: each chip's data-state, for the old sheet's three treatments). The
+  // design's chip is a radio, so the one state it draws is checked or not.
+  it('publishes each chip’s state, so the design’s checked treatment is drawable', () => {
+    const chips = panel({ chosen: 'claude' }).findAll(CHIPS)
 
-    expect(chips.map((chip) => chip.attributes('data-state'))).toEqual([
-      'selected',
-      'unselected',
-      'unselected'
-    ])
+    expect(chips.map((chip) => chip.attributes('aria-checked'))).toEqual(['true', 'false', 'false'])
   })
 
   it('asks for the chip that was clicked and decides nothing itself', async () => {
     const wrapper = panel()
 
-    await wrapper.findAll('.provider-chip')[1]?.trigger('click')
+    await wrapper.findAll(CHIPS)[1]?.trigger('click')
 
     expect(wrapper.emitted('choose')).toEqual([['codex']])
   })
 
+  // AMENDED for #635 (was: aria-pressed): a radio in a radiogroup says it with aria-checked.
   it('says which chip is pressed for anything not looking at it', () => {
-    const chips = panel({ chosen: OTHER_CHOICE }).findAll('.provider-chip')
+    const wrapper = panel({ chosen: OTHER_CHOICE })
+    const chips = wrapper.findAll(CHIPS)
 
-    expect(chips.map((chip) => chip.attributes('aria-pressed'))).toEqual(['false', 'false', 'true'])
+    expect(wrapper.get('.dm-add__chips').attributes('role')).toBe('radiogroup')
+    expect(chips.map((chip) => chip.attributes('role'))).toEqual(['radio', 'radio', 'radio'])
+    expect(chips.map((chip) => chip.attributes('aria-checked'))).toEqual(['false', 'false', 'true'])
   })
 })
 
 describe('the composer gate', () => {
-  it('is disabled with the source’s instruction before a choice', () => {
-    const composer = panel().get('.launch-input')
+  // AMENDED for #635 (was: 'is disabled with the source’s instruction before a choice', the
+  // composer disabled under "Select your Dwarf supplier"). The design's prompt is writable in
+  // every state; the gate is Send the dwarf in, and the line beside it says what it waits for.
+  it('lets the prompt be written before a choice, and holds Send the dwarf in until one', () => {
+    const wrapper = panel()
+    const prompt = wrapper.get(PROMPT)
 
-    expect(composer.attributes('disabled')).toBeDefined()
-    expect(composer.attributes('placeholder')).toBe(COMPOSER_DISABLED_PLACEHOLDER)
+    expect(prompt.attributes('disabled')).toBeUndefined()
+    expect(prompt.attributes('placeholder')).toBe('What should this dwarf work on?')
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
+    expect(wrapper.get(WHY).text()).toBe('Choose a supplier, or let Jev choose.')
   })
 
-  it('is enabled and invites a prompt once the gate opens', () => {
-    const composer = panel({
-      chosen: 'claude',
-      phase: 'known-provider-ready',
-      enabled: true,
-      placeholder: COMPOSER_ENABLED_PLACEHOLDER
-    }).get('.launch-input')
+  // AMENDED for #635 (was: the composer enabled under "Write here..."): once the gate opens, the
+  // line asks for the prompt, and Send the dwarf in wakes with one.
+  it('asks for a prompt once the gate opens, and wakes Send the dwarf in with one', () => {
+    const open = panel({ chosen: 'claude', phase: 'known-provider-ready', enabled: true })
 
-    expect(composer.attributes('disabled')).toBeUndefined()
-    expect(composer.attributes('placeholder')).toBe(COMPOSER_ENABLED_PLACEHOLDER)
+    expect(open.get(WHY).text()).toBe('Tell the dwarf what to work on.')
+    expect(open.get(LAUNCH).attributes('disabled')).toBeDefined()
+
+    const ready = panel({ chosen: 'claude', phase: 'prompt-ready', enabled: true, prompt: 'dig' })
+    expect(ready.get(WHY).text()).toBe('Ready. The dwarf walks into DwarfAI-Miners.')
+    expect(ready.get(LAUNCH).attributes('disabled')).toBeUndefined()
   })
 
   // AMENDED for #431 (was: 'caps the prompt at the same length a delivered
@@ -122,28 +149,32 @@ describe('the composer gate', () => {
   // bound that does not exist. It asserts the absence now, which is the
   // behaviour — see prepareLaunchPrompt, which lost the matching slice.
   it('lets the box hold whatever was pasted: a launch prompt has no ceiling', () => {
-    expect(panel().get('.launch-input').attributes('maxlength')).toBeUndefined()
+    expect(panel().get(PROMPT).attributes('maxlength')).toBeUndefined()
   })
 })
 
 describe('the custom-command input', () => {
-  it('is absent until Other is chosen', () => {
-    expect(
-      panel({ chosen: 'claude', phase: 'known-provider-ready' }).find('.launch-command').exists()
-    ).toBe(false)
+  // AMENDED for #635 (was: not rendered until Other is chosen): the design keeps the field in
+  // the tree and hides it, so it is hidden, not absent, until Other… opens it.
+  it('is hidden until Other is chosen', () => {
+    const field = panel({ chosen: 'claude', phase: 'known-provider-ready' }).get('.dm-add__command')
+
+    expect(field.attributes('hidden')).toBeDefined()
   })
 
-  it('appears with the source’s own placeholder when Other is chosen', () => {
-    const command = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' }).get(
-      '.launch-command'
-    )
+  // AMENDED for #635 (was: COMMAND_PLACEHOLDER, "Say your command..."): the design's own words.
+  it('appears with the design’s own placeholder when Other is chosen', () => {
+    const wrapper = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
 
-    expect(command.attributes('placeholder')).toBe(COMMAND_PLACEHOLDER)
+    expect(wrapper.get('.dm-add__command').attributes('hidden')).toBeUndefined()
+    expect(wrapper.get(COMMAND).attributes('placeholder')).toBe(
+      'Custom command, e.g. my-agent --yes'
+    )
   })
 
   it('commits on Enter and reports what was typed', async () => {
     const wrapper = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
-    const command = wrapper.get('.launch-command')
+    const command = wrapper.get(COMMAND)
 
     await command.setValue('lalolanda')
     await command.trigger('keydown', { key: 'Enter' })
@@ -168,26 +199,55 @@ describe('the model, effort and permission row', () => {
     note: null
   }
 
-  it('is absent before a real provider chip is chosen', () => {
-    expect(panel().find('.launch-tuning').exists()).toBe(false)
+  const optionTexts = (wrapper: ReturnType<typeof panel>, label: string) =>
+    wrapper
+      .get(`select[aria-label="${label}"]`)
+      .findAll('option')
+      .map((option) => option.text())
+
+  // AMENDED for #635 (was: 'is absent before a real provider chip is chosen'). The design draws
+  // the row in every state, disabled with "Choose a supplier" until one is picked.
+  it('is drawn disabled, saying Choose a supplier, before a real provider chip is chosen', () => {
+    const wrapper = panel()
+
+    for (const label of ['Model', 'Effort', 'Permissions']) {
+      expect(wrapper.get(`select[aria-label="${label}"]`).attributes('disabled')).toBeDefined()
+      expect(optionTexts(wrapper, label)).toEqual([label + ': Choose a supplier'])
+    }
   })
 
-  it('is absent for Other, which has no provider identity for it', () => {
-    expect(
-      panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
-        .find('.launch-tuning')
-        .exists()
-    ).toBe(false)
+  // AMENDED for #635 (was: 'is absent for Other, which has no provider identity for it'). Other…
+  // still has no lists; the design says so on the row, "Custom", disabled.
+  it('is drawn disabled, saying Custom, for Other, which has no provider identity for it', () => {
+    const wrapper = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
+
+    for (const label of ['Model', 'Effort', 'Permissions']) {
+      expect(wrapper.get(`select[aria-label="${label}"]`).attributes('disabled')).toBeDefined()
+      expect(optionTexts(wrapper, label)).toEqual([label + ': Custom'])
+    }
   })
 
+  /*
+   * APPENDED for #635: while Jev is on and no chip is chosen, the row says Jev decides, since
+   * the selects will show its choice once it answers (screens/launch.md, As built).
+   */
+  it('says Jev decides on the row while Jev is on and no chip is chosen', () => {
+    const wrapper = panel({
+      jev: { ...HIDDEN_JEV, availability: 'ready', enabled: true }
+    })
+
+    expect(optionTexts(wrapper, 'Model')).toEqual(['Model: Jev decides'])
+  })
+
+  // AMENDED for #635 (was: ['Sonnet', 'Haiku']): each option carries the select's name.
   it('draws one option per model the picker offers, labelled where it has one', () => {
-    const select = panel({
+    const wrapper = panel({
       chosen: 'claude',
       phase: 'known-provider-ready',
       modelPicker: LIVE_MODEL_PICKER
-    }).get('select[aria-label="Model"]')
+    })
 
-    expect(select.findAll('option').map((option) => option.text())).toEqual(['Sonnet', 'Haiku'])
+    expect(optionTexts(wrapper, 'Model')).toEqual(['Model: Sonnet', 'Model: Haiku'])
   })
 
   it('disables the model select with the picker’s own reason for a provider main could not ask', () => {
@@ -198,7 +258,7 @@ describe('the model, effort and permission row', () => {
     })
 
     expect(wrapper.get('select[aria-label="Model"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('.tuning-note').text()).toBe(NO_MODEL_LIST)
+    expect(wrapper.get('.dm-add__note').text()).toBe(NO_MODEL_LIST)
   })
 
   it('shows the source note for a history-derived list, without disabling it', () => {
@@ -214,7 +274,7 @@ describe('the model, effort and permission row', () => {
     })
 
     expect(wrapper.get('select[aria-label="Model"]').attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('.tuning-note').text()).toBe(MODEL_HISTORY_SOURCE)
+    expect(wrapper.get('.dm-add__note').text()).toBe(MODEL_HISTORY_SOURCE)
   })
 
   it('reports the model chosen off the select', async () => {
@@ -229,15 +289,20 @@ describe('the model, effort and permission row', () => {
     expect(wrapper.emitted('model')).toEqual([['claude-haiku-4-5']])
   })
 
-  it('draws no effort select for a provider the picker says has none', () => {
+  // AMENDED for #635 (was: 'draws no effort select for a provider the picker says has none').
+  // The row keeps its three parts: a select with no values stays drawn, disabled, on the default.
+  // The row reads the checked chip, and this fixture's chips are Claude and Codex, so the case
+  // chooses Codex where it chose Antigravity, which has no chip here.
+  it('draws the effort select disabled, on the default, for a provider the picker says has none', () => {
     const wrapper = panel({
-      chosen: 'antigravity',
+      chosen: 'codex',
       phase: 'known-provider-ready',
       modelPicker: { visible: true, models: [], disabled: true, note: NO_MODEL_LIST },
       effortPicker: { visible: false, efforts: [] }
     })
 
-    expect(wrapper.find('select[aria-label="Effort"]').exists()).toBe(false)
+    expect(wrapper.get('select[aria-label="Effort"]').attributes('disabled')).toBeDefined()
+    expect(optionTexts(wrapper, 'Effort')).toEqual(['Effort: Default'])
   })
 
   it('draws one option per effort level, and reports the one chosen', async () => {
@@ -249,19 +314,22 @@ describe('the model, effort and permission row', () => {
     })
     const select = wrapper.get('select[aria-label="Effort"]')
 
+    // AMENDED for #635: each option carries the select's name.
     expect(select.findAll('option').map((option) => option.text())).toEqual([
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max'
+      'Effort: low',
+      'Effort: medium',
+      'Effort: high',
+      'Effort: xhigh',
+      'Effort: max'
     ])
 
     await select.setValue('xhigh')
     expect(wrapper.emitted('effort')).toEqual([['xhigh']])
   })
 
-  it('draws no permissions select outside a held Claude session', () => {
+  // AMENDED for #635 (was: 'draws no permissions select outside a held Claude session'): drawn,
+  // disabled, on the session's own default, so the row keeps its three parts.
+  it('draws the permissions select disabled, on the default, outside a held Claude session', () => {
     const wrapper = panel({
       chosen: 'codex',
       phase: 'known-provider-ready',
@@ -274,7 +342,8 @@ describe('the model, effort and permission row', () => {
       permissionsVisible: false
     })
 
-    expect(wrapper.find('select[aria-label="Permissions"]').exists()).toBe(false)
+    expect(wrapper.get('select[aria-label="Permissions"]').attributes('disabled')).toBeDefined()
+    expect(optionTexts(wrapper, 'Permissions')).toEqual(['Permissions: Default'])
   })
 
   it('draws every non-bypass permission mode for a held Claude session, and reports the one chosen', async () => {
@@ -286,14 +355,15 @@ describe('the model, effort and permission row', () => {
     })
     const select = wrapper.get('select[aria-label="Permissions"]')
 
+    // AMENDED for #635 (was: the SDK's raw mode names): the design's words where it has them.
     expect(select.findAll('option').map((option) => option.text())).toEqual([
-      'default',
-      'acceptEdits',
-      'plan',
-      'dontAsk',
-      'auto'
+      'Permissions: Ask first',
+      'Permissions: Accept edits',
+      'Permissions: Plan only',
+      "Permissions: Don't ask",
+      'Permissions: Auto'
     ])
-    expect(select.findAll('option').map((option) => option.text())).not.toContain(
+    expect(select.findAll('option').map((option) => option.attributes('value'))).not.toContain(
       'bypassPermissions'
     )
 
@@ -301,7 +371,9 @@ describe('the model, effort and permission row', () => {
     expect(wrapper.emitted('permissionMode')).toEqual([['plan']])
   })
 
-  it('is absent once the session has launched, alongside the chips and the composer', () => {
+  // AMENDED for #635 (was: 'is absent once the session has launched'). The design keeps the
+  // panel as it is while the dwarf is sent in; nothing on the row can be changed any more.
+  it('cannot be changed once the session has launched, alongside the chips and the prompt', () => {
     const wrapper = panel({
       chosen: 'claude',
       phase: 'submitted-spawning',
@@ -310,7 +382,9 @@ describe('the model, effort and permission row', () => {
       modelPicker: LIVE_MODEL_PICKER
     })
 
-    expect(wrapper.find('.launch-tuning').exists()).toBe(false)
+    for (const label of ['Model', 'Effort', 'Permissions']) {
+      expect(wrapper.get(`select[aria-label="${label}"]`).attributes('disabled')).toBeDefined()
+    }
   })
 })
 
@@ -326,36 +400,55 @@ describe('sending the first prompt', () => {
     })
   }
 
-  it('submits on Enter', async () => {
+  // AMENDED for #635 (was: 'submits on Enter'). The design's prompt is a four-row field that
+  // takes line breaks; Ctrl+Enter (Cmd+Enter on a Mac) launches, as does Send the dwarf in.
+  it('submits on Ctrl+Enter or Cmd+Enter, and on Send the dwarf in', async () => {
     const wrapper = ready()
 
-    await wrapper.get('.launch-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', metaKey: true })
+    await wrapper.get(LAUNCH).trigger('click')
 
-    expect(wrapper.emitted('submit')).toHaveLength(1)
+    expect(wrapper.emitted('submit')).toHaveLength(3)
   })
 
-  it('writes a newline on Shift+Enter instead of submitting', async () => {
+  // AMENDED for #635 (was: 'writes a newline on Shift+Enter instead of submitting'): every plain
+  // Enter is a line break now, Shift or not.
+  it('writes a newline on a plain Enter, or Shift+Enter, instead of submitting', async () => {
     const wrapper = ready()
 
-    await wrapper.get('.launch-input').trigger('keydown', { key: 'Enter', shiftKey: true })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter' })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', shiftKey: true })
 
     expect(wrapper.emitted('submit')).toBeUndefined()
   })
 
   it('does not submit from a composer the gate has not opened', async () => {
-    const wrapper = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required' })
+    const wrapper = panel({ chosen: OTHER_CHOICE, phase: 'other-command-required', prompt: 'dig' })
 
-    await wrapper.get('.launch-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get(LAUNCH).trigger('click')
 
+    expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+
+  // APPENDED for #635: a prompt of pure whitespace is no prompt, as main reads it.
+  it('does not submit a prompt of pure whitespace', async () => {
+    const wrapper = ready({ prompt: '   ' })
+
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
     expect(wrapper.emitted('submit')).toBeUndefined()
   })
 })
 
 describe('what the panel says out loud', () => {
+  // AMENDED for #635 (was: `.launch-note`): the line beside Send the dwarf in says it.
   it('states why the chosen chip cannot start a session', () => {
     const wrapper = panel({ chosen: 'codex', phase: 'known-provider-ready', refusal: CODEX.reason })
 
-    expect(wrapper.get('.launch-note').text()).toBe(CODEX.reason)
+    expect(wrapper.get(WHY).text()).toBe(CODEX.reason)
   })
 
   it('carries a refused launch’s own reason, in its own alert', () => {
@@ -366,9 +459,12 @@ describe('what the panel says out loud', () => {
       error: 'Claude Code is not installed on this machine.'
     })
 
-    expect(wrapper.get('.launch-alert').text()).toBe(
-      'Claude Code is not installed on this machine.'
-    )
+    // AMENDED for #635 (was: `.launch-alert`): the line beside Send the dwarf in, as an alert,
+    // until the launch-failure notice per cause arrives (PR4 of #635).
+    const why = wrapper.get(WHY)
+    expect(why.text()).toBe('Claude Code is not installed on this machine.')
+    expect(why.attributes('role')).toBe('alert')
+    expect(why.classes()).toContain('is-alert')
   })
 
   /*
@@ -389,8 +485,10 @@ describe('what the panel says out loud', () => {
       error: 'codex: another instance is already running'
     })
 
-    expect(wrapper.get('.launch-alert').text()).toBe('codex: another instance is already running')
-    const composer = wrapper.get('.launch-input')
+    // AMENDED for #635: the design's selectors.
+    expect(wrapper.get(WHY).text()).toBe('codex: another instance is already running')
+    expect(wrapper.get(WHY).attributes('role')).toBe('alert')
+    const composer = wrapper.get(PROMPT)
     expect(composer.attributes('disabled')).toBeUndefined()
     expect((composer.element as HTMLTextAreaElement).value).toBe('dig the east gallery')
   })
@@ -398,7 +496,7 @@ describe('what the panel says out loud', () => {
   it('closes when its close control is used', async () => {
     const wrapper = panel()
 
-    await wrapper.get('.launch-close').trigger('click')
+    await wrapper.get(CLOSE).trigger('click')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -406,7 +504,7 @@ describe('what the panel says out loud', () => {
   it('closes on Escape, as every panel here does', async () => {
     const wrapper = panel()
 
-    await wrapper.get('.add-panel').trigger('keydown.escape')
+    await wrapper.get('.dm-add').trigger('keydown.escape')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -423,32 +521,37 @@ describe('while the session is starting', () => {
   }
 
   /*
-   * `launch.md` step 3 — insert the submitted prompt as the conversation's
-   * first message — happens here rather than being invented: between Enter and
-   * the dwarf's arrival there is no MessagePanel to hold it, and this is the
-   * one window in which the prompt exists nowhere else on screen. Once the
-   * dwarf lands, the MessagePanel draws main's own record of it and this view
-   * is gone, so it is never shown twice.
+   * AMENDED for #635 (was: 'shows the submitted prompt where its first message belongs', the
+   * spawning view's `.launch-first-message` bubble). The redesign has no spawning view: the panel
+   * stays as it is while the dwarf is sent in (screens/launch.md, As built), so the prompt stays
+   * on screen in its own field until the MessagePanel takes the slot and draws main's record of
+   * it — still never shown twice.
    */
-  it('shows the submitted prompt where its first message belongs', () => {
-    expect(spawning().get('.launch-first-message').text()).toBe('dig the east gallery')
+  it('keeps the submitted prompt on screen, in its own field, while the dwarf is sent in', () => {
+    const prompt = spawning().get(PROMPT)
+
+    expect((prompt.element as HTMLTextAreaElement).value).toBe('dig the east gallery')
   })
 
+  // AMENDED for #635 (was: any `.launch-note` text): the design's own words.
   it('says a session is starting rather than looking like nothing happened', () => {
-    expect(spawning().get('.launch-note').text()).toBeTruthy()
+    expect(spawning().get(WHY).text()).toBe('Sending the dwarf in…')
   })
 
-  it('takes the chips and the composer away while one is in flight', () => {
+  // AMENDED for #635 (was: 'takes the chips and the composer away while one is in flight'). They
+  // stay drawn, and nothing on them can be pressed or changed, Send the dwarf in included.
+  it('lets nothing on the chips, the prompt or Send be pressed while one is in flight', () => {
     const wrapper = spawning()
 
-    expect(wrapper.find('.provider-chip').exists()).toBe(false)
-    expect(wrapper.find('.launch-input').exists()).toBe(false)
+    for (const chip of wrapper.findAll(CHIPS)) expect(chip.attributes('disabled')).toBeDefined()
+    expect(wrapper.get(PROMPT).attributes('disabled')).toBeDefined()
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
   })
 
   it('can still be closed, so a launch that never lands is not a trap', async () => {
     const wrapper = spawning()
 
-    await wrapper.get('.launch-close').trigger('click')
+    await wrapper.get(CLOSE).trigger('click')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -474,7 +577,8 @@ describe('after a session the panel cannot watch has started', () => {
   }
 
   it('says the session started and where its dwarf will turn up', () => {
-    const note = detached().get('.launch-note').text()
+    // AMENDED for #635 (was: `.launch-note`): the line beside Send the dwarf in says it.
+    const note = detached().get(WHY).text()
 
     expect(note).toBeTruthy()
     expect(note.toLowerCase()).toContain('mine')
@@ -483,20 +587,25 @@ describe('after a session the panel cannot watch has started', () => {
   it('never claims the panel is still looking for it', () => {
     // The spawning copy promises the panel will find it. That promise cannot be
     // kept for a detached launch, so this state must not borrow the wording.
-    expect(detached().get('.launch-note').text().toLowerCase()).not.toContain('as soon as')
+    expect(detached().get(WHY).text().toLowerCase()).not.toContain('as soon as')
   })
 
-  it('takes the composer away, so the same prompt is not sent twice', () => {
+  // AMENDED for #635 (was: the composer and the chips taken away). They stay drawn, and nothing
+  // on them can be pressed, so the same prompt is still not sent twice.
+  it('lets nothing be sent again, so the same prompt is not sent twice', async () => {
     const wrapper = detached()
 
-    expect(wrapper.find('.launch-input').exists()).toBe(false)
-    expect(wrapper.find('.provider-chip').exists()).toBe(false)
+    expect(wrapper.get(PROMPT).attributes('disabled')).toBeDefined()
+    for (const chip of wrapper.findAll(CHIPS)) expect(chip.attributes('disabled')).toBeDefined()
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(wrapper.emitted('submit')).toBeUndefined()
   })
 
   it('can be closed, which is the only way out of it', async () => {
     const wrapper = detached()
 
-    await wrapper.get('.launch-close').trigger('click')
+    await wrapper.get(CLOSE).trigger('click')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -546,11 +655,24 @@ describe('the Jev option', () => {
     }
   }
 
-  it('is absent with no key configured — #509’s own first option', () => {
-    expect(panel({ jev: HIDDEN_JEV }).find('.jev-toggle').exists()).toBe(false)
-    expect(panel({ jev: HIDDEN_JEV }).find('.jev-unavailable-reason').exists()).toBe(false)
+  /*
+   * AMENDED for #635 (was: 'is absent with no key configured — #509’s own first option'). The
+   * design draws Jev in every state of the panel, so with no key the switches are drawn off and
+   * disabled, and say why on themselves, rather than being left out.
+   */
+  it('is drawn off and disabled with no key configured, saying no key is set', () => {
+    const wrapper = panel({ jev: HIDDEN_JEV })
+
+    for (const selector of [JEV_TOGGLE, JEV_AUTO]) {
+      const toggle = wrapper.get(selector)
+      expect(toggle.attributes('disabled')).toBeDefined()
+      expect(toggle.attributes('aria-checked')).toBe('false')
+      expect(toggle.attributes('title')).toBe('No TypeSafe key is set')
+    }
   })
 
+  // AMENDED for #635 (was: `.jev-toggle` disabled beside a `.jev-unavailable-reason` line): the
+  // reason main gave is on the switch itself.
   it('is shown disabled, with the reason, for anything else that keeps it off', () => {
     const unavailable: JevState = {
       availability: 'unavailable',
@@ -564,28 +686,35 @@ describe('the Jev option', () => {
     }
     const wrapper = panel({ jev: unavailable })
 
-    expect(wrapper.get('.jev-toggle').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('.jev-unavailable-reason').text()).toBeTruthy()
+    const toggle = wrapper.get(JEV_TOGGLE)
+    expect(toggle.attributes('disabled')).toBeDefined()
+    expect(toggle.attributes('title')).toBe(
+      'This machine offers no encrypted place to keep a key, so Jev cannot be turned on here.'
+    )
   })
 
+  // AMENDED for #635 (was: `.jev-toggle` with aria-pressed): the design's switch, aria-checked.
   it('is a pressable toggle once ready, reporting the press and nothing else', async () => {
     const wrapper = panel({ jev: READY_JEV })
-    const toggle = wrapper.get('.jev-toggle')
+    const toggle = wrapper.get(JEV_TOGGLE)
 
     expect(toggle.attributes('disabled')).toBeUndefined()
-    expect(toggle.attributes('aria-pressed')).toBe('false')
+    expect(toggle.attributes('aria-checked')).toBe('false')
 
     await toggle.trigger('click')
 
     expect(wrapper.emitted('toggle-jev')).toHaveLength(1)
+    expect(wrapper.emitted('toggle-jev-auto')).toBeUndefined()
   })
 
   it('shows the toggle pressed once the person has turned it on', () => {
     const wrapper = panel({ jev: { ...READY_JEV, enabled: true } })
 
-    expect(wrapper.get('.jev-toggle').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get(JEV_TOGGLE).attributes('aria-checked')).toBe('true')
   })
 
+  // AMENDED for #635 (was: `.jev-status` reading "Asking Jev…"). Asking Jev is part of sending
+  // the dwarf in, and the design says that one line for the whole flight.
   it('says it is asking while the ask is in flight', () => {
     const wrapper = panel({
       chosen: 'claude',
@@ -593,9 +722,10 @@ describe('the Jev option', () => {
       jev: ASKING_JEV
     })
 
-    expect(wrapper.get('.jev-status').text()).toBe('Asking Jev…')
+    expect(wrapper.get(WHY).text()).toBe('Sending the dwarf in…')
   })
 
+  // AMENDED for #635 (was: a plain Enter in `.launch-input`): the launching keys and the button.
   it('refuses a second Enter while Jev is being asked', async () => {
     const wrapper = panel({
       chosen: 'claude',
@@ -605,8 +735,10 @@ describe('the Jev option', () => {
       jev: ASKING_JEV
     })
 
-    await wrapper.get('.launch-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.get(PROMPT).trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get(LAUNCH).trigger('click')
 
+    expect(wrapper.get(LAUNCH).attributes('disabled')).toBeDefined()
     expect(wrapper.emitted('submit')).toBeUndefined()
   })
 
@@ -950,13 +1082,14 @@ describe('the Jev option', () => {
         }
       })
 
+      // AMENDED for #635: the checked radio, under the tool's own name.
       expect(wrapper.get('select[aria-label="Model"]').element).toBeTruthy()
       expect(
         wrapper
-          .findAll('.provider-chip')
-          .find((chip) => chip.attributes('data-state') === 'selected')
+          .findAll(CHIPS)
+          .find((chip) => chip.attributes('aria-checked') === 'true')
           ?.text()
-      ).toBe('codex')
+      ).toBe('Codex')
     })
 
     it('dismisses on its own control, reporting the gesture and nothing else', async () => {
@@ -976,15 +1109,22 @@ describe('the Jev option', () => {
      */
     it('can still be closed while the decision card is showing', async () => {
       const wrapper = withDecision()
-      expect(wrapper.find('.jev-decision').exists()).toBe(true)
+      // AMENDED for #635 (was: `.jev-decision` and `.launch-close`): the card's summary line.
+      expect(wrapper.find('.jev-decision-summary').exists()).toBe(true)
 
-      await wrapper.get('.launch-close').trigger('click')
+      await wrapper.get(CLOSE).trigger('click')
 
       expect(wrapper.emitted('close')).toHaveLength(1)
       expect(wrapper.emitted('dismiss-jev')).toBeUndefined()
     })
 
-    it('is gone once the session has launched, alongside the chips and the composer', () => {
+    /*
+     * AMENDED for #635 (was: `.jev-decision` absent, alongside the chips and the composer). The
+     * chips and the prompt stay drawn now, but the card still goes: its Dismiss would put the
+     * pickers back under a launch already in flight, and its "press Send the dwarf in" can no
+     * longer be acted on.
+     */
+    it('is gone once the session has launched, Dismiss with it', () => {
       const wrapper = panel({
         chosen: 'codex',
         phase: 'submitted-spawning',
@@ -993,7 +1133,8 @@ describe('the Jev option', () => {
         jev: { ...READY_JEV, enabled: true, routing: DECISION }
       })
 
-      expect(wrapper.find('.jev-decision').exists()).toBe(false)
+      expect(wrapper.find('.jev-decision-summary').exists()).toBe(false)
+      expect(wrapper.find('.jev-dismiss').exists()).toBe(false)
     })
   })
 
@@ -1244,14 +1385,21 @@ describe('the Jev option', () => {
    * Issue #523's checkbox: visible exactly when the toggle is pressable, its
    * tick carried in from the state, and its press reported as its own gesture
    * — the component decides nothing about what auto-accept means at submit.
+   *
+   * AMENDED for #635: the design's Auto-accept is a switch beside Let Jev choose, drawn in every
+   * state as the design draws Jev, and pressable exactly when the toggle is.
    */
   describe('the auto-accept checkbox (#523)', () => {
-    it('sits beside the pressable toggle, and nowhere else', () => {
+    // AMENDED for #635 (was: the `.jev-auto` checkbox present only when ready, absent otherwise).
+    it('sits beside the pressable toggle, pressable exactly when it is', () => {
       const ready = panel({ jev: READY_JEV })
-      expect(ready.find('.jev-auto').exists()).toBe(true)
-      expect(ready.get('.jev-row').text()).toContain("Auto-accept Jev's choice")
+      expect(ready.get(JEV_AUTO).attributes('disabled')).toBeUndefined()
+      expect(ready.get(JEV_TOGGLE).element.parentElement).toBe(
+        ready.get(JEV_AUTO).element.parentElement
+      )
+      expect(ready.get(JEV_AUTO).element.parentElement!.textContent).toContain('Auto-accept')
 
-      expect(panel({ jev: HIDDEN_JEV }).find('.jev-auto').exists()).toBe(false)
+      expect(panel({ jev: HIDDEN_JEV }).get(JEV_AUTO).attributes('disabled')).toBeDefined()
       const unavailable: JevState = {
         availability: 'unavailable',
         unavailableReason: 'encryption-unavailable',
@@ -1261,21 +1409,22 @@ describe('the Jev option', () => {
         previousChoice: null,
         launchedOnFallback: false
       }
-      expect(panel({ jev: unavailable }).find('.jev-auto').exists()).toBe(false)
+      expect(panel({ jev: unavailable }).get(JEV_AUTO).attributes('disabled')).toBeDefined()
     })
 
+    // AMENDED for #635 (was: the checkbox's `checked`): the switch's aria-checked.
     it('draws the tick from the state, checked and unchecked', () => {
-      const off = panel({ jev: READY_JEV }).get('.jev-auto')
-      const on = panel({ jev: { ...READY_JEV, autoAccept: true } }).get('.jev-auto')
+      const off = panel({ jev: READY_JEV }).get(JEV_AUTO)
+      const on = panel({ jev: { ...READY_JEV, autoAccept: true } }).get(JEV_AUTO)
 
-      expect((off.element as HTMLInputElement).checked).toBe(false)
-      expect((on.element as HTMLInputElement).checked).toBe(true)
+      expect(off.attributes('aria-checked')).toBe('false')
+      expect(on.attributes('aria-checked')).toBe('true')
     })
 
     it('reports its press and nothing else', async () => {
       const wrapper = panel({ jev: READY_JEV })
 
-      await wrapper.get('.jev-auto').setValue(true)
+      await wrapper.get(JEV_AUTO).trigger('click')
 
       expect(wrapper.emitted('toggle-jev-auto')).toHaveLength(1)
       expect(wrapper.emitted('toggle-jev')).toBeUndefined()
@@ -1293,38 +1442,33 @@ describe('the Jev option', () => {
  * fails here.
  */
 describe('AddPanel press and hover feedback', () => {
-  it('routes the close and every provider chip through motion.button with the shared variants', () => {
-    const wrapper = panel()
-    const controls = wrapper.findAllComponents(motion.button)
+  /*
+   * REMOVED for #635: 'routes the close and every provider chip through motion.button with the
+   * shared variants'. The redesigned panel draws the design's atoms — ActionButton for Close and
+   * Send the dwarf in, ChoiceChip for the suppliers — whose hover and press are their own states
+   * in their own stylesheets (components.md, atoms/button and atoms/chip), as the MessagePanel's
+   * controls are since its rebuild. No motion.button is left here for the case to count.
+   */
 
-    expect(controls.map((control) => control.classes()[0])).toEqual([
-      'launch-close',
-      ...wrapper.findAll('.provider-chip').map(() => 'provider-chip')
-    ])
-    for (const control of controls) {
-      expect(control.props('whileHover')).toEqual(pressHoverVariants.whileHover)
-      expect(control.props('whilePress')).toEqual(pressHoverVariants.whilePress)
-    }
-  })
-
+  // AMENDED for #635 (was: `.launch-close` named "Close the launch panel", chips with
+  // aria-pressed and data-state): the design's Close, and radios with aria-checked.
   it('leaves the chips and the close with the tag, state and press they had', async () => {
     const wrapper = panel({ chosen: 'claude' })
 
-    const close = wrapper.get('.launch-close')
+    const close = wrapper.get(CLOSE)
     expect(close.element.tagName).toBe('BUTTON')
     expect(close.attributes('type')).toBe('button')
-    expect(close.attributes('aria-label')).toBe('Close the launch panel')
+    expect(close.attributes('aria-label')).toBe('Close')
     await close.trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
 
-    const chips = wrapper.findAll('.provider-chip')
+    const chips = wrapper.findAll(CHIPS)
     expect(chips.length).toBeGreaterThan(0)
     for (const chip of chips) {
       expect(chip.element.tagName).toBe('BUTTON')
-      expect(chip.attributes('aria-pressed')).toBeDefined()
-      expect(chip.attributes('data-state')).toBeDefined()
+      expect(chip.attributes('aria-checked')).toBeDefined()
     }
-    expect(chips.filter((chip) => chip.attributes('aria-pressed') === 'true')).toHaveLength(1)
+    expect(chips.filter((chip) => chip.attributes('aria-checked') === 'true')).toHaveLength(1)
 
     await chips[0]!.trigger('click')
     expect(wrapper.emitted('choose')).toHaveLength(1)
