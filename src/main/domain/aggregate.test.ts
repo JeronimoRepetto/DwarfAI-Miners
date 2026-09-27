@@ -7,6 +7,7 @@ import {
   mineIdForPath,
   stampMapSites,
   stampUnrecorded,
+  stampWeights,
   sumTokensObserved
 } from './aggregate'
 import {
@@ -581,5 +582,37 @@ describe('dropForgottenMines (#169)', () => {
     const board = [mineOf({ id: 'mine:a' }), mineOf({ id: 'mine:b' })]
     dropForgottenMines(board, new Set(['mine:a']))
     expect(board.map((mine) => mine.id)).toEqual(['mine:a', 'mine:b'])
+  })
+})
+
+/*
+ * ADDED for #635 (PANEL-QUESTIONS 29 live check). The Mines list reads store rows once and the
+ * board is the one thing main pushes, so a walk finishing never reached a card on screen: a new
+ * mine stayed "Measuring…" and a re-measured one kept no score until the page was entered again.
+ * The board now carries this run's measured weight, the same reading ProjectSummary.weightBytes
+ * is, so the panel can see a measurement land.
+ */
+describe('stampWeights', () => {
+  const mineOf = (overrides: Partial<ReturnType<typeof defaultMine>>) => ({
+    ...defaultMine(),
+    ...overrides
+  })
+
+  it('stamps the weight a walk measured, and nothing where none has answered yet', () => {
+    const board = [mineOf({ id: 'mine:a', path: 'A' }), mineOf({ id: 'mine:b', path: 'B' })]
+    const stamped = stampWeights(board, (path) => (path === 'A' ? 2048 : undefined))
+    expect(stamped[0]!.weightBytes).toBe(2048)
+    expect(stamped[1]).not.toHaveProperty('weightBytes')
+  })
+
+  it('stamps a measured weight of zero, which is a reading, not an absence', () => {
+    const [mine] = stampWeights([mineOf({ id: 'mine:a', path: 'A' })], () => 0)
+    expect(mine!.weightBytes).toBe(0)
+  })
+
+  it('never mutates the board it was given', () => {
+    const board = [mineOf({ id: 'mine:a', path: 'A' })]
+    stampWeights(board, () => 1)
+    expect(board[0]).not.toHaveProperty('weightBytes')
   })
 })

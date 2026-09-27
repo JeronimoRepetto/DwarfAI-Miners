@@ -78,12 +78,20 @@ function tierForWeightBytes(weightBytes: number): MineTier {
  * and "Measuring the mine..." on a card nothing is measuring would be exactly
  * the invention the rest of this module refuses.
  *
- * Defined against `cardTierFor` rather than against the two fields, so the
- * state exists exactly where the card has no tier to state and the two can
- * never contradict each other.
+ * AMENDED for #635 (PANEL-QUESTIONS 29, design lead ruling 2026-09-27): a mine
+ * measured before is measuring too while it is re-measured, and it KEEPS its
+ * tier. So this reads the weight rather than the tier. `weightBytes` is this
+ * run's reading, off TierService's in-memory cache, and main's own read of it
+ * schedules the walk that fills it; `knownTier` is the store's record of an
+ * earlier run's verdict. A stored tier with no weight is therefore a mine
+ * measured before whose walk this run still owes — a stale reading, which
+ * still counts as known (#41), so the card states it and ranks by it. Only a
+ * row with neither is "never walked": no tier, the Bronze placeholder, last.
+ * A declared mine with no tier to state is still always measuring, so no card
+ * is left bare with neither a tier nor the pill.
  */
 export function isMeasuring(project: ProjectSummary): boolean {
-  return project.declared && cardTierFor(project) === undefined
+  return project.declared && project.weightBytes === undefined
 }
 
 /**

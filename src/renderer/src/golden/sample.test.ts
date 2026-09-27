@@ -341,19 +341,26 @@ describe('adaptSample projects', () => {
     expect(sample.projects[0]).not.toHaveProperty('lastOpenedAt')
   })
 
-  it('reads a measured mine as its tier and its score in kilobytes, and a measuring one as neither', () => {
+  // AMENDED for #635 (PANEL-QUESTIONS 29, design lead ruling 2026-09-27). This read every
+  // measuring mine as neither a tier nor a weight, which is how the sample's re-measured
+  // ore-ledger lost its Copper. Only `measured: false` is a mine no walk has read; any other
+  // measuring mine keeps its earlier reading's tier, with no weight yet, as the app knows one.
+  it('reads a measured mine as its tier and its score in kilobytes, a re-measured one as its tier alone, and a never-measured one as neither', () => {
     const sample = adaptSample(
       dm({
         mines: [
           { ...shaft, score: 212 },
-          { ...shaft, id: 'x', state: 'measuring', score: 40 }
+          { ...shaft, id: 'x', state: 'measuring', score: 40 },
+          { ...shaft, id: 'y', state: 'measuring', score: 0, measured: false }
         ]
       })
     )
-    const [measured, measuring] = sample.projects
+    const [measured, again, never] = sample.projects
     expect([measured!.knownTier, measured!.weightBytes]).toEqual(['copper', 212 * 1024])
-    expect(measuring).not.toHaveProperty('knownTier')
-    expect(measuring).not.toHaveProperty('weightBytes')
+    expect(again!.knownTier).toBe('copper')
+    expect(again).not.toHaveProperty('weightBytes')
+    expect(never).not.toHaveProperty('knownTier')
+    expect(never).not.toHaveProperty('weightBytes')
   })
 
   it('carries the ore the ledger holds, none for a mine not recorded yet, and a missing folder', () => {

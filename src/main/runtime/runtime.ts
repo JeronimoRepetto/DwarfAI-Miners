@@ -91,6 +91,7 @@ import {
   mergeDeclaredMines,
   stampMapSites,
   stampUnrecorded,
+  stampWeights,
   type DeclaredProject
 } from '../domain/aggregate'
 import type { HookEvent } from '../hooks/hookPayload'
@@ -1650,6 +1651,11 @@ export class AgentRuntime {
     const confirmedTierOf = simulation
       ? (mine: Mine): MineTier | undefined => simulation.knownTierOf(mine.path)
       : (mine: Mine): MineTier | undefined => tiers.knownTierOf(mine.path)
+    // This run's measured weight for the board (#635, Mine.weightBytes). A simulated valley has no
+    // walk, so it carries none, and the Mines list is never re-read on its account.
+    const measuredWeightOf = simulation
+      ? (): number | undefined => undefined
+      : (path: string): number | undefined => tiers.knownWeightBytesOf(path)
     /*
      * A demo must never write into real persistence (#42), and the reasoning
      * is the ledger's one line for line: the store index.ts handed in is
@@ -1791,9 +1797,12 @@ export class AgentRuntime {
             // Whether the store holds a row is stamped LAST, on the collapsed
             // board (#165): the flag is per project id, and a mine that was
             // still two entries a step earlier would carry it twice.
-            stampUnrecorded(
-              collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
-              this.recorded
+            stampWeights(
+              stampUnrecorded(
+                collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
+                this.recorded
+              ),
+              measuredWeightOf
             ),
             now,
             confirmedTierOf
