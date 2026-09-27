@@ -17,6 +17,7 @@ import { DEFAULT_TOGGLE_ACCELERATOR } from '../../../shared/accelerator'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DEFAULT_JEV_SETTINGS,
+  DEFAULT_LAUNCH_VIEW,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_OPENCODE_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
@@ -165,6 +166,8 @@ export function goldenApi(sample: GoldenSample): Api {
     setOpenCodePluginEnabled: (enabled) =>
       Promise.resolve({ ...DEFAULT_OPENCODE_SETTINGS, pluginEnabled: enabled }),
     setOpenCodeServerPassword: refuse('setOpenCodeServerPassword'),
-    clearOpenCodeServerPassword: refuse('clearOpenCodeServerPassword')
+    clearOpenCodeServerPassword: refuse('clearOpenCodeServerPassword'),
+    getLaunchView: () => Promise.resolve({ ...DEFAULT_LAUNCH_VIEW }),
+    setLaunchView: none
   }
 }

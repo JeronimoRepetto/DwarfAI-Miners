@@ -14,14 +14,14 @@ import MinesList from './components/browse/MinesList.vue'
 import { MINE_CARD_ENTER } from './lib/browse/cardMotion'
 import MineColumn from './components/scene/MineColumn.vue'
 import HistoryPanel from './components/history/HistoryPanel.vue'
-import { defaultDwarf, defaultMine } from './testing/factories'
+import { defaultDwarf, defaultMine, defaultProject } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
 import { dockWindowMotion } from './lib/shell/dockMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
 import { useDwarfMessaging } from './composables/useDwarfMessaging'
-import { useView } from './composables/useView'
+import { restoreLaunchView, useView } from './composables/useView'
 import {
   DEFAULT_AUDIO_PREFERENCES,
   DEFAULT_JEV_PREFERENCES,
@@ -323,6 +323,15 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     clearOpenCodeServerPassword: vi
       .fn()
       .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
+    /*
+     * AMENDED for #635 (PANEL-QUESTIONS 25, was: absent). The shell reports each change of page or
+     * mine so the next launch opens on it: a plain spy, like `setOpenMine`, since it is
+     * `ipcRenderer.send` with no verdict. `getLaunchView` is read by the entry before App mounts,
+     * never by App, and answers the default view, which is main's first-run answer. No existing
+     * assertion changed.
+     */
+    getLaunchView: vi.fn().mockResolvedValue({ area: 'map', mineId: null }),
+    setLaunchView: vi.fn(),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -3660,3 +3669,110 @@ describe('App adding a mine, card motion (#635, PANEL-QUESTIONS 9)', () => {
     expect(rises[0]!.keyframes).toEqual(MINE_CARD_ENTER.keyframes)
   })
 })
+
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+/*
+ * The app opens on the page and the mine that were open when it last closed (PO ruling 2026-09-27).
+ * The entry restores the stored view before App mounts (restoreLaunchView), so each case here does
+ * the same and then mounts. A remembered mine that was removed, or whose folder is gone, opens
+ * nothing, and the page still opens.
+ */
+describe('App launch view (#635, PANEL-QUESTIONS 25)', () => {
+  beforeEach(() => useView().clear())
+  afterEach(() => useView().clear())
+
+  const NORTH = defaultMine({ id: 'C:/dev/north', path: 'C:/dev/north', name: 'north' })
+  const NORTH_ROW = defaultProject({
+    id: NORTH.id,
+    path: NORTH.path,
+    name: 'north',
+    declared: true
+  })
+
+  async function launchOn(view: { area: string; mineId: string | null }, overrides = {}) {
+    await restoreLaunchView({ getLaunchView: () => Promise.resolve(view as never) })
+    return mountOpenApp(overrides)
+  }
+
+  it('opens on the remembered page with the remembered mine in the column', async () => {
+    const { wrapper } = await launchOn(
+      { area: 'mines', mineId: NORTH.id },
+      {
+        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
+      }
+    )
+    expect(useView().state).toEqual({ area: 'mines', mineId: NORTH.id })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+  })
+
+  it('keeps a remembered mine nobody is working open, though the board is read before the projects', async () => {
+    let answerProjects: (value: unknown) => void = () => undefined
+    const { wrapper } = await launchOn(
+      { area: 'mines', mineId: NORTH.id },
+      {
+        queryProjects: vi.fn(
+          () =>
+            new Promise((resolve) => {
+              answerProjects = resolve
+            })
+        )
+      }
+    )
+    // The board has answered without the mine; the remembered projects have not answered yet.
+    expect(useView().state.mineId).toBe(NORTH.id)
+    answerProjects({ answered: true, projects: [NORTH_ROW] })
+    await flushPromises()
+    expect(useView().state).toEqual({ area: 'mines', mineId: NORTH.id })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+  })
+
+  it('opens nothing for a remembered mine that was removed, and the page still opens', async () => {
+    const { wrapper } = await launchOn({ area: 'settings', mineId: NORTH.id })
+    expect(useView().state).toEqual({ area: 'settings', mineId: null })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+  })
+
+  it('opens nothing for a remembered mine whose folder is gone, and the page still opens', async () => {
+    const { wrapper } = await launchOn(
+      { area: 'mines', mineId: NORTH.id },
+      {
+        queryProjects: vi.fn().mockResolvedValue({
+          answered: true,
+          projects: [{ ...NORTH_ROW, folderMissing: true }]
+        })
+      }
+    )
+    expect(useView().state).toEqual({ area: 'mines', mineId: null })
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+  })
+
+  it('opens the default view on a first run, with nothing remembered', async () => {
+    await launchOn({ area: 'map', mineId: null })
+    expect(useView().state).toEqual({ area: 'map', mineId: null })
+  })
+
+  it('reports each change of page or mine to main, and nothing it merely restored', async () => {
+    const { wrapper, api } = await launchOn(
+      { area: 'mines', mineId: NORTH.id },
+      {
+        getMines: vi.fn().mockResolvedValue({ mines: [NORTH], tokensObserved: 0 }),
+        queryProjects: vi.fn().mockResolvedValue({ answered: true, projects: [NORTH_ROW] })
+      }
+    )
+    expect(api.setLaunchView).not.toHaveBeenCalled()
+    await wrapper.find(NAV_SETTINGS).trigger('click')
+    await flushPromises()
+    expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'settings', mineId: NORTH.id })
+    useView().closeMine()
+    await flushPromises()
+    expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'settings', mineId: null })
+    expect(api.setLaunchView).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a remembered mine it let go of, so the next launch does not look for it again', async () => {
+    const { api } = await launchOn({ area: 'mines', mineId: NORTH.id })
+    expect(api.setLaunchView).toHaveBeenLastCalledWith({ area: 'mines', mineId: null })
+  })
+})
+/* --- end of the #635 launch view block --------------------------------------- */

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useView } from './useView'
+import { restoreLaunchView, useView } from './useView'
 
 /*
  * Every test in this file kept its subject through #90 and changed the shape it
@@ -122,3 +122,39 @@ describe('useView', () => {
     expect(state.mineId).toBe('m2')
   })
 })
+
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+describe('restoreLaunchView (#635, PANEL-QUESTIONS 25)', () => {
+  beforeEach(() => {
+    useView().clear()
+  })
+
+  it('opens on the page and the mine main remembers', async () => {
+    await restoreLaunchView({
+      getLaunchView: () => Promise.resolve({ area: 'mines', mineId: 'north-shaft' })
+    })
+    expect(useView().state).toEqual({ area: 'mines', mineId: 'north-shaft' })
+  })
+
+  it('opens the default view when main remembers nothing', async () => {
+    useView().showArea('settings')
+    await restoreLaunchView({ getLaunchView: () => Promise.resolve({ area: 'map', mineId: null }) })
+    expect(useView().state).toEqual({ area: 'map', mineId: null })
+  })
+
+  it('reads what came back through the shared parser, so a stray answer opens the Map', async () => {
+    await restoreLaunchView({
+      getLaunchView: () => Promise.resolve({ area: 'vault', mineId: 7 } as never)
+    })
+    expect(useView().state).toEqual({ area: 'map', mineId: null })
+  })
+
+  it('opens the default view when the bridge cannot answer, never failing the launch', async () => {
+    useView().showArea('settings')
+    await expect(
+      restoreLaunchView({ getLaunchView: () => Promise.reject(new Error('no handler')) })
+    ).resolves.toBeUndefined()
+    expect(useView().state).toEqual({ area: 'map', mineId: null })
+  })
+})
+/* --- end of the #635 launch view block --------------------------------------- */

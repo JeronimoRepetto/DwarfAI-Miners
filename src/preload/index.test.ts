@@ -1501,3 +1501,22 @@ describe('preload OpenCode settings contract (#588 T6)', () => {
     expect(invoke).toHaveBeenLastCalledWith('opencode:password:clear')
   })
 })
+
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+describe('preload launch view contract (#635)', () => {
+  it('reads the stored view on launch-view:get with no payload', async () => {
+    invoke.mockResolvedValueOnce({ area: 'mines', mineId: 'north-shaft' })
+    await expect(api.getLaunchView()).resolves.toEqual({ area: 'mines', mineId: 'north-shaft' })
+    expect(invoke).toHaveBeenLastCalledWith('launch-view:get')
+  })
+
+  it('reports the view one-way on launch-view:set, through the shared parser', () => {
+    api.setLaunchView({ area: 'settings', mineId: null })
+    expect(send).toHaveBeenLastCalledWith('launch-view:set', { area: 'settings', mineId: null })
+    api.setLaunchView({ area: 'vault', mineId: '', extra: 1 } as unknown as Parameters<
+      typeof api.setLaunchView
+    >[0])
+    expect(send).toHaveBeenLastCalledWith('launch-view:set', { area: 'map', mineId: null })
+  })
+})
+/* --- end of the #635 launch view block --------------------------------------- */

@@ -6,20 +6,15 @@
  * are decided.
  */
 
-/**
- * The six areas the navigation stack selects, in the design's own order.
- *
- * A mine is deliberately NOT one of them. The design keeps an opened mine
- * beside one of these rather than instead of one, so it is a second, concurrent
- * thing the shell holds — see `useView`.
- *
- * The Laboral Union is last because that is where the source puts it — after
- * Market, not alphabetically and not beside the two areas it happens to share
- * an unavailable panel with (#335).
+/*
+ * The six areas the navigation stack selects, `SHELL_AREAS`, and their `ShellArea` type stood here
+ * until #635 (PANEL-QUESTIONS 25). They moved to `shared/contracts.ts` because the page the app
+ * opens on is stored by main, which checks it against this list; re-exported here, through the
+ * barrel, so every reader of the nav's areas keeps reading them from the nav.
  */
-export const SHELL_AREAS = ['settings', 'map', 'mines', 'lab', 'market', 'laboral-union'] as const
+import { SHELL_AREAS, type ShellArea } from '../../types'
 
-export type ShellArea = (typeof SHELL_AREAS)[number]
+export { SHELL_AREAS, type ShellArea }
 
 /*
  * `SHELL_NAV`, the v4 nav's single stack of the six areas in the source's

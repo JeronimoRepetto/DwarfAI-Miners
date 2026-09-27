@@ -105,7 +105,7 @@ Everything the app keeps lives in Electron's per-user data directory:
 | macOS    | `~/Library/Application Support/DwarfAI-Miners` |
 | Linux    | `~/.config/DwarfAI-Miners`                     |
 
-Fourteen entries: thirteen the app writes, and one (`config-v1.json`) it only reads. All but
+Fifteen entries: fourteen the app writes, and one (`config-v1.json`) it only reads. All but
 `hook-token` and the SQLite database are plain JSON or an empty marker, so you can read them in any
 text editor.
 
@@ -120,6 +120,7 @@ setting:
 | `message-panel-position-v1.json` | Where you last dragged the message panel's window (`src/main/shell/messagePanelPosition.ts`).                                                                                                                                          |
 | `audio-preferences-v1.json`      | Whether music starts on launch, and the three volumes (`src/main/shell/audioPreference.ts`).                                                                                                                                           |
 | `jev-preferences-v1.json`        | Your Jev routing profile (`economy` / `balanced` / `premium`) and default launch (provider, model, effort) — plain JSON, not a secret; re-validated against the launch gate before it is written (`src/main/shell/jevPreferences.ts`). |
+| `launch-view-v1.json`            | The page and the mine that were open when the app last closed, so it opens on them again (`src/main/shell/launchViewPreference.ts`).                                                                                                   |
 
 **Markers and secrets:**
 

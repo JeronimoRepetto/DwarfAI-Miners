@@ -679,8 +679,32 @@ const currentMine = computed<Mine | undefined>(() =>
 /*
  * A remembered mine held open has no board push to let it go when it is removed, so a change of the
  * remembered list asks the same question the board push does (useView.syncWithMines).
+ *
+ * AMENDED for #635 (PANEL-QUESTIONS 25): the question waits until the board AND the remembered list
+ * have each been read once. The app now opens on the mine it last closed on, and the board usually
+ * answers first: a remembered mine nobody is working is only in the list, so asking on the board
+ * alone let it go before the list could say it was still there. Once both are read, a mine that was
+ * removed, or whose folder is gone, is let go of as before — it opens nothing, and the page stays.
  */
-watch(projects, (list) => syncWithMines(openableMineIds(state.mines, list)))
+let boardRead = false
+let projectsRead = false
+function pruneOpenMine(): void {
+  if (boardRead && projectsRead) syncWithMines(openableMineIds(state.mines, projects.value))
+}
+watch(projects, () => {
+  projectsRead = true
+  pruneOpenMine()
+})
+
+/*
+ * The page and the mine the next launch opens on (#635, PANEL-QUESTIONS 25): each change is
+ * reported to main as it happens, one-way, and main coalesces the writes. The two fields are
+ * watched apart so a write-back of an unchanged value reports nothing, and the view the entry
+ * restored before mounting is not reported back — only what changes from it.
+ */
+watch([() => viewState.area, () => viewState.mineId], ([area, mineId]) =>
+  window.api.setLaunchView({ area, mineId })
+)
 
 /*
  * `toggleSecondary` stood here until #635: the closed rail's arrow, which closed
@@ -715,7 +739,8 @@ function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
   for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
-  syncWithMines(openableMineIds(snapshot.mines, projects.value))
+  boardRead = true
+  pruneOpenMine()
   // A launch in flight is watching for its own dwarf, which arrives on an
   // ordinary poll like every other session's — this is that poll.
   if (import.meta.env.DEV) {
@@ -1060,7 +1085,15 @@ onMounted(() => {
   void loadProjects()
   // Adopts the window's REAL shape: which edge it is docked to decides which
   // way the columns run, and the renderer never chose it.
-  void syncLayout()
+  void syncLayout().then(() => {
+    // A mine the launch restored (#635, PANEL-QUESTIONS 25) was open before this window's shape
+    // was ever asked for, so the watch that widens the window for a mine never saw it open. Asked
+    // after the sync, which is not queued behind a request and would otherwise report the narrow
+    // shape main created the window as over the wide one.
+    if (viewState.mineId !== null) {
+      void applyLayout({ mineOpen: true, dockOpen: dockItem.value !== null })
+    }
+  })
   // The button's initial "pinned" guess matches main's default; this adopts
   // the real BrowserWindow state (the user may have unpinned on a past run).
   void syncPinned()

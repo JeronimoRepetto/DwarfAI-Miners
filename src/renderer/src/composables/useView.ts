@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
-import { defaultViewState } from '../types'
-import type { ShellArea } from '../types'
+import { defaultViewState, parseLaunchView } from '../types'
+import type { LaunchView, ShellArea } from '../types'
 
 // Singleton store: module-scope state shared by every useView() caller
 // (house style shared with useMines and a sibling Vue project).
@@ -45,4 +45,27 @@ export function useView() {
   }
 
   return { state, openMine, closeMine, showArea, showMap, showMines, syncWithMines, clear }
+}
+
+/**
+ * Open on the page and the mine the shell last closed on (#635, PANEL-QUESTIONS 25), as main
+ * stored them; a first run opens the default view. Awaited by the entry BEFORE the shell mounts, so
+ * the first paint is already the remembered page rather than the Map corrected a frame later. The
+ * golden page calls it the same way on its bridge.
+ *
+ * The mine is only a claim: whether it still opens — removed, or its folder gone, and it does not,
+ * while the page still does — is App's to decide once the board and the remembered projects have
+ * both been read (App.vue, `pruneOpenMine`). A bridge that cannot answer opens the default view:
+ * a launch is never worth failing over.
+ */
+export async function restoreLaunchView(api: {
+  getLaunchView: () => Promise<LaunchView>
+}): Promise<void> {
+  let view: LaunchView
+  try {
+    view = parseLaunchView(await api.getLaunchView())
+  } catch {
+    view = defaultViewState()
+  }
+  Object.assign(state, view)
 }

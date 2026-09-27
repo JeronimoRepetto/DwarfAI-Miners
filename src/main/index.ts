@@ -69,6 +69,7 @@ import {
   isMessagePanelDragPhase,
   isMineTier,
   parseAudioPreferences,
+  parseLaunchView,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
@@ -144,6 +145,7 @@ import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessio
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
+import { createLaunchViewStore } from './shell/launchViewPreference'
 import { createJevApiKeyStore, type JevKeyVerdict } from './shell/jevApiKey'
 import {
   createJevPreferenceStore,
@@ -272,6 +274,10 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getPanelVisible)
   ipcMain.removeHandler(IPC_CHANNELS.getAudioPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setAudioPreferences)
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  ipcMain.removeHandler(IPC_CHANNELS.getLaunchView)
+  ipcMain.removeAllListeners(IPC_CHANNELS.setLaunchView)
+  /* --- end of the #635 launch view block --------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   ipcMain.removeHandler(IPC_CHANNELS.getTypographyPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setTypographyPreferences)
@@ -859,6 +865,15 @@ async function init(): Promise<void> {
   })
   /* --- end of the #370 block ----------------------------------------------- */
 
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  // The page and the mine the shell opens on: the ones open when it last closed, kept per machine.
+  // Not read here: the renderer asks for it once, before its first paint, and nothing in main
+  // needs it. Written on every change the renderer reports, coalesced by the store itself.
+  const launchViewStore = createLaunchViewStore({
+    filePath: join(app.getPath('userData'), 'launch-view-v1.json')
+  })
+  /* --- end of the #635 launch view block --------------------------------------- */
+
   /*
    * Whether the shell is really on screen (#174, #173).
    *
@@ -1437,6 +1452,14 @@ async function init(): Promise<void> {
     openMineId = typeof payload === 'string' && payload !== '' ? payload : null
   })
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  // Parsed again here whatever the preload sent: the store writes only what the next start reads.
+  // One-way, and the store never rejects — a write it could not make is warned by name.
+  ipcMain.handle(IPC_CHANNELS.getLaunchView, () => launchViewStore.load())
+  ipcMain.on(IPC_CHANNELS.setLaunchView, (_event, payload: unknown) => {
+    void launchViewStore.remember(parseLaunchView(payload))
+  })
+  /* --- end of the #635 launch view block --------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   /*
    * Settings' Jev API-key control (#509).

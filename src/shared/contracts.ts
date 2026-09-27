@@ -3794,6 +3794,66 @@ export function parseAudioPreferences(document: unknown): AudioPreferences {
   }
 }
 
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+/**
+ * The six areas the shell's navigation selects, in the design's own order (#90, #335).
+ *
+ * A mine is deliberately NOT one of them. The design keeps an opened mine beside one of these
+ * rather than instead of one, so it is a second, concurrent thing the shell holds — see `useView`.
+ * The Laboral Union is last because that is where the source puts it.
+ *
+ * Declared here rather than in the renderer's `lib/shell/shellNav.ts`, where it stood until #635:
+ * the page the app opens on is stored by main (`LaunchView` below), so the list the stored page is
+ * checked against crosses the wire, and a second copy in main could disagree with the nav.
+ */
+export const SHELL_AREAS = ['settings', 'map', 'mines', 'lab', 'market', 'laboral-union'] as const
+
+export type ShellArea = (typeof SHELL_AREAS)[number]
+
+/**
+ * The page and the mine the shell opens on: the ones that were open when it last closed (PO
+ * ruling 2026-09-27, PANEL-QUESTIONS 25; decision log, "Launch restores the last page and mine"),
+ * kept per machine in main's userData.
+ *
+ * It is the renderer's `ViewState` as it is stored, and the renderer's type IS this one rather than
+ * a copy of it. The mine is only a CLAIM about the last session: a remembered mine that has since
+ * been removed, or whose folder is gone, opens nothing, and the page still opens — the renderer
+ * decides that against the board and the remembered projects, because main's copy of neither is
+ * what the panel draws.
+ */
+export interface LaunchView {
+  area: ShellArea
+  /** The mine held open beside the page, or null when none was. */
+  mineId: string | null
+}
+
+/** A first run, with nothing remembered: the Map page with no mine open. */
+export const DEFAULT_LAUNCH_VIEW: LaunchView = { area: 'map', mineId: null }
+
+/**
+ * Stored or wire document -> launch view, degrading field by field.
+ *
+ * The shape half of the `config-layering` rule: a document that is not an object is corruption,
+ * indistinguishable from one never written, and reads as the default — a launch is never worth
+ * failing over. A readable document keeps each field that is still good: a page this build does
+ * not draw opens the Map, and the mine still opens; a mine id that is not a non-empty string opens
+ * no mine. Used by main (what it stores), the preload (what may cross) and the renderer (what it
+ * restores), which is why it is declared here.
+ */
+export function parseLaunchView(document: unknown): LaunchView {
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    return { ...DEFAULT_LAUNCH_VIEW }
+  }
+  const record = document as Record<string, unknown>
+  return {
+    area: (SHELL_AREAS as readonly unknown[]).includes(record.area)
+      ? (record.area as ShellArea)
+      : DEFAULT_LAUNCH_VIEW.area,
+    mineId: typeof record.mineId === 'string' && record.mineId !== '' ? record.mineId : null
+  }
+}
+/* --- end of the #635 launch view block --------------------------------------- */
+
 /**
  * Which of the message-panel window's two surfaces is open, or neither (#162).
  *
@@ -5416,6 +5476,16 @@ export const IPC_CHANNELS = {
   getOpenCodeSettings: 'opencode:settings:get',
   setOpenCodePluginEnabled: 'opencode:plugin:set',
   setOpenCodeServerPassword: 'opencode:password:set',
-  clearOpenCodeServerPassword: 'opencode:password:clear'
+  clearOpenCodeServerPassword: 'opencode:password:clear',
   /* --- end of the #588 T6 block ------------------------------------------------ */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  /**
+   * The page and the mine the shell opens on (`LaunchView`). `get` is read once, before the
+   * shell's first paint. `set` is one-way, like `setOpenMine`: the renderer reports each change
+   * and main stores the latest, coalescing a burst of changes into at most one write in flight
+   * and one waiting behind it, so there is no verdict to wait for.
+   */
+  getLaunchView: 'launch-view:get',
+  setLaunchView: 'launch-view:set'
+  /* --- end of the #635 launch view block --------------------------------------- */
 } as const
