@@ -15,6 +15,7 @@ import MineColumn from './components/scene/MineColumn.vue'
 import HistoryPanel from './components/history/HistoryPanel.vue'
 import { defaultDwarf, defaultMine } from './testing/factories'
 import { panelLeaveBoundMs } from './lib/shell/panelMotion'
+import { dockWindowMotion } from './lib/shell/dockMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
 import { useAgentLaunch } from './composables/useAgentLaunch'
 import { useDwarfKicking } from './composables/useDwarfKicking'
@@ -391,7 +392,9 @@ afterEach(() => {
 })
 
 describe('App panel motion (#164)', () => {
-  const animations: { element: Element; finish: () => void }[] = []
+  // AMENDED for #635: each run's keyframes are recorded too, for the dock slot's own motion.
+  const animations: { element: Element; keyframes: DOMKeyframesDefinition; finish: () => void }[] =
+    []
   const wrappers: VueWrapper[] = []
   /**
    * A hand-written stand-in for motion-v's own `animate()` — AMENDED for #566
@@ -401,12 +404,12 @@ describe('App panel motion (#164)', () => {
    * still gets a bare stub below, because `still()` reads its mere PRESENCE
    * as the app's proxy for "a real Chromium window" and never calls it.
    */
-  const engine: MotionAnimate = (element, _keyframes: DOMKeyframesDefinition) => {
+  const engine: MotionAnimate = (element, keyframes: DOMKeyframesDefinition) => {
     let finish!: () => void
     const finished = new Promise<void>((resolve) => {
       finish = resolve
     })
-    animations.push({ element, finish })
+    animations.push({ element, keyframes, finish })
     return {
       cancel: () => undefined,
       then: (onResolve: () => void, onReject?: () => void) => finished.then(onResolve, onReject)
@@ -659,6 +662,61 @@ describe('App panel motion (#164)', () => {
     for (const animation of animations.splice(0)) animation.finish()
     await flushPromises()
     expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ mineOpen: true, dockOpen: false })
+  })
+
+  /*
+   * APPENDED for #635 (motion.md, "MessagePanel window (Panel)"): the slot opens from 12px on its
+   * far side, away from the shell, and closes 8px toward it, mirrored for a left dock.
+   */
+  for (const edge of ['right', 'left'] as const) {
+    it(`opens the dock slot from its far side and closes it toward the shell, docked ${edge}`, async () => {
+      const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+      const { wrapper } = await animatedApp({
+        getPanelLayout: vi.fn().mockResolvedValue({ edge, mineOpen: false, dockOpen: false }),
+        setPanelLayout: vi
+          .fn()
+          .mockImplementation((request: { mineOpen: boolean; dockOpen: boolean }) =>
+            Promise.resolve({ edge, ...request })
+          ),
+        getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+      })
+      wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+      await flushPromises()
+      for (const animation of animations.splice(0)) animation.finish()
+      await flushPromises()
+      wrapper.findComponent(MineColumn).vm.$emit('history')
+      await flushPromises()
+      expect(animations.map((run) => run.keyframes)).toEqual([
+        dockWindowMotion(false, edge).keyframes
+      ])
+      for (const animation of animations.splice(0)) animation.finish()
+      await flushPromises()
+      wrapper.findComponent(HistoryPanel).vm.$emit('close')
+      await flushPromises()
+      expect(animations.map((run) => run.keyframes)).toEqual([
+        dockWindowMotion(true, edge).keyframes
+      ])
+    })
+  }
+
+  // APPENDED for #635 (motion.md, "Mine column leaves"): an open window closes at once.
+  it('removes the docked history at once when its mine closes, before the column folds', async () => {
+    const mine = defaultMine({ dwarfs: [defaultDwarf()] })
+    const { wrapper } = await animatedApp({
+      getMines: vi.fn().mockResolvedValue({ mines: [mine], tokensObserved: 0 })
+    })
+    wrapper.findComponent(MapPage).vm.$emit('open', mine.id)
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('history')
+    await flushPromises()
+    for (const animation of animations.splice(0)) animation.finish()
+    await flushPromises()
+    wrapper.findComponent(MineColumn).vm.$emit('close')
+    await flushPromises()
+    const dock = animations.find((run) => run.element.classList.contains('dock-window'))
+    expect(dock?.keyframes).toEqual(dockWindowMotion(true, 'right', { withMine: true }).keyframes)
   })
 })
 

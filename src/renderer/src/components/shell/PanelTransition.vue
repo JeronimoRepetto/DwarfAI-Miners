@@ -3,7 +3,9 @@ import { onBeforeUnmount } from 'vue'
 import { createBoundedMotion, type MotionAnimate } from '../../lib/shell/boundedMotion'
 import { watchReducedMotion } from '../../lib/scene/sceneMotion'
 import { panelKeyframes, panelMotionX } from '../../lib/shell/panelMotion'
+import type { MotionTransition } from '../../lib/shell/motionTiming'
 import type { ShellFoldHold } from '../../composables/useShellFold'
+import type { DOMKeyframesDefinition } from 'motion-v'
 
 const props = defineProps<{
   axis?: 'horizontal' | 'vertical'
@@ -37,6 +39,14 @@ const props = defineProps<{
    * and nothing a shrink needs to wait on, unlike a leaving one.
    */
   holdEnter?: (column: HTMLElement) => void
+  /**
+   * A motion of the caller's own, entering (`false`) or leaving (`true`), run
+   * in place of this component's default one with its own transition (#635):
+   * the dock's window slot, whose opening and closing the design times apart
+   * (`lib/shell/dockMotion.ts`). Still one bounded run, and a leave is still
+   * reported to the shrink that waits on it.
+   */
+  motion?: (leaving: boolean) => { keyframes: DOMKeyframesDefinition; transition: MotionTransition }
   /**
    * The engine `createBoundedMotion` runs, for a test to hand in a
    * hand-written fake — production never sets this, and gets the real
@@ -108,16 +118,20 @@ function run(element: Element, done: () => void, leaving: boolean): void {
     done()
     return
   }
+  const own = props.motion?.(leaving)
   const vertical = props.axis === 'vertical'
   // `panelMotionX` reads `--panel-motion-x` off the element itself, so a
   // left-docked shell's mirrored sign (`.shell.edge-left` in App.vue) still
   // reaches a horizontal column the way it did when WAAPI resolved that
   // custom property off the live cascade on its own; a vertical dock never
   // reads it.
-  const finished = motion.run(
-    panel,
-    panelKeyframes(leaving, vertical, vertical ? undefined : panelMotionX(panel))
-  )
+  const finished =
+    own === undefined
+      ? motion.run(
+          panel,
+          panelKeyframes(leaving, vertical, vertical ? undefined : panelMotionX(panel))
+        )
+      : motion.run(panel, own.keyframes, undefined, own.transition)
   if (leaving) emit('leave', finished)
   const complete = (): void => {
     if (active.get(element) !== complete) return

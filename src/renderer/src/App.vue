@@ -49,6 +49,7 @@ import {
 } from './lib/scene/sceneSizing'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
+import { dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
 import { needsYouCount, reachableArea } from './lib/shell/panelNav'
@@ -825,6 +826,16 @@ const dockItem = computed<{ kind: 'history'; key: string } | null>(() =>
  * Watched as two booleans so switching mines, or history from one mine to the
  * next, asks nothing of the window.
  */
+/**
+ * The slot's own motion (motion.md, "MessagePanel window (Panel)"): in from its far side, out
+ * toward the shell, read against the edge main reports so a left dock mirrors it.
+ */
+function dockMotion(leaving: boolean): ReturnType<typeof dockWindowMotion> {
+  // Leaving with its mine (the mine is already let go of when the leave starts), the window is
+  // removed at once, before the column fades (motion.md, "Mine column leaves").
+  return dockWindowMotion(leaving, layout.value.edge, { withMine: viewState.mineId === null })
+}
+
 watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOpen, dockOpen]) => {
   void applyLayout({ mineOpen, dockOpen })
 })
@@ -1143,7 +1154,7 @@ onBeforeUnmount(() => {
         given the window the slot's width (`visibleLayout`), as the mine column
         is, and retained while it leaves so the shrink waits for it.
       -->
-      <PanelTransition axis="vertical" :engine="props.engine" @leave="trackPanelLeave">
+      <PanelTransition :motion="dockMotion" :engine="props.engine" @leave="trackPanelLeave">
         <div v-if="dockItem && visibleLayout.dockOpen" :key="dockItem.key" class="dock-window">
           <HistoryPanel
             v-if="dockItem.kind === 'history' && currentMine"
