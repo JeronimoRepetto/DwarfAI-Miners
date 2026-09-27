@@ -346,6 +346,27 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
   justify-self: center;
 }
 
+/*
+ * The body is MarkdownBubble's tree, whose own rules are the MessagePanel's until its slice: here
+ * the design's chat-bubble.css draws it, so its blocks stack with no gap of their own and its code
+ * keeps the square corners every surface has (foundations, Stepped pixel corners). Written one
+ * class deeper than MarkdownBubble's rules so they win whatever order the two sheets load in.
+ */
+.dm-bubble .dm-bubble__text {
+  display: block;
+}
+.dm-bubble .dm-bubble__text :deep(.markdown-list) {
+  margin: 0;
+  padding-left: 14px;
+}
+.dm-bubble .dm-bubble__text :deep(.markdown-code),
+.dm-bubble .dm-bubble__text :deep(.markdown-block-code) {
+  border-radius: 0;
+}
+.dm-bubble .dm-bubble__text :deep(.markdown-block-code) {
+  line-height: 1.4;
+}
+
 /* The design's chat-bubble.css, the parts a read-only bubble draws. */
 .dm-bubble {
   --mat-fill: var(--parchment);

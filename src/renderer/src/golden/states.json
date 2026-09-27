@@ -143,7 +143,7 @@
   },
   {
     "key": "organisms/history-panel#dwarfai-miners",
-    "red": "14.1% differing: a tab shows the custom name Watcher (the dwarf names slice), d56 last time counts a failed message no transcript holds, and the bubbles body is the app Markdown renderer until the MessagePanel slice rebuilds the chat bubble (#635, PR4)"
+    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher (the dwarf names slice), and the fourth reads last 09:13, the time of a message the sample marks failed, which no transcript holds (#635, PR4 question)"
   },
   {
     "key": "molecules/vault-strip#mine-footer"
