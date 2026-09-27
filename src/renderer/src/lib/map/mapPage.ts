@@ -108,11 +108,13 @@ export interface MineTip {
  * awake, working or waiting on you, a sleeper being the one at rest that asked nobody anything —
  * and "Needs you" while any of them waits on you.
  */
-export function mineTip(mine: Mine): MineTip {
+export function mineTip(mine: Mine, facts: { notEnterable?: boolean } = {}): MineTip {
   const needs = mine.dwarfs.filter(dwarfNeedsYou).length
   const awake = mine.dwarfs.filter((d) => d.status === 'working' || dwarfNeedsYou(d)).length
   const rows: TipRow[] = [{ label: 'Dwarfs working', value: String(awake) }]
   if (needs > 0) rows.push({ label: 'Needs you', value: String(needs) })
+  // A mine whose folder no longer exists (PANEL-QUESTIONS 6; screens/map.md).
+  if (facts.notEnterable) rows.push({ label: 'Not enterable', value: '', tone: 'warn' })
   return { tier: mine.tier, title: mine.name, rows }
 }
 

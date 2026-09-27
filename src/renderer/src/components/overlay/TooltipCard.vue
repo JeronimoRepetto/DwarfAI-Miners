@@ -22,7 +22,7 @@ withDefaults(defineProps<{ title?: string; tier?: MineTier; rows?: TipRow[] }>()
     <div v-if="title !== undefined" class="dm-tip__title">
       <TierChip v-if="tier !== undefined" :tier="tier" />{{ title }}
     </div>
-    <div v-for="row in rows" :key="row.label" class="dm-tip__row">
+    <div v-for="row in rows" :key="row.label" class="dm-tip__row" :data-tone="row.tone">
       {{ row.label }}<b>{{ row.value }}</b>
     </div>
     <slot />
@@ -62,5 +62,9 @@ withDefaults(defineProps<{ title?: string; tier?: MineTier; rows?: TipRow[] }>()
 .dm-tip__row b {
   font-weight: 400;
   color: var(--ink);
+}
+/* screens/map.md: a mine that cannot be entered adds "Not enterable" in --warn. */
+.dm-tip__row[data-tone='warn'] {
+  color: var(--warn);
 }
 </style>

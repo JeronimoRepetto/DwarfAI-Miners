@@ -3030,6 +3030,22 @@ describe('App Mines page', () => {
     expect(cards[0]!.attributes('data-state')).toBe('unrecorded')
   })
 
+  // ADDED for #635 (PANEL-QUESTIONS 6): a press on a mine whose folder is gone says why.
+  it('says why a mine whose folder is gone cannot be entered', async () => {
+    const { wrapper } = await mountOpenApp({
+      queryProjects: vi.fn().mockResolvedValue({
+        answered: true,
+        projects: [{ ...ALPHA_ROW, name: 'old-shaft', live: false, folderMissing: true }]
+      })
+    })
+    await wrapper.find(NAV_MINES).trigger('click')
+    await flushPromises()
+    await wrapper.get('.dm-card button.dm-card__hit').trigger('click')
+    await flushPromises()
+    expect(toasts(wrapper)).toContain('old-shaft: Folder not found. It was moved or deleted.')
+    expect(wrapper.find('.dm-minecol').exists()).toBe(false)
+  })
+
   it('says what the Music slot did', async () => {
     const { wrapper } = await mountOpenApp()
     const on = wrapper.get(NAV_MUSIC).attributes('aria-pressed') === 'true'

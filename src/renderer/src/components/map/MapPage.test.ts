@@ -429,3 +429,28 @@ describe('MapPage mine tooltip', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 })
+
+/*
+ * PANEL-QUESTIONS 6: a marker for a mine whose folder no longer exists opens nothing; the page
+ * reports the press so the shell can say why, and its tooltip adds "Not enterable".
+ */
+describe('MapPage, a mine that cannot be entered', () => {
+  const gone = defaultProject({ id: 'C:/dev/old', name: 'old', folderMissing: true })
+
+  it('reports a press on its marker instead of opening it', async () => {
+    const wrapper = mount(MapPage, { props: { ...base, mines: [], projects: [gone] } })
+    await markerFor(wrapper, 'old').trigger('click')
+    expect(wrapper.emitted('open')).toBeUndefined()
+    expect(wrapper.emitted('refuse')).toEqual([['C:/dev/old']])
+  })
+
+  it('adds "Not enterable" to its tooltip', async () => {
+    const wrapper = mount(MapPage, {
+      props: { ...base, mines: [], projects: [gone] },
+      attachTo: document.body
+    })
+    await markerFor(wrapper, 'old').trigger('focus')
+    await wrapper.vm.$nextTick()
+    expect(document.body.querySelector('.dm-tip')?.textContent).toContain('Not enterable')
+  })
+})

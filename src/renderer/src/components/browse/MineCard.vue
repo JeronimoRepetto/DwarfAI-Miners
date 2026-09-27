@@ -25,14 +25,16 @@ const props = withDefaults(
   }>(),
   { open: false, state: undefined }
 )
-const emit = defineEmits<{ open: [id: string]; remove: [id: string] }>()
+const emit = defineEmits<{ open: [id: string]; remove: [id: string]; refuse: [id: string] }>()
 
 const label = computed(() => mineCardLabel(props.card))
 const menu = computed(() => mineCardMenu(props.card))
 const blocked = computed(() => !props.card.enterable || props.card.state === 'unenterable')
 
+// A press on a mine that cannot be entered opens nothing; the page says why (PANEL-QUESTIONS 6).
 function enter(): void {
   if (!blocked.value) emit('open', props.card.id)
+  else if (props.card.state === 'unenterable') emit('refuse', props.card.id)
 }
 
 // The menu holds one item today, Remove mine…, so any pick is the removal.

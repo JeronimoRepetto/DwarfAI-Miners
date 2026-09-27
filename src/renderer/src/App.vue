@@ -32,7 +32,7 @@ import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
 import { useToasts } from './composables/useToasts'
 import { browseRows } from './lib/browse/boardRows'
-import { mineCardView } from './lib/browse/mineCard'
+import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
@@ -539,6 +539,15 @@ const mineCards = computed(() =>
     mineCardView(row, state.mines)
   )
 )
+
+/*
+ * A press on a mine that cannot be entered (PANEL-QUESTIONS 6): nothing opens, and a toast says
+ * why, "<name>: <reason>", with the warning icon, from the Mines page and the map alike.
+ */
+function refuseMine(projectId: string): void {
+  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
+  showToast(mineRefusalToast(name), 'warning')
+}
 
 function sortProjects(mode: MineSort): void {
   setProjectSort(mode)
@@ -1165,6 +1174,7 @@ onBeforeUnmount(() => {
               :adding="addingProject"
               :loading="loading"
               @open="enterMine"
+              @refuse="refuseMine"
               @add="addMine"
             />
 
@@ -1189,6 +1199,7 @@ onBeforeUnmount(() => {
               @sort="sortProjects"
               @add="addMine"
               @open="openFromBrowse"
+              @refuse="refuseMine"
               @remove="removeFromBrowse"
               @open-main-project="adoptMainProject"
               @dismiss-worktree="dismissWorktreeQuestion"

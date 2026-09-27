@@ -47,6 +47,8 @@ export interface TipOptions {
 export interface TipRow {
   label: string
   value: string
+  /** A row said as a warning (`--warn`): the map's "Not enterable" (screens/map.md). */
+  tone?: 'warn'
 }
 
 const OPPOSITE: Record<TipSide, TipSide> = {

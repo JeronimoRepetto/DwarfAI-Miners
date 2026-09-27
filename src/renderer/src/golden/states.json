@@ -58,7 +58,7 @@
   },
   {
     "key": "molecules/mine-card#not-enterable",
-    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the app cannot reach this state yet, having no folder-missing fact on the wire (PR2 question)"
+    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the state is reachable since the folder check (PANEL-QUESTIONS 6)"
   },
   {
     "key": "molecules/mine-card#max-tier"

@@ -4158,6 +4158,12 @@ export interface ProjectSummary {
    */
   mapSite?: number
   live: boolean
+  /**
+   * True when the project's folder no longer exists (#635, PANEL-QUESTIONS 6): the one reason a mine
+   * is not enterable. Absent when the folder is there, the wire saying "nothing to report" by
+   * saying nothing.
+   */
+  folderMissing?: true
 }
 
 /**
