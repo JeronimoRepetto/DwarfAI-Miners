@@ -222,9 +222,9 @@ adding a file. This is the index — one line per group, so you can tell what a 
 
 <!-- END GENERATED: main-tree -->
 
-- **`renderer/src/`** — TWO roots, one entry: `App.vue` is the shell and `MessagePanelWindow.vue` the
-  message panel's own window beside it (`lib/shell/surface.ts` picks). `components/` is thin and
-  decides nothing, `lib/` framework-agnostic; `composables/` is Vue-bound state, `types.ts` the barrel.
+- **`renderer/src/`** — one root, `App.vue`, the shell; the MessagePanel and the Add panel are in its
+  dock slot (`useMessageDock`). `components/` is thin and decides nothing, `lib/` framework-agnostic;
+  `composables/` is Vue-bound state, `types.ts` the barrel.
 
 ## Verified versus assumed
 

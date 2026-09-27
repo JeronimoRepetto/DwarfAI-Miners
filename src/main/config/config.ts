@@ -673,8 +673,8 @@ export function loadSimulationConfig(env: ConfigEnv = process.env): SimulationCo
  * `false`) forces the path OFF; `=1` (or `true`) forces it ON; unset — the
  * common case now — leaves DARWIN_CONSOLE_INPUT_ENABLED to decide, which is
  * `true`. Mirrors perf.ts's DWARFAI_PERF, tierService.ts's TIER_DEBUG,
- * codexProvider.ts's CODEX_DEBUG and window.ts's SHELL_DEBUG for its accepted
- * spellings, but unlike those two-state flags this one is tri-state: it must
+ * and codexProvider.ts's CODEX_DEBUG for its accepted spellings, but unlike
+ * those two-state flags this one is tri-state: it must
  * distinguish "not set" from "set to false" so the shipped default can still
  * win when nobody has opted out.
  */

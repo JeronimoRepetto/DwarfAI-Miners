@@ -22,7 +22,6 @@ import {
   dwarfSilenceWindowMs,
   isDwarfProvider,
   isMcpConnectionStatus,
-  isMessagePanelDragPhase,
   parseAudioPreferences,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   DEFAULT_TYPOGRAPHY_PREFERENCES,
@@ -330,29 +329,11 @@ describe('TIER_WEIGHT_THRESHOLDS_KB', () => {
 })
 
 /*
- * The two ends of a header drag (#296), as the preload has to recognise them:
- * main moves the window, so a phase it cannot read is one that would either
- * start a drag nobody asked for or leave one running with nothing to end it.
- * Same ruling isMessagePanelSurface carries — the bridge refuses to guess, and
- * an unrecognised value crosses as '' for main to refuse outright.
+ * REMOVED for #635, stated rather than passing unseen: 'isMessagePanelDragPhase', with the guard it
+ * tested — the two ends of a drag on the message panel window's header (#296). The panel is
+ * anchored in the shell's dock slot and its header does not drag (decision log, MessagePanel and
+ * Add panel anchored), so there is no phase left to recognise.
  */
-describe('isMessagePanelDragPhase', () => {
-  it('recognises the two phases a drag actually has', () => {
-    for (const phase of ['start', 'end']) {
-      expect(isMessagePanelDragPhase(phase)).toBe(true)
-    }
-  })
-
-  it.each(['Start', 'START', 'move', 'dragging', '', ' end', 42, null, undefined, {}])(
-    'refuses %j, which is not one of them',
-    (value) => {
-      // 'move' above is the one worth naming: main follows the cursor on its
-      // own clock, so a renderer reporting each step is a phase this contract
-      // never had (see MessagePanelDragPhase).
-      expect(isMessagePanelDragPhase(value)).toBe(false)
-    }
-  )
-})
 
 /*
  * Settings' Audio section (#174, #173), and why its parser lives on the wire

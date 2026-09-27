@@ -1102,9 +1102,8 @@ onMounted(() => {
   unlistenShowMine = window.api.onShowMine((mineId) => showMineFromNotification(mineId))
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  // Adopts the stored faces, and listens because the OTHER window can change
-  // them: Settings is here, but the panel window is a second page painting the
-  // messaging face, and either may be the one that heard the change first.
+  // Adopts the stored faces, and listens to main's broadcast of them — which
+  // since #635 only ever comes from this window's own Settings, applied twice.
   void syncTypography()
   unlistenTypography = listenTypography()
   /* --- end of the #370 block ----------------------------------------------- */

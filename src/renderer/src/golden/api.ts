@@ -97,15 +97,6 @@ export function goldenApi(sample: GoldenSample): Api {
       }
       return Promise.resolve({ ...layout })
     },
-    getMessagePanel: () => Promise.resolve({ surface: 'none', mineId: '', dwarfId: '' }),
-    setMessagePanel: (state) => Promise.resolve(state),
-    onMessagePanel: unsubscribe,
-    setMessagePanelHeight: none,
-    dragMessagePanel: none,
-    dockMessagePanel: none,
-    reportMessagePanelSettled: none,
-    reportDwarfDelivery: none,
-    onDwarfDeliveryReport: unsubscribe,
     getToggleShortcut: () => Promise.resolve({ ...shortcut }),
     setToggleShortcut: refuse('setToggleShortcut'),
     getMines: () =>

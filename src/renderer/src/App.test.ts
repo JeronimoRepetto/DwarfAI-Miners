@@ -95,6 +95,11 @@ const GUILD_ON = { getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnable
  * surface, and the halo on the sprite is drawn from the state main reports —
  * never from a local guess, because a launch handing over is something only the
  * other window can know.
+ *
+ * AMENDED for #635: the five blocks came back to the shell with the panels,
+ * which are anchored in its dock slot now, and live in App.messageDock.test.ts
+ * (that file's header says what changed). The shell's half below asserts the
+ * panels in the dock rather than the requests to main.
  */
 
 /**
@@ -1890,10 +1895,10 @@ describe('App selecting a dwarf (#162)', () => {
 })
 
 /**
- * The mine's Add action, which is all of the launch flow that is still the
- * shell's (#86, #162): it asks main for the launch surface, and the panel
- * window does the rest — the chips, the gate, the prompt, the spawn and the
- * handover. See 'the add panel' in MessagePanelWindow.test.ts.
+ * The mine's Add action (#86, #162): it opens the Add panel in the dock slot.
+ * The chips, the gate, the prompt, the spawn and the handover are 'the add
+ * panel' in App.messageDock.test.ts. AMENDED for #635 (was: it asked main for
+ * the launch surface, and the panel's own window did the rest).
  */
 describe('App add action (#162)', () => {
   const MINE = {

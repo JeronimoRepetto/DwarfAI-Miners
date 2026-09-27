@@ -1510,7 +1510,7 @@ this fix it answered the 30 kB `<recommended_plugins>` item, because that is the
 ### (e) Why the panel stayed still — a code reading beside the measurement
 
 The panel re-reads a watched feed when `lastMessage` or `transcriptUpdatedAt` on the dwarf moves
-(`watchedFeedSignalKey` in `MessagePanelWindow.vue`; `feedSignalOf` in `runtime.ts`, whose #196
+(`watchedFeedSignalKey` in `useMessageDock.ts`, `MessagePanelWindow.vue` when this was written; `feedSignalOf` in `runtime.ts`, whose #196
 tests pin that a moving `transcriptUpdatedAt` alone reads and pushes the feed). `lastMessage` is
 the assistant's side and cannot move for the person's own send. The Claude provider stamps the
 transcript's mtime as `transcriptUpdatedAt`; **the Codex provider stamped nothing**, because a
