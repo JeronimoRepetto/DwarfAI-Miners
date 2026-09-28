@@ -68,8 +68,13 @@ describe('cleanDwarfName (#635, Dwarf names)', () => {
     expect(cleanDwarfName('Gimli ©️')).toBe('Gimli ©')
   })
 
-  it('drops a lone zero-width joiner', () => {
-    expect(cleanDwarfName('Gim\u200dli')).toBe('Gimli')
+  // AMENDED for #635 (NAMES-QUESTIONS 3; was: expect(cleanDwarfName('Gim\u200dli')).toBe('Gimli') --
+  // a zero-width joiner BETWEEN two letters of the name is now kept, not dropped; see the
+  // "a script's own joiners" describe block below).
+  it('drops a zero-width joiner with no letter on both sides of it', () => {
+    expect(cleanDwarfName('\u200DGimli')).toBe('Gimli')
+    expect(cleanDwarfName('Gimli\u200D')).toBe('Gimli')
+    expect(cleanDwarfName('\u200D')).toBe('')
   })
 
   it('keeps letters with their accents, from any script', () => {
@@ -269,9 +274,12 @@ describe('cleanDwarfName — invisible and direction-changing characters (#635, 
     expect(filterDwarfName('Gim' + char + 'li')).toEqual({ text: 'Gimli', refused: 'chars' })
   })
 
-  // "Every other Cf": the byte order mark, the Arabic letter mark, the Mongolian vowel separator,
-  // and the zero-width non-joiner, which some scripts use inside a word (see the PR notes).
-  it.each(['FEFF', '061C', '180E', '200C'])('removes U+%s, another format character', (hex) => {
+  // "Every other Cf": the byte order mark, the Arabic letter mark, and the Mongolian vowel
+  // separator.
+  // AMENDED for #635 (NAMES-QUESTIONS 3; was: this list also included '200C', asserting the
+  // zero-width non-joiner is always removed -- it is now kept between two letters of the name;
+  // see the "a script's own joiners" describe block below).
+  it.each(['FEFF', '061C', '180E'])('removes U+%s, another format character', (hex) => {
     expect(cleanDwarfName('Gim' + String.fromCodePoint(parseInt(hex, 16)) + 'li')).toBe('Gimli')
   })
 
@@ -288,5 +296,116 @@ describe('cleanDwarfName — invisible and direction-changing characters (#635, 
 
   it('keeps the words in order around a removed override', () => {
     expect(cleanDwarfName('\u202EStone beard\u202C')).toBe('Stone beard')
+  })
+})
+
+/*
+ * NAMES-QUESTIONS 3 (design lead ruling 2026-09-28, correcting question 2): the zero-width
+ * non-joiner and joiner (U+200C, U+200D) are kept only between two letters of the same name -- a
+ * letter, or a letter with its combining marks, on each side -- the one place they shape text in
+ * Persian and Indic scripts. Removed everywhere else (alone, leading, trailing, next to a space or
+ * punctuation), with the other format characters, so a name can be neither blank nor reshaped by
+ * them. Emoji sequences stay removed by the emoji rule. Matches the design's prototype fix,
+ * prototype/data/sample-data.js (design repo commit cb9914c), DM.filterDwarfName's stripFormat.
+ */
+describe("cleanDwarfName -- a script's own joiners, kept between letters (#635, NAMES-QUESTIONS 3)", () => {
+  it('keeps a zero-width non-joiner between two letters of a Persian word', () => {
+    expect(cleanDwarfName('کتاب\u200Cها')).toBe('کتاب\u200Cها')
+  })
+
+  it('keeps a zero-width joiner or non-joiner between two Devanagari letters', () => {
+    expect(cleanDwarfName('क\u200Dष')).toBe('क\u200Dष')
+    expect(cleanDwarfName('क\u200Cष')).toBe('क\u200Cष')
+  })
+
+  it('removes a joiner with nothing before it', () => {
+    expect(cleanDwarfName('\u200CGimli')).toBe('Gimli')
+    expect(cleanDwarfName('\u200DGimli')).toBe('Gimli')
+  })
+
+  it('removes a joiner with nothing after it', () => {
+    expect(cleanDwarfName('Gimli\u200C')).toBe('Gimli')
+    expect(cleanDwarfName('Gimli\u200D')).toBe('Gimli')
+  })
+
+  it('removes a joiner on its own', () => {
+    expect(cleanDwarfName('\u200C')).toBe('')
+    expect(cleanDwarfName('\u200D')).toBe('')
+  })
+
+  it('removes a joiner next to a space, on either side', () => {
+    expect(cleanDwarfName('Gim \u200Cli')).toBe('Gim li')
+    expect(cleanDwarfName('Gim\u200C li')).toBe('Gim li')
+  })
+
+  it('removes a joiner next to punctuation, on either side', () => {
+    expect(cleanDwarfName('Gim,\u200Cli')).toBe('Gim,li')
+    expect(cleanDwarfName('Gim\u200C,li')).toBe('Gim,li')
+  })
+
+  it('removes a joiner next to a digit, which is not a letter', () => {
+    expect(cleanDwarfName('5\u200C6')).toBe('56')
+  })
+
+  it('removes every joiner in a run of them, since neither neighbour of any one is a letter', () => {
+    expect(cleanDwarfName('Gim\u200C\u200Dli')).toBe('Gimli')
+  })
+
+  it('leaves nothing of a name made only of joiners, which removes the custom name', () => {
+    expect(cleanDwarfName('\u200C\u200D\u200C')).toBe('')
+    expect(customNameFor('\u200C\u200D\u200C', 'Explorer')).toBeUndefined()
+  })
+
+  it('still removes a whole emoji ZWJ sequence, joiner included, with the emoji rule', () => {
+    expect(cleanDwarfName('Gimli 👨\u200D👩\u200D👧')).toBe('Gimli')
+  })
+
+  // Ordering hazard: a two-emoji sequence needs only ONE zero-width joiner (a family emoji needs
+  // two, one between each pair -- but many, like "person technologist", use a single joiner
+  // between exactly two emoji). Typed with no surrounding space, removing only the emoji glyphs
+  // would leave that one joiner sitting directly between two real letters of the name by
+  // coincidence, which the joiner rule would then wrongly read as a script joiner and keep. This
+  // is guarded by reading the untouched text before the emoji pass runs, so the joiner's real
+  // neighbours (the emoji) are seen and it is dropped with them.
+  it('drops the joiner of a two-emoji sequence typed with no space, not left behind between letters', () => {
+    expect(cleanDwarfName('Gimli👨\u200D💻Stonebeard')).toBe('GimliStonebeard')
+    expect(filterDwarfName('Gimli👨\u200D💻Stonebeard').text).toBe('GimliStonebeard')
+  })
+
+  it('counts a letter with a kept joiner as one saved character toward the 24-character cap, never splitting the pair', () => {
+    // 23 complete "letter+joiner" pairs, a plain letter, then 5 more pairs past the cap: 29
+    // graphemes. The cap keeps exactly the first 24 -- the 23 pairs intact, joiner and all,
+    // plus the one plain letter that closes the cut -- never slicing a pair in half by code
+    // point.
+    const pairs = ('क' + '\u200D').repeat(23)
+    const chain = pairs + 'क' + ('क' + '\u200D').repeat(5)
+    expect(nameChars(chain)).toHaveLength(29)
+    expect(cleanDwarfName(chain)).toBe(pairs + 'क')
+  })
+
+  // The cap can land exactly after a kept "letter+joiner" pair, which leaves that joiner with
+  // nothing after it within the SAVED name -- it is now a trailing joiner and NAMES-QUESTIONS 3
+  // removes those, so the cap must re-check it rather than keep it just because it was valid
+  // before the cut. Both the save and the live field must agree on this, or the text visibly
+  // changes between what the field shows at the cap and what gets saved from it.
+  it('drops a joiner that the cap itself leaves trailing, rather than keeping a stray one at the cut', () => {
+    const unit = 'क' + '\u200D'
+    const chain = unit.repeat(25) + 'क'
+    const saved = cleanDwarfName(chain)
+    expect(saved).toBe(unit.repeat(23) + 'क')
+    expect(saved.endsWith('\u200D')).toBe(false)
+    expect(filterDwarfName(chain).text).toBe(saved)
+  })
+
+  it.each([
+    'کتاب\u200Cها',
+    'क\u200Dष',
+    'क\u200Cष',
+    '\u200C\u200D\u200C',
+    'Gim \u200Cli',
+    '5\u200C6',
+    ('क' + '\u200D').repeat(25) + 'क'
+  ])('the field agrees with the save rule when a joiner is involved: %j', (typed) => {
+    expect(cleanDwarfName(filterDwarfName(typed).text)).toBe(cleanDwarfName(typed))
   })
 })
