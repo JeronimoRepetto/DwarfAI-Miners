@@ -3335,7 +3335,15 @@ export function isCodexPermissionMode(value: unknown): value is CodexPermissionM
  * own documented three levels, and `agy --mode` is a vocabulary nothing here
  * has wired. A row filling in beside this one is not evidence for this one.
  */
-export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+/*
+ * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: `['claude']`). Codex
+ * joins on the terms above — its own vocabulary wired, not Claude's borrowed — and it is not
+ * heldable: its modes are CODEX_PERMISSION_MODES, carried on the detached
+ * `AgentLaunchRequest.permissionMode` and turned into `codex exec --sandbox` by main. So this list
+ * now reads "providers whose launch reads a permission mode", held or not; which vocabulary a
+ * provider takes is the renderer's `permissionModeOptions`, drawn from the two lists.
+ */
+export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex']
 
 export interface HeldSessionLaunchRequest {
   mineId: string

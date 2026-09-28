@@ -10,11 +10,12 @@ import {
   type JevState,
   type LaunchChoice,
   type LaunchFailure,
+  type LaunchPermissionMode,
   type LaunchPhase
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { isHeldPermissionMode, type HeldPermissionMode } from '../../types'
+import { isCodexPermissionMode, isHeldPermissionMode } from '../../types'
 import ActionButton from '../controls/ActionButton.vue'
 import ChoiceChip from '../controls/ChoiceChip.vue'
 import InputField from '../controls/InputField.vue'
@@ -60,7 +61,7 @@ const props = defineProps<{
   modelPicker: ModelPicker
   /** What the effort select should draw — hidden when the chosen provider has none. */
   effortPicker: EffortPicker
-  /** Whether the Permissions select holds values — held Claude only. */
+  /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
   permissionsVisible: boolean
   /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
   jev: JevState
@@ -72,7 +73,7 @@ const props = defineProps<{
    */
   model?: string | null
   effort?: string | null
-  permissionMode?: HeldPermissionMode | null
+  permissionMode?: LaunchPermissionMode | null
   /** Why the last launch failed, for the launch-failure notice (#635), or null. */
   failure?: LaunchFailure | null
 }>()
@@ -88,7 +89,7 @@ const emit = defineEmits<{
   /** A model picked off the tuning row. */
   model: [value: string]
   effort: [value: string]
-  permissionMode: [value: HeldPermissionMode]
+  permissionMode: [value: LaunchPermissionMode]
   /** The Jev toggle (#509). */
   'toggle-jev': []
   /** The #523 auto-accept switch beside it. */
@@ -237,7 +238,10 @@ async function pickManually(): Promise<void> {
 function pick(label: 'Model' | 'Effort' | 'Permissions', value: string): void {
   if (label === 'Model') emit('model', value)
   else if (label === 'Effort') emit('effort', value)
-  else if (isHeldPermissionMode(value)) emit('permissionMode', value)
+  // Held Claude's modes or Codex's (#635); the list the select drew is the chosen supplier's own.
+  else if (isHeldPermissionMode(value) || isCodexPermissionMode(value)) {
+    emit('permissionMode', value)
+  }
 }
 
 /** The no-key reason, in the words the Jev fallback line already uses for it (#509). */

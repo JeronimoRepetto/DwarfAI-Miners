@@ -22,6 +22,7 @@ import {
   JEV_NO_CHOICE_REFUSAL,
   launchCommand,
   launchFailed,
+  launchCodexPermissionMode,
   launchPermissionMode,
   launchPhase,
   launchPrompt,
@@ -43,6 +44,7 @@ import {
   OTHER_CHOICE,
   type JevState,
   type LaunchChoice,
+  type LaunchPermissionMode,
   type LaunchPhase,
   type LaunchState
 } from '../lib/launch/launchState'
@@ -58,7 +60,6 @@ import { DEFAULT_JEV_SETTINGS, HELDABLE_PROVIDERS } from '../types'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
-  HeldPermissionMode,
   JevRouteLaunchResult,
   JevSettings,
   LaunchFailedPush,
@@ -159,7 +160,7 @@ export interface AgentLaunch {
   /** Pick a model off the row under the composer. */
   setModel: (value: string) => void
   setEffort: (value: string) => void
-  setPermissionMode: (value: HeldPermissionMode) => void
+  setPermissionMode: (value: LaunchPermissionMode) => void
   /** The person's own Jev toggle (#509) — a no-op outside `ready`. */
   toggleJevEnabled: () => void
   /** The #523 checkbox beside it — same guard, same no-op, same session. */
@@ -280,7 +281,7 @@ export function useAgentLaunch(): AgentLaunch {
     state.value = chooseEffort(state.value, value)
   }
 
-  function setPermissionMode(value: HeldPermissionMode): void {
+  function setPermissionMode(value: LaunchPermissionMode): void {
     state.value = choosePermissionMode(state.value, value)
   }
 
@@ -467,11 +468,14 @@ export function useAgentLaunch(): AgentLaunch {
         return
       }
 
+      const codexPermissionMode = launchCodexPermissionMode(state.value)
       const result = await window.api.launchAgent({
         mineId: mineId.value,
         provider: choice,
         prompt,
         ...launchTuning(state.value),
+        // #635: Codex's own permission mode, when one was picked; main turns it into `--sandbox`.
+        ...(codexPermissionMode === undefined ? {} : { permissionMode: codexPermissionMode }),
         // Same rule and same reason as the held channel's own (#511).
         ...(routedByJev(state.value) ? { routedByJev: true } : {})
       })

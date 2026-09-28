@@ -469,6 +469,51 @@ describe('routing a launch to the channel its provider can actually use', () => 
   })
 
   /*
+   * #635 (PO decision 2026-09-28). Codex now has permission modes of its own,
+   * and the one picked travels on the detached channel — main turns it into
+   * `--sandbox`. The note above the previous test is superseded for Codex.
+   */
+  it('carries a chosen Codex permission mode to a detached launch', async () => {
+    const { api, launch } = await ready('codex')
+    launch.setPermissionMode('read-only')
+
+    await launch.submit()
+
+    expect(api.launchAgent).toHaveBeenCalledWith({
+      mineId: MINE,
+      provider: 'codex',
+      prompt: 'dig the east gallery',
+      permissionMode: 'read-only'
+    })
+  })
+
+  it('sends the same Codex permission mode again on Retry', async () => {
+    const { api, launch } = await ready('codex', {
+      launchAgent: vi
+        .fn()
+        .mockResolvedValue({ launched: false, provider: 'codex', cause: 'not-installed' })
+    })
+    launch.setPermissionMode('workspace-write')
+    await launch.submit()
+
+    await launch.retry()
+
+    expect(api.launchAgent).toHaveBeenCalledTimes(2)
+    expect(api.launchAgent.mock.calls[1]![0]).toEqual(api.launchAgent.mock.calls[0]![0])
+    expect(api.launchAgent.mock.calls[1]![0].permissionMode).toBe('workspace-write')
+  })
+
+  it('never hands a held launch a Codex permission mode left over from a switch', async () => {
+    const { api, launch } = await ready('codex')
+    launch.setPermissionMode('read-only')
+    launch.choose('claude')
+
+    await launch.submit()
+
+    expect('permissionMode' in api.launchHeldSession.mock.calls[0]![0]).toBe(false)
+  })
+
+  /*
    * AMENDED for #191 (was: "stops on started-detached instead of waiting for a
    * dwarf it cannot recognise"). The state it lands in is unchanged and so is
    * every assertion; what the old name claimed — that this is where a detached
