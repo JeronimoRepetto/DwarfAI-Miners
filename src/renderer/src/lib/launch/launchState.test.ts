@@ -22,8 +22,10 @@ import {
   composerPlaceholder,
   chooseProvider,
   detachedTimedOut,
+  heldStarted,
   jevAnswered,
   jevAsked,
+  jevLaunchedNothing,
   launchFailed,
   launchFailureMessage,
   launchPermissionMode,
@@ -31,9 +33,12 @@ import {
   launchPrompt,
   launchTuning,
   openLaunch,
+  pickManually,
+  retryLaunch,
   routedByJev,
   setJevSettings,
   shouldAskJev,
+  submitFailed,
   submitRefused,
   startedDetached,
   submitStarted,
@@ -406,12 +411,16 @@ describe('a detached launch that failed after it started (#263)', () => {
   })
 
   describe('launchFailed', () => {
-    it('leaves detached, sets the error, and clears the receipt', () => {
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: "sets the error" to
+    // the CLI's stderr, `launchFailureMessage`). The push names its cause, and
+    // a caused failure is the launch-failure notice rather than a prose line.
+    it('leaves detached, names the failure, and clears the receipt', () => {
       const failed = launchFailed(started(), failure())
 
       expect(failed.detached).toBe(false)
       expect(failed.launchId).toBeNull()
-      expect(failed.error).toBe('codex: another instance is already running')
+      expect(failed.failure).toEqual({ cause: 'exited-at-once', choice: 'codex' })
+      expect(failed.error).toBeNull()
     })
 
     it('returns straight to prompt-ready, prompt intact, so a retry is one Enter', () => {
@@ -1022,6 +1031,213 @@ describe('the Jev entry path (#523)', () => {
     it('is false before any fallback has ever arrived', () => {
       expect(opened().jev.launchedOnFallback).toBe(false)
       expect(chooseProvider(opened(), 'claude').jev.launchedOnFallback).toBe(false)
+    })
+  })
+})
+
+/*
+ * #635 (MESSAGE-QUESTIONS 14/16/17): a launch that failed for a cause the notice names keeps that
+ * cause in the model, and the ways out of it — Retry and Pick manually — are transitions too.
+ */
+describe('the launch-failure notice’s model (#635)', () => {
+  const READY: JevSettings = { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
+  const jevOn = () => typePrompt(toggleJev(setJevSettings(opened(), READY)), 'dig here')
+  const claudeReady = () => typePrompt(withClaude(), 'dig here')
+  const PARTS = {
+    provider: { value: 'claude' as const, confidence: 0.9, applied: 'answered' as const },
+    tier: { value: 'balanced' as const, confidence: 0.9, applied: 'answered' as const },
+    trivial: { value: false, probability: 0.05 },
+    largeContext: { value: false, probability: 0.05 },
+    model: { value: 'opus', applied: 'only-candidate' as const }
+  }
+  const heldPush = (overrides: Partial<LaunchFailedPush> = {}): LaunchFailedPush => ({
+    launchId: 'held:1',
+    provider: 'claude',
+    mineId: 'mine-1',
+    exitCode: null,
+    stderrTail: '',
+    cause: 'exited-at-once',
+    ...overrides
+  })
+
+  describe('submitFailed', () => {
+    it('ends the launch on the cause main named, with the supplier it was for', () => {
+      const failed = submitFailed(submitStarted(claudeReady()), 'not-installed')
+
+      expect(failed.submitting).toBe(false)
+      expect(failed.failure).toEqual({ cause: 'not-installed', choice: 'claude' })
+      expect(failed.error).toBeNull()
+      expect(launchPhase(failed)).toBe('prompt-ready')
+    })
+
+    it('names Other… as the choice for a command of the person’s own', () => {
+      const other = typePrompt(withCommand(), 'dig here')
+
+      expect(submitFailed(submitStarted(other), 'could-not-start').failure).toEqual({
+        cause: 'could-not-start',
+        choice: OTHER_CHOICE
+      })
+    })
+  })
+
+  it('takes the notice away when the next launch starts, and when Jev is asked again', () => {
+    const failed = submitFailed(submitStarted(claudeReady()), 'not-installed')
+
+    expect(submitStarted(failed).failure).toBeNull()
+    expect(jevAsked(failed).failure).toBeNull()
+  })
+
+  it('lets a refusal with no cause say its own words instead of a stale notice', () => {
+    const failed = submitFailed(submitStarted(claudeReady()), 'not-installed')
+
+    const refused = submitRefused(failed, 'That agent cannot be started from the panel yet.')
+
+    expect(refused.failure).toBeNull()
+    expect(refused.error).toBe('That agent cannot be started from the panel yet.')
+  })
+
+  describe('a held session that stopped as soon as it started (MESSAGE-QUESTIONS 16)', () => {
+    const heldInFlight = () => heldStarted(submitStarted(claudeReady()), 'held:1')
+
+    it('keeps its correlation id apart from the board receipt adoption reads', () => {
+      const state = heldInFlight()
+
+      expect(state.heldLaunchId).toBe('held:1')
+      // `launchId` is the detached receipt `launchedDwarfIn` matches a dwarf by; a held launch
+      // is adopted by its seeded conversation, so it must stay null here.
+      expect(state.launchId).toBeNull()
+      expect(state.submitting).toBe(true)
+    })
+
+    it('reaches the notice when the push names this held launch', () => {
+      const failed = launchFailed(heldInFlight(), heldPush())
+
+      expect(failed.submitting).toBe(false)
+      expect(failed.heldLaunchId).toBeNull()
+      expect(failed.failure).toEqual({ cause: 'exited-at-once', choice: 'claude' })
+      expect(launchPhase(failed)).toBe('prompt-ready')
+    })
+
+    it('ignores a push for another launch', () => {
+      const state = heldInFlight()
+
+      expect(launchFailed(state, heldPush({ launchId: 'held:9' }))).toBe(state)
+    })
+
+    it('never reopens a held launch whose dwarf was already adopted', () => {
+      const adopted = adoptLaunchedDwarf(heldInFlight(), 'claude:sess-1')
+
+      expect(launchFailed(adopted, heldPush())).toBe(adopted)
+    })
+
+    it('holds no correlation id for a launch that is not in flight', () => {
+      expect(heldStarted(claudeReady(), 'held:1').heldLaunchId).toBeNull()
+    })
+
+    it('starts every opening without one, and without a notice', () => {
+      expect(closedLaunch().heldLaunchId).toBeNull()
+      expect(closedLaunch().failure).toBeNull()
+    })
+  })
+
+  describe('jevLaunchedNothing — the Jev causes show only when nothing went out', () => {
+    it('names "Jev could not be reached" for a fallback onto no chip', () => {
+      const fellBack = jevAnswered(jevAsked(jevOn()), { kind: 'fallback', reason: 'timeout' })
+
+      expect(jevLaunchedNothing(fellBack).failure).toEqual({ cause: 'jev-unreachable' })
+    })
+
+    it('names "Jev could not choose" with the reason and its figure', () => {
+      const fellBack = jevAnswered(jevAsked(jevOn()), {
+        kind: 'fallback',
+        reason: 'low-confidence',
+        confidence: 0.41
+      })
+
+      expect(jevLaunchedNothing(fellBack).failure).toEqual({
+        cause: 'jev-could-not-choose',
+        reason: 'low-confidence',
+        confidence: 0.41
+      })
+    })
+
+    it('raises nothing for a fallback that launches on the pickers', () => {
+      const withChip = typePrompt(
+        toggleJev(setJevSettings(chooseProvider(opened(), 'claude'), READY)),
+        'dig here'
+      )
+      const fellBack = jevAnswered(jevAsked(withChip), { kind: 'fallback', reason: 'timeout' })
+
+      expect(jevLaunchedNothing(fellBack)).toBe(fellBack)
+    })
+
+    it('raises nothing for a fallback that put the configured default into the pickers', () => {
+      const fellBack = jevAnswered(jevAsked(jevOn()), {
+        kind: 'fallback',
+        reason: 'timeout',
+        fallbackTo: { provider: 'claude' }
+      })
+
+      expect(jevLaunchedNothing(fellBack)).toBe(fellBack)
+    })
+
+    it('raises nothing for a decision', () => {
+      const decided = jevAnswered(jevAsked(jevOn()), {
+        kind: 'decision',
+        provider: 'claude',
+        truncated: false,
+        tier: 'balanced',
+        parts: PARTS
+      })
+
+      expect(jevLaunchedNothing(decided)).toBe(decided)
+    })
+  })
+
+  describe('retryLaunch', () => {
+    it('asks Jev again after a Jev cause, rather than launching on no chip', () => {
+      const failed = jevLaunchedNothing(
+        jevAnswered(jevAsked(jevOn()), { kind: 'fallback', reason: 'unreachable' })
+      )
+
+      const again = retryLaunch(failed)
+
+      expect(again.jev.routing).toEqual({ phase: 'idle' })
+      expect(shouldAskJev(again)).toBe(true)
+    })
+
+    it('leaves Jev’s applied pick alone after a supplier cause, so the same launch goes again', () => {
+      const decided = jevAnswered(jevAsked(jevOn()), {
+        kind: 'decision',
+        provider: 'claude',
+        model: 'opus',
+        truncated: false,
+        tier: 'balanced',
+        parts: PARTS
+      })
+      const failed = submitFailed(submitStarted(decided), 'not-installed')
+
+      const again = retryLaunch(failed)
+
+      expect(again).toBe(failed)
+      expect(again.choice).toBe('claude')
+      expect(again.model).toBe('opus')
+    })
+  })
+
+  describe('pickManually', () => {
+    it('turns Let Jev choose off, takes the notice away and keeps the prompt', () => {
+      const failed = jevLaunchedNothing(
+        jevAnswered(jevAsked(jevOn()), { kind: 'fallback', reason: 'no-key' })
+      )
+
+      const manual = pickManually(failed)
+
+      expect(manual.jev.enabled).toBe(false)
+      expect(manual.failure).toBeNull()
+      expect(manual.jev.routing).toEqual({ phase: 'idle' })
+      expect(manual.prompt).toBe('dig here')
+      expect(launchPhase(manual)).toBe('provider-selection')
     })
   })
 })

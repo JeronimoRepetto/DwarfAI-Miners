@@ -187,3 +187,30 @@ describe('the supplier and permission names', () => {
     expect(permissionModeLabel('plan')).toBe('Plan only')
   })
 })
+
+/*
+ * #635 (MESSAGE-QUESTIONS 14/16/17): with the launch-failure notice naming the cause, the line
+ * beside Send the dwarf in only says that the dwarf did not go in (copy.md, Add a dwarf).
+ */
+describe('addPanelWhy after a launch the notice names a cause for', () => {
+  const failed = {
+    phase: 'prompt-ready' as const,
+    enabled: true,
+    prompt: 'Dig.',
+    refusal: null,
+    error: null,
+    mineName: 'DwarfAI-Miners',
+    jevAsking: false,
+    failed: true
+  }
+
+  it('says the dwarf did not go in, as the panel standing, not a second alert', () => {
+    expect(addPanelWhy(failed)).toEqual({ text: 'The dwarf did not go in.', tone: 'status' })
+  })
+
+  it('gives way to the next launch in flight', () => {
+    expect(addPanelWhy({ ...failed, phase: 'submitted-spawning' }).text).toBe(
+      'Sending the dwarf in…'
+    )
+  })
+})

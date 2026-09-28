@@ -6,7 +6,8 @@ import {
   type JevRouteLaunchResult,
   type JevSettings,
   type JevUnavailableReason,
-  type LaunchFailedPush
+  type LaunchFailedPush,
+  type LaunchFailureCause
 } from '../../types'
 
 /**
@@ -121,6 +122,22 @@ export interface LaunchState {
   launchedDwarfId: string | null
   /** Main's reason for refusing the last launch, or null. */
   error: string | null
+  /**
+   * Why the last launch failed, when it failed for one of the five causes the Add panel's
+   * notice names (#635), or null. Kept apart from `error`, which stays the words of a failure no
+   * cause was named for — a refusal, the demo, a throw nobody classified — so neither can pass
+   * for the other.
+   */
+  failure: LaunchFailure | null
+  /**
+   * The correlation id a held launch's verdict carried (#635, MESSAGE-QUESTIONS 16), or null.
+   *
+   * Deliberately NOT `launchId`. That one is the board receipt `launchedDwarfIn` adopts a
+   * detached dwarf by; a held launch is adopted by the conversation main seeded, and main stamps
+   * no dwarf with this id, so putting it there would make the panel wait for a receipt that never
+   * comes. Its only use is to tell which `LaunchFailedPush` is about this launch.
+   */
+  heldLaunchId: string | null
   /** The Add Panel's Jev option (#509) — see JevState's own comment. */
   jev: JevState
 }
@@ -140,6 +157,8 @@ export function closedLaunch(): LaunchState {
     launchId: null,
     launchedDwarfId: null,
     error: null,
+    failure: null,
+    heldLaunchId: null,
     jev: closedJevState()
   }
 }
@@ -352,7 +371,9 @@ export function canSubmit(state: LaunchState): boolean {
  */
 export function submitStarted(state: LaunchState): LaunchState {
   if (!canSubmit(state)) return state
-  return { ...state, submitting: true, error: null }
+  // A new launch takes the last one's notice with it (#635): nothing retries on its own, so a
+  // launch going out again is always a press, and the notice was about the one before it.
+  return { ...state, submitting: true, error: null, failure: null }
 }
 
 /**
@@ -364,7 +385,31 @@ export function submitStarted(state: LaunchState): LaunchState {
  * answer twice.
  */
 export function submitRefused(state: LaunchState, reason: string): LaunchState {
-  return { ...state, submitting: false, error: reason }
+  return { ...state, submitting: false, error: reason, failure: null }
+}
+
+/**
+ * Main said the launch failed, and named the cause (#635): the notice, rather than a line of
+ * prose. The supplier is the one the launch went out on — the chip, or Jev's pick in it — kept
+ * here, at the moment of failure, so a chip clicked afterwards cannot rename what failed.
+ */
+export function submitFailed(state: LaunchState, cause: LaunchFailureCause): LaunchState {
+  return {
+    ...state,
+    submitting: false,
+    error: null,
+    failure: { cause, choice: state.choice }
+  }
+}
+
+/**
+ * A HELD launch started, and its verdict carried the id a later `LaunchFailedPush` about it will
+ * name (#635, MESSAGE-QUESTIONS 16). The launch stays in flight — its dwarf is still adopted by
+ * the conversation main seeded — so only the correlation id is recorded; see `heldLaunchId`.
+ */
+export function heldStarted(state: LaunchState, heldLaunchId: string): LaunchState {
+  if (!state.submitting) return state
+  return { ...state, heldLaunchId }
 }
 
 /**
@@ -457,9 +502,19 @@ export function launchFailureMessage(failure: LaunchFailedPush): string {
  * ready` for an emptied composer) and a retry costs one Enter.
  */
 export function launchFailed(state: LaunchState, failure: LaunchFailedPush): LaunchState {
-  if (!state.detached || state.launchedDwarfId !== null) return state
-  if (state.launchId !== failure.launchId) return state
-  return { ...state, detached: false, launchId: null, error: launchFailureMessage(failure) }
+  if (state.launchedDwarfId !== null) return state
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the error line set to
+  // `launchFailureMessage`). The push always names its cause now, and a caused failure is the
+  // notice. And a HELD launch can be the one it is about: still in flight, correlated by its own
+  // `heldLaunchId` rather than the board receipt a detached launch is.
+  const failed = { cause: failure.cause, choice: state.choice }
+  if (state.detached && state.launchId === failure.launchId) {
+    return { ...state, detached: false, launchId: null, error: null, failure: failed }
+  }
+  if (state.submitting && state.heldLaunchId !== null && state.heldLaunchId === failure.launchId) {
+    return { ...state, submitting: false, heldLaunchId: null, error: null, failure: failed }
+  }
+  return state
 }
 
 /**
@@ -628,7 +683,8 @@ export function toggleJevAutoAccept(state: LaunchState): LaunchState {
 /** The ask has left for TypeSafe. Only ever from idle — a second ask mid-flight would be a second request for one launch. */
 export function jevAsked(state: LaunchState): LaunchState {
   if (state.jev.routing.phase !== 'idle') return state
-  return { ...state, jev: { ...state.jev, routing: { phase: 'asking' } } }
+  // The ask is the launch going out again (#635), so the last launch's notice goes with it.
+  return { ...state, failure: null, jev: { ...state.jev, routing: { phase: 'asking' } } }
 }
 
 /**
@@ -770,6 +826,84 @@ export function shouldAskJev(state: LaunchState): boolean {
 }
 
 /* --- end of the #509 block ------------------------------------------------- */
+
+/* --- The launch-failure notice's model (#635) — one block, appended ------------ */
+
+/**
+ * The five causes the Add panel's launch-failure notice names (#635; decision log, Five
+ * launch-failure causes, Jev cause of a failed launch; MESSAGE-QUESTIONS 14, 16 and 17).
+ *
+ * The renderer's own union, not the wire's. Main names the three causes it can know
+ * (`LaunchFailureCause`), and `choice` is the supplier that launch went out on. The two Jev causes
+ * are this panel's reading of a `JevFallbackReason` that left nothing to launch, which main never
+ * sees as a failed launch at all (contracts.ts says why), so they stay out of contracts.
+ */
+export type LaunchFailure =
+  | { cause: LaunchFailureCause; choice: LaunchChoice | null }
+  /** Jev was asked and the service gave no usable answer: a retry can change that. */
+  | { cause: 'jev-unreachable' }
+  /** Jev fell back for a reason a retry cannot change; `confidence` only as the answer gave it. */
+  | { cause: 'jev-could-not-choose'; reason: JevFallbackReason; confidence?: number }
+
+/*
+ * The reasons a retry can change: the service was asked and gave nothing usable. Every other
+ * reason — no key, a refused key, nothing launchable, the budget, low confidence — is "Jev could
+ * not choose" (decision log, Jev cause of a failed launch).
+ */
+const RETRYABLE_JEV_REASONS: ReadonlySet<JevFallbackReason> = new Set<JevFallbackReason>([
+  'unreachable',
+  'timeout',
+  'rate-limited',
+  'invalid-response'
+])
+
+/** The cause a Jev fallback that launched nothing is told by. */
+export function jevFailureOf(reason: JevFallbackReason, confidence?: number): LaunchFailure {
+  if (RETRYABLE_JEV_REASONS.has(reason)) return { cause: 'jev-unreachable' }
+  return {
+    cause: 'jev-could-not-choose',
+    reason,
+    ...(confidence === undefined ? {} : { confidence })
+  }
+}
+
+function isJevFailure(failure: LaunchFailure | null): boolean {
+  return failure?.cause === 'jev-unreachable' || failure?.cause === 'jev-could-not-choose'
+}
+
+/**
+ * Jev fell back and nothing went out (#635): the only case a Jev cause is a failed launch at all.
+ * A fallback onto a chosen chip launched on the pickers, and one that put the configured default
+ * into them waits for Send the dwarf in; neither is a failure, and both are left exactly as they
+ * are. A decision is not a fallback.
+ */
+export function jevLaunchedNothing(state: LaunchState): LaunchState {
+  const routing = state.jev.routing
+  if (routing.phase !== 'fellBack' || routing.appliedDefault !== undefined) return state
+  if (state.choice !== null) return state
+  return { ...state, error: null, failure: jevFailureOf(routing.reason, routing.confidence) }
+}
+
+/**
+ * What Retry sends again (#635): the same launch. After a supplier's cause that is the pickers as
+ * they stand — Jev's pick included, untouched. After a Jev cause Jev gave nothing to launch on, so
+ * the same launch is asking Jev again, which needs the fallback cleared back to idle first.
+ */
+export function retryLaunch(state: LaunchState): LaunchState {
+  return isJevFailure(state.failure) ? clearJevDecision(state) : state
+}
+
+/**
+ * Pick manually (#635): Let Jev choose goes off so the chips and the three selects take over,
+ * the notice goes, and the prompt stays. The fallback it answered goes too, since the pickers,
+ * not Jev, choose the next launch.
+ */
+export function pickManually(state: LaunchState): LaunchState {
+  const cleared = clearJevDecision(state)
+  return { ...cleared, failure: null, jev: { ...cleared.jev, enabled: false } }
+}
+
+/* --- end of the #635 block --------------------------------------------------- */
 
 /* --- MCP subtask delegation: the routedByJev marker (#511) — one block, appended --- */
 /**

@@ -15,8 +15,10 @@ import {
   composerEnabled,
   composerPlaceholder,
   detachedTimedOut,
+  heldStarted,
   jevAnswered,
   jevAsked,
+  jevLaunchedNothing,
   JEV_NO_CHOICE_REFUSAL,
   launchCommand,
   launchFailed,
@@ -25,10 +27,13 @@ import {
   launchPrompt,
   launchTuning,
   openLaunch,
+  pickManually as pickManuallyInstead,
+  retryLaunch,
   routedByJev,
   setJevSettings,
   shouldAskJev,
   startedDetached,
+  submitFailed,
   submitRefused,
   submitStarted,
   toggleJev,
@@ -57,6 +62,7 @@ import type {
   JevRouteLaunchResult,
   JevSettings,
   LaunchFailedPush,
+  LaunchFailureCause,
   Mine
 } from '../types'
 
@@ -161,6 +167,13 @@ export interface AgentLaunch {
   /** Dismiss the decision card, restoring the pickers it overwrote (#509). */
   dismissJevDecision: () => void
   submit: () => Promise<void>
+  /**
+   * The launch-failure notice's Retry (#635): the same launch, sent again, once per press —
+   * nothing retries on its own. After a Jev cause that means asking Jev again.
+   */
+  retry: () => Promise<void>
+  /** The notice's Pick manually (#635): Let Jev choose off, so the pickers choose. */
+  pickManually: () => void
   observe: (mines: readonly Mine[]) => void
   /**
    * Subscribe to main's launch-failure push (#263). Returns the unsubscribe,
@@ -287,6 +300,18 @@ export function useAgentLaunch(): AgentLaunch {
   }
 
   /**
+   * A launch main did not start: the notice when main named its cause (#635), main's own words —
+   * or the panel's fallback sentence — when it named none, which a refusal, the demo and an
+   * unclassified throw all do.
+   */
+  function notLaunched(verdict: { error?: string; cause?: LaunchFailureCause }): void {
+    state.value =
+      verdict.cause === undefined
+        ? submitRefused(state.value, verdict.error ?? NOT_LAUNCHED)
+        : submitFailed(state.value, verdict.cause)
+  }
+
+  /**
    * Enter on a ready composer.
    *
    * A choice with no engine behind it is refused HERE and never sent. Sending
@@ -380,9 +405,13 @@ export function useAgentLaunch(): AgentLaunch {
       // already been answered by it; everything else that lands here — today,
       // the answer that arrived after the prompt moved on — gets the honest
       // refusal, prompt intact, manual path still open.
-      if (state.value.jev.routing.phase !== 'fellBack') {
-        state.value = submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
-      }
+      // AMENDED for #635 (MESSAGE-QUESTIONS 14/17; was: the fallback's own line and nothing else):
+      // Jev fell back and nothing went out, which is the one case its causes are a failed launch,
+      // so the launch-failure notice names which of the two it was.
+      state.value =
+        state.value.jev.routing.phase === 'fellBack'
+          ? jevLaunchedNothing(state.value)
+          : submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
       return
     }
     const prompt = launchPrompt(state.value)
@@ -401,9 +430,7 @@ export function useAgentLaunch(): AgentLaunch {
         // No `startedDetached` branch, because this panel IS holding that
         // process: its dwarf arrives carrying the prompt sent here, which is
         // the same receipt `observe` already recognises for a held session.
-        if (!hostedResult.launched) {
-          state.value = submitRefused(state.value, hostedResult.error ?? NOT_LAUNCHED)
-        }
+        if (!hostedResult.launched) notLaunched(hostedResult)
         return
       }
 
@@ -428,7 +455,14 @@ export function useAgentLaunch(): AgentLaunch {
         // held launch's dwarf arrives carrying the prompt this panel sent,
         // seeded into its conversation by main, so it needs nothing else here.
         if (!heldResult.launched) {
-          state.value = submitRefused(state.value, heldResult.error ?? NOT_LAUNCHED)
+          notLaunched(heldResult)
+          return
+        }
+        // #635 (MESSAGE-QUESTIONS 16): a held session that stops as soon as it started is told on
+        // the failure push, correlated by this id — kept apart from the board receipt, see
+        // `heldStarted`.
+        if (heldResult.launchId !== undefined) {
+          state.value = heldStarted(state.value, heldResult.launchId)
         }
         return
       }
@@ -442,7 +476,7 @@ export function useAgentLaunch(): AgentLaunch {
         ...(routedByJev(state.value) ? { routedByJev: true } : {})
       })
       if (!result.launched) {
-        state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
+        notLaunched(result)
         return
       }
       // A detached session carries no conversation at all — that belongs to a
@@ -465,6 +499,16 @@ export function useAgentLaunch(): AgentLaunch {
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }
+  }
+
+  async function retry(): Promise<void> {
+    if (state.value.failure === null) return
+    state.value = retryLaunch(state.value)
+    await submit()
+  }
+
+  function pickManually(): void {
+    state.value = pickManuallyInstead(state.value)
   }
 
   /**
@@ -529,6 +573,8 @@ export function useAgentLaunch(): AgentLaunch {
     toggleJevAutoAccept: toggleJevAutoAcceptChoice,
     dismissJevDecision,
     submit,
+    retry,
+    pickManually,
     observe,
     listenFailures
   }

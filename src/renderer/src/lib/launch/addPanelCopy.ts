@@ -29,6 +29,9 @@ export const DETACHED_NOTE =
  * and "Sending the dwarf in…" while the launch is in flight — which Jev being asked is part of. A
  * launch main refused says why first, and a chip that cannot start says why before the rest, as
  * the panel's own line always did. A prompt of pure whitespace is no prompt, as main reads it.
+ *
+ * A launch that failed for a cause the launch-failure notice names (#635) says only "The dwarf did
+ * not go in." here (copy.md, Add a dwarf): the notice above it is the alert and says why.
  */
 export function addPanelWhy(state: {
   phase: LaunchPhase
@@ -38,12 +41,15 @@ export function addPanelWhy(state: {
   error: string | null
   mineName: string
   jevAsking: boolean
+  /** The launch-failure notice is showing (#635). */
+  failed?: boolean
 }): AddPanelWhy {
   if (state.error !== null) return { text: state.error, tone: 'alert' }
   if (state.phase === 'started-detached') return { text: DETACHED_NOTE, tone: 'status' }
   if (state.phase === 'submitted-spawning' || state.jevAsking) {
     return { text: 'Sending the dwarf in…', tone: 'status' }
   }
+  if (state.failed === true) return { text: 'The dwarf did not go in.', tone: 'status' }
   if (state.refusal !== null) return { text: state.refusal, tone: 'status' }
   if (!state.enabled) return { text: 'Choose a supplier, or let Jev choose.', tone: 'status' }
   if (state.prompt.trim() === '') return { text: 'Tell the dwarf what to work on.', tone: 'status' }

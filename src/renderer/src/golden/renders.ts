@@ -54,6 +54,7 @@ import {
 import { decisionForLabel } from '../lib/question/questionAnswer'
 import AddPanel from '../components/launch/AddPanel.vue'
 import { useAgentLaunch } from '../composables/useAgentLaunch'
+import { jevFallbackReasonWords } from '../lib/launch/launchFailure'
 import { OTHER_CHOICE, type LaunchChoice } from '../lib/launch/launchState'
 import { goldenApi } from './api'
 import SceneDwarf from '../components/scene/SceneDwarf.vue'
@@ -1555,7 +1556,8 @@ const LaunchStage = defineComponent({
         jev: launch.jev.value,
         model: launch.state.value.model,
         effort: launch.state.value.effort,
-        permissionMode: launch.state.value.permissionMode
+        permissionMode: launch.state.value.permissionMode,
+        failure: launch.state.value.failure
       })
   }
 })
@@ -1589,15 +1591,15 @@ const jevLaunchOf = (texts: GoldenText[], attributes: GoldenAttributes[]): JevLa
 }
 
 /*
- * The Jev reasons the notice's "Jev could not choose" opens with, in the app's own words for them
- * (AddPanel.vue, the Jev fallback line), each the start of the sentence the tree prints.
+ * The Jev reasons the notice's "Jev could not choose" opens with — each reason in the app's own
+ * words (launchFailure.ts), the start of the sentence the tree prints.
  */
-const JEV_REASON_OPENINGS: [string, JevFallbackReason][] = [
-  ['No TypeSafe key is set', 'no-key'],
-  ['TypeSafe rejected the API key', 'unauthorized'],
-  ['No launchable provider to choose from', 'no-launchable-provider'],
-  ["The prompt and catalogue do not fit Jev's request budget", 'budget-exceeded'],
-  ['Jev was not confident enough', 'low-confidence']
+const JEV_CHOOSE_REASONS: JevFallbackReason[] = [
+  'no-key',
+  'unauthorized',
+  'no-launchable-provider',
+  'budget-exceeded',
+  'low-confidence'
 ]
 
 const KIT_FAILURES: readonly string[] = ['missing', 'exited', 'start', 'jev', 'jevChoose']
@@ -1616,11 +1618,11 @@ const failedLaunchOf = (
   const field = elementsOf(attributes, 'textarea')[0] ?? fail('prompt', 'textarea')
   const prompt = field.value ?? ''
   if (cause !== 'jevChoose') return { cause: cause as KitFailure, prompt }
-  const opening = JEV_REASON_OPENINGS.find(([words]) =>
-    texts.some((t) => (t.text ?? '').startsWith(words))
+  const reason = JEV_CHOOSE_REASONS.find((entry) =>
+    texts.some((t) => (t.text ?? '').startsWith(jevFallbackReasonWords(entry)))
   )
-  if (opening === undefined) return fail('Jev reason', texts)
-  return { cause, prompt, reason: opening[1] }
+  if (reason === undefined) return fail('Jev reason', texts)
+  return { cause, prompt, reason }
 }
 
 const addPanel: Render = (sample, texts, attributes) => {
