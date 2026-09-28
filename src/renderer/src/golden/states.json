@@ -160,11 +160,19 @@
     "key": "molecules/chat-bubble#not-delivered-with-actions"
   },
   {
+    "key": "molecules/chat-bubble#not-delivered-copy-alone",
+    "red": "the bubble has no Copy-alone option yet, so a failed message whose session can no longer take text draws no Not delivered group at all (404x128 against 404x170), where the design keeps Copy alone (decision log, Copy alone on a closed session)"
+  },
+  {
     "key": "molecules/chat-bubble#retry-feedback"
   },
   {
     "key": "organisms/message-panel#not-delivered-with-actions",
     "red": "0.406% differing, 22 clusters, all in two lines: the turn outcome line reads Working where the reference prints the sample's own sentence, Working · 2 steps so far (MESSAGE-QUESTIONS: the outcome line's sentences), and the activity run above the failed message reads Working... where the reference closes it as 2 steps · activity: the app keeps a run open until the dwarf itself speaks, because a message the person sent is not the agent finishing (#294), and the design gives no rule for a run followed only by a message that never arrived (a question for the design lead). The bubble, its ✕ and its Retry and Copy draw as the reference"
+  },
+  {
+    "key": "organisms/message-panel#not-delivered-copy-alone",
+    "red": "the panel hides the whole Not delivered group on a failed message whose session can no longer take text, where the design keeps Copy alone (decision log, Copy alone on a closed session)"
   },
   {
     "key": "organisms/add-panel#live"

@@ -36,7 +36,7 @@ import MineColumn from '../components/scene/MineColumn.vue'
 import HistoryPanel from '../components/history/HistoryPanel.vue'
 import DwarfMessagePanel from '../components/message/DwarfMessagePanel.vue'
 import ChatBubble from '../components/message/ChatBubble.vue'
-import { sendMarker } from '../lib/delivery/deliveryVerdict'
+import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
 import { bubbleMark } from '../lib/message/panelChrome'
 import type { MessageEcho } from '../lib/message/echo'
 import AddPanel from '../components/launch/AddPanel.vue'
@@ -1034,11 +1034,15 @@ export function failedEchoesOf(sample: GoldenSample, dwarfId: string): MessageEc
 /*
  * The MessagePanel as its tree prints it (#635): the sample dwarf its section names, with the feed
  * main would answer for it (sample.ts), and the messages the sample marks failed as the echoes
- * the panel keeps for them (failedEchoesOf). Nothing else has been sent from the panel.
+ * the panel keeps for them (failedEchoesOf). Nothing else has been sent from the panel. A tree
+ * whose message box is disabled is that dwarf once its route for text went away (decision log,
+ * Copy alone on a closed session), which the app's dwarf says by carrying no delivery channel.
  */
 const messagePanel: Render = (sample, _texts, attributes) => {
   const id = elementsOf(attributes, 'section.dm-msg')[0]?.['data-dwarf'] ?? ''
-  const dwarf = sample.mines.flatMap((m) => m.dwarfs).find((d) => d.id === id) ?? fail('dwarf', id)
+  const found = sample.mines.flatMap((m) => m.dwarfs).find((d) => d.id === id) ?? fail('dwarf', id)
+  const routeGone = elementsOf(attributes, 'textarea').some((box) => 'disabled' in box)
+  const dwarf = routeGone ? { ...found, textDelivery: undefined } : found
   return {
     component: DwarfMessagePanel,
     props: { dwarf, feed: sample.feeds[dwarf.id], echoes: failedEchoesOf(sample, dwarf.id) }
@@ -1059,14 +1063,17 @@ const PHASE_OF_MARK: Record<string, DwarfSendState['phase']> = {
  * for the one-paragraph texts these states print; its time is the text after them; its mark is
  * the phase its `data-mark` names, drawn by the panel's own reading of that phase; and a bubble
  * whose tree holds the actions group is one its host offers Retry and Copy on, as a failed echo's
- * panel does.
+ * panel does — or, when the group holds no Retry, one whose session can no longer take text, which
+ * keeps Copy alone (decision log, Copy alone on a closed session).
  */
 const userBubbles: Render = (_sample, texts, attributes) => {
-  const bubbles: { mark?: string; offersRetry: boolean }[] = []
+  const bubbles: { mark?: string; actions: boolean; retry: boolean }[] = []
   for (const { element, attributes: printed } of attributes) {
-    if (element.startsWith('div.dm-bubble.')) bubbles.push({ offersRetry: false })
+    if (element.startsWith('div.dm-bubble.')) bubbles.push({ actions: false, retry: false })
     else if (element === 'span.dm-bubble__mark') bubbles.at(-1)!.mark = printed['data-mark']
-    else if (element.startsWith('div.dm-bubble__actions')) bubbles.at(-1)!.offersRetry = true
+    else if (element.startsWith('div.dm-bubble__actions')) bubbles.at(-1)!.actions = true
+    else if (element.startsWith('button.dm-btn') && printed.title === RETRY_TITLE)
+      bubbles.at(-1)!.retry = true
   }
   const bodies = texts.flatMap((entry, i) =>
     entry.html === undefined ? [] : [{ html: entry.html, time: texts[i + 1]?.text }]
@@ -1086,7 +1093,8 @@ const userBubbles: Render = (_sample, texts, attributes) => {
             text: read.content.textContent ?? '',
             time: bodies[i]?.time,
             mark: bubbleMark(sendMarker({ phase })!),
-            offersRetry: bubble.offersRetry
+            offersRetry: bubble.actions && bubble.retry,
+            sessionClosed: bubble.actions && !bubble.retry
           }
         }
       })
@@ -1433,8 +1441,11 @@ export const RENDERS: Record<string, Render> = {
   'organisms/message-panel#conversation': messagePanel,
   'organisms/message-panel#asking': messagePanel,
   'organisms/message-panel#not-delivered-with-actions': messagePanel,
-  // A failed message's Retry and Copy (#635, decision log, Failed delivery).
+  'organisms/message-panel#not-delivered-copy-alone': messagePanel,
+  // A failed message's Retry and Copy (#635, decision log, Failed delivery), and its Copy alone on
+  // a session that can no longer take text (decision log, Copy alone on a closed session).
   'molecules/chat-bubble#not-delivered-with-actions': userBubbles,
+  'molecules/chat-bubble#not-delivered-copy-alone': userBubbles,
   'molecules/chat-bubble#retry-feedback': userBubbles,
   'organisms/add-panel#live': addPanel,
   'organisms/add-panel#supplier-picked': addPanel,
