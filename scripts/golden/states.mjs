@@ -1,0 +1,305 @@
+/*
+ * The golden states contract (#634). `src/renderer/src/golden/states.json` lists every state a
+ * golden covers: its manifest key and, while the app has not rebuilt it yet, a `red` reason and,
+ * optionally, `at` — the percentage differing that reason was written against (#635). `renders.ts`
+ * beside it draws the real component for each key. Where the stage sits and how wide it is come
+ * from the key's manifest row alone, so a cell the design resizes needs no edit here.
+ *
+ * A red state is an expected failure that must flip: it passes the run while its verdict fails,
+ * reporting why, and FAILS the run the moment its verdict passes, so a rebuilt state cannot stay
+ * marked red. Removing `red` is the flip.
+ *
+ * `at` makes that stated percentage binding, not just the pass/fail boolean (#635): without it, a
+ * red state that regresses from 0.5% to 32% is still "red as expected" and the run stays green. A
+ * red state carrying `at` FAILS once its measured percentage exceeds `at` by more than
+ * RED_MEASURE_TOLERANCE percentage points, naming the stated and measured figures; a red state
+ * without `at` keeps the boolean-only behaviour, so the field is additive over every already-red
+ * state. For a screens-full state (several window boxes graded at once), `at` is the same figure
+ * the run already reports and fails on: the worst box's percentage (screens.golden.test.mjs takes
+ * the max across `plan.windows` before calling `expectation`) — see CONTRIBUTING.md, "Golden UI
+ * tests", for how a state gets `at` backfilled after it goes red.
+ *
+ * The framing a state needs beyond the stage (a component's "UI kit framing" rules, such as a
+ * fixed height the kit gives a column) is read from the design's docs at run time, like the stage
+ * CSS, and only for the component's root element or, for a rule the kit writes against its stage,
+ * under the stage: a rule for any other element is refused rather than placed by guess. Pure; the
+ * golden test reads the files and calls these.
+ */
+
+const STATE_FIELDS = new Set(['key', 'red', 'at'])
+
+// Percentage points a red state's measured figure may exceed its stated `at` by before the run
+// fails it. Measured empirically (#635): three consecutive full runs on the same commit varied by
+// at most 0.033 points on any state (font rasterisation / capture timing noise), so 0.1 comfortably
+// clears that noise floor while still catching a real regression, which in this codebase's own red
+// states runs from single points to tens of points.
+export const RED_MEASURE_TOLERANCE = 0.1
+
+export function checkStates(states, manifest) {
+  const problems = []
+  const seen = new Set()
+  const repeated = new Set()
+  for (const state of states) {
+    const row = manifest[state.key]
+    if (seen.has(state.key)) {
+      if (!repeated.has(state.key)) problems.push(state.key + ' is listed more than once')
+      repeated.add(state.key)
+      continue
+    }
+    seen.add(state.key)
+    if (!row) {
+      problems.push(state.key + ' is not in the manifest')
+      continue
+    }
+    const unused = Object.keys(state).filter((f) => !STATE_FIELDS.has(f))
+    if (unused.length) {
+      problems.push(state.key + ' has a field states.json does not use: ' + unused.join(', '))
+    }
+    if ('red' in state && !(typeof state.red === 'string' && state.red.trim())) {
+      problems.push(state.key + ' is marked red without a reason')
+    }
+    if ('at' in state && !('red' in state)) {
+      problems.push(state.key + " has 'at' without being red")
+    }
+    if (
+      'at' in state &&
+      !(typeof state.at === 'number' && Number.isFinite(state.at) && state.at >= 0)
+    ) {
+      problems.push(state.key + "'s at is not a non-negative number")
+    }
+  }
+  return problems
+}
+
+// A widened stage was let out to its content's width (the design's "Widened"): null asks the page
+// for max-content instead of the width the row records.
+export function stageWidth(row) {
+  return row.widened ? null : row.width
+}
+
+export function componentOf(key) {
+  return key.split('#')[0]
+}
+
+// The component's section of components.md runs from its anchor to the next level-3 heading after
+// its own.
+function sectionOf(componentsMd, component) {
+  const anchor = '<a id="' + component.replace(/\//g, '-') + '"></a>'
+  const start = componentsMd.indexOf(anchor)
+  if (start < 0) throw new Error('framing: components.md does not describe ' + component)
+  const heading = componentsMd.indexOf('\n### ', start)
+  const next = heading < 0 ? -1 : componentsMd.indexOf('\n### ', heading + 1)
+  return componentsMd.slice(start, next < 0 ? undefined : next)
+}
+
+// A component's "UI kit framing" table lists `| \`selector\` | declarations |` rows.
+export function framingFor(componentsMd, component) {
+  const section = sectionOf(componentsMd, component)
+  const at = section.indexOf('**UI kit framing**')
+  if (at < 0) return []
+  const rules = []
+  for (const line of section.slice(at).split(/\r?\n/).slice(1)) {
+    if (!line.trim()) {
+      if (rules.length) break
+      continue
+    }
+    const m = /^\|\s*`([^`]+)`\s*\|\s*(.*?)\s*\|\s*$/.exec(line)
+    if (m) rules.push({ selector: m[1], declarations: m[2] })
+    else if (!line.startsWith('|')) break
+  }
+  return rules
+}
+
+// A state's root may be another component's part: the dwarf tooltip's card is the tooltip card
+// (#635). Which component styles a class is the state's own section's "Class coverage" line
+// ("Styled by other stylesheets: `.a`, `.b` (`group/name`); ..."); from each component it names,
+// only a single-class rule for a class the root carries is borrowed, so nothing else of it can
+// reach the state.
+export function borrowedFraming(componentsMd, component, rootLine) {
+  const line = /Styled by other stylesheets: ([^\n]*)/.exec(sectionOf(componentsMd, component))
+  const root = new Set(rootLine.split(/\s/)[0].split('.').slice(1))
+  const borrowed = []
+  for (const group of (line?.[1] ?? '').matchAll(/((?:`\.[\w-]+`,?\s*)+)\(`([\w-]+\/[\w-]+)`\)/g)) {
+    const classes = [...group[1].matchAll(/`\.([\w-]+)`/g)].map((m) => m[1])
+    if (!classes.some((c) => root.has(c))) continue
+    for (const rule of framingFor(componentsMd, group[2])) {
+      const single = /^\.([\w-]+)$/.exec(rule.selector)
+      if (single && root.has(single[1])) borrowed.push(rule)
+    }
+  }
+  return borrowed
+}
+
+// anatomy.md gives each state's element tree in a text block after the line linking its image.
+export function anatomyRoot(anatomyMd, file) {
+  const lines = anatomyMd.split(/\r?\n/)
+  const at = lines.findIndex((l) => l.includes('(reference/' + file + ')'))
+  const fence = at < 0 ? -1 : lines.findIndex((l, i) => i > at && l.startsWith('```'))
+  if (fence < 0 || !lines[fence + 1]) {
+    throw new Error('framing: anatomy.md has no element tree for reference/' + file)
+  }
+  return lines[fence + 1].trim()
+}
+
+// The lines of the state's element tree: the text block after the line linking its image.
+function anatomyTree(anatomyMd, file) {
+  const lines = anatomyMd.split(/\r?\n/)
+  const at = lines.findIndex((l) => l.includes('(reference/' + file + ')'))
+  const open = at < 0 ? -1 : lines.findIndex((l, i) => i > at && l.startsWith('```'))
+  const close = open < 0 ? -1 : lines.findIndex((l, i) => i > open && l.startsWith('```'))
+  if (close < 0) throw new Error('anatomy.md has no element tree for reference/' + file)
+  return lines.slice(open + 1, close)
+}
+
+// Past the `tag.class` selector and an optional `[attributes]` block, whose quoted values may
+// hold a bracket: where a line's text, if any, starts.
+function afterSelector(line) {
+  let i = line.search(/\s|$/)
+  if (line[i + 1] !== '[') return i
+  let quoted = false
+  for (i += 2; i < line.length; i++) {
+    if (line[i] === '"') quoted = !quoted
+    else if (line[i] === ']' && !quoted) return i + 1
+  }
+  return i
+}
+
+// Every text a state's tree shows, in DOM order, for the specimen captions the golden harness
+// hands in at run time (the design lead's ruling on the tokens-port questions: no caption is
+// committed). A plain text is `{ text }`; content the tree prints as `(innerHTML "…")`, a JSON
+// string, is `{ html }`. A line ending `×N` stands for N identical siblings.
+// A quoted text as the tree prints it back to the text itself (MESSAGE-QUESTIONS 25): the tree
+// keeps a line break as \n and so writes a backslash as \\ (the design's tools/lib/render-kit.js,
+// `flat`), so a tool's multi-line output reaches a `pre-wrap` part line by line.
+const treeText = (quoted) => quoted.replace(/\\([\\n])/g, (_, c) => (c === 'n' ? '\n' : '\\'))
+
+export function anatomyTexts(anatomyMd, file) {
+  const texts = []
+  for (const raw of anatomyTree(anatomyMd, file)) {
+    const line = raw.trim()
+    if (!line) continue
+    const rest = line.startsWith('"') ? line : line.slice(afterSelector(line)).trim()
+    const repeat = /\s×(\d+)$/.exec(rest)
+    const body = repeat ? rest.slice(0, repeat.index).trim() : rest
+    const html = /^\(innerHTML (".*")\)$/.exec(body)
+    const text = /^"(.*)"$/.exec(body)
+    const entry = html ? { html: JSON.parse(html[1]) } : text ? { text: treeText(text[1]) } : null
+    if (entry) for (let n = repeat ? Number(repeat[1]) : 1; n > 0; n--) texts.push({ ...entry })
+  }
+  return texts
+}
+
+// Every element of a state's tree with the attributes it prints, in DOM order, for a form
+// control's design text (a placeholder, a value, an accessible name), handed in at run time like
+// the texts so none is committed (#635). `name=value` and `name="quoted value"` keep their value;
+// a bare name is present with no value, as `disabled` or an empty `placeholder` is. A line
+// ending `×N` stands for N identical siblings.
+export function anatomyAttributes(anatomyMd, file) {
+  const elements = []
+  for (const raw of anatomyTree(anatomyMd, file)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('"')) continue
+    const element = line.split(/\s/)[0]
+    const end = afterSelector(line)
+    const open = line.indexOf('[', element.length)
+    const block = open >= 0 && open < end ? line.slice(open + 1, end - 1) : ''
+    const attributes = {}
+    for (const m of block.matchAll(/([^\s=]+)(?:=(?:"([^"]*)"|(\S+)))?/g)) {
+      attributes[m[1]] = m[2] ?? m[3] ?? ''
+    }
+    const repeat = /\s×(\d+)$/.exec(line)
+    for (let n = repeat ? Number(repeat[1]) : 1; n > 0; n--) {
+      elements.push({ element, attributes: { ...attributes } })
+    }
+  }
+  return elements
+}
+
+// A rule the kit writes against its own stage (`.kit-stage …`) reaches parts no inline style can,
+// such as a `::after` (#635). It is applied as the kit applies it: a stylesheet rule under the
+// stage. Braces in it would let it close its block and style the page, so they are refused.
+const onStage = (r) =>
+  /^\.kit-stage\s+\S/.test(r.selector) && !/[{}]/.test(r.selector + r.declarations)
+
+// A state that draws only its component's trigger (the dialog's Live button) carries none of the
+// classes the component's framing names: a single-class rule no element of the tree carries frames
+// nothing in that state, so it is dropped before checkFraming judges the rest (#635). Anything else
+// stays for checkFraming to accept or refuse.
+export function applicableFraming(framing, tree) {
+  const carried = new Set(tree.flatMap((entry) => entry.element.split('.').slice(1)))
+  return framing.filter((r) => !/^\.[\w-]+$/.test(r.selector) || carried.has(r.selector.slice(1)))
+}
+
+export function checkFraming(framing, rootLine) {
+  const classes = rootLine.split(/\s/)[0].split('.').slice(1)
+  const stray = framing.filter(
+    (r) => !onStage(r) && (!/^\.[\w-]+$/.test(r.selector) || !classes.includes(r.selector.slice(1)))
+  )
+  if (!stray.length) return null
+  return (
+    'framing: ' +
+    stray.map((r) => r.selector).join(', ') +
+    ' frames an element other than the root (' +
+    rootLine +
+    '); the harness places framing on the root, or under the stage for a .kit-stage rule, only'
+  )
+}
+
+// Framing that checkFraming accepted, as the page applies it: declarations for the root's inline
+// style, and the stage-scoped rules as one stylesheet.
+export function splitFraming(framing) {
+  return {
+    root: framing.filter((r) => !onStage(r)).map((r) => r.declarations),
+    css: framing
+      .filter(onStage)
+      .map((r) => r.selector + ' { ' + r.declarations + ' }')
+      .join('\n')
+  }
+}
+
+const plural = (n, one, many = one + 's') => n + ' ' + (n === 1 ? one : many)
+
+// The acceptance rule's third half (zero guess notes) and the capture's own validity (nothing the
+// image cannot show), added to the pixel verdict.
+export function accept(verdict, { notes, escaped, outside }) {
+  const reasons = [...verdict.reasons]
+  if (notes) reasons.push(plural(notes, 'guess note') + ' (.dm-note) on the build')
+  if (escaped) reasons.push(plural(escaped, 'element') + ' drawn outside the stage')
+  if (outside) reasons.push(plural(outside, 'element') + ' added to the page outside the stage')
+  return { pass: reasons.length === 0, percent: verdict.percent, reasons }
+}
+
+const describeVerdict = (v) =>
+  v.percent.toFixed(3) + '% differing' + (v.reasons.length ? '; ' + v.reasons.join('; ') : '')
+
+export function expectation(state, verdict) {
+  if (state.red) {
+    if (verdict.pass) {
+      return {
+        ok: false,
+        message:
+          state.key +
+          ' is marked red but now passes (' +
+          describeVerdict(verdict) +
+          '): remove "red" from states.json to flip it to green.'
+      }
+    }
+    if (typeof state.at === 'number' && verdict.percent > state.at + RED_MEASURE_TOLERANCE) {
+      return {
+        ok: false,
+        message:
+          state.key +
+          ' is red at ' +
+          state.at.toFixed(3) +
+          '% but now measures ' +
+          describeVerdict(verdict) +
+          ': a red state is not a licence to regress further — update "at" in states.json only ' +
+          'once the growth is understood and accepted, or fix what grew.'
+      }
+    }
+    return { ok: true, message: state.key + ' is red as expected: ' + describeVerdict(verdict) }
+  }
+  return verdict.pass
+    ? { ok: true, message: state.key + ' passes: ' + describeVerdict(verdict) }
+    : { ok: false, message: state.key + ' fails: ' + describeVerdict(verdict) }
+}

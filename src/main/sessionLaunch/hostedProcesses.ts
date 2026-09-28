@@ -1,4 +1,4 @@
-import type { FeedMessage } from '../domain/types'
+import type { FeedMessage, LaunchFailureCause } from '../domain/types'
 import { prepareHeldPrompt, retainedSomething, retainHeldMessage } from './heldSession'
 import { parseHostedCommand } from './hostedCommand'
 
@@ -161,6 +161,8 @@ export interface HostedLaunchOutcome {
   hostedId?: string
   /** Human-readable reason shown in the panel when started is false. */
   error?: string
+  /** Why it failed, when it failed to start — see `LaunchFailureCause` (#635). */
+  cause?: LaunchFailureCause
 }
 
 interface HostedRecord {
@@ -266,7 +268,10 @@ export class HostedProcessRegistry {
       return { started: true, hostedId }
     } catch (error) {
       console.warn(`[hosted] Could not start a command in ${request.mineId}`, error)
-      return { started: false, error: COULD_NOT_START }
+      // A parsed command handed to spawn and refused: `could-not-start`
+      // whatever the errno, ENOENT included — nothing detects a typed program
+      // first, so there is no step here that could say "not installed" (#635).
+      return { started: false, error: COULD_NOT_START, cause: 'could-not-start' }
     }
   }
 

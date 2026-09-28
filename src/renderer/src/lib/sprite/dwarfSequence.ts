@@ -133,9 +133,9 @@ function cycleStep(sheets: DwarfSheetSet, name: DwarfSheetName): SpriteClip[] {
  * HOW MANY TURNS IS THE RANK'S OWN DECLARATION (`DWARF_CREW`, issue #330), not
  * a number this file knows: #325's literal "twice" became a per-rank count the
  * moment a sound had to fit inside the shift — the worker2's grind is one 8.53s
- * recording of its whole movement, so its shift is eight swings long and the
- * worker's stays at two. See `dwarfSheets.ts` for that arithmetic; it is the
- * maintainer's and is judged by ear.
+ * recording, so its shift is as many swings as fit inside it (`WORKER2_SHIFT_SWINGS`,
+ * five under the v3 timing; design lead ruling 2026-09-26) and the worker's stays
+ * at two. See `dwarfSheets.ts` for that arithmetic; the PO judges it by ear.
  *
  * A rank that declares no count swings ONCE rather than inheriting a number
  * from somewhere: a forgotten declaration should be visibly the wrong length,
@@ -226,6 +226,31 @@ export function dwarfClips(
   if (atWork) return workingCycle(sheets, DWARF_CREW[role].swings)
   if (wasWorking === true) return [...transition(sheets, 'end-working'), loopOf(sheets.idle)]
   return [loopOf(sheets.idle)]
+}
+
+/**
+ * The clips for a dwarf that is ALREADY in its state when it is first drawn (#635): the mine
+ * column opening on its crew. The design builds each dwarf on the sheet its status plays and only
+ * swaps sheets on a later change (components.md, Dwarf in the scene, and Sprite: `shift`), so a
+ * column opened on a sleeping foreman shows him asleep rather than lying down, and one opened on a
+ * working dwarf shows him mid-shift, at the swing, rather than picking the tool up.
+ *
+ * The shift is the same cycle `dwarfClips` plays, entered at its first swing: the loop is
+ * unchanged, only where it starts. Anything later — a status change, or a dwarf arriving after
+ * the column opened — is `dwarfClips`' to answer, with its transitions.
+ */
+export function settledClips(
+  role: DwarfRole,
+  resting: boolean,
+  working: boolean
+): readonly SpriteClip[] {
+  const sheets = DWARF_SHEETS[role]
+  if (resting) return [settleOn(sheets, 'sleeping')]
+  if (!working) return [loopOf(sheets.idle)]
+  const cycle = workingCycle(sheets, DWARF_CREW[role].swings)
+  const swing = sheets.working
+  const at = swing === undefined ? -1 : cycle.findIndex((clip) => clip.sheet === swing)
+  return at <= 0 ? cycle : [...cycle.slice(at), ...cycle.slice(0, at)]
 }
 
 /**

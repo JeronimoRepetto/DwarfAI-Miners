@@ -15,12 +15,19 @@ import {
   shellFoldKeyframes,
   type ShellFoldState
 } from '../lib/shell/shellFold'
-import type { ShellComposition } from '../lib/shell/composition'
 import type { PanelEdge } from '../types'
 
 /**
- * The shell's ground folding into its rail, and unfolding back out of it
- * (#388).
+ * The shell's ground folding around a column that leaves, and unfolding
+ * around one that arrives (#388).
+ *
+ * AMENDED for #635 (PO ruling 2026-09-27): it was first written for the closed
+ * 20px rail, which is gone. The `rail` and `remaining` options went with it —
+ * the rail was one carried column among `carried` since #566 T5b, and the
+ * composition folded TO only ever changed anything for the bare rail. The
+ * sections below still name the rail where it is the history of a rule; every
+ * rule stands for the columns left, the page above all when the mine column
+ * closes or opens beside it.
  *
  * ## Why the ground is the animation
  *
@@ -104,30 +111,26 @@ export interface ShellFoldOptions {
   shell: () => HTMLElement | null
   /** The docked side, which the fold is mirrored around. */
   edge: () => PanelEdge
-  /** The composition presentation is folding TO. */
-  remaining: () => ShellComposition
   /**
-   * The rail, which travels with the fold (#464).
-   *
-   * It is the one column standing on the FREE side of EVERY composition's
-   * leaving or entering column, so it is the one column that always has to be
-   * asked for — `carried`, below, is what changed once the rail stopped
-   * being the only one that ever could be. `null` is answered honestly where
-   * the component that draws it is not mounted or is not one element: the
-   * ground still folds, and only the travel is lost.
+   * How far the ground's own edge is drawn outside its box, in px (#635): the
+   * redesigned plate's `.m-mat` edge. The fold's clip leaves that much room on
+   * every side it does not cut, so the edge is never clipped mid-run. Optional
+   * and defaulted to none, so a caller with no outside edge is untouched.
    */
-  rail: () => HTMLElement | null
+  outline?: () => number
   /**
-   * Every OTHER column that can stand free of a leaving or entering one,
-   * besides the rail — in DOM/row order from the free edge toward the docked
-   * one, `null` for one the current composition does not draw (#566 T5b). The
+   * Every column that can stand free of a leaving or entering one, in
+   * DOM/row order from the free edge toward the docked one, `null` for one the
+   * current composition does not draw (#566 T5b). `null` is answered honestly
+   * where the component that draws it is not mounted or is not one element:
+   * the ground still folds, and only the travel is lost. The
    * secondary panel and the navigation stack are both free of the mine column
    * when IT is what closes or opens beside them; neither is free of anything
    * else, and `begin`/`unfold` work that out themselves by walking this list
    * free-to-docked and asking `foldedColumnOffset` for each one's own rest
    * position, the rail's own formula since #464 generalized rather than
    * restated. Optional and defaulted to none, so a caller with nothing beside
-   * the rail — a test harness among them — is untouched.
+   * nothing to carry — a test harness among them — is untouched.
    */
   carried?: () => (HTMLElement | null)[]
   /**
@@ -409,8 +412,13 @@ export function useShellFold(options: ShellFoldOptions) {
     return motion.still(shell)
   }
 
+  function outlineOf(): number {
+    return options.outline?.() ?? 0
+  }
+
   function apply(shell: HTMLElement, state: ShellFoldState, radius: string): void {
-    shell.style.clipPath = state === 'whole' ? '' : shellFoldClip(state, options.edge(), radius)
+    shell.style.clipPath =
+      state === 'whole' ? '' : shellFoldClip(state, options.edge(), radius, outlineOf())
   }
 
   /**
@@ -427,14 +435,13 @@ export function useShellFold(options: ShellFoldOptions) {
 
   /**
    * Every column standing free of SOME leaving or entering column right now,
-   * the rail first and then whatever `options.carried` hands over, in
-   * free-to-docked order (#464, generalized #566 T5b). `null` and one with no
-   * motion of its own (`still`, the same test `railOf` used to make alone)
+   * whatever `options.carried` hands over, in free-to-docked order (#464,
+   * generalized #566 T5b). `null` and one with no motion of its own (`still`)
    * are dropped — a column that cannot run Web Animations has nothing this
    * fold could carry it with.
    */
   function mountedColumns(): HTMLElement[] {
-    const list = [options.rail(), ...(options.carried?.() ?? [])]
+    const list = options.carried?.() ?? []
     return list.filter((el): el is HTMLElement => el !== null && !motion.still(el))
   }
 
@@ -653,7 +660,10 @@ export function useShellFold(options: ShellFoldOptions) {
     to: ShellFoldState,
     radius: string
   ): MotionTransition {
-    const clip = shellFoldKeyframes(from, to, options.edge(), radius).clipPath as [string, string]
+    const clip = shellFoldKeyframes(from, to, options.edge(), radius, outlineOf()).clipPath as [
+      string,
+      string
+    ]
     return getDefaultTransition('clipPath', { keyframes: clip as unknown as number[] })
   }
 
@@ -688,38 +698,42 @@ export function useShellFold(options: ShellFoldOptions) {
     // land inside one test's own timers.
     let settled = false
     const generation = ++folds
-    void motion.run(shell, shellFoldKeyframes(from, to, options.edge(), radius), () => {
-      // A run the ground has already replaced writes nothing at all (#585
-      // round 2): the fold that took over owns `painted`, the pin, the clip
-      // and every column this one was carrying, and it is about to say so
-      // itself. Ending is not finishing, and only the last fold standing may
-      // answer for the ground.
-      if (generation !== folds) return
-      apply(shell, to, radius)
-      if (settled) return
-      settled = true
-      done()
-      resolve()
-      // Drain anything `enter` queued WHILE this run was in flight (#566 T5b,
-      // real-window probe evidence): the ground's own fold/unfold occupies
-      // `motion.running(shell)` for its own run — 300ms and more, under a
-      // spring — and every `settle` that would otherwise have caught a freshly
-      // pre-placed column up returns at the FIRST guard for as long as it does.
-      // Nothing external is guaranteed to ask again once it is free: the
-      // `flush: 'post'` watch already fired for the change that started THIS
-      // run, and the next one is whatever the user does next, which could be
-      // seconds away or a different column's request entirely — a pre-placed
-      // column left waiting for either stayed invisible for good, live in a
-      // real window. This run just became the one thing that reliably knows
-      // the ground is free again, so it asks on that column's behalf.
-      //
-      // A BACKSTOP since #585, where it used to be the ordinary path: a column
-      // of the same change registers before the unfold is measured now, so
-      // what is left here is a column that genuinely arrived after one — a
-      // second grow landing inside the first one's run — which is a second
-      // change and honestly a second run.
-      if (pendingReveal()) settle(false)
-    })
+    void motion.run(
+      shell,
+      shellFoldKeyframes(from, to, options.edge(), radius, outlineOf()),
+      () => {
+        // A run the ground has already replaced writes nothing at all (#585
+        // round 2): the fold that took over owns `painted`, the pin, the clip
+        // and every column this one was carrying, and it is about to say so
+        // itself. Ending is not finishing, and only the last fold standing may
+        // answer for the ground.
+        if (generation !== folds) return
+        apply(shell, to, radius)
+        if (settled) return
+        settled = true
+        done()
+        resolve()
+        // Drain anything `enter` queued WHILE this run was in flight (#566 T5b,
+        // real-window probe evidence): the ground's own fold/unfold occupies
+        // `motion.running(shell)` for its own run — 300ms and more, under a
+        // spring — and every `settle` that would otherwise have caught a freshly
+        // pre-placed column up returns at the FIRST guard for as long as it does.
+        // Nothing external is guaranteed to ask again once it is free: the
+        // `flush: 'post'` watch already fired for the change that started THIS
+        // run, and the next one is whatever the user does next, which could be
+        // seconds away or a different column's request entirely — a pre-placed
+        // column left waiting for either stayed invisible for good, live in a
+        // real window. This run just became the one thing that reliably knows
+        // the ground is free again, so it asks on that column's behalf.
+        //
+        // A BACKSTOP since #585, where it used to be the ordinary path: a column
+        // of the same change registers before the unfold is measured now, so
+        // what is left here is a column that genuinely arrived after one — a
+        // second grow landing inside the first one's run — which is a second
+        // change and honestly a second run.
+        if (pendingReveal()) settle(false)
+      }
+    )
   }
 
   /** Measure the batch the leaving columns registered, and fold the ground. */
@@ -745,13 +759,10 @@ export function useShellFold(options: ShellFoldOptions) {
     // read off the element rather than restated here.
     const padding = parseFloat(style.paddingLeft) || 0
     const gap = parseFloat(style.columnGap) || 0
-    const remaining = options.remaining()
     const folded = foldedShellWidth({
       width: shell.getBoundingClientRect().width,
       leaving: pending.widths,
-      gap,
-      padding,
-      remaining
+      gap
     })
     const radius = style.borderRadius || '0px'
     const from = painted ?? 'whole'
@@ -775,7 +786,7 @@ export function useShellFold(options: ShellFoldOptions) {
       // a LATER measurement the way `painted` is comparable to a later width
       // — never the travel `carry` runs on, which is only ever a difference
       // of two positions and goes stale the moment the row repacks again.
-      const rest = foldedColumnOffset({ kept: folded, before, gap, own, padding, remaining })
+      const rest = foldedColumnOffset({ kept: folded, before, gap, own, padding })
       const stand = columnStand(shell, column)
       carry(column, 0, stand - rest, transition)
       rests.set(column, rest)

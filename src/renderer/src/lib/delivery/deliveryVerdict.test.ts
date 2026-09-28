@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { DwarfKickState, DwarfSendState } from '../../types'
 import {
+  COPY_LABEL,
+  COPY_TITLE,
   HELD_TITLE,
-  SEND_AGAIN_LABEL,
-  SEND_AGAIN_TITLE,
+  MESSAGE_COPIED,
+  RETRY_LABEL,
+  RETRY_TITLE,
   kickDismissedTheDwarf,
   kickEndedTheSession,
   kickHasNothingToAwait,
@@ -451,17 +454,27 @@ describe('a relay that never confirmed in time', () => {
  *
  * Copy about a delivery verdict, so it lives with the rest of it and is pinned
  * here rather than eyeballed in the panel.
+ *
+ * AMENDED for #635 (decision log, Failed delivery; was: SEND_AGAIN_LABEL 'Send
+ * again', and a SEND_AGAIN_TITLE saying the failed one stays marked, because a
+ * retry was a second delivery). The PO ruled Retry re-sends the same text in
+ * place, so there is no failed one left to stay marked, and the design's copy
+ * (copy.md, Chat bubble) names both buttons and Copy's toast.
  */
 describe('sending a failed message again', () => {
-  it('names the act in the imperative, short enough to sit beside a bubble', () => {
-    expect(SEND_AGAIN_LABEL).toBe('Send again')
+  it("names the act in the design's words, short enough to sit under a bubble", () => {
+    expect(RETRY_LABEL).toBe('Retry')
   })
 
-  it('says the failed one stays marked, because a retry is a second delivery', () => {
-    // Nothing is corrected: the first attempt keeps its ✕, which is the only
-    // thing on screen saying the channel let the person down once.
-    expect(SEND_AGAIN_TITLE).toContain('stays marked')
-    expect(SEND_AGAIN_TITLE).not.toMatch(/reacted/i)
+  it('says it sends the same message, and claims nothing about a reaction', () => {
+    expect(RETRY_TITLE).toBe('Send the same message again')
+    expect(RETRY_TITLE).not.toMatch(/reacted/i)
+  })
+
+  it("names Copy, what it copies, and the toast that says it did, in the design's words", () => {
+    expect(COPY_LABEL).toBe('Copy')
+    expect(COPY_TITLE).toBe('Copy the message text')
+    expect(MESSAGE_COPIED).toBe('Message copied')
   })
 })
 

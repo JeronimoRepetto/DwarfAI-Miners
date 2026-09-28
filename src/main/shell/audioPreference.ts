@@ -3,7 +3,8 @@ import { parseAudioPreferences, type AudioPreferences } from '../domain/types'
 
 /**
  * The persisted Audio settings (#174, over #173's two channels): whether music
- * starts on launch, and the three volumes.
+ * starts on launch, the three volumes, and whether the attention cues play at
+ * all (#635).
  *
  * Storage deliberately mirrors the pin, edge and shortcut preferences
  * (src/main/shell/pinPreference.ts and its siblings): one tiny JSON document

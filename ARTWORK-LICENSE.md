@@ -7,8 +7,14 @@ Repetto. This includes, without limitation, the dwarf sprites and animations,
 portraits, skins, mine and map backgrounds, mounds, nuggets, icons, logos,
 screenshots, GIFs, and voices or other sound assets.
 
-The artwork is **not** licensed under the MIT License that applies to the Code.
-The MIT license grants no permission to copy, extract, modify, adapt, train on,
+**Exception.** The sound effects listed under "Sound effects released as CC0" in
+[`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) are not covered by this notice. They are
+released under CC0 1.0, and that file records each one's author and source. The typefaces listed
+in [`FONT-CREDITS.md`](FONT-CREDITS.md) are not covered either: they belong to their authors and
+are released under the SIL Open Font License 1.1.
+
+The artwork is **not** licensed under the GPLv3 License that applies to the Code.
+The GPLv3 license grants no permission to copy, extract, modify, adapt, train on,
 redistribute, sell, sublicense, or reuse these assets in another project,
 product, dataset, model, or service.
 

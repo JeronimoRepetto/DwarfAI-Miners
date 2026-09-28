@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { withoutToolWords } from '../domain/toolOutput'
 import { homedir } from 'node:os'
 import { type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
@@ -29,6 +31,7 @@ import {
   NOTHING_TYPED_TO_ANSWER_WITH,
   OPENCODE_PERMISSION_ANSWERED_ABOVE,
   OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
+  OWN_WORDS_ONLY_WHEN_HELD,
   TYPED_ANSWER_ONLY_AT_A_PICKER,
   TYPED_ANSWER_WOULD_STEER_THE_PICKER,
   TYPED_HERE_REACHES_THE_PICKER,
@@ -61,6 +64,8 @@ import {
   type DwarfTextRequest,
   type DwarfTextResult,
   type DwarfTuningRequest,
+  type DwarfNameRequest,
+  type DwarfNameResult,
   type DwarfTuningResult,
   type FeedMessage,
   type HeldSessionLaunchRequest,
@@ -91,6 +96,7 @@ import {
   mergeDeclaredMines,
   stampMapSites,
   stampUnrecorded,
+  stampWeights,
   type DeclaredProject
 } from '../domain/aggregate'
 import type { HookEvent } from '../hooks/hookPayload'
@@ -136,6 +142,13 @@ import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
+import { createMemoryDwarfNameStore, type DwarfNameStore } from '../dwarfNames/dwarfNameStore'
+import {
+  DWARF_NAME_NOT_ON_BOARD,
+  DwarfNames,
+  stampCustomNames,
+  stampSpeakerNames
+} from '../dwarfNames/dwarfNames'
 import {
   LaunchedSessionRegistry,
   stampLaunchedRoutedByJev,
@@ -208,7 +221,7 @@ import {
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
 import { redactSecrets } from '../domain/redactSecrets'
-import { truncate } from '../../shared/truncate'
+import { truncateTail } from '../../shared/truncate'
 
 /**
  * How much conversation the message panel asks a provider for — twelve things
@@ -667,8 +680,15 @@ function stageSuffix(timings: StageTimings): string {
  * outcome's error field is a fixed, curated sentence and never a place the
  * payload could travel through.
  */
-function failureReasonSuffix(outcome: TextDeliveryOutcome): string {
-  return outcome.delivered || outcome.error === undefined ? '' : `: ${outcome.error}`
+/*
+ * A failed delivery's reason for its log line. A resume refusal carries what Codex or OpenCode
+ * wrote on stderr, for the panel; the log keeps the app's own sentence and never the tool's words,
+ * which can hold local paths or account names (#635, MESSAGE-QUESTIONS 23).
+ */
+export function failureReasonSuffix(outcome: TextDeliveryOutcome): string {
+  return outcome.delivered || outcome.error === undefined
+    ? ''
+    : `: ${withoutToolWords(outcome.error)}`
 }
 
 /**
@@ -732,6 +752,12 @@ export interface RuntimeOptions {
    * which is unconditional.
    */
   onLaunchFailed?: (push: LaunchFailedPush) => void
+  /**
+   * Mints the id a started held launch answers with, so a later
+   * `LaunchFailedPush` about it can be correlated (#635) — injected in tests
+   * for a deterministic value. Defaults to a fresh random UUID per launch.
+   */
+  heldLaunchId?: () => string
   /**
    * Pushes the verdict of a message `sendDwarfText` answered a `holdId` for
    * (#457) — see `DwarfSendSettledPush`. Optional on exactly the terms
@@ -920,6 +946,15 @@ export interface RuntimeOptions {
    */
   launchedSessionStore?: LaunchedSessionStore | null
   /**
+   * Where the names a person gives dwarfs are kept between runs (#635), or null when this build
+   * has no database to keep them in.
+   *
+   * Null and omitted both keep names for this run only, in memory, so renaming still works and no
+   * test reaches a disk. A simulated valley ignores this and always keeps them in memory: its
+   * dwarfs are invented for one run, and their names must never reach the real database.
+   */
+  dwarfNameStore?: DwarfNameStore | null
+  /**
    * Every command of the person's own this panel is holding (#194). Injected
    * for tests, which must never spawn a process; the default holds real ones.
    */
@@ -1088,6 +1123,8 @@ export class AgentRuntime {
    * reaches the log unconditionally, and only the push is optional.
    */
   private readonly onLaunchFailed: (push: LaunchFailedPush) => void
+  /** See `RuntimeOptions.heldLaunchId` (#635). */
+  private readonly heldLaunchId: () => string
   /**
    * Messages the panel is holding for a Codex thread that is mid-turn (#457),
    * and the verdict channel they eventually settle on.
@@ -1194,6 +1231,10 @@ export class AgentRuntime {
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
   private readonly simulated: boolean
+  /** The names a person gave dwarfs (#635): stamped onto every board this publishes. */
+  private readonly dwarfNames: DwarfNames
+  /** Held past the constructor so a rename can republish without waiting for a poll (#635). */
+  private readonly onMinesUpdated: RuntimeOptions['onMinesUpdated']
   /** Shared by the lifecycle grace window and the delivery stage timings. */
   private readonly now: () => number
   private readonly ledger: MaterialLedger
@@ -1443,6 +1484,21 @@ export class AgentRuntime {
     this.answerOpenCodePermission =
       options.answerOpenCodePermission ?? postOpenCodePermissionDecision
     this.simulated = simulation !== null
+    // Dwarf names (#635). Read from the store as soon as the runtime exists, so the first board
+    // that carries a renamed dwarf carries its name; a poll that lands before the read finishes
+    // publishes base names, and the read republishes once it is in.
+    this.onMinesUpdated = options.onMinesUpdated
+    this.dwarfNames = new DwarfNames({
+      store:
+        simulation !== null || options.dwarfNameStore == null
+          ? createMemoryDwarfNameStore()
+          : options.dwarfNameStore,
+      now: this.now,
+      warn: (message) => console.warn(message)
+    })
+    void this.dwarfNames.load().then((named) => {
+      if (named) this.republishNames()
+    })
     // Composed here rather than in platformAdapters: holding a session is the
     // same act on all three platforms, so there is no per-OS branch to own.
     // Model and turn ceiling are deliberately left to the CLI's own defaults —
@@ -1520,6 +1576,7 @@ export class AgentRuntime {
     // this build ever wires still logs the failure, since that half of
     // reporting it is unconditional and lives in launchAgent itself.
     this.onLaunchFailed = options.onLaunchFailed ?? ((): void => {})
+    this.heldLaunchId = options.heldLaunchId ?? ((): string => `held:${randomUUID()}`)
     // #457, and the same no-op default for the same reason: a held message
     // still fires and is still logged without anybody to report it to.
     this.onSendSettled = options.onSendSettled ?? ((): void => {})
@@ -1650,6 +1707,11 @@ export class AgentRuntime {
     const confirmedTierOf = simulation
       ? (mine: Mine): MineTier | undefined => simulation.knownTierOf(mine.path)
       : (mine: Mine): MineTier | undefined => tiers.knownTierOf(mine.path)
+    // This run's measured weight for the board (#635, Mine.weightBytes). A simulated valley has no
+    // walk, so it carries none, and the Mines list is never re-read on its account.
+    const measuredWeightOf = simulation
+      ? (): number | undefined => undefined
+      : (path: string): number | undefined => tiers.knownWeightBytesOf(path)
     /*
      * A demo must never write into real persistence (#42), and the reasoning
      * is the ledger's one line for line: the store index.ts handed in is
@@ -1791,9 +1853,12 @@ export class AgentRuntime {
             // Whether the store holds a row is stamped LAST, on the collapsed
             // board (#165): the flag is per project id, and a mine that was
             // still two entries a step earlier would carry it twice.
-            stampUnrecorded(
-              collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
-              this.recorded
+            stampWeights(
+              stampUnrecorded(
+                collapseDuplicateMines(stampMapSites(lifecycle.apply(mines), this.mapSites)),
+                this.recorded
+              ),
+              measuredWeightOf
             ),
             now,
             confirmedTierOf
@@ -1945,10 +2010,15 @@ export class AgentRuntime {
         // OpenCodeProvider reads this registry directly (registry.ts's
         // openCodePendingAsk), so nothing here needs to stamp `ranked`.
         this.openCodePermissions.observe()
-        const published = stampPermissionPrompts(
-          ranked,
-          (sessionId) =>
-            !this.heldSessions.holds(sessionId) && this.permissionPrompts.isOpen(sessionId)
+        // Each dwarf's custom name beside its base name (#635), stamped last so it is on every
+        // board this publishes and read by nothing above.
+        const published = stampCustomNames(
+          stampPermissionPrompts(
+            ranked,
+            (sessionId) =>
+              !this.heldSessions.holds(sessionId) && this.permissionPrompts.isOpen(sessionId)
+          ),
+          this.nameOf
         )
         this.mines = published
         pollProfiler.count(
@@ -2000,11 +2070,13 @@ export class AgentRuntime {
         // (#25). getMines() still answers from this.mines, so a renderer that
         // starts or reloads mid-quiet-spell gets the current state regardless.
         const totals = this.ledger.totals()
-        if (this.publishGate.shouldPublish(published, totals)) {
+        // A rename that landed while this pass awaited the watched feed has already republished;
+        // stamping again here keeps this push from carrying the name the dwarf had before it.
+        const board = stampCustomNames(published, this.nameOf)
+        if (board !== published) this.mines = board
+        if (this.publishGate.shouldPublish(board, totals)) {
           pollProfiler.count('push')
-          pollProfiler.measureSync('ipc', () =>
-            options.onMinesUpdated(published, totals, watchedFeed)
-          )
+          pollProfiler.measureSync('ipc', () => options.onMinesUpdated(board, totals, watchedFeed))
         } else {
           pollProfiler.count('skip')
         }
@@ -2180,6 +2252,22 @@ export class AgentRuntime {
    * click on an activity line (#279) and a transcript read cannot disagree
    * about which of a project's folders the dwarf is in.
    */
+  /**
+   * The mine a launch starts in, by id: the board's, or else a remembered one (#635,
+   * PANEL-QUESTIONS 5). A remembered mine with no dwarf and no live session is not on the board,
+   * yet its card opens and its + Dwarf is where dwarfs are launched, so the store row the card was
+   * built from names the folder. The folder is still resolved here and never taken from the
+   * request, which keeps every launch inside a folder the panel is showing; a forgotten row is not
+   * one (#169), and a store that does not answer answers nothing.
+   */
+  private async launchTarget(mineId: string): Promise<Pick<Mine, 'id' | 'path'> | undefined> {
+    const onBoard = this.mines.find((item) => item.id === mineId)
+    if (onBoard !== undefined || this.projects === null) return onBoard
+    const row = await this.projects.get(mineId)
+    if (!row.ok || row.value === null || row.value.hiddenAt !== null) return undefined
+    return { id: row.value.id, path: row.value.path }
+  }
+
   private workplaceOf(dwarf: Dwarf, mine: Mine): string {
     return dwarf.workplace?.path ?? mine.path
   }
@@ -2548,9 +2636,18 @@ export class AgentRuntime {
     // A set rather than a scan per row: the board is small but a page is not
     // one id, and a find() inside the map would be O(page × board).
     const onBoard = new Set(this.mines.map((mine) => mine.id))
+    /*
+     * Whether each folder is still there (#635, PANEL-QUESTIONS 6): asked through the fs adapter,
+     * so every OS answers it the same way. Every row is asked, the board's included: a mine added
+     * with no session is on the board too, and a session can outlive the folder it was started in.
+     * One stat per row of the page asked for, and only when the panel asks, never per poll.
+     */
+    const missing = await Promise.all(
+      result.value.map(async (project) => !(await this.fs.exists(project.path)))
+    )
     return {
       answered: true,
-      projects: result.value.map((project) => this.toSummary(project, onBoard))
+      projects: result.value.map((project, i) => this.toSummary(project, onBoard, missing[i]))
     }
   }
 
@@ -2562,7 +2659,11 @@ export class AgentRuntime {
    * screen itself, and a second shaping of the same row here is a second place
    * for the wire's absent-means-unmeasured rules to drift.
    */
-  private toSummary(project: ProjectRecord, onBoard: ReadonlySet<string>): ProjectSummary {
+  private toSummary(
+    project: ProjectRecord,
+    onBoard: ReadonlySet<string>,
+    folderMissing = false
+  ): ProjectSummary {
     // O(1) per row off the ledger already held in memory (#90) — no query,
     // same id scheme (mineIdForPath) the board and the ledger both key by.
     const materials = this.ledger.knownMineTotals(project.id)
@@ -2589,7 +2690,8 @@ export class AgentRuntime {
       // Straight off the row, so a browse and the map can never disagree
       // about where a mine stands (#136).
       ...(project.mapSite === null ? {} : { mapSite: project.mapSite }),
-      live: onBoard.has(project.id)
+      live: onBoard.has(project.id),
+      ...(folderMissing ? { folderMissing: true as const } : {})
     }
   }
 
@@ -2791,6 +2893,54 @@ export class AgentRuntime {
 
   getMines(): Mine[] {
     return this.mines
+  }
+
+  /**
+   * Give a dwarf on the board a custom name (#635, decision log "Dwarf names") — the
+   * `dwarf:setName` channel. The dwarf's base name is read off this board, never from the
+   * request, and DwarfNames cleans the text whatever the field already did. A save republishes at
+   * once, so every window shows the name without waiting for a poll.
+   */
+  async setDwarfName(request: DwarfNameRequest): Promise<DwarfNameResult> {
+    const dwarf = this.boardDwarf(request.dwarfId)
+    if (dwarf === undefined) return { saved: false, reason: DWARF_NAME_NOT_ON_BOARD }
+    const result = await this.dwarfNames.set(dwarf, request.name)
+    if (result.saved) this.republishNames()
+    return result
+  }
+
+  /** Take a dwarf's custom name away (#635) — `dwarf:resetName`, the ⋯ menu's "Reset name". */
+  async resetDwarfName(dwarfId: string): Promise<DwarfNameResult> {
+    if (this.boardDwarf(dwarfId) === undefined) {
+      return { saved: false, reason: DWARF_NAME_NOT_ON_BOARD }
+    }
+    const result = await this.dwarfNames.reset(dwarfId)
+    if (result.saved) this.republishNames()
+    return result
+  }
+
+  /** Read by stamping, and bound once so a stamp is one lookup per dwarf. */
+  private readonly nameOf = (dwarfId: string): string | undefined => this.dwarfNames.nameOf(dwarfId)
+
+  private boardDwarf(dwarfId: string): Dwarf | undefined {
+    for (const mine of this.mines) {
+      const dwarf = mine.dwarfs.find((item) => item.id === dwarfId)
+      if (dwarf !== undefined) return dwarf
+    }
+    return undefined
+  }
+
+  /**
+   * Publish the board again with the names as they stand now (#635), through the same gate a
+   * poll goes through. Nothing to do when no dwarf on the board changed name — which is also what
+   * keeps a load that finishes before the first poll from publishing an empty board.
+   */
+  private republishNames(): void {
+    const board = stampCustomNames(this.mines, this.nameOf)
+    if (board === this.mines) return
+    this.mines = board
+    const totals = this.ledger.totals()
+    if (this.publishGate.shouldPublish(board, totals)) this.onMinesUpdated(board, totals)
   }
 
   /**
@@ -3773,7 +3923,7 @@ export class AgentRuntime {
     // so there is no folder for one to start in (#42).
     if (this.simulated) return { launched: false, error: NO_SIMULATED_LAUNCH }
 
-    const mine = this.mines.find((item) => item.id === request.mineId)
+    const mine = await this.launchTarget(request.mineId)
     if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
 
     // #511 T4: issued BEFORE the launch itself is attempted — see
@@ -3788,12 +3938,34 @@ export class AgentRuntime {
       mine.id
     )
 
+    // #635 (MESSAGE-QUESTIONS 16): minted before the launch so the session's
+    // own early end can be pushed under it, on the same `LaunchFailedPush` a
+    // detached launch's early exit uses. Correlation only — never a board
+    // receipt, so no dwarf is stamped with it and adoption is unchanged.
+    const launchId = this.heldLaunchId()
     try {
       const result = await this.heldSessions.launch({
         mineId: mine.id,
         provider: request.provider,
         minePath: mine.path,
         prompt: request.prompt,
+        onEarlyEnd: (cause) => {
+          console.log(
+            `[runtime] Held launch of ${request.provider} in ${mine.id}: failed (${cause})`
+          )
+          this.onLaunchFailed({
+            launchId,
+            provider: request.provider,
+            mineId: mine.id,
+            // A held session reports no exit code and keeps no stderr of its
+            // own to hand back: null and empty, never a guess.
+            exitCode: null,
+            stderrTail: '',
+            // `exited-at-once`, or `could-not-start` for a CLI the engine says
+            // never spawned (#635) — the registry's reading, carried as given.
+            cause
+          })
+        },
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
         ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
@@ -3821,7 +3993,7 @@ export class AgentRuntime {
       if (delegationIssue !== undefined && !result.launched) {
         this.delegation?.revoke(delegationIssue.token)
       }
-      return result
+      return result.launched ? { ...result, launchId } : result
     } catch (error) {
       // #511 L5: `HeldSessionRegistry.launch` catches its own engine's
       // throws internally today, so this is not observed in production —
@@ -3867,7 +4039,7 @@ export class AgentRuntime {
     // a demo's mines are invented, so there is no folder to start in (#42).
     if (this.simulated) return { launched: false, error: NO_SIMULATED_LAUNCH }
 
-    const mine = this.mines.find((item) => item.id === request.mineId)
+    const mine = await this.launchTarget(request.mineId)
     if (mine === undefined) return { launched: false, error: NO_SUCH_MINE }
 
     const outcome = await this.hosted.launch({
@@ -3878,7 +4050,11 @@ export class AgentRuntime {
     })
     return outcome.started
       ? { launched: true }
-      : { launched: false, ...(outcome.error === undefined ? {} : { error: outcome.error }) }
+      : {
+          launched: false,
+          ...(outcome.error === undefined ? {} : { error: outcome.error }),
+          ...(outcome.cause === undefined ? {} : { cause: outcome.cause })
+        }
   }
 
   /**
@@ -3904,16 +4080,27 @@ export class AgentRuntime {
     if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
 
     const pending = dwarf.pendingQuestion
-    // An answer in the person's OWN words is a key pressed at a picker, and
-    // only a WATCHED session is standing at one (#481). The held path releases
-    // the blocked call with the labels the ask carried and nothing else — see
-    // TYPED_ANSWER_ONLY_AT_A_PICKER — so this is refused here rather than
-    // reaching the registry, whose refusal would be about the wrong thing.
+    // The `text` form is a person's words typed at a picker, and only a
+    // WATCHED session is standing at one (#481), so it is refused for any other
+    // here rather than reaching the registry, whose refusal would be about the
+    // wrong thing. A HELD ask takes the person's own words in the label form's
+    // `ownWords` record instead (#635, PO decision 2026-09-28), below.
     if (request.text !== undefined) {
       if (pending?.channel !== 'terminal') {
         return { answered: false, error: TYPED_ANSWER_ONLY_AT_A_PICKER }
       }
       return this.typeQuestionAnswer(dwarf, pending, request)
+    }
+    // The person's own words carried for a HELD ask (#635, PO decision
+    // 2026-09-28): only the held path hands them to the agent's tool as an
+    // answer. Refused for any other ask BEFORE anything is typed — the
+    // keystroke route below reads labels alone and would drop the words — and
+    // for a session this panel does not hold. The board may not have stamped
+    // a just-asked held question yet, so an ask not on it is the registry's
+    // to judge, exactly as a label answer is.
+    const heldAsk = pending === undefined || pending.channel === 'held'
+    if (request.ownWords !== undefined && (!heldAsk || !this.heldSessions.holds(dwarf.sessionId))) {
+      return { answered: false, error: OWN_WORDS_ONLY_WHEN_HELD }
     }
     // An observed session's ask is answered where it is DRAWN, by keystroke
     // (#362) — the same split answerDwarfPermission draws off the same field,
@@ -3931,7 +4118,8 @@ export class AgentRuntime {
     return this.heldSessions.answer({
       sessionId: dwarf.sessionId,
       toolUseId: request.toolUseId,
-      answers: request.answers
+      answers: request.answers,
+      ...(request.ownWords === undefined ? {} : { ownWords: request.ownWords })
     })
   }
 
@@ -4896,7 +5084,7 @@ export class AgentRuntime {
     request: AgentLaunchRequest,
     hooks?: LaunchAgentHooks
   ): Promise<AgentLaunchResult> {
-    const mine = this.mines.find((item) => item.id === request.mineId)
+    const mine = await this.launchTarget(request.mineId)
     if (mine === undefined) return { launched: false, provider: 'none', error: NO_SUCH_MINE }
 
     const prompt = prepareLaunchPrompt(request.prompt)
@@ -4920,6 +5108,11 @@ export class AgentRuntime {
           prompt,
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),
+          // #635: Codex's own permission mode, checked at the IPC boundary;
+          // absent stays absent, so an untouched select launches as before.
+          ...(request.permissionMode === undefined
+            ? {}
+            : { codexPermissionMode: request.permissionMode }),
           ...(delegationIssue === undefined ? {} : { delegation: delegationIssue.injection })
         })
       )
@@ -5049,7 +5242,7 @@ export class AgentRuntime {
   private reportLaunchFailure(
     launchId: string,
     provider: DwarfProvider,
-    mine: Mine,
+    mine: Pick<Mine, 'id'>,
     failure: LaunchFailure
   ): void {
     console.log(`[runtime] Launch of ${provider} in ${mine.id}: failed (exit ${failure.exitCode})`)
@@ -5058,7 +5251,12 @@ export class AgentRuntime {
       provider,
       mineId: mine.id,
       exitCode: failure.exitCode,
-      stderrTail: truncate(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS)
+      // The END of what it wrote, line breaks kept: its last lines say why it stopped, and they
+      // are what the notice title's tooltip shows (#635, MESSAGE-QUESTIONS 23). Redacted first,
+      // so a cut never splits a secret into a shape redaction no longer knows.
+      stderrTail: truncateTail(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS),
+      // The only thing this push is ever about (#635): see LaunchFailureCause.
+      cause: 'exited-at-once'
     })
   }
 
@@ -5407,7 +5605,10 @@ export class AgentRuntime {
       // mine folded from three worktrees has its history in three places, and
       // reading only the project's would show an empty panel for a mine that
       // has been worked in all day.
-      return { readable: true, speakers: await this.history.readAcross(this.mineFoldersOf(mine)) }
+      // A speaker shares its dwarf's id, so it carries the same custom name (#635); the history
+      // reader itself names no one but by the transcript.
+      const speakers = await this.history.readAcross(this.mineFoldersOf(mine))
+      return { readable: true, speakers: stampSpeakerNames(speakers, this.nameOf) }
     } catch (error) {
       console.warn(`[runtime] Failed to read the history of ${mineId}`, error)
       return unreadableHistory()

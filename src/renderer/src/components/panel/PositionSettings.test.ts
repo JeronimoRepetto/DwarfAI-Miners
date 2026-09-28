@@ -23,20 +23,29 @@ describe('PositionSettings — rendering', () => {
     expect(wrapper.find('.position-right').text()).toBe('Right')
   })
 
+  // AMENDED (#635): the design's row has its own help line (screens/settings.md, W6 General),
+  // which replaces today's "Select Left or Right to place the panel at the edges of the screen."
   it('gives the helper copy exactly as the design states it', () => {
-    expect(render().find('.hint').text()).toBe(
-      'Select Left or Right to place the panel at the edges of the screen.'
-    )
+    expect(render().find('.dm-srow__help').text()).toBe('The screen edge the panel docks to.')
   })
 
+  // AMENDED (#635): the chips are radios in a radiogroup now, so the state is aria-checked
+  // (was aria-pressed on two toggle buttons).
   it('marks the current edge as pressed and the other as not', () => {
     const right = render({ edge: 'right' })
-    expect(right.find('.position-right').attributes('aria-pressed')).toBe('true')
-    expect(right.find('.position-left').attributes('aria-pressed')).toBe('false')
+    expect(right.find('.position-right').attributes('aria-checked')).toBe('true')
+    expect(right.find('.position-left').attributes('aria-checked')).toBe('false')
 
     const left = render({ edge: 'left' })
-    expect(left.find('.position-left').attributes('aria-pressed')).toBe('true')
-    expect(left.find('.position-right').attributes('aria-pressed')).toBe('false')
+    expect(left.find('.position-left').attributes('aria-checked')).toBe('true')
+    expect(left.find('.position-right').attributes('aria-checked')).toBe('false')
+  })
+
+  it('offers Right before Left, as radios in one group named by the row', () => {
+    const wrapper = render()
+    const group = wrapper.get('[role="radiogroup"]')
+    expect(group.findAll('[role="radio"]').map((radio) => radio.text())).toEqual(['Right', 'Left'])
+    expect(wrapper.get(`#${group.attributes('aria-labelledby')}`).text()).toBe('Position')
   })
 
   it('uses real buttons, so every segment is keyboard operable', () => {

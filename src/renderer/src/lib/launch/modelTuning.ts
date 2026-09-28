@@ -90,6 +90,11 @@ export function effortPicker(
  * five values meaning nothing to it. Heldability is necessary and not
  * sufficient, and `PERMISSION_MODE_PROVIDERS` is the sufficient half — see its
  * own comment in contracts.ts.
+ *
+ * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes): the
+ * design lists modes for Codex too (sample-data.md, providers), so heldability
+ * is no longer even necessary — Codex is detached and in the list. Which
+ * modes the select offers is `permissionModeOptions` (addPanelCopy.ts).
  */
 export function permissionsVisible(choice: LaunchChoice | null): boolean {
   if (choice === null || choice === OTHER_CHOICE) return false

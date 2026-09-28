@@ -111,6 +111,66 @@ exposed to the model — `PASS`, `FAIL`, or `SKIPPED` for a CLI not on this mach
 hand when you want to know whether a real CLI still honours its own documented MCP mechanism; the
 script's own top comment says exactly what it proves and what it does not.
 
+### Golden UI tests (maintainer machine only)
+
+`pnpm test:golden` (#634) captures pieces of the redesigned interface and grades them against the
+design's reference images, with the PO's acceptance rule: the same size, under 1% of pixels
+differing, no 3×3 cluster. The references, the capture tools and the stage CSS live only in the
+private design repository and are read from it at run time; nothing of the design is ever
+committed here. So the goldens are not one of the seven checks above, and CI never runs them —
+only their pure parts (`scripts/golden/*.test.mjs`) run in `pnpm test`, on all three OSes.
+
+```bash
+pnpm golden:design   # in a worktree: copy the design repository into .design/
+pnpm test:golden
+```
+
+- **Where the design is found**, first match wins: `DWARFAI_DESIGN_REPO` (the design repository's
+  root); `.design/` in the checkout; the main checkout's `docs/dwarfai-miners-design` junction.
+  `DWARFAI_DESIGN_REPO` is a tooling variable, not an app setting: only the golden scripts read it,
+  it never enters the configuration layers, and a blank value counts as unset.
+- **Worktrees get a real copy.** `pnpm golden:design` creates or refreshes `.design/`, a
+  gitignored copy of the docs, references, tools and sample data, found through
+  `DWARFAI_DESIGN_REPO` or the main checkout's junction. It is plain files and never a link —
+  `git worktree remove --force` follows a junction and empties its target.
+- **Fail, not skip.** Locally, a missing design is a failure naming the command above, and so is a
+  configured location with the wrong shape. Only CI skips, with one line.
+- **The renderer is the recorded one.** The run fails when the browser differs from the build in
+  the design's `docs/reference/capture.json`, naming both. `GOLDEN_BROWSER=<path>` pins a browser
+  executable.
+- **Adding a state: red first, then flip.** Add its manifest key to
+  `src/renderer/src/golden/states.json` with a `red` reason (the stage's position and width come
+  from its manifest row), and an entry in `renders.ts` beside
+  it that draws the real component with props built from the sample data (the page loads the
+  design's `prototype/data/sample-data.js` at run time and `sample.ts` adapts it to the contract
+  types). Run the goldens: the state fails as expected and prints its numbers. Build the state
+  from the Markdown until it passes — a red state that passes fails the run — then remove `red`.
+  The stage, and a component's "UI kit framing" rules on its root, come from the design's docs at
+  run time; a framing rule the kit writes against its stage (`.kit-stage …`) joins the stage CSS,
+  and a state whose framing targets any other element is refused until the harness learns it.
+- **A red state's stated percentage is binding (#635).** Once you have the number the run just
+  printed, add it as `"at": <percent>` beside that state's `"red"` in `states.json` (a state
+  without `red` may not carry `at`). From then on the run fails a red state whose measured
+  percentage exceeds `at` by more than `RED_MEASURE_TOLERANCE` (0.1 percentage points,
+  `scripts/golden/states.mjs`) — a regression from 0.5% to 32% can no longer hide behind "still
+  red". A screens-full state grades several window boxes at once; `at` is the same worst-box figure
+  the run already reports and fails on (`screens.golden.test.mjs` takes the max across
+  `plan.windows`). `at` is optional and additive: an existing red state without it keeps the old
+  boolean-only behaviour until someone backfills a real measurement for it.
+- **Full-screen states are the whole App.** A `screens-full/<screen>#<state>` key in `states.json`
+  needs no entry in `renders.ts`: `screens.golden.test.mjs` mounts the real `App.vue` on a bridge
+  answered from the sample (`golden/api.ts`), in a page sized to the reference screen's work area,
+  replays the recipe's steps from the manifest row with the design's own click rules
+  (`screens.mjs`), and grades every window box of the row against the reference cut to that box.
+  A click on the prototype's own controls is not replayed: a sample switch is stood in by the
+  sample set it names, and anything else is refused.
+- **Output stays out of the tree.** Captures and diffs go to `dwarfai-golden/` under the system
+  temp directory. They picture the private references: never commit one, and never paste an image
+  or an output path into an issue or a pull request.
+- **One renderer, not three platforms.** Goldens are a single-renderer pixel baseline: they check
+  appearance, not platform behaviour. macOS and Linux parity stays with the suite CI runs on all
+  three OSes and with #635's platform-verification slice.
+
 ## Testing philosophy
 
 - **Tests come with the change.** New behavior arrives with the test that pins it — write the
@@ -180,18 +240,21 @@ in all four corners), and dwarf animations come as pose pairs (two working swing
 resting poses, two walking poses). Open an issue with a sample before producing a full set,
 so style fit gets settled cheaply.
 
-**Audio is not processed by that pipeline.** The six music tracks, the two mine ambience beds and
-the three dwarf voices are committed exactly as delivered — the music as `.ogg` under
-`src/renderer/src/assets/audio/music/` because Electron's bundled Chromium decodes it natively, and
-the beds and voices as `.mp3` filed beside the art they belong to. Every one is imported explicitly
+**Audio is not processed by that pipeline.** The eight music tracks and the three dwarf voices are
+committed exactly as delivered — the music as `.ogg` under `src/renderer/src/assets/audio/music/`
+because Electron's bundled Chromium decodes it natively, and the voices as `.mp3` filed beside the
+art they belong to. The sound effects and the mine's room tone are CC0 `.mp3` files re-levelled and
+stripped of metadata as their README describes (`src/renderer/src/assets/audio/sfx/README.md`),
+each with its source in [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md). Every one is imported explicitly
 in `src/renderer/src/lib/audio/audioAssets.ts` rather than globbed, so a renamed or missing file
-fails the build instead of quietly shortening the playlist or silencing a rank. Add a file there
-when you add a sound.
+fails the build instead of quietly shortening the playlist or silencing a rank, and
+`bundledAudio.test.ts` fails for a file nothing imports or one carrying a copyright frame. Add a
+file there, and a credit, when you add a sound.
 
 **Inbound terms.** Artwork is not an open contribution surface by default. Please discuss an art
 contribution with the maintainer before opening a pull request. Any accepted artwork must have
 separate written terms confirming that it is yours to give, free of third-party claims, and
-specifying the permission granted to this project. It is not automatically covered by the MIT
+specifying the permission granted to this project. It is not automatically covered by the GPLv3
 license for the code, and submitting a pull request does not by itself grant permission to reuse
 the project's existing artwork.
 

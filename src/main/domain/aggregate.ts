@@ -131,6 +131,24 @@ export function stampMapSites(mines: Mine[], siteByMineId: ReadonlyMap<string, n
 }
 
 /**
+ * Stamp this run's measured weight on every mine a walk has answered for (#635).
+ *
+ * `weightOf` is TierService's knownWeightBytesOf by path: undefined until a walk
+ * has answered, so a mine still waiting carries nothing rather than a guessed 0,
+ * and a measured 0 is stamped as the reading it is. See `Mine.weightBytes` for
+ * why the board carries it. The input is never mutated.
+ */
+export function stampWeights(
+  mines: Mine[],
+  weightOf: (path: string) => number | undefined
+): Mine[] {
+  return mines.map((mine) => {
+    const weightBytes = weightOf(mine.path)
+    return weightBytes === undefined ? mine : { ...mine, weightBytes }
+  })
+}
+
+/**
  * Mark every mine the projects store holds no row for (#165).
  *
  * A fourth composed step, for the reason `stampMapSites` is a third one: what

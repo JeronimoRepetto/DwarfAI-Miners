@@ -65,7 +65,9 @@ export function launchingAgentOf(dwarf: Dwarf, board: readonly Dwarf[]): Message
   if (dwarf.parentId === undefined && launcher.role !== LAUNCHER_RANK[dwarf.role]) {
     return undefined
   }
-  return { role: launcher.role, name: launcher.name }
+  // The launcher's id beside its BASE name (#635): the renderer shows a custom name by finding the
+  // launcher on the board it holds, so no display name is baked in here.
+  return { role: launcher.role, name: launcher.name, launcherId: launcher.id }
 }
 
 /**

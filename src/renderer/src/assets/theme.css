@@ -9,18 +9,21 @@
   --bg-panel: #14100b;
   --line-soft: #3f3222;
   --line-strong: #665239;
-  --ink: #f4ead8;
   --ink-dim: #b9aa91;
-  --ink-faint: #8d7f6a;
   --lantern: #f6b644;
   --lantern-soft: #e8b65c;
-  --danger-ink: #f1c9b9;
   --danger-bg: #472c25;
   --danger-line: #d78361;
-  --parchment: #f0e3c8;
   --parchment-line: #ad9772;
   --parchment-ink: #33261a;
   /*
+   * `--ink`, `--ink-faint`, `--parchment` and `--danger-ink` were the original
+   * palette's values of four names the redesign also uses; they were removed
+   * rather than renamed (#635), so the redesign's values in design-tokens.css
+   * are the only answer. The old `--danger-ink` was a light red for dark
+   * grounds, so its callers moved to `--danger-hi` rather than reading the
+   * redesign's dark red for parchment.
+   *
    * The four design-source colours the agent-question flow needs used to be
    * declared here as well as in design-tokens.css. They now live only there,
    * which is the whole point of that file: two declarations of one corrected hex

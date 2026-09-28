@@ -7,9 +7,12 @@ paths:
   - '**/sceneLayout.ts'
   - '**/sceneGeometry.ts'
   - '**/sceneSizing.ts'
-  - '**/MapView.vue'
-  - '**/MineScene.vue'
-  - '**/MineMarker.vue'
+  - '**/mapPage.ts'
+  - '**/MapPage.vue'
+  - '**/mineColumn.ts'
+  - '**/MineColumn.vue'
+  - '**/SceneDwarf.vue'
+  - '**/TierMarker.vue'
 ---
 
 # One convention, one fit, two modules
@@ -31,14 +34,16 @@ never a constant, and reserving it on a 1392-tall display is what made the inter
 percentages of the painting (1856 x 2304), because every one of them is a MEASURED position on a
 specific feature — a ledge, a river fork — and they run from image x 3.4 to 96.8 and y 28.3 to
 98.6, the closest pair 2.65 apart. `mapProjection.projectToMapBox` converts image percent to box
-percent from the measured box; `MapView.vue` calls it, then holds the result inside the box by half
-a marker — not because anything is cropped, but because a 22px marker centred on image x 3.4 would
-hang half off the panel.
+percent from the measured box; `MapPage.vue` calls it on the art box, which carries the painting's
+own aspect (`.dm-mappage__art`), so the answer is the site's image percent unchanged. Since #635 a
+marker is centred on its site as it is: nothing holds it in by its own half-width any more.
 
 **The mine interior.** `interiorMap.ts` carries every workstation and corridor as percentages of
 the painting, because the interiors are a 1184 x 3622 tower. A box-percent point would sit on a
-different gallery at every column height. `sceneGeometry.projectToBox` converts; `MineScene.vue`
-and `sceneSizing.ts` call it. One thing more to know before touching a number:
+different gallery at every column height. Since #635 the mine column draws the painting in an art
+box of its own aspect (`.dm-minecol__art`), so `mineColumn.ts` stands each dwarf on its station's
+image percent unchanged, as the map does its sites; `sceneGeometry.projectToBox` is left for a box
+of any other shape. One thing more to know before touching a number:
 
 - **Distances are painting pixels, never percent** (`paintingDistance` in `interiorRoute.ts`).
   The art is three times taller than it is wide, so a percent of height is three times a percent

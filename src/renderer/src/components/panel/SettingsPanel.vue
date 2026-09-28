@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { motion } from 'motion-v'
+import { computed, nextTick, ref, useId, watch } from 'vue'
+import { formatAccelerator } from '../../../../shared/accelerator'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
@@ -12,98 +12,95 @@ import type {
   ShortcutState,
   TypographyPreferences
 } from '../../types'
-import { pressHoverVariants } from '../../lib/shell/presence'
+import {
+  SETTINGS_SECTIONS,
+  steppedSection,
+  type SettingsSection
+} from '../../lib/settings/sections'
+import type { DialogAction } from '../../lib/overlay/dialog'
+import ActionButton from '../controls/ActionButton.vue'
+import ToggleSwitch from '../controls/ToggleSwitch.vue'
+import ModalDialog from '../overlay/ModalDialog.vue'
+import PageHeader from '../shell/PageHeader.vue'
 import AudioSettings from './AudioSettings.vue'
 import DataBaseSection from './DataBaseSection.vue'
+import JevPrivacyNotice from './JevPrivacyNotice.vue'
 import JevSettings from './JevSettings.vue'
 import NotificationSettings from './NotificationSettings.vue'
 import OpenCodeSettings from './OpenCodeSettings.vue'
 import PositionSettings from './PositionSettings.vue'
-import ResetMetricsModal from './ResetMetricsModal.vue'
+import SettingsBanner from './SettingsBanner.vue'
+import SettingsRow from './SettingsRow.vue'
 import ShortcutSettings from './ShortcutSettings.vue'
 import TypographySettings from './TypographySettings.vue'
-import PanelTransition from '../shell/PanelTransition.vue'
 
 /**
- * The redesigned Settings screen (#138, screens/settings.md), replacing the
- * interim framed mount #142 left behind. Mounts inside PanelFrame's
- * 'settings' variant (the 4px cream border already lives there); this
- * component draws only what is specific to Settings — the "Settings" title
- * and its divider — then every section in the design's order: Panel
- * shortcut, Position, Data Base.
+ * The Settings page (#138, #635), `organisms/settings` in the design: the page header, then seven
+ * sections in place of one long scroll (screens/settings.md, W6) — a vertical tablist on the left,
+ * moved with ↑ and ↓, and the chosen section's rows on the right.
  *
- * Presentational, like every settings piece: every verdict arrives as a prop
- * and every intent leaves as an event, so App.vue keeps owning the IPC (the
- * shortcut, the panel layout, the pin, the reset) and the "render only what
- * main verified" rule stays in exactly one place. The one thing kept LOCAL
- * here is whether the reset modal is open — pure display state nothing
- * outside this screen ever needs to read.
+ * - General: the shortcut failure's banner when the panel shortcut did not register, then
+ *   Position, the Panel shortcut and Always on top. The design's "Mode at launch" row is not
+ *   drawn: the app has one mode until Veta and Valle land, and a choice of modes that do not exist
+ *   is a control that lies (PR5 question) — the nav's mode lever is hidden for the same reason.
+ * - Appearance: the Font style list and Custom's rows. Sound: music at startup and the three
+ *   volumes. Notifications: the one switch. Integrations: Jev, then OpenCode. Data: Reset
+ *   metrics…, in the danger zone, confirmed by typing "yes" in the dialog. About: the version and
+ *   Hide panel.
  *
- * The AUDIO section (#174) is a maintainer-specified extension of
- * `screens/settings.md`, which has none; it sits between Position and Data
- * Base, which is after everything the design draws and before the one
- * destructive action. NOTIFICATIONS (#316) is the second such extension and
- * lands in the same gap, immediately after Audio — the design source itself
- * names it as joining there. TYPOGRAPHY (#370) is the third, and the only one
- * whose place the source states outright: after Position and before Audio.
- * JEV (#509) is the fourth, and lands right after Notifications — the same
- * gap, one section further in. OPENCODE (#588 T6) is the fifth, right after
- * Jev, and the same UNSPECIFIED placement.
+ * A failed shortcut also puts a warning dot on the General tab. Every row's label, help and
+ * behaviour is the section component's own, copied from what it did before (handoff.md,
+ * Component mapping: "Re-frames; every label and help string stays the component's own").
  *
- * The "Application" section (pin, hide panel, version) is an UNSPECIFIED
- * placement decision (#138): the design draws no home for any of the three,
- * #142 parked them in the interim settings mount, and this slice gives them
- * the design's own control styling in a small grouped section rather than
- * leaving them as unstyled furniture.
+ * Presentational, like every settings piece: every verdict arrives as a prop and every intent
+ * leaves as an event, so App.vue keeps owning the IPC (the shortcut, the panel layout, the pin, the
+ * reset, every stored preference) and the "render only what main verified" rule stays in exactly
+ * one place. Kept LOCAL here: which section is shown, and whether the reset dialog is open —
+ * display state nothing outside this page ever needs to read.
  */
-defineProps<{
-  shortcutState: ShortcutState | null
-  shortcutError: string | null
-  shortcutRecording: boolean
-  shortcutApplying: boolean
-  edge: PanelEdge
-  /** True while a layout move (including a position change) is in flight. */
-  edgeApplying: boolean
-  pinned: boolean
-  pinTooltip: string
-  /** Null until main's build answer arrives, and null forever on failure — see App.vue. */
-  versionText: string | null
-  versionHint: string
-  /** True while main is processing a confirmed reset. */
-  resetting: boolean
-  /** Why the last reset attempt failed; null once nothing has gone wrong. */
-  resetError: string | null
-  /** What Settings' Audio section has stored (#174, #173) — main's verdict. */
-  audioSettings: AudioPreferences
-  /* --- System notifications (#316) — one block, appended ------------------- */
-  /** Whether the OS notification centre may be used — main's verdict, not a wish. */
-  notificationsEnabled: boolean
-  /* --- end of the #316 block ---------------------------------------------- */
-  /* --- Typography preferences (#370) — one block, appended ----------------- */
-  /** Which faces the interface and messaging are drawn in — main's verdict. */
-  typography: TypographyPreferences
-  /** True while a face change is in flight; locks the segments. */
-  typographyApplying: boolean
-  /* --- end of the #370 block ----------------------------------------------- */
-  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
-  /** Whether a TypeSafe key is configured, and why it might never be — main's verdict. */
-  jevSettings: JevSettingsType
-  /** True while a save or a clear this section asked for is in flight. */
-  jevSaving: boolean
-  /* --- end of the #509 block ------------------------------------------------ */
-  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
-  /** Every known provider's availability — for the default-launch picker. */
-  jevProviders: AgentProviderOption[]
-  /** What each provider can start on — for the default-launch model/effort pickers. */
-  jevCatalogs: AgentModelCatalog[]
-  /* --- end of the #509 follow-up block --------------------------------------- */
-  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
-  /** The relay consent and whether a server password is stored — main's verdict. */
-  openCodeSettings: OpenCodeSettingsType
-  /** True while a request the OpenCode section made is in flight. */
-  openCodeApplying: boolean
-  /* --- end of the #588 T6 block --------------------------------------------- */
-}>()
+const props = withDefaults(
+  defineProps<{
+    shortcutState: ShortcutState | null
+    shortcutError: string | null
+    shortcutRecording: boolean
+    shortcutApplying: boolean
+    edge: PanelEdge
+    /** True while a layout move (including a position change) is in flight. */
+    edgeApplying: boolean
+    pinned: boolean
+    pinTooltip: string
+    /** Null until main's build answer arrives, and null forever on failure — see App.vue. */
+    versionText: string | null
+    versionHint: string
+    /** True while main is processing a confirmed reset. */
+    resetting: boolean
+    /** Why the last reset attempt failed; null once nothing has gone wrong. */
+    resetError: string | null
+    /** What Settings' Sound section has stored (#174, #173) — main's verdict. */
+    audioSettings: AudioPreferences
+    /** Whether the OS notification centre may be used — main's verdict, not a wish. */
+    notificationsEnabled: boolean
+    /** The font style and its faces — main's verdict. */
+    typography: TypographyPreferences
+    /** True while a font change is in flight; locks the Appearance rows. */
+    typographyApplying: boolean
+    /** Whether a TypeSafe key is configured, and why it might never be — main's verdict. */
+    jevSettings: JevSettingsType
+    /** True while a save or a clear the Jev rows asked for is in flight. */
+    jevSaving: boolean
+    /** Every known provider's availability — for the default-launch picker. */
+    jevProviders: AgentProviderOption[]
+    /** What each provider can start on — for the default-launch model/effort pickers. */
+    jevCatalogs: AgentModelCatalog[]
+    /** The relay consent and whether a server password is stored — main's verdict. */
+    openCodeSettings: OpenCodeSettingsType
+    /** True while a request the OpenCode rows made is in flight. */
+    openCodeApplying: boolean
+    /** The section shown when the page opens; General unless a caller asks for another. */
+    section?: SettingsSection
+  }>(),
+  { section: 'General' }
+)
 
 const emit = defineEmits<{
   'start-recording': []
@@ -115,248 +112,307 @@ const emit = defineEmits<{
   'toggle-pin': []
   'hide-panel': []
   'reset-confirm': []
-  /** One field of the Audio settings should change (#174). */
+  /** One field of the Sound settings should change (#174). */
   'audio-change': [patch: Partial<AudioPreferences>]
-  /* --- System notifications (#316) — one block, appended ------------------- */
   /** The notifications switch should take this value (#316). */
   'notifications-change': [enabled: boolean]
-  /* --- end of the #316 block ---------------------------------------------- */
-  /* --- Typography preferences (#370) — one block, appended ----------------- */
-  /** One typography role should take a face (#370) — a patch, never the pair. */
-  'typography-change': [patch: Partial<TypographyPreferences>]
-  /* --- end of the #370 block ----------------------------------------------- */
-  /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
+  /** The font style should become this whole choice (#370, #635). */
+  'typography-change': [preferences: TypographyPreferences]
   /** Enter or replace the TypeSafe key with this one. */
   'jev-save': [key: string]
   /** Forget the stored key. */
   'jev-clear': []
-  /* --- end of the #509 block ------------------------------------------------ */
-  /* --- Jev routing profiles: profile and defaults (#509 follow-up) — one block, appended --- */
   /** The routing profile and/or the default launch should become this whole document. */
   'jev-preferences-change': [preferences: JevPreferences]
-  /* --- end of the #509 follow-up block --------------------------------------- */
-  /* --- OpenCode permission relay (#588 T6) — one block, appended ------------ */
   /** The OpenCode permission relay should take this state. */
   'opencode-plugin-change': [enabled: boolean]
   /** Store this OpenCode server password. */
   'opencode-password-save': [password: string]
   /** Forget the stored OpenCode server password. */
   'opencode-password-clear': []
-  /* --- end of the #588 T6 block --------------------------------------------- */
 }>()
 
-const resetModalOpen = ref(false)
+const shown = ref<SettingsSection>(props.section)
+// The recorder takes the focus when Settings opens on General, not when a keyboard user walks
+// back to General through the tabs: the tab keeps the focus the arrow gave it.
+const recorderFocus = ref(true)
+const tabIds = Object.fromEntries(SETTINGS_SECTIONS.map((s) => [s, useId()])) as Record<
+  SettingsSection,
+  string
+>
+const panelId = useId()
+const nav = ref<HTMLElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
+
+/** The shortcut the OS refused, as this keyboard names it; null while it works or is unread. */
+const brokenShortcut = computed(() =>
+  props.shortcutState !== null && !props.shortcutState.registered
+    ? formatAccelerator(props.shortcutState.accelerator, props.shortcutState.platform)
+    : null
+)
+
+function show(section: SettingsSection): void {
+  recorderFocus.value = false
+  shown.value = section
+  if (panel.value) panel.value.scrollTop = 0
+}
+
+async function step(event: KeyboardEvent): Promise<void> {
+  const next = steppedSection(shown.value, event.key)
+  if (next === undefined) return
+  event.preventDefault()
+  show(next)
+  await nextTick()
+  nav.value?.querySelector<HTMLElement>(`[data-s="${next}"]`)?.focus()
+}
+
+/* --- Reset metrics: the typed confirmation (molecules/dialog) ----------------------------------- */
+const resetOpen = ref(false)
+const resetActions = computed<DialogAction[]>(() => [
+  { label: 'Cancel' },
+  { label: 'Reset metrics', variant: 'danger', confirms: true, disabled: props.resetting }
+])
+
+function resetAction(index: number): void {
+  if (index === 1) emit('reset-confirm')
+  else resetOpen.value = false
+}
+
+// A reset that went through closes its dialog, as the design's confirmation does; one that did
+// not stays open with its reason, so the person can try again or cancel.
+watch(
+  () => props.resetting,
+  (resetting, was) => {
+    if (was && !resetting && props.resetError === null) resetOpen.value = false
+  }
+)
 </script>
 
 <template>
-  <div class="settings-panel">
-    <header class="settings-head">
-      <h1 class="settings-title">Settings</h1>
-      <div class="settings-divider" role="presentation"></div>
-    </header>
-
-    <!--
-      The sections are ruled into GROUPS (maintainer request, 2026-09-21).
-
-      Settings grew from the design's three sections to eight, each drawing
-      its own heading — `settings.md` records the growth itself, "previously
-      listed three sections and now lists four", then five. Eight headings in
-      one column with nothing between them stopped reading as a list.
-
-      A rule between groups, never between every section: the point is to say
-      which sections belong together, and a rule after each one says nothing.
-      The first group is the two the design source already names as a pair,
-      `Panel shortcut` and `Panel position`; the last keeps Data Base with
-      Application, which DataBaseSection's own comment already treats as one
-      bottom cluster.
-
-      No group headings. Every section draws its own name, and a heading over
-      them would print half of those names twice.
-    -->
-    <ShortcutSettings
-      :state="shortcutState"
-      :error="shortcutError"
-      :recording="shortcutRecording"
-      :applying="shortcutApplying"
-      @start-recording="emit('start-recording')"
-      @stop-recording="emit('stop-recording')"
-      @record="emit('record', $event)"
-      @reset="emit('reset-shortcut')"
-      @close="emit('close')"
-    />
-
-    <PositionSettings :edge="edge" :applying="edgeApplying" @select="emit('select-edge', $event)" />
-
-    <div class="group-divider" role="presentation"></div>
-
-    <TypographySettings
-      :preferences="typography"
-      :applying="typographyApplying"
-      @change="emit('typography-change', $event)"
-    />
-
-    <div class="group-divider" role="presentation"></div>
-
-    <AudioSettings :settings="audioSettings" @change="emit('audio-change', $event)" />
-
-    <div class="group-divider" role="presentation"></div>
-
-    <NotificationSettings
-      :enabled="notificationsEnabled"
-      @change="emit('notifications-change', $event)"
-    />
-
-    <div class="group-divider" role="presentation"></div>
-
-    <JevSettings
-      :settings="jevSettings"
-      :saving="jevSaving"
-      :providers="jevProviders"
-      :catalogs="jevCatalogs"
-      @save="emit('jev-save', $event)"
-      @clear="emit('jev-clear')"
-      @preferences-change="emit('jev-preferences-change', $event)"
-    />
-
-    <div class="group-divider" role="presentation"></div>
-
-    <OpenCodeSettings
-      :settings="openCodeSettings"
-      :applying="openCodeApplying"
-      @plugin-change="emit('opencode-plugin-change', $event)"
-      @password-save="emit('opencode-password-save', $event)"
-      @password-clear="emit('opencode-password-clear')"
-    />
-
-    <div class="group-divider" role="presentation"></div>
-
-    <DataBaseSection @open-reset="resetModalOpen = true" />
-
-    <section class="application-settings">
-      <span class="field-label">Application</span>
-      <div class="application-controls">
-        <motion.button
-          class="pin"
+  <section class="dm-settings" aria-label="Settings">
+    <PageHeader title="Settings" />
+    <div class="dm-settings__body">
+      <div
+        ref="nav"
+        class="dm-settings__nav"
+        role="tablist"
+        aria-orientation="vertical"
+        aria-label="Settings sections"
+        @keydown="step"
+      >
+        <button
+          v-for="tab in SETTINGS_SECTIONS"
+          :id="tabIds[tab]"
+          :key="tab"
+          class="dm-settings__tab"
           type="button"
-          aria-label="Keep panel on top"
-          :aria-pressed="pinned ? 'true' : 'false'"
-          :title="pinTooltip"
-          v-bind="pressHoverVariants"
-          @click="emit('toggle-pin')"
+          role="tab"
+          :data-s="tab"
+          :aria-selected="shown === tab ? 'true' : 'false'"
+          :aria-controls="panelId"
+          :tabindex="shown === tab ? 0 : -1"
+          @click="show(tab)"
         >
-          Always on top
-        </motion.button>
-        <motion.button
-          class="hide-panel"
-          type="button"
-          title="Hide the panel; the shortcut or the tray brings it back"
-          v-bind="pressHoverVariants"
-          @click="emit('hide-panel')"
-        >
-          Hide panel
-        </motion.button>
-        <span v-if="versionText" class="version" :title="versionHint">{{ versionText }}</span>
+          {{ tab
+          }}<span
+            v-if="tab === 'General' && brokenShortcut !== null"
+            class="dm-warn-dot"
+            aria-label="warning"
+          ></span>
+        </button>
       </div>
-    </section>
+      <div
+        :id="panelId"
+        ref="panel"
+        class="dm-settings__panel"
+        role="tabpanel"
+        :aria-labelledby="tabIds[shown]"
+      >
+        <h2 class="dm-settings__h">{{ shown }}</h2>
 
-    <PanelTransition axis="vertical">
-      <ResetMetricsModal
-        v-if="resetModalOpen"
-        :confirming="resetting"
-        :error="resetError"
-        @confirm="emit('reset-confirm')"
-        @close="resetModalOpen = false"
-      />
-    </PanelTransition>
-  </div>
+        <template v-if="shown === 'General'">
+          <SettingsBanner
+            v-if="brokenShortcut !== null"
+            :text="brokenShortcut + ' is already in use by another application.'"
+          />
+          <PositionSettings
+            :edge="edge"
+            :applying="edgeApplying"
+            @select="emit('select-edge', $event)"
+          />
+          <ShortcutSettings
+            :state="shortcutState"
+            :error="shortcutError"
+            :recording="shortcutRecording"
+            :applying="shortcutApplying"
+            :autofocus="recorderFocus"
+            @start-recording="emit('start-recording')"
+            @stop-recording="emit('stop-recording')"
+            @record="emit('record', $event)"
+            @reset="emit('reset-shortcut')"
+            @close="emit('close')"
+          />
+          <SettingsRow
+            label="Always on top"
+            help="Pinned: the panel stays above other windows. Unpinned: other windows can cover the panel."
+          >
+            <ToggleSwitch
+              class="pin"
+              label="Always on top"
+              held
+              :on="pinned"
+              :title="pinTooltip"
+              @update:on="emit('toggle-pin')"
+            />
+          </SettingsRow>
+        </template>
+
+        <TypographySettings
+          v-else-if="shown === 'Appearance'"
+          :preferences="typography"
+          :applying="typographyApplying"
+          @change="emit('typography-change', $event)"
+        />
+
+        <AudioSettings
+          v-else-if="shown === 'Sound'"
+          :settings="audioSettings"
+          @change="emit('audio-change', $event)"
+        />
+
+        <NotificationSettings
+          v-else-if="shown === 'Notifications'"
+          :enabled="notificationsEnabled"
+          @change="emit('notifications-change', $event)"
+        />
+
+        <template v-else-if="shown === 'Integrations'">
+          <JevSettings
+            :settings="jevSettings"
+            :saving="jevSaving"
+            :providers="jevProviders"
+            :catalogs="jevCatalogs"
+            @save="emit('jev-save', $event)"
+            @clear="emit('jev-clear')"
+            @preferences-change="emit('jev-preferences-change', $event)"
+          />
+          <OpenCodeSettings
+            :settings="openCodeSettings"
+            :applying="openCodeApplying"
+            @plugin-change="emit('opencode-plugin-change', $event)"
+            @password-save="emit('opencode-password-save', $event)"
+            @password-clear="emit('opencode-password-clear')"
+          />
+          <JevPrivacyNotice />
+        </template>
+
+        <DataBaseSection v-else-if="shown === 'Data'" @open-reset="resetOpen = true" />
+
+        <div v-else class="dm-settings__about">
+          <p v-if="versionText" class="version" :title="versionHint">
+            <b>DwarfAI-Miners</b> · version <b>{{ versionText }}</b>
+          </p>
+          <div>
+            <ActionButton
+              class="hide-panel"
+              label="Hide panel"
+              title="Hide the panel; the shortcut or the tray brings it back"
+              @click="emit('hide-panel')"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ModalDialog
+      :open="resetOpen"
+      title="Reset metrics"
+      danger
+      typed="yes"
+      :actions="resetActions"
+      @action="resetAction"
+      @cancel="resetOpen = false"
+    >
+      <p>Are you sure you want to delete your data? Type "yes" to confirm.</p>
+      <p v-if="resetError" role="alert">{{ resetError }}</p>
+    </ModalDialog>
+  </section>
 </template>
 
 <style scoped>
-/* screens/settings.md's Panel frame: center content alignment; the 4px
-   border/radius/margin/background live on PanelFrame's 'settings' variant,
-   this only draws what is unique to the Settings screen itself. */
-.settings-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-settings);
+/* The design's settings.css, rule for rule. */
+.dm-settings {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 4px;
   height: 100%;
-  padding: var(--space-settings);
-  overflow: auto;
-  font-family: var(--font-pixel);
+  min-height: 0;
 }
-.settings-head {
-  display: flex;
-  flex-direction: column;
+.dm-settings__body {
+  display: grid;
+  grid-template-columns: 124px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+}
+.dm-settings__nav {
+  display: grid;
+  align-content: start;
   gap: 6px;
+  padding: 2px;
 }
-.settings-title {
-  margin: 0;
-  color: var(--color-accent);
-  font: inherit;
-  font-size: var(--text-title);
-  text-align: start;
-}
-.settings-divider {
-  height: 2px;
-  background: var(--color-accent);
-}
-/*
- * The rule between groups. Deliberately 1px where the title's is 2px: the
- * heavier line belongs to the panel's own name, and a group boundary that
- * matched it would flatten the two into one level. The design source draws no
- * grouping at all — `screens/settings.md` has grown by maintainer amendment
- * three times without one — so the weight is ours, recorded here the way
- * `--size-scrollbar-width` and `--elevation-5` record theirs.
- */
-.group-divider {
-  flex: none;
-  height: 1px;
-  background: var(--color-accent);
-}
-.application-settings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-settings);
-  /* The design draws nothing here (#142's unspecified placement). No auto
-     margin of its own: DataBaseSection's already carries the bottom cluster
-     down (see its own comment), and this simply follows it in flow, reading
-     as furniture below the one destructive action rather than a fourth
-     designed section. */
-}
-.field-label {
-  padding-top: var(--space-settings);
-  color: var(--color-cream);
-  font-size: var(--text-section);
-}
-.application-controls {
+.dm-settings__tab {
   display: flex;
   align-items: center;
-  gap: var(--space-settings);
+  gap: 6px;
+  min-height: var(--hit-tool);
+  padding: 0 8px;
+  font: 400 var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-soft);
+  text-align: left;
+  background: var(--wood-lo);
+  box-shadow: inset 2px 0 0 0 var(--wood);
 }
-.pin,
-.hide-panel {
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-control);
-  font: inherit;
-  font-size: var(--text-meta);
-  cursor: pointer;
+.dm-settings__tab:hover {
+  color: var(--ink);
+  box-shadow: inset 2px 0 0 0 var(--brass-lo);
+  background: var(--wood);
 }
-.pin[aria-pressed='false'] {
-  border: 2px solid var(--color-control-idle);
-  color: var(--color-control-idle);
-  background: var(--color-panel-deep);
+.dm-settings__tab[aria-selected='true'] {
+  color: var(--ink-on-light);
+  background: var(--gold);
+  box-shadow:
+    inset 2px 2px 0 0 var(--gold-hi),
+    inset -2px -2px 0 0 var(--gold-lo);
 }
-.pin:focus-visible,
-.hide-panel:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
+.dm-settings__tab .dm-warn-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--rock-lo);
 }
-.version {
-  color: var(--color-accent);
-  font-size: var(--text-meta);
+.dm-settings__panel {
+  overflow-y: auto;
+  padding: 4px 8px 12px 10px;
+  background: var(--wood);
+  box-shadow:
+    inset 2px 2px 0 0 var(--wood-hi),
+    inset -2px -2px 0 0 var(--wood-lo);
+}
+.dm-settings__h {
+  font: 400 var(--fs-title) / 1 var(--f-display);
+  color: var(--gold);
+  padding: 10px 2px 6px;
+}
+.dm-settings__about {
+  display: grid;
+  gap: 10px;
+  padding: 8px 2px;
+  font: 400 var(--fs-body) / 1.35 var(--f-meta);
+  color: var(--ink-soft);
+}
+.dm-settings__about b {
+  color: var(--parchment);
+  font-weight: 400;
 }
 </style>

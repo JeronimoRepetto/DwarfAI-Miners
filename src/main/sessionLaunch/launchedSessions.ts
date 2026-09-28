@@ -212,6 +212,14 @@ interface LaunchRecord {
    */
   lastTurn?: TurnOutcome
   /**
+   * True from the moment this panel asks to end the process until the end
+   * is refused (#635, PANEL-QUESTIONS Q24). The ending that follows is the
+   * user's own Kick, so `lastTurn` is stamped `cancelledFromApp` — see
+   * TurnOutcome. Set before the signal goes, because the process can report
+   * its outcome before `endProcessTree` resolves.
+   */
+  endRequested?: boolean
+  /**
    * Whether a Jev decision routed this launch (#511), carried past the
    * process's own exit AND a restart — unlike `tuning` above, this one has a
    * real store column (appDatabase.ts's v6 migration), so a RESTORED record
@@ -326,7 +334,11 @@ export class LaunchedSessionRegistry {
     // #510. Latched onto the record in memory only — see `LaunchRecord.lastTurn`
     // on why this never reaches the store.
     request.process.onTurnOutcome?.((outcome) => {
-      record.lastTurn = outcome
+      // AMENDED for #635 (PANEL-QUESTIONS Q24): the board's copy says when the
+      // ending was this panel's own Kick. The delegation service keeps the
+      // provider's reading unmarked, since what it reports is the turn.
+      record.lastTurn =
+        record.endRequested === true ? { ...outcome, cancelledFromApp: true } : outcome
       concludeOnce(outcome)
     })
     return launchId
@@ -616,8 +628,12 @@ export class LaunchedSessionRegistry {
       this.log(`[launched] ${launchId} is gone; its pid ${record.pid} is not that process`)
       return 'already-ended'
     }
+    record.endRequested = true
     const ended = await this.endProcessTree(record.pid)
-    if (!ended) return 'refused'
+    if (!ended) {
+      record.endRequested = false
+      return 'refused'
+    }
     record.gone = true
     this.forget(launchId)
     this.log(`[launched] ${launchId} ended`)

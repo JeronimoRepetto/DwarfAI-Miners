@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
 import type { LaunchTuning } from '../domain/launchTuning'
-import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
-import type { CliDetection, CliDetector } from '../platform/cliDetection'
+import { MAX_DWARF_TEXT_CHARS, type CodexPermissionMode, type DwarfProvider } from '../domain/types'
+import { createCliDetector, type CliDetection, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
 import {
@@ -140,6 +140,8 @@ function launch(options: {
   delegation?: DelegationInjectionContext
   /** #511 T4: the `--mcp-config` temp-file port; defaults to a deterministic in-memory fake. */
   delegationConfigFile?: DelegationConfigFile
+  /** #635: the Codex permission mode the Add panel picked; spread only when given. */
+  codexPermissionMode?: CodexPermissionMode
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -158,7 +160,10 @@ function launch(options: {
       ...(options.delegationConfigFile === undefined
         ? {}
         : { delegationConfigFile: options.delegationConfigFile }),
-      ...(options.tuning === undefined ? {} : options.tuning)
+      ...(options.tuning === undefined ? {} : options.tuning),
+      ...(options.codexPermissionMode === undefined
+        ? {}
+        : { codexPermissionMode: options.codexPermissionMode })
     })
   }
 }
@@ -282,6 +287,8 @@ describe('launchClaudeSession', () => {
     expect(invocation.stdin).toBe('dig')
   })
 
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact verdict
+  // without `cause`). Every failure to start now names its cause as a field.
   it('gives "not installed" its own reason, carrying what detection said', async () => {
     const { run, result } = launch({
       cli: detector({ cli: 'claude', installed: false, reason: 'claude not found on PATH' })
@@ -290,7 +297,8 @@ describe('launchClaudeSession', () => {
     await expect(result).resolves.toEqual({
       launched: false,
       provider: 'claude',
-      error: 'Claude Code is not installed on this machine. claude not found on PATH'
+      error: 'Claude Code is not installed on this machine. claude not found on PATH',
+      cause: 'not-installed'
     })
     expect(run).not.toHaveBeenCalled()
   })
@@ -306,6 +314,8 @@ describe('launchClaudeSession', () => {
   // than a silent no-op', asserting the fixed sentence
   // 'Claude Code could not be started.' with no path or cause). Explicit
   // platform: a spawn failure is not a Windows-only shape.
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact verdict
+  // without `cause`).
   it('names the path tried and the spawn error on Linux, rather than a fixed sentence', async () => {
     const { result } = launch({
       platform: 'linux',
@@ -315,13 +325,16 @@ describe('launchClaudeSession', () => {
     await expect(result).resolves.toEqual({
       launched: false,
       provider: 'claude',
-      error: `Claude Code could not be started: ${CLAUDE_PATH} — ENOENT.`
+      error: `Claude Code could not be started: ${CLAUDE_PATH} — ENOENT.`,
+      cause: 'could-not-start'
     })
   })
 
   // NEW for #502: the same refusal shape on macOS, with the OS's own errno
   // code as the cause — a real spawn error carries `code`, unlike the plain
   // `Error('ENOENT')` the Linux test above uses to pin the message text.
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact verdict
+  // without `cause`).
   it('names the path tried and the spawn error on macOS', async () => {
     const spawnError = Object.assign(new Error('spawn /home/j/.local/bin/claude EACCES'), {
       code: 'EACCES'
@@ -334,7 +347,8 @@ describe('launchClaudeSession', () => {
     await expect(result).resolves.toEqual({
       launched: false,
       provider: 'claude',
-      error: `Claude Code could not be started: ${CLAUDE_PATH} — EACCES.`
+      error: `Claude Code could not be started: ${CLAUDE_PATH} — EACCES.`,
+      cause: 'could-not-start'
     })
   })
 
@@ -537,6 +551,8 @@ describe('launching Codex', () => {
   // names nothing it can run', asserting the fixed sentence
   // 'Codex CLI could not be started.' and a comment claiming "never a path on
   // the wire" — that claim is exactly what #502 asked to stop being true).
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact verdict
+  // without `cause`).
   it('names the shim path and that its dialect was not understood', async () => {
     // A third shim dialect, or a hand-written wrapper: an honest failure that
     // names the path it tried and why, never a guess at an entry.
@@ -552,7 +568,8 @@ describe('launching Codex', () => {
     await expect(result).resolves.toEqual({
       launched: false,
       provider: 'codex',
-      error: `Codex CLI could not be started: ${NPM_SHIM} — the shim was found but its dialect was not understood.`
+      error: `Codex CLI could not be started: ${NPM_SHIM} — the shim was found but its dialect was not understood.`,
+      cause: 'could-not-start'
     })
     expect(run).not.toHaveBeenCalled()
   })
@@ -2340,5 +2357,202 @@ describe('a detached launch that names a model and an effort (#239)', () => {
     // request back would be a claim dressed as an observation.
     const { result } = launch({ provider: 'claude', tuning: { model: 'sonnet', effort: 'low' } })
     await expect(result).resolves.toEqual({ launched: true, provider: 'claude' })
+  })
+})
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, questions 14/16/17). The Add panel's
+ * launch-failure notice names a CAUSE, and it may not read one out of the
+ * prose above: the sentences are for people and change with them. So every
+ * failure this runner can report also carries a machine-readable `cause`.
+ *
+ * The classification is by WHICH STEP failed, never by errno, and that is
+ * what keeps it identical on every OS: detection finding nothing is "not
+ * installed" everywhere; something found that will not start — a refused shim
+ * or any spawn error, whatever code the platform attached — is "could not
+ * start" everywhere. The one per-OS difference (only Windows has batch shims
+ * for detection to refuse) stops inside cliDetection.ts, the port.
+ */
+describe('the cause a failed detached launch names (#635)', () => {
+  const HOMES: Record<Platform, string> = {
+    win32: 'C:\\Users\\j',
+    darwin: '/Users/j',
+    linux: '/home/j'
+  }
+  const PLATFORMS: Platform[] = ['win32', 'darwin', 'linux']
+
+  it.each(PLATFORMS)('says not-installed when detection finds nothing on %s', async (platform) => {
+    const cli = createCliDetector({ home: HOMES[platform], platform, fs: new FakeFs(), env: {} })
+    const { run, result } = launch({ provider: 'codex', platform, cli })
+
+    await expect(result).resolves.toMatchObject({
+      launched: false,
+      provider: 'codex',
+      cause: 'not-installed'
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it.each(PLATFORMS)(
+    'says not-installed for a configured path that is not there, on %s',
+    async (platform) => {
+      const cli = createCliDetector({
+        home: HOMES[platform],
+        platform,
+        fs: new FakeFs(),
+        env: {},
+        overrides: { claude: platform === 'win32' ? 'C:\\tools\\claude.exe' : '/opt/claude' }
+      })
+      const { result } = launch({ platform, cli })
+
+      await expect(result).resolves.toMatchObject({ launched: false, cause: 'not-installed' })
+    }
+  )
+
+  it.each(
+    PLATFORMS.flatMap((platform) =>
+      ['ENOENT', 'EACCES', 'EPERM', 'UNKNOWN'].map((code) => [platform, code] as const)
+    )
+  )('says could-not-start for a spawn error on %s (%s)', async (platform, code) => {
+    const spawnError = Object.assign(new Error(`spawn ${CLAUDE_PATH} ${code}`), { code })
+    const { result } = launch({ platform, run: vi.fn().mockRejectedValue(spawnError) })
+
+    await expect(result).resolves.toMatchObject({
+      launched: false,
+      provider: 'claude',
+      cause: 'could-not-start'
+    })
+  })
+
+  it.each(PLATFORMS)(
+    'says could-not-start for a configured shim it cannot read, on %s',
+    async (platform) => {
+      // An override is honoured on existence alone (cliDetection.ts), so the
+      // refusal reaches the launch — the same step on every OS.
+      const shim = platform === 'win32' ? 'C:\\tools\\codex.cmd' : '/opt/tools/codex.cmd'
+      const fs = new FakeFs()
+      fs.addFile(shim, '@echo off\r\nrem nothing to run here\r\n')
+      const cli = createCliDetector({
+        home: HOMES[platform],
+        platform,
+        fs,
+        env: {},
+        overrides: { codex: shim }
+      })
+      const { run, result } = launch({ provider: 'codex', platform, cli, fs })
+
+      await expect(result).resolves.toMatchObject({
+        launched: false,
+        provider: 'codex',
+        cause: 'could-not-start'
+      })
+      expect(run).not.toHaveBeenCalled()
+    }
+  )
+
+  /*
+   * Present but unrunnable is not absent (#544): a PATH walk that found only
+   * shims it cannot read reports `installed: false`, yet the person HAS the
+   * CLI, so "not installed" would send them to install what they already
+   * have. Windows-only by nature — a batch shim is a Windows artefact — which
+   * is exactly why the fact is carried out of the port as a field rather
+   * than decided here from the platform.
+   */
+  it('says could-not-start when detection found only a shim it cannot run (Windows)', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\codex.cmd', '@echo off\r\nrem nothing to run here\r\n')
+    const cli = createCliDetector({
+      home: HOMES.win32,
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin' }
+    })
+    const { run, result } = launch({ provider: 'codex', platform: 'win32', cli, fs })
+
+    await expect(result).resolves.toMatchObject({
+      launched: false,
+      provider: 'codex',
+      cause: 'could-not-start'
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('names no cause for a refusal that is not a failure to start', async () => {
+    const verdict = await launch({ prompt: '   ' }).result
+    expect(verdict.launched).toBe(false)
+    expect(verdict).not.toHaveProperty('cause')
+  })
+
+  it('names no cause for a launch that started', async () => {
+    const verdict = await launch({}).result
+    expect(verdict).not.toHaveProperty('cause')
+  })
+})
+
+/*
+ * #635 (PO decision 2026-09-28). The permission mode the Add panel picked for
+ * Codex reaches its argv on every OS as the same two words: they are Codex's
+ * own CLI flags, so nothing about them is per platform. What IS per platform
+ * is how the program is reached — a Windows npm shim runs `node <entry>` — and
+ * the mode belongs to the CLI's argv, so it lands after that entry.
+ */
+describe('a detached Codex launch that names a permission mode (#635)', () => {
+  const POSIX: readonly Platform[] = ['linux', 'darwin']
+
+  for (const platform of POSIX) {
+    it(`carries read-only as --sandbox read-only on ${platform}`, async () => {
+      const { run, result } = launch({
+        provider: 'codex',
+        platform,
+        cli: installedCodex(),
+        codexPermissionMode: 'read-only'
+      })
+      await result
+      expect(argvOf(run)).toEqual(['exec', '--sandbox', 'read-only', '-o', CODEX_OUTPUT_PATH, '-'])
+    })
+  }
+
+  it('carries workspace-write behind the npm shim’s node entry on win32', async () => {
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs,
+      tuning: { model: 'gpt-5.6-luna' },
+      codexPermissionMode: 'workspace-write'
+    })
+    await result
+    expect(argvOf(run)).toEqual([
+      NPM_ENTRY,
+      'exec',
+      '-m',
+      'gpt-5.6-luna',
+      '--sandbox',
+      'workspace-write',
+      '-o',
+      CODEX_OUTPUT_PATH,
+      '-'
+    ])
+  })
+
+  for (const platform of ['linux', 'darwin', 'win32'] as const) {
+    it(`adds nothing for the default mode on ${platform}, the launch it always was`, async () => {
+      const { run, result } = launch({
+        provider: 'codex',
+        platform,
+        cli: installedCodex(),
+        codexPermissionMode: 'default'
+      })
+      await result
+      expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
+    })
+  }
+
+  it('never hands another provider a Codex sandbox flag', async () => {
+    const { run, result } = launch({ provider: 'claude', codexPermissionMode: 'read-only' })
+    await result
+    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
   })
 })

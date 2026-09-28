@@ -15,20 +15,26 @@ import {
   composerEnabled,
   composerPlaceholder,
   detachedTimedOut,
+  heldStarted,
   jevAnswered,
   jevAsked,
+  jevLaunchedNothing,
   JEV_NO_CHOICE_REFUSAL,
   launchCommand,
   launchFailed,
+  launchCodexPermissionMode,
   launchPermissionMode,
   launchPhase,
   launchPrompt,
   launchTuning,
   openLaunch,
+  pickManually as pickManuallyInstead,
+  retryLaunch,
   routedByJev,
   setJevSettings,
   shouldAskJev,
   startedDetached,
+  submitFailed,
   submitRefused,
   submitStarted,
   toggleJev,
@@ -38,6 +44,7 @@ import {
   OTHER_CHOICE,
   type JevState,
   type LaunchChoice,
+  type LaunchPermissionMode,
   type LaunchPhase,
   type LaunchState
 } from '../lib/launch/launchState'
@@ -53,10 +60,10 @@ import { DEFAULT_JEV_SETTINGS, HELDABLE_PROVIDERS } from '../types'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
-  HeldPermissionMode,
   JevRouteLaunchResult,
   JevSettings,
   LaunchFailedPush,
+  LaunchFailureCause,
   Mine
 } from '../types'
 
@@ -153,7 +160,7 @@ export interface AgentLaunch {
   /** Pick a model off the row under the composer. */
   setModel: (value: string) => void
   setEffort: (value: string) => void
-  setPermissionMode: (value: HeldPermissionMode) => void
+  setPermissionMode: (value: LaunchPermissionMode) => void
   /** The person's own Jev toggle (#509) — a no-op outside `ready`. */
   toggleJevEnabled: () => void
   /** The #523 checkbox beside it — same guard, same no-op, same session. */
@@ -161,13 +168,19 @@ export interface AgentLaunch {
   /** Dismiss the decision card, restoring the pickers it overwrote (#509). */
   dismissJevDecision: () => void
   submit: () => Promise<void>
+  /**
+   * The launch-failure notice's Retry (#635): the same launch, sent again, once per press —
+   * nothing retries on its own. After a Jev cause that means asking Jev again.
+   */
+  retry: () => Promise<void>
+  /** The notice's Pick manually (#635): Let Jev choose off, so the pickers choose. */
+  pickManually: () => void
   observe: (mines: readonly Mine[]) => void
   /**
    * Subscribe to main's launch-failure push (#263). Returns the unsubscribe,
-   * exactly like every other `window.api.on*` member — the caller (the
-   * message-panel window, which owns this composable's lifetime) holds it
-   * and calls it on unmount, the same pattern `useDwarfDelivery.listen()`
-   * already uses.
+   * exactly like every other `window.api.on*` member — the caller
+   * (useMessageDock, which the shell holds for its lifetime) holds it and
+   * calls it on unmount.
    */
   listenFailures: () => () => void
 }
@@ -268,7 +281,7 @@ export function useAgentLaunch(): AgentLaunch {
     state.value = chooseEffort(state.value, value)
   }
 
-  function setPermissionMode(value: HeldPermissionMode): void {
+  function setPermissionMode(value: LaunchPermissionMode): void {
     state.value = choosePermissionMode(state.value, value)
   }
 
@@ -285,6 +298,18 @@ export function useAgentLaunch(): AgentLaunch {
 
   function dismissJevDecision(): void {
     state.value = clearJevDecision(state.value)
+  }
+
+  /**
+   * A launch main did not start: the notice when main named its cause (#635), main's own words —
+   * or the panel's fallback sentence — when it named none, which a refusal, the demo and an
+   * unclassified throw all do.
+   */
+  function notLaunched(verdict: { error?: string; cause?: LaunchFailureCause }): void {
+    state.value =
+      verdict.cause === undefined
+        ? submitRefused(state.value, verdict.error ?? NOT_LAUNCHED)
+        : submitFailed(state.value, verdict.cause)
   }
 
   /**
@@ -381,9 +406,13 @@ export function useAgentLaunch(): AgentLaunch {
       // already been answered by it; everything else that lands here — today,
       // the answer that arrived after the prompt moved on — gets the honest
       // refusal, prompt intact, manual path still open.
-      if (state.value.jev.routing.phase !== 'fellBack') {
-        state.value = submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
-      }
+      // AMENDED for #635 (MESSAGE-QUESTIONS 14/17; was: the fallback's own line and nothing else):
+      // Jev fell back and nothing went out, which is the one case its causes are a failed launch,
+      // so the launch-failure notice names which of the two it was.
+      state.value =
+        state.value.jev.routing.phase === 'fellBack'
+          ? jevLaunchedNothing(state.value)
+          : submitRefused(state.value, JEV_NO_CHOICE_REFUSAL)
       return
     }
     const prompt = launchPrompt(state.value)
@@ -402,9 +431,7 @@ export function useAgentLaunch(): AgentLaunch {
         // No `startedDetached` branch, because this panel IS holding that
         // process: its dwarf arrives carrying the prompt sent here, which is
         // the same receipt `observe` already recognises for a held session.
-        if (!hostedResult.launched) {
-          state.value = submitRefused(state.value, hostedResult.error ?? NOT_LAUNCHED)
-        }
+        if (!hostedResult.launched) notLaunched(hostedResult)
         return
       }
 
@@ -429,21 +456,31 @@ export function useAgentLaunch(): AgentLaunch {
         // held launch's dwarf arrives carrying the prompt this panel sent,
         // seeded into its conversation by main, so it needs nothing else here.
         if (!heldResult.launched) {
-          state.value = submitRefused(state.value, heldResult.error ?? NOT_LAUNCHED)
+          notLaunched(heldResult)
+          return
+        }
+        // #635 (MESSAGE-QUESTIONS 16): a held session that stops as soon as it started is told on
+        // the failure push, correlated by this id — kept apart from the board receipt, see
+        // `heldStarted`.
+        if (heldResult.launchId !== undefined) {
+          state.value = heldStarted(state.value, heldResult.launchId)
         }
         return
       }
 
+      const codexPermissionMode = launchCodexPermissionMode(state.value)
       const result = await window.api.launchAgent({
         mineId: mineId.value,
         provider: choice,
         prompt,
         ...launchTuning(state.value),
+        // #635: Codex's own permission mode, when one was picked; main turns it into `--sandbox`.
+        ...(codexPermissionMode === undefined ? {} : { permissionMode: codexPermissionMode }),
         // Same rule and same reason as the held channel's own (#511).
         ...(routedByJev(state.value) ? { routedByJev: true } : {})
       })
       if (!result.launched) {
-        state.value = submitRefused(state.value, result.error ?? NOT_LAUNCHED)
+        notLaunched(result)
         return
       }
       // A detached session carries no conversation at all — that belongs to a
@@ -466,6 +503,16 @@ export function useAgentLaunch(): AgentLaunch {
     } catch {
       state.value = submitRefused(state.value, LOST_BRIDGE)
     }
+  }
+
+  async function retry(): Promise<void> {
+    if (state.value.failure === null) return
+    state.value = retryLaunch(state.value)
+    await submit()
+  }
+
+  function pickManually(): void {
+    state.value = pickManuallyInstead(state.value)
   }
 
   /**
@@ -491,8 +538,8 @@ export function useAgentLaunch(): AgentLaunch {
   }
 
   /**
-   * Main's launch-failure push (#263), subscribed exactly like
-   * `useDwarfDelivery.listen()` subscribes `onDwarfDeliveryReport`. Applies
+   * Main's launch-failure push (#263), subscribed like every other
+   * `window.api.on*` member, returning the unsubscribe. Applies
    * `launchFailed` unconditionally — its own launchId/launchedDwarfId guard
    * is what keeps a push for a closed, retried or already-adopted launch
    * from touching this panel, so nothing here has to re-check what state
@@ -530,6 +577,8 @@ export function useAgentLaunch(): AgentLaunch {
     toggleJevAutoAccept: toggleJevAutoAcceptChoice,
     dismissJevDecision,
     submit,
+    retry,
+    pickManually,
     observe,
     listenFailures
   }

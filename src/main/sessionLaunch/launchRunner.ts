@@ -8,10 +8,16 @@ import {
   LAUNCHABLE_PROVIDERS,
   NOT_LAUNCHABLE,
   PRODUCT_NAME,
+  detectionFailureCause,
   notInstalledReason
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
-import type { AgentLaunchResult, DwarfProvider, TurnOutcome } from '../domain/types'
+import type {
+  AgentLaunchResult,
+  CodexPermissionMode,
+  DwarfProvider,
+  TurnOutcome
+} from '../domain/types'
 import {
   describeProgramFailure,
   describeShimRefusal,
@@ -583,6 +589,8 @@ export type SessionLauncher = (
      * sees it.
      */
     delegation?: DelegationInjectionContext
+    /** Codex's own permission mode (#635) — see `ClaudeLaunchOptions.codexPermissionMode`. */
+    codexPermissionMode?: CodexPermissionMode
   } & LaunchTuning
 ) => Promise<SessionLaunchOutcome>
 
@@ -943,6 +951,12 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
    */
   codexOutputPath?: () => string
   /**
+   * The permission mode a Codex launch asked for (#635), already checked at
+   * the IPC boundary — read only for `codex`, whose `--sandbox` it becomes
+   * (`codexPermissionArgs`); every other provider's builder never sees it.
+   */
+  codexPermissionMode?: CodexPermissionMode
+  /**
    * The MCP delegation server this launch's own gate check
    * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
    * absent when it declined (#511 T4) — read only for `claude` (a temp
@@ -1083,7 +1097,8 @@ export async function launchClaudeSession(
     return {
       launched: false,
       provider: options.provider,
-      error: detection.reason === undefined ? reason : `${reason} ${detection.reason}`
+      error: detection.reason === undefined ? reason : `${reason} ${detection.reason}`,
+      cause: detectionFailureCause(detection)
     }
   }
 
@@ -1095,7 +1110,8 @@ export async function launchClaudeSession(
       return {
         launched: false,
         provider: options.provider,
-        error: couldNotStart(options.provider, program.shimPath, describeShimRefusal(program))
+        error: couldNotStart(options.provider, program.shimPath, describeShimRefusal(program)),
+        cause: 'could-not-start'
       }
     }
     // #510. Only Codex has a `-o` flag; every other provider's builder
@@ -1144,7 +1160,8 @@ export async function launchClaudeSession(
             ...(options.effort === undefined ? {} : { effort: options.effort })
           },
           codexOutputPath,
-          injection.codexDelegationArgs
+          injection.codexDelegationArgs,
+          options.provider === 'codex' ? options.codexPermissionMode : undefined
         ),
         ...injection.extraArgs
       ],
@@ -1176,10 +1193,15 @@ export async function launchClaudeSession(
       ...(started === undefined ? {} : { retained: started })
     }
   } catch (error) {
+    // `could-not-start` whatever the errno (#635): ENOENT here means the file
+    // detection just found is gone, not that the CLI was never installed, and
+    // classifying by step rather than by code is what keeps the answer the
+    // same on every OS, which attach different codes to the same refusal.
     return {
       launched: false,
       provider: options.provider,
-      error: couldNotStart(options.provider, detection.path, describeProgramFailure(error))
+      error: couldNotStart(options.provider, detection.path, describeProgramFailure(error)),
+      cause: 'could-not-start'
     }
   }
 }

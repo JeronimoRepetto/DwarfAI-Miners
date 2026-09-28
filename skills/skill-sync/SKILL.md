@@ -3,7 +3,7 @@ name: skill-sync
 description: >
   Regenerating AGENTS.md's three generated regions — the skill catalogue, the auto-invoke table, and the main/ tree bullet.
   Trigger: after adding, renaming, retiring or re-scoping any skill, after adding or removing a directory under src/main, or when a generated region in AGENTS.md looks stale.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

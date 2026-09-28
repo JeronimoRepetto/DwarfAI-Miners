@@ -2,37 +2,19 @@
  * What one row of a project browse says on a card, and what it refuses to say
  * (#92).
  *
+ * AMENDED for #635 (PR2): the redesigned card is built in mineCard.ts, on top of the three facts
+ * kept here (the tier a card may state, whether it is being measured, its way to the next tier).
+ * The helpers only the retired card and panel read went with them: browseTierLabel (the redesign's
+ * tier words are presentation.ts's designTierLabel), TIER_CHIPS (the page's chips), cardTierLabel
+ * and cardArtFor (the card draws its tier and mound from mineCardView), activeAgentsFor and
+ * cardStatusFor (the crew line of pills, crewPills in mineCard.ts).
+ *
  * The refusals are the point: a browse spans projects nobody has walked and
  * projects nobody is working, and a card that filled either gap with a
  * plausible value would be inventing history.
  */
-import type { Mine, MineTier, ProjectSummary } from '../../types'
-import { MINE_TIERS, TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
-import { MOUND_SRC } from '../art'
-import { designTierLabel } from '../presentation'
-
-/**
- * The tier names the redesign puts on screen.
- *
- * The table itself moved to `presentation.ts` as `designTierLabel` when the
- * rebuilt map needed the same spelling for its tooltip (#136) — one home for
- * the design's tier copy, rather than a browse module the map would have had to
- * reach across families into. The name stays here because the browse surface is
- * where it is read.
- */
-export const browseTierLabel = designTierLabel
-
-/** One chip of the type filter row; `tier: null` is All, which filters nothing. */
-export interface TierChip {
-  tier: MineTier | null
-  label: string
-}
-
-/** All first, then every tier poorest first — the canonical progression. */
-export const TIER_CHIPS: readonly TierChip[] = [
-  { tier: null, label: 'All' },
-  ...MINE_TIERS.map((tier) => ({ tier, label: browseTierLabel(tier) }))
-]
+import type { MineTier, ProjectSummary } from '../../types'
+import { TIER_WEIGHT_THRESHOLDS_KB } from '../../types'
 
 /**
  * The tier a card may state, or nothing at all.
@@ -96,78 +78,20 @@ function tierForWeightBytes(weightBytes: number): MineTier {
  * and "Measuring the mine..." on a card nothing is measuring would be exactly
  * the invention the rest of this module refuses.
  *
- * Defined against `cardTierFor` rather than against the two fields, so the
- * state exists exactly where the card has no tier to state and the two can
- * never contradict each other.
+ * AMENDED for #635 (PANEL-QUESTIONS 29, design lead ruling 2026-09-27): a mine
+ * measured before is measuring too while it is re-measured, and it KEEPS its
+ * tier. So this reads the weight rather than the tier. `weightBytes` is this
+ * run's reading, off TierService's in-memory cache, and main's own read of it
+ * schedules the walk that fills it; `knownTier` is the store's record of an
+ * earlier run's verdict. A stored tier with no weight is therefore a mine
+ * measured before whose walk this run still owes — a stale reading, which
+ * still counts as known (#41), so the card states it and ranks by it. Only a
+ * row with neither is "never walked": no tier, the Bronze placeholder, last.
+ * A declared mine with no tier to state is still always measuring, so no card
+ * is left bare with neither a tier nor the pill.
  */
 export function isMeasuring(project: ProjectSummary): boolean {
-  return project.declared && cardTierFor(project) === undefined
-}
-
-/** The tier to print on a card, or nothing at all — see cardTierFor. */
-export function cardTierLabel(project: ProjectSummary): string | undefined {
-  const tier = cardTierFor(project)
-  return tier === undefined ? undefined : browseTierLabel(tier)
-}
-
-/** The entrance painting of that tier; no painting for a project nobody has weighed. */
-export function cardArtFor(project: ProjectSummary): string | undefined {
-  const tier = cardTierFor(project)
-  return tier === undefined ? undefined : MOUND_SRC[tier]
-}
-
-/**
- * How many agents are working a project right now, or nothing when the panel
- * cannot back a number.
- *
- * `live` is stamped by the poll that answered the browse, and the board the
- * panel holds may be one poll older, so a live project with no mine on the
- * board is a count we do not have — not a count of zero. A mine that IS on the
- * board with an empty crew is zero, which the board can honestly say.
- */
-export function activeAgentsFor(
-  project: ProjectSummary,
-  mines: readonly Mine[]
-): number | undefined {
-  if (!project.live) return undefined
-  return mines.find((mine) => mine.id === project.id)?.dwarfs.length
-}
-
-/** The two markers a card can raise in its lower-right corner. */
-export interface CardStatus {
-  /** An agent on this project has asked its user something nothing has answered. */
-  asking: boolean
-  /** An agent on this project is resting rather than working. */
-  resting: boolean
-}
-
-/**
- * What a card says about its crew beyond how many there are, or nothing at all.
- *
- * Joined off the board exactly as activeAgentsFor is, and absent for exactly
- * the same reasons: a project that is not live, or one whose mine the panel's
- * snapshot does not carry yet, is an absence of evidence. Two false markers
- * would be a claim about a crew nobody has looked at.
- *
- * Neither fact is derived here. `asking` is the provider's own structured
- * record of an ask (see Dwarf.pendingQuestion) — the same field the message
- * panel answers from, and never prose that reads like a question. `resting` is
- * `status === 'waiting'`, which is precisely what floats the `z z z` over a
- * dwarf in DwarfSprite. Both markers therefore mean on a card exactly what
- * they already mean inside the mine, which is the whole point of reading them
- * from the same two places rather than inventing a browse-only rule.
- */
-export function cardStatusFor(
-  project: ProjectSummary,
-  mines: readonly Mine[]
-): CardStatus | undefined {
-  if (!project.live) return undefined
-  const mine = mines.find((candidate) => candidate.id === project.id)
-  if (mine === undefined) return undefined
-  return {
-    asking: mine.dwarfs.some((dwarf) => dwarf.pendingQuestion !== undefined),
-    resting: mine.dwarfs.some((dwarf) => dwarf.status === 'waiting')
-  }
+  return project.declared && project.weightBytes === undefined
 }
 
 /**

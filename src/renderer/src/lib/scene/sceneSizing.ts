@@ -64,36 +64,47 @@ export const INTERIOR_FIT: ImageFit = 'contain'
 export const DESIGN_INTERIOR_WIDTH = 245
 
 /**
- * How much of the window's height the shell spends before a painting sees any
- * of it: the 8px padding `App.vue` puts around the open shell, top and bottom.
+ * How much of the window's height the shell spends before the mine column sees
+ * any of it (#635): the dock's 12px inset top and bottom, and the rock plate's
+ * 6px padding top and bottom (screens/shell.md, Layout and Parts). The window
+ * itself still spans the work area; `App.vue` draws the plate inside it.
  *
- * A deliberate copy of that stylesheet's `--space-nav-gap`, kept here because
- * main has to reserve the width this height derives and cannot read CSS. The
- * frame's own 2px border is NOT counted: the painting is drawn `contain` inside
- * it, so the four pixels it costs letterbox rather than crop, and counting them
- * would make the column disagree with the `aspect-ratio` the stylesheet sets.
+ * A deliberate copy of those stylesheet values, kept here because main has to
+ * reserve the width this height derives and cannot read CSS.
  */
-export const SHELL_CONTENT_INSET = 16
+export const SHELL_CONTENT_INSET = 36
 
 /**
- * How wide the mine column is on a window this tall (#153).
+ * The mine column's own chrome (`--chrome-h` in the design's mine column): its
+ * toolbar plate, roster and footer, which the painting is drawn beside rather
+ * than under (#635).
+ */
+export const MINE_COLUMN_CHROME_HEIGHT = 196
+
+/** What the column adds to its painting's width: `calc(--art-w + 16px)`. */
+export const MINE_COLUMN_ART_INSET = 16
+
+/** The narrowest mine column there is; rock letterboxes the painting beyond it. */
+export const MINE_COLUMN_MIN_WIDTH = 300
+
+/**
+ * How wide the mine column is on a window this tall (#153, #635).
  *
- * The maintainer's acceptance ruling, evaluated: the painting is drawn at the
- * FULL HEIGHT of the shell's content area with its aspect preserved and nothing
- * cropped, so the width follows the height. The design's 245 is what this
- * returns at the mock's own 768-tall composition — it was never a constant, and
- * treating it as one is what made the interior read tiny on a 1392-tall display.
+ * The redesign's rule: the painting is drawn whole at the column's height less
+ * its chrome, at its own aspect, and the column is that width plus 16px, never
+ * narrower than 300px. At the design screen's 1080 the floor is what wins.
  *
  * Whole pixels, because main reserves the same number in the window and Electron
  * bounds take nothing else; `panelBounds.test.ts` holds the two derivations
  * equal at every height.
  */
 export function interiorColumnWidth(windowHeightPx: number): number {
-  const content = windowHeightPx - SHELL_CONTENT_INSET
-  return Math.max(
+  const art = windowHeightPx - SHELL_CONTENT_INSET - MINE_COLUMN_CHROME_HEIGHT
+  const width = Math.max(
     0,
-    Math.round((content * INTERIOR_PAINTING_SIZE.width) / INTERIOR_PAINTING_SIZE.height)
+    Math.round((art * INTERIOR_PAINTING_SIZE.width) / INTERIOR_PAINTING_SIZE.height)
   )
+  return Math.max(MINE_COLUMN_MIN_WIDTH, width + MINE_COLUMN_ART_INSET)
 }
 
 /**

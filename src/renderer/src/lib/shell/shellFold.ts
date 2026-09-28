@@ -1,5 +1,5 @@
 /**
- * The shell folding into its rail, as geometry (#388).
+ * The shell folding around a column that leaves or arrives, as geometry (#388).
  *
  * The window is frameless and transparent, and main moves its docked edge never
  * and its free edge always: opening adds pixels on the free side, closing takes
@@ -52,8 +52,16 @@
  * row has drawn beside it.
  */
 import type { DOMKeyframesDefinition } from 'motion-v'
-import type { ShellComposition } from './composition'
 import type { PanelEdge } from '../../types'
+
+/*
+ * AMENDED for #635 (PO ruling 2026-09-27): the closed rail these rules were first written for is
+ * gone. Every composition left paints the plate and its padding, so the `remaining` composition
+ * that `foldedShellWidth` and `foldedColumnOffset` took — whose only effect was dropping the
+ * padding when the bare rail remained — went with `ShellComposition`. The carry rules below
+ * are unchanged for every column that still stands free of a leaving one: the page, when the
+ * mine column closes or opens beside it.
+ */
 
 /**
  * How much of the shell is painted: the whole ground, or that many CSS pixels
@@ -68,11 +76,22 @@ export type ShellFoldState = 'whole' | number
  * than named here, so the clipped corners are the ones the ground is already
  * drawn with and the strip the fold ends on has the rail's shape.
  */
-export function shellFoldClip(state: ShellFoldState, edge: PanelEdge, radius: string): string {
-  const free = state === 'whole' ? '0px' : `calc(100% - ${state}px)`
+export function shellFoldClip(
+  state: ShellFoldState,
+  edge: PanelEdge,
+  radius: string,
+  outline = 0
+): string {
+  // The plate draws its edge `outline` px OUTSIDE its box (#635, `.m-mat`), so
+  // every side the fold does not cut is inset by minus that much and the edge
+  // stays continuous through the run. The folded free side is the one edge the
+  // fold cuts, exactly where it always did: it is the band the window is about
+  // to take away, so #388's rule is untouched.
+  const keep = outline > 0 ? `-${outline}px` : '0px'
+  const free = state === 'whole' ? keep : `calc(100% - ${state}px)`
   return edge === 'right'
-    ? `inset(0px 0px 0px ${free} round ${radius})`
-    : `inset(0px ${free} 0px 0px round ${radius})`
+    ? `inset(${keep} ${keep} ${keep} ${free} round ${radius})`
+    : `inset(${keep} ${free} ${keep} ${keep} round ${radius})`
 }
 
 /** The fold from what is painted now to what the change leaves painted. */
@@ -80,33 +99,25 @@ export function shellFoldKeyframes(
   from: ShellFoldState,
   to: ShellFoldState,
   edge: PanelEdge,
-  radius: string
+  radius: string,
+  outline = 0
 ): DOMKeyframesDefinition {
-  return { clipPath: [shellFoldClip(from, edge, radius), shellFoldClip(to, edge, radius)] }
+  return {
+    clipPath: [shellFoldClip(from, edge, radius, outline), shellFoldClip(to, edge, radius, outline)]
+  }
 }
 
-/**
- * How wide the shell's ground is once the columns now leaving are gone.
- *
- * `padding` is only ever spent on the bare rail: `.shell.is-rail` paints no
- * ground at all, so the 8px the open compositions reserve goes with them and
- * what is left is the design's own 20px rail. Folding to the padded 36 would
- * end on an amber strip the collapsed shell is never going to draw.
- */
+/** How wide the shell's ground is once the columns now leaving are gone. */
 export function foldedShellWidth(shell: {
   /** The shell's current width, in CSS pixels. */
   width: number
   /** The width of each column leaving in this change. */
   leaving: readonly number[]
-  /** `--space-nav-gap` between columns; one goes with each of them. */
+  /** The gap between columns; one goes with each of them. */
   gap: number
-  /** The shell's own padding, which only the open compositions reserve. */
-  padding: number
-  /** The composition that will stand once the fold has finished. */
-  remaining: ShellComposition
 }): number {
   const kept = shell.leaving.reduce((width, column) => width - column - shell.gap, shell.width)
-  return Math.max(0, shell.remaining === 'rail' ? kept - 2 * shell.padding : kept)
+  return Math.max(0, kept)
 }
 
 /**
@@ -123,28 +134,24 @@ export function foldedShellWidth(shell: {
  * two widths ahead of it) share one formula rather than two that happen to
  * agree when there is nothing ahead.
  *
- * `padding` goes with the open compositions exactly as it does above: the bare
- * rail is docked by `.shell.is-rail { justify-content: flex-end }` with no
- * ground and no padding around it, so it ends flush against the edge itself.
+ * `padding` is the plate's own, which every composition paints (#635): the
+ * free-most column rests one padding in from the plate's free edge.
  */
 export function foldedColumnOffset(shell: {
   /** The strip the fold ends on, from `foldedShellWidth`. */
   kept: number
   /** Every surviving column standing between this one and the free edge. */
   before: readonly number[]
-  /** `--space-nav-gap`, spent between every pair of surviving columns. */
+  /** The gap spent between every pair of surviving columns. */
   gap: number
   /** This column's own width. */
   own: number
-  /** The shell's own padding, which only the open compositions reserve. */
+  /** The plate's own padding. */
   padding: number
-  /** The composition that will stand once the fold has finished. */
-  remaining: ShellComposition
 }): number {
-  const padding = shell.remaining === 'rail' ? 0 : shell.padding
   const clearedFree = shell.before.reduce(
     (width, column) => width - column - shell.gap,
-    shell.kept - padding
+    shell.kept - shell.padding
   )
   return Math.max(0, clearedFree - shell.own)
 }

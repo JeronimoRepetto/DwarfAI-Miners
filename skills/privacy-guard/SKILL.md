@@ -3,7 +3,7 @@ name: privacy-guard
 description: >
   Keeping machine-specific identifiers out of tracked files, and the CI step that fails the build when one gets in.
   Trigger: before committing any fixture, test, default, screenshot or document, and whenever writing a path, hostname or home directory into a tracked file.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

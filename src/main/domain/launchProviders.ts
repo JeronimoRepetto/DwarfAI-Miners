@@ -1,4 +1,9 @@
-import { DWARF_PROVIDERS, type AgentProviderList, type DwarfProvider } from './types'
+import {
+  DWARF_PROVIDERS,
+  type AgentProviderList,
+  type DwarfProvider,
+  type LaunchFailureCause
+} from './types'
 
 /**
  * Which providers the Add Panel may offer, and which of them a launch can
@@ -20,6 +25,8 @@ export interface CliPresence {
   installed: boolean
   /** Detection's own explanation. Read here, and deliberately never published. */
   reason?: string
+  /** Found, but cannot be started from here — see `CliDetection.unrunnable` (#635). */
+  unrunnable?: true
 }
 
 /**
@@ -134,6 +141,20 @@ export const PRODUCT_NAME: Readonly<Record<DwarfProvider, string>> = {
 /** That name inside the one sentence both launch engines say about a missing CLI. */
 export function notInstalledReason(provider: DwarfProvider): string {
   return `${PRODUCT_NAME[provider]} is not installed on this machine.`
+}
+
+/**
+ * The cause a launch refused at detection names (#635) — the one reading both
+ * launch engines take of a verdict that found nothing to run, so the detached
+ * and the held channel cannot come to classify the same machine two ways.
+ *
+ * `unrunnable` is the only thing that moves it: something was found and cannot
+ * be started from here, which is not absent (#544), and "not installed" would
+ * send the person to install a CLI they already have. Nothing here asks which
+ * OS produced the verdict — the port already answered that.
+ */
+export function detectionFailureCause(detection: CliPresence): LaunchFailureCause {
+  return detection.unrunnable === true ? 'could-not-start' : 'not-installed'
 }
 
 /**

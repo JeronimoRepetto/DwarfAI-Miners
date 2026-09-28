@@ -762,3 +762,45 @@ describe('prepareAppSchema', () => {
     expect(() => prepareAppSchema(db)).toThrow(/42/)
   })
 })
+
+/* --- Dwarf names (#635) — one block, appended ------------------------------- */
+describe('app database — the dwarf names table stays additive (#635)', () => {
+  function columns(db: WritableSqliteDb, table: string): string[] {
+    return db.all(`PRAGMA table_info(${table})`).map((row) => String(row.name))
+  }
+
+  it('creates a fresh database with the dwarf names table, at the floor', async () => {
+    const db = await createAppDatabase({
+      filePath: DB,
+      sqlite: new MemoryWritableSqlite()
+    }).connect()
+
+    expect(tables(db)).toContain('dwarf_names')
+    expect(columns(db, 'dwarf_names')).toEqual(['dwarf_id', 'provider', 'custom_name', 'set_at'])
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
+  })
+
+  /*
+   * A file an earlier build converged — every table it knew, stamped at the floor — gains the new
+   * table on its next open and keeps the floor: a build that knows only the floor never selects
+   * from dwarf_names, so nothing it reads changed (see APP_COMPAT_FLOOR).
+   */
+  it('adds the table to a file converged before it existed, keeping every row and the floor', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const earlier = await createAppDatabase({ filePath: DB, sqlite }).connect()
+    earlier.run('INSERT INTO materials (mine_id, material, tokens) VALUES (?, ?, ?)', [
+      'mine:a',
+      'gold',
+      7
+    ])
+    earlier.exec('DROP TABLE dwarf_names')
+    earlier.close()
+
+    const db = await createAppDatabase({ filePath: DB, sqlite }).connect()
+
+    expect(tables(db)).toContain('dwarf_names')
+    expect(version(db)).toBe(APP_COMPAT_FLOOR)
+    expect(db.all('SELECT tokens FROM materials')).toEqual([{ tokens: 7 }])
+  })
+})
+/* --- end of the #635 dwarf names block -------------------------------------- */

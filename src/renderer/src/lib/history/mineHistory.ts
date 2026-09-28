@@ -1,5 +1,6 @@
 import {
   MINE_HISTORY_MESSAGE_LIMIT,
+  type FailedSend,
   type FeedMessage,
   type MessageIssuer,
   type MineHistoryResult,
@@ -22,7 +23,8 @@ import { authorOf, panelMessagesOf, type PanelMessage } from '../message/convers
 
 export const HISTORY_READING_NOTE = "Reading this mine's history..."
 export const HISTORY_UNREADABLE_NOTE = "This mine's history could not be read."
-export const HISTORY_EMPTY_NOTE = 'Nobody has spoken in this mine yet.'
+/** The design's own empty line (screens/mine.md, Mine history), since #635. */
+export const HISTORY_EMPTY_NOTE = 'Nobody has worked here yet.'
 /**
  * Said of the transcript region, never as chrome the design does not draw:
  * the CLIs prune their own transcripts (Claude Code after its
@@ -59,42 +61,72 @@ export function selectedSpeakerId(
   return ordered[0]?.id ?? null
 }
 
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December'
-]
-
 function twoDigits(value: number): string {
   return String(value).padStart(2, '0')
 }
 
-/**
- * `Month DD, YYYY HH:MM`, the design's required format, spelled by hand rather
- * than through `toLocaleString`: the design fixes the shape, and a locale
- * formatter would move the day before the month, drop the zero padding or
- * translate the month on a machine whose language is not English. Local time,
- * because the person reading it is at the machine the message was written on.
+/*
+ * A time as the redesigned history prints it (#635): "HH:MM", local and zero-padded on a 24-hour
+ * clock, spelled by hand so no locale moves or translates it. The `Month DD, YYYY HH:MM` footer the
+ * old panel printed (formatHistoryTimestamp) went with the footer; the design draws none.
  */
-export function formatHistoryTimestamp(epochMs: number): string {
+export function historyClock(epochMs: number): string {
   if (!Number.isFinite(epochMs)) return ''
   const date = new Date(epochMs)
-  const month = MONTHS[date.getMonth()]!
-  return `${month} ${twoDigits(date.getDate())}, ${date.getFullYear()} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`
+  return twoDigits(date.getHours()) + ':' + twoDigits(date.getMinutes())
 }
 
-/** One row of a tab: the message, and whose face it is drawn under. */
+export function historyTitle(mineName: string): string {
+  return 'History · ' + mineName
+}
+
+export function historyLabel(mineName: string): string {
+  return 'Mine history, ' + mineName
+}
+
+/** Said at the head of the transcript: the cap is the wire's own, never a second copy of it. */
+export const HISTORY_READ_ONLY_NOTE =
+  'Read-only · up to the last ' + MINE_HISTORY_MESSAGE_LIMIT + ' messages'
+
+/*
+ * "last · HH:MM" under a tab's name, or "no messages" (copy.md, Mine history): the last timed entry
+ * of the dwarf's conversation, a message it never received included (PANEL-QUESTIONS 16).
+ */
+export function historyTabLast(
+  speaker: MineHistorySpeaker,
+  failed: readonly FailedSend[] = []
+): string {
+  if (speaker.messages.length === 0 && failed.length === 0) return 'no messages'
+  const last = Math.max(
+    speaker.messages.length === 0 ? -Infinity : speaker.lastMessageAt,
+    ...failed.map((send) => send.sentAt)
+  )
+  return 'last · ' + historyClock(last)
+}
+
+/*
+ * The tabs, one per dwarf, in the order the mine's roster draws its crew (#635): the anatomy's
+ * tabs follow the crew, and a dwarf in the same place in both is found in both. A dwarf that has
+ * left the mine has no place in the roster, so those follow, newest first as the tabs were ordered
+ * before (orderSpeakers).
+ */
+export function historyTabs(
+  speakers: readonly MineHistorySpeaker[],
+  crewIds: readonly string[]
+): MineHistorySpeaker[] {
+  const byId = new Map(speakers.map((speaker) => [speaker.id, speaker]))
+  const present = crewIds.flatMap((id) => byId.get(id) ?? [])
+  const current = new Set(present.map((speaker) => speaker.id))
+  return [...present, ...orderSpeakers(speakers.filter((speaker) => !current.has(speaker.id)))]
+}
+
+/** One row of a tab: the message, whose face it is drawn under, and its own time. */
 export interface HistoryRow extends PanelMessage {
   author: MessageIssuer
+  /** "HH:MM", or nothing where the transcript gave no time. */
+  time: string
+  /** A message the person sent that never reached the session (PANEL-QUESTIONS 16). */
+  failed?: true
 }
 
 /**
@@ -102,11 +134,73 @@ export interface HistoryRow extends PanelMessage {
  * the message panel uses (#175): a prompt another agent issued wears that
  * agent's face, anything else wears the speaker's own.
  */
-export function speakerRows(speaker: MineHistorySpeaker): HistoryRow[] {
-  return panelMessagesOf(latestMessages(speaker.messages)).map((message) => ({
+export function speakerRows(
+  speaker: MineHistorySpeaker,
+  failed: readonly FailedSend[] = []
+): HistoryRow[] {
+  /*
+   * A message that never arrived is part of what happened (PANEL-QUESTIONS 16): from the app's own
+   * record of the send, placed among the transcript's messages by when it was sent, the latest
+   * fifty of the two together.
+   */
+  const timed: { at: number; message: FeedMessage; failed: boolean }[] = [
+    ...speaker.messages.map((message) => ({
+      at: Date.parse(message.timestamp),
+      message,
+      failed: false
+    })),
+    ...failed.map((send) => ({
+      at: send.sentAt,
+      message: {
+        role: 'user' as const,
+        text: send.text,
+        timestamp: new Date(send.sentAt).toISOString()
+      },
+      failed: true
+    }))
+  ]
+  // A stable sort, and a row with no time keeps its place in the transcript.
+  const ordered = failed.length === 0 ? timed : [...timed].sort((a, b) => (a.at || 0) - (b.at || 0))
+  const kept = ordered.slice(-MINE_HISTORY_MESSAGE_LIMIT)
+  return panelMessagesOf(kept.map((entry) => entry.message)).map((message, index) => ({
     ...message,
-    author: authorOf(message, speaker)
+    author: authorOf(message, speaker),
+    time: historyClock(kept[index]!.at),
+    ...(kept[index]!.failed ? { failed: true as const } : {})
   }))
+}
+
+export type HistoryMark = 'delivered' | 'reacted' | 'failed'
+
+/** A mark as the bubble draws it: text with a name, never colour alone (components.md, Chat bubble). */
+export const HISTORY_MARK: Record<
+  HistoryMark,
+  { mark: HistoryMark; glyph: string; title: string }
+> = {
+  delivered: { mark: 'delivered', glyph: '✓', title: 'Handed over to the queue' },
+  reacted: { mark: 'reacted', glyph: '✓✓', title: 'Seen acting on it' },
+  // Without Retry or Copy: the history is read-only (PANEL-QUESTIONS 16).
+  failed: { mark: 'failed', glyph: '✕ not delivered', title: 'Not delivered' }
+}
+
+/*
+ * The delivery mark each row wears, read off the record itself (#635). Delivered and reacted are
+ * different facts (AGENTS.md; reaction.ts): a prompt in the transcript was handed to the session,
+ * so it is at least ✓, and it is ✓✓ only once the session was seen acting after it — a later turn
+ * of its own, spoken or a step. A prompt another agent issued is not this session acting. The
+ * dwarf's own words carry no mark, and a message that never reached the transcript is not in it
+ * to mark: a live ✕ belongs to the MessagePanel.
+ */
+export function historyMarks(rows: readonly HistoryRow[]): (HistoryMark | undefined)[] {
+  let actedAfter = false
+  const marks: (HistoryMark | undefined)[] = new Array(rows.length).fill(undefined)
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i]!
+    if (row.failed) marks[i] = 'failed'
+    else if (row.from === 'user') marks[i] = actedAfter ? 'reacted' : 'delivered'
+    else if (row.issuer === undefined) actedAfter = true
+  }
+  return marks
 }
 
 /**

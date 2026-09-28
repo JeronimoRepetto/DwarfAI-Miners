@@ -66,17 +66,33 @@ const SETTING_OF: Record<AudioChannel, AudioVolumeKey> = {
 }
 
 /**
+ * The attention cues (#635): a dwarf asking a question, asking for a
+ * permission, or finishing its turn — the second rung of the attention ladder
+ * (sound.md). Named apart because two rules are theirs alone: they survive the
+ * collapsed shell, and `notificationSounds` is the one setting that silences
+ * them. Nothing per mine gates them — not its mute, not its focus — which is
+ * why the engine's `playSfx` reads neither.
+ */
+export const ATTENTION_SFX_KINDS = ['question', 'permission', 'finished'] as const
+
+export type AttentionSfx = (typeof ATTENTION_SFX_KINDS)[number]
+
+/**
  * The interface sounds (#323): a press on one of the five area buttons, and the
- * secondary panel opening or closing.
+ * secondary panel opening or closing — and since #635 the three attention cues.
  *
  * A KIND rather than a fourth channel, because there is no fourth thing to mix:
- * both are short answers to a press, both ride the voice channel's base and the
- * one slider Settings calls `Effects`, and giving them a channel would mean a
- * volume nobody asked for.
+ * all of them are short, all ride the voice channel's base and the one slider
+ * Settings calls `Effects`, and giving them a channel would mean a volume
+ * nobody asked for (sound.md, "Mapping onto the engine").
  */
-export const UI_SFX_KINDS = ['click', 'panel'] as const
+export const UI_SFX_KINDS = ['click', 'panel', ...ATTENTION_SFX_KINDS] as const
 
 export type UiSfx = (typeof UI_SFX_KINDS)[number]
+
+export function isAttentionSfx(kind: UiSfx): kind is AttentionSfx {
+  return (ATTENTION_SFX_KINDS as readonly UiSfx[]).includes(kind)
+}
 
 /**
  * Which interface sound survives a shell collapsed to its bare rail.
@@ -87,10 +103,16 @@ export type UiSfx = (typeof UI_SFX_KINDS)[number]
  * opens the panel, and the act of opening the app going unheard is the one case
  * worth exempting (#323). `hidden` still wins over it, as it wins over
  * everything.
+ *
+ * The attention cues do too (#635): the panel closed to Veta is exactly when
+ * the on-screen cue is smallest, so the sound is what has to reach the person.
  */
 const SFX_SURVIVES_COLLAPSE: Record<UiSfx, boolean> = {
   click: false,
-  panel: true
+  panel: true,
+  question: true,
+  permission: true,
+  finished: true
 }
 
 /**
@@ -121,8 +143,12 @@ export function channelVolume(
  * allowed through a collapsed rail — see SFX_SURVIVES_COLLAPSE. Nothing else
  * differs: the same base, the same slider, and the same 0 while the app is
  * hidden.
+ *
+ * An attention cue is also 0 with Notification sounds off (#635), and that is
+ * the only extra gate: a mine's mute and its focus never reach this function.
  */
 export function sfxVolume(kind: UiSfx, settings: AudioPreferences, gates: AudioGates): number {
+  if (isAttentionSfx(kind) && !settings.notificationSounds) return 0
   return channelVolume('voice', settings, {
     ...gates,
     collapsed: gates.collapsed && !SFX_SURVIVES_COLLAPSE[kind]

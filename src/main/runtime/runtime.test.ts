@@ -27,6 +27,7 @@ import {
   NOTHING_TYPED_TO_ANSWER_WITH,
   OPENCODE_PERMISSION_ANSWERED_ABOVE,
   OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
+  OWN_WORDS_ONLY_WHEN_HELD,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
   TYPED_ANSWER_ONLY_AT_A_PICKER,
@@ -47,7 +48,7 @@ import {
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
-import type { SessionLauncher } from '../sessionLaunch/launchRunner'
+import { EARLY_FAILURE_WINDOW_MS, type SessionLauncher } from '../sessionLaunch/launchRunner'
 import { resolveDelegationServerScriptPath } from '../mcp/delegationServerCommand'
 import {
   MODEL_CATALOG_TIMEOUT_MS,
@@ -81,6 +82,10 @@ import {
 } from '../sessionLaunch/hostedProcesses'
 import { createAppDatabase } from '../appDatabase/appDatabase'
 import { createSqliteLaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
+// #635: dwarf names.
+import { createSqliteDwarfNameStore } from '../dwarfNames/dwarfNameStore'
+import { DWARF_NAME_NOT_ON_BOARD, DWARF_NAME_NOT_SAVED } from '../dwarfNames/dwarfNames'
+import type { Mine, MineHistorySpeaker } from '../domain/types'
 import {
   LaunchedSessionRegistry,
   type LaunchedProcess,
@@ -91,7 +96,7 @@ import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { CODEX_HOLD_MAX_MS } from '../textDelivery/codexHold'
 import { OPENCODE_HOLD_MAX_MS } from '../textDelivery/opencodeHold'
 import { TierService, type TierThresholds } from '../tier/tierService'
-import { AgentRuntime, expandHomePath } from './runtime'
+import { AgentRuntime, expandHomePath, failureReasonSuffix } from './runtime'
 
 function datePath(date: Date): string {
   const year = String(date.getFullYear())
@@ -412,7 +417,8 @@ describe('AgentRuntime activation', () => {
             role: 'user',
             text: 'survey the seam',
             timestamp: 't0',
-            issuer: { role: 'foreman', name: 'coordinator' }
+            // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
+            issuer: { role: 'foreman', name: 'coordinator', launcherId: 'claude:session-1' }
           },
           { role: 'assistant', text: 'On my way.', timestamp: 't1' }
         ]
@@ -505,7 +511,8 @@ describe('AgentRuntime activation', () => {
             role: 'user',
             text: 'survey the seam',
             timestamp: 't0',
-            issuer: { role: 'foreman', name: 'codex-thread-p' }
+            // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
+            issuer: { role: 'foreman', name: 'codex-thread-p', launcherId: 'codex:thread-p' }
           },
           { role: 'assistant', text: 'On my way.', timestamp: 't1' }
         ]
@@ -762,7 +769,8 @@ describe('AgentRuntime activation', () => {
             role: 'user',
             text: 'survey the seam',
             timestamp: 't0',
-            issuer: { role: 'foreman', name: 'coordinator' }
+            // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
+            issuer: { role: 'foreman', name: 'coordinator', launcherId: 'claude:session-1' }
           }
         ]
       })
@@ -1347,6 +1355,34 @@ describe('AgentRuntime.sendDwarfText', () => {
       sessionName: 'sample-project-70',
       text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] stop digging`
     })
+  })
+
+  // ADDED for #635 (Dwarf names): the agent never sees a custom name. A worker the person renamed
+  // is still addressed by its base name in the prefix its foreman reads, on the next poll too.
+  it("keeps a renamed worker's base name in the prefix its foreman reads", async () => {
+    const { runtime, port } = await runtimeWith({
+      [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+    })
+    await expect(
+      runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+    ).resolves.toMatchObject({ saved: true })
+
+    await runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'stop digging', pressEnter: true })
+    await runtime.refresh()
+    await runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'dig east', pressEnter: true })
+
+    expect(port.relayToClaudeSession).toHaveBeenNthCalledWith(1, {
+      sessionName: 'sample-project-70',
+      text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] stop digging`
+    })
+    expect(port.relayToClaudeSession).toHaveBeenNthCalledWith(2, {
+      sessionName: 'sample-project-70',
+      text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] dig east`
+    })
+    expect(JSON.stringify(vi.mocked(port.relayToClaudeSession).mock.calls)).not.toContain(
+      'Stonebeard'
+    )
   })
 
   /*
@@ -5796,6 +5832,20 @@ describe('AgentRuntime material vault', () => {
     expect(runtime.getMines()[0]!.tokensObserved).toBe(2_500)
   })
 
+  // ADDED for #635 (PANEL-QUESTIONS 29 live check): the board carries this run's measured weight,
+  // so a walk that answers while the Mines list is on screen reaches it (Mine.weightBytes).
+  it('stamps every published mine with the weight its walk measured', async () => {
+    const ledger = new MaterialLedger({ store: nullLedgerStore() })
+    await ledger.load()
+    const { provider, setTokens } = countingProvider()
+    const runtime = await vaultRuntime([provider], ledger)
+
+    setTokens(1_000)
+    await runtime.refresh()
+
+    expect(runtime.getMines()[0]!.weightBytes).toBe(0)
+  })
+
   it('keeps a mine material after its whole crew leaves', async () => {
     const ledger = new MaterialLedger({ store: nullLedgerStore() })
     await ledger.load()
@@ -6361,6 +6411,38 @@ describe('AgentRuntime.launchAgent (#86)', () => {
   })
 
   /*
+   * #635 (PO decision 2026-09-28). The Codex permission mode the IPC boundary
+   * checked has one more hop to make, to the launcher that turns it into argv.
+   */
+  it('forwards the Codex permission mode the request named, down to the launcher', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({
+      mineId,
+      provider: 'codex',
+      prompt: 'go',
+      permissionMode: 'read-only'
+    })
+
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'codex',
+      minePath: 'C:\\work\\project',
+      prompt: 'go',
+      codexPermissionMode: 'read-only'
+    })
+  })
+
+  it('leaves the permission mode off the launcher call when the request named none', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'go' })
+
+    expect('codexPermissionMode' in launchSession.mock.calls[0]![0]).toBe(false)
+  })
+
+  /*
    * AMENDED for #534 (was: 'refuses to launch OpenCode before ever probing
    * its own detector', a detection verdict claiming `installed: true` with a
    * path, asserting `cliDetector.detect` was NEVER called and the result was
@@ -6417,12 +6499,15 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     await runtime.refresh()
     const mineId = runtime.getMines()[0]!.id
 
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact
+    // verdict without `cause`).
     await expect(
       runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
     ).resolves.toEqual({
       launched: false,
       provider: 'opencode',
-      error: 'OpenCode is not installed on this machine.'
+      error: 'OpenCode is not installed on this machine.',
+      cause: 'not-installed'
     })
     expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
   })
@@ -6514,12 +6599,15 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     })
 
     expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact push
+    // without `cause`). The push names what it is about as a field now.
     expect(onLaunchFailed).toHaveBeenCalledWith({
       launchId,
       provider: 'codex',
       mineId,
       exitCode: 1,
-      stderrTail: 'codex: another instance is already running'
+      stderrTail: 'codex: another instance is already running',
+      cause: 'exited-at-once'
     })
   })
 
@@ -6559,6 +6647,33 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     expect(push.stderrTail).toContain('[redacted]')
   })
 
+  /*
+   * ADDED for #635 (MESSAGE-QUESTIONS 23): the notice title's tooltip shows the tool's LAST lines,
+   * which say why it stopped, with their line breaks. The push used to keep the first 400
+   * characters of the captured tail on one line.
+   */
+  it('keeps the last lines of a long stderr, with their breaks, within 400 characters', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    const noise = Array.from({ length: 40 }, (_, n) => `warning ${n}: retrying the handshake`)
+    const stderrTail = [...noise, 'error: not signed in', 'Run `codex login` first.', ''].join('\n')
+    handle.fail({ exitCode: 1, signal: null, stderrTail })
+
+    const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
+    expect(Array.from(push.stderrTail).length).toBeLessThanOrEqual(400)
+    expect(push.stderrTail.startsWith('…')).toBe(true)
+    expect(
+      push.stderrTail.trimEnd().endsWith('error: not signed in\nRun `codex login` first.')
+    ).toBe(true)
+    expect(push.stderrTail).not.toContain('warning 0:')
+  })
+
   it('never pushes when this build has nothing wired to receive it', async () => {
     const handle = earlyFailureHandle()
     const launchSession: SessionLauncher = vi
@@ -6582,6 +6697,56 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
 
     expect(onLaunchFailed).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). The push is the
+   * launch-failure notice's "stopped as soon as it started", and the notice
+   * reads its cause as a field rather than inferring it from which channel
+   * spoke — so the push says so itself.
+   */
+  it('names the cause exited-at-once on the push (#635)', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    handle.fail({ exitCode: 2, signal: null, stderrTail: '' })
+
+    const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
+    expect(push.cause).toBe('exited-at-once')
+  })
+
+  it("carries the launcher's cause onto the verdict unchanged (#635)", async () => {
+    const launchSession: SessionLauncher = vi.fn().mockResolvedValue({
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI is not installed on this machine.',
+      cause: 'not-installed'
+    })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    ).resolves.toMatchObject({ launched: false, cause: 'not-installed' })
+  })
+
+  it('names no cause for a launch refused before the launcher ran (#635)', async () => {
+    const launchSession: SessionLauncher = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    const noMine = await runtime.launchAgent({
+      mineId: 'mine:nowhere',
+      provider: 'codex',
+      prompt: 'dig'
+    })
+    const empty = await runtime.launchAgent({ mineId, provider: 'codex', prompt: '  ' })
+
+    expect(noMine).not.toHaveProperty('cause')
+    expect(empty).not.toHaveProperty('cause')
   })
 })
 
@@ -8235,9 +8400,10 @@ describe('AgentRuntime project queries (#92)', () => {
     providers?: Provider[]
     ledger?: MaterialLedger
     tiers?: TierService
+    fs?: FakeFs
   }): AgentRuntime {
     return new AgentRuntime({
-      fs: new FakeFs(),
+      fs: options.fs ?? new FakeFs(),
       // AMENDED for #470: see worktreePlatformAdapters above.
       platformAdapters: worktreePlatformAdapters(),
 
@@ -8268,7 +8434,11 @@ describe('AgentRuntime project queries (#92)', () => {
   it('answers with what was remembered, on the wire shape rather than the row shape', async () => {
     const projects = queryStore()
     await projects.upsertObserved({ path: WORKED, at: 4_000, provider: 'codex', knownTier: 'gold' })
-    const runtime = queryRuntime({ projects })
+    // AMENDED for #635: the folder is on disk, as a remembered project's is, so the wire says
+    // nothing about it being missing (PANEL-QUESTIONS 6, pinned below).
+    const fake = new FakeFs()
+    fake.addFile(WORKED + '\\README.md', '# x')
+    const runtime = queryRuntime({ projects, fs: fake })
 
     const result = await runtime.queryProjects(newest)
     runtime.stop()
@@ -8291,6 +8461,51 @@ describe('AgentRuntime project queries (#92)', () => {
         live: false
       }
     ])
+  })
+
+  /*
+   * ADDED for #635 (PANEL-QUESTIONS 6, design lead ruling 2026-09-27): a mine is not enterable
+   * when its folder no longer exists, and that is the only cause. Asked through the fs adapter,
+   * so the same answer holds on every OS; said only when true, the wire's absent-means-no rule.
+   */
+  it('says a remembered folder that no longer exists is missing', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const runtime = queryRuntime({ projects, fs: new FakeFs() })
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    expect(result.projects[0]?.folderMissing).toBe(true)
+  })
+
+  it('says nothing about a folder that is still there', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const fake = new FakeFs()
+    fake.addFile(WORKED + '\\README.md', '# x')
+    const runtime = queryRuntime({ projects, fs: fake })
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    expect(result.projects[0]).not.toHaveProperty('folderMissing')
+  })
+
+  /*
+   * ADDED for #635: a live Electron run added a mine, deleted its folder and still entered it,
+   * because a mine on the board was never asked. Being on the board says nothing about the folder
+   * (a mine added with no session is on it too), so the folder decides, board or not.
+   */
+  it('says a folder is missing even for a mine on the board', async () => {
+    const projects = queryStore()
+    await projects.upsertObserved({ path: WORKED, at: 4_000 })
+    const { provider, setWorking } = toggleProvider(WORKED)
+    setWorking(true)
+    const runtime = queryRuntime({ projects, providers: [provider], fs: new FakeFs() })
+    await runtime.refresh()
+    await runtime.settleProjects()
+    const result = await runtime.queryProjects(newest)
+    runtime.stop()
+    const worked = result.projects.find((project) => project.path === WORKED)
+    expect(worked?.live).toBe(true)
+    expect(worked?.folderMissing).toBe(true)
   })
 
   it('carries the map placement the store chose, so a browse and the map agree (#136)', async () => {
@@ -8707,13 +8922,17 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
 
+    // AMENDED for #635 (MESSAGE-QUESTIONS 16; was: `{ launched: true }`
+    // exactly). A started held launch now also carries the id its early-
+    // failure push would be correlated by; its value is pinned in the #635
+    // block below, where the id is injected.
     await expect(
       runtime.launchHeldSession({
         provider: 'claude',
         mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig here'
       })
-    ).resolves.toEqual({ launched: true })
+    ).resolves.toEqual({ launched: true, launchId: expect.any(String) })
     runtime.stop()
 
     expect(port.started).toHaveLength(1)
@@ -9209,7 +9428,10 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       mineId,
       prompt: 'dig the east gallery'
     })
-    expect(result).toEqual({ launched: true })
+    // AMENDED for #635 (MESSAGE-QUESTIONS 16; was: `{ launched: true }`
+    // exactly). The id is for the early-failure push alone — pinned below as
+    // never stamped on the dwarf, so the receipt this test reads is unchanged.
+    expect(result).toEqual({ launched: true, launchId: expect.any(String) })
     port.reportSessionId(0, 'sess-1')
     await runtime.refresh()
 
@@ -9219,6 +9441,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // row of a held exchange that still rides the snapshot.
     expect(dwarfsOf()).toHaveLength(1)
     expect(dwarfsOf()[0]).toMatchObject({ id: 'claude:sess-1', sessionId: 'sess-1' })
+    expect(dwarfsOf()[0]!.launchId).not.toBe(result.launchId)
     expect(dwarfsOf()[0]!.openingPrompt).toEqual({
       role: 'user',
       text: 'dig the east gallery',
@@ -9335,6 +9558,66 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // Never the registry's own wording, which describes this app rather than
     // the session the person is looking at.
     expect(result.error).not.toContain('not one this panel is holding')
+  })
+
+  /*
+   * ADDED for #635 (PO decision 2026-09-28, held free-text answers): a held session takes a
+   * question answered in the person's own words, carried explicitly as `ownWords`, and hands the
+   * words to the agent's tool as that question's answer string.
+   */
+  it('releases a held ask answered in the person’s own words, verbatim', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    const asked = port.ask(0, 'toolu_live')
+    await Promise.resolve()
+
+    await expect(
+      runtime.answerDwarfQuestion({
+        dwarfId: 'claude:sess-1',
+        toolUseId: 'toolu_live',
+        answers: {},
+        ownWords: { 'Which colour?': 'teal, like the old logo' }
+      })
+    ).resolves.toEqual({ answered: true })
+    await expect(asked).resolves.toEqual({
+      answered: true,
+      answers: { 'Which colour?': 'teal, like the old logo' }
+    })
+    runtime.stop()
+  })
+
+  it('refuses own words for an ask this panel does not hold, before anything is typed', async () => {
+    const port = heldPort()
+    const ask: DwarfQuestion = {
+      toolUseId: 'call_observed',
+      channel: 'terminal',
+      questions: [{ question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] }]
+    }
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider(ask)]
+    })
+    await runtime.refresh()
+
+    const result = await runtime.answerDwarfQuestion({
+      dwarfId: 'claude:sess-1',
+      toolUseId: 'call_observed',
+      answers: {},
+      ownWords: { 'Which colour?': 'teal' }
+    })
+    runtime.stop()
+
+    expect(result).toEqual({ answered: false, error: OWN_WORDS_ONLY_WHEN_HELD })
   })
 
   /*
@@ -9656,6 +9939,150 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     runtime.stop()
 
     expect('permissionMode' in port.started[0]!).toBe(false)
+  })
+
+  /*
+   * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). A held session that
+   * stops as soon as it starts is told to the panel on the SAME push a
+   * detached launch's early exit is (`LaunchFailedPush`, #263), because the
+   * panel already hears it and the notice is one notice whatever the channel.
+   * That push is correlated by a launch id, which a held verdict never carried
+   * — so it carries one now, minted here and never a board receipt: no dwarf
+   * is ever stamped with it.
+   */
+  describe('a held session that stops as soon as it starts (#635)', () => {
+    /*
+     * One mutable clock for the runtime and the registry it holds, advanced
+     * by hand, so the early window this block is about is the injected one
+     * rather than whatever fixed instant `heldRegistry` above stamps.
+     */
+    const clock = { now: 1_700_000_000_000 }
+
+    function earlyRuntime(port: HeldPortFake, onLaunchFailed: (push: LaunchFailedPush) => void) {
+      const fs = new FakeFs()
+      fs.addFile(CLAUDE, '#!/bin/sh\n')
+      return new AgentRuntime({
+        fs: new FakeFs(),
+        platformAdapters: worktreePlatformAdapters(),
+        config: defaultConfig(),
+        providers: [foremanProvider()],
+        heldSessions: new HeldSessionRegistry({
+          detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+          start: { claude: port.port },
+          now: () => clock.now,
+          log: () => {}
+        }),
+        onMinesUpdated: vi.fn(),
+        onLaunchFailed,
+        heldLaunchId: () => 'held-launch:1',
+        now: () => clock.now
+      })
+    }
+
+    it('answers a started held launch with the id its failure push would carry', async () => {
+      const port = heldPort()
+      const runtime = earlyRuntime(port, vi.fn())
+      await runtime.refresh()
+
+      const result = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      runtime.stop()
+
+      expect(result).toEqual({ launched: true, launchId: 'held-launch:1' })
+    })
+
+    it('pushes exited-at-once, correlated by that id, when the session ends at once', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+      const mineId = mineIdForPath(MINE_PATH, 'win32')
+
+      const { launchId } = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig'
+      })
+      expect(onLaunchFailed).not.toHaveBeenCalled()
+      clock.now += EARLY_FAILURE_WINDOW_MS - 1
+      port.started[0]!.onEnd('the session stream failed')
+      runtime.stop()
+
+      expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+      expect(onLaunchFailed).toHaveBeenCalledWith({
+        launchId,
+        provider: 'claude',
+        mineId,
+        // A held session reports no exit code and keeps no stderr of its own
+        // to hand back: null and empty, never a guess.
+        exitCode: null,
+        stderrTail: '',
+        cause: 'exited-at-once'
+      })
+    })
+
+    it('pushes nothing for a session that ends once the window has passed', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      clock.now += EARLY_FAILURE_WINDOW_MS
+      port.started[0]!.onEnd('the session stream ended')
+      runtime.stop()
+
+      expect(onLaunchFailed).not.toHaveBeenCalled()
+    })
+
+    /*
+     * The Agent SDK resolves a start whose CLI never spawned and fails the
+     * stream afterwards (heldSessionNeverSpawned, heldSession.ts). That is the
+     * same machine the detached runner calls `could-not-start`, so the push
+     * says so too.
+     */
+    it('pushes could-not-start when the engine says the CLI never spawned', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+
+      const { launchId } = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      port.started[0]!.onEnd('the session stream failed', true)
+      runtime.stop()
+
+      expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+      expect(onLaunchFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ launchId, cause: 'could-not-start' })
+      )
+    })
+
+    it('carries no launch id on a held launch that did not start', async () => {
+      const port = heldPort()
+      const runtime = earlyRuntime(port, vi.fn())
+      await runtime.refresh()
+
+      const result = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: '   '
+      })
+      runtime.stop()
+
+      expect(result.launched).toBe(false)
+      expect(result).not.toHaveProperty('launchId')
+    })
   })
 })
 
@@ -11416,6 +11843,27 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
     expect(result.launched).toBe(false)
     expect(result.error).toBe(SHELL_METACHARACTER_REFUSAL)
     expect(port.started).toHaveLength(0)
+  })
+
+  // #635 (MESSAGE-QUESTIONS 17): the registry's cause crosses this hop as it
+  // came, and a refusal the parse made still names none.
+  it('carries could-not-start for a command that would not start (#635)', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    port.failWith = Object.assign(new Error('spawn my-agent ENOENT'), { code: 'ENOENT' })
+
+    const failed = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    const refused = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent && rm -rf .',
+      prompt: 'dig'
+    })
+
+    expect(failed).toMatchObject({ launched: false, cause: 'could-not-start' })
+    expect(refused).not.toHaveProperty('cause')
   })
 
   /*
@@ -13829,3 +14277,370 @@ describe('AgentRuntime.sendDwarfText while a prompt stands at its terminal (#481
     expect(port.sendToConsole).not.toHaveBeenCalled()
   })
 })
+
+/*
+ * APPENDED for #635 (PANEL-QUESTIONS 5, design lead ruling 2026-09-27). A remembered mine with no
+ * dwarf and no live session opens like any other, and its mine column's + Dwarf is where dwarfs
+ * are launched (decision log, First run: add a mine). Such a mine is not on the board, so a launch
+ * that looked only at the board refused it. The folder is still main's to resolve — from the
+ * store row the panel's card is built from — and never taken from the request; a forgotten row is
+ * not a mine the panel shows, so it stays refused.
+ */
+describe('AgentRuntime launching into a remembered mine (#635, PANEL-QUESTIONS 5)', () => {
+  const REMEMBERED = 'C:\\work\\remembered'
+
+  async function rememberedRuntime(launchSession: SessionLauncher) {
+    const projects = createProjectsStore({
+      filePath: 'C:\\userData\\projects-v1.db',
+      sqlite: new MemoryWritableSqlite(),
+      platform: 'win32'
+    })
+    const observed = await projects.upsertObserved({ path: REMEMBERED, at: 1 })
+    if (!observed.ok) throw new Error('the store refused the observation')
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [],
+      projects,
+      launchSession,
+      onMinesUpdated: vi.fn()
+    })
+    await runtime.refresh()
+    return { runtime, projects, mineId: observed.value.id }
+  }
+
+  it('starts the session in the remembered folder though no mine on the board names it', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, mineId } = await rememberedRuntime(launchSession)
+    expect(runtime.getMines()).toHaveLength(0)
+
+    const verdict = await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+    runtime.stop()
+
+    expect(verdict).toMatchObject({ launched: true, provider: 'claude' })
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'claude',
+      minePath: REMEMBERED,
+      prompt: 'go'
+    })
+  })
+
+  it('still refuses a mine the person removed, whose row is only flagged', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'claude' })
+    const { runtime, projects, mineId } = await rememberedRuntime(launchSession)
+    await projects.forget({ id: mineId, at: 2 })
+
+    const verdict = await runtime.launchAgent({ mineId, provider: 'claude', prompt: 'go' })
+    runtime.stop()
+
+    expect(verdict).toEqual({
+      launched: false,
+      provider: 'none',
+      error: 'That mine is no longer on the map.'
+    })
+    expect(launchSession).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * ADDED for #635 (MESSAGE-QUESTIONS 23): a resume refusal carries what Codex or OpenCode wrote on
+ * stderr, for the panel. The delivery log line keeps the app's own sentence and never the tool's
+ * words, which can hold local paths or account names.
+ */
+describe('failureReasonSuffix', () => {
+  it('logs a refusal without what the tool said', () => {
+    const suffix = failureReasonSuffix({
+      delivered: false,
+      error:
+        'Codex stopped straight away (exit 1), so nothing was delivered. It said: ' +
+        'error: not signed in as j'
+    })
+    expect(suffix).toBe(': Codex stopped straight away (exit 1), so nothing was delivered.')
+  })
+
+  it('logs the app’s own reason whole, and nothing for a delivered message', () => {
+    expect(failureReasonSuffix({ delivered: false, error: 'The relay never answered.' })).toBe(
+      ': The relay never answered.'
+    )
+    expect(failureReasonSuffix({ delivered: true })).toBe('')
+  })
+})
+
+/* --- Dwarf names (#635) — one block, appended ------------------------------- */
+/*
+ * Main owns the names (handoff, "Dwarf names in the app"): it re-validates every save, keeps it
+ * per machine, and stamps `customName` onto the board it publishes — republishing at once, so
+ * every window follows through the existing push. `name` stays the provider's base name.
+ */
+describe('AgentRuntime dwarf names (#635)', () => {
+  const FOREMAN_ID = 'claude:session-1'
+  const WORKER_ID = 'claude:session-1:agent-9'
+  const DB_PATH = 'C:\\userData\\projects-v1.db'
+
+  function crew(): Provider {
+    return {
+      kind: 'claude',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\work\\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: FOREMAN_ID,
+              provider: 'claude',
+              role: 'foreman',
+              name: 'boss',
+              status: 'working',
+              sessionId: 'session-1'
+            },
+            {
+              id: WORKER_ID,
+              provider: 'claude',
+              role: 'worker',
+              name: 'Explorer',
+              status: 'working',
+              sessionId: 'session-1'
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function boardDwarf(mines: Mine[], id: string): Dwarf | undefined {
+    return mines.flatMap((mine) => mine.dwarfs).find((dwarf) => dwarf.id === id)
+  }
+
+  type RuntimeOptions = ConstructorParameters<typeof AgentRuntime>[0]
+
+  function runtimeWith(options: Partial<RuntimeOptions> = {}) {
+    const onMinesUpdated = vi.fn<RuntimeOptions['onMinesUpdated']>()
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [crew()],
+      onMinesUpdated,
+      ...options
+    })
+    return { runtime, onMinesUpdated }
+  }
+
+  function lastPublished(onMinesUpdated: { mock: { calls: [Mine[], ...unknown[]][] } }): Mine[] {
+    return onMinesUpdated.mock.calls.at(-1)![0]
+  }
+
+  it('stamps a given name beside the base name and republishes at once, without a poll', async () => {
+    const { runtime, onMinesUpdated } = runtimeWith()
+    await runtime.refresh()
+    const pushes = onMinesUpdated.mock.calls.length
+
+    await expect(
+      runtime.setDwarfName({ dwarfId: WORKER_ID, name: '  Stone   beard ' })
+    ).resolves.toEqual({ saved: true, customName: 'Stone beard' })
+
+    expect(onMinesUpdated).toHaveBeenCalledTimes(pushes + 1)
+    expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)).toMatchObject({
+      name: 'Explorer',
+      customName: 'Stone beard'
+    })
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)?.customName).toBe('Stone beard')
+    expect(boardDwarf(runtime.getMines(), FOREMAN_ID)).not.toHaveProperty('customName')
+  })
+
+  it('keeps the name on the board every later poll publishes', async () => {
+    const { runtime } = runtimeWith()
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    await runtime.refresh()
+
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)).toMatchObject({
+      name: 'Explorer',
+      customName: 'Stonebeard'
+    })
+  })
+
+  it('republishes the base name at once on a reset, and on a save that leaves it empty', async () => {
+    const { runtime, onMinesUpdated } = runtimeWith()
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    await expect(runtime.resetDwarfName(WORKER_ID)).resolves.toEqual({ saved: true })
+    expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)).not.toHaveProperty('customName')
+
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+    await expect(runtime.setDwarfName({ dwarfId: WORKER_ID, name: '  ' })).resolves.toEqual({
+      saved: true
+    })
+    expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)).not.toHaveProperty('customName')
+  })
+
+  it('refuses to name a dwarf that is not on the board', async () => {
+    const { runtime } = runtimeWith()
+    await runtime.refresh()
+
+    await expect(
+      runtime.setDwarfName({ dwarfId: 'claude:ghost', name: 'Stonebeard' })
+    ).resolves.toEqual({ saved: false, reason: DWARF_NAME_NOT_ON_BOARD })
+    await expect(runtime.resetDwarfName('claude:ghost')).resolves.toEqual({
+      saved: false,
+      reason: DWARF_NAME_NOT_ON_BOARD
+    })
+  })
+
+  it('lets two dwarfs carry the same name', async () => {
+    const { runtime } = runtimeWith()
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+    await runtime.setDwarfName({ dwarfId: FOREMAN_ID, name: 'Stonebeard' })
+
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)?.customName).toBe('Stonebeard')
+    expect(boardDwarf(runtime.getMines(), FOREMAN_ID)?.customName).toBe('Stonebeard')
+  })
+
+  /*
+   * The point of persisting: a name given before a restart is on the next run's board. Two
+   * runtimes over one database stand in for the two runs. The next run reads the names while its
+   * first poll runs, and republishes once they are in.
+   */
+  it('puts a name given in one run on the board of the next', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = () =>
+      createSqliteDwarfNameStore({ database: createAppDatabase({ filePath: DB_PATH, sqlite }) })
+    const first = runtimeWith({ dwarfNameStore: store() }).runtime
+    await first.refresh()
+    await first.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    const { runtime: next, onMinesUpdated } = runtimeWith({ dwarfNameStore: store() })
+    await next.refresh()
+
+    await vi.waitFor(() => {
+      expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)?.customName).toBe('Stonebeard')
+    })
+  })
+
+  it('refuses the save and keeps the dwarf as it was when the database will not write', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const database = createAppDatabase({ filePath: DB_PATH, sqlite })
+    const { runtime } = runtimeWith({ dwarfNameStore: createSqliteDwarfNameStore({ database }) })
+    await runtime.refresh()
+    sqlite.failWith('locked')
+    database.invalidate()
+
+    await expect(runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })).resolves.toEqual(
+      { saved: false, reason: DWARF_NAME_NOT_SAVED }
+    )
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)).not.toHaveProperty('customName')
+  })
+
+  /*
+   * A simulated valley's dwarfs are invented for one run, so their names are too (handoff): kept
+   * in memory, and never written to the database the app would otherwise use.
+   */
+  it('keeps a simulated dwarf’s name in memory only', async () => {
+    const store = {
+      list: vi.fn().mockResolvedValue([]),
+      put: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined)
+    }
+    const { runtime } = runtimeWith({
+      providers: undefined,
+      sqlite: { openReadOnly: async () => null },
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      dwarfNameStore: store
+    })
+    await runtime.refresh()
+    const simulated = runtime.getMines().flatMap((mine) => mine.dwarfs)[0]!
+
+    await expect(
+      runtime.setDwarfName({ dwarfId: simulated.id, name: 'Stonebeard' })
+    ).resolves.toEqual({ saved: true, customName: 'Stonebeard' })
+    expect(boardDwarf(runtime.getMines(), simulated.id)?.customName).toBe('Stonebeard')
+    expect(store.list).not.toHaveBeenCalled()
+    expect(store.put).not.toHaveBeenCalled()
+    runtime.stop()
+  })
+
+  it('carries a speaker’s custom name into the mine history, beside its transcript’s name', async () => {
+    const speakers: MineHistorySpeaker[] = [
+      {
+        id: WORKER_ID,
+        provider: 'claude',
+        role: 'worker',
+        name: 'Explorer',
+        lastMessageAt: 1,
+        messages: []
+      },
+      {
+        id: FOREMAN_ID,
+        provider: 'claude',
+        role: 'foreman',
+        name: 'session-',
+        lastMessageAt: 1,
+        messages: []
+      }
+    ]
+    const history = {
+      read: vi.fn().mockResolvedValue(speakers),
+      readAcross: vi.fn().mockResolvedValue(speakers)
+    }
+    const { runtime } = runtimeWith({ history })
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    const result = await runtime.mineHistory(runtime.getMines()[0]!.id)
+
+    expect(result.speakers.find((speaker) => speaker.id === WORKER_ID)).toMatchObject({
+      name: 'Explorer',
+      customName: 'Stonebeard'
+    })
+    expect(result.speakers.find((speaker) => speaker.id === FOREMAN_ID)).not.toHaveProperty(
+      'customName'
+    )
+  })
+
+  /*
+   * A custom name is user data: never logged, never written into diagnostics (decision log, Dwarf
+   * names). Every console method is watched across everything that touches a name, the failing
+   * database included — the path most likely to log.
+   */
+  it('never hands a custom name to a log line', async () => {
+    const methods = ['log', 'info', 'warn', 'error', 'debug'] as const
+    const spies = methods.map((method) => vi.spyOn(console, method).mockImplementation(() => {}))
+    try {
+      const sqlite = new MemoryWritableSqlite()
+      const database = createAppDatabase({ filePath: DB_PATH, sqlite })
+      const { runtime } = runtimeWith({ dwarfNameStore: createSqliteDwarfNameStore({ database }) })
+      await runtime.refresh()
+      await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+      await runtime.refresh()
+      await runtime.mineHistory(runtime.getMines()[0]!.id)
+      sqlite.failWith('locked')
+      database.invalidate()
+      await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Ironfoot' })
+      await runtime.resetDwarfName(WORKER_ID)
+
+      const lines = spies.flatMap((spy) =>
+        spy.mock.calls.map((call) =>
+          call.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join(' ')
+        )
+      )
+      // The failing writes did log: the check below would pass vacuously on a silent path.
+      expect(lines.some((line) => line.includes('[dwarfNames]'))).toBe(true)
+      for (const line of lines) {
+        expect(line).not.toContain('Stonebeard')
+        expect(line).not.toContain('Ironfoot')
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+  })
+})
+/* --- end of the #635 dwarf names block -------------------------------------- */

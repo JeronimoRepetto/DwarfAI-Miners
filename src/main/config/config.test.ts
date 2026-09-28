@@ -24,6 +24,8 @@ describe('defaultConfig', () => {
       sendTextRelayModel: 'haiku',
       sendTextTimeoutS: 60,
       hooksPort: 47821,
+      // AMENDED for #635 (was: no guild flag). The guild areas ship hidden.
+      guildAreasEnabled: false,
       providers: {
         claude: {
           cliPath: '',
@@ -356,6 +358,38 @@ describe('loadConfig', () => {
     )
   })
 
+  /*
+   * ADDED for #635. The guild areas ship designed in full and hidden: a flag
+   * in the three layers, off by default and never a Settings row. A value
+   * that is not a considered yes or no stops startup naming the key, as every
+   * other bad value does — a switch left silently off would look exactly like
+   * the flag not working.
+   */
+  describe('guild areas flag', () => {
+    it('is off by default', () => {
+      expect(loadConfig({}).guildAreasEnabled).toBe(false)
+      expect(defaultConfig().guildAreasEnabled).toBe(false)
+    })
+
+    it.each([
+      ['true', true],
+      ['1', true],
+      [' TRUE ', true],
+      ['false', false],
+      ['0', false]
+    ])('reads %j as %s', (raw, expected) => {
+      expect(loadConfig({ GUILD_AREAS_ENABLED: raw }).guildAreasEnabled).toBe(expected)
+    })
+
+    it('falls back to the default when blank', () => {
+      expect(loadConfig({ GUILD_AREAS_ENABLED: '  ' }).guildAreasEnabled).toBe(false)
+    })
+
+    it.each(['yes', 'on', '2', 'enabled'])('fails fast on the unusable value %j', (value) => {
+      expect(() => loadConfig({ GUILD_AREAS_ENABLED: value })).toThrowError(/GUILD_AREAS_ENABLED/)
+    })
+  })
+
   describe('CLI detection overrides', () => {
     it('reads and trims explicit claude and codex binary paths (#91)', () => {
       const config = loadConfig({
@@ -492,7 +526,7 @@ describe('loadSimulationConfig', () => {
 
 /*
  * Issue #367. Same shape as the diagnostic switches (DWARFAI_PERF, TIER_DEBUG,
- * CODEX_DEBUG, SHELL_DEBUG): a real-environment-only capability gate for a
+ * CODEX_DEBUG): a real-environment-only capability gate for a
  * route that types keystrokes into another program, so it must never be
  * expressible through the userData config file the way an ordinary AppConfig
  * setting is (see the "never leaks into AppConfig" tripwire below, mirrored

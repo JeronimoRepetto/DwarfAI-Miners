@@ -128,9 +128,15 @@ describe('permissionsVisible (#239)', () => {
     expect(permissionsVisible('claude')).toBe(true)
   })
 
-  it('hides for a provider with no held engine', () => {
-    expect(permissionsVisible('codex')).toBe(false)
+  // AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: 'hides for a provider
+  // with no held engine', with `permissionsVisible('codex')` false). Codex's detached launch has
+  // modes of its own now; Antigravity still has none wired.
+  it('hides for a provider with no permission modes wired', () => {
     expect(permissionsVisible('antigravity')).toBe(false)
+  })
+
+  it("shows for Codex, whose detached launch takes Codex's own modes (#635)", () => {
+    expect(permissionsVisible('codex')).toBe(true)
   })
 
   it('hides for Other and for no choice at all', () => {

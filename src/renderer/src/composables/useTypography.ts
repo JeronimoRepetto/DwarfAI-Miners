@@ -1,23 +1,25 @@
 import { ref } from 'vue'
-import { DEFAULT_TYPOGRAPHY_PREFERENCES, type TypographyPreferences } from '../types'
 import {
-  INTERFACE_FONT_PROPERTY,
-  MESSAGING_FONT_PROPERTY,
-  fontFamilyReference
-} from '../lib/typography/fontFamilies'
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
+  parseTypographyPreferences,
+  type TypographyPreferences
+} from '../types'
+import { resolveTypography } from '../lib/typography/typePresets'
 
 /**
- * State for Settings' Typography section, and the one place a chosen face
- * actually reaches the page (#370).
+ * State for Settings › Appearance, and the one place a chosen font style
+ * actually reaches the page (#370, #635).
  *
  * ## Why this is a composable and not a change in every component
  *
- * The two roles are already custom properties every component reads:
- * `--font-pixel` on `body`, `--font-conversation` on the bubbles, the question
- * and permission prose and the Add Panel. So applying a preference is two
+ * The four type roles are custom properties every component reads —
+ * `--f-display`, `--f-label`, `--f-meta` (inherited from `body`) and `--f-talk`,
+ * which the #370 roles `--font-pixel` and `--font-conversation` follow in the
+ * stylesheet — and the size steps are too. So applying a preference is a few
  * `setProperty` calls on the DOCUMENT ROOT, where an inline declaration
  * outranks the `:root` block in `design-tokens.css` — and nothing below this
- * file learns that a preference exists. The alternative, a prop threaded to
+ * file learns that a preference exists. A preset and a Custom face both set
+ * the sizes their faces are sharp at (typePresets.ts, crisp sizes). The alternative, a prop threaded to
  * every styled component, would have put the feature in fifty places and left
  * the fifty-first on the old face.
  *
@@ -25,15 +27,15 @@ import {
  *
  * `preferences` only ever becomes a document MAIN answered with, which is the
  * rule `usePinnedWindow` holds for the pin. Main refuses a face this build
- * cannot draw — Tiny5 for messaging above all — so a press that was corrected
+ * cannot draw — Tiny5 for messages above all — so a press that was corrected
  * has to show the correction rather than the wish.
  *
- * ## Both windows
+ * ## One window
  *
- * Installed in the shell AND in the message-panel window, because both paint
- * with these roles and only the shell holds Settings. `listen()` is how the
- * window that did not make the change hears about it; without it the panel's
- * bubbles would keep the old face until a reload.
+ * Installed in the shell, which holds Settings and, since #635, the message
+ * panel too. `listen()` was how the panel's own window heard a change the
+ * shell made (#370); with one page it hears the shell's own change a second
+ * time, which applies the same document again.
  *
  * No module-scope singleton: each root calls this once, so per-call refs keep
  * the tests independent without a clearAll() ritual.
@@ -42,20 +44,27 @@ export function useTypography() {
   // Matches the stylesheet's own declarations, so the first paint is right
   // before anything has been asked; sync() corrects it from the stored
   // document after mount.
-  const preferences = ref<TypographyPreferences>({ ...DEFAULT_TYPOGRAPHY_PREFERENCES })
+  const preferences = ref<TypographyPreferences>({
+    style: DEFAULT_TYPOGRAPHY_PREFERENCES.style,
+    faces: { ...DEFAULT_TYPOGRAPHY_PREFERENCES.faces }
+  })
   const applying = ref(false)
 
   /**
-   * Repoint the two roles on the document root.
+   * Repoint the four roles and the size steps on the document root.
    *
-   * A `var()` reference rather than a stack: the stacks are design values and
-   * stay declared once in `design-tokens.css` (see fontFamilies.ts).
+   * `var()` references rather than stacks: the stacks are design values and
+   * stay declared once in `design-tokens.css` (see typePresets.ts).
    */
-  function adopt(next: TypographyPreferences): void {
+  function adopt(answer: TypographyPreferences): void {
+    // Read through the shared parser once more: the preload already did, but a document this
+    // build cannot draw must paint the defaults rather than throw out of the window's setup.
+    const next = parseTypographyPreferences(answer)
     preferences.value = next
     const root = document.documentElement
-    root.style.setProperty(INTERFACE_FONT_PROPERTY, fontFamilyReference(next.interfaceFont))
-    root.style.setProperty(MESSAGING_FONT_PROPERTY, fontFamilyReference(next.messagingFont))
+    for (const [property, value] of Object.entries(resolveTypography(next))) {
+      root.style.setProperty(property, value)
+    }
   }
 
   /** Adopt the stored faces; on failure keep the last known ones. */
@@ -69,20 +78,21 @@ export function useTypography() {
   }
 
   /**
-   * Ask main for a face, naming only the role that changed.
+   * Ask main for a whole choice: the style and its four faces.
    *
-   * The other role is carried from what is currently in force rather than
-   * omitted, because the document is stored whole — sending one field would
-   * make the other one's absence indistinguishable from a request to reset it.
+   * Whole rather than a patch, because what a press means depends on what is
+   * in force — picking Custom keeps the faces of the style it leaves — and
+   * Settings builds that from the preferences it was handed
+   * (lib/settings/fontStyle.ts), so nothing here merges.
    *
    * A second press while one is in flight is ignored: two racing writes could
    * land out of order and leave the section drawn at the older one.
    */
-  async function set(patch: Partial<TypographyPreferences>): Promise<void> {
+  async function set(next: TypographyPreferences): Promise<void> {
     if (applying.value) return
     applying.value = true
     try {
-      adopt(await window.api.setTypographyPreferences({ ...preferences.value, ...patch }))
+      adopt(await window.api.setTypographyPreferences(next))
     } catch {
       // The failed write may or may not have reached main before breaking:
       // re-read the real state rather than assume either outcome.

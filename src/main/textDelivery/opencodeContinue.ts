@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { toolSaid } from '../domain/toolOutput'
 import type { FsLike } from '../adapters/fsLike'
 import { redactSecrets } from '../domain/redactSecrets'
 import {
@@ -272,7 +273,7 @@ function refusalReason(exitCode: number, stderrTail: string | undefined): string
   return said === ''
     ? `${opening} It said nothing about why: the session id may be one it no longer knows, ` +
         'or it could not start in that folder.'
-    : `${opening} It said: ${said}`
+    : opening + toolSaid(said)
 }
 
 /**

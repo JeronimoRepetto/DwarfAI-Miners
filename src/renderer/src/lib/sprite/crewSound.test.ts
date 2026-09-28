@@ -27,11 +27,15 @@ describe('crewFrameSignals — the strike (#330)', () => {
   // through rather than hardcoded, exactly as `crewWalkSignal`'s own tests
   // read `declared.gain` instead of restating the number.
   const STRIKE = DWARF_CREW.worker.sound!.strike!
+  // AMENDED by #635: these named frame 4, the v2 impact. The design moved the impact to the frame
+  // the v3 swing holds 200ms, index 5 (dwarfSheets.test.ts pins it), so the frame is read off the
+  // sheet's own declaration here rather than restated — the strike follows it by construction.
+  const IMPACT = DWARF_SHEETS.worker.working!.impactFrames![0]!
 
   it('sounds on the frame the sheet already calls an impact', () => {
-    // Clip 1 is the first swing, frame 4 the declared impact — the same frame
+    // Clip 1 is the first swing, IMPACT the declared impact — the same frame
     // the sparks fire on, so the sound and the debris are one event.
-    expect(step('worker', { clip: 1, frame: 3 }, { clip: 1, frame: 4 })).toEqual([
+    expect(step('worker', { clip: 1, frame: IMPACT - 1 }, { clip: 1, frame: IMPACT })).toEqual([
       { cue: 'strike', gain: STRIKE.gain }
     ])
   })
@@ -39,13 +43,13 @@ describe('crewFrameSignals — the strike (#330)', () => {
   it('sounds on BOTH swings of the shift, not only the first', () => {
     // The second swing is a clip of its own drawn from the same strip (#325),
     // so the declaration reaches it without naming it.
-    expect(step('worker', { clip: 2, frame: 3 }, { clip: 2, frame: 4 })).toEqual([
+    expect(step('worker', { clip: 2, frame: IMPACT - 1 }, { clip: 2, frame: IMPACT })).toEqual([
       { cue: 'strike', gain: STRIKE.gain }
     ])
   })
 
   it('says nothing on any other frame of the swing', () => {
-    for (const frame of [0, 1, 2, 3, 5, 6, 12]) {
+    for (const frame of [0, 1, 2, 3, 4, 5, 6, 12].filter((frame) => frame !== IMPACT)) {
       expect(step('worker', { clip: 1, frame: frame - 1 }, { clip: 1, frame }), `${frame}`).toEqual(
         []
       )
@@ -58,7 +62,7 @@ describe('crewFrameSignals — the strike (#330)', () => {
   })
 
   it('needs no previous position: a strike is the frame showing, not a crossing', () => {
-    expect(step('worker', undefined, { clip: 1, frame: 4 })).toEqual([
+    expect(step('worker', undefined, { clip: 1, frame: IMPACT })).toEqual([
       { cue: 'strike', gain: STRIKE.gain }
     ])
   })
@@ -96,30 +100,41 @@ describe('crewFrameSignals — the strike (#330)', () => {
   })
 })
 
+/*
+ * AMENDED by #635, on the design lead ruling 2026-09-26 (SPRITE-QUESTIONS.md, question 2): one grind per shift, starting when the shift starts. The cue used to be frame 14 of the pick-up, reached by a
+ * crossing inside that strip; now it is the pick-up's first frame, so "reaching" it is ENTERING the
+ * strip — from the set-down as the cycle comes round, or from nothing on a first reading. The
+ * crossing rule is kept, and entering counts as crossing: a late tick that lands past frame 0 still
+ * opens the grind. The cases below that pinned frame 14 are restated for frame 0.
+ */
 describe('crewFrameSignals — the shift (#330)', () => {
   const CUE = DWARF_CREW.worker2.sound!.shift!
+  const LAST = DWARF_CREW.worker2.swings! + 1
 
-  it('sounds as the pick-up crosses the declared frame', () => {
-    expect(
-      step('worker2', { clip: 0, frame: CUE.frame - 1 }, { clip: 0, frame: CUE.frame })
-    ).toEqual([{ cue: 'shift' }])
+  it('declares the shift on the pick-up’s first frame, where the shift starts', () => {
+    expect(CUE).toEqual({ sheet: 'start-working', frame: 0 })
   })
 
-  it('sounds even when the tick skips the declared frame outright', () => {
-    // A late tick lands on frame 15 with frame 14 never drawn. The cue is a
-    // CROSSING rather than an equality for exactly this: a grind that silently
-    // did not start is a worker2 miming its whole shift.
-    expect(step('worker2', { clip: 0, frame: 13 }, { clip: 0, frame: 15 })).toEqual([
+  it('sounds as the cycle comes round onto the pick-up', () => {
+    expect(step('worker2', { clip: LAST, frame: 16 }, { clip: 0, frame: CUE.frame })).toEqual([
       { cue: 'shift' }
     ])
   })
 
-  it('sounds once per shift, not again on every later frame of the pick-up', () => {
-    expect(step('worker2', { clip: 0, frame: CUE.frame }, { clip: 0, frame: 15 })).toEqual([])
+  it('sounds even when the tick skips the pick-up’s first frame outright', () => {
+    // A late tick lands on frame 2 with frame 0 never drawn. The cue is a
+    // CROSSING rather than an equality for exactly this: a grind that silently
+    // did not start is a worker2 miming its whole shift.
+    expect(step('worker2', { clip: LAST, frame: 16 }, { clip: 0, frame: 2 })).toEqual([
+      { cue: 'shift' }
+    ])
   })
 
-  it('says nothing while the pick-up has not reached the frame yet', () => {
-    for (let frame = 1; frame < CUE.frame; frame++) {
+  // REMOVED by #635: "says nothing while the pick-up has not reached the frame yet" walked frames
+  // 1-13 below the old frame-14 cue. With the cue on the pick-up's first frame (the ruling above)
+  // there is no frame before it to stay silent on; the frames after it are covered next.
+  it('sounds once per shift, not again on every later frame of the pick-up', () => {
+    for (let frame = 1; frame < 16; frame++) {
       expect(
         step('worker2', { clip: 0, frame: frame - 1 }, { clip: 0, frame }),
         `${frame}`
@@ -132,27 +147,29 @@ describe('crewFrameSignals — the shift (#330)', () => {
     // set-down's does, which is exactly why the strip is part of the
     // declaration rather than the frame alone.
     expect(step('worker2', { clip: 1, frame: 0 }, { clip: 1, frame: 9 })).toEqual([])
-    expect(step('worker2', { clip: 9, frame: 13 }, { clip: 9, frame: 15 })).toEqual([])
+    // AMENDED by #635: the set-down is clip LAST since the shift is five swings, not clip 9.
+    expect(step('worker2', { clip: LAST, frame: 13 }, { clip: LAST, frame: 15 })).toEqual([])
   })
 
-  it('says nothing when the sequence has just restarted onto the pick-up', () => {
-    // Wrapping from the set-down back to frame 0 is not a crossing of frame
-    // 14; the shift sounds a few frames later, when it gets there.
-    expect(step('worker2', { clip: 9, frame: 16 }, { clip: 0, frame: 0 })).toEqual([])
-  })
+  // REPLACED by #635: "says nothing when the sequence has just restarted onto the pick-up" held
+  // that wrapping onto frame 0 was no crossing of frame 14. On the ruling, that wrap IS the next
+  // shift starting, so it sounds; see "sounds as the cycle comes round onto the pick-up" above.
 
   it('sounds again on the next shift, a restart being a new shift', () => {
     // Nothing here remembers having fired, which is what makes the second lap
     // — and a re-render that restarts the sequence — a shift of its own. A
     // flag would outlive the shift it described, exactly as #322's seam flag
     // outlived its bed.
-    const crossing = () => step('worker2', { clip: 0, frame: 13 }, { clip: 0, frame: 14 })
-    expect(crossing()).toEqual([{ cue: 'shift' }])
-    expect(crossing()).toEqual([{ cue: 'shift' }])
+    const entering = () => step('worker2', { clip: LAST, frame: 16 }, { clip: 0, frame: 0 })
+    expect(entering()).toEqual([{ cue: 'shift' }])
+    expect(entering()).toEqual([{ cue: 'shift' }])
   })
 
-  it('needs a previous position, a crossing being the whole of it', () => {
-    expect(step('worker2', undefined, { clip: 0, frame: 14 })).toEqual([])
+  // AMENDED by #635: it held that a first reading could not sound, the cue being a crossing inside
+  // the pick-up. The shift starts on the pick-up's first frame, so a first reading there IS the
+  // shift starting — a worker2 that arrives at the rock grinds from its first frame.
+  it('sounds on a first reading that is the start of a shift', () => {
+    expect(step('worker2', undefined, { clip: 0, frame: 0 })).toEqual([{ cue: 'shift' }])
   })
 
   it('leaves the worker without one, its shift being a run of strikes', () => {

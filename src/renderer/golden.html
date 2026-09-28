@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DwarfAI-Miners golden stage</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The golden UI tests' page (#634), served only by scripts/golden/server.mjs. Never part of
+      the product: electron-vite builds index.html alone. It has no Content-Security-Policy of its
+      own because the harness hands it reference images as data: URLs.
+    -->
+  </head>
+  <body>
+    <script type="module" src="/src/golden/page.ts"></script>
+  </body>
+</html>

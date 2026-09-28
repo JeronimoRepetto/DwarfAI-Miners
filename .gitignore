@@ -28,6 +28,9 @@ src/renderer/src/assets/art/aseprite
 src/renderer/src/assets/art/dwarf-base
 src/renderer/src/assets/art/skins
 docs/dwarfai-miners-design/*
+# The golden UI tests' real copy of the private design repository (#634), made by
+# `pnpm golden:design`. Never committed, never a link.
+/.design/
 
 # ODD feature documents: the orchestrator's working notes, kept local and mirrored to Engram
 odd/

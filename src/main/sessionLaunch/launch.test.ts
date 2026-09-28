@@ -611,3 +611,57 @@ describe('ONE_SHOT_STDOUT_IS_TURN_TEXT (#510 correction)', () => {
     expect(Object.keys(ONE_SHOT_STDOUT_IS_TURN_TEXT).sort()).toEqual([...DWARF_PROVIDERS].sort())
   })
 })
+
+/*
+ * #635 (PO decision 2026-09-28): a Codex launch can carry the permission mode
+ * the Add panel picked. `codex exec [OPTIONS] [PROMPT]` (codex-cli 0.153.4) is
+ * why the mode's flags go BEFORE the trailing "-", on the same terms as every
+ * other option this builder writes.
+ */
+describe('buildCodexLaunchArgs with a permission mode (#635)', () => {
+  it('adds nothing for no mode or the default mode, so the argv is what it always was', () => {
+    expect(buildCodexLaunchArgs({}, undefined, undefined, undefined)).toEqual(['exec', '-'])
+    expect(buildCodexLaunchArgs({}, undefined, undefined, 'default')).toEqual(['exec', '-'])
+  })
+
+  it('writes the sandbox after the tuning and before the output path and the "-"', () => {
+    expect(
+      buildCodexLaunchArgs(
+        { model: 'gpt-5.6-sol', effort: 'high' },
+        '/tmp/out.log',
+        ['-c', 'mcp_servers.jev.command="node"'],
+        'read-only'
+      )
+    ).toEqual([
+      'exec',
+      '-m',
+      'gpt-5.6-sol',
+      '-c',
+      'model_reasoning_effort=high',
+      '--sandbox',
+      'read-only',
+      '-o',
+      '/tmp/out.log',
+      '-c',
+      'mcp_servers.jev.command="node"',
+      '-'
+    ])
+  })
+
+  it('writes workspace-write on its own, still before the "-"', () => {
+    expect(buildCodexLaunchArgs({}, undefined, undefined, 'workspace-write')).toEqual([
+      'exec',
+      '--sandbox',
+      'workspace-write',
+      '-'
+    ])
+  })
+})
+
+describe('buildLaunchArgs dispatches the Codex permission mode (#635)', () => {
+  it('passes the mode through to Codex', () => {
+    expect(buildLaunchArgs('codex', {}, undefined, undefined, 'read-only')).toEqual(
+      buildCodexLaunchArgs({}, undefined, undefined, 'read-only')
+    )
+  })
+})

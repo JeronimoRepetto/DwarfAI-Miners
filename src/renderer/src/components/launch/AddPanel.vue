@@ -1,71 +1,86 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { motion } from 'motion-v'
-import { CLOSE_ICON_SRC, USER_PORTRAIT_SRC, maskImageValue } from '../../lib/art'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { belongsToComposition } from '../../lib/controls/input'
+import { useHoverTip } from '../../composables/useHoverTip'
+import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
+import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
 import {
-  COMMAND_PLACEHOLDER,
-  COMPOSER_DISABLED_PLACEHOLDER,
+  jevFallbackReasonWords,
+  launchFailureNotice,
+  launchFailureOutput
+} from '../../lib/launch/launchFailure'
+import {
   OTHER_CHOICE,
   type JevState,
   type LaunchChoice,
+  type LaunchFailure,
+  type LaunchPermissionMode,
   type LaunchPhase
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { pressHoverVariants } from '../../lib/shell/presence'
-import {
-  HELD_PERMISSION_MODES,
-  type HeldPermissionMode,
-  type JevFallbackReason,
-  type JevModelFallbackReason,
-  type JevRouteModelPart,
-  type ModelTier
-} from '../../types'
+import { isCodexPermissionMode, isHeldPermissionMode } from '../../types'
+import ActionButton from '../controls/ActionButton.vue'
+import ChoiceChip from '../controls/ChoiceChip.vue'
+import InputField from '../controls/InputField.vue'
+import SelectField from '../controls/SelectField.vue'
+import ToggleSwitch from '../controls/ToggleSwitch.vue'
+import PixelIcon from '../icon/PixelIcon.vue'
+import TooltipCard from '../overlay/TooltipCard.vue'
+import LaunchFailureOutput from './LaunchFailureOutput.vue'
 
 /**
- * The design's Add Panel (#86): the surface the mine's Add action opens, where
- * a provider is chosen and the new agent's first prompt is written.
+ * The redesigned Add panel (#635), `organisms/add-panel` in the design: the surface the mine's
+ * Add action opens in the dock's window slot, where a supplier (or Jev) is chosen and the new
+ * dwarf's first prompt is written, and "Send the dwarf in" launches it. Launching turns it into
+ * that dwarf's MessagePanel in the same anchored place.
  *
- * It shares the MessagePanel's dock and its visual language on purpose — the
- * source says it is visually similar, and submitting REPLACES it with that
- * panel, so the two have to look like one surface changing rather than two
- * surfaces swapping. What is different is everything above the composer: a chip
- * row, and a gate.
+ * Thin, like every component here. It decides nothing: which chips exist and in which state is
+ * lib/launch/providerChips', whether a launch may go is lib/launch/launchState's, and every word
+ * the panel says about where it stands is lib/launch/addPanelCopy's. This file turns those
+ * answers into the design's parts and reports gestures back.
  *
- * Thin, like every component here. It decides nothing: which chips exist and in
- * which state is lib/launch/providerChips', whether the composer is open is
- * lib/launch/launchState's, and what a launch costs is the composable's. This
- * file turns those answers into the design's own boxes and reports gestures
- * back.
+ * ## What the redesign took away, stated rather than passing unseen
  *
- * ## The panel title is the instruction
- *
- * The source's own export puts `Select your Dwarf supplier` in the title bar
- * AND in the disabled composer, and it stays in the title after a choice is
- * made. That is the screen's name, not a live status line — so it is written
- * once, as the panel's accessible name and its heading.
+ * The spawning view — the chips and the prompt replaced by the submitted prompt as a bubble —
+ * is gone: the panel stays as it is while the dwarf is sent in, with Send the dwarf in disabled
+ * and "Sending the dwarf in…" beside it, until its MessagePanel takes the slot. Enter no longer
+ * launches from the prompt, which is a four-row field that takes line breaks: Ctrl+Enter (Cmd+Enter
+ * on a Mac) does, as the design's accessibility row says, beside the button.
  */
 
 const props = defineProps<{
+  /** The mine the panel adds a dwarf to, as its title and its Ready line name it. */
+  mineName: string
   chips: ProviderChip[]
   phase: LaunchPhase
-  /** Whether the gate in front of the composer is open. */
+  /** Whether the gate in front of the launch is open: a valid supplier, or Jev standing in. */
   enabled: boolean
-  placeholder: string
   command: string
   prompt: string
   /** Why the chosen chip cannot start a session, or null. */
   refusal: string | null
   /** The reason main gave for refusing the last launch, or null. */
   error: string | null
-  /** The row under the composer (#239): what the model select should draw. */
+  /** The tuning row (#239): what the model select should draw. */
   modelPicker: ModelPicker
   /** What the effort select should draw — hidden when the chosen provider has none. */
   effortPicker: EffortPicker
-  /** Whether the Permissions select belongs on screen — held Claude only. */
+  /** Whether the Permissions select holds values — held Claude and, since #635, Codex. */
   permissionsVisible: boolean
   /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
   jev: JevState
+  /**
+   * What the launch model holds for the three selects, which they show (#635). Vue sets a bound
+   * value again on every render, so a select drawn without these snapped each pick back to its
+   * first option (the PO's report, 2026-09-28), and Jev's pick, which sets them without touching
+   * the controls, never showed at all (MESSAGE-QUESTIONS 2). Absent, a select shows its first.
+   */
+  model?: string | null
+  effort?: string | null
+  permissionMode?: LaunchPermissionMode | null
+  /** Why the last launch failed, for the launch-failure notice (#635), or null. */
+  failure?: LaunchFailure | null
 }>()
 
 const emit = defineEmits<{
@@ -74,58 +89,179 @@ const emit = defineEmits<{
   command: [text: string]
   /** Enter in the custom-command box. */
   commit: []
-  /** The composer's text, as it is typed. */
+  /** The prompt's text, as it is typed. */
   prompt: [text: string]
-  /** A model picked off the row under the composer. */
+  /** A model picked off the tuning row. */
   model: [value: string]
   effort: [value: string]
-  permissionMode: [value: HeldPermissionMode]
+  permissionMode: [value: LaunchPermissionMode]
   /** The Jev toggle (#509). */
   'toggle-jev': []
-  /** The #523 auto-accept checkbox beside it. */
+  /** The #523 auto-accept switch beside it. */
   'toggle-jev-auto': []
   /** The decision card's own Dismiss control (#509). */
   'dismiss-jev': []
   submit: []
+  /** The launch-failure notice's Retry (#635): the same launch, again. */
+  retry: []
+  /** Its Pick manually (#635): Let Jev choose off, so the chips and selects choose. */
+  'pick-manually': []
   close: []
 }>()
 
 const spawning = computed(() => props.phase === 'submitted-spawning')
 /**
- * A launch that started and that this panel is not holding (#168, #191).
- *
- * Drawn like the spawning view — the chips and the composer go, the submitted
- * prompt stays — but its note says something different, because what the panel
- * is waiting for is different. A detached session leaves no held conversation,
- * so it cannot be recognised by its words the way a held one is; it is
- * recognised when main proves it from the session's own transcript, which is a
- * thing that can take a sweep or two and, on a provider whose store says
- * nothing, may not happen at all. The copy below promises only that.
+ * A launch that started and that this panel is not holding (#168, #191): its dwarf is recognised
+ * only once main proves it from the session's own transcript, which the line beside the button
+ * promises and nothing more.
  */
 const detached = computed(() => props.phase === 'started-detached')
-/** Both end states replace the Add controls with the prompt that was sent. */
+/** Both end states hold the panel as it is, with nothing left to press but Close. */
 const launched = computed(() => spawning.value || detached.value)
-const showCommand = computed(() =>
-  props.chips.some((chip) => chip.choice === OTHER_CHOICE && chip.state === 'selected')
-)
+
+const chosen = computed(() => props.chips.find((chip) => chip.state === 'selected')?.choice ?? null)
+const showCommand = computed(() => chosen.value === OTHER_CHOICE)
+const jevOn = computed(() => props.jev.availability === 'ready' && props.jev.enabled)
 
 /**
- * Enter submits, Shift+Enter writes a newline — the convention every composer
- * here uses, and the one the source states for this one.
- *
- * The disabled attribute already stops a keystroke reaching a closed gate;
- * checking again costs nothing and means the rule does not depend on the
- * browser honouring it. A second guard blocks it while Jev is being asked
- * (#509) — the "submit control disabled" state the source's own amendment
- * asks for, since this composer draws no separate submit button for Enter
- * to disable.
+ * A command typed under Other… but not yet committed with its Enter (#635). The panel this one
+ * replaced kept its prompt disabled until that Enter, so nobody could reach a launch without it;
+ * this one lets the prompt be written first, and a person who typed a command and moved on has
+ * chosen their supplier. So the command in the box counts as committed, and launching commits it
+ * first — the launch model's own gate still decides, on the same committed command as before.
  */
-function onPromptKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Enter' || event.shiftKey) return
-  event.preventDefault()
-  if (!props.enabled || props.jev.routing.phase === 'asking') return
+const commandPending = computed(
+  () => showCommand.value && !props.enabled && props.command.trim() !== ''
+)
+/** The gate as this panel reads it: the launch model's, or Other… with a command in its box. */
+const supplierReady = computed(() => props.enabled || commandPending.value)
+
+/**
+ * The launch-failure notice (#635; components.md, Add a dwarf): the cause, what to do, and the
+ * actions that cause has. Its words and which actions it offers are lib/launch/launchFailure's.
+ */
+const notice = computed(() =>
+  props.failure === null || props.failure === undefined ? null : launchFailureNotice(props.failure)
+)
+/*
+ * The title's tooltip (MESSAGE-QUESTIONS 23): the tool's captured last lines, on hover and at once
+ * on keyboard focus, above the title and aligned to its start, as the outcome line's. The title
+ * takes focus only while it has one, and a hidden copy of the same lines describes it.
+ */
+const failOutput = computed(() =>
+  props.failure === null || props.failure === undefined ? null : launchFailureOutput(props.failure)
+)
+const failTip = useHoverTip<'title'>({ side: 'top', align: 'start' })
+const failTipId = 'dm-add-fail-tip-' + ++cards
+
+/** A Jev cause is the notice saying what Jev did, so the fallback line under the toggles steps aside. */
+const jevFailed = computed(
+  () =>
+    props.failure?.cause === 'jev-unreachable' || props.failure?.cause === 'jev-could-not-choose'
+)
+
+/** The line beside Send the dwarf in, and whether it is an alert. */
+const why = computed(() =>
+  addPanelWhy({
+    phase: props.phase,
+    enabled: supplierReady.value,
+    prompt: props.prompt,
+    refusal: props.refusal,
+    error: props.error,
+    mineName: props.mineName,
+    jevAsking: props.jev.routing.phase === 'asking',
+    failed: notice.value !== null
+  })
+)
+
+/** The one row of selects: Model, Effort and Permissions. */
+const selects = computed(() =>
+  addPanelSelects({
+    choice: chosen.value,
+    jevOn: jevOn.value,
+    modelPicker: props.modelPicker,
+    effortPicker: props.effortPicker,
+    permissionsVisible: props.permissionsVisible,
+    values: {
+      model: props.model ?? null,
+      effort: props.effort ?? null,
+      permissionMode: props.permissionMode ?? null
+    }
+  })
+)
+
+/** Send the dwarf in wakes once a supplier is valid (or Jev is on) and there is a prompt. */
+const canLaunch = computed(
+  () =>
+    supplierReady.value &&
+    !launched.value &&
+    props.jev.routing.phase !== 'asking' &&
+    props.prompt.trim() !== ''
+)
+
+function launch(): void {
+  if (!canLaunch.value) return
+  if (commandPending.value) emit('commit')
   emit('submit')
 }
+
+/**
+ * Ctrl+Enter (Cmd+Enter on a Mac) launches from the prompt when ready (components.md, Add a
+ * dwarf, Accessibility). Either modifier on every platform: the person's own habit is the one
+ * that should work, and neither does anything else in a text field. Plain Enter is a line break.
+ */
+function onPromptKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return
+  // An input method's own Enter picks its candidate; the text is not written yet (#635).
+  if (belongsToComposition(event)) return
+  event.preventDefault()
+  launch()
+}
+
+/** Enter commits the command (#194), unless it is the input method's own (#635). */
+function onCommandKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || belongsToComposition(event)) return
+  event.preventDefault()
+  emit('commit')
+}
+
+/*
+ * The panel takes the keyboard when it opens, on its first control: the first supplier chip
+ * (screens/shell.md, Where focus goes, `focusFirst()`). Once Vue has drawn it, as the
+ * MessagePanel does its composer (#409); the dock remounts the panel for every opening.
+ */
+const chipRow = ref<HTMLElement | null>(null)
+function focusFirstChip(): void {
+  chipRow.value?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
+}
+onMounted(async () => {
+  await nextTick()
+  focusFirstChip()
+})
+
+/*
+ * Pick manually hands the keyboard to the first supplier chip (screens/launch.md, As built): the
+ * chips and the three selects take over from Jev, and the notice leaves with the pressed button.
+ * Once Vue has redrawn the panel without it.
+ */
+async function pickManually(): Promise<void> {
+  emit('pick-manually')
+  await nextTick()
+  focusFirstChip()
+}
+
+/** A pick off one of the three selects, reported to the launch model under its own name. */
+function pick(label: 'Model' | 'Effort' | 'Permissions', value: string): void {
+  if (label === 'Model') emit('model', value)
+  else if (label === 'Effort') emit('effort', value)
+  // Held Claude's modes or Codex's (#635); the list the select drew is the chosen supplier's own.
+  else if (isHeldPermissionMode(value) || isCodexPermissionMode(value)) {
+    emit('permissionMode', value)
+  }
+}
+
+/** The no-key reason, in the words the Jev fallback line already uses for it (#509). */
+const JEV_NO_KEY = 'No TypeSafe key is set'
 
 /*
  * Jev (#509): a toggle beside the pickers it can fill in for, a decision
@@ -150,11 +286,33 @@ const jevDecision = computed(() =>
   props.jev.routing.phase === 'decided' ? props.jev.routing.decision : null
 )
 
-/** The provider's label off the SAME source the chip row already resolved it from — never the CLI binary name. */
+/**
+ * The decision card stays on screen while the launch is in flight, so the panel stays as it is
+ * (MESSAGE-QUESTIONS Q1, design lead ruling 2026-09-28): what goes out is still what it names.
+ * Its Dismiss waits with every other control instead, because putting the pickers back under a
+ * launch already going would make the card name a launch that is not the one under way.
+ */
+const showJevDecision = computed(() => jevDecision.value !== null)
+
+/*
+ * Dismiss hands the keyboard to Let Jev choose (components.md, Add a dwarf, Accessibility): the
+ * card takes the pressed button away with it, and the toggle is what brings the card back.
+ */
+const jevToggle = ref<InstanceType<typeof ToggleSwitch> | null>(null)
+function dismissJev(): void {
+  emit('dismiss-jev')
+  ;(jevToggle.value?.$el as HTMLElement | undefined)?.focus()
+}
+
+/**
+ * The supplier as the chip row draws it, off the SAME chip — the tool's own name, never the CLI
+ * binary name; the raw id only for a provider no chip stands for.
+ */
 const jevProviderLabel = computed(() => {
   const decision = jevDecision.value
   if (decision === null) return ''
-  return props.chips.find((chip) => chip.choice === decision.provider)?.label ?? decision.provider
+  const chip = props.chips.find((entry) => entry.choice === decision.provider)
+  return chip === undefined ? decision.provider : supplierLabel(chip.choice)
 })
 
 /** The model's label off the picker's own catalogue, falling back to the raw id it could not resolve. */
@@ -167,194 +325,40 @@ const jevModelLabel = computed(() => {
   )
 })
 
-/**
- * #608: `confidence` is `undefined` (never `0`) when no part was actually
- * answered — the MIN is taken over only the parts `applied: 'answered'`, so
- * a discarded safe-default part's own number (the bug's own 19% provider
- * figure) never reaches this computed at all. `null` here, not `0`: `0` was
- * the bug's own overclaim, a number standing in for "nothing to show" that
- * a reader cannot tell apart from a genuine 0% answer.
+/*
+ * The card (MESSAGE-QUESTIONS 15; decision log, Jev card from the decision): the eyebrow, Jev's
+ * pick in bold, and Dismiss. Everything else the decision says is in the pick's tooltip, one
+ * sentence per line, on hover after the tooltip delay and at once on keyboard focus, below the
+ * paragraph and aligned to its start, as the outcome line's (useHoverTip). A hidden copy of the
+ * same lines describes the paragraph for a screen reader. The #509 closing note is gone: the
+ * pickers show the pick themselves.
  */
-const jevConfidencePercent = computed<number | null>(() => {
-  const decision = jevDecision.value
-  if (decision === null || decision.confidence === undefined) return null
-  return Math.round(decision.confidence * 100)
-})
-
-/**
- * The one sentence naming what is about to launch (#608). Deliberately
- * never "Jev chose" — a named part (the provider, in the issue that opened
- * #608) can be a safe default rather than Jev's own answer, while it is
- * still what launches, so this states the plain fact of the launch and
- * leaves WHO chose each part to `jevPartsSummary` below. The confidence
- * shown here, when there is one, is labelled as Jev's own LEAST certain
- * answer — never the raw `decision.confidence`'s meaning misread as "how
- * sure Jev was about this launch", since a part that fell back was never
- * asked and cannot make the launch more or less certain either way.
- */
-const jevDecisionSummary = computed(() => {
+const jevEyebrow = computed(() => jevCardEyebrow(props.jev.autoAccept))
+const jevPick = computed(() => {
   const decision = jevDecision.value
   if (decision === null) return ''
-  const parts = [jevProviderLabel.value]
-  if (jevModelLabel.value !== null) parts.push(jevModelLabel.value)
-  if (decision.effort !== undefined) parts.push(`${decision.effort} effort`)
-  const launch = `Launching ${parts.join(', ')}.`
-  const confidence = jevConfidencePercent.value
-  return confidence === null ? launch : `${launch} Jev's least certain answer was ${confidence}%.`
+  return jevPickText({
+    supplier: jevProviderLabel.value,
+    model: jevModelLabel.value,
+    ...(decision.effort === undefined ? {} : { effort: decision.effort })
+  })
 })
-
-/**
- * The tier in words (jev-routing-profiles T4) — `ModelTier`'s own kebab-case
- * wire values are never shown as-is. `'special-purpose'` is exhaustive
- * against the type only: a routing decision never lands on it (see
- * `ModelTier`'s own comment in contracts.ts), so this card never renders it.
- */
-const TIER_LABELS: Record<ModelTier, string> = {
-  'fast-cheap': 'fast & cheap',
-  balanced: 'balanced',
-  frontier: 'frontier',
-  'long-context': 'long context',
-  'special-purpose': 'special purpose'
-}
-
-/**
- * Which parts Jev itself answered confidently, and which fell to a safe
- * value instead (jev-routing-profiles T4) — `JevRouteParts`' own two
- * confidence-bearing parts, `provider` and `tier`. Confidence is always
- * Jev's OWN raw reported number even for a part that fell back — see
- * `JevRouteAnsweredPart`'s own comment in contracts.ts — so this line can
- * say how close it was, not just that a floor bit. Whether the safe value
- * came from the person's own configured default or the cheapest launchable
- * provider is not on the wire (`applied` only ever says 'safe-default'), so
- * this deliberately says "the safe value" rather than guessing "your
- * default" for a part that might not be.
- */
-const jevPartsSummary = computed(() => {
+const jevTipLines = computed(() => {
   const decision = jevDecision.value
-  if (decision === null) return ''
-  const tierPct = Math.round(decision.parts.tier.confidence * 100)
-  const providerPct = Math.round(decision.parts.provider.confidence * 100)
-  const tierLabel = TIER_LABELS[decision.tier]
-
-  const chosen: string[] = []
-  if (decision.parts.tier.applied === 'answered') {
-    chosen.push(`the ${tierLabel} tier (${tierPct}% sure)`)
-  }
-  if (decision.parts.provider.applied === 'answered') {
-    chosen.push(`${jevProviderLabel.value} (${providerPct}% sure)`)
-  }
-
-  const unsureNames: string[] = []
-  const unsureValues: string[] = []
-  if (decision.parts.tier.applied === 'safe-default') {
-    unsureNames.push(`the tier (${tierPct}%)`)
-    unsureValues.push(tierLabel)
-  }
-  if (decision.parts.provider.applied === 'safe-default') {
-    unsureNames.push(`the provider (${providerPct}%)`)
-    unsureValues.push(jevProviderLabel.value)
-  }
-
-  let sentence = chosen.length === 0 ? '' : `Jev chose ${chosen.join(' and ')}.`
-  if (unsureNames.length > 0) {
-    const plural = unsureValues.length > 1
-    const unsureSentence = `Jev was unsure about ${unsureNames.join(' and ')}; the safe value${
-      plural ? 's' : ''
-    } ${unsureValues.join(' and ')} ${plural ? 'were' : 'was'} used.`
-    sentence = sentence === '' ? unsureSentence : `${sentence} ${unsureSentence}`
-  }
-  const modelSentence = jevModelPartSentence(decision.parts.model)
-  return sentence === '' ? modelSentence : `${sentence} ${modelSentence}`
+  return decision === null ? [] : jevCardTip(decision, jevProviderLabel.value)
 })
+const jevTip = useHoverTip<'pick'>({ side: 'bottom', align: 'start' })
+const jevTipId = 'dm-add-jev-tip-' + ++cards
 
-/**
- * Fixed English words for every way the model step's own second request
- * (#608) fell back to the local cost/profile choice instead of a winner —
- * `Record<JevModelFallbackReason, string>` is exhaustive over the union on
- * purpose, so a fallback reason added to the wire fails typecheck here
- * rather than rendering silently as nothing. The first nine reuse
- * `JEV_FALLBACK_REASONS`' own wording above (request 1's vocabulary,
- * mid-sentence here rather than sentence-starting); `'no-live-model'` is
- * the one reason that predates #608 entirely — no launchable, catalogued
- * model existed at any tier step, so there was never a candidate and never
- * a second request either.
+/*
+ * The fallback line says every way Jev failed still launched, or what is owed instead (#509,
+ * #523). Its reason words are the app's own, now in lib/launch/launchFailure, which the
+ * launch-failure notice's "Jev could not choose" opens with too (#635).
  */
-const JEV_MODEL_FALLBACK_REASONS: Record<JevModelFallbackReason, string> = {
-  'no-key': 'no TypeSafe key is set',
-  'no-launchable-provider': 'no launchable provider to choose from',
-  unreachable: 'Jev could not be reached',
-  timeout: 'Jev took too long',
-  'rate-limited': 'Jev is rate-limited right now',
-  unauthorized: 'TypeSafe rejected the API key',
-  'low-confidence': 'Jev was not confident enough',
-  'invalid-response': "Jev's answer could not be used",
-  'budget-exceeded': "the prompt and catalogue do not fit Jev's request budget",
-  'no-live-model': 'no live model exists for this provider and tier'
-}
-
-/**
- * The model step's own sentence (#608) — kept out of the chosen/unsure
- * lists above on purpose, because its three `applied` states do not share
- * their vocabulary: `'only-candidate'` is neither Jev's own pick nor a
- * safe default (nothing was defaulted to; it was the only option), so it
- * needs a third sentence shape rather than being forced into "chose" or
- * "unsure about".
- */
-function jevModelPartSentence(model: JevRouteModelPart): string {
-  if (model.applied === 'answered') {
-    // `probability` is always present when `applied === 'answered'` (see
-    // `JevRouteModelPart`'s own comment in contracts.ts) — the `?? 0` is
-    // belt-and-braces for a state the wire's own type rules out, never a
-    // stand-in for "no answer" the way the old `jevConfidencePercent` used
-    // `0` for (#608's own bug).
-    const fitPct = Math.round((model.probability ?? 0) * 100)
-    let modelSentence = `Jev picked the model (${fitPct}% fit).`
-    if (model.choiceProbability !== undefined) {
-      const choicePct = Math.round(model.choiceProbability * 100)
-      modelSentence += ` Tie broken by Jev's ranking (${choicePct}%).`
-    }
-    return modelSentence
-  }
-  if (model.applied === 'only-candidate') {
-    return 'Only one model fits that tier, so no second question was asked.'
-  }
-  const reason =
-    model.reason === undefined ? 'an unknown reason' : JEV_MODEL_FALLBACK_REASONS[model.reason]
-  return `Jev could not pick the model (${reason}); the closest local choice was used.`
-}
-
-/**
- * Fixed English sentences per fallback reason (#509's own acceptance
- * criterion: every way Jev can fail still launches and says that it did).
- * Kept here, display text only — the wire only ever carries the reason, on
- * the same split `contracts.ts` states for every prompt-sentence-that-names-
- * no-provider.
- *
- * AMENDED in the ending below for #523: “still launches” was true because a
- * chip always stood under it. On the toggle-alone entry path there may be
- * nothing to launch onto, and then the line says what IS owed instead —
- * nothing launched, the prompt stands, a provider is missing.
- */
-const JEV_FALLBACK_REASONS: Record<JevFallbackReason, string> = {
-  'no-key': 'No TypeSafe key is set',
-  'no-launchable-provider': 'No launchable provider to choose from',
-  unreachable: 'Jev could not be reached',
-  timeout: 'Jev took too long',
-  'rate-limited': 'Jev is rate-limited right now',
-  unauthorized: 'TypeSafe rejected the API key',
-  'low-confidence': 'Jev was not confident enough',
-  'invalid-response': "Jev's answer could not be used",
-  'budget-exceeded': "The prompt and catalogue do not fit Jev's request budget"
-}
-
 const jevFallbackMessage = computed(() => {
   const routing = props.jev.routing
   if (routing.phase !== 'fellBack') return ''
-  const reason = JEV_FALLBACK_REASONS[routing.reason]
-  const withConfidence =
-    routing.reason === 'low-confidence' && routing.confidence !== undefined
-      ? `${reason} (${Math.round(routing.confidence * 100)}%)`
-      : reason
+  const withConfidence = jevFallbackReasonWords(routing.reason, routing.confidence)
 
   // jev-routing-profiles T4: a configured default was just applied to the
   // pickers below (launchState.jevAnswered's own detour), so this line says
@@ -386,673 +390,432 @@ const jevFallbackMessage = computed(() => {
   return `${withConfidence}. ${ending}`
 })
 
-/** Enter commits the command. The gate behind it decides whether that opens anything. */
-function onCommandKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Enter' || event.shiftKey) return
-  event.preventDefault()
-  emit('commit')
-}
+/** Why the Jev switches cannot be pressed: no key yet, or the reason main gave (#509). */
+const jevUnavailableTitle = computed(() =>
+  props.jev.availability === 'hidden' ? JEV_NO_KEY : jevUnavailableMessage.value
+)
+</script>
+
+<script lang="ts">
+/** Every panel's own number, for the id its Jev tooltip's hidden copy is named by. */
+let cards = 0
 </script>
 
 <template>
   <section
-    class="add-panel"
-    :aria-label="COMPOSER_DISABLED_PLACEHOLDER"
+    class="dm-add m-mat m-wood m-raised"
+    role="dialog"
+    :aria-label="`Add a dwarf to ${mineName}`"
     @keydown.escape="emit('close')"
     @click.stop
   >
-    <!-- The same window-drag handle the message panel's header carries (#296). -->
-    <header class="panel-bar" data-window-drag>
-      <h2 class="panel-title">{{ COMPOSER_DISABLED_PLACEHOLDER }}</h2>
-      <motion.button
-        class="launch-close"
-        type="button"
-        aria-label="Close the launch panel"
-        v-bind="pressHoverVariants"
+    <!-- Anchored like the MessagePanel (#635): the header does not drag. -->
+    <header class="dm-add__head">
+      <PixelIcon name="add" :scale="2" />
+      <h2 class="dm-add__title">
+        Add a dwarf
+        <small>to {{ mineName }}</small>
+      </h2>
+      <ActionButton
+        class="dm-add__close"
+        icon="close"
+        size="sm"
+        title="Close"
         @click="emit('close')"
-      >
-        <span
-          class="close-glyph"
-          :style="{ '--close-icon': maskImageValue(CLOSE_ICON_SRC) }"
-          aria-hidden="true"
-        ></span>
-      </motion.button>
+      />
     </header>
 
-    <!--
-      The chip row and the command box share one line, exactly as the source's
-      Other export draws them: the command appears beside the chips rather than
-      under them, so choosing Other grows the row instead of moving it.
-    -->
-    <div v-if="!launched" class="launch-choices">
-      <motion.button
-        v-for="chip in chips"
-        :key="chip.choice"
-        class="provider-chip"
-        type="button"
-        :data-state="chip.state"
-        :aria-pressed="chip.state === 'selected'"
-        v-bind="pressHoverVariants"
-        @click="emit('choose', chip.choice)"
-      >
-        {{ chip.label }}
-      </motion.button>
-      <input
-        v-if="showCommand"
-        class="launch-command is-selectable"
-        type="text"
-        :value="command"
-        :placeholder="COMMAND_PLACEHOLDER"
-        aria-label="Your own launch command"
-        @input="emit('command', ($event.target as HTMLInputElement).value)"
-        @keydown="onCommandKeydown"
-      />
-    </div>
-
-    <!--
-      `launch.md` step 3 — the submitted prompt is the conversation's first
-      message — drawn here because between Enter and the dwarf's arrival there
-      is no MessagePanel to hold it. It is not a copy that outlives that window:
-      the moment the dwarf lands this panel is gone, and the MessagePanel draws
-      main's own record of the same words (the held session was seeded with
-      them), so it is shown once and by whoever can prove it.
-    -->
-    <div v-if="launched" class="launch-spawning">
-      <article class="message is-user">
-        <p class="launch-first-message bubble">{{ prompt }}</p>
-        <img class="portrait" :src="USER_PORTRAIT_SRC" alt="You" draggable="false" />
-      </article>
-    </div>
-
-    <template v-else>
+    <div class="dm-add__body">
       <!--
-        No maxlength since #431. This prompt never travels through a command
-        line: a detached launch writes it to the child's stdin and a held one
-        passes it to the SDK inside this process, so the ceiling a MESSAGE
-        answers to was never its bound (see prepareLaunchPrompt). There is
-        therefore no limit to state and nothing for the panel to refuse —
-        only the silent cut that used to be here.
+        The supplier chips (W7·1), detected providers then Other… for a command of the person's
+        own, which opens its field under them. Enter commits the command (#194): the gate behind it
+        decides whether the launch can go.
       -->
-      <textarea
-        class="launch-input is-selectable"
-        rows="2"
-        :value="prompt"
-        :disabled="!enabled"
-        :placeholder="placeholder"
-        :class="{ 'is-instruction': !enabled }"
-        :aria-label="placeholder"
-        @input="emit('prompt', ($event.target as HTMLTextAreaElement).value)"
-        @keydown="onPromptKeydown"
-      ></textarea>
-
-      <!--
-        The row under the composer (#239, launch.md's maintainer amendment):
-        model, effort and permissions, visible once a real provider chip is
-        chosen. Reuses this screen's own chip and input surfaces — nothing
-        new is drawn, per the amendment's own words.
-      -->
-      <div v-if="modelPicker.visible" class="launch-tuning">
-        <select
-          class="tuning-select"
-          :disabled="modelPicker.disabled"
-          aria-label="Model"
-          @change="emit('model', ($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="option in modelPicker.models" :key="option.value" :value="option.value">
-            {{ option.label ?? option.value }}
-          </option>
-        </select>
-        <span v-if="modelPicker.note" class="tuning-note">{{ modelPicker.note }}</span>
-        <select
-          v-if="effortPicker.visible"
-          class="tuning-select"
-          aria-label="Effort"
-          @change="emit('effort', ($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="level in effortPicker.efforts" :key="level" :value="level">
-            {{ level }}
-          </option>
-        </select>
-        <select
-          v-if="permissionsVisible"
-          class="tuning-select"
-          aria-label="Permissions"
-          @change="
-            emit('permissionMode', ($event.target as HTMLSelectElement).value as HeldPermissionMode)
-          "
-        >
-          <option v-for="mode in HELD_PERMISSION_MODES" :key="mode" :value="mode">
-            {{ mode }}
-          </option>
-        </select>
+      <div class="dm-add__sec">
+        <p class="dm-add__label">Choose your dwarf supplier</p>
+        <div ref="chipRow" class="dm-add__chips" role="radiogroup" aria-label="Supplier">
+          <ChoiceChip
+            v-for="chip in chips"
+            :key="chip.choice"
+            role="radio"
+            :label="supplierLabel(chip.choice)"
+            :pressed="chip.state === 'selected'"
+            :data-value="chip.choice"
+            :disabled="launched"
+            @click="emit('choose', chip.choice)"
+          />
+        </div>
+        <InputField
+          :hidden="!showCommand"
+          class="dm-add__command"
+          placeholder="Custom command, e.g. my-agent --yes"
+          label="Custom command"
+          :value="command"
+          :disabled="launched"
+          @update:value="emit('command', $event)"
+          @keydown="onCommandKeydown"
+        />
       </div>
 
       <!--
-        Jev (#509): a toggle beside the pickers it can fill in for. Absent
-        outright with no key configured — issue #509's own first option —
-        shown disabled with main's reason for anything else that keeps it
-        off, and pressable once ready.
+        Jev (W7·2, #509): the toggle and auto-accept, with its decision or fallback below once it
+        has answered. Drawn in every state as the design draws it; a Jev that cannot be asked — no
+        key, or main's own reason (#509) — shows both switches off and disabled, with that reason
+        on them.
       -->
-      <div v-if="jev.availability !== 'hidden'" class="jev-row">
-        <template v-if="jev.availability === 'ready'">
-          <button
-            class="jev-toggle"
-            type="button"
-            :aria-pressed="jev.enabled"
-            @click="emit('toggle-jev')"
+      <div class="dm-add__sec">
+        <p class="dm-add__label">Jev</p>
+        <div class="dm-add__row">
+          <span class="t-section">Let Jev choose</span>
+          <ToggleSwitch
+            ref="jevToggle"
+            label="Let Jev choose"
+            :on="jev.enabled"
+            :disabled="jev.availability !== 'ready' || launched"
+            :title="jev.availability === 'ready' ? undefined : jevUnavailableTitle"
+            held
+            @update:on="emit('toggle-jev')"
+          />
+          <span class="t-meta t-soft">Auto-accept</span>
+          <ToggleSwitch
+            label="Auto-accept Jev"
+            :on="jev.autoAccept"
+            :disabled="jev.availability !== 'ready' || launched"
+            :title="jev.availability === 'ready' ? undefined : jevUnavailableTitle"
+            held
+            @update:on="emit('toggle-jev-auto')"
+          />
+        </div>
+        <!--
+          The decision card (#509): shown before it is acted on, and can be overridden — the
+          pickers below have already been set to it, so Dismiss puts them back rather than this
+          card undoing anything itself. Its shape is the design's (MESSAGE-QUESTIONS 15). The
+          fallback line says every way Jev failed still launched, or what is owed instead (#523).
+        -->
+        <div v-if="showJevDecision && jevDecision !== null" class="dm-add__jev" role="status">
+          <span class="t-meta">{{ jevEyebrow }}</span>
+          <p
+            class="dm-add__jev-pick"
+            tabindex="0"
+            :aria-describedby="jevTipId"
+            @pointerenter="jevTip.hover('pick', $event)"
+            @pointerleave="jevTip.leave"
+            @pointerdown="jevTip.press"
+            @focus="jevTip.focus('pick', $event)"
+            @blur="jevTip.hide"
           >
-            Let Jev choose
-          </button>
-          <!--
-            #523: with the toggle now a full entry path, its two-Enter confirm
-            can be collapsed by request. The checkbox stands beside the toggle
-            and appears exactly where the toggle is pressable — an
-            auto-accept for an option that cannot be accepted is nothing's.
-          -->
-          <label class="jev-auto-label">
-            <input
-              class="jev-auto"
-              type="checkbox"
-              :checked="jev.autoAccept"
-              @change="emit('toggle-jev-auto')"
+            <b>{{ jevPick }}</b
+            >.
+          </p>
+          <span :id="jevTipId" class="sr-only">{{ jevTipLines.join(' ') }}</span>
+          <div class="dm-add__jev-actions">
+            <ActionButton
+              class="jev-dismiss"
+              label="Dismiss"
+              size="sm"
+              :disabled="launched"
+              @click="dismissJev"
             />
-            Auto-accept Jev's choice
-          </label>
-        </template>
-        <template v-else>
-          <button class="jev-toggle" type="button" disabled aria-pressed="false">
-            Let Jev choose
-          </button>
-          <p class="jev-unavailable-reason">{{ jevUnavailableMessage }}</p>
-        </template>
+          </div>
+          <!-- In <body>: the panel's body scrolls, which would otherwise clip a fixed card. -->
+          <Teleport to="body">
+            <Transition name="dm-tip-pop">
+              <TooltipCard
+                v-if="jevTip.shown.value !== null"
+                :ref="jevTip.card"
+                :style="jevTip.style.value"
+                ><div v-for="line in jevTipLines" :key="line">{{ line }}</div></TooltipCard
+              >
+            </Transition>
+          </Teleport>
+        </div>
+        <div
+          v-else-if="jev.routing.phase === 'fellBack' && !jevFailed"
+          class="dm-add__jev"
+          role="status"
+        >
+          <p class="jev-fallback">{{ jevFallbackMessage }}</p>
+          <!--
+            Only when a default was APPLIED: the pickers below were overwritten exactly as a
+            decision would overwrite them, so the same Dismiss belongs here too.
+          -->
+          <ActionButton
+            v-if="jev.routing.appliedDefault !== undefined"
+            class="jev-dismiss jev-fallback-dismiss"
+            label="Dismiss"
+            size="sm"
+            :disabled="launched"
+            @click="dismissJev"
+          />
+        </div>
       </div>
-
-      <p v-if="jev.routing.phase === 'asking'" class="launch-note jev-status" role="status">
-        Asking Jev…
-      </p>
 
       <!--
-        The decision card (#509): shown before it is acted on, and can be
-        overridden — the pickers above have already been set to it (through
-        the same choose/model/effort paths a click would use), so Dismiss
-        puts them back rather than this card undoing anything itself.
+        Model, effort and permissions as one row of selects (W7·3), which wraps a select onto the
+        next line rather than cut its label. What the model list could not say (#239) — no live
+        list, or where the list came from — is a line under the row.
       -->
-      <div v-else-if="jevDecision !== null" class="jev-decision">
-        <p class="jev-decision-summary">{{ jevDecisionSummary }}</p>
-        <p class="jev-decision-parts">{{ jevPartsSummary }}</p>
-        <p v-if="jevDecision.parts.trivial.value" class="jev-decision-trivial">
-          Treated as a trivial prompt.
+      <div class="dm-add__sec">
+        <p class="dm-add__label">Model, effort and permissions</p>
+        <div class="dm-add__row">
+          <SelectField
+            v-for="select in selects"
+            :key="select.label"
+            :label="select.label"
+            :options="select.options"
+            :value="select.value"
+            :disabled="select.disabled || launched"
+            @update:value="pick(select.label, $event)"
+          />
+        </div>
+        <p v-if="modelPicker.visible && modelPicker.note" class="dm-add__note">
+          {{ modelPicker.note }}
         </p>
-        <p v-if="jevDecision.parts.largeContext.value" class="jev-decision-large-context">
-          Large-context model preferred.
-        </p>
-        <p v-if="jevDecision.truncated" class="jev-decision-truncated">
-          The prompt sent to Jev was trimmed to fit its request budget.
-        </p>
-        <p class="jev-decision-note">
-          The pickers below now show this choice — change them, or press Launch again to start it.
-        </p>
-        <button class="jev-dismiss" type="button" @click="emit('dismiss-jev')">Dismiss</button>
       </div>
-    </template>
+
+      <!--
+        The prompt (W7·4). No maxlength since #431: this prompt never travels through a command
+        line, so there is no ceiling to state and nothing for the panel to refuse.
+      -->
+      <div class="dm-add__sec">
+        <p class="dm-add__label">Prompt</p>
+        <InputField
+          class="dm-add__prompt"
+          area
+          :rows="4"
+          placeholder="What should this dwarf work on?"
+          label="Prompt"
+          :value="prompt"
+          :disabled="launched"
+          @update:value="emit('prompt', $event)"
+          @keydown="onPromptKeydown"
+        />
+      </div>
+    </div>
 
     <!--
-      One line under the composer, and it is never decoration — the discipline
-      the MessagePanel's own note line holds. A refused launch carries main's
-      reason in its own alert; otherwise the line says what the chosen chip can
-      or cannot do, which is the thing a user is about to act on.
+      The footer (W7·5): after a failed launch, the danger notice above Send the dwarf in, so it is
+      on screen however far the body scrolls (#635): the warning icon, the cause, what to do, then
+      its actions. An alert, so its cause is read out when it appears; focus stays where it was.
+      Then the line that says where the launch stands — main's own words for a failure it named no
+      cause for — and the launch itself.
     -->
-    <p v-if="error" class="launch-alert" role="alert">{{ error }}</p>
-    <p v-else-if="spawning" class="launch-note" role="status">
-      Starting the session. Its dwarf appears in the mine as soon as the panel finds it.
-    </p>
-    <!--
-      Deliberately NOT the line above. That one says "as soon as the panel
-      finds it", which is a held session's promise: its dwarf arrives carrying
-      the conversation main seeded, so the panel finds it the moment it lands.
-      This one arrives carrying nothing the panel can read, and is recognised
-      only once main has proved it from the session's own transcript — a sweep
-      or two later, and never at all where the store says nothing. So the copy
-      keeps the one claim that is true either way, and adds the second as what
-      the panel will do rather than as when.
-    -->
-    <p v-else-if="detached" class="launch-note" role="status">
-      The session started. Its dwarf joins the mine on the next sweep, and this panel opens on it
-      once its transcript proves which one it is.
-    </p>
-    <p v-else-if="refusal" class="launch-note" role="status">{{ refusal }}</p>
-
-    <!--
-      The fallback line (#509) is deliberately OUTSIDE the chain above and the
-      launched/composer split: issue #509's own acceptance criterion is that
-      the launch still happens and the panel SAYS that it did, so this has to
-      survive past `launched` becoming true rather than vanish with the
-      composer the moment the fallback's own launch starts.
-    -->
-    <p v-if="jev.routing.phase === 'fellBack'" class="launch-note jev-fallback" role="status">
-      {{ jevFallbackMessage }}
-    </p>
-    <!--
-      Only when a default was APPLIED: the pickers below were just overwritten
-      exactly as a decision would overwrite them, and clearJevDecision already
-      restores what stood before — so the same Dismiss the decided card offers
-      belongs here too, or the one way back is retyping the prompt. A plain
-      fallback applied nothing, so there is nothing to put back.
-    -->
-    <button
-      v-if="jev.routing.phase === 'fellBack' && jev.routing.appliedDefault !== undefined"
-      class="jev-dismiss jev-fallback-dismiss"
-      type="button"
-      @click="emit('dismiss-jev')"
-    >
-      Dismiss
-    </button>
+    <footer class="dm-add__foot">
+      <div v-if="notice !== null" class="dm-add__fail" role="alert" :data-cause="failure?.cause">
+        <PixelIcon name="warning" />
+        <div class="dm-add__fail-body">
+          <p
+            class="dm-add__fail-title"
+            :tabindex="failOutput === null ? undefined : 0"
+            :aria-describedby="failOutput === null ? undefined : failTipId"
+            @pointerenter="failOutput !== null && failTip.hover('title', $event)"
+            @pointerleave="failTip.leave"
+            @pointerdown="failTip.press"
+            @focus="failOutput !== null && failTip.focus('title', $event)"
+            @blur="failTip.hide"
+          >
+            {{ notice.title }}
+          </p>
+          <span v-if="failOutput !== null" :id="failTipId" class="sr-only">{{ failOutput }}</span>
+          <p class="dm-add__fail-text">{{ notice.text }}</p>
+          <!-- In <body>, as the Jev card's: the footer would otherwise clip a fixed card. -->
+          <Teleport to="body">
+            <Transition name="dm-tip-pop">
+              <TooltipCard
+                v-if="failOutput !== null && failTip.shown.value !== null"
+                :ref="failTip.card"
+                :style="failTip.style.value"
+                ><LaunchFailureOutput :text="failOutput"
+              /></TooltipCard>
+            </Transition>
+          </Teleport>
+          <!--
+            Drawn even with no action to hold, as the design draws it: with no launchable provider
+            the row is empty, and its margin is still part of the notice's height.
+          -->
+          <div class="dm-add__fail-actions">
+            <ActionButton
+              v-if="notice.retry"
+              class="dm-add__fail-retry"
+              label="Retry"
+              :disabled="launched"
+              @click="emit('retry')"
+            />
+            <ActionButton
+              v-if="notice.pickManually"
+              class="dm-add__fail-manual"
+              label="Pick manually"
+              :disabled="launched"
+              @click="pickManually"
+            />
+          </div>
+        </div>
+      </div>
+      <p class="dm-add__why" :class="{ 'is-alert': why.tone === 'alert' }" :role="why.tone">
+        {{ why.text }}
+      </p>
+      <ActionButton
+        class="dm-add__launch"
+        variant="primary"
+        size="lg"
+        label="Send the dwarf in"
+        :disabled="!canLaunch"
+        @click="launch"
+      />
+    </footer>
   </section>
 </template>
 
 <style scoped>
-/*
- * The MessagePanel's own frame, deliberately to the pixel: 990px capped at what
- * the composition has, 12px radius, a 2px accent border, #2b2119 and elevation
- * 5. Submitting replaces one with the other in the same slot — one window, one
- * place in it (#162) — and a frame that changed under the swap would read as
- * two panels rather than one flow.
- *
- * The height is content-driven rather than fixed. The MessagePanel derives its
- * opening height from the latest message and can be dragged; there is no
- * message here to derive one from and nothing stated about resizing this panel,
- * so it is as tall as the chips and the composer make it — which is what the
- * source's own export shows. Since #162 that height is also the WINDOW's: the
- * panel window measures the surface it drew, so this panel growing a command
- * box grows the window with it.
- */
-.add-panel {
-  position: relative;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-nav-gap);
-  width: min(var(--size-message-panel-width), 100%);
-  padding-bottom: 8px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  background: var(--color-panel);
-  box-shadow: var(--elevation-5);
-  /*
-   * The MESSAGING face, not the Pixel UI one (#370). This panel is where the
-   * person composes the first thing they say to a session, and the issue's
-   * complaint was exactly that it did not follow the choice its own successor
-   * in this slot does — submitting replaces it with the MessagePanel, and a
-   * prompt that changed face on submit would read as two panels rather than
-   * one flow. Declared on the root so every part of it inherits: the chips and
-   * the composer are one surface, and half of it in another face is worse than
-   * either whole.
-   */
-  font-family: var(--font-conversation);
-  font-size: var(--text-meta);
+/* The design's add-panel.css, rule for rule. */
+.dm-add {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 440px;
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
   text-align: left;
 }
-/* The screen's name at the start, its close at the end — the export's own bar. */
-.panel-bar {
+.dm-add__head {
   display: flex;
-  flex: none;
-  gap: var(--space-nav-gap);
+  gap: 8px;
+  padding: 8px 4px 8px 10px;
+  background: var(--wood-lo);
+  box-shadow: inset 0 -2px 0 0 var(--rock-lo);
   align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px;
 }
-.panel-title {
-  margin: 0;
-  overflow: hidden;
-  color: var(--color-cream);
-  font-size: var(--text-meta);
-  font-weight: normal;
-  letter-spacing: 0.06em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.launch-close {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-  background: var(--color-cream);
-}
-.close-glyph {
-  display: block;
-  width: 70%;
-  height: 70%;
-  background: var(--color-panel);
-  mask: var(--close-icon) center / contain no-repeat;
-}
-.launch-close:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-/*
- * Chips and the command box on one line, centred, wrapping when there are more
- * providers than fit — the export centres a seven-chip row, and a machine with
- * more of them must not push the command box off the panel.
- */
-.launch-choices {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  gap: var(--space-nav-gap);
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-}
-/*
- * The design's chip: 25px tall, 12px radius, 10px type, in three states.
- *
- * One correction to `components.md`'s table, and it is a correction to the
- * TABLE rather than a decision of ours. It gives the default state a
- * `#fae2b6` background AND `#fae2b6` text — cream on cream, which is nothing at
- * all — while the verified export it links (provider-selection-panel.png) draws
- * the default chip on the panel's own dark ground with an amber border and
- * cream text. The export and the table's own text colour agree; the background
- * cell does not, so it is the cell that is wrong. Selected and unselected are
- * transcribed exactly.
- */
-.provider-chip {
-  flex: none;
-  height: var(--size-chip-height);
-  padding: 0 14px;
-  border: 2px solid var(--color-accent);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  cursor: pointer;
-  background: var(--color-panel);
-  font: inherit;
-  font-size: var(--text-meta);
-  white-space: nowrap;
-}
-.provider-chip[data-state='unselected'] {
-  border-color: var(--color-nav-idle);
-  color: var(--color-nav-idle);
-  background: var(--color-panel);
-}
-.provider-chip[data-state='selected'] {
-  border-color: var(--color-cream);
-  color: var(--color-panel);
-  background: var(--color-accent);
-}
-.provider-chip:hover {
-  border-color: var(--color-cream);
-}
-.provider-chip:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-/*
- * The command box: 25px, 12px radius, accent border, dark 10px start-aligned
- * text on the white the export draws. It takes the rest of the row so a long
- * command is readable rather than scrolling inside a chip-sized box.
- */
-.launch-command {
+.dm-add__title {
   flex: 1;
-  min-width: 160px;
-  height: var(--size-chip-height);
-  padding: 0 12px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-panel);
-  background: var(--color-white);
-  font: inherit;
-  font-size: var(--text-meta);
-  text-align: left;
-}
-.launch-command:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 1px;
-}
-/*
- * The composer, on the MessagePanel's own input treatment: 865px capped, white,
- * 12px radius, accent border, start-aligned dark text.
- *
- * The disabled state is not the MessagePanel's, and that is the source's doing:
- * its export draws the closed composer as a large CREAM panel with its
- * instruction centred, which is a different thing from a greyed-out box — it
- * reads as a sign rather than as a broken control.
- */
-.launch-input {
-  align-self: center;
-  width: min(var(--size-message-input-width), calc(100% - 16px));
-  padding: 8px 10px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-panel);
-  background: var(--color-white);
-  font: inherit;
-  font-size: var(--text-meta);
-  resize: none;
-  text-align: left;
-}
-.launch-input.is-instruction {
-  padding: 20px 10px;
-  color: var(--color-panel);
-  cursor: not-allowed;
-  background: var(--color-cream);
-  text-align: center;
-}
-/* The rule the MessagePanel's input holds too: its text stays selectable. */
-.launch-input.is-selectable,
-.launch-command.is-selectable {
-  user-select: text;
-  -webkit-user-select: text;
-}
-.launch-input:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 1px;
-}
-/*
- * The row under the composer (#239, launch.md's maintainer amendment):
- * "Controls use the existing chip and input surfaces of this screen; nothing
- * new is drawn." So each select borrows the provider chip's own box — 25px
- * tall, 12px radius, accent border, panel ground, cream 10px text — and the
- * row shares the chip row's own centred, wrapping layout.
- */
-.launch-tuning {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  gap: var(--space-nav-gap);
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-}
-.tuning-select {
-  flex: none;
-  height: var(--size-chip-height);
-  padding: 0 10px;
-  border: 2px solid var(--color-accent);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  cursor: pointer;
-  background: var(--color-panel);
-  font: inherit;
-  font-size: var(--text-meta);
-}
-.tuning-select:disabled {
-  border-color: var(--color-nav-idle);
-  color: var(--color-nav-idle);
-  cursor: not-allowed;
-}
-.tuning-select:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-/* The source note beside the model select — its own reason, or where the list came from. */
-.tuning-note {
-  flex: none;
-  color: var(--color-tooltip-text);
-  font-size: var(--text-helper);
-  opacity: 0.75;
-}
-/* The first message, drawn exactly as the MessagePanel draws a user's. */
-.launch-spawning {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  padding: 0 8px;
-}
-.message {
-  display: flex;
-  gap: var(--space-nav-gap);
-  align-items: flex-start;
-  justify-content: flex-end;
-}
-.bubble {
+  min-width: 0;
   margin: 0;
-  overflow-wrap: anywhere;
-  padding: 8px 10px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-panel);
-  background: var(--color-cream);
-  line-height: 1.35;
-  white-space: pre-wrap;
-  user-select: text;
-  -webkit-user-select: text;
+  font: var(--fs-title) / 1.05 var(--f-display);
+  color: var(--gold);
 }
-.portrait {
-  flex: none;
-  width: var(--size-portrait);
-  height: var(--size-portrait);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  object-fit: cover;
-  image-rendering: pixelated;
-  user-select: none;
+.dm-add__title small {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-meta);
+  color: var(--ink-soft);
 }
-.launch-note,
-.launch-alert {
-  flex: none;
-  margin: 0;
-  padding: 0 8px;
-  font-size: var(--text-helper);
-  line-height: 1.3;
+.dm-add__body {
+  display: grid;
+  gap: 14px;
+  padding: 12px 10px;
+  align-content: start;
+  overflow-y: auto;
 }
-.launch-note {
-  color: var(--color-tooltip-text);
-  opacity: 0.75;
-}
-.launch-alert {
-  color: var(--danger-ink);
-}
-/*
- * Jev (#509). No new tokens: the toggle borrows the provider chip's own box
- * (`.provider-chip`), the decision card borrows the key row's panel-deep
- * ground (`.jev-key-row`/`.jev-key-input` in JevSettings.vue), and the
- * Dismiss control borrows the same button model every settings action here
- * already uses.
- */
-.jev-row {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-nav-gap);
-  padding: 0 8px;
-}
-.jev-toggle {
-  flex: none;
-  height: var(--size-chip-height);
-  padding: 0 14px;
-  border: 2px solid var(--color-accent);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  cursor: pointer;
-  background: var(--color-panel);
-  font: inherit;
-  font-size: var(--text-meta);
-  white-space: nowrap;
-}
-.jev-toggle[aria-pressed='true'] {
-  border-color: var(--color-cream);
-  color: var(--color-panel);
-  background: var(--color-accent);
-}
-.jev-toggle:disabled {
-  border-color: var(--color-nav-idle);
-  color: var(--color-nav-idle);
-  cursor: not-allowed;
-}
-.jev-toggle:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-.jev-unavailable-reason {
-  flex: none;
-  margin: 0;
-  color: var(--color-tooltip-text);
-  font-size: var(--text-helper);
-  opacity: 0.75;
-}
-/*
- * The #523 checkbox, drawn with what this screen already has: the toggle's
- * own cream meta type, and the browser's checkbox itself — the one control
- * whose two states need no new surface here.
- */
-.jev-auto-label {
-  display: flex;
-  flex: none;
+.dm-add__sec {
+  display: grid;
   gap: 6px;
-  align-items: center;
-  color: var(--color-cream);
-  cursor: pointer;
-  font-size: var(--text-meta);
-  white-space: nowrap;
 }
-.jev-status {
-  padding: 0 8px;
+.dm-add__label {
+  margin: 0;
+  font: var(--fs-meta) / 1 var(--f-meta);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
 }
-.jev-decision {
+.dm-add__chips {
   display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 4px;
-  margin: 0 8px;
+  gap: 0 2px;
+  flex-wrap: wrap;
+}
+.dm-add__row {
+  display: flex;
+  gap: 4px 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.dm-add__row :deep(.dm-select) {
+  flex: 1 1 auto;
+}
+.dm-add__jev {
+  display: grid;
+  gap: 6px;
   padding: 8px 10px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  background: var(--color-panel-deep);
+  margin: 2px;
+  font: var(--fs-body) / 1.35 var(--f-talk);
+  color: var(--ink);
+  background: var(--info-lo);
+  box-shadow:
+    0 -2px 0 0 var(--info),
+    0 2px 0 0 var(--info),
+    -2px 0 0 0 var(--info),
+    2px 0 0 0 var(--info);
 }
-.jev-decision-summary,
-.jev-decision-parts {
+.dm-add__jev p {
   margin: 0;
-  color: var(--color-cream);
-  font-size: var(--text-meta);
 }
-.jev-decision-truncated,
-.jev-decision-trivial,
-.jev-decision-large-context,
-.jev-decision-note {
+.dm-add__jev b {
+  color: var(--parch-hi);
+}
+.dm-add__jev .t-meta {
+  color: var(--info);
+}
+.dm-add__jev-actions {
+  display: flex;
+}
+.dm-add__foot {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--wood);
+  box-shadow: inset 0 2px 0 0 var(--wood-hi);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+/* Launch failure: the settings danger zone's surface and type, as a full-width row above the launch. */
+.dm-add__fail {
+  flex: 1 1 100%;
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  margin: 2px;
+  background: var(--danger-lo);
+  box-shadow:
+    0 -2px 0 0 var(--danger),
+    0 2px 0 0 var(--danger),
+    -2px 0 0 0 var(--danger),
+    2px 0 0 0 var(--danger);
+  align-items: flex-start;
+}
+.dm-add__fail-body {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+.dm-add__fail-title {
   margin: 0;
-  color: var(--color-tooltip-text);
-  font-size: var(--text-helper);
-  opacity: 0.75;
+  font: var(--fs-section) / 1.2 var(--f-label);
+  color: var(--danger-hi);
 }
-.jev-dismiss {
-  align-self: flex-start;
-  padding: 4px 10px;
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  cursor: pointer;
-  background: var(--color-control);
-  font: inherit;
-  font-size: var(--text-helper);
+.dm-add__fail-text {
+  margin: 0;
+  font: var(--fs-meta) / 1.35 var(--f-meta);
+  color: var(--ink-soft);
 }
-.jev-dismiss:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
+.dm-add__fail-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.dm-add__why {
+  flex: 1;
+  margin: 0;
+  font: var(--fs-meta) / 1.3 var(--f-meta);
+  color: var(--ink-faint);
+}
+/* A refused launch says why in the danger ink the dark ground reads (tokens: --danger-hi). */
+.dm-add__why.is-alert {
+  color: var(--danger-hi);
+}
+/* What the model list could not say, under the row, in the note face. */
+.dm-add__note {
+  margin: 0;
+  font: var(--fs-meta) / 1.3 var(--f-meta);
+  color: var(--ink-faint);
 }
 </style>

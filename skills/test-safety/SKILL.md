@@ -3,7 +3,7 @@ name: test-safety
 description: >
   Preserving tests that already exist — a test file you did not create is append-and-amend only, and every removal is stated out loud.
   Trigger: before writing to, overwriting or deleting any existing *.test.ts file, and before reporting that a change is done.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

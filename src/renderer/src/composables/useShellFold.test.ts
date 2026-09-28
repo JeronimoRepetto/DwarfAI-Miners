@@ -9,7 +9,17 @@ import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
 import { motionBoundMs, type MotionTransition } from '../lib/shell/motionTiming'
 import type { MotionAnimate } from '../lib/shell/boundedMotion'
 import type { PanelEdge } from '../types'
-import type { ShellComposition } from '../lib/shell/composition'
+
+/*
+ * AMENDED for #635 (PO ruling 2026-09-27), once here rather than at each case. The closed rail
+ * is gone, and with it `useShellFold`'s `rail` and `remaining` options. The harness's `rail`
+ * below is still the free-most column of the row, 20px wide where the rail stood, and it is now
+ * handed over as the first of `carried` — the exact order `mountedColumns` always walked the
+ * rail and the carried columns in — so every case that carries it asserts the same carry rule it
+ * did. What went is `remaining`, whose only effect was dropping the plate's padding when the bare
+ * rail remained: the cases that set it to 'mine' or 'pages' lose one line and nothing else; the
+ * ones that set 'rail' say where they stand what changed.
+ */
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -116,7 +126,6 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
   const engine = fakeEngine()
   const state = {
     edge: 'right' as PanelEdge,
-    remaining: 'pages' as ShellComposition,
     shell,
     rail: rail as HTMLElement | null,
     /*
@@ -144,9 +153,7 @@ function harness(options: { reduced?: boolean; hidden?: boolean; width?: number 
         fold = useShellFold({
           shell: () => state.shell,
           edge: () => state.edge,
-          remaining: () => state.remaining,
-          rail: () => state.rail,
-          carried: () => [state.secondary, state.nav],
+          carried: () => [state.rail, state.secondary, state.nav],
           // ADDED for #585 round 3: the navigation strip is the wall a drawer
           // goes behind, and a wall does not move out of the way of its own
           // drawer. Every case above is untouched: `state.nav` is `null`
@@ -265,7 +272,6 @@ function styleReads(shell: HTMLElement) {
 describe('useShellFold', () => {
   it('folds the shell down to what the leaving column leaves behind', async () => {
     const test = harness()
-    test.state.remaining = 'mine'
     expect(test.fold.hold(test.column(555))!.folded).toBeInstanceOf(Promise)
     await settled()
     expect(test.animations).toHaveLength(1)
@@ -281,7 +287,6 @@ describe('useShellFold', () => {
   it('mirrors the fold onto the free side of a left-docked shell', async () => {
     const test = harness()
     test.state.edge = 'left'
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     expect(clipFrames(test.animations[0]!.keyframes)[1]).toBe(
@@ -297,7 +302,7 @@ describe('useShellFold', () => {
    */
   it('is ONE fold however many columns leave in the same change', async () => {
     const test = harness()
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     const first = test.fold.hold(test.column(555))
     const second = test.fold.hold(test.column(38))
     const third = test.fold.hold(test.column(348))
@@ -305,8 +310,9 @@ describe('useShellFold', () => {
     expect(third).toBe(first)
     await settled()
     expect(test.animations).toHaveLength(1)
+    // AMENDED for #635 (was: 20px): the plate's padding stays painted now that no bare rail remains (see top).
     expect(clipFrames(test.animations[0]!.keyframes)[1]).toBe(
-      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+      'inset(0px 0px 0px calc(100% - 36px) round 12px)'
     )
     test.wrapper.unmount()
   })
@@ -433,7 +439,7 @@ describe('useShellFold', () => {
    */
   it('leaves the footprint alone when a request settles without moving the window', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     void test.fold.hold(test.column(555))
     void test.fold.hold(test.column(38))
     await settled()
@@ -449,15 +455,16 @@ describe('useShellFold', () => {
     // AMENDED for #585: the unfold waits one microtask for the columns of
     // this change to register, so what it starts is observed after it.
     await settled()
+    // AMENDED for #635 (was: 20px): the plate's padding stays painted now that no bare rail remains (see top).
     expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
-      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+      'inset(0px 0px 0px calc(100% - 36px) round 12px)'
     )
     test.wrapper.unmount()
   })
 
   it('unfolds from the rail the fold ended on, not from the window around it', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     void test.fold.hold(test.column(555))
     void test.fold.hold(test.column(38))
     await settled()
@@ -473,8 +480,9 @@ describe('useShellFold', () => {
     // AMENDED for #585: the unfold waits one microtask for the columns of
     // this change to register, so what it starts is observed after it.
     await settled()
+    // AMENDED for #635 (was: 20px): the plate's padding stays painted now that no bare rail remains (see top).
     expect(clipFrames(test.animations[1]!.keyframes)[0]).toBe(
-      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+      'inset(0px 0px 0px calc(100% - 36px) round 12px)'
     )
     test.wrapper.unmount()
   })
@@ -492,7 +500,6 @@ describe('useShellFold', () => {
     test.fold.settle(true)
     expect(test.animations).toHaveLength(0)
     expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 645px) round 12px)')
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     expect(test.animations[0]!.keyframes).toEqual({
@@ -521,7 +528,6 @@ describe('useShellFold', () => {
    */
   it('does not unfold from a fold’s footprint when the window catches up wider than it was', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'mine'
     test.fold.settle(false)
     void test.fold.hold(test.column(555))
     await settled()
@@ -537,7 +543,6 @@ describe('useShellFold', () => {
 
   it('resolves the shell’s style once for a whole fold, not once per step of it', async () => {
     const test = harness()
-    test.state.remaining = 'mine'
     const reads = styleReads(test.shell)
     void test.fold.hold(test.column(555))
     await settled()
@@ -582,7 +587,6 @@ describe('useShellFold', () => {
    */
   it('carries the rail into the strip the fold ends on, and sets it down when the window catches up', async () => {
     const test = harness()
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
@@ -613,7 +617,6 @@ describe('useShellFold', () => {
    */
   it('carries the rail on the SAME transition the clip run gets, never its own default spring', async () => {
     const test = harness()
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     expect(test.railAnimations[0]!.keyframes).toEqual(carries(0, 563))
@@ -632,7 +635,6 @@ describe('useShellFold', () => {
   it('mirrors the rail’s travel onto the free side of a left-docked shell', async () => {
     const test = harness()
     test.state.edge = 'left'
-    test.state.remaining = 'mine'
     // The docked edge is the shell's left, so the free edge the rail stands at
     // is the other end of the same row.
     placed(test.rail, 973, 20)
@@ -653,7 +655,6 @@ describe('useShellFold', () => {
   it('holds a leaving column past the fold, until the window has caught up with it', async () => {
     const test = harness()
     test.fold.settle(false)
-    test.state.remaining = 'mine'
     const leaving = test.fold.hold(test.column(555))!
     let folded = false
     let released = false
@@ -688,7 +689,6 @@ describe('useShellFold', () => {
     vi.useFakeTimers()
     const test = harness()
     test.fold.settle(false)
-    test.state.remaining = 'mine'
     const leaving = test.fold.hold(test.column(555))!
     let released = false
     void leaving.released.then(() => {
@@ -719,7 +719,6 @@ describe('useShellFold', () => {
   it('carries nothing when the row leaves the rail where it stands', async () => {
     const test = harness({ width: 0 })
     sized(test.rail, 0)
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(0))
     await settled()
     expect(test.railAnimations).toHaveLength(0)
@@ -734,7 +733,6 @@ describe('useShellFold', () => {
   it('folds the ground without the rail when there is none to carry', async () => {
     const test = harness()
     test.state.rail = null
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     expect(test.railAnimations).toHaveLength(0)
@@ -755,7 +753,6 @@ describe('useShellFold', () => {
   it('keeps the fold’s clip while the viewport still reports the box the fold started from', async () => {
     const test = harness()
     test.fold.settle(false)
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     test.animations[0]!.finish()
@@ -775,7 +772,6 @@ describe('useShellFold', () => {
   it('lets the window’s own resize end a fold main has not reported yet', async () => {
     const test = harness()
     test.fold.settle(false)
-    test.state.remaining = 'mine'
     void test.fold.hold(test.column(555))
     await settled()
     test.animations[0]!.finish()
@@ -796,7 +792,7 @@ describe('useShellFold', () => {
    */
   it('returns the rail from the footprint it had when the shell unfolds', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     void test.fold.hold(test.column(555))
     void test.fold.hold(test.column(38))
     await settled()
@@ -810,9 +806,10 @@ describe('useShellFold', () => {
     // this change to register, so what it starts is observed after it.
     await settled()
     // The rail rested against the docked edge; the row has just put it back at
-    // the free one, 617px away from where the unfold has to start.
-    expect(test.railAnimations[1]!.keyframes).toEqual(carries(617, 0))
-    expect(test.rail.style.transform).toBe('translateX(617px)')
+    // the free one, 609px away from where the unfold has to start. AMENDED for
+    // #635 (was: 617): it rested one plate padding in from it (see top).
+    expect(test.railAnimations[1]!.keyframes).toEqual(carries(609, 0))
+    expect(test.rail.style.transform).toBe('translateX(609px)')
     test.animations[1]!.finish()
     await settled()
     expect(test.rail.style.transform).toBe('')
@@ -903,7 +900,6 @@ describe('useShellFold', () => {
 describe('useShellFold carrying more than the rail (#566 T5b)', () => {
   it('carries the secondary panel and the navigation stack, not only the rail, when the mine column closes beside them', async () => {
     const test = harness({ width: 1001 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     const mine = test.column(348)
@@ -924,7 +920,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // secondary panel, so neither is free of it — only the rail is, exactly
     // as before #566 T5b generalized the carry.
     const test = harness({ width: 1001 })
-    test.state.remaining = 'mine'
     test.state.nav = carriedColumn(599, 38)
     void test.fold.hold(test.column(555))
     await settled()
@@ -951,7 +946,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('uncovers the leaving mine column in place, on the same transition as the carries beside it', async () => {
     const test = harness({ width: 1001 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     const mine = placed(test.column(348), 645, 348)
@@ -982,7 +976,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('slides a leaving secondary panel into the strip docked of it, clipped at that edge', async () => {
     const test = harness({ width: 1001 })
-    test.state.remaining = 'mine'
     test.state.nav = carriedColumn(599, 38)
     const secondary = placed(test.column(555), 36, 555)
     void test.fold.hold(secondary)
@@ -1002,7 +995,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
   it('mirrors every carry and the leaving column’s own clip onto a left-docked shell', async () => {
     const test = harness({ width: 1001 })
     test.state.edge = 'left'
-    test.state.remaining = 'pages'
     // The docked edge is the shell's left on this dock, so the free edge
     // every carried column stands nearer is the other end of the same row —
     // placements mirrored from the right-docked book above.
@@ -1036,7 +1028,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('pre-places an entering column, then carries it and everything free of it back on the unfold', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     // Establishes `box`/`painted`/every carried column's own rest position —
@@ -1084,7 +1075,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('remembers where an entering column came to rest, so the next change carries it too', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.fold.settle(false)
     // The secondary panel ARRIVES, and is carried by the unfold that reveals
     // the ground — the case above.
@@ -1121,7 +1111,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('pre-places an entering secondary panel as a drawer, behind the strip docked of it', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.state.nav = carriedColumn(599, 38)
     test.fold.settle(false)
     const secondary = placed(test.column(555), 36, 555)
@@ -1154,7 +1143,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('reads a column already pre-placed by this change at its resting place, not its pre-placed one', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.fold.settle(false)
     // `carriedColumn` rather than a bare one: `mountedColumns` drops anything
     // that cannot run Web Animations, and the row this case is about is the
@@ -1192,7 +1180,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('waits for the entering columns of this change before unfolding, so ground and content are ONE run', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     test.fold.settle(false)
@@ -1244,7 +1231,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('unfolds a pending entering column on its own settle, even where the box did not move', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     test.fold.settle(false)
@@ -1265,7 +1251,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
 
   it('lets the window’s own resize carry a pre-placed entering column, with nothing else ever asking settle again', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     test.fold.settle(false)
@@ -1308,7 +1293,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('waits for main to finish answering before unfolding, even when the resize lands first', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     test.state.secondary = carriedColumn(36, 555)
     test.state.nav = carriedColumn(599, 38)
     test.fold.settle(false)
@@ -1357,7 +1341,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('coalesces columns leaving in separate ticks into ONE fold over the union', async () => {
     const test = harness({ width: 438 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     // The row is [rail][nav][mine] against the docked edge: 8px of padding,
     // 20 + 38 + 348 of column and a gap between each.
     const nav = placed(test.column(38), 36, 38)
@@ -1374,8 +1358,9 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // measured 376 of 438 live — the ground barely moved).
     expect(second).toBe(first)
     const folds = test.animations
+    // AMENDED for #635 (was: 20px): the plate's padding stays painted now that no bare rail remains (see top).
     expect(clipFrames(folds[folds.length - 1]!.keyframes)[1]).toBe(
-      'inset(0px 0px 0px calc(100% - 20px) round 12px)'
+      'inset(0px 0px 0px calc(100% - 36px) round 12px)'
     )
     // From the footprint the first fold started at, not from what it had
     // already written: nothing was settled on the way past.
@@ -1389,7 +1374,8 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     expect(test.railAnimations.length).toBeGreaterThanOrEqual(1)
     folds[folds.length - 1]!.finish()
     await settled()
-    expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 20px) round 12px)')
+    // AMENDED for #635 (was: 20px): the plate's padding stays painted (see top).
+    expect(test.shell.style.clipPath).toBe('inset(0px 0px 0px calc(100% - 36px) round 12px)')
     test.wrapper.unmount()
   })
 
@@ -1402,7 +1388,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('gives every column of a coalesced fold its own role, on the fold’s one transition', async () => {
     const test = harness({ width: 438 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     const nav = placed(test.column(38), 36, 38)
     const mine = placed(test.column(348), 82, 348)
     void test.fold.hold(mine)
@@ -1449,7 +1435,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('carries a leaving drawer over the room the columns docked of it vacate', async () => {
     const test = harness({ width: 438 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     const nav = placed(test.column(38), 36, 38)
     const mine = placed(test.column(348), 82, 348)
     void test.fold.hold(mine)
@@ -1460,10 +1446,11 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     // #585 round 3: no clip of its own, the shell's docked edge is its wall —
     // see the case above.
     expect(test.animationsFor(nav)[0]!.keyframes).toEqual(carries(0, 402))
-    // Which is the rail's own travel but for the padding the bare rail drops:
-    // the two cross the ground together instead of one outrunning the other.
+    // Which is the rail's own travel: the two cross the ground together
+    // instead of one outrunning the other. AMENDED for #635 (was: 410, the
+    // rail's travel less the padding the bare rail dropped; see top).
     expect(transformFrames(test.railAnimations[test.railAnimations.length - 1]!.keyframes)[1]).toBe(
-      'translateX(410px)'
+      'translateX(402px)'
     )
     test.wrapper.unmount()
   })
@@ -1475,7 +1462,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('gives the docked-most leaving column no travel to follow', async () => {
     const test = harness({ width: 438 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     const nav = placed(test.column(38), 36, 38)
     const mine = placed(test.column(348), 82, 348)
     void test.fold.hold(mine)
@@ -1509,9 +1496,8 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('uncovers the entering strip at the rail’s own edge, whole once the rail has crossed it', async () => {
     const test = harness({ width: 25 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     test.fold.settle(false)
-    test.state.remaining = 'pages'
     const secondary = carriedColumn(36, 555)
     const nav = carriedColumn(599, 38)
     test.state.secondary = secondary
@@ -1546,7 +1532,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('keeps the strip whole until the rail comes back over it, and its drawer’s mouth at its edge', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     const secondary = carriedColumn(36, 555)
     const nav = carriedColumn(599, 38)
     test.state.secondary = secondary
@@ -1559,10 +1545,11 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
     })
     expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px -571px)', 'inset(0px 0px 0px 46px)']
+      clipPath: ['inset(0px 0px 0px -571px)', 'inset(0px 0px 0px 38px)']
     })
     expect(nav.style.transform).toBe('')
-    expect(transformFrames(test.railAnimations[0]!.keyframes)[1]).toBe('translateX(617px)')
+    // AMENDED for #635 (was: 617px): the rail rests one plate padding in (see top).
+    expect(transformFrames(test.railAnimations[0]!.keyframes)[1]).toBe('translateX(609px)')
     test.wrapper.unmount()
   })
 
@@ -1576,7 +1563,6 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
    */
   it('still knows which leaving column is the strip once Vue has nulled its ref', async () => {
     const test = harness({ width: 645 })
-    test.state.remaining = 'pages'
     const secondary = carriedColumn(36, 555)
     const nav = carriedColumn(599, 38)
     test.state.secondary = secondary
@@ -1584,7 +1570,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
     test.fold.settle(false)
     // The way Vue actually hands a leaving strip over: the ref is gone, the
     // element is not.
-    test.state.remaining = 'rail'
+    // AMENDED for #635: was `test.state.remaining = 'rail'`, the bare rail's composition (see top).
     test.state.secondary = null
     test.state.nav = null
     void test.fold.hold(secondary)
@@ -1595,7 +1581,7 @@ describe('useShellFold carrying more than the rail (#566 T5b)', () => {
       clipPath: ['inset(0px 0px 0px 0px)', 'inset(0px 555px 0px 0px)']
     })
     expect(test.animationsFor(nav)[0]!.keyframes).toEqual({
-      clipPath: ['inset(0px 0px 0px -571px)', 'inset(0px 0px 0px 46px)']
+      clipPath: ['inset(0px 0px 0px -571px)', 'inset(0px 0px 0px 38px)']
     })
     test.wrapper.unmount()
   })

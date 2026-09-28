@@ -209,6 +209,21 @@ describe('answerRequest', () => {
     const request = answerRequest('claude:s1', question({ multiSelect: true }), 'Neither')
     expect(Object.values(request.answers)).toEqual(['Neither'])
   })
+
+  // ADDED for #635 (PO decision 2026-09-28, held free-text answers).
+  it('carries a question answered in the person’s own words in its own record, marked as such', () => {
+    const request = answerRequest('claude:s1', question(), [{ ownWords: 'keep the file store' }])
+    expect(request).toEqual({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: {},
+      ownWords: { 'Which database should the importer write to?': 'keep the file store' }
+    })
+  })
+
+  it('carries no own-words record for an answer made of labels alone', () => {
+    expect('ownWords' in answerRequest('claude:s1', question(), 'SQLite')).toBe(false)
+  })
 })
 
 describe('answerStatusLine', () => {
@@ -618,9 +633,11 @@ describe('questionIndex and stepQuestion (#443)', () => {
     expect(questionIndex(moved, pair({ toolUseId: 'toolu_02' }))).toBe(0)
   })
 
+  // AMENDED for #635 (was: "Question 1 of 2"): the question card's step count reads "1 / 3"
+  // (components.md, Question card, as built).
   it('says which question of how many, counted from one', () => {
-    expect(questionStepLine(0, 2)).toBe('Question 1 of 2')
-    expect(questionStepLine(3, 4)).toBe('Question 4 of 4')
+    expect(questionStepLine(0, 2)).toBe('1 / 2')
+    expect(questionStepLine(3, 4)).toBe('4 / 4')
   })
 })
 

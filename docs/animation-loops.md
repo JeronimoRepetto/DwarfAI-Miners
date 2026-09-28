@@ -298,6 +298,13 @@ of fewer than two frames starts no timer" machinery #47 already built. The parag
 describe the gap exactly as measured — they are why the fix exists — but the gap itself is
 closed.
 
+**Superseded by the redesign (#635).** The design's reduced-motion ruling keeps the dwarfs moving:
+under `prefers-reduced-motion: reduce` every frame of every sheet lasts a flat 200ms, the per-frame
+durations replaced rather than scaled, and only the shell's own motion stops. Sprites no longer run
+one `setInterval` each: every sprite in a window plays on one shared frame clock that reads each
+sheet's Aseprite sidecar, which is also what gives a loop the per-frame holds item 2 below asks
+for (`lib/sprite/frameClock.ts`).
+
 `prefers-reduced-motion: reduce` is handled in four places, and handled well:
 
 - `theme.css` neutralises **every** CSS animation and transition globally.
@@ -305,8 +312,8 @@ closed.
   every dwarf statically instead of walking them, zeroing walk durations.
 - `DwarfSprite` hides the spark bursts, stills the drifting `z z z`, and replaces the walk-out with
   a plain dim.
-- `MineMarker` holds its pulsing light steady rather than removing it, and `VaultChip` stills its
-  own pulse.
+- `TierMarker` holds its pulse halo steady rather than removing it (#635; `MineMarker`, which it
+  replaced, held its light the same way), and `VaultChip` stills its own pulse.
 
 **The sprite's frame timer is consulted by none of it.** `prefersReducedMotion()` is never read in
 `DwarfSprite`, and the `setInterval` that swaps paintings runs identically either way. So a viewer

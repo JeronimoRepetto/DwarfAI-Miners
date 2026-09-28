@@ -171,6 +171,20 @@ describe('preload app build contract', () => {
 })
 
 /**
+ * The features that ship hidden (#635). Read-only and payload-free, like the
+ * build: main resolves the flags from its configuration layers once, and the
+ * renderer only ever draws what main answered.
+ */
+describe('preload feature flags contract', () => {
+  it('asks for the flags on the app:features channel with no payload', async () => {
+    const flags = { guildAreasEnabled: true }
+    invoke.mockResolvedValueOnce(flags)
+    await expect(api.getFeatureFlags()).resolves.toEqual(flags)
+    expect(invoke).toHaveBeenLastCalledWith('app:features')
+  })
+})
+
+/**
  * Adding and removing a user-declared mine (#85). The folder picker is opened
  * in MAIN, so this side carries no path in either direction — it asks, and it
  * names a mine by the id both processes already agree on.
@@ -326,6 +340,34 @@ describe('preload question-answer contract', () => {
     })
   })
 
+  /*
+   * ADDED for #635 (PO decision 2026-09-28, held free-text answers): a held walk's steps answered
+   * in the person's own words ride beside the labels as `ownWords`, rebuilt from string pairs like
+   * `answers`. The bridge once rebuilt `answers` alone, so the words never reached main and the
+   * walk was refused as unanswered — found in the built app, where no test could see it.
+   */
+  it('carries the own-words record beside the labels, string pairs only', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Run the tests after?': 'Yes' },
+      ownWords: { 'Which database?': 'MariaDB please', 'Which port?': 5432 }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Run the tests after?': 'Yes' },
+      ownWords: { 'Which database?': 'MariaDB please' }
+    })
+  })
+
+  it('sends no own-words record when the answer carries none', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await api.answerDwarfQuestion(answer)
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', answer)
+  })
+
   it('hands back the refusal and its reason rather than a bare false', async () => {
     // The panel has to be able to say WHY an answer did not land — an ask that
     // has since been withdrawn reads nothing like a session nobody holds.
@@ -416,50 +458,54 @@ describe('preload permission-decision contract (#203)', () => {
   })
 })
 
+/*
+ * AMENDED for #635, once here: `expanded` left the layout with the rail (PO ruling 2026-09-27)
+ * and `dockOpen` took its place, so every payload below carries `mineOpen` and `dockOpen`.
+ */
 describe('preload panel-layout contract (#90, #138)', () => {
   it('asks for the current layout on the panel:layout:get channel with no payload', async () => {
-    const layout = { edge: 'right', expanded: false, mineOpen: false }
+    const layout = { edge: 'right', mineOpen: false, dockOpen: false }
     invoke.mockResolvedValueOnce(layout)
     await expect(api.getPanelLayout()).resolves.toEqual(layout)
     expect(invoke).toHaveBeenLastCalledWith('panel:layout:get')
   })
 
-  it('collapses expanded and mineOpen to real booleans before they cross', async () => {
-    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+  it('collapses mineOpen and dockOpen to real booleans before they cross', async () => {
+    invoke.mockResolvedValueOnce({ edge: 'right', mineOpen: false, dockOpen: false })
     await (api.setPanelLayout as unknown as (value: unknown) => Promise<unknown>)({
-      expanded: 'yes',
-      mineOpen: 1
+      mineOpen: 1,
+      dockOpen: 'yes'
     })
     expect(invoke).toHaveBeenLastCalledWith('panel:layout:set', {
-      expanded: false,
-      mineOpen: false
+      mineOpen: false,
+      dockOpen: false
     })
   })
 
-  it('omits edge entirely when the caller (the rail toggle, a mine opening) does not name one', async () => {
+  it('omits edge entirely when the caller (a mine or the dock opening) does not name one', async () => {
     // Only the Settings position control may ever move the docked side; every
     // other caller must be structurally unable to nudge it by accident.
-    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
-    await api.setPanelLayout({ expanded: true, mineOpen: false })
+    invoke.mockResolvedValueOnce({ edge: 'right', mineOpen: false, dockOpen: false })
+    await api.setPanelLayout({ mineOpen: false, dockOpen: true })
     const [, payload] = invoke.mock.calls.at(-1) ?? []
     expect(payload).not.toHaveProperty('edge')
   })
 
   it('forwards a real edge from the position control untouched', async () => {
-    invoke.mockResolvedValueOnce({ edge: 'left', expanded: true, mineOpen: false })
-    await api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+    invoke.mockResolvedValueOnce({ edge: 'left', mineOpen: false, dockOpen: false })
+    await api.setPanelLayout({ mineOpen: false, dockOpen: true, edge: 'left' })
     expect(invoke).toHaveBeenLastCalledWith('panel:layout:set', {
-      expanded: true,
       mineOpen: false,
+      dockOpen: true,
       edge: 'left'
     })
   })
 
   it('drops an edge value no build recognizes rather than forwarding a guess', async () => {
-    invoke.mockResolvedValueOnce({ edge: 'right', expanded: true, mineOpen: false })
+    invoke.mockResolvedValueOnce({ edge: 'right', mineOpen: false, dockOpen: false })
     await (api.setPanelLayout as unknown as (value: unknown) => Promise<unknown>)({
-      expanded: true,
       mineOpen: false,
+      dockOpen: false,
       edge: 'top'
     })
     const [, payload] = invoke.mock.calls.at(-1) ?? []
@@ -469,10 +515,10 @@ describe('preload panel-layout contract (#90, #138)', () => {
   it('hands back the REAL layout main applied, never the wish', async () => {
     // A screen too narrow for the whole composition, or a docked edge the
     // window manager could not honor, must reach the renderer as a fact.
-    const actual = { edge: 'right', expanded: true, mineOpen: true }
+    const actual = { edge: 'right', mineOpen: true, dockOpen: false }
     invoke.mockResolvedValueOnce(actual)
     await expect(
-      api.setPanelLayout({ expanded: true, mineOpen: false, edge: 'left' })
+      api.setPanelLayout({ mineOpen: false, dockOpen: false, edge: 'left' })
     ).resolves.toEqual(actual)
   })
 })
@@ -679,6 +725,11 @@ describe('preload launch contract (#168)', () => {
    * #239. Held-only, exactly as HeldSessionLaunchRequest.permissionMode is —
    * launchAgent carries no such field, and the bridge must not invent one for
    * it.
+   *
+   * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: the
+   * sentence above, unqualified). launchAgent now carries a permission mode
+   * of its own, Codex's vocabulary rather than the Agent SDK's — see the three
+   * tests after the next one. The two tests here are unchanged.
    */
   it('carries a permission mode on the held channel when the caller named one', async () => {
     invoke.mockResolvedValueOnce({ launched: true })
@@ -700,6 +751,50 @@ describe('preload launch contract (#168)', () => {
   it('crosses no permission mode when the caller named none, rather than an empty string', async () => {
     invoke.mockResolvedValueOnce({ launched: true })
     await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('permissionMode' in sent).toBe(false)
+  })
+
+  /*
+   * #635 (PO decision 2026-09-28). A detached Codex launch now carries a
+   * permission mode of its own. The bridge rebuilds this request field by
+   * field, so a field it forgot would never reach main — the exact loss #671
+   * found on another field.
+   */
+  it('carries a Codex permission mode on the launch channel when the caller named one', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig',
+      permissionMode: 'read-only'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig',
+      permissionMode: 'read-only'
+    })
+  })
+
+  it('crosses no permission mode on the launch channel when the caller named none', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('permissionMode' in sent).toBe(false)
+  })
+
+  it('drops a non-string permission mode rather than forwarding it', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig',
+      ...({ permissionMode: { sandbox: 'danger-full-access' } } as object)
+    } as Parameters<typeof api.launchAgent>[0])
 
     const sent = invoke.mock.calls.at(-1)![1] as object
     expect('permissionMode' in sent).toBe(false)
@@ -762,7 +857,7 @@ describe('preload launch contract (#168)', () => {
  * The failure channel (#263): a launch `agent:launch` already answered
  * `launched: true` for died almost at once, so main pushes what it learned a
  * moment later rather than leaving the panel to find out never. One-way,
- * exactly like `onMessagePanel` and `onDwarfDeliveryReport`: there is no
+ * exactly like `onShowMine` and `onDwarfSendSettled`: there is no
  * request the panel makes for this, since main learns of it asynchronously.
  */
 describe('preload launch-failure contract (#263)', () => {
@@ -789,6 +884,55 @@ describe('preload launch-failure contract (#263)', () => {
     expect(listener).toHaveBeenCalledWith(FAILURE)
     stop()
     expect(removeListener).toHaveBeenLastCalledWith('agent:launchFailed', wrapped)
+  })
+
+  /*
+   * #635 (MESSAGE-QUESTIONS 16/17). The launch-failure notice branches on
+   * `cause`, and a field this bridge drops never reaches it — the exact way a
+   * held answer's own words were lost in #671, where a request was rebuilt
+   * field by field and the new field was not among them. These pin that the
+   * cause crosses on the push and on all three launch verdicts, as main
+   * answered them.
+   */
+  it('hands the cause on the push to the renderer (#635)', () => {
+    const listener = vi.fn()
+    api.onLaunchFailed(listener)
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
+    wrapped(null, { ...FAILURE, cause: 'exited-at-once' })
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ cause: 'exited-at-once' }))
+  })
+
+  it('hands the cause on each launch verdict back as main answered it (#635)', async () => {
+    const detached = {
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI is not installed on this machine.',
+      cause: 'not-installed'
+    }
+    invoke.mockResolvedValueOnce(detached)
+    await expect(
+      api.launchAgent({ mineId: 'mine:1', provider: 'codex', prompt: 'dig' })
+    ).resolves.toEqual(detached)
+
+    const held = {
+      launched: false,
+      error: 'The agent could not be started.',
+      cause: 'could-not-start'
+    }
+    invoke.mockResolvedValueOnce(held)
+    await expect(
+      api.launchHeldSession({ mineId: 'mine:1', provider: 'claude', prompt: 'dig' })
+    ).resolves.toEqual(held)
+
+    const hosted = {
+      launched: false,
+      error: 'That command could not be started.',
+      cause: 'could-not-start'
+    }
+    invoke.mockResolvedValueOnce(hosted)
+    await expect(
+      api.launchHostedProcess({ mineId: 'mine:1', command: 'my-agent', prompt: 'dig' })
+    ).resolves.toEqual(hosted)
   })
 })
 
@@ -1012,131 +1156,13 @@ describe('preload session-tuning contract (#96)', () => {
     })
   })
 })
-/**
- * The message panel's own window (#162).
- *
- * Two renderers read this one bridge now, and the members below are the whole
- * of what they say to each other: what the panel shows, how tall it is, and
- * the delivery verdicts only the panel window writes. Main is between them
- * both ways — neither window ever talks to the other.
+/*
+ * REMOVED for #635, stated rather than passing unseen: 'preload message-panel contract (#162)', its
+ * eleven cases (the surface's get, set, field-by-field rebuild, the collapses and the refused
+ * surface, the real state handed back, the push and its unsubscribe, the height report and its
+ * collapse, the delivery report and its relay). The members they pinned are gone with the message
+ * panel's own window: the panel is in the shell's dock slot, and nothing about it crosses.
  */
-describe('preload message-panel contract (#162)', () => {
-  const OPEN = { surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' } as const
-
-  it('exposes the whole surface beside the members that were already there', () => {
-    expect(typeof api.getMessagePanel).toBe('function')
-    expect(typeof api.setMessagePanel).toBe('function')
-    expect(typeof api.onMessagePanel).toBe('function')
-    expect(typeof api.setMessagePanelHeight).toBe('function')
-    expect(typeof api.reportDwarfDelivery).toBe('function')
-    expect(typeof api.onDwarfDeliveryReport).toBe('function')
-  })
-
-  it('asks for the current state on the panel:message:get channel with no payload', async () => {
-    invoke.mockResolvedValueOnce(OPEN)
-    await expect(api.getMessagePanel()).resolves.toEqual(OPEN)
-    expect(invoke).toHaveBeenLastCalledWith('panel:message:get')
-  })
-
-  it('rebuilds the state field by field on panel:message:set', async () => {
-    invoke.mockResolvedValueOnce(OPEN)
-    await api.setMessagePanel(OPEN)
-    expect(invoke).toHaveBeenLastCalledWith('panel:message:set', {
-      surface: 'message',
-      mineId: 'mine:a',
-      dwarfId: 'claude:s1'
-    })
-  })
-
-  it('collapses a non-string id to an empty string before it crosses the bridge', async () => {
-    invoke.mockResolvedValueOnce(OPEN)
-    await api.setMessagePanel({
-      surface: 'message',
-      mineId: 7,
-      dwarfId: null
-    } as unknown as Parameters<typeof api.setMessagePanel>[0])
-    expect(invoke).toHaveBeenLastCalledWith('panel:message:set', {
-      surface: 'message',
-      mineId: '',
-      dwarfId: ''
-    })
-  })
-
-  it('crosses an unrecognised surface as nothing, so main refuses rather than guessing', async () => {
-    // The same ruling launchAgent's provider carries (#168): a surface
-    // collapsed to a default would be the bridge deciding what the panel
-    // shows — 'none' above all, which would CLOSE a window nobody asked to
-    // close.
-    invoke.mockResolvedValueOnce(OPEN)
-    await api.setMessagePanel({
-      surface: 'history',
-      mineId: 'mine:a',
-      dwarfId: ''
-    } as unknown as Parameters<typeof api.setMessagePanel>[0])
-    expect(invoke).toHaveBeenLastCalledWith('panel:message:set', {
-      surface: '',
-      mineId: 'mine:a',
-      dwarfId: ''
-    })
-  })
-
-  it('hands back the REAL state main applied, never the wish', async () => {
-    // Main creates, moves, shows and hides an actual window off the back of
-    // this, and it may answer with something else entirely — the panel closed
-    // by the other window between the click and the call.
-    const closed = { surface: 'none', mineId: '', dwarfId: '' }
-    invoke.mockResolvedValueOnce(closed)
-    await expect(api.setMessagePanel(OPEN)).resolves.toEqual(closed)
-  })
-
-  it('subscribes to main’s push on panel:message:changed, and unsubscribes', () => {
-    const listener = vi.fn()
-    const stop = api.onMessagePanel(listener)
-    expect(on).toHaveBeenLastCalledWith('panel:message:changed', expect.any(Function))
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, state: unknown) => void
-    wrapped(null, OPEN)
-    // The renderer never sees the IpcRendererEvent: it is the state that is
-    // the message.
-    expect(listener).toHaveBeenCalledWith(OPEN)
-    stop()
-    expect(removeListener).toHaveBeenLastCalledWith('panel:message:changed', wrapped)
-  })
-
-  it('reports the measured height on panel:message:height as a number', () => {
-    api.setMessagePanelHeight(235)
-    expect(send).toHaveBeenLastCalledWith('panel:message:height', 235)
-  })
-
-  it('crosses anything that is not a number as one main refuses', () => {
-    // Never 0 and never a default: both are heights a window could be given,
-    // and a bridge that invented one would resize the panel off a payload
-    // nobody could read.
-    api.setMessagePanelHeight('235' as unknown as number)
-    expect(send).toHaveBeenLastCalledWith('panel:message:height', Number.NaN)
-  })
-
-  it('reports the delivery verdicts on panel:message:delivery, uncoerced', () => {
-    // Forwarded whole for the reason queryProjects is: a nested record cannot
-    // be collapsed to a safe default the way a stray string can, so main
-    // validates it and refuses what it cannot read (see
-    // parseDwarfDeliveryReport).
-    const report = { send: { 'claude:s1': { phase: 'delivered' } }, kick: {} }
-    api.reportDwarfDelivery(report as unknown as Parameters<typeof api.reportDwarfDelivery>[0])
-    expect(send).toHaveBeenLastCalledWith('panel:message:delivery', report)
-  })
-
-  it('subscribes to the relayed verdicts on panel:message:delivery:changed', () => {
-    const listener = vi.fn()
-    const report = { send: {}, kick: { 'claude:s1': { phase: 'reacted' } } }
-    const stop = api.onDwarfDeliveryReport(listener)
-    expect(on).toHaveBeenLastCalledWith('panel:message:delivery:changed', expect.any(Function))
-    const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
-    wrapped(null, report)
-    expect(listener).toHaveBeenCalledWith(report)
-    stop()
-    expect(removeListener).toHaveBeenLastCalledWith('panel:message:delivery:changed', wrapped)
-  })
-})
 
 /**
  * A link inside a bubble, handed to main (#347).
@@ -1162,6 +1188,30 @@ describe('preload open-link contract (#347)', () => {
     const refusal = { opened: false, reason: 'That link could not be opened.' }
     invoke.mockResolvedValueOnce(refusal)
     await expect(api.openExternalLink('javascript:alert(1)')).resolves.toEqual(refusal)
+  })
+})
+
+/**
+ * Copy on a failed message, handed to main (#635, decision log, Failed delivery) — APPENDED,
+ * nothing above changed. The same shape as the open-link contract: the bridge carries one string
+ * over and hands main's verdict back; main owns the clipboard and refuses a bad payload.
+ */
+describe('preload copy-text contract (#635)', () => {
+  it('asks on the shell:copyText channel with the text as written', async () => {
+    invoke.mockResolvedValueOnce({ copied: true })
+    await api.copyText('Also check\nthat it sorts.')
+    expect(invoke).toHaveBeenLastCalledWith('shell:copyText', 'Also check\nthat it sorts.')
+  })
+
+  it('collapses a non-string text to an empty string before it crosses', async () => {
+    invoke.mockResolvedValueOnce({ copied: false })
+    await api.copyText(42 as unknown as string)
+    expect(invoke).toHaveBeenLastCalledWith('shell:copyText', '')
+  })
+
+  it("hands back main's verdict untouched", async () => {
+    invoke.mockResolvedValueOnce({ copied: false })
+    await expect(api.copyText('')).resolves.toEqual({ copied: false })
   })
 })
 
@@ -1239,45 +1289,49 @@ describe('preload notifications contract (#316)', () => {
  * subscription, because this is the one preference BOTH windows paint with.
  */
 describe('preload typography contract (#370)', () => {
+  /*
+   * AMENDED for the type presets (#635): the document is a font style and four role faces now.
+   * Every test keeps its #370 boundary rule, on the new shape.
+   */
+  const CUSTOM = {
+    style: 'custom',
+    faces: { display: 'tiny5', label: 'roboto', meta: 'arial', talk: 'pixelify-sans' }
+  } as const
+
   it('asks for the stored faces on typography:preferences:get with no payload', async () => {
-    const stored = { interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' }
+    const stored = { ...CUSTOM }
     invoke.mockResolvedValueOnce(stored)
     await expect(api.getTypographyPreferences()).resolves.toEqual(stored)
     expect(invoke).toHaveBeenLastCalledWith('typography:preferences:get')
   })
 
   it('rebuilds the document through the shared parser before it crosses', async () => {
-    invoke.mockResolvedValueOnce({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    invoke.mockResolvedValueOnce(CUSTOM)
     await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
-      interfaceFont: 'roboto',
-      messagingFont: 'arial',
+      ...CUSTOM,
       theme: 'neon'
     })
-    // Two checked values and nothing the caller happened to attach.
-    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
-      interfaceFont: 'roboto',
-      messagingFont: 'arial'
-    })
+    // The checked values and nothing the caller happened to attach.
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', CUSTOM)
   })
 
-  it('refuses Tiny5 for messaging at the bridge, before main ever sees it', async () => {
-    invoke.mockResolvedValueOnce({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
+  // AMENDED (#635): was "refuses Tiny5 for messaging…", on the two-face document.
+  it('refuses Tiny5 for messages at the bridge, before main ever sees it', async () => {
+    invoke.mockResolvedValueOnce(CUSTOM)
     await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
-      interfaceFont: 'tiny5',
-      messagingFont: 'tiny5'
+      style: 'custom',
+      faces: { ...CUSTOM.faces, talk: 'tiny5' }
     })
-    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
-      interfaceFont: 'tiny5',
-      messagingFont: 'pixelify-sans'
-    })
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', CUSTOM)
   })
 
   it('hands back what main STORED, never the request', async () => {
-    const stored = { interfaceFont: 'arial', messagingFont: 'arial' }
+    const stored = {
+      style: 'readable',
+      faces: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+    } as const
     invoke.mockResolvedValueOnce(stored)
-    await expect(
-      api.setTypographyPreferences({ interfaceFont: 'roboto', messagingFont: 'roboto' })
-    ).resolves.toEqual(stored)
+    await expect(api.setTypographyPreferences(CUSTOM)).resolves.toEqual(stored)
   })
 
   it('subscribes to the change push on typography:preferences:changed', () => {
@@ -1285,8 +1339,8 @@ describe('preload typography contract (#370)', () => {
     const stop = api.onTypographyPreferences(listener)
     expect(on).toHaveBeenLastCalledWith('typography:preferences:changed', expect.any(Function))
     const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
-    wrapped(null, { interfaceFont: 'roboto', messagingFont: 'arial' })
-    expect(listener).toHaveBeenCalledWith({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    wrapped(null, CUSTOM)
+    expect(listener).toHaveBeenCalledWith(CUSTOM)
     stop()
     expect(removeListener).toHaveBeenLastCalledWith('typography:preferences:changed', wrapped)
   })
@@ -1300,8 +1354,13 @@ describe('preload typography contract (#370)', () => {
     const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
     wrapped(null, 'roboto')
     expect(listener).toHaveBeenCalledWith({
-      interfaceFont: 'tiny5',
-      messagingFont: 'pixelify-sans'
+      style: 'dwarfai',
+      faces: {
+        display: 'jacquard-12',
+        label: 'tiny5',
+        meta: 'pixelify-sans',
+        talk: 'pixelify-sans'
+      }
     })
   })
 })
@@ -1474,3 +1533,80 @@ describe('preload OpenCode settings contract (#588 T6)', () => {
     expect(invoke).toHaveBeenLastCalledWith('opencode:password:clear')
   })
 })
+
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+describe('preload launch view contract (#635)', () => {
+  it('reads the stored view on launch-view:get with no payload', async () => {
+    invoke.mockResolvedValueOnce({ area: 'mines', mineId: 'north-shaft' })
+    await expect(api.getLaunchView()).resolves.toEqual({ area: 'mines', mineId: 'north-shaft' })
+    expect(invoke).toHaveBeenLastCalledWith('launch-view:get')
+  })
+
+  it('reports the view one-way on launch-view:set, through the shared parser', () => {
+    api.setLaunchView({ area: 'settings', mineId: null })
+    expect(send).toHaveBeenLastCalledWith('launch-view:set', { area: 'settings', mineId: null })
+    api.setLaunchView({ area: 'vault', mineId: '', extra: 1 } as unknown as Parameters<
+      typeof api.setLaunchView
+    >[0])
+    expect(send).toHaveBeenLastCalledWith('launch-view:set', { area: 'map', mineId: null })
+  })
+})
+/* --- end of the #635 launch view block --------------------------------------- */
+
+/* --- Dwarf names (#635) — one block, appended ------------------------------- */
+/*
+ * Renaming a dwarf and resetting its name: request/response, because a refusal has a reason the
+ * header shows. The request is rebuilt field by field. A dwarf id that is not a string crosses as
+ * '', which main refuses; a name that is not a string does not cross at all, so main refuses the
+ * shape rather than reading it as a reset. Only a real empty string removes a custom name.
+ */
+describe('preload dwarf-name contract (#635)', () => {
+  it('sends a rename on the dwarf:setName channel and answers the verdict', async () => {
+    invoke.mockResolvedValueOnce({ saved: true, customName: 'Stonebeard' })
+    await expect(api.setDwarfName({ dwarfId: 'claude:s1', name: 'Stonebeard' })).resolves.toEqual({
+      saved: true,
+      customName: 'Stonebeard'
+    })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
+      dwarfId: 'claude:s1',
+      name: 'Stonebeard'
+    })
+  })
+
+  it('rebuilds the rename rather than forwarding whatever the caller attached', async () => {
+    invoke.mockResolvedValueOnce({ saved: true })
+    await api.setDwarfName({
+      dwarfId: 'claude:s1',
+      name: 'Stonebeard',
+      provider: 'codex'
+    } as unknown as Parameters<typeof api.setDwarfName>[0])
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
+      dwarfId: 'claude:s1',
+      name: 'Stonebeard'
+    })
+
+    // AMENDED for #635 (verifier finding; was: a non-string name crossed as '', which main read as
+    // a reset and answered saved: true, erasing the kept name). It crosses with no name at all
+    // now, a shape main refuses, so a malformed call can never remove a name.
+    await api.setDwarfName({ dwarfId: 7, name: null } as unknown as Parameters<
+      typeof api.setDwarfName
+    >[0])
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: '' })
+  })
+
+  it('still sends a real empty name, which removes the custom name', async () => {
+    invoke.mockResolvedValueOnce({ saved: true })
+    await api.setDwarfName({ dwarfId: 'claude:s1', name: '' })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: 'claude:s1', name: '' })
+  })
+
+  it('sends a reset on the dwarf:resetName channel, naming the dwarf alone', async () => {
+    invoke.mockResolvedValueOnce({ saved: true })
+    await expect(api.resetDwarfName('claude:s1')).resolves.toEqual({ saved: true })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', 'claude:s1')
+
+    await api.resetDwarfName(undefined as unknown as string)
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', '')
+  })
+})
+/* --- end of the #635 dwarf names block -------------------------------------- */
