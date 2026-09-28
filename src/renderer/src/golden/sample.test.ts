@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MATERIAL_TOKENS_PER_UNIT } from '../types'
 import { MAP_SPAWN_POINTS } from '../lib/map/spawnPoints.generated'
 import { adaptSample, silenceMs, swapSample } from './sample'
@@ -433,5 +433,65 @@ describe('swapSample — a prototype sample switch under a running app', () => {
     const swapped = swapSample(adaptSample(dm({})), adaptSample(dm({ mines: [shaft] })))
     expect(swapped).not.toHaveProperty('launch')
     expect(swapped.mines).toHaveLength(1)
+  })
+})
+
+/*
+ * APPENDED (#635, the MessagePanel slice): the MessagePanel reads one dwarf's conversation as the
+ * feed main answers for it, so every dwarf with something said has the same messages its history
+ * speaker carries, readable, by dwarf id. A dwarf with nothing said has an empty readable feed.
+ */
+describe('adaptSample feeds', () => {
+  it("answers each dwarf's conversation as its feed, the messages its history speaker holds", () => {
+    const talker = {
+      ...digger,
+      conversation: [
+        { from: 'user', md: 'Dig here.', mark: 'reacted', time: '09:02' },
+        { from: 'dwarf', md: 'Done.', time: '09:07' }
+      ]
+    }
+    const sample = adaptSample(dm({ mines: [shaft], dwarfs: [talker] }))
+    const speaker = sample.histories['north-shaft']!.speakers[0]!
+    expect(sample.feeds.a1).toEqual({ readable: true, messages: speaker.messages })
+  })
+
+  it('answers a dwarf with nothing said with an empty readable feed', () => {
+    const sample = adaptSample(dm({ mines: [shaft], dwarfs: [digger] }))
+    expect(sample.feeds.a1).toEqual({ readable: true, messages: [] })
+  })
+})
+
+/*
+ * APPENDED (#635, the MessagePanel slice): the prototype's chat takes a message and a file from any
+ * dwarf, so each sample dwarf is a session the panel can write to, attach to and stop, on the
+ * console channel the app's own terminal-held sessions use. The day of the conversation is the
+ * one the page is on, as the prototype's is always today.
+ */
+describe('adaptSample, the dwarfs the MessagePanel talks to', () => {
+  it('gives each dwarf the console channel for words, files and a stop', () => {
+    const [dwarf] = adaptSample(dm({ mines: [shaft], dwarfs: [digger] })).mines[0]!.dwarfs
+    expect(dwarf!.textDelivery).toBe('terminal')
+    expect(dwarf!.capabilities).toEqual({
+      sendText: 'terminal',
+      cancel: 'terminal',
+      adjustEffort: null,
+      attach: 'terminal'
+    })
+  })
+
+  it('dates the conversation on the day the page is on', () => {
+    // A fixed day, as the design's capture runtime fixes the page's clock.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 0, 15, 10, 30))
+    try {
+      const talker = { ...digger, conversation: [{ from: 'dwarf', md: 'Done.', time: '09:07' }] }
+      const [message] = adaptSample(dm({ mines: [shaft], dwarfs: [talker] })).feeds.a1!.messages
+      const said = new Date(message!.timestamp)
+      expect([said.getFullYear(), said.getMonth(), said.getDate(), said.getHours()]).toEqual([
+        2026, 0, 15, 9
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

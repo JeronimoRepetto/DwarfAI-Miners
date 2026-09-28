@@ -716,7 +716,7 @@ bold, lists and code — a face that cannot draw bold cannot carry one. That is 
 that gave conversation text its own typeface in the first place.
 
 Choosing one family in both makes the whole app that family. Both apply the moment you press them,
-in the shell and in the message panel's own window alike, and both survive a restart.
+everywhere in the app, the message panel included, and both survive a restart.
 
 Tiny5, Pixelify Sans and Roboto are shipped inside the app — nothing is fetched from a font service,
 and the panel renders identically with no network. All three are under the SIL Open Font License.
@@ -959,7 +959,6 @@ app reads on every launch. Each is on for `1` or `true` and off for anything els
 | `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                                                   |
 | `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                                                    |
 | `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                                                  |
-| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                                         |
 | `JEV_DEBUG`            | Each Jev routing call: the request it sent, the answer or the fallback reason, and — once Jev answered — the local decision, plus elapsed ms. |
 | `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367).                      |
 | `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).                         |

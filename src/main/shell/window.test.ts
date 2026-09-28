@@ -1,29 +1,14 @@
-import type { BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { emptyMessagePanel } from './messagePanelState'
 import { DESIGN_SCREEN_HEIGHT, uiScale } from './panelBounds'
 /*
- * Crosses the main -> renderer boundary only to PIN two copies equal (see
- * AGENTS.md's boundaries section): MESSAGE_PANEL_LEAVE_TIMEOUT_MS below,
- * against the renderer's own derived bound for the message surface's leave —
- * asserted in "outlasts the message surface's own leave watchdog..." below.
- * `motionTiming.ts` is pure
- * (no DOM globals), unlike `panelMotion.ts` beside it (`panelMotionX` reads
- * `getComputedStyle`) — which the node-side typecheck has no "dom" lib for —
- * so only this one file crosses, and the leave keyframes it is asked about
- * are copied below rather than imported for the same reason. Production code
- * never imports across this boundary either way.
+ * AMENDED for #635: this file crossed the main -> renderer boundary once, to pin the message
+ * panel window's deferred hide against the renderer's own leave bound (MESSAGE_PANEL_LEAVE_TIMEOUT_MS
+ * against motionBoundMs). That window is gone, and with it the pin and the import; the guarantee
+ * has no second copy left to hold equal.
  */
-import { motionBoundMs } from '../../renderer/src/lib/shell/motionTiming'
 import {
-  // ADDED for #389 — the deferred hide that lets a closing surface settle.
-  MESSAGE_PANEL_LEAVE_TIMEOUT_MS,
-  MESSAGE_PANEL_REVEAL_TIMEOUT_MS,
-  messagePanelHideIsDue,
-  type MessagePanelHideTarget,
   applyAlwaysOnTop,
-  buildMessagePanelWindowOptions,
   applyPanelBounds,
   // ADDED for #570 — the page load split out of createMainWindow.
   applyPanelPageLoad,
@@ -34,20 +19,12 @@ import {
   fitShellWindow,
   formatShellFit,
   refitOnDisplayChange,
-  // ADDED for #409 — the OS focus a dwarf selection gives the panel window.
-  focusMessagePanelOnSelection,
-  type MessagePanelFocusTarget,
   formatShellTrace,
-  messagePanelNeedsReveal,
-  messagePanelState,
   panelLayout,
   raisePanelWindow,
   seedPanelEdge,
-  setMessagePanel,
   setPanelLayout,
-  shellDebugEnabled,
   type AlwaysOnTopTarget,
-  type MessagePanelRevealTarget,
   type PanelBoundsTarget,
   type RaiseTarget,
   type UiScaleTarget
@@ -61,13 +38,6 @@ import {
  * the nav and the page (`panelBounds.test.ts` derives the width).
  */
 const PANEL_BOUNDS = { x: 1402, y: 0, width: 518, height: 1032 }
-
-/**
- * The message panel beside it (#162) — a rectangle main derived from the
- * display and from where the shell actually is, which this file, again, only
- * carries through untouched.
- */
-const MESSAGE_PANEL_BOUNDS = { x: 8, y: 797, width: 990, height: 235 }
 
 /**
  * Deterministic BrowserWindow stand-in for the always-on-top surface: it
@@ -548,14 +518,13 @@ describe('formatShellFit', () => {
 })
 
 describe('refitOnDisplayChange', () => {
-  it('refits the shell, then the message panel against it', () => {
+  // AMENDED for #635 (was: 'refits the shell, then the message panel against it'): the panel is in
+  // the shell's dock slot, so refitting the shell is refitting everything the app draws.
+  it('refits the shell, which holds every panel the app draws', () => {
     const steps: string[] = []
-    const refit = refitOnDisplayChange({
-      fitShell: () => steps.push('shell'),
-      placeMessagePanel: () => steps.push('panel')
-    })
+    const refit = refitOnDisplayChange({ fitShell: () => steps.push('shell') })
     refit()
-    expect(steps).toEqual(['shell', 'panel'])
+    expect(steps).toEqual(['shell'])
   })
 })
 
@@ -676,376 +645,17 @@ describe('the shell window can be focused at all', () => {
     expect(options.focusable).toBe(true)
   })
 })
-/**
- * The message panel as a window of its own (#162).
- *
- * The design draws it as a second surface beside the shell, so it is a second
- * BrowserWindow — and every question that raises is about how it relates to the
- * shell rather than about what it contains. Same discipline as the block above:
- * no real BrowserWindow exists here, so the builder is asserted on its own and
- * the state is asserted on what it stores.
+/*
+ * REMOVED for #635, stated rather than passing unseen, with the functions they tested:
+ * 'buildMessagePanelWindowOptions', 'setMessagePanel', 'focusMessagePanelOnSelection (#409)',
+ * 'revealing a panel window nothing measured' (#312), 'hiding a panel window once its surface has
+ * settled' (#389, with the pin of MESSAGE_PANEL_LEAVE_TIMEOUT_MS against the renderer's own leave
+ * bound, the one crossing of the boundary this file made) and 'shellDebugEnabled' (#312). All of
+ * them were the message panel's own window, and it is gone: the MessagePanel and the Add panel are
+ * in this window's dock slot (decision log, MessagePanel and Add panel anchored). The keyboard the
+ * selection focus gave that window is this one's: it is focusable ('the shell window can be
+ * focused at all', above) and a press raises and focuses it ('raisePanelWindow').
  */
-describe('buildMessagePanelWindowOptions', () => {
-  /** Stands in for the shell window, which is all the parent slot is. */
-  const shell = {} as unknown as BrowserWindow
-
-  const input = {
-    alwaysOnTop: true,
-    preloadPath: 'C:/app/out/preload/index.mjs',
-    iconPath: 'C:/app/resources/app-icon.png',
-    bounds: MESSAGE_PANEL_BOUNDS,
-    parent: shell
-  }
-
-  it('opens hidden, on the rectangle it was handed', () => {
-    const options = buildMessagePanelWindowOptions(input)
-    // Hidden because nothing has measured the panel yet: the renderer reports
-    // its own height and that first report is what reveals the window.
-    expect(options.show).toBe(false)
-    expect({
-      x: options.x,
-      y: options.y,
-      width: options.width,
-      height: options.height
-    }).toEqual(MESSAGE_PANEL_BOUNDS)
-  })
-
-  it('is the same frameless floating surface the shell is', () => {
-    const options = buildMessagePanelWindowOptions(input)
-    expect(options.frame).toBe(false)
-    expect(options.transparent).toBe(true)
-    expect(options.focusable).toBe(true)
-  })
-
-  it('drops the Windows thick frame like the shell does, so a height report cannot flash it (#394)', () => {
-    expect(buildMessagePanelWindowOptions(input).thickFrame).toBe(false)
-  })
-
-  /*
-   * ADDED for #465, for the reason the shell drops it: this window is
-   * transparent too, it is re-bounded on every height report, and macOS draws
-   * its own shadow around whatever shape a transparent window presents.
-   */
-  it('paints no native shadow either, because the panel paints its own (#465)', () => {
-    expect(buildMessagePanelWindowOptions(input).hasShadow).toBe(false)
-    expect(buildMessagePanelWindowOptions(input).thickFrame).toBe(false)
-  })
-
-  it('is a CHILD of the shell, so it cannot outlive it', () => {
-    // Closing the shell closes this window, and it never becomes a second
-    // entry in the taskbar or Alt-Tab beside the app it belongs to.
-    expect(buildMessagePanelWindowOptions(input).parent).toBe(shell)
-    expect(buildMessagePanelWindowOptions(input).skipTaskbar).toBe(true)
-  })
-
-  it('mirrors the shell’s pin rather than owning a second one', () => {
-    // Pinning is the shell's control and the tray's business (#35). A panel
-    // that floated while the shell did not — or the other way round — would
-    // split one window's stacking into two answers.
-    expect(buildMessagePanelWindowOptions({ ...input, alwaysOnTop: true }).alwaysOnTop).toBe(true)
-    expect(buildMessagePanelWindowOptions({ ...input, alwaysOnTop: false }).alwaysOnTop).toBe(false)
-  })
-
-  it('gives the panel no size for a user to drag, because main owns its rectangle', () => {
-    // The design's vertical-only resize is the panel's own top-edge handle: it
-    // reports a height and main applies it, so the window's width can never be
-    // dragged away from the 990 the composition is derived from.
-    const options = buildMessagePanelWindowOptions(input)
-    expect(options.resizable).toBe(false)
-    expect(options.minWidth).toBeUndefined()
-    expect(options.minHeight).toBeUndefined()
-  })
-
-  it('wires the SAME preload, so the panel reads one typed API', () => {
-    const options = buildMessagePanelWindowOptions(input)
-    expect(options.webPreferences?.preload).toBe(input.preloadPath)
-    expect(options.icon).toBe(input.iconPath)
-  })
-
-  it('keeps the second renderer sandboxed from Node and isolated from the preload world', () => {
-    const options = buildMessagePanelWindowOptions(input)
-    expect(options.webPreferences?.contextIsolation).toBe(true)
-    expect(options.webPreferences?.nodeIntegration).toBe(false)
-  })
-})
-
-/**
- * The state both windows write and both read (#162).
- *
- * The shell opens the panel on a dwarf or on the mine's Add action; the panel
- * window closes itself, and adopts the dwarf a launch produced. Main is the one
- * serialization point, so the answer is always what it STORED — the same
- * read-back rule `setPanelLayout` above follows.
- */
-describe('setMessagePanel', () => {
-  it('answers with what it stored, and stores what it answered', () => {
-    const opened = setMessagePanel({
-      surface: 'message',
-      mineId: 'mine:a',
-      dwarfId: 'claude:s1'
-    })
-    expect(opened).toEqual({ surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' })
-    expect(messagePanelState()).toEqual(opened)
-  })
-
-  it('takes the launch surface, which names a mine and no dwarf yet', () => {
-    const launching = setMessagePanel({ surface: 'launch', mineId: 'mine:a', dwarfId: '' })
-    expect(launching).toEqual({ surface: 'launch', mineId: 'mine:a', dwarfId: '' })
-  })
-
-  it('closes back to nothing, which is the window hidden rather than destroyed', () => {
-    setMessagePanel({ surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' })
-    expect(setMessagePanel(emptyMessagePanel())).toEqual(emptyMessagePanel())
-    expect(messagePanelState()).toEqual(emptyMessagePanel())
-  })
-
-  it('hands out a copy, so a reader cannot change what main holds', () => {
-    setMessagePanel({ surface: 'message', mineId: 'mine:a', dwarfId: 'claude:s1' })
-    const read = messagePanelState()
-    read.dwarfId = 'claude:someone-else'
-    expect(messagePanelState().dwarfId).toBe('claude:s1')
-  })
-})
-
-/**
- * Selecting a dwarf must land the keyboard in its composer, not one click
- * away from it (#409). The renderer's half — focusing the textarea inside the
- * page — is DwarfMessagePanel's own test; this is main's half, giving the
- * PANEL WINDOW the OS focus in the one case nothing else in this file ever
- * does: switching dwarfs while the panel is already open, so no later
- * `show()` runs to focus it again (see setMessagePanelHeight and
- * revealMessagePanelWithoutReport, both of which rely on Electron's own
- * documented `show()` — "Shows and gives focus to the window" — for a panel
- * that was not visible yet).
- */
-describe('focusMessagePanelOnSelection (#409)', () => {
-  function fakeFocusTarget(visible: boolean) {
-    const calls: string[] = []
-    const target: MessagePanelFocusTarget = {
-      isVisible: () => visible,
-      focus: () => calls.push('focus')
-    }
-    return { target, calls }
-  }
-
-  const MESSAGE = { surface: 'message' as const, mineId: 'mine:a', dwarfId: 'claude:s1' }
-  const LAUNCH = { surface: 'launch' as const, mineId: 'mine:a', dwarfId: '' }
-
-  it('focuses an already-open panel when the shell selects or switches a dwarf', () => {
-    const { target, calls } = fakeFocusTarget(true)
-    focusMessagePanelOnSelection(target, MESSAGE, true)
-    expect(calls).toEqual(['focus'])
-  })
-
-  it('never focuses for a request that did not come from the shell', () => {
-    // The panel adopting the dwarf its own launch produced sets this same
-    // surface for itself (#162) — never a reason to steal the keyboard back
-    // from wherever the person already is.
-    const { target, calls } = fakeFocusTarget(true)
-    focusMessagePanelOnSelection(target, MESSAGE, false)
-    expect(calls).toEqual([])
-  })
-
-  it('never focuses for the launch surface, or for none, even from the shell', () => {
-    const { target, calls } = fakeFocusTarget(true)
-    focusMessagePanelOnSelection(target, LAUNCH, true)
-    focusMessagePanelOnSelection(target, emptyMessagePanel(), true)
-    expect(calls).toEqual([])
-  })
-
-  it('never focuses a window that is not visible yet — show() itself focuses that one', () => {
-    const { target, calls } = fakeFocusTarget(false)
-    focusMessagePanelOnSelection(target, MESSAGE, true)
-    expect(calls).toEqual([])
-  })
-})
-
-/**
- * The window opens even when its renderer never measured anything (#312).
- *
- * The first open of a run created the window and stopped there: the height
- * report that is the ONE thing which reveals it never arrived, and main had no
- * second answer — so a click produced a halo on the dwarf and no panel, and
- * only closing and reopening got one. A report is still what sizes the window;
- * this is what keeps a silent renderer from costing the click entirely.
- *
- * Asserted through a narrow target with a fake, the way `raisePanelWindow` and
- * the three `apply*` above are: the wait itself happens inside Electron and
- * cannot be reached from here, but every rule about whether to reveal can.
- */
-describe('revealing a panel window nothing measured', () => {
-  function fakeRevealTarget(state: { visible?: boolean; destroyed?: boolean } = {}) {
-    const target: MessagePanelRevealTarget = {
-      isDestroyed: () => state.destroyed ?? false,
-      isVisible: () => state.visible ?? false
-    }
-    return target
-  }
-
-  it('reveals a window that is still hidden on a surface that is still open', () => {
-    expect(messagePanelNeedsReveal(fakeRevealTarget(), 'message')).toBe(true)
-    expect(messagePanelNeedsReveal(fakeRevealTarget(), 'launch')).toBe(true)
-  })
-
-  it('leaves a window a height report already revealed alone', () => {
-    // The ordinary run: the report landed inside the wait, sized the window
-    // and showed it. Showing it again would be a raise nobody asked for.
-    expect(messagePanelNeedsReveal(fakeRevealTarget({ visible: true }), 'message')).toBe(false)
-  })
-
-  it('never opens a window onto a surface that closed while it waited', () => {
-    // A second click can deselect before the wait is out, and main's state is
-    // then 'none' — the panel would come back showing the dwarf nobody has
-    // selected any more.
-    expect(messagePanelNeedsReveal(fakeRevealTarget(), 'none')).toBe(false)
-  })
-
-  it('has nothing to reveal once the window has been destroyed', () => {
-    expect(messagePanelNeedsReveal(fakeRevealTarget({ destroyed: true }), 'message')).toBe(false)
-  })
-
-  it('waits longer than a page load and less than a person reads as a failure', () => {
-    // The bound is the requirement, not the number: long enough that the
-    // ordinary report wins the race and this never fires, short enough that
-    // what the person sees is the panel opening rather than a click that did
-    // nothing and a panel arriving later.
-    expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeGreaterThanOrEqual(500)
-    expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeLessThanOrEqual(2000)
-  })
-
-  /*
-   * ADDED for #464 (correction to T2), the reveal side's own version of the
-   * leave-side check above: unchanged at 1000ms, but that has to still be
-   * true of the DERIVED rise bound rather than an old literal this file no
-   * longer restates. A comfortable margin already, not a tie — no IPC margin
-   * named here on purpose, since this floor was never brought to the razor's
-   * edge the leave one was.
-   */
-  it('still covers the message surface’s own rise bound, with room to spare', () => {
-    const messageRiseKeyframes = { opacity: [0, 1], y: [12, 0] }
-    expect(MESSAGE_PANEL_REVEAL_TIMEOUT_MS).toBeGreaterThanOrEqual(
-      motionBoundMs(messageRiseKeyframes)
-    )
-  })
-})
-
-/**
- * ADDED for #389. The window stays up while its surface settles.
- *
- * The mirror image of the block above, and asserted the same way and for the
- * same reason: the wait itself happens inside Electron and cannot be reached
- * from here, but every rule about whether the hide is owed can. A close used to
- * take the window off screen in the frame the state changed, which left the
- * renderer nothing to animate — so main defers, and the renderer's report is
- * what ends the deferral early.
- */
-describe('hiding a panel window once its surface has settled', () => {
-  function fakeHideTarget(state: { visible?: boolean; destroyed?: boolean } = {}) {
-    const target: MessagePanelHideTarget = {
-      isDestroyed: () => state.destroyed ?? false,
-      isVisible: () => state.visible ?? true
-    }
-    return target
-  }
-
-  it('hides a visible window whose closed surface reported itself settled', () => {
-    expect(messagePanelHideIsDue(fakeHideTarget(), 'none', true)).toBe(true)
-  })
-
-  it('ignores a report nothing was waiting for', () => {
-    // A leave overtaken by a reopen, or a renderer reporting twice: main
-    // cancels the wait when a surface opens, so an unarmed report is one whose
-    // close has already been answered — and hiding on it would close a panel
-    // by way of a message about an older one.
-    expect(messagePanelHideIsDue(fakeHideTarget(), 'none', false)).toBe(false)
-  })
-
-  it('never hides a window whose surface opened again while the old one settled', () => {
-    expect(messagePanelHideIsDue(fakeHideTarget(), 'message', true)).toBe(false)
-    expect(messagePanelHideIsDue(fakeHideTarget(), 'launch', true)).toBe(false)
-  })
-
-  it('has nothing to hide when the window is gone, or was never shown', () => {
-    expect(messagePanelHideIsDue(fakeHideTarget({ destroyed: true }), 'none', true)).toBe(false)
-    expect(messagePanelHideIsDue(fakeHideTarget({ visible: false }), 'none', true)).toBe(false)
-  })
-
-  it('waits out the renderer’s own bounded leave, and no longer', () => {
-    // The bound is the requirement, not the number. It has to outlast the
-    // renderer's own watchdog — the run's derived duration plus one margin,
-    // asserted below against the renderer's own copy rather than a literal
-    // this file restates — so an honest leave always reports before main
-    // stops listening; and it has to stay short enough that a renderer which
-    // reports nothing at all still leaves the window gone rather than
-    // standing transparent over other programs.
-    expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeGreaterThan(300)
-    expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeLessThanOrEqual(600)
-  })
-
-  /*
-   * ADDED for #566 (was: a literal 350 this file restated from the
-   * renderer's own #266 constants, now gone — see `panelMotion.ts`). Main
-   * cannot import renderer code in production (AGENTS.md), so this pins the
-   * two copies equal instead of trusting them to agree: the message
-   * surface's own leave keyframes against the SAME `motionBoundMs` the
-   * renderer's own `boundedMotion.run` arms its watchdog with. A motion-dom
-   * default that changed the derived bound would fail this test rather than
-   * silently outrunning the literal main still held.
-   *
-   * AMENDED for #464 (correction to T2): the renderer's own watchdog firing
-   * at its bound is not the same MOMENT main learns about it — the run's
-   * `settle` callback still has to execute, and `reportMessagePanelSettled`
-   * still has to cross the IPC hop, before main's own timer may safely have
-   * fired first. `IPC_MARGIN_MS` below is that room, named once so it reads
-   * as a deliberate margin rather than the zero-slack equality the bound and
-   * the constant used to share by coincidence.
-   */
-  it('outlasts the message surface’s own leave watchdog by a whole IPC margin, not merely ties it', () => {
-    // Copied, not imported: `panelKeyframes(true, true)` is the renderer's
-    // own builder for this shape, but it lives in `panelMotion.ts` beside
-    // `panelMotionX`, which reads `getComputedStyle` — a DOM global the
-    // node-side typecheck has no "dom" lib for. `MessagePanelWindow.vue`'s
-    // `settleAndLeave` is what actually runs this exact keyframe pair.
-    const messageLeaveKeyframes = { opacity: [1, 0], y: [0, 12] }
-    // The room for the renderer's `settle` callback to run and its report to
-    // cross the IPC hop, past the renderer's own watchdog firing — not
-    // covered by `motionBoundMs` itself, which only accounts for the motion.
-    const IPC_MARGIN_MS = 50
-    expect(MESSAGE_PANEL_LEAVE_TIMEOUT_MS).toBeGreaterThanOrEqual(
-      motionBoundMs(messageLeaveKeyframes) + IPC_MARGIN_MS
-    )
-  })
-})
-
-/**
- * The switch that makes a first message-panel open say what it did (#312).
- *
- * The first open of a run took a path nobody could see: the panel window is
- * created hidden and revealed by a height report, and every refusal on the way
- * there is a bare `return`. A whole failing run produced not one line from
- * main, which is why the flag exists at all — and why it is asserted here
- * rather than trusted, exactly as its three siblings are.
- */
-describe('shellDebugEnabled', () => {
-  it('is off when nobody asked for it', () => {
-    expect(shellDebugEnabled({})).toBe(false)
-  })
-
-  it('is on for the two affirmative spellings, in any case', () => {
-    for (const raw of ['1', 'true', 'TRUE', 'True']) {
-      expect(shellDebugEnabled({ SHELL_DEBUG: raw })).toBe(true)
-    }
-  })
-
-  it('stays off for anything else, so a stray value cannot switch it on', () => {
-    // The same refusal DWARFAI_PERF, TIER_DEBUG and CODEX_DEBUG make: an empty
-    // string, a '0' or a word is not a request, and a debugging device that
-    // turns itself on for one is one nobody can turn off.
-    for (const raw of ['', '0', 'false', 'yes', 'on']) {
-      expect(shellDebugEnabled({ SHELL_DEBUG: raw })).toBe(false)
-    }
-  })
-})
 
 /**
  * One diagnostic line, and the shape the maintainer pastes back (#312).
@@ -1057,41 +667,36 @@ describe('shellDebugEnabled', () => {
  * whole reproduction.
  */
 describe('formatShellTrace', () => {
+  // AMENDED for #635 throughout: the moments were the message panel window's, gone with it; the
+  // line is still the shell's (formatShellFit), so the cases name shell moments.
   it('names the subject, the moment, and every fact after it', () => {
-    expect(formatShellTrace('message panel placed', { surface: 'message', visible: false })).toBe(
-      '[shell] message panel placed: surface=message visible=false'
+    expect(formatShellTrace('layout applied', { asked: 'mine', visible: false })).toBe(
+      '[shell] layout applied: asked=mine visible=false'
     )
   })
 
   it('states a moment with nothing to add without a dangling colon', () => {
-    expect(formatShellTrace('message panel window close', {})).toBe(
-      '[shell] message panel window close'
-    )
+    expect(formatShellTrace('window close', {})).toBe('[shell] window close')
   })
 
   it('folds a rectangle into one field, so the line stays greppable', () => {
     // Size before origin, and no spaces inside the value: a rectangle split
     // across fields cannot be compared between two lines at a glance, and one
     // carrying a space stops being one field.
-    expect(formatShellTrace('message panel window created', { bounds: MESSAGE_PANEL_BOUNDS })).toBe(
-      '[shell] message panel window created: bounds=990x235@8,797'
+    expect(formatShellTrace('window created', { bounds: PANEL_BOUNDS })).toBe(
+      '[shell] window created: bounds=518x1032@1402,0'
     )
   })
 
-  it('carries an anchor as the two numbers it actually is, not as a rectangle', () => {
-    // A remembered position is an x and a BOTTOM edge (see MessagePanelAnchor):
-    // printing it as a rectangle would invent a width and a height nothing
-    // stored, and this line is read beside the bounds the anchor produced.
-    expect(
-      formatShellTrace('message panel window created', { anchor: { x: 300, bottom: 900 } })
-    ).toBe('[shell] message panel window created: anchor=300,900')
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'carries an anchor as the two numbers it
+   * actually is, not as a rectangle'. The anchor was where a moved message panel was remembered
+   * (#296), gone with its window; the line carries rectangles only.
+   */
 
   it('says "none" for a fact that is absent, never nothing at all', () => {
-    // A missing anchor is the answer to the first question this flag was added
-    // to settle, so it has to be printed rather than left off the line.
-    expect(formatShellTrace('message panel window created', { anchor: null })).toBe(
-      '[shell] message panel window created: anchor=none'
+    expect(formatShellTrace('window created', { bounds: null })).toBe(
+      '[shell] window created: bounds=none'
     )
   })
 

@@ -70,7 +70,6 @@ src/
 │   └── tier/        measuring a project to a tier
 └── renderer/src/
     ├── App.vue      the SHELL window's root; types.ts beside it is this process's type barrel
-    ├── MessagePanelWindow.vue  the message panel's own window (#162) — the second root, one entry
     ├── assets/      processed art, css, and fonts/ — the one face this repo carries files for
     ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ · controls/ · icon/ · overlay/ · browse/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
@@ -79,7 +78,7 @@ src/
     │                  map/       the authored dig sites of the valley and the trails between them
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
-    │                  message/   what a dwarf's panel may honestly show, how far back it pages, how tall it opens, and what its Markdown means
+    │                  message/   what a dwarf's panel may honestly show, what its chrome says, how far back it pages, and what its Markdown means
     │                  history/   the mine-wide history: tab order, the 50-message cap, the timestamp's spelling
     │                  launch/    starting an agent: the gates, the chips, and whose dwarf arrived
     │                  delivery/  reaching a session: the four actions, and whether it provably worked

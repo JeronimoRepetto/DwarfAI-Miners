@@ -15,16 +15,17 @@ ClaudeProvider / CodexProvider / AntigravityProvider     (+ the simulated one, d
             |          <- HeldSessionRegistry (the sessions this panel keeps open)
       Electron IPC / preload
             |
-       Vue renderer  ->  shell window  +  message-panel window
+       Vue renderer  ->  shell window (the MessagePanel and the Add panel in its dock slot)
 ```
 
 The shared contract in `src/shared/contracts.ts` is the single type boundary for main,
 preload, and renderer. Providers depend on the `FsLike` port so parsers and scans can be tested
 without the real filesystem.
 
-Both windows are the **same** renderer bundle: main loads `index.html` a second time with
-`?surface=message-panel` and the entry point picks its root component from that. One bundle, one
-stylesheet, one Content-Security-Policy, and every design token already defined in the first.
+There is one window. The MessagePanel and the Add panel are anchored in the shell's dock slot,
+beside the plate, where the mine history also opens — one of them at a time — so the app has one
+renderer root, one page and one Content-Security-Policy. The panel had a window of its own until
+#635 (#162); the decision log anchors it in the Panel.
 
 `src/main/platform/platformAdapters.ts` is the single composition point for everything
 operating-system-specific: the runtime gets a focus function, a `TextDeliveryPort`, a

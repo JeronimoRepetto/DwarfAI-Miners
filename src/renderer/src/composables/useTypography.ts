@@ -30,12 +30,12 @@ import { resolveTypography } from '../lib/typography/typePresets'
  * cannot draw — Tiny5 for messages above all — so a press that was corrected
  * has to show the correction rather than the wish.
  *
- * ## Both windows
+ * ## One window
  *
- * Installed in the shell AND in the message-panel window, because both paint
- * with these roles and only the shell holds Settings. `listen()` is how the
- * window that did not make the change hears about it; without it the panel's
- * bubbles would keep the old face until a reload.
+ * Installed in the shell, which holds Settings and, since #635, the message
+ * panel too. `listen()` was how the panel's own window heard a change the
+ * shell made (#370); with one page it hears the shell's own change a second
+ * time, which applies the same document again.
  *
  * No module-scope singleton: each root calls this once, so per-call refs keep
  * the tests independent without a clearAll() ritual.

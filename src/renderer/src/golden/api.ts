@@ -97,15 +97,6 @@ export function goldenApi(sample: GoldenSample): Api {
       }
       return Promise.resolve({ ...layout })
     },
-    getMessagePanel: () => Promise.resolve({ surface: 'none', mineId: '', dwarfId: '' }),
-    setMessagePanel: (state) => Promise.resolve(state),
-    onMessagePanel: unsubscribe,
-    setMessagePanelHeight: none,
-    dragMessagePanel: none,
-    dockMessagePanel: none,
-    reportMessagePanelSettled: none,
-    reportDwarfDelivery: none,
-    onDwarfDeliveryReport: unsubscribe,
     getToggleShortcut: () => Promise.resolve({ ...shortcut }),
     setToggleShortcut: refuse('setToggleShortcut'),
     getMines: () =>
@@ -116,7 +107,13 @@ export function goldenApi(sample: GoldenSample): Api {
       }),
     onMinesUpdated: unsubscribe,
     activateDwarf: refuse('activateDwarf'),
-    getDwarfFeed: refuse('getDwarfFeed'),
+    // The open dwarf's conversation (#635, the MessagePanel slice), as the sample carries it.
+    getDwarfFeed: (dwarfId) => {
+      const feed = sample.feeds[dwarfId]
+      return feed === undefined
+        ? Promise.reject(new Error('golden: the sample carries no dwarf ' + dwarfId))
+        : Promise.resolve(feed)
+    },
     getDwarfFeedPage: refuse('getDwarfFeedPage'),
     setWatchedDwarf: none,
     refreshDwarfTelemetry: none,

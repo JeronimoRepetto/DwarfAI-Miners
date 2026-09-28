@@ -34,6 +34,11 @@ import CrewRoster from '../components/scene/CrewRoster.vue'
 import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
 import HistoryPanel from '../components/history/HistoryPanel.vue'
+import DwarfMessagePanel from '../components/message/DwarfMessagePanel.vue'
+import AddPanel from '../components/launch/AddPanel.vue'
+import { useAgentLaunch } from '../composables/useAgentLaunch'
+import { OTHER_CHOICE, type LaunchChoice } from '../lib/launch/launchState'
+import { goldenApi } from './api'
 import SceneDwarf from '../components/scene/SceneDwarf.vue'
 import { INTERIOR_SRC } from '../lib/art'
 import type { Station } from '../lib/scene/mineColumn'
@@ -65,6 +70,7 @@ import type { IconName } from '../lib/icon/iconGrids'
 import { GUILD_SLOTS, SYSTEM_SLOTS, WORLD_SLOTS } from '../lib/shell/panelNav'
 import { SPRITE_SHEETS, type SpriteSheetKey } from '../lib/sprite/dwarfSheets'
 import {
+  DEFAULT_JEV_SETTINGS,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   MATERIALS,
   type Dwarf,
@@ -1005,6 +1011,86 @@ const historyPanel: Render = (sample, _texts, attributes) => {
 }
 
 /*
+ * The MessagePanel as its tree prints it (#635): the sample dwarf its section names, with the feed
+ * main would answer for it (sample.ts). Nothing has been sent from the panel, so no echo is drawn.
+ */
+const messagePanel: Render = (sample, _texts, attributes) => {
+  const id = elementsOf(attributes, 'section.dm-msg')[0]?.['data-dwarf'] ?? ''
+  const dwarf = sample.mines.flatMap((m) => m.dwarfs).find((d) => d.id === id) ?? fail('dwarf', id)
+  return {
+    component: DwarfMessagePanel,
+    props: { dwarf, feed: sample.feeds[dwarf.id] }
+  }
+}
+
+/*
+ * The Add panel as its tree prints it (#635): the real launch composable opened on the mine its
+ * name gives, over the bridge answered from the sample, with the supplier its checked chip names
+ * chosen, as a person's click would choose it. Each prop is what App hands the panel from it.
+ */
+const LaunchStage = defineComponent({
+  props: {
+    sample: { type: Object as () => GoldenSample, required: true },
+    mineId: { type: String, required: true },
+    mineName: { type: String, required: true },
+    choice: { type: String as () => LaunchChoice | null, default: null }
+  },
+  setup(props) {
+    // The kit draws Jev as a choice the person can make, which is the app with a TypeSafe key set:
+    // the bridge answers the stored verdict main keeps once one is (#509).
+    const api = goldenApi(props.sample)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        ...api,
+        getJevSettings: () => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, configured: true })
+      }
+    })
+    const launch = useAgentLaunch()
+    launch.close()
+    void launch.open(props.mineId).then(() => {
+      if (props.choice !== null) launch.choose(props.choice)
+    })
+    return () =>
+      h(AddPanel, {
+        mineName: props.mineName,
+        chips: launch.chips.value,
+        phase: launch.phase.value,
+        enabled: launch.enabled.value,
+        command: launch.state.value.command,
+        prompt: launch.state.value.prompt,
+        refusal: launch.refusal.value,
+        error: launch.state.value.error,
+        modelPicker: launch.modelPicker.value,
+        effortPicker: launch.effortPicker.value,
+        permissionsVisible: launch.permissionsVisible.value,
+        jev: launch.jev.value
+      })
+  }
+})
+
+const addPanel: Render = (sample, _texts, attributes) => {
+  const label = elementsOf(attributes, 'section.dm-add')[0]?.['aria-label'] ?? ''
+  const name = label.replace(/^Add a dwarf to /, '')
+  const mine = sample.mines.find((m) => m.name === name) ?? fail('mine', name)
+  const checked = elementsOf(attributes, 'button.dm-chip').find((a) => a['aria-checked'] === 'true')
+  const value = checked?.['data-value']
+  const choice = value === undefined ? null : value === 'other' ? OTHER_CHOICE : value
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: [
+        {
+          component: LaunchStage,
+          props: { sample, mineId: mine.id, mineName: mine.name, choice }
+        }
+      ]
+    }
+  }
+}
+
+/*
  * The settings row as its tree prints it, in the kit's frame: danger and stacked as its classes
  * say, its label and help the first texts, then each control in tree order — a switch named and
  * set as it prints, a key cap showing the next text, a button labelled with the next text in the
@@ -1201,6 +1287,12 @@ export const RENDERS: Record<string, Render> = {
   'molecules/dwarf-tooltip#needs-you': dwarfTooltip('worker2'),
   'molecules/dwarf-tooltip#asleep': dwarfTooltip('foreman'),
   'organisms/history-panel#dwarfai-miners': historyPanel,
+  // The MessagePanel and the Add panel (#635, their slice), each read off its own tree.
+  'organisms/message-panel#conversation': messagePanel,
+  'organisms/message-panel#asking': messagePanel,
+  'organisms/add-panel#live': addPanel,
+  'organisms/add-panel#supplier-picked': addPanel,
+  'organisms/add-panel#custom-command': addPanel,
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,
@@ -1308,7 +1400,8 @@ export const RENDERS: Record<string, Render> = {
   'foundations/motion#enter': (_sample, texts) => ({ component: EnterFrame, props: { texts } }),
   'foundations/motion#press': button({ labelled: true, variant: 'primary' }),
   // Specimens with no view yet. The presets draw the page header, the mine card and two bubbles
-  // in each preset, none rebuilt yet.
+  // in each preset: all three are components now (ChatBubble since #635's MessagePanel slice),
+  // and the specimen that sets them side by side is not built yet.
   'foundations/type-presets#dwarfai-pixel-clean-readable': unbuilt,
 
   // The icon registry at both scales, and the tones on the close and check icons.

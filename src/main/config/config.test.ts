@@ -526,7 +526,7 @@ describe('loadSimulationConfig', () => {
 
 /*
  * Issue #367. Same shape as the diagnostic switches (DWARFAI_PERF, TIER_DEBUG,
- * CODEX_DEBUG, SHELL_DEBUG): a real-environment-only capability gate for a
+ * CODEX_DEBUG): a real-environment-only capability gate for a
  * route that types keystrokes into another program, so it must never be
  * expressible through the userData config file the way an ordinary AppConfig
  * setting is (see the "never leaks into AppConfig" tripwire below, mirrored

@@ -15,7 +15,8 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import ActionButton from '../controls/ActionButton.vue'
 import DwarfPortrait from '../dwarf/DwarfPortrait.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
-import MarkdownBubble from '../message/MarkdownBubble.vue'
+import ActivityDisclosure from '../message/ActivityDisclosure.vue'
+import ChatBubble from '../message/ChatBubble.vue'
 import {
   HISTORY_MARK,
   HISTORY_READ_ONLY_NOTE,
@@ -137,6 +138,19 @@ function toggleRun(key: string): void {
 }
 
 /*
+ * A run's steps as the disclosure lists them: a read or edit step opens its own path (#279), and
+ * a refusal main gave for it stays on its own row, in its title.
+ */
+function activityLines(rows: readonly HistoryRow[]) {
+  return rows.map((line) => ({
+    key: line.key,
+    text: line.text,
+    ...(line.activity && isOpenablePath(line.activity) ? { target: line.activity.target } : {}),
+    ...(props.pathRefusal?.key === line.key ? { title: props.pathRefusal.reason } : {})
+  }))
+}
+
+/*
  * Open on the latest message, on mount and on a tab change only: the transcript runs oldest first,
  * and a live re-read must not pull a reader to the bottom mid-sentence (#192).
  */
@@ -214,57 +228,23 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
         <p v-if="notice !== null" class="dm-hist__note">{{ notice }}</p>
       </template>
       <template v-for="entry in entries" :key="entry.key">
-        <div v-if="entry.kind === 'activity'" class="dm-activity">
-          <button
-            class="dm-activity__toggle"
-            type="button"
-            :aria-expanded="openRuns[entry.key] ? 'true' : 'false'"
-            @click="toggleRun(entry.key)"
-          >
-            <span class="dm-activity__caret"></span>{{ activityStepsLabel(entry.rows.length) }}
-          </button>
-          <ul class="dm-activity__list" :hidden="!openRuns[entry.key]">
-            <li v-for="line in entry.rows" :key="line.key">
-              <button
-                v-if="line.activity && isOpenablePath(line.activity)"
-                class="dm-activity__path"
-                type="button"
-                :data-row-key="line.key"
-                :title="pathRefusal?.key === line.key ? pathRefusal.reason : line.text"
-                @click="emit('open-path', { key: line.key, target: line.activity.target })"
-              >
-                {{ line.text }}
-              </button>
-              <template v-else>{{ line.text }}</template>
-            </li>
-          </ul>
-        </div>
-        <div
+        <ActivityDisclosure
+          v-if="entry.kind === 'activity'"
+          :label="activityStepsLabel(entry.rows.length)"
+          :open="openRuns[entry.key] === true"
+          :lines="activityLines(entry.rows)"
+          @toggle="toggleRun(entry.key)"
+          @open-path="emit('open-path', $event)"
+        />
+        <ChatBubble
           v-else
-          class="dm-bubble m-mat"
-          :class="{
-            'dm-bubble--user': entry.message.from === 'user',
-            'is-new': arrived.has(entry.key)
-          }"
-          role="article"
-          :aria-label="entry.message.from === 'user' ? 'You' : 'Dwarf'"
-        >
-          <MarkdownBubble
-            class="dm-bubble__text"
-            :text="entry.message.text"
-            @open-link="emit('open-link', $event)"
-          />
-          <div class="dm-bubble__foot">
-            <span v-if="entry.message.time">{{ entry.message.time }}</span>
-            <span
-              v-if="marks.get(entry.key)"
-              class="dm-bubble__mark"
-              :data-mark="marks.get(entry.key)!.mark"
-              :title="marks.get(entry.key)!.title"
-              >{{ marks.get(entry.key)!.glyph }}</span
-            >
-          </div>
-        </div>
+          :from="entry.message.from === 'user' ? 'user' : 'agent'"
+          :text="entry.message.text"
+          :time="entry.message.time"
+          :mark="marks.get(entry.key)"
+          :is-new="arrived.has(entry.key)"
+          @open-link="emit('open-link', $event)"
+        />
       </template>
     </div>
   </section>
@@ -352,204 +332,8 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
 }
 
 /*
- * The body is MarkdownBubble's tree, whose own rules are the MessagePanel's until its slice: here
- * the design's chat-bubble.css draws it, so its blocks stack with no gap of their own and its code
- * keeps the square corners every surface has (foundations, Stepped pixel corners). Written one
- * class deeper than MarkdownBubble's rules so they win whatever order the two sheets load in.
+ * The bubbles and the activity runs are ChatBubble's and ActivityDisclosure's (#635), which carry
+ * the design's chat-bubble.css and activity.css with them: they were drawn here until the
+ * MessagePanel slice extracted them for both panels.
  */
-.dm-bubble .dm-bubble__text {
-  display: block;
-}
-.dm-bubble .dm-bubble__text :deep(.markdown-list) {
-  margin: 0;
-  padding-left: 14px;
-}
-.dm-bubble .dm-bubble__text :deep(.markdown-code),
-.dm-bubble .dm-bubble__text :deep(.markdown-block-code) {
-  border-radius: 0;
-}
-.dm-bubble .dm-bubble__text :deep(.markdown-block-code) {
-  line-height: 1.4;
-}
-
-/* The design's chat-bubble.css, the parts a read-only bubble draws. */
-.dm-bubble {
-  --mat-fill: var(--parchment);
-  --mat-hi: var(--parch-hi);
-  --mat-lo: var(--parch-lo);
-  --mat-edge: var(--rock-lo);
-  display: grid;
-  max-width: 92%;
-  gap: 6px;
-  padding: 8px 10px;
-  margin: var(--px);
-  font: var(--fs-body) / 1.35 var(--f-talk);
-  color: var(--ink-on-light);
-  justify-self: start;
-  overflow-wrap: anywhere;
-}
-.dm-bubble--user {
-  --mat-fill: var(--parch-lo);
-  --mat-hi: var(--parchment);
-  --mat-lo: var(--gold-lo);
-  max-width: 82%;
-  justify-self: end;
-}
-.dm-bubble :deep(p),
-.dm-bubble :deep(ul) {
-  margin: 0;
-}
-.dm-bubble :deep(ul) {
-  display: grid;
-  gap: 2px;
-  padding-left: 14px;
-  list-style: none;
-}
-.dm-bubble :deep(li) {
-  position: relative;
-}
-.dm-bubble :deep(li)::before {
-  content: '';
-  width: 4px;
-  height: 4px;
-  position: absolute;
-  left: -10px;
-  top: 7px;
-  background: var(--gold-lo);
-}
-.dm-bubble :deep(strong) {
-  font-weight: 700;
-}
-.dm-bubble :deep(code) {
-  padding: 0 2px;
-  font: var(--fs-meta) / 1.3 var(--f-code);
-  background: var(--parch-lo);
-}
-.dm-bubble--user :deep(code) {
-  background: var(--parchment);
-}
-.dm-bubble :deep(pre) {
-  margin: 0;
-  padding: 6px 8px;
-  font: var(--fs-meta) / 1.4 var(--f-code);
-  background: var(--parch-lo);
-  box-shadow: inset 2px 2px 0 0 var(--gold-lo);
-  overflow-x: auto;
-}
-.dm-bubble :deep(pre code) {
-  padding: 0;
-  background: none;
-}
-.dm-bubble__foot {
-  display: flex;
-  gap: 6px;
-  font: var(--fs-meta) / 1 var(--f-meta);
-  color: var(--ink-on-light-soft);
-  justify-content: flex-end;
-}
-.dm-bubble__mark[data-mark='reacted'] {
-  color: var(--ok-lo);
-}
-.dm-bubble__mark[data-mark='failed'] {
-  color: var(--danger-ink);
-}
-.dm-bubble.is-new {
-  animation: dm-pop-in var(--dur-base) var(--ease-out) both;
-}
-
-/* The design's activity.css. */
-.dm-activity {
-  display: grid;
-  gap: 2px;
-  margin: var(--px);
-  justify-self: stretch;
-}
-.dm-activity__toggle {
-  display: flex;
-  min-height: var(--hit);
-  gap: 6px;
-  padding: 0 8px;
-  font: var(--fs-meta) / 1 var(--f-meta);
-  color: var(--ink-soft);
-  background: var(--wood);
-  box-shadow: inset 2px 0 0 0 var(--brass-lo);
-  align-items: center;
-  text-align: left;
-}
-.dm-activity__toggle:hover {
-  color: var(--ink);
-  background: var(--wood-hi);
-  box-shadow: inset 2px 0 0 0 var(--brass);
-}
-.dm-activity__caret {
-  width: 0;
-  height: 0;
-  border-left: 5px solid var(--brass);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transition: transform var(--dur-fast) var(--ease-step);
-}
-.dm-activity__toggle[aria-expanded='true'] .dm-activity__caret {
-  transform: rotate(90deg);
-}
-.dm-activity__list {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 4px 8px 6px 20px;
-  background: var(--wood-lo);
-  list-style: none;
-  animation: dm-fade-in var(--dur-base) var(--ease-out) both;
-}
-.dm-activity__list[hidden] {
-  display: none;
-}
-.dm-activity__list li {
-  position: relative;
-  font: var(--fs-meta) / 1.4 var(--f-meta);
-  color: var(--ink-soft);
-}
-.dm-activity__list li::before {
-  content: '';
-  width: 4px;
-  height: 4px;
-  position: absolute;
-  left: -10px;
-  top: 6px;
-  background: var(--ok);
-}
-.dm-activity__list li:last-child::before {
-  background: var(--brass);
-}
-/*
- * A read or edit step opens its own file (#279): a button styled as the text it is, underlined
- * only for the pointer or the keyboard, so nothing else about the line changes.
- */
-.dm-activity__path {
-  font: inherit;
-  color: inherit;
-  text-align: left;
-}
-.dm-activity__path:hover,
-.dm-activity__path:focus-visible {
-  text-decoration: underline;
-}
-@keyframes dm-pop-in {
-  from {
-    opacity: 0;
-    transform: translateY(var(--rise));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes dm-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
 </style>

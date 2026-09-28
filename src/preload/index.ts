@@ -26,12 +26,9 @@ import type {
   HeldSessionLaunchResult,
   HostedLaunchRequest,
   HostedLaunchResult,
-  DwarfDeliveryReport,
   DwarfSendSettledPush,
   ExternalLinkResult,
   LaunchFailedPush,
-  MessagePanelDragPhase,
-  MessagePanelState,
   MetricsResetResult,
   MineDeclareResult,
   MineHistoryResult,
@@ -73,8 +70,6 @@ import {
   parseAudioPreferences,
   /* The launch view (#635, PANEL-QUESTIONS 25). */
   parseLaunchView,
-  isMessagePanelDragPhase,
-  isMessagePanelSurface,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
@@ -160,79 +155,13 @@ export interface DwarfAiMinersApi {
    * the whole composition answers with what it could actually give.
    */
   setPanelLayout: (request: PanelLayoutRequest) => Promise<PanelLayout>
-  /**
-   * What the message panel's own window is showing (#162): its surface, the
-   * mine it belongs to, and the dwarf a message surface is open on.
+  /*
+   * REMOVED for #635, stated rather than passing unseen: getMessagePanel, setMessagePanel,
+   * onMessagePanel, setMessagePanelHeight, dragMessagePanel, dockMessagePanel,
+   * reportMessagePanelSettled, reportDwarfDelivery and onDwarfDeliveryReport — the message panel's
+   * own window (#162, #296, #389). The panel is anchored in the shell's dock slot, so its surface
+   * and its delivery verdicts are the renderer's own and nothing about them crosses.
    */
-  getMessagePanel: () => Promise<MessagePanelState>
-  /**
-   * Open, swap or close that window (#162). Resolves with the REAL state after
-   * main applied it — a window is created, moved, shown or hidden off the back
-   * of this, and the panel window itself may have changed the state between
-   * the click and the answer.
-   *
-   * Both windows call it: the shell opens the panel on a selected dwarf or on
-   * the mine's Add action, and the panel closes itself and adopts the dwarf a
-   * launch produced. Main is the single serialization point, so the last write
-   * wins and the other window is told.
-   */
-  setMessagePanel: (state: MessagePanelState) => Promise<MessagePanelState>
-  /** Hear about a state the OTHER window set (#162). Returns an unsubscribe function. */
-  onMessagePanel: (listener: (state: MessagePanelState) => void) => () => void
-  /**
-   * Report how tall the panel measured itself, in DESIGN pixels (#162) — the
-   * height derived from the latest message when it opened, or the one its
-   * top-edge drag left behind. Main multiplies by the same ui scale every
-   * other dimension goes through and moves the window.
-   *
-   * One-way, like `retireDwarf`: the window either took the height or the
-   * compositor refused it, and the panel is drawn at the height it measured
-   * either way. The first report also reveals a window created hidden.
-   */
-  setMessagePanelHeight: (designHeight: number) => void
-  /**
-   * Report that a drag of the panel window by its header has begun or ended
-   * (#296) — 'start' on a press that landed on the header, 'end' when it is
-   * released.
-   *
-   * Nothing about WHERE. Main reads the cursor on its own clock, moves the
-   * window, clamps it to the display it is on and remembers the position; the
-   * gesture is the only part a renderer can see. See MessagePanelDragPhase for
-   * why reporting each step would stall the drag it was driving.
-   *
-   * One-way, and for a stronger reason than `setMessagePanelHeight`: there is
-   * no verdict here that a page draws. Neither surface renders the panel's
-   * position, so answering with one would create a copy that could only
-   * disagree with the window.
-   */
-  dragMessagePanel: (phase: MessagePanelDragPhase) => void
-  /**
-   * Snap the panel window back beside the shell and forget where it had been
-   * dragged to (#296) — the way back, on a double-click of the same header
-   * row that moves it. One-way, for the reason above.
-   */
-  dockMessagePanel: () => void
-  /**
-   * Report that the panel's surface has finished leaving (#389), so main can
-   * hide the window it has been holding open for exactly that.
-   *
-   * One-way and carrying nothing, for the reason the two above are: main knows
-   * which window sent it and what surface it holds, and there is no verdict to
-   * draw — main hides on this or on its own bound, and a closed panel is closed
-   * either way. A report arriving with no hide waiting on it is ignored.
-   */
-  reportMessagePanelSettled: () => void
-  /**
-   * Publish the send and kick verdicts the panel window holds, so the mine in
-   * the SHELL window can draw its markers (#162).
-   *
-   * One writer, one reader. The composer and the kick control live in the
-   * panel window, so that window owns both stores — the reaction watch
-   * included — and the shell renders these without writing any of them.
-   */
-  reportDwarfDelivery: (report: DwarfDeliveryReport) => void
-  /** Hear the verdicts the panel window published (#162). Returns an unsubscribe function. */
-  onDwarfDeliveryReport: (listener: (report: DwarfDeliveryReport) => void) => () => void
   /** The panel toggle's REAL state, including a startup registration failure (see #17). */
   getToggleShortcut: () => Promise<ShortcutState>
   /**
@@ -374,7 +303,7 @@ export interface DwarfAiMinersApi {
   /**
    * A launch `launchAgent` already answered `launched: true` for died almost
    * at once (#263) — see `LaunchFailedPush`. Push rather than pull, exactly
-   * like `onMessagePanel`: main learns of this asynchronously, well after the
+   * like `onShowMine`: main learns of this asynchronously, well after the
    * verdict above already answered, so there is no request to make and
    * nothing to poll for. Returns an unsubscribe function, like every other
    * subscription here.
@@ -542,9 +471,9 @@ export interface DwarfAiMinersApi {
   /**
    * Hear the faces change (#370). Returns an unsubscribe function.
    *
-   * The only preference with a push, because it is the only one BOTH windows
-   * paint with: Settings lives in the shell, and the messaging face is what the
-   * message-panel window draws its bubbles and its Add Panel in.
+   * The only preference with a push. It was for the message panel's own window
+   * (#162), a second page painting the messaging face; that window is gone
+   * (#635), and the shell hears its own change here as well as in the reply.
    */
   onTypographyPreferences: (listener: (preferences: TypographyPreferences) => void) => () => void
   /* --- end of the #370 block ----------------------------------------------- */
@@ -648,56 +577,6 @@ const api: DwarfAiMinersApi = {
       dockOpen: request?.dockOpen === true,
       ...(request?.edge === 'left' || request?.edge === 'right' ? { edge: request.edge } : {})
     }),
-  getMessagePanel: () => ipcRenderer.invoke(IPC_CHANNELS.getMessagePanel),
-  // Rebuilt field by field, like the launch channels: main creates and moves a
-  // real window off this, so what crosses is three checked values and nothing
-  // else the caller happened to attach.
-  //
-  // The surface is the one field with no safe default (the same ruling #168
-  // gave a provider). Every other one collapses to '', but a surface collapsed
-  // to 'none' would CLOSE a window nobody asked to close, so an unrecognised
-  // one crosses as '' and main refuses the request outright.
-  setMessagePanel: (state) =>
-    ipcRenderer.invoke(IPC_CHANNELS.setMessagePanel, {
-      surface: isMessagePanelSurface(state?.surface) ? state.surface : '',
-      mineId: typeof state?.mineId === 'string' ? state.mineId : '',
-      dwarfId: typeof state?.dwarfId === 'string' ? state.dwarfId : ''
-    }),
-  onMessagePanel: (listener) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, state: MessagePanelState) => listener(state)
-    ipcRenderer.on(IPC_CHANNELS.messagePanelChanged, wrapped)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.messagePanelChanged, wrapped)
-  },
-  // Anything that is not a number crosses as NaN rather than as 0 or a
-  // default: both of those are heights a window could be given, and inventing
-  // one would resize the panel off a payload nobody could read. Main refuses
-  // a non-finite height and leaves the window where it was.
-  setMessagePanelHeight: (designHeight) =>
-    ipcRenderer.send(
-      IPC_CHANNELS.setMessagePanelHeight,
-      typeof designHeight === 'number' ? designHeight : Number.NaN
-    ),
-  // The phase is the one field, and it has no safe default — the same ruling
-  // the surface carries just above. Collapsing an unrecognised value to
-  // 'start' would begin a drag nobody asked for and 'end' would silently
-  // swallow one, so it crosses as '' and main refuses the request outright.
-  dragMessagePanel: (phase) =>
-    ipcRenderer.send(IPC_CHANNELS.dragMessagePanel, isMessagePanelDragPhase(phase) ? phase : ''),
-  dockMessagePanel: () => ipcRenderer.send(IPC_CHANNELS.dockMessagePanel),
-  // Nothing crosses, so there is nothing to coerce or refuse: the message IS
-  // the report (#389).
-  reportMessagePanelSettled: () => ipcRenderer.send(IPC_CHANNELS.reportMessagePanelSettled),
-  // Forwarded uncoerced, exactly as queryProjects' query is: a nested record
-  // of verdicts cannot be collapsed to a safe default the way a stray string
-  // can, so main validates it and refuses what it cannot read — one malformed
-  // entry taking the whole report down rather than being dropped.
-  reportDwarfDelivery: (report) => ipcRenderer.send(IPC_CHANNELS.reportDwarfDelivery, report),
-  onDwarfDeliveryReport: (listener) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, report: DwarfDeliveryReport) =>
-      listener(report)
-    ipcRenderer.on(IPC_CHANNELS.dwarfDeliveryReported, wrapped)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.dwarfDeliveryReported, wrapped)
-  },
   getToggleShortcut: () => ipcRenderer.invoke(IPC_CHANNELS.getToggleShortcut),
   // Same discipline as setAlwaysOnTop: collapse anything that is not a string
   // BEFORE it crosses, so main's boundary check only reasons about a string.
@@ -836,7 +715,7 @@ const api: DwarfAiMinersApi = {
       // tell apart from "not asked at all".
       ...(request?.routedByJev === true ? { routedByJev: true } : {})
     }),
-  // Subscription, exactly like onMessagePanel and onDwarfDeliveryReport: the
+  // Subscription, exactly like onShowMine and onDwarfSendSettled: the
   // renderer never sees the IpcRendererEvent, only the push itself.
   onLaunchFailed: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, push: LaunchFailedPush) => listener(push)

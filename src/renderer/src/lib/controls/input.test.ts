@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { escapeAction, fieldClasses, fieldControlAttributes, showsClear } from './input'
+import {
+  belongsToComposition,
+  escapeAction,
+  fieldClasses,
+  fieldControlAttributes,
+  showsClear
+} from './input'
 
 describe('fieldClasses', () => {
   it('is a parchment well: the field class and the material recipe', () => {
@@ -99,5 +105,17 @@ describe('fieldControlAttributes, invalid and described', () => {
     const attributes = fieldControlAttributes({ placeholder: 'Folder' })
     expect(attributes).not.toHaveProperty('aria-invalid')
     expect(attributes).not.toHaveProperty('aria-describedby')
+  })
+})
+
+// APPENDED for #635: a key an input method is still composing with is never a shortcut.
+describe('belongsToComposition', () => {
+  it('is true while composing, and for the 229 keyCode Chromium gives a key the IME took', () => {
+    expect(belongsToComposition({ isComposing: true, keyCode: 13 })).toBe(true)
+    expect(belongsToComposition({ isComposing: false, keyCode: 229 })).toBe(true)
+  })
+
+  it('is false for an ordinary key', () => {
+    expect(belongsToComposition({ isComposing: false, keyCode: 13 })).toBe(false)
   })
 })

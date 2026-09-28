@@ -72,7 +72,7 @@ export const fadeVariants = {
  * Removing a CSS transition in favour of motion-v without this constant would
  * be a regression relative to what a viewer already had: a popup or tooltip
  * that used to snap now crossfades for 300ms because it was asked for LESS
- * motion. `App.vue` and `MessagePanelWindow.vue` hand this to `<MotionConfig>`
+ * motion. `App.vue` hands this to `<MotionConfig>`
  * as its own `transition` prop rather than each surface reading `reduced` and
  * repeating the object: a `motion.*` component with no `transition` of its
  * own inherits the config's (`motion-v`'s `resolve-motion-props.mjs`:

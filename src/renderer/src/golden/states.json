@@ -149,6 +149,23 @@
     "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)"
   },
   {
+    "key": "organisms/message-panel#conversation",
+    "red": "0.500% differing: the turn outcome line reads Working where the reference prints the sample's own sentence, Turn finished · 5 steps · read README.md, which nothing the app observes stands behind (MESSAGE-QUESTIONS: the outcome line's sentences); 1365 pixels, 20 clusters, every one in that line"
+  },
+  {
+    "key": "organisms/message-panel#asking",
+    "red": "the question card in place of the composer is the old card, restyled with the question and permission cards in the next slice of #635 (PR3); the frame, the header, the outcome line and the conversation above it are the rebuilt ones"
+  },
+  {
+    "key": "organisms/add-panel#live"
+  },
+  {
+    "key": "organisms/add-panel#supplier-picked"
+  },
+  {
+    "key": "organisms/add-panel#custom-command"
+  },
+  {
     "key": "molecules/vault-strip#mine-footer"
   },
   {
@@ -242,7 +259,7 @@
   },
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
-    "red": "the presets paint since PR5 (Settings › Appearance), but the specimen draws two chat bubbles in each preset, and molecules/chat-bubble is not a component of its own yet: its markup lives inside HistoryPanel, and extracting it is the message panel slice of #635 (PR5 question)"
+    "red": "the presets paint since PR5 (Settings › Appearance), and molecules/chat-bubble is a component of its own since the MessagePanel slice of #635 (ChatBubble), but the specimen that draws the page header, the mine card and two bubbles in each preset is not built yet: renders.ts still draws the unbuilt view for it"
   },
   {
     "key": "atoms/button#secondary"
@@ -461,5 +478,17 @@
   {
     "key": "screens-full/panel#map-first-run",
     "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 454, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 458, y 710 and y 760). With the lever drawn it passes at 0.000%"
+  },
+  {
+    "key": "screens-full/message-panel#conversation",
+    "red": "the MessagePanel window is 0.331% off, the turn outcome line reads Working where the reference prints the sample's own sentence, Turn finished · 5 steps · read README.md, which nothing the app observes stands behind (MESSAGE-QUESTIONS: the outcome line's sentences); 1365 pixels, 20 clusters, every one in that line; the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+  },
+  {
+    "key": "screens-full/message-panel#question",
+    "red": "the question card in place of the composer is the old card, restyled in PR3 of #635 (73.068% in the window, from y 148 down); the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+  },
+  {
+    "key": "screens-full/message-panel#permission",
+    "red": "the permission card in place of the composer is the old card, restyled in PR3 of #635 (97768px in 440x242 at the foot of the window); the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
   }
 ]

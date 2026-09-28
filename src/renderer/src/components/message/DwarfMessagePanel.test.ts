@@ -1,19 +1,16 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AnimatePresence, motion } from 'motion-v'
-import {
-  MESSAGE_PANEL_ASK_HEIGHT,
-  MESSAGE_PANEL_MAX_HEIGHT,
-  MESSAGE_PANEL_MIN_HEIGHT,
-  initialPanelHeight
-} from '../../lib/message/panelHeight'
+/*
+ * AMENDED for #635: motion-v's AnimatePresence and motion, and lib/message/panelHeight, are no
+ * longer imported — the bubbles enter with the design's own pop-in and the panel has no height of
+ * its own (see the REMOVED notes where their cases stood).
+ */
 import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
 import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
-import { fadeVariants, pressHoverVariants } from '../../lib/shell/presence'
 import {
   NO_TRANSCRIPT_NOTE,
   NOTHING_SAID_NOTE,
@@ -36,6 +33,16 @@ import {
   type FeedMessage
 } from '../../types'
 import DwarfMessagePanel from './DwarfMessagePanel.vue'
+import MenuButton from '../overlay/MenuButton.vue'
+import DialogCard from '../overlay/DialogCard.vue'
+import ModalDialog from '../overlay/ModalDialog.vue'
+import type { MenuItem } from '../../lib/overlay/menu'
+import {
+  COMPOSER_HINT as COMPOSER_HINT_TEXT,
+  MENU_CONSOLE,
+  MENU_HISTORY,
+  MENU_STOP
+} from '../../lib/message/panelChrome'
 
 /*
  * WHERE DwarfActionBar's TESTS WENT (#159).
@@ -69,8 +76,6 @@ import DwarfMessagePanel from './DwarfMessagePanel.vue'
  * that rendered it, and the panel reads the same entries.
  */
 
-const LONG_REPLY = 'x'.repeat(1200)
-
 const HELD = [
   { role: 'user' as const, text: 'dig here', timestamp: '2026-09-03T09:00:00.000Z' },
   { role: 'assistant' as const, text: 'Found the seam.', timestamp: '2026-09-03T09:00:01.000Z' }
@@ -100,47 +105,34 @@ function panel(props: Record<string, unknown> = {}) {
   })
 }
 
-/**
- * A pointer gesture on the resize handle.
- *
- * Dispatched rather than triggered: `clientY` is a getter on jsdom's
- * MouseEvent, so test-utils' own `trigger(type, { clientY })` cannot set it —
- * the constructor is the only way in. `pointerId` is deliberately absent,
- * which is also what jsdom gives a real listener here.
+/*
+ * REMOVED for #635, stated rather than passing unseen: `pointer` and `heightOf`, the helpers of
+ * the resize-handle and height cases below. The panel has no height of its own: the dock sets it
+ * and the person cannot resize it (decision log, MessagePanel and Add panel anchored).
  */
-function pointer(wrapper: ReturnType<typeof panel>, type: string, clientY: number, clientX = 0) {
-  wrapper
-    .find('.panel-resize')
-    .element.dispatchEvent(new MouseEvent(type, { clientY, clientX, bubbles: true }))
-  return wrapper.vm.$nextTick()
-}
 
-/** The panel's own height, as the style attribute carries it. */
-function heightOf(wrapper: ReturnType<typeof panel>): number {
-  const style = wrapper.find('.message-panel').attributes('style') ?? ''
-  return Number(/height:\s*([\d.]+)px/.exec(style)?.[1] ?? '0')
+/** One animation frame, which the panel waits before it scrolls to the latest message (#635). */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }
 
 describe('DwarfMessagePanel shape', () => {
   it('names the selected dwarf, as the design puts it at the top left', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ name: 'Durin' }) })
-    expect(wrapper.find('.panel-agent').text()).toBe('Durin')
+    expect(wrapper.find('.dm-msg__rename').text()).toBe('Durin')
   })
 
-  it("draws the dwarf's own portrait beside what it said", () => {
-    const worker = panel({ dwarf: defaultDwarf({ role: 'worker' }) })
-    const worker2 = panel({ dwarf: defaultDwarf({ role: 'worker2' }) })
-    const foreman = panel({ dwarf: defaultDwarf({ role: 'foreman' }) })
-    expect(worker.find('.message.is-agent .portrait').attributes('src')).toContain('worker-face')
-    expect(worker2.find('.message.is-agent .portrait').attributes('src')).toContain('worker2-face')
-    expect(foreman.find('.message.is-agent .portrait').attributes('src')).toContain('foreman')
-  })
-
-  it('draws the launching agent against a prompt that agent issued', async () => {
-    // #175: a worker's first message came from the foreman that spawned it, and
-    // the panel was drawing the user's own face against it. The portrait is the
-    // rank and the alt text is the name — the design draws no per-message
-    // label, and inventing one is what `ui-rebuild` forbids.
+  /*
+   * REMOVED for #635, stated rather than passing unseen: "draws the dwarf's own portrait beside
+   * what it said". The redesigned conversation draws no portrait beside a bubble (anatomy.md,
+   * MessagePanel): the dwarf's face is the header's, and a bubble says who spoke by its side and
+   * its name ("You" or "Dwarf").
+   *
+   * AMENDED for #635 (was: 'draws the launching agent against a prompt that agent issued', with
+   * the issuer's portrait and name as its alt). #175's guarantee — a prompt another agent issued
+   * is never drawn as the person's own — holds on the bubble itself: it is the dwarf side's.
+   */
+  it('draws a prompt another agent issued on the dwarf side, never as the person’s own', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({ role: 'worker', name: 'survey the seam' }),
       feed: {
@@ -158,99 +150,104 @@ describe('DwarfMessagePanel shape', () => {
     })
     await wrapper.vm.$nextTick()
 
-    const portraits = wrapper.findAll('.message .portrait')
-    expect(portraits[0]!.attributes('src')).toContain('foreman')
-    expect(portraits[0]!.attributes('alt')).toBe('coordinator, foreman')
-    // The reply is still the dwarf speaking for itself.
-    expect(portraits[1]!.attributes('src')).toContain('worker-face')
-    expect(portraits[1]!.attributes('alt')).toBe('survey the seam, worker')
+    const bubbles = wrapper.findAll('.dm-bubble')
+    expect(bubbles[0]!.classes()).not.toContain('dm-bubble--user')
+    expect(bubbles[0]!.attributes('aria-label')).toBe('Dwarf')
+    expect(bubbles[1]!.classes()).not.toContain('dm-bubble--user')
   })
 
-  it("keeps the user's own face on a launch the human typed", async () => {
-    // The other half of #175, and the case the design's launch flow draws: a
-    // session the panel launched opens with the user's submitted prompt, and no
-    // issuer is what says so.
+  // AMENDED for #635 (was: "keeps the user's own face on a launch the human typed", the portrait's
+  // alt): the person's own prompt is the person's own bubble.
+  it('keeps a launch the human typed as the person’s own bubble', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({ role: 'foreman', name: 'coordinator' })
     })
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.find('.message.is-user .portrait').attributes('alt')).toBe('You')
+    expect(wrapper.find('.dm-bubble--user').attributes('aria-label')).toBe('You')
   })
 
+  // AMENDED for #635 (was: the `.message.is-user` and `.is-agent` rows): the bubbles themselves.
   it('start-aligns the agent and end-aligns the user, as the design does', () => {
-    const messages = panel().findAll('.message')
-    expect(messages[0]!.classes()).toContain('is-user')
-    expect(messages[1]!.classes()).toContain('is-agent')
+    const messages = panel().findAll('.dm-bubble')
+    expect(messages[0]!.classes()).toContain('dm-bubble--user')
+    expect(messages[1]!.classes()).not.toContain('dm-bubble--user')
   })
 
   /*
-   * AMENDED for #348. The name is now wrapped in `.panel-who`, so that the
-   * worktree label can ride beside it without taking a column of the header's
-   * three-column grid — which is what centres the history tab. The subject is
-   * unchanged: three cells, the tab in the middle.
+   * AMENDED for #635 (was: 'centres the history tab between the name and the close', the old
+   * three-cell bar): the header is the portrait, the name over its chips, and the tools, in that
+   * order (screens/message.md, As built, MessagePanel).
    */
-  it('centres the history tab between the name and the close, as the design does', () => {
-    const bar = [...panel().find('.panel-bar').element.children]
-    expect(bar.map((child) => child.className)).toEqual([
-      'panel-who',
-      'panel-history',
-      'panel-close'
+  it('draws the portrait, the name and the tools across the header, as the design does', () => {
+    const bar = [...panel().find('.dm-msg__head').element.children]
+    expect(bar.map((child) => child.classList[0])).toEqual([
+      'dm-portrait',
+      'dm-msg__who',
+      'dm-msg__tools'
     ])
-    expect(panel().find('.panel-who .panel-agent').exists()).toBe(true)
+    expect(panel().find('.dm-msg__who .dm-msg__rename').exists()).toBe(true)
   })
 
   /**
    * Which worktree the dwarf is in, beside its name (#348) — a mine is a
    * project, and its crew can be spread over every worktree of that project.
    */
-  it('names the branch beside the dwarf when it works in a worktree', () => {
+  // AMENDED for #635 (was: the `· <branch>` label beside the name): the worktree meta chip.
+  it('names the branch under the dwarf when it works in a worktree', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         name: 'Scout',
-
-        workplace: { path: 'C:\\Code\\Anvil-worktrees\\forge', branch: 'feat/console-paste' }
+        workplace: { path: 'C:/Code/Anvil-worktrees/forge', branch: 'feat/console-paste' }
       })
     })
-    expect(wrapper.find('.panel-workplace').text()).toBe('· feat/console-paste')
+    const chips = wrapper.findAll('.dm-msg__chips .dm-meta')
+    expect(chips.at(-1)!.text()).toBe('worktree: feat/console-paste')
     // Text, never a control: there is nothing to press about where a dwarf is.
-    expect(wrapper.find('.panel-workplace').element.tagName).toBe('SPAN')
+    expect(chips.at(-1)!.element.tagName).toBe('SPAN')
   })
 
   it('names the worktree s folder when its HEAD is detached and carries no branch', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
-        workplace: { path: 'C:\\Code\\Anvil-worktrees\\forge' }
+        workplace: { path: 'C:/Code/Anvil-worktrees/forge' }
       })
     })
-    expect(wrapper.find('.panel-workplace').text()).toBe('· forge')
+    expect(wrapper.findAll('.dm-msg__chips .dm-meta').at(-1)!.text()).toBe('worktree: forge')
   })
 
   it('says nothing beside the name for a dwarf in the mine s own folder', () => {
     // Absent means the mine's own folder, and most dwarfs are there. A label
     // with nothing in it would read as a fact that failed to load.
-    expect(panel().find('.panel-workplace').exists()).toBe(false)
+    const chips = panel().findAll('.dm-msg__chips .dm-meta')
+    expect(chips.map((chip) => chip.text())).toEqual(['Claude · test-model · medium'])
   })
 
-  it('carries the three controls the design draws: kick, boost and close', () => {
+  /*
+   * AMENDED for #635 (was: 'carries the three controls the design draws: kick, boost and close').
+   * The redesign's tools are Mine history, Open console, More and Close; the kick moved into the
+   * ⋯ menu as Stop dwarf… and Boost is not drawn (screens/message.md, W4·6).
+   */
+  it('carries the tools the design draws, and no kick or boost beside the composer', () => {
     const wrapper = panel()
-    expect(wrapper.find('.control-kick').exists()).toBe(true)
-    expect(wrapper.find('.control-boost').exists()).toBe(true)
-    expect(wrapper.find('.panel-close').exists()).toBe(true)
+    const tools = wrapper.findAll('.dm-msg__tools button').map((tool) => tool.attributes('title'))
+    expect(tools).toEqual(['Mine history', 'Open console', 'More', 'Close chat'])
+    expect(wrapper.find('.dm-composer .dm-composer__kick').exists()).toBe(false)
   })
 
   it('gives the messages their own scroll, so history reads without expanding anything', () => {
-    expect(panel().find('.panel-conversation').exists()).toBe(true)
+    expect(panel().find('.dm-msg__log').exists()).toBe(true)
   })
 
   it('opens showing the latest message rather than the oldest', async () => {
     // Oldest first is the design's order, so an unscrolled panel would open on
     // the message furthest from what just happened.
     const wrapper = panel()
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     Object.defineProperty(list, 'scrollHeight', { value: 900, configurable: true })
     await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    // AMENDED for #635: one frame after it is built, as the design's panel does it.
+    await nextFrame()
     expect(list.scrollTop).toBe(900)
   })
 })
@@ -263,7 +260,7 @@ describe('DwarfMessagePanel shape', () => {
  * what it claimed before, and #294's own block pins the folding itself.
  */
 async function openRun(wrapper: ReturnType<typeof panel>): Promise<void> {
-  await wrapper.find('.activity-disclosure').trigger('click')
+  await wrapper.find('.dm-activity__toggle').trigger('click')
 }
 
 /**
@@ -287,28 +284,29 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
   it('draws a tool call as its own muted line rather than a bubble', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
-    const line = wrapper.find('.activity-line')
+    const line = wrapper.find('.dm-activity__list li')
     expect(line.exists()).toBe(true)
     expect(line.text()).toBe('Ran pnpm test')
   })
 
-  it('carries the full text as the title, for the truncated line to expand on hover', async () => {
-    const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
-    await openRun(wrapper)
-    expect(wrapper.find('.activity-line').attributes('title')).toBe('Ran pnpm test')
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'carries the full text as the title, for
+   * the truncated line to expand on hover'. The redesigned step list (activity.css) wraps a step
+   * rather than cutting it, so a plain step has nothing hidden for a title to carry; a step that
+   * opens a path still carries it ('still carries the full text as the title…', below).
+   */
 
   it('draws no portrait and no bubble surface for a tool-call line', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
-    const line = wrapper.find('.activity-line')
+    const line = wrapper.find('.dm-activity__list li')
     expect(line.find('.portrait').exists()).toBe(false)
     expect(line.classes()).not.toContain('bubble')
   })
 
   it('still draws the ordinary bubbles either side of the tool-call line', () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
-    expect(wrapper.findAll('.bubble').map((bubble) => bubble.text())).toEqual([
+    expect(wrapper.findAll('.dm-bubble__text').map((bubble) => bubble.text())).toEqual([
       'dig here',
       'Tests pass.'
     ])
@@ -317,14 +315,16 @@ describe('DwarfMessagePanel activity lines (#240)', () => {
   it('counts the tool-call line as one row in the conversation, same as a bubble', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
-    expect(wrapper.findAll('.bubble')).toHaveLength(2)
-    expect(wrapper.findAll('.activity-line')).toHaveLength(1)
+    expect(wrapper.findAll('.dm-bubble__text')).toHaveLength(2)
+    expect(wrapper.findAll('.dm-activity__list li')).toHaveLength(1)
   })
 
-  it('draws a run line as a plain paragraph rather than a clickable control', async () => {
+  // AMENDED for #635 (was: a `<p>`): a list item of the run's step list, with no control in it.
+  it('draws a run line as plain text rather than a clickable control', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(CONVERSATION) })
     await openRun(wrapper)
-    expect(wrapper.find('.activity-line').element.tagName).toBe('P')
+    expect(wrapper.find('.dm-activity__list li').element.tagName).toBe('LI')
+    expect(wrapper.find('.dm-activity__list li button').exists()).toBe(false)
   })
 })
 
@@ -357,29 +357,29 @@ describe('DwarfMessagePanel path-opening lines (#279)', () => {
   it('draws an edit line as a keyboard-reachable button, not an anchor, styled as text', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_EDIT) })
     await openRun(wrapper)
-    const line = wrapper.find('.activity-line')
+    // AMENDED for #635 (was: the line itself, `.activity-line.is-openable`): the step's own button.
+    const line = wrapper.find('.dm-activity__list li .dm-activity__path')
     expect(line.element.tagName).toBe('BUTTON')
     expect(line.attributes('type')).toBe('button')
-    expect(line.classes()).toContain('is-openable')
   })
 
   it('draws a read line the same way an edit line is drawn', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_READ) })
     await openRun(wrapper)
-    expect(wrapper.find('.activity-line').element.tagName).toBe('BUTTON')
+    expect(wrapper.find('.dm-activity__list li .dm-activity__path').element.tagName).toBe('BUTTON')
   })
 
   it("emits the activity's own target on click, not the display text", async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_EDIT) })
     await openRun(wrapper)
-    await wrapper.find('.activity-line').trigger('click')
+    await wrapper.find('.dm-activity__path').trigger('click')
     expect(wrapper.emitted('open-path')).toEqual([['src/main/index.ts']])
   })
 
   it('still carries the full text as the title, same as a plain activity line', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_EDIT) })
     await openRun(wrapper)
-    expect(wrapper.find('.activity-line').attributes('title')).toBe('Edited src/main/index.ts')
+    expect(wrapper.find('.dm-activity__path').attributes('title')).toBe('Edited src/main/index.ts')
   })
 })
 
@@ -414,28 +414,33 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
     { role: 'assistant' as const, text: 'Fixed it.', timestamp: 't4' }
   ]
 
+  // AMENDED for #635 (was: none of its lines rendered): the design's step list is drawn hidden.
   it('draws one disclosure row for the whole run, and none of its lines, until it is pressed', () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
-    expect(wrapper.findAll('.activity-disclosure')).toHaveLength(1)
-    expect(wrapper.findAll('.activity-line')).toHaveLength(0)
-    expect(wrapper.findAll('.bubble')).toHaveLength(2)
+    expect(wrapper.findAll('.dm-activity__toggle')).toHaveLength(1)
+    expect(wrapper.find('.dm-activity__list').attributes('hidden')).toBeDefined()
+    expect(wrapper.findAll('.dm-bubble__text')).toHaveLength(2)
   })
 
   it('is a button carrying its own state, so Enter and Space reach it like any other control', () => {
     const row = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) }).find(
-      '.activity-disclosure'
+      '.dm-activity__toggle'
     )
     expect(row.element.tagName).toBe('BUTTON')
     expect(row.attributes('type')).toBe('button')
     expect(row.attributes('aria-expanded')).toBe('false')
   })
 
-  it('counts the run and names its last call, once a bubble has closed it', () => {
+  /*
+   * AMENDED for #635 (was: 'counts the run and names its last call', "3 steps — Edited …" with the
+   * same words as its title): the design's disclosure reads "3 steps · activity" (anatomy.md,
+   * MessagePanel), as the history's always did; the steps themselves are one press away.
+   */
+  it('counts the run, once a bubble has closed it', () => {
     const row = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) }).find(
-      '.activity-disclosure'
+      '.dm-activity__toggle'
     )
-    expect(row.text()).toBe('3 steps — Edited src/main/index.ts')
-    expect(row.attributes('title')).toBe('3 steps — Edited src/main/index.ts')
+    expect(row.text()).toBe('3 steps · activity')
   })
 
   it('reads Working... while the run is the last thing a live session has done', () => {
@@ -443,7 +448,7 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
       dwarf: defaultDwarf({ status: 'working' }),
       feed: heldFeed(RUN_OF_THREE.slice(0, 4))
     })
-    expect(wrapper.find('.activity-disclosure').text()).toBe('Working...')
+    expect(wrapper.find('.dm-activity__toggle').text()).toBe('Working...')
   })
 
   it('counts the run instead, once the session behind it has ended', () => {
@@ -453,34 +458,36 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
       dwarf: defaultDwarf({ status: 'leaving' }),
       feed: heldFeed(RUN_OF_THREE.slice(0, 4))
     })
-    expect(wrapper.find('.activity-disclosure').text()).toBe('3 steps — Edited src/main/index.ts')
+    // AMENDED for #635: the design's count (was: "3 steps — Edited src/main/index.ts").
+    expect(wrapper.find('.dm-activity__toggle').text()).toBe('3 steps · activity')
   })
 
   it('opens in place to the exact lines of the run, in order, on a press', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
-    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
 
-    expect(wrapper.findAll('.activity-line').map((line) => line.text())).toEqual([
+    expect(wrapper.findAll('.dm-activity__list li').map((line) => line.text())).toEqual([
       'Read src/shared/contracts.ts',
       'Ran pnpm test',
       'Edited src/main/index.ts'
     ])
-    expect(wrapper.find('.activity-disclosure').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.dm-activity__toggle').attributes('aria-expanded')).toBe('true')
   })
 
   it('collapses again on a second press', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
-    await wrapper.find('.activity-disclosure').trigger('click')
-    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
 
-    expect(wrapper.findAll('.activity-line')).toHaveLength(0)
-    expect(wrapper.find('.activity-disclosure').attributes('aria-expanded')).toBe('false')
+    // AMENDED for #635: hidden again, as the design's list is (was: no lines rendered).
+    expect(wrapper.find('.dm-activity__list').attributes('hidden')).toBeDefined()
+    expect(wrapper.find('.dm-activity__toggle').attributes('aria-expanded')).toBe('false')
   })
 
   it("still emits an opened line's own target from inside an expanded run", async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(RUN_OF_THREE) })
-    await wrapper.find('.activity-disclosure').trigger('click')
-    await wrapper.findAll('.activity-line.is-openable')[1]!.trigger('click')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
+    await wrapper.findAll('.dm-activity__path')[1]!.trigger('click')
 
     expect(wrapper.emitted('open-path')).toEqual([['src/main/index.ts']])
   })
@@ -498,15 +505,18 @@ describe('DwarfMessagePanel activity disclosure (#294)', () => {
         }
       ])
     })
-    const rows = wrapper.findAll('.activity-disclosure')
+    const rows = wrapper.findAll('.dm-activity__toggle')
     expect(rows).toHaveLength(2)
 
     await rows[1]!.trigger('click')
 
-    const after = wrapper.findAll('.activity-disclosure')
+    const after = wrapper.findAll('.dm-activity__toggle')
     expect(after[0]!.attributes('aria-expanded')).toBe('false')
     expect(after[1]!.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.findAll('.activity-line').map((line) => line.text())).toEqual(['Searched TODO'])
+    // AMENDED for #635: the lines of the list that is not hidden (was: the only lines rendered).
+    expect(
+      wrapper.findAll('.dm-activity__list:not([hidden]) li').map((line) => line.text())
+    ).toEqual(['Searched TODO'])
   })
 })
 
@@ -522,7 +532,10 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
     Object.defineProperty(list, 'scrollHeight', {
       configurable: true,
       get: () =>
-        list.querySelectorAll('.message, .activity-line, .activity-disclosure').length * perRow
+        // AMENDED for #635: the bubbles, the open steps and the disclosure rows.
+        list.querySelectorAll(
+          '.dm-bubble, .dm-activity__list:not([hidden]) li, .dm-activity__toggle'
+        ).length * perRow
     })
   }
 
@@ -538,13 +551,13 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
 
   it('leaves the list exactly where the reader had it when a run is opened', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_RUN) })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     Object.defineProperty(list, 'clientHeight', { value: 30, configurable: true })
     await wrapper.vm.$nextTick()
     list.scrollTop = 5
 
-    await wrapper.find('.activity-disclosure').trigger('click')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(list.scrollTop).toBe(5)
@@ -552,7 +565,7 @@ describe('DwarfMessagePanel activity disclosure and scroll (#294)', () => {
 
   it('does not yank a reader who scrolled up when a collapsed run grows', async () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: heldFeed(WITH_RUN) })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     Object.defineProperty(list, 'clientHeight', { value: 30, configurable: true })
     await wrapper.vm.$nextTick()
@@ -598,7 +611,7 @@ describe('DwarfMessagePanel scroll (#195)', () => {
   function growingScrollHeight(list: Element, perMessage = 40): void {
     Object.defineProperty(list, 'scrollHeight', {
       configurable: true,
-      get: () => list.querySelectorAll('.message').length * perMessage
+      get: () => list.querySelectorAll('.dm-bubble').length * perMessage
     })
   }
 
@@ -618,11 +631,14 @@ describe('DwarfMessagePanel scroll (#195)', () => {
     // no conversation yet — so `showLatest` lands on THAT row's height first;
     // there is still no real conversation to have scrolled past.
     const wrapper = panel({ dwarf: defaultDwarf(), feed: undefined })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
-    expect(list.scrollTop).toBe(40) // 1 row (the empty-state placeholder) * 40.
+    await nextFrame()
+    // AMENDED for #635 (was: 40, the empty-state placeholder row): the empty state is the note
+    // line in the log, which is no bubble, so there is nothing to have scrolled past at all.
+    expect(list.scrollTop).toBe(0)
 
     await wrapper.setProps({
       feed: {
@@ -641,7 +657,7 @@ describe('DwarfMessagePanel scroll (#195)', () => {
 
   it('sticks to the bottom when a new row arrives and the reader was already there', async () => {
     const wrapper = panel({ dwarf: defaultDwarf() })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
@@ -659,7 +675,7 @@ describe('DwarfMessagePanel scroll (#195)', () => {
 
   it("keeps the reader's own scroll position when a row arrives below where they had scrolled up to", async () => {
     const wrapper = panel({ dwarf: defaultDwarf() })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
@@ -678,150 +694,48 @@ describe('DwarfMessagePanel scroll (#195)', () => {
   })
 })
 
-/**
- * Every sizing rule `screens/mine.md` states, in its own words: the initial
- * height derives from the latest message, new messages never resize the panel,
- * reopening recalculates, and the user may resize it vertically only.
+/*
+ * REMOVED for #635, stated rather than passing unseen: the whole 'DwarfMessagePanel height' block
+ * (the opening height from the latest message, never resizing on a new one, recalculating on a
+ * reopen, the vertical drag, its floor and ceiling, a pointer that never grabbed, the keyboard
+ * resize) and the whole 'DwarfMessagePanel history tab' block (expanding to the full transcript,
+ * giving the height back, a portrait on every message). The panel has no height of its own: the
+ * dock sets it, the person cannot resize it and the conversation scrolls inside (decision log,
+ * MessagePanel and Add panel anchored), so lib/message/panelHeight went with them. The history the
+ * tab expanded is the mine history now, which the header's Mine history tool opens in the dock
+ * ('DwarfMessagePanel header tools (#635)', below).
  */
-describe('DwarfMessagePanel height', () => {
-  it("opens at the height its dwarf's latest message calls for", () => {
-    const wrapper = panel({
-      dwarf: defaultDwarf(),
-      feed: heldFeed([{ role: 'assistant', text: LONG_REPLY, timestamp: 'now' }])
-    })
-    expect(heightOf(wrapper)).toBe(initialPanelHeight(LONG_REPLY))
-    expect(heightOf(wrapper)).toBeGreaterThan(MESSAGE_PANEL_MIN_HEIGHT)
-  })
-
-  it('never resizes itself when a new message arrives', async () => {
-    const wrapper = panel({
-      dwarf: defaultDwarf(),
-      feed: heldFeed([{ role: 'assistant', text: 'ok', timestamp: 'now' }])
-    })
-    const opened = heightOf(wrapper)
-
-    await wrapper.setProps({
-      dwarf: defaultDwarf(),
-      feed: heldFeed([
-        { role: 'assistant', text: 'ok', timestamp: 'now' },
-        { role: 'assistant', text: LONG_REPLY, timestamp: 'later' }
-      ])
-    })
-
-    expect(heightOf(wrapper)).toBe(opened)
-  })
-
-  it('recalculates from the latest message when it is closed and opened again', () => {
-    // The panel is mounted per selection, so "reopening" is a fresh mount —
-    // which is the whole reason the height rule is a pure function.
-    const short = panel({
-      dwarf: defaultDwarf(),
-      feed: heldFeed([{ role: 'assistant', text: 'ok', timestamp: 'now' }])
-    })
-    const long = panel({
-      dwarf: defaultDwarf(),
-      feed: heldFeed([{ role: 'assistant', text: LONG_REPLY, timestamp: 'now' }])
-    })
-    expect(heightOf(long)).toBeGreaterThan(heightOf(short))
-  })
-
-  it('resizes vertically from the drag handle, and only vertically', async () => {
-    const wrapper = panel()
-    const opened = heightOf(wrapper)
-
-    await pointer(wrapper, 'pointerdown', 400, 100)
-    await pointer(wrapper, 'pointermove', 330, 900)
-
-    // Dragging the top edge UP makes a bottom-docked panel taller.
-    expect(heightOf(wrapper)).toBe(opened + 70)
-    // Nothing the pointer did sideways reached the panel: there is no width to set.
-    expect(wrapper.find('.message-panel').attributes('style')).not.toContain('width:')
-  })
-
-  it('stops the drag at the floor and at the ceiling', async () => {
-    const wrapper = panel()
-
-    await pointer(wrapper, 'pointerdown', 400)
-    await pointer(wrapper, 'pointermove', 4000)
-    expect(heightOf(wrapper)).toBe(MESSAGE_PANEL_MIN_HEIGHT)
-
-    await pointer(wrapper, 'pointermove', -4000)
-    expect(heightOf(wrapper)).toBe(MESSAGE_PANEL_MAX_HEIGHT)
-  })
-
-  it('ignores a pointer that moved without ever grabbing the handle', async () => {
-    const wrapper = panel()
-    const opened = heightOf(wrapper)
-    await pointer(wrapper, 'pointermove', 100)
-    expect(heightOf(wrapper)).toBe(opened)
-  })
-
-  it('resizes from the keyboard too, because a drag handle is not reachable without one', async () => {
-    const wrapper = panel()
-    const opened = heightOf(wrapper)
-    await wrapper.find('.panel-resize').trigger('keydown', { key: 'ArrowUp' })
-    expect(heightOf(wrapper)).toBeGreaterThan(opened)
-    await wrapper.find('.panel-resize').trigger('keydown', { key: 'ArrowDown' })
-    expect(heightOf(wrapper)).toBe(opened)
-  })
-})
-
-describe('DwarfMessagePanel history tab', () => {
-  it('starts collapsed and expands to the full transcript', async () => {
-    const wrapper = panel()
-    expect(wrapper.find('.panel-history').attributes('aria-expanded')).toBe('false')
-
-    await wrapper.find('.panel-history').trigger('click')
-    expect(wrapper.find('.panel-history').attributes('aria-expanded')).toBe('true')
-    expect(wrapper.find('.message-panel').classes()).toContain('is-history')
-    expect(heightOf(wrapper)).toBe(MESSAGE_PANEL_MAX_HEIGHT)
-  })
-
-  it('gives the height back exactly as it was when the history closes again', async () => {
-    const wrapper = panel()
-    const opened = heightOf(wrapper)
-    await wrapper.find('.panel-history').trigger('click')
-    await wrapper.find('.panel-history').trigger('click')
-    expect(heightOf(wrapper)).toBe(opened)
-  })
-
-  it('draws a portrait against every message in the transcript, both sides', async () => {
-    const wrapper = panel()
-    await wrapper.find('.panel-history').trigger('click')
-    expect(wrapper.findAll('.message .portrait')).toHaveLength(2)
-  })
-})
 
 describe('DwarfMessagePanel input', () => {
   it('sends on Enter and writes a newline on Shift+Enter', async () => {
     const wrapper = panel()
-    await wrapper.find('.panel-input').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
 
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter', shiftKey: true })
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter', shiftKey: true })
     expect(wrapper.emitted('send')).toBeUndefined()
 
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toEqual([[{ text: 'dig deeper', pressEnter: true }]])
   })
 
   it('clears the box once the message has left', async () => {
     const wrapper = panel()
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
-    expect((wrapper.find('.panel-input').element as HTMLTextAreaElement).value).toBe('')
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
+    expect((wrapper.find('.dm-composer textarea').element as HTMLTextAreaElement).value).toBe('')
   })
 
   it('refuses to send a blank message', async () => {
     const wrapper = panel()
-    await wrapper.find('.panel-input').setValue('   ')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('   ')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeUndefined()
   })
 
   it('sends nothing while a send is still in flight', async () => {
     const wrapper = panel({ sendState: { phase: 'sending' } })
-    await wrapper.find('.panel-input').setValue('dig deeper')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeUndefined()
   })
 
@@ -836,7 +750,7 @@ describe('DwarfMessagePanel input', () => {
    * theirs to trim. The five tests below are what replaces this one.
    */
   it('lets the box hold whatever was pasted, rather than cutting it at a limit', () => {
-    expect(panel().find('.panel-input').attributes('maxlength')).toBeUndefined()
+    expect(panel().find('.dm-composer textarea').attributes('maxlength')).toBeUndefined()
   })
 
   it("says so in the alert ink when the text is past this channel's ceiling", async () => {
@@ -845,8 +759,8 @@ describe('DwarfMessagePanel input', () => {
     // command line its script used to be spawned in.
     const wrapper = panel()
     const text = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 1)
-    await wrapper.find('.panel-input').setValue(text)
-    expect(wrapper.find('.panel-alert').text()).toBe(
+    await wrapper.find('.dm-composer textarea').setValue(text)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(
       messageTooLongReason(text.length, MAX_DWARF_TEXT_CHARS, 'terminal')
     )
   })
@@ -854,7 +768,7 @@ describe('DwarfMessagePanel input', () => {
   it('keeps the text and sends nothing when Enter is pressed on an over-long message', async () => {
     const wrapper = panel()
     const text = 'x'.repeat(MAX_DWARF_TEXT_CHARS + 1)
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     await input.setValue(text)
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeUndefined()
@@ -863,10 +777,10 @@ describe('DwarfMessagePanel input', () => {
 
   it('sends again the moment the person has trimmed it back inside the ceiling', async () => {
     const wrapper = panel()
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     await input.setValue('x'.repeat(MAX_DWARF_TEXT_CHARS + 1))
     await input.setValue('x'.repeat(MAX_DWARF_TEXT_CHARS))
-    expect(wrapper.find('.panel-alert').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').exists()).toBe(false)
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toHaveLength(1)
   })
@@ -895,14 +809,16 @@ describe('DwarfMessagePanel input', () => {
         }
       })
     })
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     await input.setValue('x'.repeat(101))
-    expect(wrapper.find('.panel-alert').text()).toBe(messageTooLongReason(101, 100, 'claude-relay'))
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(
+      messageTooLongReason(101, 100, 'claude-relay')
+    )
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeUndefined()
 
     await input.setValue('x'.repeat(100))
-    expect(wrapper.find('.panel-alert').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').exists()).toBe(false)
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toHaveLength(1)
   })
@@ -918,42 +834,47 @@ describe('DwarfMessagePanel input', () => {
   it('names the Codex queue own number, which is tighter than every other route', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'codex-queue' }) })
     const text = 'x'.repeat(MAX_CODEX_QUEUE_TEXT_CHARS + 1)
-    await wrapper.find('.panel-input').setValue(text)
-    expect(wrapper.find('.panel-alert').text()).toBe(
+    await wrapper.find('.dm-composer textarea').setValue(text)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(
       messageTooLongReason(text.length, MAX_CODEX_QUEUE_TEXT_CHARS, 'codex-queue')
     )
   })
 
   it('lets a relayed session take 40,000 characters, which no argv could have', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'claude-relay' }) })
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     await input.setValue('x'.repeat(40_000))
-    expect(wrapper.find('.panel-alert').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').exists()).toBe(false)
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toHaveLength(1)
   })
 
   it('refuses the same 40,000 characters on a Codex dwarf, before anything is sent', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'codex-queue' }) })
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     await input.setValue('x'.repeat(40_000))
-    expect(wrapper.find('.panel-alert').text()).toContain(String(MAX_CODEX_QUEUE_TEXT_CHARS))
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toContain(
+      String(MAX_CODEX_QUEUE_TEXT_CHARS)
+    )
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeUndefined()
   })
   /* --- end of the #437 block ------------------------------------------------ */
 
-  it('keeps the input selectable, which the design asks for by name', () => {
-    // Guarded here because it is a stated rule that a stylesheet change could
-    // silently take away.
-    expect(panel().find('.panel-input').classes()).toContain('is-selectable')
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'keeps the input selectable, which the
+   * design asks for by name'. The class it read belonged to the old textarea; the composer's well
+   * is the kit's Input now, a native textarea whose text is selectable as every native field's is,
+   * and the redesign names no such rule.
+   */
 
   it('disables the box, with its reason, for a session that cannot be written to', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: undefined }) })
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     expect(input.attributes('disabled')).toBeDefined()
-    expect(input.attributes('title')).toContain("can't receive messages yet")
+    expect(wrapper.find('.dm-composer .dm-field').attributes('title')).toContain(
+      "can't receive messages yet"
+    )
   })
 
   it('disables the box, saying the session has ended, for a dwarf that is leaving', () => {
@@ -962,16 +883,16 @@ describe('DwarfMessagePanel input', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({ textDelivery: 'terminal', status: 'leaving' })
     })
-    const input = wrapper.find('.panel-input')
+    const input = wrapper.find('.dm-composer textarea')
     expect(input.attributes('disabled')).toBeDefined()
-    expect(input.attributes('title')).toContain('ended')
-    expect(wrapper.find('.panel-note').text()).toContain('ended')
+    expect(wrapper.find('.dm-composer .dm-field').attributes('title')).toContain('ended')
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('ended')
   })
 
   it('names the channel a message would travel through', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: 'foreman-relay' }) })
-    expect(panel().find('.panel-input').attributes('title')).toContain('console')
-    expect(wrapper.find('.panel-input').attributes('title')).toContain('foreman')
+    expect(panel().find('.dm-composer .dm-field').attributes('title')).toContain('console')
+    expect(wrapper.find('.dm-composer .dm-field').attributes('title')).toContain('foreman')
   })
 
   /*
@@ -992,11 +913,11 @@ describe('DwarfMessagePanel input', () => {
         }
       })
     })
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.panel-refusal').text()).toContain('codex exec')
+    expect(wrapper.find('.dm-composer textarea').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.dm-composer__hint').text()).toContain('codex exec')
     // The provenance note keeps its own row: what the panel may claim about a
     // transcript is a different fact from why a control is disabled.
-    expect(wrapper.find('.panel-note').exists()).toBe(true)
+    expect(wrapper.find('.dm-msg__log').attributes('title') !== undefined).toBe(true)
   })
 
   /*
@@ -1007,7 +928,7 @@ describe('DwarfMessagePanel input', () => {
    * apologising for two controls that both work. What the kick does is on the
    * control itself.
    */
-  it('draws no refusal for a queue-only thread: the composer sends, the kick dismisses', () => {
+  it('draws no refusal for a queue-only thread: the composer sends, the kick dismisses', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         provider: 'codex',
@@ -1015,9 +936,11 @@ describe('DwarfMessagePanel input', () => {
         capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
-    expect(wrapper.find('.control-kick').attributes('title')).toContain('off the rock')
+    expect(wrapper.find('.dm-composer textarea').attributes('disabled')).toBeUndefined()
+    // AMENDED for #635 (was: no `.panel-refusal` row, and the kick's title): the hint is the
+    // keyboard's, and what the kick does is what Stop dwarf… says before it stops.
+    expect(wrapper.find('.dm-composer__hint').text()).toBe(COMPOSER_HINT_TEXT)
+    expect(await stopHint(wrapper)).toContain('off the rock')
   })
 
   it('draws no refusal row at all when both controls work', () => {
@@ -1032,7 +955,8 @@ describe('DwarfMessagePanel input', () => {
         }
       })
     })
-    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+    // AMENDED for #635 (was: no `.panel-refusal` row): the hint is the keyboard's own.
+    expect(wrapper.find('.dm-composer__hint').text()).toBe(COMPOSER_HINT_TEXT)
   })
 
   it('lets a failure reason take the floor rather than doubling up with a refusal', () => {
@@ -1040,24 +964,60 @@ describe('DwarfMessagePanel input', () => {
       dwarf: defaultDwarf({ textDelivery: undefined }),
       sendState: { phase: 'failed', error: 'The relay never answered.' }
     })
-    expect(wrapper.find('.panel-alert').text()).toBe('The relay never answered.')
-    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(
+      'The relay never answered.'
+    )
+    // AMENDED for #635 (was: no `.panel-refusal` row beside the alert): one hint line, the alert.
+    expect(wrapper.findAll('.dm-composer__hint')).toHaveLength(1)
   })
 
   it('shows the send verdict without ever blurring handed over and reacted', () => {
     const handed = panel({
       sendState: { phase: 'delivered', via: 'terminal', awaitingReaction: true }
     })
-    expect(handed.find('.panel-status').text()).toContain('Handed over')
-    expect(handed.find('.panel-status').text()).not.toContain('reacted.')
+    expect(handed.find('.dm-composer__hint[role="status"]').text()).toContain('Handed over')
+    expect(handed.find('.dm-composer__hint[role="status"]').text()).not.toContain('reacted.')
 
     const reacted = panel({ sendState: { phase: 'reacted', via: 'terminal' } })
-    expect(reacted.find('.panel-status').text()).toContain('the session reacted')
+    expect(reacted.find('.dm-composer__hint[role="status"]').text()).toContain(
+      'the session reacted'
+    )
 
     const failed = panel({ sendState: { phase: 'failed', error: 'The relay never answered.' } })
-    expect(failed.find('.panel-alert').text()).toBe('The relay never answered.')
+    expect(failed.find('.dm-composer__hint[role="alert"]').text()).toBe('The relay never answered.')
   })
 })
+
+/** The ⋯ menu's Stop dwarf… row, as the panel hands it to the menu (#635). */
+function stopItem(wrapper: ReturnType<typeof panel>): MenuItem {
+  return (wrapper.findComponent(MenuButton).props('items') as MenuItem[])[MENU_STOP]!
+}
+
+/** The confirmation Stop dwarf… opens (#635). */
+function stopDialog(wrapper: ReturnType<typeof panel>) {
+  return wrapper.findComponent(ModalDialog)
+}
+
+/** Stop dwarf… picked from the ⋯ menu. */
+function pickStop(wrapper: ReturnType<typeof panel>): void {
+  wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_STOP)
+}
+
+/**
+ * What stopping THIS session does, as the confirmation says it beside the design's sentence: the
+ * kick's own hint from the capability model (#383), read off the panel's own action model.
+ */
+async function stopHint(wrapper: ReturnType<typeof panel>): Promise<string | undefined> {
+  pickStop(wrapper)
+  await wrapper.vm.$nextTick()
+  const said = wrapper
+    .findComponent(DialogCard)
+    .findAll('p')
+    .map((line) => line.text())
+  stopDialog(wrapper).vm.$emit('cancel')
+  await wrapper.vm.$nextTick()
+  return said[1]
+}
 
 describe('DwarfMessagePanel controls', () => {
   const kickable = defaultDwarf({
@@ -1072,17 +1032,34 @@ describe('DwarfMessagePanel controls', () => {
   })
 
   /*
-   * AMENDED for #293 (was: 'asks for a second click before it kicks', which
-   * asserted the arm state and its 'is-armed' class). The arming was #11's
-   * implementation choice, the design source listed the confirmation under
-   * Unspecified, and a first click that visibly did nothing read as a kick that
-   * had failed.
+   * AMENDED for #635 throughout this block (was: the `.control-kick` button beside the composer,
+   * its title and its aria-label). The kick is Stop dwarf… in the ⋯ menu, which confirms first
+   * (screens/message.md, W4·6); what each case says about when it is live, what it does and when
+   * it is locked is unchanged, read off the menu item and the confirmation instead. The
+   * confirmation is the design's, which is also what took #293's one click away: the design asks
+   * first for anything destructive.
    */
-  it('kicks on one click, with no confirmation to press through', async () => {
+  it('stops on the confirmation, and never before it', async () => {
     const wrapper = panel({ dwarf: kickable })
-    await wrapper.find('.control-kick').trigger('click')
+    pickStop(wrapper)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('kick')).toBeUndefined()
+    expect(stopDialog(wrapper).props('open')).toBe(true)
+
+    stopDialog(wrapper).vm.$emit('action', 1)
+    await wrapper.vm.$nextTick()
     expect(wrapper.emitted('kick')).toHaveLength(1)
-    expect(wrapper.find('.control-kick').classes()).not.toContain('is-armed')
+    expect(stopDialog(wrapper).props('open')).toBe(false)
+  })
+
+  it('stops nothing when the confirmation is cancelled', async () => {
+    const wrapper = panel({ dwarf: kickable })
+    pickStop(wrapper)
+    await wrapper.vm.$nextTick()
+    stopDialog(wrapper).vm.$emit('action', 0)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('kick')).toBeUndefined()
+    expect(stopDialog(wrapper).props('open')).toBe(false)
   })
 
   /*
@@ -1097,37 +1074,37 @@ describe('DwarfMessagePanel controls', () => {
    * dismissal is unchanged for an idle dwarf; mid-turn the control is now
    * refused, which is the test that follows them.
    */
-  it('keeps kick live where nothing can be cancelled, and says it dismisses', () => {
+  it('keeps kick live where nothing can be cancelled, and says it dismisses', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'waiting',
         capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null }
       })
     })
-    expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.control-kick').attributes('title')).toContain('off the rock')
+    expect(stopItem(wrapper).disabled).toBe(false)
+    expect(await stopHint(wrapper)).toContain('off the rock')
   })
 
   /* AMENDED for #293, same reason (was: 'disables kick when the dwarf ...'). */
   it('keeps kick live when the dwarf carries no capability matrix at all', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ status: 'waiting', capabilities: undefined }) })
-    expect(wrapper.find('.control-kick').attributes('disabled')).toBeUndefined()
+    expect(stopItem(wrapper).disabled).toBe(false)
   })
 
   /*
    * The other half of #305, step 3, and the only place it is proven to reach
    * the DOM: a dismissal on a dwarf mid-turn is undone by the next poll, so the
-   * button is genuinely disabled rather than merely re-worded.
+   * control is genuinely disabled rather than merely re-worded.
    */
-  it('disables kick while a turn nothing can interrupt is open, with the reason', () => {
+  it('disables kick while a turn nothing can interrupt is open, with the reason', async () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
         status: 'working',
         capabilities: { sendText: 'codex-queue', cancel: null, adjustEffort: null, attach: null }
       })
     })
-    expect(wrapper.find('.control-kick').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.control-kick').attributes('title')).toContain('cannot be stopped from')
+    expect(stopItem(wrapper).disabled).toBe(true)
+    expect(await stopHint(wrapper)).toContain('cannot be stopped from')
   })
 
   /*
@@ -1138,14 +1115,15 @@ describe('DwarfMessagePanel controls', () => {
    */
   it('offers kick on a session that has ended, to end its walk', async () => {
     const wrapper = panel({ dwarf: defaultDwarf({ status: 'leaving' }) })
-    const control = wrapper.find('.control-kick')
-    expect(control.attributes('disabled')).toBeUndefined()
-    expect(control.attributes('title')).toContain('has ended')
-    await control.trigger('click')
+    expect(stopItem(wrapper).disabled).toBe(false)
+    expect(await stopHint(wrapper)).toContain('has ended')
+    pickStop(wrapper)
+    await wrapper.vm.$nextTick()
+    stopDialog(wrapper).vm.$emit('action', 1)
     expect(wrapper.emitted('kick')).toHaveLength(1)
   })
 
-  it('names what kicking THIS channel actually does, rather than one generic promise', () => {
+  it('names what kicking THIS channel actually does, rather than one generic promise', async () => {
     const relay = panel({
       dwarf: defaultDwarf({
         capabilities: {
@@ -1156,17 +1134,16 @@ describe('DwarfMessagePanel controls', () => {
         }
       })
     })
-    expect(relay.find('.control-kick').attributes('title')).toBe(
-      'Asks the agent to stop — it decides how.'
-    )
+    expect(await stopHint(relay)).toBe('Asks the agent to stop — it decides how.')
   })
 
   it('locks the kick control while a kick is in flight', async () => {
     const wrapper = panel({ dwarf: kickable, kickState: { phase: 'kicking' } })
-    const control = wrapper.find('.control-kick')
-    expect(control.attributes('disabled')).toBeDefined()
-    expect(control.attributes('aria-label')).toBe('Kicking...')
-    await control.trigger('click')
+    expect(stopItem(wrapper).disabled).toBe(true)
+    // Even a confirmation that was already open stops nothing while one is in flight.
+    pickStop(wrapper)
+    await wrapper.vm.$nextTick()
+    stopDialog(wrapper).vm.$emit('action', 1)
     expect(wrapper.emitted('kick')).toBeUndefined()
   })
 
@@ -1182,7 +1159,7 @@ describe('DwarfMessagePanel controls', () => {
       dwarf: kickable,
       kickState: { phase: 'delivered', via: 'claude-relay', awaitingReaction: true }
     })
-    expect(wrapper.find('.panel-status').text()).toContain('Kick handed over')
+    expect(wrapper.find('.dm-composer__hint[role="status"]').text()).toContain('Kick handed over')
   })
 
   /*
@@ -1202,7 +1179,7 @@ describe('DwarfMessagePanel controls', () => {
       }),
       kickState: { phase: 'delivered', via: 'launched-process' }
     })
-    const line = wrapper.find('.panel-status').text()
+    const line = wrapper.find('.dm-composer__hint[role="status"]').text()
     expect(line).toContain('Ended the session')
     expect(line).not.toContain('handed over')
   })
@@ -1218,45 +1195,46 @@ describe('DwarfMessagePanel controls', () => {
       dwarf: kickable,
       kickState: { phase: 'delivered', via: 'terminal' }
     })
-    const line = wrapper.find('.panel-status').text()
+    const line = wrapper.find('.dm-composer__hint[role="status"]').text()
     expect(line).toContain('Ended the session')
     expect(line).toContain('its terminal is left at its prompt')
     expect(line).not.toContain('handed over')
     expect(line).not.toContain('watching')
   })
 
-  it('draws Boost where the design puts it and refuses to pretend it works', () => {
-    // The spike found `applyFlagSettings` resolves as a silent no-op with no
-    // supportsEffort guard, and no provider here exposes an effort channel at
-    // all — so the control is rendered and disabled with its reason, never
-    // wired to something that would answer a click with silence.
-    const wrapper = panel({ dwarf: defaultDwarf({ provider: 'claude', effort: 'xhigh' }) })
-    const boost = wrapper.find('.control-boost')
-    expect(boost.attributes('disabled')).toBeDefined()
-    expect(boost.attributes('title')).toContain(
-      "No provider supports changing a running session's effort yet."
-    )
-    expect(boost.attributes('title')).toContain('Extra high')
-  })
-
-  it('passes a Codex reasoning_effort value through as it was reported', () => {
-    const wrapper = panel({ dwarf: defaultDwarf({ provider: 'codex', effort: 'medium' }) })
-    expect(wrapper.find('.control-boost').attributes('title')).toContain('medium')
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'draws Boost where the design puts it and
+   * refuses to pretend it works' and 'passes a Codex reasoning_effort value through as it was
+   * reported', with the control they read. Boost is never enabled, since no provider supports it,
+   * and the redesign puts it behind a switch like the guild areas rather than drawing a dead
+   * control (screens/message.md, W4·6). The effort a session reports is in the header's meta chip.
+   */
 
   it('closes on the close control and on Escape', async () => {
     const wrapper = panel()
-    await wrapper.find('.panel-close').trigger('click')
-    await wrapper.find('.message-panel').trigger('keydown', { key: 'Escape' })
+    await wrapper.find('.dm-msg__close').trigger('click')
+    await wrapper.find('.dm-msg').trigger('keydown', { key: 'Escape' })
     expect(wrapper.emitted('close')).toHaveLength(2)
   })
 
-  it("focuses the session's console from the dwarf's own name", async () => {
-    // Where the old action bar's console icon went: the design draws a name
-    // here and no fourth icon, so the name is the control.
+  /*
+   * AMENDED for #635 (was: "focuses the session's console from the dwarf's own name"). The
+   * redesign draws the console as a tool of its own, and in the ⋯ menu as Open console; the name
+   * is the dwarf's title, which renames it once the dwarf names slice lands.
+   */
+  it("focuses the session's console from the header's Console tool and from the ⋯ menu", async () => {
     const wrapper = panel()
-    await wrapper.find('.panel-agent').trigger('click')
-    expect(wrapper.emitted('open-console')).toHaveLength(1)
+    await wrapper.find('.dm-msg__console').trigger('click')
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_CONSOLE)
+    expect(wrapper.emitted('open-console')).toHaveLength(2)
+  })
+
+  // APPENDED for #635: the history is the mine's, opened in the dock in place of this panel.
+  it('asks for the mine history from the header and from the ⋯ menu', async () => {
+    const wrapper = panel()
+    await wrapper.findAll('.dm-msg__tools button')[0]!.trigger('click')
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_HISTORY)
+    expect(wrapper.emitted('history')).toHaveLength(2)
   })
 })
 
@@ -1286,9 +1264,11 @@ describe('DwarfMessagePanel question', () => {
     })
   }
 
-  it('opens tall enough to hold the whole ask, without squashing the conversation', () => {
-    expect(heightOf(asking())).toBe(MESSAGE_PANEL_ASK_HEIGHT)
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'opens tall enough to hold the whole ask,
+   * without squashing the conversation'. The panel's height is the dock's, and the conversation
+   * scrolls inside above the card (decision log, MessagePanel and Add panel anchored).
+   */
 
   it('shows no question surface for a dwarf with nothing outstanding', () => {
     expect(panel().find('.question-card').exists()).toBe(false)
@@ -1326,12 +1306,13 @@ describe('DwarfMessagePanel question', () => {
   it('replaces the composer with the ask, exactly as the design draws it', () => {
     // The two question exports show the option cards and the card's own
     // `Other Thing` box where the ordinary input sits — one input, not two.
+    // AMENDED for #635 (was: the card first in the composer, the kick and boost column beside it):
+    // the card takes the composer's place at the bottom of the panel (W4·7), and no composer and
+    // no control column stands beside it.
     const wrapper = asking()
-    const composer = [...wrapper.find('.panel-composer').element.children]
-    expect(composer[0]?.classList.contains('question-card')).toBe(true)
-    expect(wrapper.find('.panel-input').exists()).toBe(false)
-    // The two controls stay beside it, where every export puts them.
-    expect(wrapper.find('.panel-composer .control-kick').exists()).toBe(true)
+    const bottom = [...wrapper.find('.dm-msg__bottom').element.children]
+    expect(bottom[0]?.classList.contains('question-card')).toBe(true)
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
   })
 
   it('forwards the chosen option once Enter confirms it', async () => {
@@ -1401,16 +1382,17 @@ describe('DwarfMessagePanel permission (#203)', () => {
     })
   }
 
-  it('opens tall enough to hold the whole prompt, without squashing the conversation', () => {
-    expect(heightOf(withPermission())).toBe(MESSAGE_PANEL_ASK_HEIGHT)
-  })
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'opens tall enough to hold the whole
+   * prompt, without squashing the conversation', for the reason the ask's own went.
+   */
 
   it('replaces the composer with the permission card, exactly as an ask would', () => {
+    // AMENDED for #635, as the ask's own above.
     const wrapper = withPermission()
-    const composer = [...wrapper.find('.panel-composer').element.children]
-    expect(composer[0]?.classList.contains('permission-card')).toBe(true)
-    expect(wrapper.find('.panel-input').exists()).toBe(false)
-    expect(wrapper.find('.panel-composer .control-kick').exists()).toBe(true)
+    const bottom = [...wrapper.find('.dm-msg__bottom').element.children]
+    expect(bottom[0]?.classList.contains('permission-card')).toBe(true)
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
   })
 
   it('forwards the chosen decision once Enter confirms it', async () => {
@@ -1461,11 +1443,13 @@ describe('DwarfMessagePanel permission (#203)', () => {
 describe('DwarfMessagePanel composer focus (#409)', () => {
   let attached: ReturnType<typeof panel> | undefined
 
+  // AMENDED for #635: opened as the dock opens it, asking for the keyboard (`focusOnOpen`).
   function attachedPanel(props: Record<string, unknown> = {}) {
     attached = mount(DwarfMessagePanel, {
       attachTo: document.body,
       props: {
         dwarf: defaultDwarf({ textDelivery: 'terminal' }),
+        focusOnOpen: true,
         ...props
       }
     })
@@ -1481,7 +1465,15 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
     const wrapper = attachedPanel()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
-    expect(document.activeElement).toBe(wrapper.find('.panel-input').element)
+    expect(document.activeElement).toBe(wrapper.find('.dm-composer textarea').element)
+  })
+
+  // APPENDED for #635: the UI kit draws its states without opening them on anybody's behalf.
+  it('takes no keyboard when its host did not open it on a selection', async () => {
+    const wrapper = attachedPanel({ focusOnOpen: false })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).not.toBe(wrapper.find('.dm-composer textarea').element)
   })
 
   it('never focuses a composer the panel is already explaining as dead (#217)', async () => {
@@ -1490,7 +1482,7 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
     })
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
-    expect(document.activeElement).not.toBe(wrapper.find('.panel-input').element)
+    expect(document.activeElement).not.toBe(wrapper.find('.dm-composer textarea').element)
   })
 
   it('moves focus to the composer once a pending question clears', async () => {
@@ -1511,7 +1503,7 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
     })
     await wrapper.vm.$nextTick()
     // Sanity: the card, not the composer, holds the slot while the ask is open.
-    expect(wrapper.find('.panel-input').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer textarea').exists()).toBe(false)
 
     await wrapper.setProps({
       dwarf: defaultDwarf({ textDelivery: 'terminal' })
@@ -1519,7 +1511,7 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    expect(document.activeElement).toBe(wrapper.find('.panel-input').element)
+    expect(document.activeElement).toBe(wrapper.find('.dm-composer textarea').element)
   })
 })
 
@@ -1530,7 +1522,7 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
  */
 describe('DwarfMessagePanel honesty', () => {
   it("says a held session's exchange is the one this panel watched happen", () => {
-    expect(panel().find('.panel-note').text()).toContain('holding this session')
+    expect(panel().find('.dm-msg__log').attributes('title')).toContain('holding this session')
   })
 
   it("says an observed session's messages are its latest activity", () => {
@@ -1541,8 +1533,8 @@ describe('DwarfMessagePanel honesty', () => {
         messages: [{ role: 'assistant', text: 'Blasting', timestamp: 'now' }]
       }
     })
-    expect(wrapper.find('.panel-note').text()).toContain('Latest activity')
-    expect(wrapper.findAll('.message')).toHaveLength(1)
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toContain('Latest activity')
+    expect(wrapper.findAll('.dm-bubble')).toHaveLength(1)
   })
 
   it('draws an empty state, never a bubble, for a session it cannot read', () => {
@@ -1554,13 +1546,13 @@ describe('DwarfMessagePanel honesty', () => {
       dwarf: defaultDwarf(),
       feed: { readable: false, messages: [] }
     })
-    expect(wrapper.findAll('.bubble')).toHaveLength(0)
-    expect(wrapper.find('.panel-empty').text()).toBe(NO_TRANSCRIPT_NOTE)
+    expect(wrapper.findAll('.dm-bubble__text')).toHaveLength(0)
+    expect(wrapper.find('.dm-msg__note').text()).toBe(NO_TRANSCRIPT_NOTE)
   })
 
   it('says it is still reading rather than that there is nothing', () => {
     const wrapper = panel({ dwarf: defaultDwarf(), feed: undefined })
-    expect(wrapper.find('.panel-empty').text()).toBe(READING_NOTE)
+    expect(wrapper.find('.dm-msg__note').text()).toBe(READING_NOTE)
   })
 })
 
@@ -1572,21 +1564,29 @@ describe('DwarfMessagePanel honesty', () => {
  * standing where the bubble text would, never inferring the rank from
  * anything the session said.
  */
+/*
+ * AMENDED for #635 throughout (was: an agent row drawn for the empty state, the dwarf's portrait
+ * beside the note). The redesign draws no portrait beside the conversation's rows, and the
+ * dwarf's own face is the header's; the empty state is the note line in the log. What #332 pinned
+ * — silence says nothing about a dwarf's rank, whose face comes off `dwarf.role` — holds there.
+ */
 describe('DwarfMessagePanel empty portrait (#332)', () => {
-  it("draws the dwarf's own portrait beside the empty-state note", () => {
+  it("draws the dwarf's own portrait in the header above the empty-state note", () => {
     const wrapper = panel({
       dwarf: defaultDwarf(),
       feed: { readable: true, messages: [] }
     })
-    const row = wrapper.find('.message.is-agent')
-    expect(row.find('.portrait').attributes('src')).toContain('worker-face')
-    expect(row.find('.panel-empty').text()).toBe(NOTHING_SAID_NOTE)
+    expect(wrapper.find('.dm-msg__head .dm-portrait img').attributes('src')).toContain(
+      'worker-face'
+    )
+    expect(wrapper.find('.dm-msg__log .dm-msg__note').text()).toBe(NOTHING_SAID_NOTE)
+    expect(wrapper.find('.dm-bubble').exists()).toBe(false)
   })
 
   it('draws no empty row once the conversation has messages', () => {
     const wrapper = panel({ dwarf: defaultDwarf() })
-    expect(wrapper.find('.panel-empty').exists()).toBe(false)
-    expect(wrapper.findAll('.message')).toHaveLength(HELD.length)
+    expect(wrapper.find('.dm-msg__note').exists()).toBe(false)
+    expect(wrapper.findAll('.dm-bubble')).toHaveLength(HELD.length)
   })
 
   it.each([
@@ -1598,7 +1598,7 @@ describe('DwarfMessagePanel empty portrait (#332)', () => {
       dwarf: defaultDwarf({ role }),
       feed: { readable: true, messages: [] }
     })
-    expect(wrapper.find('.message.is-agent .portrait').attributes('src')).toContain(needle)
+    expect(wrapper.find('.dm-msg__head .dm-portrait img').attributes('src')).toContain(needle)
   })
 })
 
@@ -1616,24 +1616,24 @@ describe('DwarfMessagePanel awaiting approval', () => {
 
   it('says where the dialog is, above the composer', () => {
     const wrapper = panel({ dwarf: asked })
-    expect(wrapper.find('.panel-approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
+    expect(wrapper.find('.dm-msg__approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
   })
 
   it('jumps to that terminal through the console channel the panel already has', async () => {
     const wrapper = panel({ dwarf: asked })
-    await wrapper.find('.approval-jump').trigger('click')
+    await wrapper.find('.dm-msg__approval .dm-btn').trigger('click')
     expect(wrapper.emitted('open-console')).toHaveLength(1)
   })
 
   it('offers no answer of its own: the dialog is not this panel’s to decide', () => {
     const wrapper = panel({ dwarf: asked })
     expect(wrapper.find('.permission-card').exists()).toBe(false)
-    expect(wrapper.find('.panel-input').exists()).toBe(true)
+    expect(wrapper.find('.dm-composer textarea').exists()).toBe(true)
   })
 
   it('says nothing for a dwarf that is merely waiting', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ status: 'waiting' }) })
-    expect(wrapper.find('.panel-approval').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg__approval').exists()).toBe(false)
   })
 
   it('stands aside for a prompt this panel can decide itself', () => {
@@ -1653,7 +1653,7 @@ describe('DwarfMessagePanel awaiting approval', () => {
         }
       })
     })
-    expect(wrapper.find('.panel-approval').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg__approval').exists()).toBe(false)
   })
 })
 
@@ -1695,7 +1695,7 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
 
   it('shows the card instead of the terminal sentence, never both', () => {
     const wrapper = panel({ dwarf: observed() })
-    expect(wrapper.find('.panel-approval').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg__approval').exists()).toBe(false)
   })
 
   it('keeps the sentence where the hook spoke and the content could not be named', () => {
@@ -1707,7 +1707,7 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
         textDelivery: 'terminal'
       })
     })
-    expect(wrapper.find('.panel-approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
+    expect(wrapper.find('.dm-msg__approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
     expect(wrapper.find('.permission-card').exists()).toBe(false)
   })
 
@@ -1748,7 +1748,7 @@ describe('DwarfMessagePanel on a dismissed dwarf', () => {
       }),
       kickState: { phase: 'delivered', via: 'dismiss' }
     })
-    const line = wrapper.find('.panel-status').text()
+    const line = wrapper.find('.dm-composer__hint[role="status"]').text()
     expect(line).toContain('off the rock')
     expect(line).not.toContain('handed over')
     expect(line).not.toContain('Ended the session')
@@ -1779,30 +1779,33 @@ describe('DwarfMessagePanel echoes (#309)', () => {
 
   /** The last bubble in the conversation, which is where an echo belongs. */
   function lastMessageRow(wrapper: ReturnType<typeof panel>) {
-    return wrapper.findAll('.message').at(-1)!
+    return wrapper.findAll('.dm-bubble').at(-1)!
   }
 
   it("draws a sent message as the person's own bubble, after everything the transcript carried", () => {
     const wrapper = panel({ echoes: [echo()] })
-    const rows = wrapper.findAll('.message')
+    const rows = wrapper.findAll('.dm-bubble')
     // HELD is two rows; the echo is the third and last.
     expect(rows).toHaveLength(3)
-    expect(rows.at(-1)!.classes()).toContain('is-user')
-    expect(rows.at(-1)!.find('.bubble').text()).toBe('dig deeper')
-    expect(rows.at(-1)!.find('.portrait').attributes('alt')).toBe('You')
+    // AMENDED for #635 (was: the `.is-user` row and the portrait's "You" alt): the person's own
+    // bubble, named "You".
+    expect(rows.at(-1)!.classes()).toContain('dm-bubble--user')
+    expect(rows.at(-1)!.find('.dm-bubble__text').text()).toBe('dig deeper')
+    expect(rows.at(-1)!.attributes('aria-label')).toBe('You')
   })
 
   it('carries the pending glyph while the message is still in flight', () => {
     const wrapper = panel({ echoes: [echo({ state: { phase: 'sending' } })] })
-    const marker = lastMessageRow(wrapper).find('.bubble-marker')
+    const marker = lastMessageRow(wrapper).find('.dm-bubble__mark')
     expect(marker.text()).toBe(sendMarker({ phase: 'sending' })!.glyph)
-    expect(marker.classes()).toContain('is-sending')
+    // AMENDED for #635 (was: the `is-sending` class): the design's mark name.
+    expect(marker.attributes('data-mark')).toBe('pending')
   })
 
   it("carries one tick when the message reached the session's queue, in the verdict's own words", () => {
     const state: DwarfSendState = { phase: 'delivered', via: 'terminal', awaitingReaction: true }
     const wrapper = panel({ echoes: [echo({ state })] })
-    const marker = lastMessageRow(wrapper).find('.bubble-marker')
+    const marker = lastMessageRow(wrapper).find('.dm-bubble__mark')
     expect(marker.text()).toBe('✓')
     expect(marker.attributes('title')).toBe(sendMarker(state)!.title)
     // Handed over, never a claimed reaction — the whole point of #21.
@@ -1812,7 +1815,7 @@ describe('DwarfMessagePanel echoes (#309)', () => {
   it('says so on the tick when the watch closed without seeing a reaction', () => {
     const state: DwarfSendState = { phase: 'delivered', via: 'terminal', awaitingReaction: false }
     const wrapper = panel({ echoes: [echo({ state })] })
-    expect(lastMessageRow(wrapper).find('.bubble-marker').attributes('title')).toBe(
+    expect(lastMessageRow(wrapper).find('.dm-bubble__mark').attributes('title')).toBe(
       sendMarker(state)!.title
     )
   })
@@ -1820,38 +1823,40 @@ describe('DwarfMessagePanel echoes (#309)', () => {
   it('carries two ticks only once the session was seen acting', () => {
     const state: DwarfSendState = { phase: 'reacted', via: 'terminal' }
     const wrapper = panel({ echoes: [echo({ state })] })
-    const marker = lastMessageRow(wrapper).find('.bubble-marker')
+    const marker = lastMessageRow(wrapper).find('.dm-bubble__mark')
     expect(marker.text()).toBe('✓✓')
     expect(marker.attributes('title')).toBe(sendMarker(state)!.title)
-    expect(marker.classes()).toContain('is-reacted')
+    // AMENDED for #635 (was: the `is-reacted` class): the design's mark name.
+    expect(marker.attributes('data-mark')).toBe('reacted')
   })
 
   it('carries a ✕ with the reason on hover, and keeps the words readable', () => {
     const state: DwarfSendState = { phase: 'failed', error: 'The relay never started.' }
     const wrapper = panel({ echoes: [echo({ state })] })
     const row = lastMessageRow(wrapper)
-    expect(row.find('.bubble-marker').text()).toBe('✕')
-    expect(row.find('.bubble-marker').attributes('title')).toBe('The relay never started.')
+    // AMENDED for #635 (was: '✕'): spelled as the design writes it.
+    expect(row.find('.dm-bubble__mark').text()).toBe('✕ not delivered')
+    expect(row.find('.dm-bubble__mark').attributes('title')).toBe('The relay never started.')
     // The bubble is kept rather than removed: it is the only copy of what the
     // person typed, and it is about to be sent again.
-    expect(row.find('.bubble').text()).toBe('dig deeper')
+    expect(row.find('.dm-bubble__text').text()).toBe('dig deeper')
   })
 
   it('falls back to the verdict’s own sentence when the channel gave no reason', () => {
     const state: DwarfSendState = { phase: 'failed' }
     const wrapper = panel({ echoes: [echo({ state })] })
-    expect(lastMessageRow(wrapper).find('.bubble-marker').attributes('title')).toBe(
+    expect(lastMessageRow(wrapper).find('.dm-bubble__mark').attributes('title')).toBe(
       sendMarker(state)!.title
     )
   })
 
   it('offers Send again on a failed message, and on no other', () => {
     const failed = panel({ echoes: [echo({ state: { phase: 'failed', error: 'nope' } })] })
-    expect(failed.find('.bubble-retry').text()).toBe(SEND_AGAIN_LABEL)
+    expect(failed.find('.dm-bubble__actions .dm-btn').text()).toBe(SEND_AGAIN_LABEL)
 
     for (const phase of ['sending', 'delivered', 'reacted'] as const) {
       const other = panel({ echoes: [echo({ state: { phase } })] })
-      expect(other.find('.bubble-retry').exists()).toBe(false)
+      expect(other.find('.dm-bubble__actions .dm-btn').exists()).toBe(false)
     }
   })
 
@@ -1870,10 +1875,10 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     }
     const wrapper = panel({ echoes: [echo({ state })] })
     const row = lastMessageRow(wrapper)
-    expect(row.find('.bubble-marker').text()).toBe('✓')
-    expect(row.find('.bubble-marker').attributes('title')).toBe(sendMarker(state)!.title)
-    expect(row.find('.bubble-marker').attributes('title')).toContain('did not confirm in time')
-    expect(wrapper.find('.bubble-retry').exists()).toBe(false)
+    expect(row.find('.dm-bubble__mark').text()).toBe('✓')
+    expect(row.find('.dm-bubble__mark').attributes('title')).toBe(sendMarker(state)!.title)
+    expect(row.find('.dm-bubble__mark').attributes('title')).toContain('did not confirm in time')
+    expect(wrapper.find('.dm-bubble__actions .dm-btn').exists()).toBe(false)
   })
 
   it("emits the failed message's own id, so a retry cannot land on another bubble", async () => {
@@ -1883,7 +1888,7 @@ describe('DwarfMessagePanel echoes (#309)', () => {
         echo({ id: 'e2', text: 'second', state: { phase: 'failed', error: 'nope' } })
       ]
     })
-    await wrapper.find('.bubble-retry').trigger('click')
+    await wrapper.find('.dm-bubble__actions .dm-btn').trigger('click')
     expect(wrapper.emitted('send-again')).toEqual([['e2']])
   })
 
@@ -1894,12 +1899,27 @@ describe('DwarfMessagePanel echoes (#309)', () => {
       dwarf: defaultDwarf({ textDelivery: undefined }),
       echoes: [echo({ state: { phase: 'failed', error: 'nope' } })]
     })
-    expect(wrapper.find('.bubble-retry').exists()).toBe(false)
+    expect(wrapper.find('.dm-bubble__actions .dm-btn').exists()).toBe(false)
   })
 
-  it('draws no marker at all against a row read off the transcript', () => {
+  /*
+   * AMENDED for #635 (was: 'draws no marker at all against a row read off the transcript'). The
+   * redesign marks the person's words in the transcript too, by the history's own reading of the
+   * record (historyMarks, PANEL-QUESTIONS 16): a prompt the transcript holds was handed to the
+   * session, so it is at least ✓, and ✓✓ only once the session was seen acting after it. HELD's
+   * prompt is followed by the dwarf's reply, and the reply itself carries no mark.
+   */
+  it('marks a transcript prompt by the record, and the dwarf’s own words not at all', () => {
     const wrapper = panel()
-    expect(wrapper.find('.bubble-marker').exists()).toBe(false)
+    const marks = wrapper.findAll('.dm-bubble__mark')
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.attributes('data-mark')).toBe('reacted')
+    expect(wrapper.findAll('.dm-bubble')[1]!.find('.dm-bubble__mark').exists()).toBe(false)
+  })
+
+  it('marks a prompt nothing has answered yet as handed over, never as reacted', () => {
+    const wrapper = panel({ feed: heldFeed([HELD[0]!]) })
+    expect(wrapper.find('.dm-bubble__mark').attributes('data-mark')).toBe('delivered')
   })
 
   it('never folds an echo into a run of tool calls, because it is not the agent working', () => {
@@ -1913,7 +1933,7 @@ describe('DwarfMessagePanel echoes (#309)', () => {
       ]),
       echoes: [echo()]
     })
-    expect(wrapper.find('.message.is-user .bubble').text()).toBe('dig deeper')
+    expect(wrapper.find('.dm-bubble--user .dm-bubble__text').text()).toBe('dig deeper')
   })
 })
 
@@ -1930,7 +1950,7 @@ describe('DwarfMessagePanel echo scroll (#309)', () => {
   function growingScrollHeight(list: Element, perMessage = 40): void {
     Object.defineProperty(list, 'scrollHeight', {
       configurable: true,
-      get: () => list.querySelectorAll('.message').length * perMessage
+      get: () => list.querySelectorAll('.dm-bubble').length * perMessage
     })
   }
 
@@ -1944,7 +1964,7 @@ describe('DwarfMessagePanel echo scroll (#309)', () => {
 
   it('goes to a new echo even for a reader who had scrolled away, because they wrote it', async () => {
     const wrapper = panel({ echoes: [] })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
@@ -1952,14 +1972,15 @@ describe('DwarfMessagePanel echo scroll (#309)', () => {
 
     await wrapper.setProps({ echoes: [echo('e1', { phase: 'sending' })] })
     await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    // AMENDED for #635: the scroll lands one frame after the row, as the design's panel does it.
+    await nextFrame()
 
     expect(list.scrollTop).toBe(120) // 3 rows * 40, the new bottom.
   })
 
   it('leaves the list exactly where it was when only a tick changed', async () => {
     const wrapper = panel({ echoes: [echo('e1', { phase: 'sending' })] })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
@@ -1997,10 +2018,10 @@ describe('DwarfMessagePanel markdown (#347)', () => {
 
   it("renders an agent's Markdown as real elements, not as delimiters", () => {
     const wrapper = withReply(REPLY)
-    expect(wrapper.find('.bubble strong').text()).toBe('Done')
-    expect(wrapper.findAll('.bubble ul > li')).toHaveLength(2)
-    expect(wrapper.find('.bubble code').text()).toBe('pnpm test')
-    expect(wrapper.find('.bubble').text()).not.toContain('**')
+    expect(wrapper.find('.dm-bubble__text strong').text()).toBe('Done')
+    expect(wrapper.findAll('.dm-bubble__text ul > li')).toHaveLength(2)
+    expect(wrapper.find('.dm-bubble__text code').text()).toBe('pnpm test')
+    expect(wrapper.find('.dm-bubble__text').text()).not.toContain('**')
   })
 
   /*
@@ -2008,9 +2029,9 @@ describe('DwarfMessagePanel markdown (#347)', () => {
    * open, and half a panel that renders formatting is worse than either whole.
    */
   it("renders the person's own transcript rows the same way", () => {
-    expect(withReply('**Done**', 'user').find('.message.is-user .bubble strong').text()).toBe(
-      'Done'
-    )
+    expect(
+      withReply('**Done**', 'user').find('.dm-bubble--user .dm-bubble__text strong').text()
+    ).toBe('Done')
   })
 
   it('renders an echo the same way, so a message does not change on delivery', () => {
@@ -2024,11 +2045,11 @@ describe('DwarfMessagePanel markdown (#347)', () => {
         }
       ]
     })
-    expect(wrapper.findAll('.message').at(-1)!.find('.bubble strong').text()).toBe('now')
+    expect(wrapper.findAll('.dm-bubble').at(-1)!.find('.dm-bubble__text strong').text()).toBe('now')
   })
 
   it('leaves plain text exactly as it was, line breaks included', () => {
-    expect(withReply('Found the seam.\nTwo lines.').find('.bubble').text()).toBe(
+    expect(withReply('Found the seam.\nTwo lines.').find('.dm-bubble__text').text()).toBe(
       'Found the seam.\nTwo lines.'
     )
   })
@@ -2050,8 +2071,8 @@ describe('DwarfMessagePanel markdown (#347)', () => {
         }
       ])
     })
-    await wrapper.find('.activity-disclosure').trigger('click')
-    const line = wrapper.find('.activity-line')
+    await wrapper.find('.dm-activity__toggle').trigger('click')
+    const line = wrapper.find('.dm-activity__list li')
     expect(line.text()).toBe('Edited src/_internal_/index.ts')
     expect(line.find('em').exists()).toBe(false)
   })
@@ -2062,7 +2083,7 @@ describe('DwarfMessagePanel markdown (#347)', () => {
    */
   it("reports a pressed link's address and opens nothing itself", async () => {
     const wrapper = withReply('see [the issue](https://example.test/347)')
-    await wrapper.find('.bubble .markdown-link').trigger('click')
+    await wrapper.find('.dm-bubble__text .markdown-link').trigger('click')
     expect(wrapper.emitted('open-link')).toEqual([['https://example.test/347']])
   })
 })
@@ -2096,7 +2117,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
   function growingScrollHeight(list: Element, perMessage = 40): void {
     Object.defineProperty(list, 'scrollHeight', {
       configurable: true,
-      get: () => list.querySelectorAll('.message').length * perMessage
+      get: () => list.querySelectorAll('.dm-bubble').length * perMessage
     })
   }
 
@@ -2109,7 +2130,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
       dwarf: defaultDwarf(),
       feed: { readable: true, messages: OBSERVED }
     })
-    const list = wrapper.find('.panel-conversation').element
+    const list = wrapper.find('.dm-msg__log').element
     growingScrollHeight(list)
     fixedClientHeight(list, 30)
     await wrapper.vm.$nextTick()
@@ -2120,7 +2141,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
     const { wrapper, list } = await observedPanel()
 
     list.scrollTop = 0
-    await wrapper.find('.panel-conversation').trigger('scroll')
+    await wrapper.find('.dm-msg__log').trigger('scroll')
 
     expect(wrapper.emitted('page-back')).toHaveLength(1)
   })
@@ -2129,7 +2150,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
     const { wrapper, list } = await observedPanel()
 
     list.scrollTop = TOP_OF_LIST_TOLERANCE_PX
-    await wrapper.find('.panel-conversation').trigger('scroll')
+    await wrapper.find('.dm-msg__log').trigger('scroll')
 
     expect(wrapper.emitted('page-back')).toHaveLength(1)
   })
@@ -2138,7 +2159,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
     const { wrapper, list } = await observedPanel()
 
     list.scrollTop = 40
-    await wrapper.find('.panel-conversation').trigger('scroll')
+    await wrapper.find('.dm-msg__log').trigger('scroll')
 
     expect(wrapper.emitted('page-back')).toBeUndefined()
   })
@@ -2177,7 +2198,9 @@ describe('DwarfMessagePanel paging (#364)', () => {
     // The panel's one note row already says what the messages ARE; where the
     // conversation begins is the same kind of statement about the same rows, so
     // it is prefixed the way an ended session's is rather than replacing it.
-    expect(wrapper.find('.panel-note').text()).toBe(`${CONVERSATION_START_NOTE} ${OBSERVED_NOTE}`)
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toBe(
+      `${CONVERSATION_START_NOTE} ${OBSERVED_NOTE}`
+    )
   })
 
   it('says only its own note when nothing has been asked for', () => {
@@ -2185,7 +2208,7 @@ describe('DwarfMessagePanel paging (#364)', () => {
       dwarf: defaultDwarf(),
       feed: { readable: true, messages: OBSERVED }
     })
-    expect(wrapper.find('.panel-note').text()).toBe(OBSERVED_NOTE)
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toBe(OBSERVED_NOTE)
   })
 
   it('carries the whole sentence into the list’s own label, for a reader who cannot see it', () => {
@@ -2194,7 +2217,16 @@ describe('DwarfMessagePanel paging (#364)', () => {
       feed: { readable: true, messages: OBSERVED },
       pagingNote: READING_OLDER_NOTE
     })
-    expect(wrapper.find('.panel-conversation').attributes('aria-label')).toBe(
+    // AMENDED for #635 (was: the list's own aria-label): the log is named "Conversation with
+    // <name>" as the design names it, and the whole sentence is its title — its accessible
+    // description — and the note line it draws while paging.
+    expect(wrapper.find('.dm-msg__log').attributes('aria-label')).toBe(
+      'Conversation with Sample Worker'
+    )
+    expect(wrapper.find('.dm-msg__log').attributes('title')).toBe(
+      `${READING_OLDER_NOTE} ${OBSERVED_NOTE}`
+    )
+    expect(wrapper.find('.dm-msg__log .dm-msg__note').text()).toBe(
       `${READING_OLDER_NOTE} ${OBSERVED_NOTE}`
     )
   })
@@ -2282,7 +2314,7 @@ describe('DwarfMessagePanel attachments (#408)', () => {
       const event = new Event(type, { bubbles: true, cancelable: true })
       Object.defineProperty(event, 'dataTransfer', { value: dropEvent(['red.png']).dataTransfer })
 
-      wrapper.find('.panel-composer').element.dispatchEvent(event)
+      wrapper.find('.dm-composer').element.dispatchEvent(event)
       await flushPromises()
       expect(event.defaultPrevented).toBe(true)
     }
@@ -2292,60 +2324,60 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     const api = fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
 
     expect(api.describeDwarfAttachments).toHaveBeenCalledWith([SHOT.path])
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(1)
-    expect(wrapper.find('.composer-chip').text()).toContain('red.png')
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(1)
+    expect(wrapper.find('.dm-composer__files .dm-composer__file').text()).toContain('red.png')
   })
 
   it('adds the same way through the picker, which is the point of one model', async () => {
     const api = fakeApi([[{ path: NOTES.path, attachment: NOTES }]], [NOTES.path])
     const wrapper = attachPanel()
 
-    await wrapper.find('.control-attach').trigger('click')
+    await wrapper.find('.dm-composer__attach').trigger('click')
     await flushPromises()
 
     expect(api.chooseDwarfAttachments).toHaveBeenCalled()
     expect(api.describeDwarfAttachments).toHaveBeenCalledWith([NOTES.path])
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(1)
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(1)
   })
 
-  it('draws an image chip from a preview main rendered, never from a path', async () => {
-    fakeApi([[{ path: SHOT.path, attachment: SHOT, thumbnail: 'data:image/png;base64,AAA' }]])
-    const wrapper = attachPanel()
-
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
-    await flushPromises()
-
-    const src = wrapper.find('.chip-thumb').attributes('src')
-    expect(src).toBe('data:image/png;base64,AAA')
-    expect(src).not.toContain('file://')
-  })
-
-  it('draws a glyph rather than a preview for a file that is not an image', async () => {
+  /*
+   * REMOVED for #635, stated rather than passing unseen: 'draws an image chip from a preview main
+   * rendered, never from a path' and 'draws a glyph rather than a preview for a file that is not
+   * an image'. The redesign draws an attached file as a pill with the attach icon and its name,
+   * for every kind of file alike (components.md, Composer, As built), so no preview is drawn and
+   * none is loaded from anywhere; the guarantee that nothing is read off the disk holds by there
+   * being no image at all.
+   *
+   * APPENDED in their place: the pill itself.
+   */
+  it('draws a dropped file as the design’s pill: the attach icon and its name', async () => {
     fakeApi([[{ path: NOTES.path, attachment: NOTES }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['notes.txt']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['notes.txt']))
     await flushPromises()
 
-    expect(wrapper.find('.chip-thumb').exists()).toBe(false)
-    expect(wrapper.find('.chip-glyph').exists()).toBe(true)
+    const pill = wrapper.find('.dm-composer__files .dm-composer__file')
+    expect(pill.text()).toContain(NOTES.name)
+    expect(pill.find('img').exists()).toBe(false)
+    expect(pill.find('button').attributes('aria-label')).toBe(`Remove ${NOTES.name}`)
   })
 
   it('removes a chip when its remove control is pressed, and sends without it', async () => {
     fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
-    await wrapper.find('.chip-remove').trigger('click')
+    await wrapper.find('.dm-composer__file button').trigger('click')
 
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
-    await wrapper.find('.panel-input').setValue('just words')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
+    await wrapper.find('.dm-composer textarea').setValue('just words')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toEqual([[{ text: 'just words', pressEnter: true }]])
   })
 
@@ -2353,10 +2385,10 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
-    await wrapper.find('.panel-input').setValue('look at this')
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').setValue('look at this')
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
 
     expect(wrapper.emitted('send')).toEqual([
       [{ text: 'look at this', pressEnter: true, attachments: [SHOT] }]
@@ -2367,9 +2399,9 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     fakeApi([[{ path: SHOT.path, attachment: SHOT }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
 
     expect(wrapper.emitted('send')).toEqual([[{ text: '', pressEnter: true, attachments: [SHOT] }]])
   })
@@ -2377,7 +2409,7 @@ describe('DwarfMessagePanel attachments (#408)', () => {
   it('still sends nothing when there are neither words nor files', async () => {
     fakeApi()
     const wrapper = attachPanel()
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeUndefined()
   })
 
@@ -2388,23 +2420,25 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     fakeApi([[{ path: SHOT.path, attachment: SHOT, thumbnail: 'data:image/png;base64,AAA' }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(1)
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(1)
 
-    await wrapper.find('.panel-input').trigger('keydown', { key: 'Enter' })
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
   })
 
   it('names the limit that refused a file, in the alert row', async () => {
     fakeApi([[{ path: 'C:\\work\\src', refusal: 'directory' }]])
     const wrapper = attachPanel()
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['src']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['src']))
     await flushPromises()
 
-    expect(wrapper.find('.panel-alert').text()).toBe(refusalSentence('directory', 'src'))
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(
+      refusalSentence('directory', 'src')
+    )
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
   })
 
   it('disables the control with its reason on a channel that carries text only', () => {
@@ -2412,7 +2446,7 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
     })
-    const control = wrapper.find('.control-attach')
+    const control = wrapper.find('.dm-composer__attach')
     expect(control.attributes('disabled')).toBeDefined()
     expect(control.attributes('title')).toBe(NO_ATTACH_CHANNEL_HINT)
   })
@@ -2423,21 +2457,21 @@ describe('DwarfMessagePanel attachments (#408)', () => {
       dwarf: defaultDwarf({ textDelivery: 'claude-relay', capabilities: CANNOT_ATTACH })
     })
 
-    await wrapper.find('.panel-composer').trigger('drop', dropEvent(['red.png']))
+    await wrapper.find('.dm-composer').trigger('drop', dropEvent(['red.png']))
     await flushPromises()
 
     expect(api.describeDwarfAttachments).not.toHaveBeenCalled()
-    expect(wrapper.find('.panel-alert').text()).toBe(NO_ATTACH_CHANNEL_HINT)
-    expect(wrapper.findAll('.composer-chip')).toHaveLength(0)
+    expect(wrapper.find('.dm-composer__hint[role="alert"]').text()).toBe(NO_ATTACH_CHANNEL_HINT)
+    expect(wrapper.findAll('.dm-composer__files .dm-composer__file')).toHaveLength(0)
   })
 
   it('marks the composer while a drag is over it, and unmarks it on leave', async () => {
     fakeApi()
     const wrapper = attachPanel()
-    await wrapper.find('.panel-composer').trigger('dragover')
-    expect(wrapper.find('.panel-composer').classes()).toContain('is-dragging')
-    await wrapper.find('.panel-composer').trigger('dragleave')
-    expect(wrapper.find('.panel-composer').classes()).not.toContain('is-dragging')
+    await wrapper.find('.dm-composer').trigger('dragover')
+    expect(wrapper.find('.dm-composer').classes()).toContain('is-dragging')
+    await wrapper.find('.dm-composer').trigger('dragleave')
+    expect(wrapper.find('.dm-composer').classes()).not.toContain('is-dragging')
   })
 
   it('shows what a sent message carried, as chips with no remove control', () => {
@@ -2450,20 +2484,20 @@ describe('DwarfMessagePanel attachments (#408)', () => {
     }
     const wrapper = attachPanel({ echoes: [echo], echoAttachments: { 'echo-1': [SHOT] } })
 
-    expect(wrapper.findAll('.bubble-attachment')).toHaveLength(1)
-    expect(wrapper.find('.bubble-attachment').text()).toContain('red.png')
-    expect(wrapper.find('.bubble-attachment .chip-remove').exists()).toBe(false)
+    expect(wrapper.findAll('.dm-msg__files .dm-composer__file')).toHaveLength(1)
+    expect(wrapper.find('.dm-msg__files .dm-composer__file').text()).toContain('red.png')
+    expect(wrapper.find('.dm-msg__files .dm-composer__file button').exists()).toBe(false)
   })
 
   it('puts the caret back in the composer after a pick, so #409 still holds', async () => {
     // The OS dialog takes the focus away; the person's next act is typing.
     fakeApi([[{ path: SHOT.path, attachment: SHOT }]], [SHOT.path])
     const wrapper = attachPanel()
-    const input = wrapper.find('.panel-input').element as HTMLTextAreaElement
+    const input = wrapper.find('.dm-composer textarea').element as HTMLTextAreaElement
     const focus = vi.fn()
     input.focus = focus
 
-    await wrapper.find('.control-attach').trigger('click')
+    await wrapper.find('.dm-composer__attach').trigger('click')
     await flushPromises()
     expect(focus).toHaveBeenCalled()
   })
@@ -2498,22 +2532,28 @@ describe('DwarfMessagePanel on a resumed Codex thread (#450)', () => {
 
   it('leaves the composer live, with no refusal row to explain', () => {
     const wrapper = resumed()
-    expect(wrapper.find('.panel-input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.panel-refusal').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer textarea').attributes('disabled')).toBeUndefined()
+    // AMENDED for #635 (was: no `.panel-refusal` row): the hint is the keyboard's own.
+    expect(wrapper.find('.dm-composer__hint').text()).toBe(COMPOSER_HINT_TEXT)
   })
 
   it('names what the message will actually do, on the box itself', () => {
-    expect(resumed().find('.panel-input').attributes('title')).toContain('next turn')
+    expect(resumed().find('.dm-composer .dm-field').attributes('title')).toContain('next turn')
   })
 })
 /* --- end of the #450 block --------------------------------------------------- */
 
 /* --- Turn outcome (#510) — one block, appended ---------------------------- */
 describe('DwarfMessagePanel turn outcome (#510)', () => {
-  it('says nothing when the dwarf carries no last turn', () => {
+  /*
+   * AMENDED for #635 (was: 'says nothing when the dwarf carries no last turn'). The redesign draws
+   * the outcome line in every state, with its status square (screens/message.md, As built); with
+   * no turn to speak of it says the state word the prototype prints, and still invents no turn.
+   */
+  it('says only the state word when the dwarf carries no last turn', () => {
     const wrapper = panel({ dwarf: defaultDwarf({ lastTurn: undefined }) })
-    expect(wrapper.find('.panel-turn-outcome').exists()).toBe(false)
-    expect(wrapper.find('.panel-turn-outcome-trimmed').exists()).toBe(false)
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Working')
+    expect(wrapper.find('.dm-msg__outcome').text()).not.toContain('Last turn')
   })
 
   it('says a concluded turn ended and carries its own words', () => {
@@ -2522,10 +2562,10 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
       })
     })
-    const line = wrapper.find('.panel-turn-outcome')
+    const line = wrapper.find('.dm-msg__outcome')
     expect(line.text()).toContain('Last turn concluded')
     expect(line.text()).toContain('Found the seam.')
-    expect(wrapper.find('.panel-turn-outcome-trimmed').exists()).toBe(false)
+    expect(line.text()).not.toContain('(trimmed)')
   })
 
   it('says the wire itself trimmed a concluded turn, only when it did', () => {
@@ -2539,7 +2579,8 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         }
       })
     })
-    expect(wrapper.find('.panel-turn-outcome-trimmed').text()).toBe('(trimmed)')
+    // AMENDED for #635 (was: a row of its own under the line): at the end of the line itself.
+    expect(wrapper.find('.dm-msg__outcome').text()).toMatch(/\(trimmed\)$/)
   })
 
   it('says a capped turn stopped at a limit, naming the provider’s own word, and shows no text', () => {
@@ -2555,7 +2596,7 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         }
       })
     })
-    const line = wrapper.find('.panel-turn-outcome')
+    const line = wrapper.find('.dm-msg__outcome')
     expect(line.text()).toBe('Last turn stopped at a limit (error_max_turns)')
     expect(line.text()).not.toContain('should never be drawn')
   })
@@ -2570,7 +2611,7 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         }
       })
     })
-    expect(wrapper.find('.panel-turn-outcome').text()).toBe(
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe(
       'Last turn failed (error_during_execution)'
     )
   })
@@ -2581,7 +2622,7 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         lastTurn: { kind: 'interrupted', detail: 'CANCELED', endedAt: 1_700_000_000_000 }
       })
     })
-    expect(wrapper.find('.panel-turn-outcome').text()).toBe('Last turn was interrupted (CANCELED)')
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Last turn was interrupted (CANCELED)')
   })
 
   it('never claims a delivery or a reaction — only how the turn itself ended', () => {
@@ -2593,7 +2634,7 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
       })
     })
-    const line = wrapper.find('.panel-turn-outcome').text()
+    const line = wrapper.find('.dm-msg__outcome').text()
     expect(line).not.toContain('delivered')
     expect(line).not.toContain('reacted')
     expect(line).not.toContain('Handed over')
@@ -2605,8 +2646,8 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
         lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
       })
     })
-    expect(wrapper.find('.panel-composer').exists()).toBe(true)
-    expect(wrapper.find('.panel-input').exists()).toBe(true)
+    expect(wrapper.find('.dm-composer').exists()).toBe(true)
+    expect(wrapper.find('.dm-composer textarea').exists()).toBe(true)
   })
 })
 /* --- end of the #510 block --------------------------------------------------- */
@@ -2627,32 +2668,22 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
  * either. `lib/message/entryArrival`'s `tailArrivals` is the one fact this
  * relies on to tell a genuine arrival apart from both.
  */
+/*
+ * AMENDED for #635 throughout this block (was: every row a `motion.article` under an
+ * `AnimatePresence`, entering with presence.ts's fadeVariants). The redesign's bubble enters
+ * with its own `.dm-bubble.is-new` pop-in (motion.md, dm-pop-in), a CSS animation of transform
+ * and opacity; the rule the block pins is unchanged — a genuine arrival animates, and neither an
+ * ordinary mount nor a page paged in ahead of the reader does. REMOVED with the motion
+ * components, stated rather than passing unseen: 'wraps the conversation in AnimatePresence,
+ * skipping the initial mount stagger' and 'carries the shared fadeVariants on every message row'.
+ */
 describe('DwarfMessagePanel list motion (#566 T4b)', () => {
-  function messageRows(wrapper: ReturnType<typeof panel>) {
-    return wrapper.findAllComponents(motion.article)
-  }
-
-  it('wraps the conversation in AnimatePresence, skipping the initial mount stagger', () => {
-    const wrapper = panel()
-    const presence = wrapper.findComponent(AnimatePresence)
-    expect(presence.exists()).toBe(true)
-    expect(presence.props('initial')).toBe(false)
-  })
-
-  it('carries the shared fadeVariants on every message row, not a literal of its own', () => {
-    const rows = messageRows(panel())
-    expect(rows.length).toBeGreaterThan(0)
-    for (const row of rows) {
-      expect(row.props('animate')).toEqual(fadeVariants.animate)
-      expect(row.props('exit')).toEqual(fadeVariants.exit)
-    }
-  })
+  const isNew = (wrapper: ReturnType<typeof panel>) =>
+    wrapper.findAll('.dm-bubble').map((row) => row.classes().includes('is-new'))
 
   it('does not animate any row on an ordinary mount — an already-open conversation', () => {
     // HELD carries two rows.
-    for (const row of messageRows(panel())) {
-      expect(row.props('initial')).toBe(false)
-    }
+    expect(isNew(panel())).toEqual([false, false])
   })
 
   it('animates a message that arrives after mount, and leaves the rows already on screen alone', async () => {
@@ -2660,12 +2691,10 @@ describe('DwarfMessagePanel list motion (#566 T4b)', () => {
     await wrapper.setProps({
       feed: heldFeed([...HELD, { role: 'assistant', text: 'Seam exhausted.', timestamp: 't2' }])
     })
-    const rows = messageRows(wrapper)
+    const rows = wrapper.findAll('.dm-bubble')
     expect(rows).toHaveLength(3)
     expect(rows.at(-1)!.text()).toContain('Seam exhausted.')
-    expect(rows.at(-1)!.props('initial')).toEqual(fadeVariants.initial)
-    expect(rows[0]!.props('initial')).toBe(false)
-    expect(rows[1]!.props('initial')).toBe(false)
+    expect(isNew(wrapper)).toEqual([false, false, true])
   })
 
   it('does not animate an older page paged in ahead of the reader (#430)', async () => {
@@ -2681,11 +2710,7 @@ describe('DwarfMessagePanel list motion (#566 T4b)', () => {
 
     await wrapper.setProps({ feed: { readable: true, messages: [...OLDER, ...OBSERVED] } })
 
-    const rows = messageRows(wrapper)
-    expect(rows).toHaveLength(4)
-    for (const row of rows) {
-      expect(row.props('initial')).toBe(false)
-    }
+    expect(isNew(wrapper)).toEqual([false, false, false, false])
   })
 })
 
@@ -2708,7 +2733,7 @@ describe('DwarfMessagePanel echo exit (#566 T4b)', () => {
     const wrapper = panel({
       echoes: [{ id: 'e1', text: 'dig deeper', sentAt: 0, state: { phase: 'sending' } }]
     })
-    expect(wrapper.findAll('.message')).toHaveLength(3) // HELD (2) + the echo.
+    expect(wrapper.findAll('.dm-bubble')).toHaveLength(3) // HELD (2) + the echo.
 
     await wrapper.setProps({
       feed: heldFeed([
@@ -2718,113 +2743,78 @@ describe('DwarfMessagePanel echo exit (#566 T4b)', () => {
       echoes: []
     })
 
-    const rows = wrapper.findAll('.message')
+    const rows = wrapper.findAll('.dm-bubble')
     expect(rows).toHaveLength(3)
-    expect(rows.at(-1)!.find('.bubble').text()).toBe('dig deeper')
-    // No echo left to carry a tick — this row came off the transcript.
-    expect(rows.at(-1)!.find('.bubble-marker').exists()).toBe(false)
+    expect(rows.at(-1)!.find('.dm-bubble__text').text()).toBe('dig deeper')
+    // No echo left to carry its own verdict — this row came off the transcript, and wears the
+    // record's mark: handed over, nothing seen acting after it yet. AMENDED for #635 (was: no
+    // mark at all, before the transcript's own prompts were marked).
+    expect(rows.at(-1)!.find('.dm-bubble__mark').attributes('data-mark')).toBe('delivered')
   })
 })
 
 /*
- * ADDED for #566 T4: the panel chrome answers a pointer through the shared
- * vocabulary - the header row and the composer's control column, the controls
- * that are on screen for every dwarf.
- *
- * Not the transcript's own buttons (the activity disclosure, an openable path,
- * Send again, the jump to the terminal, an attachment chip's remove): each is a
- * conditional row needing its own fixture, and they are left for a follow-up
- * rather than changed here untested.
+ * AMENDED for #635 (was: 'DwarfMessagePanel press and hover feedback' and 'DwarfMessagePanel
+ * withholds the gesture from a disabled control', four cases over the old chrome's
+ * `motion.button`s — the name, the history tab, the close, attach, kick and boost). The chrome is
+ * the kit's own button now (ActionButton), whose press and hover are its stylesheet's, disabled
+ * included (`atoms/button`, ActionButton.test.ts). What stays the panel's is that every tool is a
+ * real button named for what it does, and that a control that refuses says why. The history tab,
+ * the kick and Boost are gone from the chrome (see the shape block above).
  */
-describe('DwarfMessagePanel press and hover feedback', () => {
-  const CHROME = [
-    'panel-agent',
-    'panel-history',
-    'panel-close',
-    'control-attach',
-    'control-kick',
-    'control-boost'
-  ]
-
-  /*
-   * AMENDED for the #566 T4 follow-up (was: every control carries the shared
-   * variants, unconditionally). That form asserted the defect: Attach, Kick and
-   * Boost are all disabled in this mount, and a disabled control carrying the
-   * gesture grows under a cursor that cannot press it. The rule is now stated
-   * as the rule - a control carries the gesture exactly while it is live - so
-   * this one case covers both halves and needs no revisiting when a fixture
-   * changes which controls are live.
-   */
-  it('routes every chrome control through motion.button, carrying the shared variants while it is live', () => {
+describe('DwarfMessagePanel chrome controls', () => {
+  it('draws every tool as a real button, named for what it does', async () => {
     const wrapper = panel()
-
-    const controls = wrapper.findAllComponents(motion.button)
-    expect(controls.map((control) => control.classes()[0])).toEqual(CHROME)
-    for (const control of controls) {
-      const live = control.attributes('disabled') === undefined
-      expect(control.props('whileHover')).toEqual(live ? pressHoverVariants.whileHover : undefined)
-      expect(control.props('whilePress')).toEqual(live ? pressHoverVariants.whilePress : undefined)
+    for (const tool of wrapper.findAll('.dm-msg__tools button')) {
+      expect(tool.attributes('type')).toBe('button')
+      expect(tool.attributes('aria-label')).toBe(tool.attributes('title'))
     }
-    // Both halves are actually exercised here, rather than the loop passing
-    // because every control happened to land on one side of the branch.
-    expect(controls.some((control) => control.attributes('disabled') === undefined)).toBe(true)
-    expect(controls.some((control) => control.attributes('disabled') !== undefined)).toBe(true)
-  })
-
-  it('leaves every chrome control a button with the name, state and press it had', async () => {
-    const wrapper = panel()
-
-    for (const control of CHROME) {
-      const button = wrapper.get(`.${control}`)
-      expect(button.element.tagName).toBe('BUTTON')
-      expect(button.attributes('type')).toBe('button')
-    }
-
-    expect(wrapper.get('.panel-history').attributes('aria-label')).toBe('Expand message history')
-    expect(wrapper.get('.panel-close').attributes('aria-label')).toBe('Close messages')
-    // Boost is drawn and refuses on purpose (no provider can change a running
-    // session's effort) - the gesture must not have talked it into being live.
-    expect(wrapper.get('.control-boost').attributes('disabled')).toBeDefined()
-
-    await wrapper.get('.panel-close').trigger('click')
+    await wrapper.get('.dm-msg__close').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
-
-    await wrapper.get('.panel-agent').trigger('click')
-    expect(wrapper.emitted('open-console')).toHaveLength(1)
-  })
-})
-
-/*
- * ADDED for the #566 T4 follow-up: the composer's controls come and go with the
- * channel, and Boost is disabled for good. A control that refuses a press must
- * not answer a hover either - the same line this panel's own CSS already drew
- * with `:hover:not(:disabled)` long before the gesture arrived.
- */
-describe('DwarfMessagePanel withholds the gesture from a disabled control', () => {
-  it('gives Boost no press or hover, since no provider can ever answer it', () => {
-    const boost = panel()
-      .findAllComponents(motion.button)
-      .find((control) => control.classes().includes('control-boost'))!
-
-    expect(boost.attributes('disabled')).toBeDefined()
-    expect(boost.props('whileHover')).toBeUndefined()
-    expect(boost.props('whilePress')).toBeUndefined()
   })
 
   // A dwarf whose provider declares no `attach` capability, which is every
   // dwarf the fixtures build and most dwarfs in the wild.
-  it('gives Attach no press or hover on a channel that carries no file', () => {
-    const wrapper = panel()
-    const attach = wrapper
-      .findAllComponents(motion.button)
-      .find((control) => control.classes().includes('control-attach'))!
-
+  it('disables Attach on a channel that carries no file, and says why on its title', () => {
+    const attach = panel().get('.dm-composer__attach')
     expect(attach.attributes('disabled')).toBeDefined()
-    expect(attach.props('whileHover')).toBeUndefined()
-    expect(attach.props('whilePress')).toBeUndefined()
-    // And the reason is still on the hover line, which is why no CSS
-    // `pointer-events: none` may stand in for this: it would take the title
-    // with it, leaving a dead control that no longer says why.
+    // The reason is on the hover line, which is why no CSS `pointer-events: none` may stand in
+    // for the disabled state: it would take the title with it.
     expect(attach.attributes('title')).toBeTruthy()
+  })
+})
+
+/*
+ * APPENDED (#635, the MessagePanel slice): one draft per dwarf (decision log, Drafts per dwarf).
+ * The panel is mounted per dwarf, so the half-written message is held by its host: the panel
+ * opens on the draft it is handed, reports every change to it, and a send empties it.
+ */
+describe('DwarfMessagePanel keeps its draft with its host', () => {
+  it('opens with the draft it is handed in the composer', () => {
+    const wrapper = panel({ draft: 'half a thought' })
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('half a thought')
+  })
+
+  it('reports each change to the draft', async () => {
+    const wrapper = panel()
+    await wrapper.find('textarea').setValue('dig')
+    expect(wrapper.emitted('draft')?.at(-1)).toEqual(['dig'])
+  })
+})
+
+// APPENDED for #635, from a live run of the Add panel: the composer's Enter follows the same rule.
+describe('DwarfMessagePanel input under an input method', () => {
+  it('sends nothing on an Enter the input method is still composing with', async () => {
+    const wrapper = panel()
+    await wrapper.find('.dm-composer textarea').setValue('掘る')
+
+    await wrapper
+      .find('.dm-composer textarea')
+      .trigger('keydown', { key: 'Enter', isComposing: true })
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter', keyCode: 229 })
+    expect(wrapper.emitted('send')).toBeUndefined()
+
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toEqual([[{ text: '掘る', pressEnter: true }]])
   })
 })

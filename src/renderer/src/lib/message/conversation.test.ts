@@ -12,7 +12,8 @@ import {
   conversationEnded,
   conversationOf,
   feedMessagesOf,
-  latestText
+  latestText,
+  panelMessagesOf
 } from './conversation'
 
 const HELD = [
@@ -379,5 +380,25 @@ describe('feedMessagesOf', () => {
         )
       )
     }
+  })
+})
+
+/*
+ * APPENDED (#635, the MessagePanel slice): the redesigned bubbles print their time and the log
+ * divides the days, so a row carries the wire's own stamp as a time when it is one. A stamp that
+ * is not a time — the poll's `lastMessage` has none — adds nothing, rather than a guessed moment.
+ */
+describe('panelMessagesOf, the time each row was said', () => {
+  it('carries a parseable stamp as epoch milliseconds', () => {
+    const at = '2026-09-27T09:02:00.000Z'
+    expect(panelMessagesOf([{ role: 'user', text: 'dig', timestamp: at }])[0]?.at).toBe(
+      Date.parse(at)
+    )
+  })
+
+  it('adds no time for a stamp that is not one', () => {
+    expect(panelMessagesOf([{ role: 'user', text: 'dig', timestamp: '' }])[0]).not.toHaveProperty(
+      'at'
+    )
   })
 })

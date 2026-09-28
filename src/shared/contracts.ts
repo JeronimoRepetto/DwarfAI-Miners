@@ -2916,105 +2916,12 @@ export interface DwarfKickResult {
   error?: string
 }
 
-/**
- * What the panel shows about one dwarf's most recent message: in flight, or
- * the verdict, kept just long enough to be read.
- *
- * 'delivered' and 'reacted' are two different facts, and the panel must never
- * blur them (issue #21): delivered means the text reached the session's queue,
- * reacted means the session was then SEEN acting on it. A delivery that is
- * never observed reacting stays 'delivered' — it never promotes on a guess.
- *
- * On the wire since #162, having been a renderer-local type until then. The
- * send happens in the message-panel WINDOW and the marker is drawn on the
- * dwarf's sprite in the SHELL window, so this verdict now crosses a process
- * boundary — see DwarfDeliveryReport, which is the one direction it travels.
+/*
+ * MOVED to renderer/src/types.ts for #635, stated rather than passing unseen: DwarfSendState,
+ * DwarfKickState, DwarfDeliveryReport and FailedSend. They crossed the bridge only because the send and the kick
+ * happened in the message panel's own window and the markers were drawn in the shell's (#162);
+ * that window is gone, and nothing in main reads any of them.
  */
-export interface DwarfSendState {
-  /**
-   * 'held' is the one phase that claims NOTHING (#457, #534). A message the
-   * panel is holding for a Codex thread or an OpenCode session whose turn is
-   * still running sits in this app's own memory: no channel has been asked
-   * anything, so 'sending' would say it is in flight and 'delivered' would
-   * say it was handed over, and both are false. It is its own phase for
-   * exactly that reason, and it is never a resting place — every held
-   * message ends as 'delivered' when its continuation fires, or as 'failed'
-   * when it cannot (the session was kicked, the wait ran out, or the
-   * continuation itself refused).
-   */
-  phase: 'sending' | 'held' | 'delivered' | 'reacted' | 'failed'
-  /** The channel the delivery used, once one was chosen. */
-  via?: string
-  /** Why it failed, shown on the marker. */
-  error?: string
-  /**
-   * True while a delivered message is still watching its dwarf's snapshots for
-   * proof the session acted. False once that bounded window closed unobserved.
-   */
-  awaitingReaction?: boolean
-  /**
-   * True on a 'delivered' state that got there because a relay courier was
-   * killed by its own timeout, not because anything confirmed the hand-over
-   * (#439) — carried straight from DwarfTextResult.unconfirmed. Read only
-   * alongside `phase === 'delivered'`, and never on 'failed': the whole point
-   * is that this is NOT the same claim as a failure, so it decays exactly like
-   * an ordinary delivered message (the reaction watch may still promote it to
-   * 'reacted') while the marker keeps showing its own honest sentence instead
-   * of the plain "watching" or "no reaction seen" copy — see
-   * renderer/lib/delivery/deliveryVerdict.ts.
-   */
-  unconfirmed?: boolean
-}
-
-/**
- * What the panel shows about one dwarf's most recent kick: in flight, or the
- * verdict. Same two-phase honesty as DwarfSendState — an interrupt handed to a
- * session is not the same as a session that stopped.
- */
-export interface DwarfKickState {
-  phase: 'kicking' | 'delivered' | 'reacted' | 'failed'
-  /** The channel the kick used, once one was chosen. */
-  via?: string
-  /** Why it failed, shown on the marker. */
-  error?: string
-  /** True while a delivered kick is still watching for proof the session stopped. */
-  awaitingReaction?: boolean
-}
-
-/**
- * Every delivery verdict the message-panel window currently holds, reported to
- * the shell so the mine can draw its markers (#162).
- *
- * One writer, one reader, one direction. The composer and the kick control
- * live in the panel window, so that window owns both stores — including the
- * reaction watch, which folds each poll's snapshot in (see the renderer's
- * `useDwarfMessaging`). The marker is drawn on the dwarf's own sprite, inside
- * the mine, which is in the shell window. So the state is published rather
- * than duplicated: the shell renders these and writes none of them, and a
- * second store there could only ever disagree with this one.
- *
- * Whole maps rather than deltas, because the stores expire their own entries
- * on timers: a delta stream would need the shell to run the same timers to
- * know when a marker should be gone, which is the duplication this avoids.
- */
-export interface DwarfDeliveryReport {
-  /** Send verdicts, keyed by dwarf id. */
-  send: Record<string, DwarfSendState>
-  /** Kick verdicts, keyed by dwarf id. */
-  kick: Record<string, DwarfKickState>
-  /**
-   * The messages this panel sent that never reached their session, per dwarf, oldest first
-   * (#635, PANEL-QUESTIONS 16): the app's own record of the send, which the mine history draws
-   * because no transcript holds them. Absent from a report that has none to give.
-   */
-  failed?: Record<string, FailedSend[]>
-}
-
-/** A message that never reached its session: its words, and when it was sent (epoch ms). */
-export interface FailedSend {
-  text: string
-  sentAt: number
-}
 
 /**
  * One provider the Add Panel may draw a chip for (#86, over detection's #91).
@@ -3877,99 +3784,15 @@ export function parseLaunchView(document: unknown): LaunchView {
 }
 /* --- end of the #635 launch view block --------------------------------------- */
 
-/**
- * Which of the message-panel window's two surfaces is open, or neither (#162).
- *
- * The two SHARE one window because they share one slot in the design: the Add
- * Panel is replaced by the MessagePanel when a launch is submitted, which is
- * one surface changing rather than two surfaces swapping. 'none' is the window
- * closed — hidden, not destroyed, so reopening costs no page load.
+/*
+ * REMOVED for #635, stated rather than passing unseen: MessagePanelSurface and its guard,
+ * MessagePanelDragPhase and its guard, RendererSurface with RENDERER_SURFACE_PARAM and
+ * MESSAGE_PANEL_SURFACE, and MessagePanelState. They described the message panel's own window
+ * (#162, #296): which surface main held for both windows, the drag on its header, and the query
+ * its page was loaded with. The panel is anchored in the shell's dock slot now (decision log,
+ * MessagePanel and Add panel anchored), so the surface is the renderer's own state
+ * (renderer/src/types.ts) and none of the rest exists.
  */
-export type MessagePanelSurface = 'none' | 'launch' | 'message'
-
-/**
- * Whether a value is one of the three surfaces this build has.
- *
- * Exists for the reason isDwarfProvider does: the preload refuses to guess
- * one. A surface collapsed to a default would be the bridge deciding what the
- * panel shows — 'none' above all, which would CLOSE a window nobody asked to
- * close — so an unrecognised value crosses as '' and main refuses the request
- * outright.
- */
-export function isMessagePanelSurface(value: unknown): value is MessagePanelSurface {
-  return value === 'none' || value === 'launch' || value === 'message'
-}
-
-/**
- * The two ends of a drag on the message panel's own header (#296).
- *
- * This is the whole of what the renderer says about moving the window: the
- * press landed on the header, and the press is over. Everything between them
- * is main's — it reads the cursor on its own clock, moves the window, clamps it
- * to the display and remembers where it ended up — which is the rule
- * `PanelLayout` already holds for the shell, applied to the one thing about
- * this window a renderer could otherwise have decided.
- *
- * There is deliberately no 'move' phase, and the reason is not economy. A
- * pointer event's own position is measured inside the window, and a window
- * that is tracking the cursor moves WITH it — so the coordinates stop changing
- * and the events stop arriving exactly when the drag is working. A renderer
- * driving each step would then stall the very gesture it was driving. The
- * position that is still true throughout is the one the OS holds, and only
- * main can ask for it.
- */
-export type MessagePanelDragPhase = 'start' | 'end'
-
-/**
- * Whether a value is one of the two phases a drag has.
- *
- * Exists for the reason `isMessagePanelSurface` does: the preload refuses to
- * guess one. A phase collapsed to a default would be the bridge deciding that
- * a window should move — 'start' above all, which would begin a drag nobody
- * asked for — so an unrecognised value crosses as '' and main refuses it.
- */
-export function isMessagePanelDragPhase(value: unknown): value is MessagePanelDragPhase {
-  return value === 'start' || value === 'end'
-}
-
-/**
- * Which of the app's two windows a renderer is running in (#162).
- *
- * One renderer ENTRY serves both. The panel window is the same page loaded
- * with the query below, and the renderer picks its root component from it —
- * one bundle, one stylesheet, one Content-Security-Policy, rather than a
- * second build target that would duplicate all three for one component.
- */
-export type RendererSurface = 'shell' | 'message-panel'
-
-/** The query parameter that names the surface (see RendererSurface). */
-export const RENDERER_SURFACE_PARAM = 'surface'
-
-/** The value main loads the message-panel window's page with. */
-export const MESSAGE_PANEL_SURFACE = 'message-panel'
-
-/**
- * What the message-panel window is showing (#162).
- *
- * Held in MAIN and written by BOTH windows, which is the whole reason it is a
- * wire type: the shell opens the panel (a dwarf was clicked, or the mine's Add
- * action was pressed) and the panel window closes itself and adopts the dwarf
- * a launch produced. Main is the single serialization point, so the last write
- * wins and both windows are told what it became — the same read-back rule
- * `PanelLayout` follows, for the same reason.
- *
- * `mineId` and `dwarfId` are '' rather than absent where they do not apply,
- * matching how every id already crosses this bridge (see the preload's own
- * collapsing): a surface of 'none' names neither, and 'launch' names only the
- * mine, because the dwarf does not exist yet.
- */
-export interface MessagePanelState {
-  surface: MessagePanelSurface
-  /** The mine the surface belongs to; '' when nothing is open. */
-  mineId: string
-  /** The dwarf a message surface is open on; '' for the other two. */
-  dwarfId: string
-}
 
 /**
  * Which build of the app is running (see #79) — the number, and which of the
@@ -5018,68 +4841,12 @@ export const IPC_CHANNELS = {
    */
   getPanelLayout: 'panel:layout:get',
   setPanelLayout: 'panel:layout:set',
-  /**
-   * The message-panel window: what it shows, what it reports, and how tall it
-   * is (#162).
-   *
-   * `setMessagePanel` answers with the REAL MessagePanelState after main
-   * applied it, for the reason the layout channels do — main creates, moves,
-   * shows and hides an actual window off the back of it. Both windows may
-   * send it: the shell opens the panel, and the panel closes itself and adopts
-   * the dwarf a launch produced. `messagePanelChanged` is how the OTHER window
-   * hears about it, so neither has to poll the state it does not own.
-   *
-   * `reportDwarfDelivery` carries the send and kick verdicts the panel window
-   * is the only writer of, so the mine in the shell window can draw its
-   * markers (see DwarfDeliveryReport). One-way: there is no verdict about a
-   * verdict.
-   *
-   * `setMessagePanelHeight` is the design's vertical-only resize reaching the
-   * window that has to carry it. The renderer measures its own surface in
-   * DESIGN pixels — the height derived from the latest message, or the one a
-   * drag left behind — and main multiplies by the same `uiScale` every other
-   * dimension goes through. One-way, and the first one also reveals the
-   * window: it is created hidden, so nobody sees it at a height nothing had
-   * measured yet.
-   *
-   * `dragMessagePanel` and `dockMessagePanel` are where that window stops being
-   * glued to the shell (#296). Both are one-way, and for a stronger reason than
-   * the height report: there is no verdict here for a renderer to draw at all.
-   * Main reads the cursor, moves the window, clamps it to the display and
-   * remembers where it ended up — the panel's position is not state the page
-   * renders, so answering with it would be inventing a copy that could
-   * disagree. `dockMessagePanel` is the way back: it forgets the position and
-   * puts the panel beside the shell again.
+  /*
+   * REMOVED for #635, stated rather than passing unseen: the message panel window's nine channels
+   * — its surface (get, set, changed), the delivery report and its relay, its height, the drag and
+   * the dock-back on its header, and the settled report its deferred hide waited on (#162, #296,
+   * #389). The panel is in the shell's own window, so none of them has two ends any more.
    */
-  getMessagePanel: 'panel:message:get',
-  setMessagePanel: 'panel:message:set',
-  messagePanelChanged: 'panel:message:changed',
-  reportDwarfDelivery: 'panel:message:delivery',
-  dwarfDeliveryReported: 'panel:message:delivery:changed',
-  setMessagePanelHeight: 'panel:message:height',
-  dragMessagePanel: 'panel:message:drag',
-  dockMessagePanel: 'panel:message:dock',
-  /**
-   * The panel window saying its surface has finished leaving (#389).
-   *
-   * The mirror image of the height report above. That one reveals a window
-   * created hidden; this one releases a hide main is holding back, so the
-   * surface can settle — lower and fade, on the shell's own 250ms — while the
-   * window it is in is still on screen. Without it main hides the window in the
-   * frame the state changed and there is nothing left to animate.
-   *
-   * One-way, and carrying nothing. Main already knows which window sent it and
-   * what surface it holds, and the renderer has no verdict to draw: the window
-   * either hid on this report or on main's own bound, and a panel that has
-   * closed is closed either way.
-   *
-   * Deliberately NOT a fourth MessagePanelSurface. A 'closing' surface would
-   * cross to the SHELL as well, which draws the selected dwarf's halo from it
-   * and would have to decide what a halo means during a close — a one-way door
-   * for a state that has nothing to say. This says the one thing main is
-   * waiting to hear and adds nothing to what either window renders.
-   */
-  reportMessagePanelSettled: 'panel:message:settled',
   /**
    * Whether the shell window is on screen at all (#174, #173).
    *

@@ -53,6 +53,12 @@ const props = defineProps<{
    * motion-v import (#566).
    */
   engine?: MotionAnimate
+  /**
+   * Vue's own sequencing, for a slot whose content is REPLACED in place (#635): the dock's window
+   * slot swapping a chat for the Add panel or the history. `out-in` lets the old content leave
+   * first, so the two never stand side by side in a row that has room for one.
+   */
+  mode?: 'out-in'
 }>()
 const emit = defineEmits<{ leave: [completion: Promise<void>] }>()
 /**
@@ -179,6 +185,7 @@ onBeforeUnmount(() => {
 <template>
   <Transition
     :css="false"
+    :mode="mode"
     @enter="enter"
     @leave="leave"
     @enter-cancelled="finish"

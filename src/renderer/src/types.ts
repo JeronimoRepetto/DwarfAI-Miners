@@ -1,7 +1,5 @@
 import type {
-  DwarfKickState,
   DwarfPermissionDecision,
-  DwarfSendState,
   MaterialTotals,
   Mine,
   ProjectSummary,
@@ -32,14 +30,11 @@ export type {
   DwarfAttendance,
   DwarfCapabilities,
   DwarfContextUsage,
-  DwarfDeliveryReport,
-  FailedSend,
   DwarfFeedPage,
   DwarfFeedPageRequest,
   DwarfFeedResult,
   DwarfKickRequest,
   DwarfKickResult,
-  DwarfKickState,
   DwarfKickVia,
   DwarfMcpServerStatus,
   DwarfObserver,
@@ -56,7 +51,6 @@ export type {
   DwarfQuestionOption,
   DwarfRole,
   DwarfSendSettledPush,
-  DwarfSendState,
   DwarfSessionTuning,
   DwarfStatus,
   DwarfTextRequest,
@@ -80,9 +74,6 @@ export type {
   MaterialTotals,
   McpConnectionStatus,
   MessageIssuer,
-  MessagePanelDragPhase,
-  MessagePanelState,
-  MessagePanelSurface,
   MetricsResetResult,
   Mine,
   MineDeclareResult,
@@ -99,7 +90,6 @@ export type {
   PanelLayout,
   PanelLayoutRequest,
   ProjectQuery,
-  RendererSurface,
   ProjectQueryResult,
   ProjectSortDirection,
   ProjectSortKey,
@@ -182,14 +172,12 @@ export {
   HELD_PERMISSION_MODES,
   MATERIALS,
   MATERIAL_TOKENS_PER_UNIT,
-  MESSAGE_PANEL_SURFACE,
   MAP_SPAWN_SITE_COUNT,
   MAX_DWARF_TEXT_CHARS,
   MINE_HISTORY_MESSAGE_LIMIT,
   MINE_TIERS,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
-  RENDERER_SURFACE_PARAM,
   TIER_WEIGHT_THRESHOLDS_KB,
   WAITING_ON_HUMAN_REASON,
   WINDOWS_COMMAND_LINE_LIMIT,
@@ -198,8 +186,6 @@ export {
   isDwarfProvider,
   isHeldPermissionMode,
   isMcpConnectionStatus,
-  isMessagePanelDragPhase,
-  isMessagePanelSurface,
   isMineTier,
   isPanelObserved,
   parseAudioPreferences,
@@ -308,17 +294,120 @@ export function defaultMinesState(): MinesState {
 }
 
 /*
- * MOVED to shared/contracts.ts for #162, stated here rather than passing
- * unseen: DwarfSendState and DwarfKickState were declared in this file, with
- * the doc comments they still carry there.
- *
- * They cross a process boundary now. The composer and the kick control live in
- * the message-panel WINDOW, which owns both stores; the marker each verdict
- * drives is drawn on the dwarf's sprite inside the mine, which is in the SHELL
- * window. So the verdicts travel — see DwarfDeliveryReport — and a wire shape
- * belongs at the one declaration point. The two store roots below stay here:
- * they are this process's own state, and nothing sends a whole store.
+ * MOVED to shared/contracts.ts for #162, and back for #635: DwarfSendState, DwarfKickState,
+ * DwarfDeliveryReport and FailedSend crossed a process boundary while the composer and the kick
+ * control lived in the message panel's own window and the markers were drawn in the shell's. That
+ * window is gone (the panel is anchored in the shell's dock slot), so they are this process's own
+ * state again.
  */
+
+/**
+ * What the panel shows about one dwarf's most recent message: in flight, or
+ * the verdict, kept just long enough to be read.
+ *
+ * 'delivered' and 'reacted' are two different facts, and the panel must never
+ * blur them (issue #21): delivered means the text reached the session's queue,
+ * reacted means the session was then SEEN acting on it. A delivery that is
+ * never observed reacting stays 'delivered' — it never promotes on a guess.
+ *
+ * The renderer's own again since #635 (on the wire for #162, while the send
+ * happened in the message panel's own window): see the note above.
+ */
+export interface DwarfSendState {
+  /**
+   * 'held' is the one phase that claims NOTHING (#457, #534). A message the
+   * panel is holding for a Codex thread or an OpenCode session whose turn is
+   * still running sits in this app's own memory: no channel has been asked
+   * anything, so 'sending' would say it is in flight and 'delivered' would
+   * say it was handed over, and both are false. It is its own phase for
+   * exactly that reason, and it is never a resting place — every held
+   * message ends as 'delivered' when its continuation fires, or as 'failed'
+   * when it cannot (the session was kicked, the wait ran out, or the
+   * continuation itself refused).
+   */
+  phase: 'sending' | 'held' | 'delivered' | 'reacted' | 'failed'
+  /** The channel the delivery used, once one was chosen. */
+  via?: string
+  /** Why it failed, shown on the marker. */
+  error?: string
+  /**
+   * True while a delivered message is still watching its dwarf's snapshots for
+   * proof the session acted. False once that bounded window closed unobserved.
+   */
+  awaitingReaction?: boolean
+  /**
+   * True on a 'delivered' state that got there because a relay courier was
+   * killed by its own timeout, not because anything confirmed the hand-over
+   * (#439) — carried straight from DwarfTextResult.unconfirmed. Read only
+   * alongside `phase === 'delivered'`, and never on 'failed': the whole point
+   * is that this is NOT the same claim as a failure, so it decays exactly like
+   * an ordinary delivered message (the reaction watch may still promote it to
+   * 'reacted') while the marker keeps showing its own honest sentence instead
+   * of the plain "watching" or "no reaction seen" copy — see
+   * renderer/lib/delivery/deliveryVerdict.ts.
+   */
+  unconfirmed?: boolean
+}
+
+/**
+ * What the panel shows about one dwarf's most recent kick: in flight, or the
+ * verdict. Same two-phase honesty as DwarfSendState — an interrupt handed to a
+ * session is not the same as a session that stopped.
+ */
+export interface DwarfKickState {
+  phase: 'kicking' | 'delivered' | 'reacted' | 'failed'
+  /** The channel the kick used, once one was chosen. */
+  via?: string
+  /** Why it failed, shown on the marker. */
+  error?: string
+  /** True while a delivered kick is still watching for proof the session stopped. */
+  awaitingReaction?: boolean
+}
+
+/** A message that never reached its session: its words, and when it was sent (epoch ms). */
+export interface FailedSend {
+  text: string
+  sentAt: number
+}
+
+/**
+ * Every delivery verdict the dock holds, as the mine draws its markers from it and the history
+ * its failed messages (#162, #635). Whole maps, because the stores expire their own entries on
+ * timers: a marker missing from them is a marker whose time is up.
+ */
+export interface DwarfDeliveryReport {
+  /** Send verdicts, keyed by dwarf id. */
+  send: Record<string, DwarfSendState>
+  /** Kick verdicts, keyed by dwarf id. */
+  kick: Record<string, DwarfKickState>
+  /**
+   * The messages the panel sent that never reached their session, per dwarf, oldest first
+   * (PANEL-QUESTIONS 16): the app's own record of the send, which the mine history draws because
+   * no transcript holds them. Absent when there is none.
+   */
+  failed?: Record<string, FailedSend[]>
+}
+
+/**
+ * What the dock's window slot is asked to hold, for the chat and the launch (#635): nothing, the
+ * Add panel on a mine, or the MessagePanel on one dwarf of a mine. The two share one slot because
+ * submitting a launch replaces the Add panel with the MessagePanel on its dwarf. Main held this
+ * for two windows until #635 (#162); it is the renderer's own now.
+ */
+export type MessagePanelSurface = 'none' | 'launch' | 'message'
+
+/**
+ * The surface, with the mine it belongs to and the dwarf a chat is open on. '' rather than absent
+ * where they do not apply: 'none' names neither, and 'launch' only the mine, because the dwarf
+ * does not exist yet.
+ */
+export interface MessagePanelState {
+  surface: MessagePanelSurface
+  /** The mine the surface belongs to; '' when nothing is open. */
+  mineId: string
+  /** The dwarf a message surface is open on; '' for the other two. */
+  dwarfId: string
+}
 
 /** Root state for the dwarf-messaging store, keyed by dwarf id. */
 export interface DwarfMessagingState {
