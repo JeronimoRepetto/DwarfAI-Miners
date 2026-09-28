@@ -39,11 +39,30 @@ function stepText(text: string): string {
     .replace(/\?$/, '')
 }
 
+/**
+ * Every character the bubble's Markdown could read as formatting, escaped with a backslash so it
+ * renders as itself (#635). The words are the agent's and the person's, and the record shows them
+ * as they were written: a question holding `**` or a backtick must not come out bold or as code.
+ *
+ * The bubble parses with markdown-it (lib/message/markdown), which honours CommonMark's backslash
+ * escape before any ASCII punctuation. Escaped anywhere: the backslash itself, code (`), emphasis
+ * and bold (* _), strikethrough (~), links and images ([ ] !), autolinks (< >), entities (&) and
+ * table cells (|). At the start of the text, which is the start of the list item's content, what
+ * would open a block there: a list marker (- +, and * above), a heading (#), a quote (>, above) or
+ * a numbered item (digits, then . or )).
+ */
+function literal(text: string): string {
+  return text
+    .replace(/[\\`*_~[\]!<>&|]/g, (c) => `\\${c}`)
+    .replace(/^[-+#]/, (c) => `\\${c}`)
+    .replace(/^(\d+)([.)])/, '$1\\$2')
+}
+
 function recordOf(items: readonly { text: string; answer: string }[]): string {
   return [
     ANSWERS_HEADING,
     '',
-    ...items.map((item) => `- ${stepText(item.text)}: **${item.answer}**`)
+    ...items.map((item) => `- ${literal(stepText(item.text))}: **${literal(item.answer)}**`)
   ].join('\n')
 }
 

@@ -3,7 +3,12 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { sendMarker } from '../../lib/delivery/deliveryVerdict'
 import { bubbleMark } from '../../lib/message/panelChrome'
-import type { DwarfSendState } from '../../types'
+import {
+  permissionAnswerRecord,
+  questionAnswersRecord,
+  wordsAnswerRecord
+} from '../../lib/question/answersRecord'
+import type { DwarfPermissionRequest, DwarfQuestion, DwarfSendState } from '../../types'
 import ChatBubble from './ChatBubble.vue'
 
 /*
@@ -121,3 +126,95 @@ describe('ChatBubble, not delivered on a closed session (#635)', () => {
     expect(wrapper.emitted('retry')).toBeUndefined()
   })
 })
+
+/* --- The "Answers:" record, shown literally (#635, MESSAGE-QUESTIONS 8) — one block, appended -- */
+
+/*
+ * The record shows what was asked and answered exactly as it was written: the words are the agent's
+ * and the person's, and a character the bubble's Markdown would read as formatting must render as
+ * itself. Only the answer's bold is the record's own. Checked through the real render path — the
+ * record's text, drawn by ChatBubble's Markdown — since a string that looks escaped proves nothing
+ * about what the parser makes of it.
+ */
+describe('ChatBubble, an "Answers:" record drawn literally (#635)', () => {
+  function ask(question: string): DwarfQuestion {
+    return {
+      toolUseId: 'toolu_01',
+      channel: 'held',
+      questions: [{ question, multiSelect: false, options: [{ label: 'x' }] }]
+    }
+  }
+
+  function drawn(text: string) {
+    return mount(ChatBubble, { props: { from: 'user', text } }).find('.dm-bubble__text')
+  }
+
+  /** The one item's visible text, and that nothing but the answer's bold was made of it. */
+  function expectLiteral(text: string, step: string, answer: string): void {
+    const body = drawn(text)
+    expect(body.find('p').text()).toBe('Answers:')
+    const items = body.findAll('li')
+    expect(items).toHaveLength(1)
+    expect(items[0]!.element.textContent).toBe(`${step}: ${answer}`)
+    const bold = items[0]!.findAll('strong')
+    expect(bold).toHaveLength(1)
+    expect(bold[0]!.element.textContent).toBe(answer)
+    for (const made of [
+      'em',
+      'code',
+      'a',
+      's',
+      'del',
+      'ol',
+      'ul ul',
+      'blockquote',
+      'pre',
+      'table'
+    ]) {
+      expect(items[0]!.find(made).exists(), made).toBe(false)
+    }
+  }
+
+  it.each([
+    ['**bold** and *em*', '__under__ and _em_'],
+    ['use `pnpm`', '```fenced```'],
+    ['a [link](https://example.test) here', '[x] and ![img](https://example.test/a.png)'],
+    ['~~struck~~', 'a \\ backslash \\* and \\\\'],
+    ['<https://example.test> and &amp; and &#42;', '<b>tag</b>'],
+    ['a | pipe | row', '1) not a list']
+  ])('draws the question %j and the answer %j as they were written', (question, answer) => {
+    expectLiteral(questionAnswersRecord(ask(question), [answer]), question, answer)
+  })
+
+  it.each([
+    '- a dash',
+    '+ a plus',
+    '* a star',
+    '# a heading',
+    '> a quote',
+    '1. a number',
+    '12) a number'
+  ])('draws a question opening with a block marker, %j, as text', (question) => {
+    expectLiteral(questionAnswersRecord(ask(question), ['yes']), question, 'yes')
+  })
+
+  it('draws a person’s own words literally', () => {
+    expectLiteral(wordsAnswerRecord(ask('Where?'), '*not* `here`'), 'Where', '*not* `here`')
+  })
+
+  it('draws a permission’s request literally, Allow still in bold', () => {
+    const permission: DwarfPermissionRequest = {
+      toolUseId: 'toolu_p1',
+      toolName: 'Bash',
+      input: 'rm -rf *.log && echo `date` > _out_',
+      channel: 'held',
+      askedAt: '2026-09-28T09:00:00.000Z'
+    }
+    expectLiteral(
+      permissionAnswerRecord(permission, 'allow'),
+      'Bash · rm -rf *.log && echo `date` > _out_',
+      'Allow'
+    )
+  })
+})
+/* --- end of the "Answers:" record block ------------------------------------- */
