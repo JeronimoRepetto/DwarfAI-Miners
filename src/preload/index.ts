@@ -818,7 +818,18 @@ const api: DwarfAiMinersApi = {
     for (const [question, label] of Object.entries(request?.answers ?? {})) {
       if (typeof label === 'string') answers[question] = label
     }
-    return ipcRenderer.invoke(IPC_CHANNELS.answerDwarfQuestion, { ...address, answers })
+    // A held walk's steps answered in the person's own words (#635, PO decision 2026-09-28),
+    // rebuilt the same way and crossing only when there are any: dropping it here would leave
+    // main a walk with questions unanswered, which it rightly refuses.
+    const ownWords: Record<string, string> = {}
+    for (const [question, words] of Object.entries(request?.ownWords ?? {})) {
+      if (typeof words === 'string') ownWords[question] = words
+    }
+    return ipcRenderer.invoke(IPC_CHANNELS.answerDwarfQuestion, {
+      ...address,
+      answers,
+      ...(Object.keys(ownWords).length === 0 ? {} : { ownWords })
+    })
   },
   // Same discipline as answerDwarfQuestion: every field crosses as a real
   // string or as '', including `decision` — main refuses an empty one rather

@@ -340,6 +340,34 @@ describe('preload question-answer contract', () => {
     })
   })
 
+  /*
+   * ADDED for #635 (PO decision 2026-09-28, held free-text answers): a held walk's steps answered
+   * in the person's own words ride beside the labels as `ownWords`, rebuilt from string pairs like
+   * `answers`. The bridge once rebuilt `answers` alone, so the words never reached main and the
+   * walk was refused as unanswered — found in the built app, where no test could see it.
+   */
+  it('carries the own-words record beside the labels, string pairs only', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await (api.answerDwarfQuestion as unknown as (value: unknown) => Promise<unknown>)({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Run the tests after?': 'Yes' },
+      ownWords: { 'Which database?': 'MariaDB please', 'Which port?': 5432 }
+    })
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', {
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: { 'Run the tests after?': 'Yes' },
+      ownWords: { 'Which database?': 'MariaDB please' }
+    })
+  })
+
+  it('sends no own-words record when the answer carries none', async () => {
+    invoke.mockResolvedValueOnce({ answered: true })
+    await api.answerDwarfQuestion(answer)
+    expect(invoke).toHaveBeenLastCalledWith('agent:answerQuestion', answer)
+  })
+
   it('hands back the refusal and its reason rather than a bare false', async () => {
     // The panel has to be able to say WHY an answer did not land — an ask that
     // has since been withdrawn reads nothing like a session nobody holds.
