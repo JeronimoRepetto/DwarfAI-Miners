@@ -5,8 +5,9 @@
  * draws; this decides the words, from facts the dwarf already carries and nothing else.
  */
 import { compactSilence, providerLabel } from '../dwarf/dwarfTip'
+import type { KickBlocked } from '../delivery/actionBar'
 import type { DeliveryMarker } from '../delivery/deliveryVerdict'
-import type { MenuEntry } from '../overlay/menu'
+import type { MenuEntry, MenuItem } from '../overlay/menu'
 import { sceneDwarfStatus } from '../scene/sceneDwarf'
 import { dwarfWorkplaceLabel } from '../worktree'
 import { finishedTurnWord } from './turnOutcome'
@@ -157,18 +158,37 @@ export function bubbleMark(marker: DeliveryMarker): BubbleMark {
   return { mark, glyph: mark === 'failed' ? '✕ not delivered' : marker.glyph, title: marker.title }
 }
 
+/*
+ * Why Stop dwarf… cannot act, as its title says it (MESSAGE-QUESTIONS 13), in the house form
+ * "<action> · <reason>". The open turn's is OPEN_TURN_NO_INTERRUPT_HINT, shortened.
+ */
+const STOP_BLOCKED_TITLE: Record<KickBlocked, string> = {
+  'open-turn': 'Stop dwarf · this turn can only be stopped where its session runs',
+  stopping: 'Stop dwarf · already stopping'
+}
+
 /**
  * The ⋯ menu (components.md, MessagePanel, Anatomy): Open console, Mine history, a rule, then Stop
  * dwarf… as danger. Reset name, which the design lists while a custom name is set, arrives with
- * the dwarf names slice. Stop is disabled where the session cannot be stopped, the kick's own
- * capability.
+ * the dwarf names slice. Stop is never hidden, so the menu keeps one shape for every dwarf; it is
+ * disabled, with its reason as its title, only in the kick's own two cases (`kickBlocked`), and an
+ * idle session the app only observes can still be stopped (MESSAGE-QUESTIONS 13).
  */
-export function messagePanelMenu(canStop: boolean): MenuEntry[] {
+export function messagePanelMenu(stopBlocked: KickBlocked | null): MenuEntry[] {
+  const stop: MenuItem =
+    stopBlocked === null
+      ? { label: 'Stop dwarf…', danger: true, disabled: false }
+      : {
+          label: 'Stop dwarf…',
+          danger: true,
+          disabled: true,
+          title: STOP_BLOCKED_TITLE[stopBlocked]
+        }
   return [
     { label: 'Open console', icon: 'console' },
     { label: 'Mine history', icon: 'history' },
     { separator: true },
-    { label: 'Stop dwarf…', danger: true, disabled: !canStop }
+    stop
   ]
 }
 

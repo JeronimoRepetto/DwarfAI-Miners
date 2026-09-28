@@ -10,6 +10,7 @@ import {
   ENDED_DISMISS_HINT,
   JUMP_TO_TERMINAL_NAME,
   KICK_HINT,
+  kickBlocked,
   launchedNoInboxReason,
   NO_CHANNEL_REASON,
   NO_EFFORT_REASON,
@@ -1228,5 +1229,41 @@ describe('JUMP_TO_TERMINAL_NAME', () => {
   // copy.md lists "Jump to terminal" as a plain action (the question card, the MessagePanel).
   it('reads as the design writes it', () => {
     expect(JUMP_TO_TERMINAL_NAME).toBe('Jump to terminal')
+  })
+})
+
+/* --- ADDED for #635 (MESSAGE-QUESTIONS 13): why the kick cannot act right now ------- */
+describe('kickBlocked', () => {
+  const observed = (status: Dwarf['status']): Dwarf =>
+    defaultDwarf({
+      status,
+      capabilities: { sendText: null, cancel: null, adjustEffort: null, attach: null }
+    })
+
+  it('is "stopping" while a kick is in flight, whatever the dwarf is doing', () => {
+    expect(kickBlocked(capableDwarf(), { kicking: true })).toBe('stopping')
+    expect(kickBlocked(observed('working'), { kicking: true })).toBe('stopping')
+  })
+
+  it('is "open-turn" while a turn is open on a session nothing here can interrupt', () => {
+    expect(kickBlocked(observed('working'), IDLE)).toBe('open-turn')
+  })
+
+  it('is null for an idle observed session, which the kick sends off the rock', () => {
+    expect(kickBlocked(observed('waiting'), IDLE)).toBeNull()
+  })
+
+  it('is null for a session the app can cancel, and for one that has ended', () => {
+    expect(kickBlocked(capableDwarf({ status: 'working' }), IDLE)).toBeNull()
+    expect(kickBlocked(observed('leaving'), IDLE)).toBeNull()
+  })
+
+  it('is exactly when the bar disables the kick', () => {
+    for (const dwarf of [capableDwarf(), observed('working'), observed('waiting')]) {
+      for (const state of [IDLE, { kicking: true }]) {
+        const kick = buildActionBar(dwarf, state)[0]!
+        expect(kick.enabled).toBe(kickBlocked(dwarf, state) === null)
+      }
+    }
   })
 })

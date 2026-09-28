@@ -542,8 +542,9 @@ const guildPage =
 
 /*
  * The menu's rows as its tree prints them: an item per menuitem, danger and forced as its classes
- * say, its label the next text and its hint the text of its hint line; a rule per separator. An
- * icon line prints no name a render can read, so a state's icons are its render's, in tree order.
+ * say, disabled with its reason as the tree's attributes print them (MESSAGE-QUESTIONS 13), its
+ * label the next text and its hint the text of its hint line; a rule per separator. An icon line
+ * prints no name a render can read, so a state's icons are its render's, in tree order.
  */
 const menu =
   (icons: IconName[]): Render =>
@@ -551,12 +552,13 @@ const menu =
     const items: MenuEntry[] = []
     let next = 0
     let icon = 0
-    for (const { element } of attributes.slice(1)) {
+    for (const { element, attributes: own } of attributes.slice(1)) {
       const last = items.at(-1) as MenuItem | undefined
       if (element.startsWith('button.dm-menu__item')) {
         items.push({
           label: texts[next++]?.text ?? '',
           ...(element.includes('dm-menu__item--danger') ? { danger: true } : {}),
+          ...('disabled' in own ? { disabled: true, title: own.title } : {}),
           ...(forcedOf(element) === 'hover' ? { state: 'hover' as const } : {})
         })
       } else if (element === 'icon' && last) last.icon = icons[icon++]
@@ -1810,6 +1812,7 @@ export const RENDERS: Record<string, Render> = {
   // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
   // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
   'molecules/menu#messagepanel': menu(['console', 'history']),
+  'molecules/menu#messagepanel-stop-unavailable': menu(['console', 'history']),
   'molecules/menu#mine-card': menu([]),
   'molecules/menu#item-hovered': menu([]),
   'molecules/menu#danger-hovered': menu(['console']),

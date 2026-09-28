@@ -13,6 +13,7 @@ import {
   JUMP_TO_TERMINAL_NAME,
   approvalNote,
   buildActionBar,
+  kickBlocked,
   refusalLine,
   SESSION_CLOSED_REASON,
   sessionClosed
@@ -735,8 +736,11 @@ function bindComposer(instance: unknown): void {
   composerRef.value = (instance as ComponentPublicInstance | null)?.$el ?? null
 }
 
-/** The ⋯ menu: Open console, Mine history, and Stop dwarf…, which confirms first. */
-const menu = computed(() => messagePanelMenu(action('kick')?.enabled === true))
+/*
+ * The ⋯ menu: Open console, Mine history, and Stop dwarf…, which confirms first, disabled with its
+ * reason only while the kick itself is (MESSAGE-QUESTIONS 13).
+ */
+const menu = computed(() => messagePanelMenu(kickBlocked(props.dwarf, transient.value)))
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {

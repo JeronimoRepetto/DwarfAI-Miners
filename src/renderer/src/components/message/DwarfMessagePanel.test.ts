@@ -1092,6 +1092,9 @@ describe('DwarfMessagePanel controls', () => {
       })
     })
     expect(stopItem(wrapper).disabled).toBe(false)
+    // ADDED for #635 (MESSAGE-QUESTIONS 13): an idle observed session can still be stopped, so the
+    // item carries no reason.
+    expect(stopItem(wrapper).title).toBeUndefined()
     expect(await stopHint(wrapper)).toContain('off the rock')
   })
 
@@ -1114,6 +1117,10 @@ describe('DwarfMessagePanel controls', () => {
       })
     })
     expect(stopItem(wrapper).disabled).toBe(true)
+    // ADDED for #635 (MESSAGE-QUESTIONS 13): the disabled item says why, in the house form.
+    expect(stopItem(wrapper).title).toBe(
+      'Stop dwarf · this turn can only be stopped where its session runs'
+    )
     expect(await stopHint(wrapper)).toContain('cannot be stopped from')
   })
 
@@ -1150,6 +1157,8 @@ describe('DwarfMessagePanel controls', () => {
   it('locks the kick control while a kick is in flight', async () => {
     const wrapper = panel({ dwarf: kickable, kickState: { phase: 'kicking' } })
     expect(stopItem(wrapper).disabled).toBe(true)
+    // ADDED for #635 (MESSAGE-QUESTIONS 13): the disabled item says why, in the house form.
+    expect(stopItem(wrapper).title).toBe('Stop dwarf · already stopping')
     // Even a confirmation that was already open stops nothing while one is in flight.
     pickStop(wrapper)
     await wrapper.vm.$nextTick()

@@ -86,6 +86,9 @@
     "key": "molecules/menu#messagepanel"
   },
   {
+    "key": "molecules/menu#messagepanel-stop-unavailable"
+  },
+  {
     "key": "molecules/menu#mine-card"
   },
   {

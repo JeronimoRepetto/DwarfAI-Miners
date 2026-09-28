@@ -213,8 +213,10 @@ describe('bubbleMark', () => {
 })
 
 describe('the ⋯ menu', () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 13; was: messagePanelMenu(true)): the menu takes why
+  // Stop cannot act, null when it can, rather than a bare yes or no.
   it('holds Open console and Mine history, then Stop dwarf… below a rule, as danger', () => {
-    expect(messagePanelMenu(true)).toEqual([
+    expect(messagePanelMenu(null)).toEqual([
       { label: 'Open console', icon: 'console' },
       { label: 'Mine history', icon: 'history' },
       { separator: true },
@@ -222,11 +224,26 @@ describe('the ⋯ menu', () => {
     ])
   })
 
+  /*
+   * AMENDED for #635 (MESSAGE-QUESTIONS 13; was: messagePanelMenu(false) drew it disabled with no
+   * title). Disabled in the ruling's two cases only, each with its reason as the title in the
+   * house form "<action> · <reason>"; the label stays "Stop dwarf…".
+   */
   it('offers Stop dwarf… only where the session can be stopped', () => {
-    expect(messagePanelMenu(false).at(-1)).toEqual({
+    expect(messagePanelMenu('open-turn').at(-1)).toEqual({
       label: 'Stop dwarf…',
       danger: true,
-      disabled: true
+      disabled: true,
+      title: 'Stop dwarf · this turn can only be stopped where its session runs'
+    })
+  })
+
+  it('says a stop already on its way, disabled', () => {
+    expect(messagePanelMenu('stopping').at(-1)).toEqual({
+      label: 'Stop dwarf…',
+      danger: true,
+      disabled: true,
+      title: 'Stop dwarf · already stopping'
     })
   })
 

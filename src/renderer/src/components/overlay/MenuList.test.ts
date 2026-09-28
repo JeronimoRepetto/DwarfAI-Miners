@@ -31,6 +31,16 @@ describe('MenuList', () => {
     expect(menu.emitted('pick')).toEqual([[0]])
   })
 
+  // ADDED for #635 (MESSAGE-QUESTIONS 13): a disabled item stays drawn and says why in its title.
+  it('keeps a disabled item in place, with its reason as its title', () => {
+    const menu = mount(MenuList, {
+      props: { items: [{ label: 'Stop dwarf…', danger: true, disabled: true, title: 'Why' }] }
+    })
+    const row = menu.get('[role="menuitem"]')
+    expect(row.attributes('disabled')).toBeDefined()
+    expect(row.attributes('title')).toBe('Why')
+  })
+
   it('moves the focus with the arrows, skipping the rule, and wraps', async () => {
     const menu = mount(MenuList, { props: { items }, attachTo: document.body })
     const rows = menu.findAll<HTMLButtonElement>('[role="menuitem"]')
