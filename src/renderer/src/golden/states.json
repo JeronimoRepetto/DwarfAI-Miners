@@ -182,6 +182,33 @@
     "key": "molecules/chat-bubble#retry-feedback"
   },
   {
+    "key": "molecules/chat-bubble#dwarf-rich-text"
+  },
+  {
+    "key": "molecules/chat-bubble#your-messages"
+  },
+  {
+    "key": "molecules/activity#closed"
+  },
+  {
+    "key": "molecules/activity#hover",
+    "red": "27.692% differing, 1 cluster: the toggle draws at rest where the reference forces its hover (the wood-hi fill, the brass edge and the ink label), because ActivityDisclosure takes no forced state yet (#635, PR3b)"
+  },
+  {
+    "key": "molecules/activity#open"
+  },
+  {
+    "key": "molecules/activity#working"
+  },
+  {
+    "key": "molecules/composer#empty",
+    "red": "79.497% differing, 404x96 against 404x137: the composer is still markup inside the MessagePanel, so the state draws the unbuilt specimen until it is its own component (#635, PR3b)"
+  },
+  {
+    "key": "molecules/composer#disabled",
+    "red": "78.456% differing, 404x96 against 404x137: the composer is still markup inside the MessagePanel, so the state draws the unbuilt specimen until it is its own component (#635, PR3b)"
+  },
+  {
     "key": "organisms/message-panel#not-delivered-with-actions",
     "red": "0.168% differing, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b). The activity run above the failed message, the bubble, its ✕ and its Retry and Copy draw as the reference"
   },
