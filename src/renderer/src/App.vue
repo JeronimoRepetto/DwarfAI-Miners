@@ -1248,6 +1248,7 @@ onBeforeUnmount(() => {
               :model="dock.launch.state.value.model"
               :effort="dock.launch.state.value.effort"
               :permission-mode="dock.launch.state.value.permissionMode"
+              :failure="dock.launch.state.value.failure"
               @choose="dock.launch.choose"
               @command="dock.launch.setCommand"
               @commit="dock.launch.commit"
@@ -1259,6 +1260,8 @@ onBeforeUnmount(() => {
               @toggle-jev-auto="dock.launch.toggleJevAutoAccept"
               @dismiss-jev="dock.launch.dismissJevDecision"
               @submit="dock.launch.submit"
+              @retry="dock.launch.retry"
+              @pick-manually="dock.launch.pickManually"
               @close="closeDockToOpener"
             />
             <!--

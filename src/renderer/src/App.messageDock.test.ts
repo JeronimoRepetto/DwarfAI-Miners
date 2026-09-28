@@ -1593,8 +1593,12 @@ describe('the add panel', () => {
    * AFTER `agent:launch` already answered `launched: true`, and the panel
    * returns to the composer with the CLI's own words rather than staying
    * parked on "the session started" forever.
+   *
+   * AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: a push with no
+   * `cause`, and the CLI's stderr on the line as an alert). The push always
+   * names its cause now, and the panel says it as the launch-failure notice.
    */
-  it('returns to the composer with the CLI’s own words when the launch fails after it started', async () => {
+  it('returns to the composer with the notice naming the cause when the launch fails after it started', async () => {
     const { wrapper, api } = await openAddPanel({
       listAgentProviders: vi.fn().mockResolvedValue({
         providers: [{ provider: 'codex', installed: true, launchable: true }]
@@ -1616,15 +1620,35 @@ describe('the add panel', () => {
       provider: 'codex',
       mineId: MINE.id,
       exitCode: 1,
-      stderrTail: 'codex: another instance is already running'
+      stderrTail: 'codex: another instance is already running',
+      cause: 'exited-at-once'
     })
     await flushPromises()
 
-    expect(wrapper.find('.dm-add__why.is-alert').text()).toBe(
-      'codex: another instance is already running'
+    expect(wrapper.get('.dm-add__fail[role="alert"] .dm-add__fail-title').text()).toBe(
+      'Codex stopped as soon as it started'
     )
+    expect(wrapper.find('.dm-add__why').text()).toBe('The dwarf did not go in.')
     // The composer is back, prompt intact, so a retry costs one click.
     expect(wrapper.find<HTMLTextAreaElement>(PROMPT).element.value).toBe('dig the east gallery')
+  })
+
+  /*
+   * #635: the notice's Retry reaches the launch again through this window, once per press — the
+   * panel emits, and App is what hands the press to the launch composable.
+   */
+  it('sends the same launch again when the notice’s Retry is pressed', async () => {
+    const { wrapper, api } = await openAddPanel({
+      launchHeldSession: vi.fn().mockResolvedValue({ launched: false, cause: 'not-installed' })
+    })
+
+    await submitPrompt(wrapper, 'dig the east gallery')
+    expect(wrapper.get('.dm-add__fail-title').text()).toBe('Claude is not installed')
+
+    await wrapper.get('.dm-add__fail-retry').trigger('click')
+    await flushPromises()
+
+    expect(api.launchHeldSession).toHaveBeenCalledTimes(2)
   })
 
   /*

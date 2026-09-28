@@ -13,7 +13,7 @@
  * each state, and the captions its tree shows, which the harness reads at run time and hands in as
  * `texts`. A specimen still marked `Unbuilt` has no view yet, so it fails as it should.
  */
-import { defineComponent, h, type Component } from 'vue'
+import { defineComponent, h, onUnmounted, type Component } from 'vue'
 import ActionButton from '../components/controls/ActionButton.vue'
 import TierProgress from '../components/browse/TierProgress.vue'
 import TierMarker from '../components/map/TierMarker.vue'
@@ -54,6 +54,7 @@ import {
 import { decisionForLabel } from '../lib/question/questionAnswer'
 import AddPanel from '../components/launch/AddPanel.vue'
 import { useAgentLaunch } from '../composables/useAgentLaunch'
+import { jevFallbackReasonWords } from '../lib/launch/launchFailure'
 import { OTHER_CHOICE, type LaunchChoice } from '../lib/launch/launchState'
 import { goldenApi } from './api'
 import SceneDwarf from '../components/scene/SceneDwarf.vue'
@@ -94,7 +95,10 @@ import {
   type DwarfProvider,
   type DwarfSendState,
   type DwarfRole,
+  type JevFallbackReason,
   type JevRouteLaunchResult,
+  type LaunchFailedPush,
+  type LaunchFailureCause,
   type Material,
   type MaterialTotals,
   type MineTier
@@ -1394,13 +1398,34 @@ interface JevLaunch {
   autoAccept: boolean
 }
 
+/*
+ * A launch that failed, as its tree prints it (#635): the notice's cause (`data-cause`, the kit's
+ * own key for it), the prompt the field holds, and for "Jev could not choose" the reason its
+ * sentence opens with. Each is reached as a person reaches it — the supplier chosen, the prompt
+ * written, Send the dwarf in — over a bridge that answers the failure the cause names.
+ */
+type KitFailure = 'missing' | 'exited' | 'start' | 'jev' | 'jevChoose'
+interface FailedLaunch {
+  cause: KitFailure
+  prompt: string
+  reason?: JevFallbackReason
+}
+
+/** What main says for each CLI cause, on the wire (contracts.ts, LaunchFailureCause). */
+const CLI_CAUSES: Partial<Record<KitFailure, LaunchFailureCause>> = {
+  missing: 'not-installed',
+  exited: 'exited-at-once',
+  start: 'could-not-start'
+}
+
 const LaunchStage = defineComponent({
   props: {
     sample: { type: Object as () => GoldenSample, required: true },
     mineId: { type: String, required: true },
     mineName: { type: String, required: true },
     choice: { type: String as () => LaunchChoice | null, default: null },
-    jevLaunch: { type: Object as () => JevLaunch | null, default: null }
+    jevLaunch: { type: Object as () => JevLaunch | null, default: null },
+    failedLaunch: { type: Object as () => FailedLaunch | null, default: null }
   },
   setup(props) {
     // The kit draws Jev as a choice the person can make, which is the app with a TypeSafe key set:
@@ -1409,10 +1434,50 @@ const LaunchStage = defineComponent({
     const jevLaunch = props.jevLaunch
     // A launch in flight is one whose session never answers: the golden stops the world there.
     const never = (): Promise<never> => new Promise<never>(() => {})
+    const failedLaunch = props.failedLaunch
+    const cliCause = failedLaunch === null ? undefined : CLI_CAUSES[failedLaunch.cause]
+    // An early exit is a launch that started: main answers `launched: true` with its receipt, then
+    // pushes the failure a moment later, on the channel `listenFailures` subscribes to.
+    const pushed = cliCause === 'exited-at-once'
+    let pushFailure: ((push: LaunchFailedPush) => void) | null = null
+    const failing =
+      failedLaunch === null
+        ? {}
+        : {
+            ...(failedLaunch.cause === 'jev' || failedLaunch.cause === 'jevChoose'
+              ? {
+                  routeJevLaunch: (): Promise<JevRouteLaunchResult> =>
+                    Promise.resolve({
+                      kind: 'fallback',
+                      reason: failedLaunch.reason ?? 'unreachable'
+                    })
+                }
+              : {}),
+            launchAgent: (request: { provider: DwarfProvider }) =>
+              Promise.resolve(
+                pushed
+                  ? { launched: true, provider: request.provider, launchId: 'golden-launch' }
+                  : { launched: false, provider: request.provider, cause: cliCause }
+              ),
+            launchHeldSession: () =>
+              Promise.resolve(
+                pushed
+                  ? { launched: true, launchId: 'golden-launch' }
+                  : { launched: false, cause: cliCause }
+              ),
+            launchHostedProcess: () => Promise.resolve({ launched: false, cause: cliCause }),
+            onLaunchFailed: (listener: (push: LaunchFailedPush) => void) => {
+              pushFailure = listener
+              return () => {
+                pushFailure = null
+              }
+            }
+          }
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
         ...api,
+        ...failing,
         getJevSettings: () => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, configured: true }),
         ...(jevLaunch === null
           ? {}
@@ -1443,8 +1508,27 @@ const LaunchStage = defineComponent({
     })
     const launch = useAgentLaunch()
     launch.close()
+    const unlisten = failedLaunch === null ? null : launch.listenFailures()
+    onUnmounted(() => unlisten?.())
     void launch.open(props.mineId).then(async () => {
       if (props.choice !== null) launch.choose(props.choice)
+      if (failedLaunch !== null) {
+        // As a person reaches it: Let Jev choose for a Jev cause, the prompt, Send the dwarf in.
+        if (props.choice === null) launch.toggleJevEnabled()
+        launch.setPrompt(failedLaunch.prompt)
+        await launch.submit()
+        if (pushed) {
+          pushFailure?.({
+            launchId: 'golden-launch',
+            provider: props.choice as DwarfProvider,
+            mineId: props.mineId,
+            exitCode: 1,
+            stderrTail: '',
+            cause: 'exited-at-once'
+          })
+        }
+        return
+      }
       if (jevLaunch === null) return
       // As a person reaches it: Let Jev choose, the prompt, Send (Jev asked, its card shown),
       // and, in flight, Send again on the pick it applied.
@@ -1472,7 +1556,8 @@ const LaunchStage = defineComponent({
         jev: launch.jev.value,
         model: launch.state.value.model,
         effort: launch.state.value.effort,
-        permissionMode: launch.state.value.permissionMode
+        permissionMode: launch.state.value.permissionMode,
+        failure: launch.state.value.failure
       })
   }
 })
@@ -1505,6 +1590,41 @@ const jevLaunchOf = (texts: GoldenText[], attributes: GoldenAttributes[]): JevLa
   }
 }
 
+/*
+ * The Jev reasons the notice's "Jev could not choose" opens with — each reason in the app's own
+ * words (launchFailure.ts), the start of the sentence the tree prints.
+ */
+const JEV_CHOOSE_REASONS: JevFallbackReason[] = [
+  'no-key',
+  'unauthorized',
+  'no-launchable-provider',
+  'budget-exceeded',
+  'low-confidence'
+]
+
+const KIT_FAILURES: readonly string[] = ['missing', 'exited', 'start', 'jev', 'jevChoose']
+
+/** The failed launch its tree prints, or null when it shows no launch-failure notice. */
+const failedLaunchOf = (
+  texts: GoldenText[],
+  attributes: GoldenAttributes[]
+): FailedLaunch | null => {
+  const notice = elementsOf(attributes, 'div.dm-add__fail')[0]
+  if (notice === undefined || 'hidden' in notice) return null
+  const cause = notice['data-cause']
+  if (cause === undefined || !KIT_FAILURES.includes(cause)) {
+    return fail('launch-failure cause', cause)
+  }
+  const field = elementsOf(attributes, 'textarea')[0] ?? fail('prompt', 'textarea')
+  const prompt = field.value ?? ''
+  if (cause !== 'jevChoose') return { cause: cause as KitFailure, prompt }
+  const reason = JEV_CHOOSE_REASONS.find((entry) =>
+    texts.some((t) => (t.text ?? '').startsWith(jevFallbackReasonWords(entry)))
+  )
+  if (reason === undefined) return fail('Jev reason', texts)
+  return { cause, prompt, reason }
+}
+
 const addPanel: Render = (sample, texts, attributes) => {
   const label = elementsOf(attributes, 'section.dm-add')[0]?.['aria-label'] ?? ''
   const name = label.replace(/^Add a dwarf to /, '')
@@ -1512,7 +1632,8 @@ const addPanel: Render = (sample, texts, attributes) => {
   const checked = elementsOf(attributes, 'button.dm-chip').find((a) => a['aria-checked'] === 'true')
   const value = checked?.['data-value']
   const choice = value === undefined ? null : value === 'other' ? OTHER_CHOICE : value
-  const jevLaunch = jevLaunchOf(texts, attributes)
+  const failedLaunch = failedLaunchOf(texts, attributes)
+  const jevLaunch = failedLaunch === null ? jevLaunchOf(texts, attributes) : null
   return {
     component: KitFrame,
     props: {
@@ -1520,7 +1641,7 @@ const addPanel: Render = (sample, texts, attributes) => {
       parts: [
         {
           component: LaunchStage,
-          props: { sample, mineId: mine.id, mineName: mine.name, choice, jevLaunch }
+          props: { sample, mineId: mine.id, mineName: mine.name, choice, jevLaunch, failedLaunch }
         }
       ]
     }
@@ -1763,6 +1884,12 @@ export const RENDERS: Record<string, Render> = {
   'organisms/add-panel#jev-suggests': addPanel,
   'organisms/add-panel#jev-suggests-launch-in-flight': addPanel,
   'organisms/add-panel#jev-accepted-automatically': addPanel,
+  'organisms/add-panel#launch-failed-cli-not-installed': addPanel,
+  'organisms/add-panel#launch-failed-cli-exited-at-once': addPanel,
+  'organisms/add-panel#launch-failed-cli-would-not-start': addPanel,
+  'organisms/add-panel#launch-failed-jev-unreachable': addPanel,
+  'organisms/add-panel#launch-failed-jev-could-not-choose': addPanel,
+  'organisms/add-panel#launch-failed-no-launchable-provider': addPanel,
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,

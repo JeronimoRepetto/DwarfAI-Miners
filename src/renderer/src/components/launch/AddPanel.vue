@@ -4,15 +4,17 @@ import { belongsToComposition } from '../../lib/controls/input'
 import { useHoverTip } from '../../composables/useHoverTip'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
 import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
+import { jevFallbackReasonWords, launchFailureNotice } from '../../lib/launch/launchFailure'
 import {
   OTHER_CHOICE,
   type JevState,
   type LaunchChoice,
+  type LaunchFailure,
   type LaunchPhase
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import { isHeldPermissionMode, type HeldPermissionMode, type JevFallbackReason } from '../../types'
+import { isHeldPermissionMode, type HeldPermissionMode } from '../../types'
 import ActionButton from '../controls/ActionButton.vue'
 import ChoiceChip from '../controls/ChoiceChip.vue'
 import InputField from '../controls/InputField.vue'
@@ -71,6 +73,8 @@ const props = defineProps<{
   model?: string | null
   effort?: string | null
   permissionMode?: HeldPermissionMode | null
+  /** Why the last launch failed, for the launch-failure notice (#635), or null. */
+  failure?: LaunchFailure | null
 }>()
 
 const emit = defineEmits<{
@@ -92,6 +96,10 @@ const emit = defineEmits<{
   /** The decision card's own Dismiss control (#509). */
   'dismiss-jev': []
   submit: []
+  /** The launch-failure notice's Retry (#635): the same launch, again. */
+  retry: []
+  /** Its Pick manually (#635): Let Jev choose off, so the chips and selects choose. */
+  'pick-manually': []
   close: []
 }>()
 
@@ -122,6 +130,19 @@ const commandPending = computed(
 /** The gate as this panel reads it: the launch model's, or Other… with a command in its box. */
 const supplierReady = computed(() => props.enabled || commandPending.value)
 
+/**
+ * The launch-failure notice (#635; components.md, Add a dwarf): the cause, what to do, and the
+ * actions that cause has. Its words and which actions it offers are lib/launch/launchFailure's.
+ */
+const notice = computed(() =>
+  props.failure === null || props.failure === undefined ? null : launchFailureNotice(props.failure)
+)
+/** A Jev cause is the notice saying what Jev did, so the fallback line under the toggles steps aside. */
+const jevFailed = computed(
+  () =>
+    props.failure?.cause === 'jev-unreachable' || props.failure?.cause === 'jev-could-not-choose'
+)
+
 /** The line beside Send the dwarf in, and whether it is an alert. */
 const why = computed(() =>
   addPanelWhy({
@@ -131,7 +152,8 @@ const why = computed(() =>
     refusal: props.refusal,
     error: props.error,
     mineName: props.mineName,
-    jevAsking: props.jev.routing.phase === 'asking'
+    jevAsking: props.jev.routing.phase === 'asking',
+    failed: notice.value !== null
   })
 )
 
@@ -192,10 +214,24 @@ function onCommandKeydown(event: KeyboardEvent): void {
  * MessagePanel does its composer (#409); the dock remounts the panel for every opening.
  */
 const chipRow = ref<HTMLElement | null>(null)
+function focusFirstChip(): void {
+  chipRow.value?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
+}
 onMounted(async () => {
   await nextTick()
-  chipRow.value?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
+  focusFirstChip()
 })
+
+/*
+ * Pick manually hands the keyboard to the first supplier chip (screens/launch.md, As built): the
+ * chips and the three selects take over from Jev, and the notice leaves with the pressed button.
+ * Once Vue has redrawn the panel without it.
+ */
+async function pickManually(): Promise<void> {
+  emit('pick-manually')
+  await nextTick()
+  focusFirstChip()
+}
 
 /** A pick off one of the three selects, reported to the launch model under its own name. */
 function pick(label: 'Model' | 'Effort' | 'Permissions', value: string): void {
@@ -294,38 +330,15 @@ const jevTipLines = computed(() => {
 const jevTip = useHoverTip<'pick'>({ side: 'bottom', align: 'start' })
 const jevTipId = 'dm-add-jev-tip-' + ++cards
 
-/**
- * Fixed English sentences per fallback reason (#509's own acceptance
- * criterion: every way Jev can fail still launches and says that it did).
- * Kept here, display text only — the wire only ever carries the reason, on
- * the same split `contracts.ts` states for every prompt-sentence-that-names-
- * no-provider.
- *
- * AMENDED in the ending below for #523: “still launches” was true because a
- * chip always stood under it. On the toggle-alone entry path there may be
- * nothing to launch onto, and then the line says what IS owed instead —
- * nothing launched, the prompt stands, a provider is missing.
+/*
+ * The fallback line says every way Jev failed still launched, or what is owed instead (#509,
+ * #523). Its reason words are the app's own, now in lib/launch/launchFailure, which the
+ * launch-failure notice's "Jev could not choose" opens with too (#635).
  */
-const JEV_FALLBACK_REASONS: Record<JevFallbackReason, string> = {
-  'no-key': 'No TypeSafe key is set',
-  'no-launchable-provider': 'No launchable provider to choose from',
-  unreachable: 'Jev could not be reached',
-  timeout: 'Jev took too long',
-  'rate-limited': 'Jev is rate-limited right now',
-  unauthorized: 'TypeSafe rejected the API key',
-  'low-confidence': 'Jev was not confident enough',
-  'invalid-response': "Jev's answer could not be used",
-  'budget-exceeded': "The prompt and catalogue do not fit Jev's request budget"
-}
-
 const jevFallbackMessage = computed(() => {
   const routing = props.jev.routing
   if (routing.phase !== 'fellBack') return ''
-  const reason = JEV_FALLBACK_REASONS[routing.reason]
-  const withConfidence =
-    routing.reason === 'low-confidence' && routing.confidence !== undefined
-      ? `${reason} (${Math.round(routing.confidence * 100)}%)`
-      : reason
+  const withConfidence = jevFallbackReasonWords(routing.reason, routing.confidence)
 
   // jev-routing-profiles T4: a configured default was just applied to the
   // pickers below (launchState.jevAnswered's own detour), so this line says
@@ -496,7 +509,11 @@ let cards = 0
             </Transition>
           </Teleport>
         </div>
-        <div v-else-if="jev.routing.phase === 'fellBack'" class="dm-add__jev" role="status">
+        <div
+          v-else-if="jev.routing.phase === 'fellBack' && !jevFailed"
+          class="dm-add__jev"
+          role="status"
+        >
           <p class="jev-fallback">{{ jevFallbackMessage }}</p>
           <!--
             Only when a default was APPLIED: the pickers below were overwritten exactly as a
@@ -557,11 +574,40 @@ let cards = 0
     </div>
 
     <!--
-      The footer (W7·5): the line that says where the launch stands, and the launch itself. The
-      launch-failure notice per cause, with Retry and Pick manually, arrives in the next slice of
-      #635 (PR4); until then a refused launch says main's own reason on this line, as an alert.
+      The footer (W7·5): after a failed launch, the danger notice above Send the dwarf in, so it is
+      on screen however far the body scrolls (#635): the warning icon, the cause, what to do, then
+      its actions. An alert, so its cause is read out when it appears; focus stays where it was.
+      Then the line that says where the launch stands — main's own words for a failure it named no
+      cause for — and the launch itself.
     -->
     <footer class="dm-add__foot">
+      <div v-if="notice !== null" class="dm-add__fail" role="alert" :data-cause="failure?.cause">
+        <PixelIcon name="warning" />
+        <div class="dm-add__fail-body">
+          <p class="dm-add__fail-title">{{ notice.title }}</p>
+          <p class="dm-add__fail-text">{{ notice.text }}</p>
+          <!--
+            Drawn even with no action to hold, as the design draws it: with no launchable provider
+            the row is empty, and its margin is still part of the notice's height.
+          -->
+          <div class="dm-add__fail-actions">
+            <ActionButton
+              v-if="notice.retry"
+              class="dm-add__fail-retry"
+              label="Retry"
+              :disabled="launched"
+              @click="emit('retry')"
+            />
+            <ActionButton
+              v-if="notice.pickManually"
+              class="dm-add__fail-manual"
+              label="Pick manually"
+              :disabled="launched"
+              @click="pickManually"
+            />
+          </div>
+        </div>
+      </div>
       <p class="dm-add__why" :class="{ 'is-alert': why.tone === 'alert' }" :role="why.tone">
         {{ why.text }}
       </p>
@@ -676,6 +722,42 @@ let cards = 0
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
+}
+/* Launch failure: the settings danger zone's surface and type, as a full-width row above the launch. */
+.dm-add__fail {
+  flex: 1 1 100%;
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  margin: 2px;
+  background: var(--danger-lo);
+  box-shadow:
+    0 -2px 0 0 var(--danger),
+    0 2px 0 0 var(--danger),
+    -2px 0 0 0 var(--danger),
+    2px 0 0 0 var(--danger);
+  align-items: flex-start;
+}
+.dm-add__fail-body {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+.dm-add__fail-title {
+  margin: 0;
+  font: var(--fs-section) / 1.2 var(--f-label);
+  color: var(--danger-hi);
+}
+.dm-add__fail-text {
+  margin: 0;
+  font: var(--fs-meta) / 1.35 var(--f-meta);
+  color: var(--ink-soft);
+}
+.dm-add__fail-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 .dm-add__why {
   flex: 1;

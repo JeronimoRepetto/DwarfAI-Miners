@@ -6,7 +6,7 @@ import {
   OTHER_CHOICE,
   type LaunchPhase
 } from '../../lib/launch/launchState'
-import type { JevState } from '../../lib/launch/launchState'
+import type { JevState, LaunchFailure } from '../../lib/launch/launchState'
 import {
   MODEL_HISTORY_SOURCE,
   NO_MODEL_LIST,
@@ -64,6 +64,8 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       model: (overrides.model ?? null) as string | null,
       effort: (overrides.effort ?? null) as string | null,
       permissionMode: (overrides.permissionMode ?? null) as HeldPermissionMode | null,
+      // APPENDED for #635 (MESSAGE-QUESTIONS 14/16/17): the launch-failure notice's cause.
+      failure: (overrides.failure ?? null) as LaunchFailure | null,
       // APPENDED for #635: `onCommit`-style listeners, for the cases that read the ORDER in which
       // the panel reports two gestures, which `emitted()` keeps per event and cannot show.
       ...((overrides.listeners ?? {}) as Record<string, unknown>)
@@ -1799,5 +1801,165 @@ describe('focus when the panel opens', () => {
 
     expect(document.activeElement).toBe(wrapper.findAll(CHIPS)[0]!.element)
     wrapper.unmount()
+  })
+})
+
+/*
+ * #635 (MESSAGE-QUESTIONS 14/16/17; components.md, Add a dwarf): after a failed launch, a danger
+ * notice in the footer above Send the dwarf in — the warning icon, the cause, what to do, then its
+ * actions. It is an alert, and focus stays where it was when it appears.
+ */
+describe('the launch-failure notice (#635)', () => {
+  const NOTICE = '.dm-add__fail'
+  const READY_ON_CLAUDE = {
+    chosen: 'claude',
+    phase: 'prompt-ready',
+    enabled: true,
+    prompt: 'Dig.'
+  }
+  const JEV_ON: JevState = { ...HIDDEN_JEV, availability: 'ready', enabled: true }
+  const buttons = (wrapper: ReturnType<typeof panel>) =>
+    wrapper.findAll(`${NOTICE} .dm-add__fail-actions .dm-btn`).map((button) => button.text())
+
+  it('shows no notice while nothing has failed', () => {
+    expect(panel(READY_ON_CLAUDE).find(NOTICE).exists()).toBe(false)
+  })
+
+  it('names the cause and what to do, as an alert in the footer before the line and the launch', () => {
+    const wrapper = panel({
+      ...READY_ON_CLAUDE,
+      failure: { cause: 'not-installed', choice: 'claude' }
+    })
+    const notice = wrapper.get(NOTICE)
+
+    expect(notice.attributes('role')).toBe('alert')
+    expect(notice.get('.dm-add__fail-title').text()).toBe('Claude is not installed')
+    expect(notice.get('.dm-add__fail-text').text()).toBe(
+      'Its command-line tool was not found on this computer. Install it, then retry.'
+    )
+    expect(notice.find('.dm-icon').exists()).toBe(true)
+    const foot = [...wrapper.get('.dm-add__foot').element.children]
+    expect(
+      ['dm-add__fail', 'dm-add__why', 'dm-add__launch'].map((name) =>
+        foot.findIndex((child) => child.classList.contains(name))
+      )
+    ).toEqual([0, 1, 2])
+    expect(buttons(wrapper)).toEqual(['Retry'])
+  })
+
+  it('says only that the dwarf did not go in on the line beside the launch', () => {
+    const wrapper = panel({
+      ...READY_ON_CLAUDE,
+      failure: { cause: 'exited-at-once', choice: 'claude' }
+    })
+
+    expect(wrapper.get(WHY).text()).toBe('The dwarf did not go in.')
+  })
+
+  it('reports Retry, once per press', async () => {
+    const wrapper = panel({
+      ...READY_ON_CLAUDE,
+      failure: { cause: 'could-not-start', choice: 'claude' }
+    })
+
+    await wrapper.get(`${NOTICE} .dm-add__fail-retry`).trigger('click')
+
+    expect(wrapper.emitted('retry')).toEqual([[]])
+  })
+
+  it('offers Retry and Pick manually when Jev could not be reached', () => {
+    const wrapper = panel({
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'Dig.',
+      jev: JEV_ON,
+      failure: { cause: 'jev-unreachable' }
+    })
+
+    expect(wrapper.get('.dm-add__fail-title').text()).toBe('Jev could not be reached')
+    expect(buttons(wrapper)).toEqual(['Retry', 'Pick manually'])
+  })
+
+  it('offers Pick manually alone when Jev could not choose', () => {
+    const wrapper = panel({
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'Dig.',
+      jev: JEV_ON,
+      failure: { cause: 'jev-could-not-choose', reason: 'no-key' }
+    })
+
+    expect(wrapper.get('.dm-add__fail-text').text()).toBe(
+      'No TypeSafe key is set. Pick the supplier and model yourself.'
+    )
+    expect(buttons(wrapper)).toEqual(['Pick manually'])
+  })
+
+  it('shows the reason alone, with no action, when there is no launchable provider', () => {
+    const wrapper = panel({
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'Dig.',
+      jev: JEV_ON,
+      failure: { cause: 'jev-could-not-choose', reason: 'no-launchable-provider' }
+    })
+
+    expect(wrapper.get('.dm-add__fail-text').text()).toBe('No launchable provider to choose from.')
+    expect(buttons(wrapper)).toEqual([])
+  })
+
+  it('draws no Jev fallback line under the toggles while the notice says what Jev did', () => {
+    const wrapper = panel({
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'Dig.',
+      jev: {
+        ...JEV_ON,
+        routing: { phase: 'fellBack', reason: 'unreachable' },
+        launchedOnFallback: false
+      },
+      failure: { cause: 'jev-unreachable' }
+    })
+
+    expect(wrapper.find('.jev-fallback').exists()).toBe(false)
+  })
+
+  it('Pick manually reports itself and moves focus to the first supplier chip', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const wrapper = panel({
+      phase: 'prompt-ready',
+      enabled: true,
+      prompt: 'Dig.',
+      jev: JEV_ON,
+      failure: { cause: 'jev-unreachable' },
+      attachTo: host
+    })
+    await flushPromises()
+
+    await wrapper.get(`${NOTICE} .dm-add__fail-manual`).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('pick-manually')).toEqual([[]])
+    expect(document.activeElement).toBe(wrapper.findAll(CHIPS)[0]!.element)
+    wrapper.unmount()
+    host.remove()
+  })
+
+  it('leaves focus where it was when the notice appears', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const wrapper = panel({ ...READY_ON_CLAUDE, attachTo: host })
+    await flushPromises()
+    const prompt = wrapper.get(PROMPT).element as HTMLTextAreaElement
+    prompt.focus()
+
+    await wrapper.setProps({ failure: { cause: 'not-installed', choice: 'claude' } })
+    await flushPromises()
+
+    expect(wrapper.find(NOTICE).exists()).toBe(true)
+    expect(document.activeElement).toBe(prompt)
+    wrapper.unmount()
+    host.remove()
   })
 })

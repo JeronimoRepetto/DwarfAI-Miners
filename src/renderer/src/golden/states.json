@@ -247,6 +247,28 @@
     "key": "organisms/add-panel#jev-accepted-automatically"
   },
   {
+    "key": "organisms/add-panel#launch-failed-cli-not-installed"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-cli-exited-at-once",
+    "red": "the Permissions select alone, one cluster: the app offers permission modes for held Claude only, so Codex's select reads Permissions: Default, disabled, where the kit lists Codex's own modes; the launch-failure notice draws as the reference",
+    "at": 4.269
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-cli-would-not-start",
+    "red": "the Permissions select alone, one cluster: the app offers permission modes for held Claude only, so Codex's select reads Permissions: Default, disabled, where the kit lists Codex's own modes; the launch-failure notice draws as the reference",
+    "at": 4.269
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-jev-unreachable"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-jev-could-not-choose"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-no-launchable-provider"
+  },
+  {
     "key": "molecules/vault-strip#mine-footer"
   },
   {

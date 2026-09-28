@@ -931,7 +931,10 @@ describe('a detached launch that fails after it started (#263)', () => {
     expect(typeof stop).toBe('function')
   })
 
-  it('returns the composer with main’s own words when the push names this launch', async () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: "with main’s own
+  // words", the error line set to the push's stderr). The push names its
+  // cause, which the launch-failure notice says instead of a prose line.
+  it('returns the composer with the push’s cause when it names this launch', async () => {
     const { api, launch } = await detachedLaunch()
     launch.listenFailures()
     expect(launch.phase.value).toBe('started-detached')
@@ -940,7 +943,8 @@ describe('a detached launch that fails after it started (#263)', () => {
     listener(failure())
 
     expect(launch.phase.value).toBe('prompt-ready')
-    expect(launch.state.value.error).toBe('codex: another instance is already running')
+    expect(launch.state.value.failure).toEqual({ cause: 'exited-at-once', choice: 'codex' })
+    expect(launch.state.value.error).toBeNull()
     // The typed prompt survives, so a retry costs one Enter.
     expect(launch.state.value.prompt).toBe('dig the east gallery')
   })
@@ -1308,5 +1312,240 @@ describe('the Jev entry path (#523)', () => {
       expect(launch.state.value.prompt).toBe('shore the north wall')
       expect(launch.jev.value.routing).toEqual({ phase: 'idle' })
     })
+  })
+})
+
+/*
+ * #635 (MESSAGE-QUESTIONS 14/16/17): the Add panel's launch-failure notice. Each channel's verdict
+ * carries main's cause; the panel keeps it as the notice, keeps a failure main named no cause for
+ * as its own words, and gives Retry and Pick manually their launches.
+ */
+describe('the launch-failure notice (#635)', () => {
+  async function ready(choice: 'claude' | 'codex', overrides: Record<string, unknown> = {}) {
+    const api = stubApi(overrides)
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose(choice)
+    launch.setPrompt('dig the east gallery')
+    return { api, launch }
+  }
+
+  it('names a held supplier that is not installed', async () => {
+    const { launch } = await ready('claude', {
+      launchHeldSession: vi
+        .fn()
+        .mockResolvedValue({ launched: false, error: 'claude is missing', cause: 'not-installed' })
+    })
+
+    await launch.submit()
+
+    expect(launch.state.value.failure).toEqual({ cause: 'not-installed', choice: 'claude' })
+    expect(launch.state.value.error).toBeNull()
+    expect(launch.phase.value).toBe('prompt-ready')
+  })
+
+  it('names a detached supplier that could not be started', async () => {
+    const { launch } = await ready('codex', {
+      launchAgent: vi
+        .fn()
+        .mockResolvedValue({ launched: false, provider: 'codex', cause: 'could-not-start' })
+    })
+
+    await launch.submit()
+
+    expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: 'codex' })
+  })
+
+  it('names a custom command that could not be started', async () => {
+    const api = stubApi({
+      launchHostedProcess: vi.fn().mockResolvedValue({ launched: false, cause: 'could-not-start' })
+    })
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.choose(OTHER_CHOICE)
+    launch.setCommand('lalolanda')
+    launch.commit()
+    launch.setPrompt('dig')
+
+    await launch.submit()
+
+    expect(api.launchHostedProcess).toHaveBeenCalledOnce()
+    expect(launch.state.value.failure).toEqual({ cause: 'could-not-start', choice: OTHER_CHOICE })
+  })
+
+  it('keeps main’s own words for a failure it named no cause for', async () => {
+    const { launch } = await ready('claude', {
+      launchHeldSession: vi
+        .fn()
+        .mockResolvedValue({ launched: false, error: 'The demo cannot launch agents.' })
+    })
+
+    await launch.submit()
+
+    expect(launch.state.value.failure).toBeNull()
+    expect(launch.state.value.error).toBe('The demo cannot launch agents.')
+  })
+
+  describe('a held session that stopped as soon as it started (MESSAGE-QUESTIONS 16)', () => {
+    async function heldInFlight() {
+      const setup = await ready('claude', {
+        launchHeldSession: vi.fn().mockResolvedValue({ launched: true, launchId: 'held:1' })
+      })
+      setup.launch.listenFailures()
+      await setup.launch.submit()
+      const listener = setup.api.onLaunchFailed.mock.calls[0]![0] as (
+        push: LaunchFailedPush
+      ) => void
+      return { ...setup, listener }
+    }
+
+    const heldPush = (launchId = 'held:1'): LaunchFailedPush => ({
+      launchId,
+      provider: 'claude',
+      mineId: MINE,
+      exitCode: null,
+      stderrTail: '',
+      cause: 'exited-at-once'
+    })
+
+    it('reaches the notice when the push names this held launch', async () => {
+      const { launch, listener } = await heldInFlight()
+      expect(launch.phase.value).toBe('submitted-spawning')
+
+      listener(heldPush())
+
+      expect(launch.phase.value).toBe('prompt-ready')
+      expect(launch.state.value.failure).toEqual({ cause: 'exited-at-once', choice: 'claude' })
+    })
+
+    it('ignores a push for a launch it did not make', async () => {
+      const { launch, listener } = await heldInFlight()
+
+      listener(heldPush('held:9'))
+
+      expect(launch.phase.value).toBe('submitted-spawning')
+      expect(launch.state.value.failure).toBeNull()
+    })
+
+    it('still adopts the held dwarf by its seeded conversation, not by the correlation id', async () => {
+      const { launch } = await heldInFlight()
+
+      launch.observe([mineWith([heldDwarf('claude:sess-9', 'dig the east gallery')])])
+
+      expect(launch.phase.value).toBe('message-panel')
+      expect(launch.state.value.launchedDwarfId).toBe('claude:sess-9')
+    })
+  })
+
+  describe('Retry', () => {
+    it('sends the same launch again, once per press', async () => {
+      const { api, launch } = await ready('claude', {
+        launchHeldSession: vi.fn().mockResolvedValue({ launched: false, cause: 'not-installed' })
+      })
+      await launch.submit()
+      expect(api.launchHeldSession).toHaveBeenCalledTimes(1)
+
+      await launch.retry()
+
+      expect(api.launchHeldSession).toHaveBeenCalledTimes(2)
+      expect(api.launchHeldSession.mock.calls[1]![0]).toEqual(
+        api.launchHeldSession.mock.calls[0]![0]
+      )
+    })
+
+    it('does nothing by itself: no launch goes again without a press', async () => {
+      vi.useFakeTimers()
+      try {
+        const { api, launch } = await ready('claude', {
+          launchHeldSession: vi.fn().mockResolvedValue({ launched: false, cause: 'not-installed' })
+        })
+        await launch.submit()
+
+        await vi.advanceTimersByTimeAsync(DETACHED_TIMEOUT_MS * 2)
+
+        expect(api.launchHeldSession).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('asks Jev again after Jev could not be reached', async () => {
+      const api = stubApi({
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+        routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'unreachable' })
+      })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      launch.toggleJevEnabled()
+      launch.setPrompt('dig the east gallery')
+      await launch.submit()
+      expect(launch.state.value.failure).toEqual({ cause: 'jev-unreachable' })
+
+      await launch.retry()
+
+      expect(api.routeJevLaunch).toHaveBeenCalledTimes(2)
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(api.launchAgent).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('the Jev causes — only when nothing went out', () => {
+    async function onJev(fallback: Record<string, unknown>, chip?: 'claude') {
+      const api = stubApi({
+        getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+        routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', ...fallback })
+      })
+      const launch = useAgentLaunch()
+      await launch.open(MINE)
+      if (chip !== undefined) launch.choose(chip)
+      launch.toggleJevEnabled()
+      launch.setPrompt('dig the east gallery')
+      await launch.submit()
+      return { api, launch }
+    }
+
+    it('names "Jev could not choose" with its reason when no chip stood under it', async () => {
+      const { api, launch } = await onJev({ reason: 'no-key' })
+
+      expect(launch.state.value.failure).toEqual({
+        cause: 'jev-could-not-choose',
+        reason: 'no-key'
+      })
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+    })
+
+    it('raises no notice for a fallback that launched on the pickers', async () => {
+      const { api, launch } = await onJev({ reason: 'timeout' }, 'claude')
+
+      expect(api.launchHeldSession).toHaveBeenCalledOnce()
+      expect(launch.state.value.failure).toBeNull()
+    })
+
+    it('raises no notice for a fallback that put the configured default into the pickers', async () => {
+      const { api, launch } = await onJev({ reason: 'timeout', fallbackTo: { provider: 'claude' } })
+
+      expect(api.launchHeldSession).not.toHaveBeenCalled()
+      expect(launch.state.value.failure).toBeNull()
+      expect(launch.state.value.choice).toBe('claude')
+    })
+  })
+
+  it('Pick manually turns Let Jev choose off and takes the notice away, prompt kept', async () => {
+    stubApi({
+      getJevSettings: vi.fn().mockResolvedValue({ configured: true }),
+      routeJevLaunch: vi.fn().mockResolvedValue({ kind: 'fallback', reason: 'unreachable' })
+    })
+    const launch = useAgentLaunch()
+    await launch.open(MINE)
+    launch.toggleJevEnabled()
+    launch.setPrompt('dig the east gallery')
+    await launch.submit()
+
+    launch.pickManually()
+
+    expect(launch.jev.value.enabled).toBe(false)
+    expect(launch.state.value.failure).toBeNull()
+    expect(launch.state.value.prompt).toBe('dig the east gallery')
+    expect(launch.phase.value).toBe('provider-selection')
   })
 })
