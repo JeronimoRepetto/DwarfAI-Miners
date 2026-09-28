@@ -35,10 +35,13 @@ the traceability index — is archived in the design repository, and nothing her
   overwritten by the next sync. If a doc is wrong, say so in the PR or issue.
 - **Read before you write UI.** `foundations.md` first, then the screen file for what you are
   building, then `components.md` for shared parts, and `decisions.md` before reopening anything.
-- **No folder, no design.** A worktree never has the folder. Ask the maintainer where the design
-  docs are and read them there — do not reconstruct the design from screenshots, existing code,
-  memory or taste, do not copy or link the folder into the worktree, and never write its local
-  path into a tracked file ([`privacy-guard`](../privacy-guard/SKILL.md)).
+- **No folder, no design.** A worktree never has the design folder linked in. The one sanctioned
+  way to have the design there is the real, gitignored copy `pnpm golden:design` makes in
+  `.design/` (it is what golden UI tests need). Never link the folder in and never copy it by hand:
+  `git worktree remove --force` follows a link and empties the target. Without either, ask the
+  maintainer where the design docs are; do not reconstruct the design from screenshots, existing
+  code, memory or taste, and never write its local path into a tracked file
+  ([`privacy-guard`](../privacy-guard/SKILL.md)).
 - **No reference images either.** Every state's PNG lives only in the design repository's
   `docs/reference/` — never copy, commit or link one here, screenshot included (PO ruling,
   2026-09-26). Ask the maintainer to compare a build against one (Accepting a built piece, below).
@@ -166,8 +169,9 @@ for access and replicate its behaviour, rather than eyeballing a screenshot.
 
 ## References
 
-All of these live **outside version control**, in the maintainer's main checkout only; the links
-resolve there and nowhere else. If they are missing, ask — do not proceed without them.
+All of these live **outside version control**: the links resolve in the maintainer's main
+checkout, and in a worktree only under the `.design/` copy that `pnpm golden:design` makes. If they
+are missing, ask — do not proceed without them.
 
 - [`docs/dwarfai-miners-design/README.md`](../../docs/dwarfai-miners-design/README.md) — the routing map
 - [`docs/dwarfai-miners-design/foundations.md`](../../docs/dwarfai-miners-design/foundations.md) — tokens, type, spacing, shape

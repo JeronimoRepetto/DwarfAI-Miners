@@ -27,8 +27,10 @@ a parameter instead, so a test can pass `'darwin'` on a Windows host and assert 
 
 The running OS is read in **three call sites (four occurrences)** across production code — inside
 `currentPlatform()`, and twice in the main entry point (shortcut key names, and the platform handed
-to the hook channel). Adding a fourth call site needs a reason. Tests read it **zero** times, and
-that number should stay zero.
+to the hook channel). Adding a fourth call site needs a reason. Tests do not read it, with one
+allowed exception: `it.skipIf(process.platform === 'win32')` on a real-disk proof of a behaviour
+that exists only on POSIX (file modes), whose test says why beside it, as `hookFs.test.ts` does.
+Anything else that differs per OS is asserted through the ports, on every host.
 
 ## Composition
 

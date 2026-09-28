@@ -190,4 +190,5 @@ A generator that creates one static file is a moving part that buys nothing.
   the brief for this harness turned out to be wrong, one of them outright false — including one
   that had already been copied from an inaccurate source comment into a rule file. Restating an
   unverified claim is how that spreads.
-- Keep a `SKILL.md` under ~150 lines. Adherence drops as length grows.
+- Keep a `SKILL.md` readable in one sitting. Adherence drops as length grows, so when a skill keeps
+  growing, split it rather than trim the reasons out of it.
