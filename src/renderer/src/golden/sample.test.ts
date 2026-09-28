@@ -96,6 +96,52 @@ describe('adaptSample', () => {
     expect(d?.waitingReason).toBeUndefined()
   })
 
+  /*
+   * APPENDED for #635 (decision log, Turn outcome line): the turn a resting dwarf finished, as the
+   * provider's end-of-turn message gives it, ended as long ago as the dwarf has been silent.
+   */
+  it('carries the turn a dwarf finished, ended as long ago as it has been silent', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_800_000_000_000)
+    try {
+      const resting = { ...digger, status: 'asleep', silence: '41m' }
+      const sample = adaptSample(
+        dm({
+          mines: [shaft],
+          dwarfs: [
+            { ...resting, id: 'c', turn: { kind: 'capped', detail: 'error_max_turns' } },
+            { ...resting, id: 'k', silence: '2h', turn: { kind: 'concluded', text: 'Done.' } },
+            { ...digger, id: 'w' }
+          ]
+        })
+      )
+      expect(sample.mines[0]?.dwarfs.map((d) => [d.id, d.lastTurn])).toEqual([
+        [
+          'c',
+          { kind: 'capped', detail: 'error_max_turns', endedAt: 1_800_000_000_000 - 2_460_000 }
+        ],
+        ['k', { kind: 'concluded', text: 'Done.', endedAt: 1_800_000_000_000 - 7_200_000 }],
+        ['w', undefined]
+      ])
+      expect(() =>
+        adaptSample(dm({ mines: [shaft], dwarfs: [{ ...resting, turn: { kind: 'odd' } }] }))
+      ).toThrow(/turn "odd"/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // APPENDED for #635 (decision log, Dwarf names): the name a person gave it, as main stamps it.
+  it('carries a custom name the sample gives a dwarf, and none where it gives none', () => {
+    const named = { ...digger, id: 'n', customName: 'Warden' }
+    const dwarfs = adaptSample(dm({ mines: [shaft], dwarfs: [digger, named] })).mines[0]?.dwarfs
+    expect(dwarfs?.map((d) => [d.id, d.name, d.customName])).toEqual([
+      ['a1', 'digger-1', undefined],
+      ['n', 'digger-1', 'Warden']
+    ])
+    expect(dwarfs?.[0] && 'customName' in dwarfs[0]).toBe(false)
+  })
+
   it('reads asking as waiting on the user, a permission need as waiting on approval, asleep as resting', () => {
     const sample = adaptSample(
       dm({

@@ -5,6 +5,10 @@
  * face in the textarea. What the options decide is in lib/controls/input; this only draws it and
  * keeps the text. Esc inside a search with text clears it and goes no further; clearing moves
  * focus to the control, because the button that had it goes away (accessibility.md, Focus).
+ *
+ * A `filter` refuses characters as they are typed or pasted (#635, the MessagePanel's "Dwarf
+ * name" field): the field holds only what it keeps, and the caret stays where the person left it,
+ * less whatever was dropped before it.
  */
 import { computed, ref, watch } from 'vue'
 import PixelIcon from '../icon/PixelIcon.vue'
@@ -16,14 +20,18 @@ import {
   type InputOptions
 } from '../../lib/controls/input'
 
-const props = withDefaults(defineProps<InputOptions>(), {
+const props = withDefaults(defineProps<InputOptions & { filter?: (raw: string) => string }>(), {
   value: '',
   search: false,
   area: false,
   disabled: false,
   invalid: false
 })
-const emit = defineEmits<{ 'update:value': [value: string] }>()
+const emit = defineEmits<{
+  'update:value': [value: string]
+  /** The text as typed or pasted, before any filter: for a host that says why it was refused. */
+  typed: [raw: string]
+}>()
 
 const current = ref(props.value)
 watch(
@@ -41,6 +49,22 @@ const clearShown = computed(() => showsClear(props, current.value))
 function edit(value: string): void {
   current.value = value
   emit('update:value', value)
+}
+
+function typed(target: HTMLInputElement | HTMLTextAreaElement): void {
+  const raw = target.value
+  emit('typed', raw)
+  const filter = props.filter
+  const kept = filter ? filter(raw) : raw
+  if (filter && kept !== raw) {
+    // The caret keeps its place among the kept characters: what the filter keeps of the text
+    // before it. A filter reads left to right, so that is always a start of what it kept.
+    const before = raw.slice(0, target.selectionStart ?? raw.length)
+    const at = Math.min(filter(before).length, kept.length)
+    target.value = kept
+    target.setSelectionRange(at, at)
+  }
+  edit(kept)
 }
 
 function clear(): void {
@@ -64,14 +88,14 @@ function keydown(event: KeyboardEvent): void {
       ref="control"
       v-bind="attributes"
       :value="current"
-      @input="edit(($event.target as HTMLTextAreaElement).value)"
+      @input="typed($event.target as HTMLTextAreaElement)"
     ></textarea>
     <input
       v-else
       ref="control"
       v-bind="attributes"
       :value="current"
-      @input="edit(($event.target as HTMLInputElement).value)"
+      @input="typed($event.target as HTMLInputElement)"
       @keydown="keydown"
     />
     <button

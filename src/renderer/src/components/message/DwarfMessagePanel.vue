@@ -36,18 +36,31 @@ import { tailArrivals } from '../../lib/message/entryArrival'
 import { isOpenablePath } from '../../lib/message/openablePath'
 import {
   COMPOSER_HINT,
-  MENU_CONSOLE,
-  MENU_HISTORY,
-  MENU_STOP,
   STOP_DWARF_BODY,
   bubbleMark,
   dayLabel,
   messagePanelChips,
   messagePanelMenu,
+  messagePanelMenuAction,
   messagePanelOutcome,
   stopDwarfTitle,
   type BubbleMark
 } from '../../lib/message/panelChrome'
+import {
+  DWARF_NAME_LABEL,
+  RENAME_TITLE,
+  renameAnnouncement,
+  renameChanges,
+  renameHint,
+  renameLabel
+} from '../../lib/message/rename'
+import { belongsToComposition } from '../../lib/controls/input'
+import { dwarfDisplayName } from '../../lib/dwarf/displayName'
+import {
+  cleanDwarfName,
+  filterDwarfName,
+  type DwarfNameRefusal
+} from '../../../../shared/dwarfName'
 import type { AskAnswer } from '../../lib/question/questionAnswer'
 import { sceneDwarfLabel, sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
 import {
@@ -73,6 +86,8 @@ import {
 } from '../../types'
 import { useHoverTip } from '../../composables/useHoverTip'
 import ActionButton from '../controls/ActionButton.vue'
+import FieldHint from '../controls/FieldHint.vue'
+import InputField from '../controls/InputField.vue'
 import MetaChip from '../controls/MetaChip.vue'
 import DwarfPermissionCard from '../dwarf/DwarfPermissionCard.vue'
 import DwarfPortrait from '../dwarf/DwarfPortrait.vue'
@@ -160,6 +175,17 @@ const props = defineProps<{
    * UI kit draws its states, is not opened on anybody's behalf.
    */
   focusOnOpen?: boolean
+  /**
+   * A look forced on the name without the pointer or the keyboard, as the UI kit's own Name ·
+   * hover and Name · focus states show it (#635).
+   */
+  nameState?: 'hover' | 'focus'
+  /**
+   * A rename already open, holding this text, as the UI kit's Renaming states draw it (#635): the
+   * field in the focused look without taking the keyboard, and `refused` saying what the field
+   * just dropped. Taken once, on mount; nobody's rename is opened on their behalf otherwise.
+   */
+  renaming?: { value: string; refused?: DwarfNameRefusal }
 }>()
 
 const emit = defineEmits<{
@@ -196,6 +222,13 @@ const emit = defineEmits<{
   /** The composer's text changed, for the host that keeps the draft (#635). */
   draft: [text: string]
 }>()
+
+/*
+ * The name this panel shows for its dwarf, everywhere in its own chrome (#635; decision log, Dwarf
+ * names): the custom name a person gave it, or its base name. Always the one main publishes on
+ * the board, never a guess of what a save will leave: a rename shows once the board carries it.
+ */
+const displayName = computed(() => dwarfDisplayName(props.dwarf))
 
 const message = ref(props.draft ?? '')
 watch(message, (text) => emit('draft', text))
@@ -737,16 +770,22 @@ function bindComposer(instance: unknown): void {
 }
 
 /*
- * The ⋯ menu: Open console, Mine history, and Stop dwarf…, which confirms first, disabled with its
- * reason only while the kick itself is (MESSAGE-QUESTIONS 13).
+ * The ⋯ menu: Open console, Mine history, Reset name while the dwarf has a custom name, and Stop
+ * dwarf…, which confirms first, disabled with its reason only while the kick itself is
+ * (MESSAGE-QUESTIONS 13).
  */
-const menu = computed(() => messagePanelMenu(kickBlocked(props.dwarf, transient.value)))
+const hasCustomName = computed(() => props.dwarf.customName !== undefined)
+const menu = computed(() =>
+  messagePanelMenu(kickBlocked(props.dwarf, transient.value), hasCustomName.value)
+)
 const stopAsked = ref(false)
 
 function onMenu(index: number): void {
-  if (index === MENU_CONSOLE) emit('open-console')
-  else if (index === MENU_HISTORY) emit('history')
-  else if (index === MENU_STOP) stopAsked.value = true
+  const picked = messagePanelMenuAction(index, hasCustomName.value)
+  if (picked === 'console') emit('open-console')
+  else if (picked === 'history') emit('history')
+  else if (picked === 'reset-name') void resetName()
+  else if (picked === 'stop') stopAsked.value = true
 }
 
 /**
@@ -761,35 +800,176 @@ function onStopAction(index: number): void {
   if (action('kick')?.enabled !== true) return
   emit('kick')
 }
+
+/*
+ * Renaming in place (#635; decision log, Dwarf names; screens/message.md, As built). A click on
+ * the name, or Enter or F2 on it, puts the kit's Input in its place holding the name shown, all
+ * of it selected; the chips and the base line give way to the hint. Enter saves and leaving the
+ * field saves too; Esc cancels, and only the next Esc closes the panel. Focus returns to the name
+ * after Enter or Esc; after leaving the field it stays wherever the person put it.
+ *
+ * The field drops refused characters as they are typed (shared/dwarfName's filterDwarfName, the
+ * rules main cleans every write with again), and the hint says why. What a save sends is what main
+ * will keep; a save that would change nothing asks main for nothing. The words are
+ * lib/message/rename's.
+ */
+const editing = ref<{ text: string; refused: DwarfNameRefusal | null; forced: boolean } | null>(
+  props.renaming === undefined
+    ? null
+    : { text: props.renaming.value, refused: props.renaming.refused ?? null, forced: true }
+)
+const nameHint = computed(() =>
+  editing.value === null
+    ? null
+    : renameHint(editing.value.text, editing.value.refused, props.dwarf.name)
+)
+const nameHintId = 'dm-msg-hint-' + props.dwarf.id
+const nameRef = ref<HTMLButtonElement | null>(null)
+const nameFieldRef = ref<ComponentPublicInstance | null>(null)
+/** The panel's polite status (accessibility.md, names): what the last save or reset came to. */
+const said = ref('')
+
+const keptName = (raw: string): string => filterDwarfName(raw).text
+
+async function startRename(): Promise<void> {
+  if (editing.value !== null) return
+  editing.value = { text: displayName.value, refused: null, forced: false }
+  await nextTick()
+  const input = (nameFieldRef.value?.$el as HTMLElement | undefined)?.querySelector('input')
+  input?.focus({ preventScroll: true })
+  input?.select()
+}
+
+function onNameKey(event: KeyboardEvent): void {
+  // Enter would click the button anyway; taken here so one press cannot open the field twice.
+  if (event.key !== 'Enter' && event.key !== 'F2') return
+  event.preventDefault()
+  void startRename()
+}
+
+function onNameTyped(raw: string): void {
+  if (editing.value !== null) editing.value.refused = filterDwarfName(raw).refused
+}
+
+function onNameEdited(text: string): void {
+  if (editing.value !== null) editing.value.text = text
+}
+
+function onFieldKey(event: KeyboardEvent): void {
+  if (event.key === 'Enter') {
+    // The Enter that picks an input method's candidate is the IME's, never a save (#635).
+    if (belongsToComposition(event)) return
+    event.preventDefault()
+    finishRename(true, true)
+  } else if (event.key === 'Escape') {
+    // The field first, then the layer: this Esc cancels, the next one closes the panel.
+    event.preventDefault()
+    event.stopPropagation()
+    finishRename(false, true)
+  }
+}
+
+/*
+ * Closes the field, once: Enter, Esc and leaving the field can all reach here for one rename (the
+ * field leaving the page can take the focus with it), and only the first counts.
+ */
+function finishRename(save: boolean, keyboard: boolean): void {
+  const open = editing.value
+  if (open === null) return
+  editing.value = null
+  if (save) void saveName(open.text)
+  if (keyboard) void nextTick(() => nameRef.value?.focus({ preventScroll: true }))
+}
+
+async function saveName(text: string): Promise<void> {
+  if (!renameChanges(text, props.dwarf)) return
+  const base = props.dwarf.name
+  try {
+    const result = await window.api.setDwarfName({
+      dwarfId: props.dwarf.id,
+      name: cleanDwarfName(text)
+    })
+    said.value = renameAnnouncement(result, base)
+  } catch {
+    // Only the bridge can throw here; the name stays the one the board has, which is the truth.
+  }
+}
+
+/** Reset name, from the ⋯ menu: at once, back to the base name, confirming nothing. */
+async function resetName(): Promise<void> {
+  const base = props.dwarf.name
+  try {
+    said.value = renameAnnouncement(await window.api.resetDwarfName(props.dwarf.id), base)
+  } catch {
+    // As for a save: the board still carries the name, and the panel shows it.
+  }
+}
 </script>
 
 <template>
   <section
     class="dm-msg m-mat m-raised"
     role="dialog"
-    :aria-label="`Chat with ${dwarf.name}`"
+    :aria-label="`Chat with ${displayName}`"
     :data-dwarf="dwarf.id"
     @keydown.escape="emit('close')"
     @click.stop
   >
     <!--
       The header (screens/message.md, W4·1). It does not drag and a double-click does nothing:
-      the panel is anchored in every mode. The name renames the dwarf in place once the dwarf
-      names slice lands; until then it is the title and nothing else.
+      the panel is anchored in every mode. The name renames the dwarf in place (decision log,
+      Dwarf names); while it does, the header grows by the field's height.
     -->
     <header class="dm-msg__head">
       <DwarfPortrait
         :role="dwarf.role"
         :status="portraitStatus"
-        :aria-label="sceneDwarfLabel(dwarf.name, portraitStatus)"
+        :aria-label="sceneDwarfLabel(displayName, portraitStatus)"
       />
       <div class="dm-msg__who">
         <h2 class="dm-msg__name">
-          <span class="dm-msg__rename">{{ dwarf.name }}</span>
+          <InputField
+            v-if="editing !== null && nameHint !== null"
+            ref="nameFieldRef"
+            class="dm-msg__field"
+            :value="editing.text"
+            :label="DWARF_NAME_LABEL"
+            :invalid="nameHint.error"
+            :described-by="nameHintId"
+            :state="editing.forced ? 'focus' : undefined"
+            :filter="keptName"
+            @typed="onNameTyped"
+            @update:value="onNameEdited"
+            @keydown="onFieldKey"
+            @focusout="finishRename(true, false)"
+          />
+          <button
+            v-else
+            ref="nameRef"
+            type="button"
+            :class="['dm-msg__rename', ...(nameState ? ['is-' + nameState] : [])]"
+            :title="RENAME_TITLE"
+            :aria-label="renameLabel(displayName)"
+            @click="startRename"
+            @keydown="onNameKey"
+          >
+            {{ displayName }}
+          </button>
         </h2>
-        <div class="dm-msg__chips">
+        <!-- The base name, only under a custom name and never while renaming (Dwarf names). -->
+        <p v-if="dwarf.customName !== undefined && editing === null" class="dm-msg__base">
+          {{ dwarf.name }}
+        </p>
+        <div v-show="editing === null" class="dm-msg__chips">
           <MetaChip v-for="chip in chips" :key="chip" :text="chip" />
         </div>
+        <FieldHint
+          v-if="nameHint !== null"
+          :id="nameHintId"
+          class="dm-msg__hint"
+          :error="nameHint.error"
+          >{{ nameHint.text }}</FieldHint
+        >
       </div>
       <div class="dm-msg__tools">
         <ActionButton icon="history" size="sm" title="Mine history" @click="emit('history')" />
@@ -852,7 +1032,7 @@ function onStopAction(index: number): void {
       ref="conversationRef"
       class="dm-msg__log"
       role="log"
-      :aria-label="`Conversation with ${dwarf.name}`"
+      :aria-label="`Conversation with ${displayName}`"
       aria-live="polite"
       :title="note"
       tabindex="0"
@@ -929,7 +1109,7 @@ function onStopAction(index: number): void {
         v-if="dwarf.pendingPermission"
         class="dm-msg__ask"
         :permission="dwarf.pendingPermission"
-        :name="dwarf.name"
+        :name="displayName"
         :answer-state="answerState"
         @decide="emit('decide', $event)"
         @send-text="emit('send', $event)"
@@ -939,7 +1119,7 @@ function onStopAction(index: number): void {
         v-else-if="dwarf.pendingQuestion"
         class="dm-msg__ask"
         :question="dwarf.pendingQuestion"
-        :name="dwarf.name"
+        :name="displayName"
         :answer-state="answerState"
         @answer="emit('answer', $event)"
         @answer-text="emit('answer-text', $event)"
@@ -954,7 +1134,7 @@ function onStopAction(index: number): void {
         v-else
         :ref="bindComposer"
         :value="message"
-        :placeholder="closed ? SESSION_CLOSED_REASON : `Write to ${dwarf.name}…`"
+        :placeholder="closed ? SESSION_CLOSED_REASON : `Write to ${displayName}…`"
         :disabled="!canReceive"
         :title="composerTitle"
         :can-attach="canAttach"
@@ -971,9 +1151,12 @@ function onStopAction(index: number): void {
       />
     </div>
 
+    <!-- What a rename or a reset came to, said politely to screen readers only (copy.md). -->
+    <span class="sr-only" role="status" aria-live="polite">{{ said }}</span>
+
     <ModalDialog
       :open="stopAsked"
-      :title="stopDwarfTitle(dwarf.name)"
+      :title="stopDwarfTitle(displayName)"
       danger
       :actions="[{ label: 'Cancel' }, { label: 'Stop dwarf', variant: 'danger' }]"
       @action="onStopAction"
@@ -1036,6 +1219,30 @@ function onStopAction(index: number): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
+  cursor: text;
+}
+/* Hover and keyboard focus put a wood plate with a brass underline behind the name: editable. */
+.dm-msg__rename:hover,
+.dm-msg__rename.is-hover,
+.dm-msg__rename:focus-visible,
+.dm-msg__rename.is-focus {
+  background: var(--wood);
+  box-shadow: inset 0 -2px 0 0 var(--brass);
+}
+.dm-msg__base {
+  margin: 0;
+  font: var(--fs-meta) / 1.3 var(--f-meta);
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * While renaming, the hint takes the chips' place under the field. Written through the name block
+ * so it outranks the hint atom's own margin whatever order the two stylesheets load in.
+ */
+.dm-msg__who .dm-msg__hint {
+  margin: 0 2px;
 }
 .dm-msg__chips {
   display: flex;

@@ -89,6 +89,9 @@
     "key": "molecules/menu#messagepanel-stop-unavailable"
   },
   {
+    "key": "molecules/menu#messagepanel-custom-name"
+  },
+  {
     "key": "molecules/menu#mine-card"
   },
   {
@@ -230,6 +233,27 @@
   },
   {
     "key": "organisms/message-panel#answer-refused-reason"
+  },
+  {
+    "key": "organisms/message-panel#name-hover"
+  },
+  {
+    "key": "organisms/message-panel#name-focus"
+  },
+  {
+    "key": "organisms/message-panel#custom-name"
+  },
+  {
+    "key": "organisms/message-panel#renaming"
+  },
+  {
+    "key": "organisms/message-panel#renaming-at-the-limit"
+  },
+  {
+    "key": "organisms/message-panel#renaming-emoji-refused"
+  },
+  {
+    "key": "organisms/message-panel#renaming-empty"
   },
   {
     "key": "organisms/add-panel#live"

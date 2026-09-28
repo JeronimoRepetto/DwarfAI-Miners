@@ -34,6 +34,7 @@ import {
   type DwarfAttachment,
   type DwarfAttachmentPick,
   type DwarfFeedResult,
+  type DwarfNameResult,
   type DwarfPermissionRequest,
   type DwarfSendState,
   type FeedMessage
@@ -47,6 +48,7 @@ import {
   COMPOSER_HINT as COMPOSER_HINT_TEXT,
   MENU_CONSOLE,
   MENU_HISTORY,
+  MENU_RESET_NAME,
   MENU_STOP
 } from '../../lib/message/panelChrome'
 
@@ -3392,6 +3394,298 @@ describe('DwarfMessagePanel: a refused "Answers:" record (MESSAGE-QUESTIONS 21)'
   })
 })
 /* --- end of the ruling 21 block ------------------------------------------------------------- */
+
+/*
+ * APPENDED for #635 (the dwarf names slice; decision log, Dwarf names; screens/message.md, As
+ * built): the name renames the dwarf in place. A click, or Enter or F2 on it, puts the "Dwarf
+ * name" field in its place holding the name shown, all of it selected; Enter saves and leaving
+ * the field saves too; Esc cancels and keeps the panel open, and only the next Esc closes it.
+ * Focus returns to the name after Enter or Esc and stays where the person put it after leaving.
+ * The panel shows the name main publishes, never a guess, and announces what main answered.
+ *
+ * `window.api` is faked per test, as the attachments block above does: what each case is about
+ * is which call the panel made, with what.
+ */
+describe('DwarfMessagePanel renames its dwarf in place (#635)', () => {
+  const BASE = 'dwarfai-55'
+  const named = (customName?: string) =>
+    defaultDwarf({
+      id: 'd55',
+      name: BASE,
+      textDelivery: 'terminal',
+      ...(customName === undefined ? {} : { customName })
+    })
+
+  function fakeNames(answer: DwarfNameResult = { saved: true, customName: 'Watcher' }) {
+    const api = {
+      setDwarfName: vi.fn().mockResolvedValue(answer),
+      resetDwarfName: vi.fn().mockResolvedValue({ saved: true } satisfies DwarfNameResult)
+    }
+    ;(window as unknown as { api: unknown }).api = api
+    return api
+  }
+
+  let host: HTMLElement | null = null
+  function attached(props: Record<string, unknown> = {}) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    return mount(DwarfMessagePanel, {
+      attachTo: host,
+      props: { dwarf: named(), feed: heldFeed(HELD), ...props }
+    })
+  }
+
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api
+  })
+  // After enableAutoUnmount's own afterEach, so the panel is gone before its host goes.
+  afterEach(() => {
+    host?.remove()
+    host = null
+  })
+
+  const field = (wrapper: ReturnType<typeof panel>) =>
+    wrapper.get('.dm-msg__field input').element as HTMLInputElement
+  const said = (wrapper: ReturnType<typeof panel>) =>
+    wrapper.get('.sr-only[role="status"][aria-live="polite"]').text()
+
+  async function open(wrapper: ReturnType<typeof panel>): Promise<void> {
+    await wrapper.get('.dm-msg__rename').trigger('click')
+    await flushPromises()
+  }
+
+  async function type(wrapper: ReturnType<typeof panel>, text: string): Promise<void> {
+    const input = field(wrapper)
+    input.value = text
+    input.setSelectionRange(text.length, text.length)
+    await wrapper.get('.dm-msg__field input').trigger('input')
+  }
+
+  it('makes the name a button titled Rename and named for the dwarf it renames', () => {
+    const wrapper = panel({ dwarf: named('Watcher') })
+    const name = wrapper.get('h2.dm-msg__name button.dm-msg__rename')
+    expect(name.attributes('type')).toBe('button')
+    expect(name.attributes('title')).toBe('Rename')
+    expect(name.attributes('aria-label')).toBe('Rename Watcher')
+    expect(name.text()).toBe('Watcher')
+  })
+
+  it('names the dwarf by its custom name in the panel’s own chrome, never by the base name', async () => {
+    const wrapper = panel({ dwarf: named('Watcher') })
+    expect(wrapper.get('.dm-msg').attributes('aria-label')).toBe('Chat with Watcher')
+    expect(wrapper.get('.dm-msg__log').attributes('aria-label')).toBe('Conversation with Watcher')
+    expect(wrapper.get('.dm-composer textarea').attributes('placeholder')).toBe('Write to Watcher…')
+    expect(wrapper.get('.dm-msg__head .dm-portrait').attributes('aria-label')).toMatch(/^Watcher, /)
+    // Stop dwarf… is one row down while Reset name is in the menu.
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_STOP + 1)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findComponent(ModalDialog).props('title')).toBe('Stop Watcher?')
+  })
+
+  it('shows the base name under a custom name, and no base line without one', () => {
+    const custom = panel({ dwarf: named('Watcher') })
+    const base = custom.get('p.dm-msg__base')
+    expect(base.text()).toBe(BASE)
+    expect(base.isVisible()).toBe(true)
+    expect(panel({ dwarf: named() }).find('p.dm-msg__base').exists()).toBe(false)
+  })
+
+  it('opens the field on a click, holding the name shown, all of it selected', async () => {
+    fakeNames()
+    const wrapper = attached({ dwarf: named('Watcher') })
+    await open(wrapper)
+    const input = field(wrapper)
+    expect(wrapper.find('button.dm-msg__rename').exists()).toBe(false)
+    expect(input.getAttribute('aria-label')).toBe('Dwarf name')
+    expect(input.value).toBe('Watcher')
+    expect(document.activeElement).toBe(input)
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Watcher'.length])
+    // The chips and the base line give way to the hint, which describes the field.
+    expect(wrapper.get('.dm-msg__chips').isVisible()).toBe(false)
+    expect(wrapper.find('p.dm-msg__base').exists()).toBe(false)
+    const hint = wrapper.get('p.dm-field__hint.dm-msg__hint')
+    expect(hint.text()).toBe('Enter saves · Esc cancels')
+    expect(input.getAttribute('aria-describedby')).toBe(hint.attributes('id'))
+  })
+
+  it('opens the field on Enter or F2 on the name', async () => {
+    for (const key of ['Enter', 'F2']) {
+      const wrapper = attached()
+      await wrapper.get('.dm-msg__rename').trigger('keydown', { key })
+      await flushPromises()
+      expect(field(wrapper).value).toBe(BASE)
+      wrapper.unmount()
+      host?.remove()
+    }
+  })
+
+  it('saves on Enter what main will keep, and gives the name back its focus', async () => {
+    const api = fakeNames()
+    const wrapper = attached()
+    await open(wrapper)
+    await type(wrapper, '  Watcher   of  seals ')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher of seals' })
+    expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
+    expect(document.activeElement).toBe(wrapper.get('.dm-msg__rename').element)
+    expect(wrapper.get('.dm-msg__chips').isVisible()).toBe(true)
+    expect(wrapper.find('.dm-msg__hint').exists()).toBe(false)
+  })
+
+  it('shows the name main publishes, never its own guess, and announces what main saved', async () => {
+    fakeNames({ saved: true, customName: 'Watcher' })
+    const wrapper = attached()
+    await open(wrapper)
+    await type(wrapper, 'Watcher')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    // Until the board carries it, the name is still the one the board has.
+    expect(wrapper.get('.dm-msg__rename').text()).toBe(BASE)
+    expect(said(wrapper)).toBe('Renamed to Watcher')
+    await wrapper.setProps({ dwarf: named('Watcher') })
+    expect(wrapper.get('.dm-msg__rename').text()).toBe('Watcher')
+    expect(wrapper.get('p.dm-msg__base').text()).toBe(BASE)
+  })
+
+  it('saves when the person leaves the field, and leaves focus where they put it', async () => {
+    const api = fakeNames()
+    const wrapper = attached()
+    await open(wrapper)
+    await type(wrapper, 'Watcher')
+    const composer = wrapper.get('.dm-composer textarea').element as HTMLTextAreaElement
+    composer.focus()
+    await flushPromises()
+    expect(api.setDwarfName).toHaveBeenCalledTimes(1)
+    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: 'Watcher' })
+    expect(wrapper.find('.dm-msg__field').exists()).toBe(false)
+    expect(document.activeElement).toBe(composer)
+  })
+
+  it('cancels on Esc and keeps the panel open; only the next Esc closes it', async () => {
+    const api = fakeNames()
+    const wrapper = attached({ dwarf: named('Watcher') })
+    await open(wrapper)
+    await type(wrapper, 'Warden')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(wrapper.emitted('close')).toBeUndefined()
+    const name = wrapper.get('.dm-msg__rename')
+    expect(name.text()).toBe('Watcher')
+    expect(document.activeElement).toBe(name.element)
+    await name.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('drops emoji and control characters as they are typed, and says so', async () => {
+    fakeNames()
+    const wrapper = attached({ dwarf: named() })
+    await open(wrapper)
+    await type(wrapper, 'Scout🙂')
+    expect(field(wrapper).value).toBe('Scout')
+    const hint = wrapper.get('.dm-msg__hint')
+    expect(hint.text()).toBe('Emoji and control characters are not allowed.')
+    expect(hint.classes()).toContain('is-error')
+    expect(wrapper.get('.dm-msg__field').classes()).toContain('is-invalid')
+    expect(field(wrapper).getAttribute('aria-invalid')).toBe('true')
+    // The next keystroke that is allowed takes the refusal away.
+    await type(wrapper, 'Scouts')
+    expect(wrapper.get('.dm-msg__hint').text()).toBe('Enter saves · Esc cancels')
+    expect(wrapper.get('.dm-msg__field').classes()).not.toContain('is-invalid')
+  })
+
+  it('takes no more than 24 characters, and counts them at the limit', async () => {
+    fakeNames()
+    const wrapper = attached()
+    await open(wrapper)
+    await type(wrapper, 'Keeper of the tier seals!')
+    expect(field(wrapper).value).toBe('Keeper of the tier seals')
+    const hint = wrapper.get('.dm-msg__hint')
+    expect(hint.text()).toBe('24 of 24 characters')
+    expect(hint.classes()).toContain('is-error')
+    expect(wrapper.get('.dm-msg__field').classes()).toContain('is-invalid')
+  })
+
+  it('goes back to the base name when saved empty, and says so', async () => {
+    const api = fakeNames({ saved: true })
+    const wrapper = attached({ dwarf: named('Watcher') })
+    await open(wrapper)
+    await type(wrapper, '')
+    expect(wrapper.get('.dm-msg__hint').text()).toBe('Empty · Enter goes back to dwarfai-55')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(api.setDwarfName).toHaveBeenCalledWith({ dwarfId: 'd55', name: '' })
+    expect(said(wrapper)).toBe('Name reset to dwarfai-55')
+  })
+
+  it('asks main for nothing when the save would change nothing', async () => {
+    const api = fakeNames()
+    const wrapper = attached({ dwarf: named('Watcher') })
+    await open(wrapper)
+    await type(wrapper, ' Watcher ')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(said(wrapper)).toBe('')
+  })
+
+  it('saves nothing on an Enter the input method is still composing with', async () => {
+    const api = fakeNames()
+    const wrapper = attached()
+    await open(wrapper)
+    await type(wrapper, '見張り')
+    const input = wrapper.get('.dm-msg__field input')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    await input.trigger('keydown', { key: 'Enter', keyCode: 229 })
+    await flushPromises()
+    expect(api.setDwarfName).not.toHaveBeenCalled()
+    expect(wrapper.find('.dm-msg__field').exists()).toBe(true)
+  })
+
+  it('says main’s reason when it saved nothing, and keeps the name the board has', async () => {
+    fakeNames({ saved: false, reason: 'The name could not be saved.' })
+    const wrapper = attached()
+    await open(wrapper)
+    await type(wrapper, 'Watcher')
+    await wrapper.get('.dm-msg__field input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(said(wrapper)).toBe('The name could not be saved.')
+    expect(wrapper.get('.dm-msg__rename').text()).toBe(BASE)
+  })
+
+  it('offers Reset name in the ⋯ menu only while a custom name is set', () => {
+    const labels = (wrapper: ReturnType<typeof panel>) =>
+      (wrapper.findComponent(MenuButton).props('items') as MenuItem[]).map((item) => item.label)
+    expect(labels(panel({ dwarf: named('Watcher') }))).toContain('Reset name')
+    expect(labels(panel({ dwarf: named() }))).not.toContain('Reset name')
+  })
+
+  it('resets the name at once from the ⋯ menu, confirming nothing, and says so', async () => {
+    const api = fakeNames()
+    const wrapper = attached({ dwarf: named('Watcher') })
+    wrapper.findComponent(MenuButton).vm.$emit('pick', MENU_RESET_NAME)
+    await flushPromises()
+    expect(api.resetDwarfName).toHaveBeenCalledWith('d55')
+    expect(wrapper.findComponent(ModalDialog).props('open')).toBe(false)
+    expect(said(wrapper)).toBe('Name reset to dwarfai-55')
+  })
+
+  // The UI kit's own states, drawn without the pointer or the keyboard (the goldens draw them).
+  it('draws a forced hover or focus on the name, and a rename already open', () => {
+    expect(panel({ nameState: 'hover' }).get('.dm-msg__rename').classes()).toContain('is-hover')
+    expect(panel({ nameState: 'focus' }).get('.dm-msg__rename').classes()).toContain('is-focus')
+    const open = panel({
+      dwarf: named(),
+      renaming: { value: 'Scout', refused: 'chars' }
+    })
+    expect(open.get('.dm-msg__field').classes()).toEqual(
+      expect.arrayContaining(['is-focus', 'is-invalid'])
+    )
+    expect(field(open).value).toBe('Scout')
+    expect(open.get('.dm-msg__hint').text()).toBe('Emoji and control characters are not allowed.')
+  })
+})
 
 /*
  * No panel outlives its test (#635). A mounted panel keeps its one-second outcome clock running

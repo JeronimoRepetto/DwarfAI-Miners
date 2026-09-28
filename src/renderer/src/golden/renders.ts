@@ -44,7 +44,8 @@ import ActivityDisclosure from '../components/message/ActivityDisclosure.vue'
 import { ACTIVITY_WORKING_LABEL, activityStepsLabel } from '../lib/message/activityGroup'
 import { historyClock } from '../lib/history/mineHistory'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
-import { COMPOSER_HINT, bubbleMark } from '../lib/message/panelChrome'
+import { COMPOSER_HINT, bubbleMark, messagePanelMenu } from '../lib/message/panelChrome'
+import { DWARF_NAME_MAX, nameChars, type DwarfNameRefusal } from '../../../shared/dwarfName'
 import type { MessageEcho } from '../lib/message/echo'
 import {
   ANSWERS_HEADING,
@@ -1099,16 +1100,51 @@ const messagePanel: Render = (sample, texts, attributes) => {
   const routeGone = elementsOf(attributes, 'textarea').some((box) => 'disabled' in box)
   const reached = routeGone ? { ...found, textDelivery: undefined } : found
   const dwarf = askClosed(reached, attributes)
+  const name = attributes.find((a) => a.element.startsWith('button.dm-msg__rename'))
+  const nameState = name === undefined ? undefined : forcedOf(name.element)
+  const renaming = renamingOf(attributes)
   return {
     component: DwarfMessagePanel,
     props: {
       dwarf,
       routeGone,
       feed: sample.feeds[dwarf.id],
-      echoes: [...failedEchoesOf(sample, dwarf.id), ...answersRecordsOf(reached, texts, attributes)]
+      echoes: [
+        ...failedEchoesOf(sample, dwarf.id),
+        ...answersRecordsOf(reached, texts, attributes)
+      ],
+      ...(nameState === undefined ? {} : { nameState }),
+      ...(renaming === undefined ? {} : { renaming })
     }
   }
 }
+
+/*
+ * A rename a MessagePanel tree prints open (#635; decision log, Dwarf names): the field in the
+ * name's place, holding the text its input prints. A field with the invalid edge refused
+ * something: text past the cap when it holds the most a name may, characters it drops otherwise.
+ */
+function renamingOf(
+  attributes: GoldenAttributes[]
+): { value: string; refused?: DwarfNameRefusal } | undefined {
+  const at = attributes.findIndex(
+    (a) => a.element.startsWith('label.dm-field') && a.element.split('.').includes('dm-msg__field')
+  )
+  if (at < 0) return undefined
+  const value = attributes[at + 1]?.attributes.value ?? ''
+  if (!attributes[at]!.element.split('.').includes('is-invalid')) return { value }
+  return { value, refused: nameChars(value).length >= DWARF_NAME_MAX ? 'long' : 'chars' }
+}
+
+/*
+ * The MessagePanel's ⋯ menu for a dwarf with a custom name (#635): the app's own menu, as the
+ * panel hands it to MenuButton, rather than the rows the tree prints, so the state proves the
+ * panel's menu and not the menu atom.
+ */
+const customNameMenu: Render = () => ({
+  component: MenuList,
+  props: { items: messagePanelMenu(null, true) }
+})
 
 /*
  * The sample dwarf once its ask closed (#635, MESSAGE-QUESTIONS 21, Answer refused · ask closed):
@@ -1841,6 +1877,7 @@ export const RENDERS: Record<string, Render> = {
   // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
   'molecules/menu#messagepanel': menu(['console', 'history']),
   'molecules/menu#messagepanel-stop-unavailable': menu(['console', 'history']),
+  'molecules/menu#messagepanel-custom-name': customNameMenu,
   'molecules/menu#mine-card': menu([]),
   'molecules/menu#item-hovered': menu([]),
   'molecules/menu#danger-hovered': menu(['console']),
@@ -1886,6 +1923,14 @@ export const RENDERS: Record<string, Render> = {
   'organisms/message-panel#answer-refused': messagePanel,
   'organisms/message-panel#answer-refused-ask-closed': messagePanel,
   'organisms/message-panel#answer-refused-reason': textTooltip,
+  // The name that renames the dwarf in place (#635, the dwarf names slice).
+  'organisms/message-panel#name-hover': messagePanel,
+  'organisms/message-panel#name-focus': messagePanel,
+  'organisms/message-panel#custom-name': messagePanel,
+  'organisms/message-panel#renaming': messagePanel,
+  'organisms/message-panel#renaming-at-the-limit': messagePanel,
+  'organisms/message-panel#renaming-emoji-refused': messagePanel,
+  'organisms/message-panel#renaming-empty': messagePanel,
   // The question card and its option (#635, PR3a): a question walked by steps, and a permission.
   'organisms/question-card#live': questionCard,
   'organisms/question-card#last-step': questionCard,
