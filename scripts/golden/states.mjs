@@ -1,12 +1,23 @@
 /*
  * The golden states contract (#634). `src/renderer/src/golden/states.json` lists every state a
- * golden covers: its manifest key and, while the app has not rebuilt it yet, a `red` reason.
- * `renders.ts` beside it draws the real component for each key. Where the stage sits and how wide
- * it is come from the key's manifest row alone, so a cell the design resizes needs no edit here.
+ * golden covers: its manifest key and, while the app has not rebuilt it yet, a `red` reason and,
+ * optionally, `at` — the percentage differing that reason was written against (#635). `renders.ts`
+ * beside it draws the real component for each key. Where the stage sits and how wide it is come
+ * from the key's manifest row alone, so a cell the design resizes needs no edit here.
  *
  * A red state is an expected failure that must flip: it passes the run while its verdict fails,
  * reporting why, and FAILS the run the moment its verdict passes, so a rebuilt state cannot stay
  * marked red. Removing `red` is the flip.
+ *
+ * `at` makes that stated percentage binding, not just the pass/fail boolean (#635): without it, a
+ * red state that regresses from 0.5% to 32% is still "red as expected" and the run stays green. A
+ * red state carrying `at` FAILS once its measured percentage exceeds `at` by more than
+ * RED_MEASURE_TOLERANCE percentage points, naming the stated and measured figures; a red state
+ * without `at` keeps the boolean-only behaviour, so the field is additive over every already-red
+ * state. For a screens-full state (several window boxes graded at once), `at` is the same figure
+ * the run already reports and fails on: the worst box's percentage (screens.golden.test.mjs takes
+ * the max across `plan.windows` before calling `expectation`) — see CONTRIBUTING.md, "Golden UI
+ * tests", for how a state gets `at` backfilled after it goes red.
  *
  * The framing a state needs beyond the stage (a component's "UI kit framing" rules, such as a
  * fixed height the kit gives a column) is read from the design's docs at run time, like the stage
@@ -15,7 +26,14 @@
  * golden test reads the files and calls these.
  */
 
-const STATE_FIELDS = new Set(['key', 'red'])
+const STATE_FIELDS = new Set(['key', 'red', 'at'])
+
+// Percentage points a red state's measured figure may exceed its stated `at` by before the run
+// fails it. Measured empirically (#635): three consecutive full runs on the same commit varied by
+// at most 0.033 points on any state (font rasterisation / capture timing noise), so 0.1 comfortably
+// clears that noise floor while still catching a real regression, which in this codebase's own red
+// states runs from single points to tens of points.
+export const RED_MEASURE_TOLERANCE = 0.1
 
 export function checkStates(states, manifest) {
   const problems = []
@@ -39,6 +57,15 @@ export function checkStates(states, manifest) {
     }
     if ('red' in state && !(typeof state.red === 'string' && state.red.trim())) {
       problems.push(state.key + ' is marked red without a reason')
+    }
+    if ('at' in state && !('red' in state)) {
+      problems.push(state.key + " has 'at' without being red")
+    }
+    if (
+      'at' in state &&
+      !(typeof state.at === 'number' && Number.isFinite(state.at) && state.at >= 0)
+    ) {
+      problems.push(state.key + "'s at is not a non-negative number")
     }
   }
   return problems
@@ -242,16 +269,30 @@ const describeVerdict = (v) =>
 
 export function expectation(state, verdict) {
   if (state.red) {
-    return verdict.pass
-      ? {
-          ok: false,
-          message:
-            state.key +
-            ' is marked red but now passes (' +
-            describeVerdict(verdict) +
-            '): remove "red" from states.json to flip it to green.'
-        }
-      : { ok: true, message: state.key + ' is red as expected: ' + describeVerdict(verdict) }
+    if (verdict.pass) {
+      return {
+        ok: false,
+        message:
+          state.key +
+          ' is marked red but now passes (' +
+          describeVerdict(verdict) +
+          '): remove "red" from states.json to flip it to green.'
+      }
+    }
+    if (typeof state.at === 'number' && verdict.percent > state.at + RED_MEASURE_TOLERANCE) {
+      return {
+        ok: false,
+        message:
+          state.key +
+          ' is red at ' +
+          state.at.toFixed(3) +
+          '% but now measures ' +
+          describeVerdict(verdict) +
+          ': a red state is not a licence to regress further — update "at" in states.json only ' +
+          'once the growth is understood and accepted, or fix what grew.'
+      }
+    }
+    return { ok: true, message: state.key + ' is red as expected: ' + describeVerdict(verdict) }
   }
   return verdict.pass
     ? { ok: true, message: state.key + ' passes: ' + describeVerdict(verdict) }
