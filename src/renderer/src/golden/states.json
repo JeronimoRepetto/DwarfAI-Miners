@@ -166,6 +166,10 @@
     "key": "organisms/add-panel#custom-command"
   },
   {
+    "key": "organisms/add-panel#jev-suggests-launch-in-flight",
+    "red": "the Jev card leaves once the launch is in flight, where the design keeps it on screen with its Dismiss disabled (MESSAGE-QUESTIONS Q1, design lead ruling 2026-09-28)"
+  },
+  {
     "key": "molecules/vault-strip#mine-footer"
   },
   {
