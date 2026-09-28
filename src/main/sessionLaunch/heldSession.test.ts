@@ -17,6 +17,7 @@ import {
   askToWireQuestion,
   heldMessageEntries,
   heldMessageText,
+  heldSessionNeverSpawned,
   heldTelemetryToWire,
   isReplayedUserMessage,
   parseAskUserQuestion,
@@ -1813,5 +1814,62 @@ describe('stampHeldStatus', () => {
     const stamped = stampHeldStatus(mines, () => ({ held: false }))
     expect(stamped[0]!.dwarfs[0]!.status).toBe('working')
     expect(stamped[0]!.dwarfs[0]!.waitingReason).toBe('unknown')
+  })
+})
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, questions 16 and 17). The Agent SDK
+ * (0.3.258) never rejects `query()` for a CLI that could not be spawned: Node
+ * reports ENOENT/EACCES/EPERM as an asynchronous 'error' event, which the
+ * SDK's ProcessTransport stores and raises only once the stream is read —
+ * tagged by its own `Cn` helper with an `errorClass` of `executable_not_found`,
+ * `executable_launch_failed` or `spawn_failed`, or copied onto the "Cannot
+ * write to process that exited with error" wrapper. So the held engine's
+ * start resolves and the stream then fails at once, which without this read
+ * would be "stopped as soon as it started" for a CLI that never started.
+ *
+ * The errors below are built in the shape that transport builds them, one per
+ * errno each OS actually reports for a spawn it refuses: Windows' UNKNOWN for
+ * a binary it cannot load, ENOENT everywhere, EACCES for a file without the
+ * execute bit on macOS and Linux, EPERM for a policy refusal.
+ */
+describe('heldSessionNeverSpawned (#635)', () => {
+  const sdkSpawnError = (message: string, errorClass: string, code: string) =>
+    Object.assign(new Error(message), { telemetryMessage: message, errorClass, code })
+
+  it.each([
+    ['win32', 'UNKNOWN', 'spawn_failed'],
+    ['win32', 'ENOENT', 'executable_not_found'],
+    ['darwin', 'EACCES', 'executable_launch_failed'],
+    ['darwin', 'ENOENT', 'executable_not_found'],
+    ['linux', 'EACCES', 'executable_launch_failed'],
+    ['linux', 'EPERM', 'executable_launch_failed']
+  ])('recognises a CLI that never spawned on %s (%s → %s)', (_platform, code, errorClass) => {
+    expect(heldSessionNeverSpawned(sdkSpawnError('could not launch', errorClass, code))).toBe(true)
+  })
+
+  it('recognises the write-side wrapper, which copies the stored error class', () => {
+    const wrapped = sdkSpawnError(
+      'Cannot write to process that exited with error: Failed to spawn Claude Code process',
+      'spawn_failed',
+      'UNKNOWN'
+    )
+    expect(heldSessionNeverSpawned(wrapped)).toBe(true)
+  })
+
+  it.each([
+    ['a process that spawned and exited non-zero', { errorClass: 'process_exited_nonzero' }],
+    ['a process that spawned and was signalled', { errorClass: 'process_killed_by_signal' }],
+    ['an error result from a turn', { errorClass: 'error_result' }],
+    ['a stream error after the spawn', { errorClass: 'process_error' }],
+    ['an untagged error', {}]
+  ])('reads %s as having started', (_label, tags) => {
+    expect(heldSessionNeverSpawned(Object.assign(new Error('boom'), tags))).toBe(false)
+  })
+
+  it('reads anything that is not an error object as having started', () => {
+    expect(heldSessionNeverSpawned('spawn_failed')).toBe(false)
+    expect(heldSessionNeverSpawned(undefined)).toBe(false)
+    expect(heldSessionNeverSpawned({ errorClass: 42 })).toBe(false)
   })
 })

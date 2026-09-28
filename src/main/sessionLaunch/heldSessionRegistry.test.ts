@@ -11,6 +11,7 @@ import {
   TUNING_UNSUPPORTED
 } from './heldSessionRegistry'
 import { HELD_CONTEXT_USAGE_TIMEOUT_MS, HELD_TUNING_TIMEOUT_MS } from './heldSession'
+import { EARLY_FAILURE_WINDOW_MS } from './launchRunner'
 import type { HeldDelegationLink } from '../mcp/delegationHeldServer'
 import type { DelegationLink } from '../mcp/delegationLink'
 import type {
@@ -303,7 +304,13 @@ describe('HeldSessionRegistry.launch', () => {
       minePath: MINE,
       prompt: 'dig'
     })
-    expect(result).toEqual({ launched: false, error: 'The agent could not be started.' })
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact
+    // verdict without `cause`).
+    expect(result).toEqual({
+      launched: false,
+      error: 'The agent could not be started.',
+      cause: 'could-not-start'
+    })
     expect(registry.count()).toBe(0)
   })
 
@@ -2594,5 +2601,299 @@ describe('HeldSessionRegistry delegation injection (#511 T4)', () => {
     ).resolves.toEqual({ launched: true })
     expect(() => port.end(0)).not.toThrow()
     expect(() => registry.closeAll()).not.toThrow()
+  })
+})
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, questions 16 and 17). The causes a
+ * launch-failure notice names belong to the SUPPLIER, whatever channel the app
+ * launches it on — so a held launch classifies a refusal exactly as the
+ * detached runner does (launchRunner.test.ts, the same heading), by which step
+ * failed, identically on every OS. Detection through the real detector over a
+ * fake disk, with the OS passed in, so macOS and Linux run on a Windows host.
+ */
+describe('the cause a failed held launch names (#635)', () => {
+  const PLATFORMS = ['win32', 'darwin', 'linux'] as const
+  const HOMES = { win32: 'C:\\Users\\j', darwin: '/Users/j', linux: '/home/j' } as const
+
+  function launchOn(registry: HeldSessionRegistry) {
+    return registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+  }
+
+  it.each(PLATFORMS)('says not-installed when detection finds nothing on %s', async (platform) => {
+    const port = new FakePort()
+    const detector = createCliDetector({
+      home: HOMES[platform],
+      platform,
+      fs: new FakeFs(),
+      env: {}
+    })
+
+    await expect(launchOn(registryOver(port, detector))).resolves.toMatchObject({
+      launched: false,
+      cause: 'not-installed'
+    })
+    expect(port.started).toHaveLength(0)
+  })
+
+  it.each(PLATFORMS)(
+    'says could-not-start when the engine cannot start on %s',
+    async (platform) => {
+      const port = new FakePort()
+      const fs = new FakeFs()
+      const binary = platform === 'win32' ? 'C:\\tools\\claude.exe' : '/opt/tools/claude'
+      fs.addFile(binary, 'binary')
+      const detector = createCliDetector({
+        home: HOMES[platform],
+        platform,
+        fs,
+        env: {},
+        overrides: { claude: binary }
+      })
+      port.failWith = Object.assign(new Error('spawn EACCES'), { code: 'EACCES' })
+
+      await expect(launchOn(registryOver(port, detector))).resolves.toMatchObject({
+        launched: false,
+        cause: 'could-not-start'
+      })
+    }
+  )
+
+  it('says could-not-start when detection found only a shim it cannot run (Windows)', async () => {
+    const port = new FakePort()
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\claude.cmd', '@echo off\r\nrem nothing to run here\r\n')
+    const detector = createCliDetector({
+      home: HOMES.win32,
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin' }
+    })
+
+    await expect(launchOn(registryOver(port, detector))).resolves.toMatchObject({
+      launched: false,
+      cause: 'could-not-start'
+    })
+    expect(port.started).toHaveLength(0)
+  })
+
+  it('names no cause for a refusal that is not a failure to start', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+
+    const empty = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: '   '
+    })
+    const unheldable = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'codex',
+      minePath: MINE,
+      prompt: 'dig'
+    })
+    expect(empty).not.toHaveProperty('cause')
+    expect(unheldable).not.toHaveProperty('cause')
+  })
+})
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). A held session that
+ * ends, or errors before its stream opens, within the early window the app
+ * already applies to a watched process (EARLY_FAILURE_WINDOW_MS, #263) is
+ * "stopped as soon as it started". A held launch has no process to watch, so
+ * the signal is the session's own end, read against the registry's own clock
+ * — injected here and advanced by hand, the house idiom for a `now`.
+ */
+describe('a held session that stops as soon as it starts (#635)', () => {
+  function clockedRegistry(port: FakePort) {
+    const clock = { now: 1_700_000_000_000 }
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: { claude: port.start },
+      now: () => clock.now,
+      log: () => {}
+    })
+    return { registry, clock }
+  }
+
+  function launchWatched(registry: HeldSessionRegistry, onEarlyEnd: () => void) {
+    return registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      onEarlyEnd
+    })
+  }
+
+  it.each(['the session stream ended', 'the session stream failed', 'exit 1', 'exit 0'])(
+    'tells the launch once when the session ends inside the window (%s)',
+    async (reason) => {
+      const port = new FakePort()
+      const { registry, clock } = clockedRegistry(port)
+      const onEarlyEnd = vi.fn()
+
+      await expect(launchWatched(registry, onEarlyEnd)).resolves.toEqual({ launched: true })
+      expect(onEarlyEnd).not.toHaveBeenCalled()
+
+      clock.now += EARLY_FAILURE_WINDOW_MS - 1
+      port.end(0, reason)
+
+      expect(onEarlyEnd).toHaveBeenCalledTimes(1)
+      // A session that spawned and then stopped: the engine said nothing
+      // about a spawn, so this is the stopped-at-once cause.
+      expect(onEarlyEnd).toHaveBeenCalledWith('exited-at-once')
+      expect(registry.count()).toBe(0)
+    }
+  )
+
+  /*
+   * The REAL shape of a Claude CLI that never spawned (see
+   * heldSessionNeverSpawned in heldSession.test.ts): the SDK engine's start
+   * resolves, and only then does the stream fail — the engine flagging that
+   * failure as a spawn that never happened. That is `could-not-start`, the
+   * cause the detached runner and held Antigravity already name for the same
+   * machine, never "stopped as soon as it started" for a start that did not
+   * happen. Whenever it arrives: a spawn error is not a matter of timing.
+   */
+  it.each([0, EARLY_FAILURE_WINDOW_MS])(
+    'names could-not-start when the engine says the CLI never spawned (%i ms in)',
+    async (elapsed) => {
+      const port = new FakePort()
+      const { registry, clock } = clockedRegistry(port)
+      const onEarlyEnd = vi.fn()
+      await expect(launchWatched(registry, onEarlyEnd)).resolves.toEqual({ launched: true })
+
+      clock.now += elapsed
+      port.started[0]!.onEnd('the session stream failed', true)
+
+      expect(onEarlyEnd).toHaveBeenCalledTimes(1)
+      expect(onEarlyEnd).toHaveBeenCalledWith('could-not-start')
+      expect(registry.count()).toBe(0)
+    }
+  )
+
+  it('says nothing for a session that ends once the window has passed', async () => {
+    const port = new FakePort()
+    const { registry, clock } = clockedRegistry(port)
+    const onEarlyEnd = vi.fn()
+    await launchWatched(registry, onEarlyEnd)
+
+    clock.now += EARLY_FAILURE_WINDOW_MS
+    port.end(0, 'the session stream ended')
+
+    expect(onEarlyEnd).not.toHaveBeenCalled()
+  })
+
+  /*
+   * The panel closing its own sessions on quit is not the supplier failing:
+   * `closeAll` forgets the record before the engine reports the end it
+   * caused, which is exactly what keeps this from firing.
+   */
+  it('says nothing when the panel itself closed the session', async () => {
+    const port = new FakePort()
+    const { registry } = clockedRegistry(port)
+    const onEarlyEnd = vi.fn()
+    await launchWatched(registry, onEarlyEnd)
+
+    registry.closeAll()
+    port.end(0, 'the panel closed the session')
+
+    expect(onEarlyEnd).not.toHaveBeenCalled()
+  })
+
+  it('still tells onEnded, which revokes a delegation token, beside onEarlyEnd', async () => {
+    const port = new FakePort()
+    const { registry } = clockedRegistry(port)
+    const onEarlyEnd = vi.fn()
+    const onEnded = vi.fn()
+    await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      onEarlyEnd,
+      onEnded
+    })
+
+    port.end(0, 'the session stream failed')
+
+    expect(onEarlyEnd).toHaveBeenCalledTimes(1)
+    expect(onEnded).toHaveBeenCalledTimes(1)
+  })
+
+  /*
+   * An engine may report the end before its own start has resolved — the SDK
+   * stream can fail in the same tick it was opened. Nothing is held by then,
+   * and a push sent now would reach a panel that has not yet been told which
+   * launch it is about. So the verdict says it, and nothing is kept.
+   */
+  it('answers exited-at-once in the verdict when the session ended before its start resolved', async () => {
+    const onEarlyEnd = vi.fn()
+    const onEnded = vi.fn()
+    const close = vi.fn()
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: {
+        claude: async (request) => {
+          request.onEnd('the session stream failed')
+          return { close, send: () => false }
+        }
+      },
+      now: () => 1_700_000_000_000,
+      log: () => {}
+    })
+
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      onEarlyEnd,
+      onEnded
+    })
+
+    expect(result).toMatchObject({ launched: false, cause: 'exited-at-once' })
+    expect(result.error).toContain('Claude Code')
+    expect(registry.count()).toBe(0)
+    expect(onEarlyEnd).not.toHaveBeenCalled()
+    // Never started as far as the caller is concerned: its own refusal path
+    // revokes what it issued, exactly as for any launch that did not start.
+    expect(onEnded).not.toHaveBeenCalled()
+    // What the engine still holds is released rather than left waiting.
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers could-not-start in the verdict when a CLI that never spawned ended before its start resolved', async () => {
+    const close = vi.fn()
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: {
+        claude: async (request) => {
+          request.onEnd('the session stream failed', true)
+          return { close, send: () => false }
+        }
+      },
+      now: () => 1_700_000_000_000,
+      log: () => {}
+    })
+
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      onEarlyEnd: vi.fn()
+    })
+
+    expect(result).toEqual({
+      launched: false,
+      error: 'The agent could not be started.',
+      cause: 'could-not-start'
+    })
+    expect(registry.count()).toBe(0)
+    expect(close).toHaveBeenCalledTimes(1)
   })
 })

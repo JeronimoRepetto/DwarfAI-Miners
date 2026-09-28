@@ -542,8 +542,56 @@ export interface HeldSessionStartRequest {
    * `FeedMessage.activity` carries it on the wire.
    */
   onMessage: (role: FeedMessage['role'], text: string, activity?: FeedActivity) => void
-  /** The session finished, one way or another. Always called exactly once. */
-  onEnd: (reason: string) => void
+  /**
+   * The session finished, one way or another. Always called exactly once.
+   *
+   * AMENDED for #635 (MESSAGE-QUESTIONS 16/17; was: `(reason) => void`).
+   * `neverSpawned` is true when the engine knows the CLI's process was never
+   * started at all — see `heldSessionNeverSpawned` for why an engine can end
+   * a session it resolved as started, and why that is `could-not-start`
+   * rather than a session that stopped at once. Absent means it did start.
+   */
+  onEnd: (reason: string, neverSpawned?: boolean) => void
+}
+
+/**
+ * The Agent SDK's own tags for a Claude CLI whose process never started
+ * (#635), as its ProcessTransport stamps them on the error it stores
+ * (`@anthropic-ai/claude-agent-sdk` 0.3.258, `sdk.mjs`: the child's 'error'
+ * handler in `initialize`, and `XFe` for the not-found / failed-to-launch
+ * pair). Every other class it uses — `process_exited_nonzero`,
+ * `process_killed_by_signal`, `process_error`, `error_result` — is about a
+ * process that did start.
+ */
+const SDK_NEVER_SPAWNED_CLASSES: ReadonlySet<string> = new Set([
+  'executable_not_found',
+  'executable_launch_failed',
+  'spawn_failed'
+])
+
+/**
+ * Whether a held Claude session's stream failed because its CLI was never
+ * spawned (#635, MESSAGE-QUESTIONS 16/17).
+ *
+ * Needed because the SDK does not reject `query()` for that: Node reports a
+ * refused spawn (ENOENT, EACCES, EPERM, Windows' UNKNOWN) as an asynchronous
+ * 'error' event, the transport stores it, and it is raised only once the
+ * stream is read — so the engine's start resolves and the stream then fails
+ * at once. Read as an ordinary end, that is "stopped as soon as it started"
+ * for a start that never happened, while the detached runner and held
+ * Antigravity both name the same machine `could-not-start`.
+ *
+ * Read from the SDK's own `errorClass` tag rather than from the errno or the
+ * message, which is what keeps it one answer on every OS: the transport
+ * classifies by the spawn syscall, and so does this. The "Cannot write to
+ * process that exited with error" wrapper copies the tag, so it reads the
+ * same. Untagged or unknown means it started — the reading that changes
+ * nothing about what this app said before.
+ */
+export function heldSessionNeverSpawned(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const errorClass = (error as { errorClass?: unknown }).errorClass
+  return typeof errorClass === 'string' && SDK_NEVER_SPAWNED_CLASSES.has(errorClass)
 }
 
 /**

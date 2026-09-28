@@ -73,6 +73,7 @@ export type {
   HostedLaunchRequest,
   HostedLaunchResult,
   LaunchFailedPush,
+  LaunchFailureCause,
   Material,
   MaterialTotals,
   McpConnectionStatus,

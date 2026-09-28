@@ -3122,6 +3122,40 @@ export interface AgentLaunchRequest {
 }
 
 /**
+ * Why a launch of a supplier's CLI went nowhere, as a fact the panel can
+ * branch on (#635, proposals/MESSAGE-QUESTIONS.md questions 16 and 17) — the
+ * Add panel's launch-failure notice names its cause first, and it may not read
+ * one out of `error`, whose prose is for people and changes with them.
+ *
+ * Classified by WHICH STEP failed, never by errno, which is what makes it the
+ * same answer on Windows, macOS and Linux:
+ *
+ * - `not-installed` — detection found no CLI to run.
+ * - `could-not-start` — something was found and would not start: a shim this
+ *   app cannot run (a Windows-only artefact, refused inside cliDetection.ts,
+ *   the port) or a spawn error, whatever code the platform attached to it.
+ *   For a held Claude session the Agent SDK reports that spawn error only
+ *   once its stream is read, after the launch already answered, so it can
+ *   also arrive on `LaunchFailedPush` (see `heldSessionNeverSpawned`).
+ * - `exited-at-once` — it started, then stopped within
+ *   `EARLY_FAILURE_WINDOW_MS`: a watched detached process exiting non-zero, or
+ *   a held session ending or erroring before its stream opened — never one
+ *   whose CLI was not spawned at all, which is `could-not-start`. Only ever on
+ *   `LaunchFailedPush`, or on a held verdict whose session was already gone by
+ *   the time the verdict was written.
+ *
+ * Main produces only these three. The notice's two other causes — Jev could
+ * not be reached, Jev could not choose — are the renderer's own reading of a
+ * `JevFallbackReason` and never cross this boundary, so they are not here: a
+ * wider union would let main claim a cause it has no way to know.
+ *
+ * Absent on every failure that is none of them — a refusal (an empty prompt,
+ * no such mine, a provider with no launch path, the demo), or a throw nobody
+ * classified — and on every launch that started.
+ */
+export type LaunchFailureCause = 'not-installed' | 'could-not-start' | 'exited-at-once'
+
+/**
  * Verdict of one launch attempt. Never carries the prompt back, and never
  * claims a dwarf: `launched` means a process was STARTED, not that anything is
  * on the board. The session is discovered by the ordinary poll like every
@@ -3134,6 +3168,8 @@ export interface AgentLaunchResult {
   provider: DwarfProvider | 'none'
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /** Why it failed, when it failed to start — see `LaunchFailureCause` (#635). */
+  cause?: LaunchFailureCause
   /**
    * The receipt this launch will be recognised by, when main opened one (#191).
    *
@@ -3163,13 +3199,24 @@ export interface AgentLaunchResult {
  * a dwarf id and never a session id, for the reason `Dwarf.launchId` never is:
  * no dwarf exists to have proved this launch's identity, because the whole
  * point of this push is that none ever will.
+ *
+ * AMENDED for #635 (MESSAGE-QUESTIONS 16): also pushed for a HELD session
+ * (Claude, Antigravity) that ends, or errors before its stream opens, inside
+ * the same early window — correlated then by `HeldSessionLaunchResult.launchId`.
+ * One push rather than a second channel, because the notice is one notice
+ * whatever channel the supplier was launched on. A held session has no exit
+ * code to read and no stderr of its own kept, so it pushes `exitCode: null`
+ * and an empty `stderrTail`.
  */
 export interface LaunchFailedPush {
   launchId: string
   /** Which CLI this launch was for. Never 'none': a refused launch never spawned anything to fail. */
   provider: DwarfProvider
   mineId: string
-  /** The child's own exit code, or null when it went by signal instead. */
+  /**
+   * The child's own exit code, or null when it went by signal instead — or
+   * when the launch was a held session, which reports none (#635).
+   */
   exitCode: number | null
   /**
    * The CLI's own words, redacted and length-capped exactly as every other
@@ -3177,6 +3224,16 @@ export interface LaunchFailedPush {
    * when it wrote nothing to stderr before it went.
    */
   stderrTail: string
+  /**
+   * `exited-at-once` for a launch that started and stopped inside the early
+   * window (#635). `could-not-start` for a held Claude session whose CLI was
+   * never spawned: the Agent SDK resolves such a start and raises the spawn
+   * error only once its stream is read, so the verdict had already said
+   * `launched: true` — this is the same cause the detached channel and held
+   * Antigravity name for the same machine. Typed as the whole union so the
+   * notice reads one field, whichever channel told it.
+   */
+  cause: LaunchFailureCause
 }
 
 /*
@@ -3310,6 +3367,20 @@ export interface HeldSessionLaunchResult {
   launched: boolean
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /** Why it failed, when it failed to start — see `LaunchFailureCause` (#635). */
+  cause?: LaunchFailureCause
+  /**
+   * The id a `LaunchFailedPush` about this launch will carry, present exactly
+   * when `launched` is true (#635, MESSAGE-QUESTIONS 16): a held session that
+   * stops as soon as it started is told on the same push a detached launch's
+   * early exit is, and a push needs something to be correlated by.
+   *
+   * Correlation only. Unlike `AgentLaunchResult.launchId` it is NOT a board
+   * receipt — main stamps no dwarf with it, so `Dwarf.launchId` never equals
+   * it, and a held launch is still adopted by the conversation it was seeded
+   * with. A renderer that matched a held dwarf by this id would wait forever.
+   */
+  launchId?: string
 }
 
 /*
@@ -3366,6 +3437,12 @@ export interface HostedLaunchResult {
   launched: boolean
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /**
+   * Why it failed, when it failed to start — see `LaunchFailureCause` (#635).
+   * Never `not-installed`: nothing detects a typed command before it is
+   * spawned, so a program that is not there is a spawn error like any other.
+   */
+  cause?: LaunchFailureCause
 }
 
 /**

@@ -48,7 +48,7 @@ import {
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
-import type { SessionLauncher } from '../sessionLaunch/launchRunner'
+import { EARLY_FAILURE_WINDOW_MS, type SessionLauncher } from '../sessionLaunch/launchRunner'
 import { resolveDelegationServerScriptPath } from '../mcp/delegationServerCommand'
 import {
   MODEL_CATALOG_TIMEOUT_MS,
@@ -6432,12 +6432,15 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     await runtime.refresh()
     const mineId = runtime.getMines()[0]!.id
 
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact
+    // verdict without `cause`).
     await expect(
       runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
     ).resolves.toEqual({
       launched: false,
       provider: 'opencode',
-      error: 'OpenCode is not installed on this machine.'
+      error: 'OpenCode is not installed on this machine.',
+      cause: 'not-installed'
     })
     expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
   })
@@ -6529,12 +6532,15 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     })
 
     expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact push
+    // without `cause`). The push names what it is about as a field now.
     expect(onLaunchFailed).toHaveBeenCalledWith({
       launchId,
       provider: 'codex',
       mineId,
       exitCode: 1,
-      stderrTail: 'codex: another instance is already running'
+      stderrTail: 'codex: another instance is already running',
+      cause: 'exited-at-once'
     })
   })
 
@@ -6597,6 +6603,56 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
 
     expect(onLaunchFailed).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). The push is the
+   * launch-failure notice's "stopped as soon as it started", and the notice
+   * reads its cause as a field rather than inferring it from which channel
+   * spoke — so the push says so itself.
+   */
+  it('names the cause exited-at-once on the push (#635)', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    handle.fail({ exitCode: 2, signal: null, stderrTail: '' })
+
+    const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
+    expect(push.cause).toBe('exited-at-once')
+  })
+
+  it("carries the launcher's cause onto the verdict unchanged (#635)", async () => {
+    const launchSession: SessionLauncher = vi.fn().mockResolvedValue({
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI is not installed on this machine.',
+      cause: 'not-installed'
+    })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    ).resolves.toMatchObject({ launched: false, cause: 'not-installed' })
+  })
+
+  it('names no cause for a launch refused before the launcher ran (#635)', async () => {
+    const launchSession: SessionLauncher = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    const noMine = await runtime.launchAgent({
+      mineId: 'mine:nowhere',
+      provider: 'codex',
+      prompt: 'dig'
+    })
+    const empty = await runtime.launchAgent({ mineId, provider: 'codex', prompt: '  ' })
+
+    expect(noMine).not.toHaveProperty('cause')
+    expect(empty).not.toHaveProperty('cause')
   })
 })
 
@@ -8772,13 +8828,17 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
 
+    // AMENDED for #635 (MESSAGE-QUESTIONS 16; was: `{ launched: true }`
+    // exactly). A started held launch now also carries the id its early-
+    // failure push would be correlated by; its value is pinned in the #635
+    // block below, where the id is injected.
     await expect(
       runtime.launchHeldSession({
         provider: 'claude',
         mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig here'
       })
-    ).resolves.toEqual({ launched: true })
+    ).resolves.toEqual({ launched: true, launchId: expect.any(String) })
     runtime.stop()
 
     expect(port.started).toHaveLength(1)
@@ -9274,7 +9334,10 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       mineId,
       prompt: 'dig the east gallery'
     })
-    expect(result).toEqual({ launched: true })
+    // AMENDED for #635 (MESSAGE-QUESTIONS 16; was: `{ launched: true }`
+    // exactly). The id is for the early-failure push alone — pinned below as
+    // never stamped on the dwarf, so the receipt this test reads is unchanged.
+    expect(result).toEqual({ launched: true, launchId: expect.any(String) })
     port.reportSessionId(0, 'sess-1')
     await runtime.refresh()
 
@@ -9284,6 +9347,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // row of a held exchange that still rides the snapshot.
     expect(dwarfsOf()).toHaveLength(1)
     expect(dwarfsOf()[0]).toMatchObject({ id: 'claude:sess-1', sessionId: 'sess-1' })
+    expect(dwarfsOf()[0]!.launchId).not.toBe(result.launchId)
     expect(dwarfsOf()[0]!.openingPrompt).toEqual({
       role: 'user',
       text: 'dig the east gallery',
@@ -9781,6 +9845,150 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     runtime.stop()
 
     expect('permissionMode' in port.started[0]!).toBe(false)
+  })
+
+  /*
+   * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). A held session that
+   * stops as soon as it starts is told to the panel on the SAME push a
+   * detached launch's early exit is (`LaunchFailedPush`, #263), because the
+   * panel already hears it and the notice is one notice whatever the channel.
+   * That push is correlated by a launch id, which a held verdict never carried
+   * — so it carries one now, minted here and never a board receipt: no dwarf
+   * is ever stamped with it.
+   */
+  describe('a held session that stops as soon as it starts (#635)', () => {
+    /*
+     * One mutable clock for the runtime and the registry it holds, advanced
+     * by hand, so the early window this block is about is the injected one
+     * rather than whatever fixed instant `heldRegistry` above stamps.
+     */
+    const clock = { now: 1_700_000_000_000 }
+
+    function earlyRuntime(port: HeldPortFake, onLaunchFailed: (push: LaunchFailedPush) => void) {
+      const fs = new FakeFs()
+      fs.addFile(CLAUDE, '#!/bin/sh\n')
+      return new AgentRuntime({
+        fs: new FakeFs(),
+        platformAdapters: worktreePlatformAdapters(),
+        config: defaultConfig(),
+        providers: [foremanProvider()],
+        heldSessions: new HeldSessionRegistry({
+          detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+          start: { claude: port.port },
+          now: () => clock.now,
+          log: () => {}
+        }),
+        onMinesUpdated: vi.fn(),
+        onLaunchFailed,
+        heldLaunchId: () => 'held-launch:1',
+        now: () => clock.now
+      })
+    }
+
+    it('answers a started held launch with the id its failure push would carry', async () => {
+      const port = heldPort()
+      const runtime = earlyRuntime(port, vi.fn())
+      await runtime.refresh()
+
+      const result = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      runtime.stop()
+
+      expect(result).toEqual({ launched: true, launchId: 'held-launch:1' })
+    })
+
+    it('pushes exited-at-once, correlated by that id, when the session ends at once', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+      const mineId = mineIdForPath(MINE_PATH, 'win32')
+
+      const { launchId } = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig'
+      })
+      expect(onLaunchFailed).not.toHaveBeenCalled()
+      clock.now += EARLY_FAILURE_WINDOW_MS - 1
+      port.started[0]!.onEnd('the session stream failed')
+      runtime.stop()
+
+      expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+      expect(onLaunchFailed).toHaveBeenCalledWith({
+        launchId,
+        provider: 'claude',
+        mineId,
+        // A held session reports no exit code and keeps no stderr of its own
+        // to hand back: null and empty, never a guess.
+        exitCode: null,
+        stderrTail: '',
+        cause: 'exited-at-once'
+      })
+    })
+
+    it('pushes nothing for a session that ends once the window has passed', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      clock.now += EARLY_FAILURE_WINDOW_MS
+      port.started[0]!.onEnd('the session stream ended')
+      runtime.stop()
+
+      expect(onLaunchFailed).not.toHaveBeenCalled()
+    })
+
+    /*
+     * The Agent SDK resolves a start whose CLI never spawned and fails the
+     * stream afterwards (heldSessionNeverSpawned, heldSession.ts). That is the
+     * same machine the detached runner calls `could-not-start`, so the push
+     * says so too.
+     */
+    it('pushes could-not-start when the engine says the CLI never spawned', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+
+      const { launchId } = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      port.started[0]!.onEnd('the session stream failed', true)
+      runtime.stop()
+
+      expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+      expect(onLaunchFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ launchId, cause: 'could-not-start' })
+      )
+    })
+
+    it('carries no launch id on a held launch that did not start', async () => {
+      const port = heldPort()
+      const runtime = earlyRuntime(port, vi.fn())
+      await runtime.refresh()
+
+      const result = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: '   '
+      })
+      runtime.stop()
+
+      expect(result.launched).toBe(false)
+      expect(result).not.toHaveProperty('launchId')
+    })
   })
 })
 
@@ -11541,6 +11749,27 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
     expect(result.launched).toBe(false)
     expect(result.error).toBe(SHELL_METACHARACTER_REFUSAL)
     expect(port.started).toHaveLength(0)
+  })
+
+  // #635 (MESSAGE-QUESTIONS 17): the registry's cause crosses this hop as it
+  // came, and a refusal the parse made still names none.
+  it('carries could-not-start for a command that would not start (#635)', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    port.failWith = Object.assign(new Error('spawn my-agent ENOENT'), { code: 'ENOENT' })
+
+    const failed = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    const refused = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent && rm -rf .',
+      prompt: 'dig'
+    })
+
+    expect(failed).toMatchObject({ launched: false, cause: 'could-not-start' })
+    expect(refused).not.toHaveProperty('cause')
   })
 
   /*

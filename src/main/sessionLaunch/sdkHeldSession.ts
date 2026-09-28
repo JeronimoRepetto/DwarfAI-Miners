@@ -14,6 +14,7 @@ import { resultTurnOutcome } from './claudeTurnOutcome'
 import type { HeldSessionSubagentSignal, HeldTaskEndStatus } from './heldCrew'
 import {
   heldMessageEntries,
+  heldSessionNeverSpawned,
   isReplayedUserMessage,
   type HeldSessionHandle,
   type HeldSessionPort,
@@ -383,10 +384,11 @@ export function createSdkHeldSession(): HeldSessionPort {
     // to dissolve whatever was still open, and a second call would try to
     // dissolve asks that have already been released.
     let ended = false
-    const end = (reason: string): void => {
+    const end = (reason: string, neverSpawned = false): void => {
       if (ended) return
       ended = true
-      request.onEnd(reason)
+      if (neverSpawned) request.onEnd(reason, true)
+      else request.onEnd(reason)
     }
 
     // Deliberately not awaited: the launch verdict is "the session started",
@@ -487,7 +489,10 @@ export function createSdkHeldSession(): HeldSessionPort {
         end('the session stream ended')
       } catch (error) {
         console.warn('[held] The session stream failed', error)
-        end('the session stream failed')
+        // #635: a CLI the SDK could not spawn surfaces HERE, after `query()`
+        // already returned — see heldSessionNeverSpawned for why, and why the
+        // registry must hear it as a spawn that never happened.
+        end('the session stream failed', heldSessionNeverSpawned(error))
       }
     })()
 

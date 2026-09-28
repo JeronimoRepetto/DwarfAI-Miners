@@ -492,3 +492,52 @@ describe('what a hosted process says about itself', () => {
     expect(first).not.toBe(second)
   })
 })
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, question 17): a typed command that was
+ * parsed and handed to spawn, and would not start, is `could-not-start` — the
+ * same cause the detached runner and the held registry name for a spawn error,
+ * whatever errno the platform attached. Never `not-installed`: nothing here
+ * detects a typed program before it is spawned. A command refused by the
+ * parse never reached spawn and names no cause; its sentence is the whole
+ * answer.
+ */
+describe('the cause a failed hosted launch names (#635)', () => {
+  it.each(['ENOENT', 'EACCES', 'EPERM', 'UNKNOWN'])(
+    'says could-not-start for a spawn error (%s)',
+    async (code) => {
+      const h = harness()
+      h.port.failWith = Object.assign(new Error(`spawn my-agent ${code}`), { code })
+
+      const result = await h.registry.launch({
+        mineId: MINE_ID,
+        minePath: MINE,
+        command: 'my-agent',
+        prompt: 'dig'
+      })
+
+      expect(result.started).toBe(false)
+      expect(result.cause).toBe('could-not-start')
+    }
+  )
+
+  it('names no cause for a command the parse refused, or an empty prompt', async () => {
+    const h = harness()
+
+    const shell = await h.registry.launch({
+      mineId: MINE_ID,
+      minePath: MINE,
+      command: 'my-agent | tee log',
+      prompt: 'dig'
+    })
+    const empty = await h.registry.launch({
+      mineId: MINE_ID,
+      minePath: MINE,
+      command: 'my-agent',
+      prompt: '  '
+    })
+
+    expect(shell).not.toHaveProperty('cause')
+    expect(empty).not.toHaveProperty('cause')
+  })
+})
