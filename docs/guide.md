@@ -719,7 +719,8 @@ Choosing one family in both makes the whole app that family. Both apply the mome
 everywhere in the app, the message panel included, and both survive a restart.
 
 Tiny5, Pixelify Sans and Roboto are shipped inside the app — nothing is fetched from a font service,
-and the panel renders identically with no network. All three are under the SIL Open Font License.
+and the panel renders identically with no network. They are under the SIL Open Font License, and
+[`FONT-CREDITS.md`](../FONT-CREDITS.md) credits every bundled typeface and its authors.
 Arial is your operating system's own copy, with a sans-serif fallback on a machine that has none, so
 it may look slightly different from one platform to the next.
 

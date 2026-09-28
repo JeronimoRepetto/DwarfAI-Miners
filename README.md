@@ -361,6 +361,8 @@ walked the support matrix on real hardware — including "it all worked". See
   audio assets.
 - [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) — where every bundled sound comes from; the sound
   effects are CC0.
+- [`FONT-CREDITS.md`](FONT-CREDITS.md) — the four bundled typefaces, their authors and their SIL
+  Open Font License.
 
 <h2>
   Support the project
