@@ -182,12 +182,34 @@
     "key": "molecules/chat-bubble#retry-feedback"
   },
   {
-    "key": "organisms/message-panel#not-delivered-with-actions",
-    "red": "0.168% differing, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b). The activity run above the failed message, the bubble, its ✕ and its Retry and Copy draw as the reference"
+    "key": "molecules/chat-bubble#dwarf-rich-text"
   },
   {
-    "key": "organisms/message-panel#not-delivered-copy-alone",
-    "red": "0.168% differing, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b). The activity run, the bubble with Copy alone and the closed composer draw as the reference"
+    "key": "molecules/chat-bubble#your-messages"
+  },
+  {
+    "key": "molecules/activity#closed"
+  },
+  {
+    "key": "molecules/activity#hover"
+  },
+  {
+    "key": "molecules/activity#open"
+  },
+  {
+    "key": "molecules/activity#working"
+  },
+  {
+    "key": "molecules/composer#empty"
+  },
+  {
+    "key": "molecules/composer#disabled"
+  },
+  {
+    "key": "organisms/message-panel#not-delivered-with-actions"
+  },
+  {
+    "key": "organisms/message-panel#not-delivered-copy-alone"
   },
   {
     "key": "organisms/add-panel#live"
@@ -530,6 +552,6 @@
   },
   {
     "key": "screens-full/message-panel#not-delivered",
-    "red": "1.379% differing: the MessagePanel window is 0.111% off, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b); the activity run, the bubble, its ✕ and its Retry and Copy draw as the reference; the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%) now that the outcome line counts the open run (Working · 2 steps so far, MESSAGE-QUESTIONS 7): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
   }
 ]

@@ -41,14 +41,21 @@ export function providerLabel(observer: DwarfObserver): string {
 /*
  * A silence as the design writes it ("12s", "2m", "2h"): the largest whole unit, rounded down,
  * because claiming more silence than was observed argues on the pessimistic side
- * (describeSilence).
+ * (describeSilence). `days` goes one unit further ("2d", and a week is "7d", nothing larger), for
+ * the MessagePanel's idle time (MESSAGE-QUESTIONS 10); the dwarf tooltip keeps hours as its
+ * largest unit, since no doc gives it days.
  */
-export function compactSilence(silentForMs: number): string {
+export function compactSilence(
+  silentForMs: number,
+  { days = false }: { days?: boolean } = {}
+): string {
   const seconds = Math.floor(Math.max(0, silentForMs) / 1_000)
   if (seconds < 60) return seconds + 's'
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return minutes + 'm'
-  return Math.floor(minutes / 60) + 'h'
+  const hours = Math.floor(minutes / 60)
+  if (!days || hours < 24) return hours + 'h'
+  return Math.floor(hours / 24) + 'd'
 }
 
 /*
