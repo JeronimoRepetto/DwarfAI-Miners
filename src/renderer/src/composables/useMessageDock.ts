@@ -64,7 +64,8 @@ export function useMessageDock() {
     reconcile: reconcileEchoes,
     listenHeld: listenHeldMessages,
     keepEchoesFor,
-    failedSends
+    failedSends,
+    routeGone
   } = useDwarfMessaging()
   /**
    * The pages of conversation older than the newest feed (#364) — held beside `selectedFeed`
@@ -219,6 +220,15 @@ export function useMessageDock() {
     const last = lastSelectedDwarf.value
     return last !== undefined && last.id === openDwarfId.value ? last : undefined
   })
+
+  /**
+   * Whether the open dwarf's delivery route went away (#635, decision log, Copy alone on a closed
+   * session): the panel's composer and its failed messages say the session is closed, where a
+   * dwarf that never had a channel keeps the no-channel refusal.
+   */
+  const selectedRouteGone = computed(
+    () => selectedDwarf.value !== undefined && routeGone(selectedDwarf.value)
+  )
 
   /**
    * Every replacement of `selectedFeed` goes through here (#249), so a panel that lost the words it
@@ -604,6 +614,7 @@ export function useMessageDock() {
     close,
     openDwarfId,
     selectedDwarf,
+    selectedRouteGone,
     drawnFeed,
     pagingNote,
     launchOpen,

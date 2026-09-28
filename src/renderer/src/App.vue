@@ -1267,6 +1267,7 @@ onBeforeUnmount(() => {
               v-else-if="dockItem.kind === 'message' && dock.selectedDwarf.value"
               :key="dockItem.key"
               :dwarf="dock.selectedDwarf.value"
+              :route-gone="dock.selectedRouteGone.value"
               :feed="dock.drawnFeed.value"
               :paging-note="dock.pagingNote.value ?? undefined"
               :draft="dock.drafts.value[dock.selectedDwarf.value.id]"

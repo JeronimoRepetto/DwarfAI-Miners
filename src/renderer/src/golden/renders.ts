@@ -1036,7 +1036,8 @@ export function failedEchoesOf(sample: GoldenSample, dwarfId: string): MessageEc
  * main would answer for it (sample.ts), and the messages the sample marks failed as the echoes
  * the panel keeps for them (failedEchoesOf). Nothing else has been sent from the panel. A tree
  * whose message box is disabled is that dwarf once its route for text went away (decision log,
- * Copy alone on a closed session), which the app's dwarf says by carrying no delivery channel.
+ * Copy alone on a closed session): the board's dwarf carries no delivery channel any more, and the
+ * host's store, which saw it with one, says its route is gone.
  */
 const messagePanel: Render = (sample, _texts, attributes) => {
   const id = elementsOf(attributes, 'section.dm-msg')[0]?.['data-dwarf'] ?? ''
@@ -1045,7 +1046,12 @@ const messagePanel: Render = (sample, _texts, attributes) => {
   const dwarf = routeGone ? { ...found, textDelivery: undefined } : found
   return {
     component: DwarfMessagePanel,
-    props: { dwarf, feed: sample.feeds[dwarf.id], echoes: failedEchoesOf(sample, dwarf.id) }
+    props: {
+      dwarf,
+      routeGone,
+      feed: sample.feeds[dwarf.id],
+      echoes: failedEchoesOf(sample, dwarf.id)
+    }
   }
 }
 

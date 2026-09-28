@@ -6,7 +6,9 @@ import {
   JUMP_TO_TERMINAL_NAME,
   approvalNote,
   buildActionBar,
-  refusalLine
+  refusalLine,
+  SESSION_CLOSED_REASON,
+  sessionClosed
 } from '../../lib/delivery/actionBar'
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { ATTACH_LOST_CONTACT, acceptAttachments, attachHint } from '../../lib/delivery/attachments'
@@ -97,6 +99,13 @@ import ChatBubble from './ChatBubble.vue'
 
 const props = defineProps<{
   dwarf: Dwarf
+  /**
+   * The dwarf was seen with a channel for text earlier in this app run and has none now: its
+   * delivery route went away (#635, decision log, Copy alone on a closed session). Only the
+   * host's store, which watched the board over time, can know it; unset, a dwarf with no channel
+   * is a session type with none yet.
+   */
+  routeGone?: boolean
   /**
    * The transcript read for this dwarf. Undefined while the read is in flight, which is its own
    * answer rather than an empty one (see conversationOf).
@@ -227,6 +236,20 @@ function action(id: 'kick' | 'boost' | 'chat') {
 // dwarf still carries the channel it had, and the model is what knows the
 // session behind it has ended (#192).
 const canReceive = computed(() => action('chat')?.enabled === true)
+/*
+ * A session that can no longer take text: it ended, or its route went away (decision log, Copy
+ * alone on a closed session). One fact for the composer and the failed bubbles alike, so the
+ * closed well and a failed message's Copy alone can never disagree.
+ */
+const closed = computed(() => sessionClosed(props.dwarf, props.routeGone === true))
+/*
+ * The box's tooltip: the capability model's reason, except where the route went away — the
+ * model sees only a dwarf with no channel and would say the no-channel sentence, which is never
+ * said of a closed session. An ended session keeps saying it has ended.
+ */
+const composerTitle = computed(() =>
+  props.routeGone === true && !canReceive.value ? SESSION_CLOSED_REASON : action('chat')?.hint
+)
 const isSending = computed(() => props.sendState?.phase === 'sending')
 const isKicking = computed(() => props.kickState?.phase === 'kicking')
 
@@ -509,7 +532,12 @@ const alertLine = computed(() => {
  * the keyboard hint.
  */
 const hint = computed(
-  () => alertLine.value ?? statusLine.value ?? (canReceive.value ? null : refusal.value)
+  () =>
+    alertLine.value ??
+    statusLine.value ??
+    // A closed session's reason is in the well, and the hint under it stays the keyboard's, as
+    // the design's composer hint always reads (screens/message.md, Copy alone on a closed session).
+    (canReceive.value || closed.value ? null : refusal.value)
 )
 
 /** Send wakes once there is something to send and a session to send it to. */
@@ -746,7 +774,7 @@ function onStopAction(index: number): void {
           :mark="entry.message.mark"
           :is-new="arrivedKeys.has(entry.key)"
           :offers-retry="entry.message.echo !== undefined && canReceive"
-          :session-closed="entry.message.echo !== undefined && !canReceive"
+          :session-closed="entry.message.echo !== undefined && (closed || !canReceive)"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"
@@ -856,11 +884,11 @@ function onStopAction(index: number): void {
           <InputField
             area
             :rows="2"
-            :placeholder="`Write to ${dwarf.name}…`"
+            :placeholder="closed ? SESSION_CLOSED_REASON : `Write to ${dwarf.name}…`"
             label="Message"
             :value="message"
             :disabled="!canReceive"
-            :title="action('chat')?.hint"
+            :title="composerTitle"
             @update:value="message = $event"
             @keydown="onInputKeydown"
           />

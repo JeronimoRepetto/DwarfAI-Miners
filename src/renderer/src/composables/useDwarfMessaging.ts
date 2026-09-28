@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, shallowRef } from 'vue'
 import {
   REACTION_WINDOW_MS,
   observeReaction,
@@ -6,6 +6,7 @@ import {
   type ReactionSnapshot,
   type ReactionWatch
 } from '../lib/delivery/reaction'
+import { rememberRoutes, routeWentAway } from '../lib/delivery/deliveryRoute'
 import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/echo'
 import {
   defaultDwarfMessagingState,
@@ -76,6 +77,13 @@ const echoes = reactive<Record<string, MessageEcho[]>>({})
  * them with the words (#309, #635).
  */
 const echoAttachments = reactive<Record<string, Record<string, readonly DwarfAttachment[]>>>({})
+/**
+ * Every dwarf id this app run has seen with a channel for text (#635, decision log, Copy alone on
+ * a closed session), so a dwarf with none now can be told apart as one whose route went away
+ * rather than a session type with no channel yet (lib/delivery/deliveryRoute). Fed by `observe`,
+ * from the same polls; replaced only when it grows.
+ */
+const routed = shallowRef<ReadonlySet<string>>(new Set())
 const clearTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Open reaction watches, keyed by dwarf id — at most one per dwarf. */
 const watches = new Map<string, ReactionWatch>()
@@ -447,6 +455,7 @@ export function useDwarfMessaging() {
    * new IPC and no new main-process field.
    */
   function observe(dwarfs: readonly Dwarf[]): void {
+    routed.value = rememberRoutes(routed.value, dwarfs)
     for (const dwarf of dwarfs) {
       const snapshot: ReactionSnapshot = { status: dwarf.status, lastMessage: dwarf.lastMessage }
       const watch = watches.get(dwarf.id)
@@ -534,6 +543,12 @@ export function useDwarfMessaging() {
     for (const dwarfId of Object.keys(echoAttachments)) delete echoAttachments[dwarfId]
     lastSeen.clear()
     heldMessages.clear()
+    routed.value = new Set()
+  }
+
+  /** Whether this dwarf's delivery route went away: seen with a channel for text, none now. */
+  function routeGone(dwarf: Dwarf): boolean {
+    return routeWentAway(routed.value, dwarf)
   }
 
   return {
@@ -551,6 +566,7 @@ export function useDwarfMessaging() {
     echoesFor,
     failedSends,
     keepEchoesFor,
+    routeGone,
     clear,
     clearAll
   }

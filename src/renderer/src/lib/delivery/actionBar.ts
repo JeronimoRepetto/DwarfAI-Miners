@@ -36,7 +36,19 @@ export interface ActionTransientState {
   kicking: boolean
 }
 
+/**
+ * Only for a session TYPE with no delivery channel yet — a gap in this app, not a fact about the
+ * session. Never said for a session that can no longer take text: that one has its own sentence,
+ * SESSION_CLOSED_REASON (decision log, Copy alone on a closed session).
+ */
 export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
+
+/**
+ * The well of a closed session's composer (#635, decision log, Copy alone on a closed session):
+ * the session ended, or its delivery route went away. Nothing will make a send work there again,
+ * which is why a failed message on it keeps Copy alone.
+ */
+export const SESSION_CLOSED_REASON = 'This session can no longer receive messages.'
 
 /**
  * How each provider is started detached, in its own argv (#217).
@@ -385,6 +397,17 @@ export const SESSION_ENDED_REASON = 'This session has ended.'
 
 function hasEnded(dwarf: Dwarf): boolean {
   return dwarf.status === 'leaving'
+}
+
+/**
+ * Whether the session behind a dwarf can no longer take text (#635, decision log, Copy alone on a
+ * closed session): it ended, or its delivery route went away. The route is the caller's to know
+ * (lib/delivery/deliveryRoute): only a store that watched the board over time can tell a channel
+ * that went away from one that never was, and a dwarf that never had one is not closed — its
+ * session type has no channel yet.
+ */
+export function sessionClosed(dwarf: Dwarf, routeGone: boolean): boolean {
+  return hasEnded(dwarf) || routeGone
 }
 
 /**

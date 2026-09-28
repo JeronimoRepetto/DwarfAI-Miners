@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
  * longer imported — the bubbles enter with the design's own pop-in and the panel has no height of
  * its own (see the REMOVED notes where their cases stood).
  */
-import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
+import {
+  APPROVAL_AT_TERMINAL_NOTE,
+  NO_CHANNEL_REASON,
+  SESSION_CLOSED_REASON
+} from '../../lib/delivery/actionBar'
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
@@ -2860,5 +2864,67 @@ describe('DwarfMessagePanel input under an input method', () => {
 
     await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toEqual([[{ text: '掘る', pressEnter: true }]])
+  })
+})
+
+/*
+ * #635, decision log, Copy alone on a closed session — APPENDED. A session that can no longer take
+ * text (it ended, or its delivery route went away) has its own disabled composer: the well reads
+ * "This session can no longer receive messages.", Attach and Send are disabled with it, and the
+ * hint under it stays the keyboard's, as the composer's hint always reads in the design. The
+ * no-channel sentence is only ever for a session type with no channel yet, and the closed one
+ * never is.
+ */
+describe('DwarfMessagePanel, a closed session (#635)', () => {
+  const failedEcho: MessageEcho = {
+    id: 'e2',
+    text: 'second',
+    sentAt: Date.parse('2026-09-09T10:00:00.000Z'),
+    state: { phase: 'failed', error: 'nope' }
+  }
+
+  it.each([
+    [
+      'its delivery route went away',
+      { dwarf: defaultDwarf({ textDelivery: undefined }), routeGone: true }
+    ],
+    [
+      'it ended',
+      { dwarf: defaultDwarf({ textDelivery: 'terminal', status: 'leaving' }), routeGone: false }
+    ]
+  ])('draws the closed composer once %s', (_why, props) => {
+    const wrapper = panel(props)
+    const box = wrapper.find('.dm-composer textarea')
+    expect(box.attributes('disabled')).toBeDefined()
+    expect(box.attributes('placeholder')).toBe(SESSION_CLOSED_REASON)
+    expect(wrapper.find('.dm-composer__attach').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.dm-composer__send').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.dm-composer__hint').text()).toBe(COMPOSER_HINT_TEXT)
+    expect(wrapper.html()).not.toContain(NO_CHANNEL_REASON)
+  })
+
+  it('says the closed sentence on hover too once the route went away, never the no-channel one', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: undefined }), routeGone: true })
+    expect(wrapper.find('.dm-composer .dm-field').attributes('title')).toBe(SESSION_CLOSED_REASON)
+  })
+
+  it('keeps the no-channel refusal, and never the closed sentence, for a dwarf that never had one', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ textDelivery: undefined }) })
+    const box = wrapper.find('.dm-composer textarea')
+    expect(box.attributes('disabled')).toBeDefined()
+    expect(box.attributes('placeholder')).toBe('Write to Sample Worker…')
+    expect(wrapper.find('.dm-composer__hint').text()).toBe(NO_CHANNEL_REASON)
+    expect(wrapper.html()).not.toContain(SESSION_CLOSED_REASON)
+  })
+
+  it('keeps Copy alone on a failed message of a session whose route went away', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: undefined }),
+      routeGone: true,
+      echoes: [failedEcho]
+    })
+    expect(wrapper.findAll('.dm-bubble__actions .dm-btn').map((b) => b.text())).toEqual([
+      COPY_LABEL
+    ])
   })
 })
