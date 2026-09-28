@@ -1390,6 +1390,8 @@ interface JevLaunch {
   prompt: string
   pick: { provider: DwarfProvider; model: string; effort: string }
   inFlight: boolean
+  /** Auto-accept on, as its switch prints it. */
+  autoAccept: boolean
 }
 
 const LaunchStage = defineComponent({
@@ -1450,6 +1452,9 @@ const LaunchStage = defineComponent({
       launch.setPrompt(jevLaunch.prompt)
       await launch.submit()
       if (jevLaunch.inFlight) void launch.submit()
+      // Auto-accept is switched on once the card shows, as a person can: on before the ask, it
+      // would launch the pick at once, where the tree shows the card waiting on Send the dwarf in.
+      if (jevLaunch.autoAccept) launch.toggleJevAutoAccept()
     })
     return () =>
       h(AddPanel, {
@@ -1475,7 +1480,8 @@ const LaunchStage = defineComponent({
 /*
  * Jev's launch as the tree prints it, or null with Let Jev choose off: the prompt its field holds,
  * the pick its card names as "supplier · model · effort" (the supplier by the chip of that label),
- * and in flight when the prompt is disabled, which only a launch under way does to it.
+ * in flight when the prompt is disabled, which only a launch under way does to it, and auto-accept
+ * as its switch prints it.
  */
 const jevLaunchOf = (texts: GoldenText[], attributes: GoldenAttributes[]): JevLaunch | null => {
   const toggle = elementsOf(attributes, 'button.dm-toggle').find(
@@ -1491,7 +1497,11 @@ const jevLaunchOf = (texts: GoldenText[], attributes: GoldenAttributes[]): JevLa
   return {
     prompt: field.value ?? '',
     pick: { provider, model: pick[2]!, effort: pick[3]! },
-    inFlight: 'disabled' in field
+    inFlight: 'disabled' in field,
+    autoAccept:
+      elementsOf(attributes, 'button.dm-toggle').find(
+        (a) => a['aria-label'] === 'Auto-accept Jev'
+      )?.['aria-checked'] === 'true'
   }
 }
 
@@ -1750,7 +1760,9 @@ export const RENDERS: Record<string, Render> = {
   'organisms/add-panel#live': addPanel,
   'organisms/add-panel#supplier-picked': addPanel,
   'organisms/add-panel#custom-command': addPanel,
+  'organisms/add-panel#jev-suggests': addPanel,
   'organisms/add-panel#jev-suggests-launch-in-flight': addPanel,
+  'organisms/add-panel#jev-accepted-automatically': addPanel,
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,

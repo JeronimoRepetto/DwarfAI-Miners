@@ -820,10 +820,25 @@ describe('the Jev option', () => {
       })
     }
 
+    /*
+     * APPENDED for #635 (MESSAGE-QUESTIONS 15): the card is the eyebrow, one paragraph naming
+     * Jev's pick, and Dismiss; the rest of the decision is in the paragraph's tooltip, whose
+     * lines its hidden copy carries (aria-describedby) — what a screen reader hears, and what
+     * the cases below read where they used to read the summary and parts lines.
+     */
+    const PICK = '.dm-add__jev-pick'
+    const tipCopy = (wrapper: ReturnType<typeof panel>): string =>
+      wrapper.get(`#${wrapper.get(PICK).attributes('aria-describedby') ?? ''}`).text()
+
+    /*
+     * AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary` containing 'codex',
+     * the chip's raw provider id). The pick paragraph names the supplier as the chip row draws
+     * it, the tool's own name, still never the CLI binary name.
+     */
     it('names the provider Jev chose off the same label source the chips use', () => {
       const wrapper = withDecision()
 
-      expect(wrapper.get('.jev-decision-summary').text()).toContain('codex')
+      expect(wrapper.get(PICK).text()).toContain('Codex')
     })
 
     it('resolves the model label off the picker’s own catalogue, falling back to the raw id', () => {
@@ -836,7 +851,8 @@ describe('the Jev option', () => {
         }
       })
 
-      expect(wrapper.get('.jev-decision-summary').text()).toContain('GPT-5.6 Sol')
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary`): the pick paragraph.
+      expect(wrapper.get(PICK).text()).toContain('GPT-5.6 Sol')
     })
 
     it('falls back to the raw model id when the catalogue names it no label', () => {
@@ -844,14 +860,19 @@ describe('the Jev option', () => {
         modelPicker: { visible: true, models: [], disabled: true, note: null }
       })
 
-      expect(wrapper.get('.jev-decision-summary').text()).toContain('gpt-5.6-sol')
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary`): the pick paragraph.
+      expect(wrapper.get(PICK).text()).toContain('gpt-5.6-sol')
     })
 
+    /*
+     * AMENDED for #635 (MESSAGE-QUESTIONS 15; was: both on `.jev-decision-summary`). The effort is
+     * in the pick paragraph; the confidence, as Jev's least certain answer, is in its tooltip.
+     */
     it('states the effort level and the confidence as a percentage', () => {
       const wrapper = withDecision()
 
-      expect(wrapper.get('.jev-decision-summary').text()).toContain('high')
-      expect(wrapper.get('.jev-decision-summary').text()).toContain('87%')
+      expect(wrapper.get(PICK).text()).toContain('high')
+      expect(tipCopy(wrapper)).toContain("Jev's least certain answer was 87%.")
     })
 
     /*
@@ -871,7 +892,10 @@ describe('the Jev option', () => {
         }
       })
 
-      expect(wrapper.get('.jev-decision-summary').text()).not.toMatch(/\d+%/)
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: no figure on `.jev-decision-summary`): no
+      // figure on the pick, and no least certain answer in its tooltip.
+      expect(wrapper.get(PICK).text()).not.toMatch(/\d+%/)
+      expect(tipCopy(wrapper)).not.toContain('least certain')
     })
 
     it('notes a trimmed prompt only when the decision says it was truncated', () => {
@@ -884,13 +908,20 @@ describe('the Jev option', () => {
       })
       const untrimmed = withDecision()
 
-      expect(trimmed.get('.jev-decision-truncated').text()).toBeTruthy()
-      expect(untrimmed.find('.jev-decision-truncated').exists()).toBe(false)
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: a `.jev-decision-truncated` line on the
+      // card): the same sentence, a line of the pick's tooltip.
+      const TRIMMED = 'The prompt sent to Jev was trimmed to fit its request budget.'
+      expect(tipCopy(trimmed)).toContain(TRIMMED)
+      expect(tipCopy(untrimmed)).not.toContain(TRIMMED)
     })
 
-    it('says the pickers below now show the choice and can still be changed', () => {
-      expect(withDecision().get('.jev-decision-note').text()).toBeTruthy()
-    })
+    /*
+     * REMOVED for #635 (MESSAGE-QUESTIONS 15): 'says the pickers below now show the choice and can
+     * still be changed', which pinned the `.jev-decision-note` line. The design lead ruled the note
+     * out: the pickers show the pick themselves (decision log, Jev card from the decision). Its
+     * absence is pinned by 'draws only the eyebrow, the pick and Dismiss' below and by
+     * jevCardCopy.test.ts.
+     */
 
     /*
      * jev-routing-profiles T4. The card gains the tier in words and a
@@ -900,11 +931,13 @@ describe('the Jev option', () => {
      */
     describe('the tier and per-part line (T4)', () => {
       it('shows the tier in words, and names both parts Jev chose with their own confidence', () => {
-        const text = withDecision().get('.jev-decision-parts').text()
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+        const text = tipCopy(withDecision())
 
         expect(text).toContain('frontier')
         expect(text).toContain('90%')
-        expect(text).toContain('codex')
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: 'codex'): the supplier as its chip names it.
+        expect(text).toContain('Codex')
         expect(text).toContain('87%')
       })
 
@@ -926,7 +959,8 @@ describe('the Jev option', () => {
           }
         })
 
-        const text = wrapper.get('.jev-decision-parts').text()
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+        const text = tipCopy(wrapper)
 
         expect(text).toContain('unsure about the provider')
         expect(text).toContain('54%')
@@ -951,8 +985,9 @@ describe('the Jev option', () => {
         })
         const untrivial = withDecision()
 
-        expect(trivial.get('.jev-decision-trivial').text()).toBeTruthy()
-        expect(untrivial.find('.jev-decision-trivial').exists()).toBe(false)
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: a `.jev-decision-trivial` line on the card).
+        expect(tipCopy(trivial)).toContain('Treated as a trivial prompt.')
+        expect(tipCopy(untrivial)).not.toContain('Treated as a trivial prompt.')
       })
 
       it('shows the large-context flag only when the local decision preferred one', () => {
@@ -974,8 +1009,9 @@ describe('the Jev option', () => {
         })
         const notLarge = withDecision()
 
-        expect(large.get('.jev-decision-large-context').text()).toBeTruthy()
-        expect(notLarge.find('.jev-decision-large-context').exists()).toBe(false)
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: a `.jev-decision-large-context` line).
+        expect(tipCopy(large)).toContain('Large-context model preferred.')
+        expect(tipCopy(notLarge)).not.toContain('Large-context model preferred.')
       })
     })
 
@@ -1011,13 +1047,14 @@ describe('the Jev option', () => {
       }
 
       it('credits Jev’s own pick with the winning candidate’s fit percentage', () => {
-        const text = withModel({
-          value: 'gpt-5.6-sol',
-          applied: 'answered',
-          probability: 0.82
-        })
-          .get('.jev-decision-parts')
-          .text()
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+        const text = tipCopy(
+          withModel({
+            value: 'gpt-5.6-sol',
+            applied: 'answered',
+            probability: 0.82
+          })
+        )
 
         expect(text).toContain('Jev picked the model')
         expect(text).toContain('82%')
@@ -1025,14 +1062,15 @@ describe('the Jev option', () => {
       })
 
       it('names the Choice tiebreak when one broke a Noul tie', () => {
-        const text = withModel({
-          value: 'gpt-5.6-sol',
-          applied: 'answered',
-          probability: 0.55,
-          choiceProbability: 0.61
-        })
-          .get('.jev-decision-parts')
-          .text()
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+        const text = tipCopy(
+          withModel({
+            value: 'gpt-5.6-sol',
+            applied: 'answered',
+            probability: 0.55,
+            choiceProbability: 0.61
+          })
+        )
 
         expect(text).toContain('Jev picked the model')
         expect(text).toContain('55%')
@@ -1041,9 +1079,8 @@ describe('the Jev option', () => {
       })
 
       it('says plainly that only one model fit the tier — neither Jev’s own pick nor a safe default', () => {
-        const text = withModel({ value: 'gpt-5.6-sol', applied: 'only-candidate' })
-          .get('.jev-decision-parts')
-          .text()
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+        const text = tipCopy(withModel({ value: 'gpt-5.6-sol', applied: 'only-candidate' }))
 
         expect(text).toContain('Only one model fits that tier')
         expect(text).not.toContain('Jev picked the model')
@@ -1071,9 +1108,8 @@ describe('the Jev option', () => {
       ])(
         'maps the %s fallback reason to fixed words, and says the local choice was used',
         (reason, words) => {
-          const text = withModel({ applied: 'safe-default', reason })
-            .get('.jev-decision-parts')
-            .text()
+          // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+          const text = tipCopy(withModel({ applied: 'safe-default', reason }))
 
           expect(text).toContain('Jev could not pick the model')
           expect(text).toContain(words)
@@ -1117,21 +1153,29 @@ describe('the Jev option', () => {
         })
       }
 
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary`): the pick paragraph.
       it('never says "Jev chose" when the named provider was a safe default', () => {
-        expect(withIssue608().get('.jev-decision-summary').text()).not.toContain('Jev chose')
+        expect(withIssue608().get(PICK).text()).not.toContain('Jev chose')
       })
 
+      /*
+       * AMENDED for #635 (MESSAGE-QUESTIONS 15; was: the headline `.jev-decision-summary` without
+       * 19% and with 75%). The pick carries no figure; the figure is the tooltip's least certain
+       * answer, which must still be the answered parts' and never the safe default's 19%.
+       */
       it('never shows the discarded 19% provider confidence as the headline figure', () => {
-        const summary = withIssue608().get('.jev-decision-summary').text()
+        expect(withIssue608().get(PICK).text()).not.toMatch(/\d+%/)
+        const tip = tipCopy(withIssue608())
 
-        expect(summary).not.toContain('19%')
+        expect(tip).not.toContain('least certain answer was 19%')
         // The MIN over the ANSWERED parts only — tier 92%, model 75% — never
         // the excluded safe-default provider figure.
-        expect(summary).toContain('75%')
+        expect(tip).toContain("Jev's least certain answer was 75%.")
       })
 
       it('still credits Jev for the tier and the model on the per-part line, and names the provider as unsure', () => {
-        const text = withIssue608().get('.jev-decision-parts').text()
+        // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-parts`): the tooltip's lines.
+        const text = tipCopy(withIssue608())
 
         expect(text).toContain('unsure about the provider')
         expect(text).toContain('19%')
@@ -1178,7 +1222,8 @@ describe('the Jev option', () => {
     it('can still be closed while the decision card is showing', async () => {
       const wrapper = withDecision()
       // AMENDED for #635 (was: `.jev-decision` and `.launch-close`): the card's summary line.
-      expect(wrapper.find('.jev-decision-summary').exists()).toBe(true)
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary`): the pick paragraph.
+      expect(wrapper.find(PICK).exists()).toBe(true)
 
       await wrapper.get(CLOSE).trigger('click')
 
@@ -1205,7 +1250,8 @@ describe('the Jev option', () => {
         jev: { ...READY_JEV, enabled: true, routing: DECISION }
       })
 
-      expect(wrapper.find('.jev-decision-summary').exists()).toBe(true)
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary`): the pick paragraph.
+      expect(wrapper.find(PICK).exists()).toBe(true)
       expect(wrapper.get('.jev-dismiss').attributes('disabled')).toBeDefined()
     })
 
@@ -1219,7 +1265,8 @@ describe('the Jev option', () => {
         jev: { ...READY_JEV, enabled: true, routing: DECISION }
       })
 
-      expect(wrapper.find('.jev-decision-summary').exists()).toBe(true)
+      // AMENDED for #635 (MESSAGE-QUESTIONS 15; was: `.jev-decision-summary`): the pick paragraph.
+      expect(wrapper.find(PICK).exists()).toBe(true)
       expect(wrapper.get('.jev-dismiss').attributes('disabled')).toBeDefined()
     })
 
@@ -1244,6 +1291,70 @@ describe('the Jev option', () => {
       await wrapper.get('.jev-dismiss').trigger('click')
 
       expect(document.activeElement).toBe(wrapper.get(JEV_TOGGLE).element)
+      wrapper.unmount()
+      host.remove()
+    })
+
+    // APPENDED for #635 (MESSAGE-QUESTIONS 15): the card's shape, as the design draws it.
+    it('draws only the eyebrow, the pick and Dismiss', () => {
+      const card = withDecision().get('.dm-add__jev')
+
+      expect(card.attributes('role')).toBe('status')
+      expect(card.get('.t-meta').text()).toBe('JEV SUGGESTS')
+      expect(card.findAll('p').map((p) => p.classes())).toEqual([['dm-add__jev-pick']])
+      expect(card.findAll('button').map((b) => b.text())).toEqual(['Dismiss'])
+      expect(card.text()).not.toContain('pickers below')
+    })
+
+    // APPENDED for #635 (MESSAGE-QUESTIONS 15): the pick in bold, then a full stop.
+    it('names the pick in bold, supplier · model · effort, then a full stop', () => {
+      const pick = withDecision().get(PICK)
+
+      expect(pick.get('b').text()).toBe('Codex · gpt-5.6-sol · high')
+      expect(pick.text()).toBe('Codex · gpt-5.6-sol · high.')
+    })
+
+    // APPENDED for #635 (MESSAGE-QUESTIONS 15): auto-accept on, the eyebrow says it was accepted.
+    it('says the pick was accepted automatically with auto-accept on', () => {
+      const wrapper = withDecision({
+        jev: { ...READY_JEV, enabled: true, autoAccept: true, routing: DECISION }
+      })
+
+      expect(wrapper.get('.dm-add__jev .t-meta').text()).toBe('JEV · ACCEPTED AUTOMATICALLY')
+    })
+
+    /*
+     * APPENDED for #635 (MESSAGE-QUESTIONS 15; components.md, Add a dwarf, Accessibility): the
+     * pick takes keyboard focus and shows its tooltip at once on it, one line per sentence, in
+     * the design's order, below the paragraph; blur takes it away.
+     */
+    it('shows the rest of the decision in a tooltip on keyboard focus, one line per sentence', async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const wrapper = withDecision({
+        attachTo: host,
+        jev: {
+          ...READY_JEV,
+          enabled: true,
+          routing: { ...DECISION, decision: { ...DECISION.decision, truncated: true } }
+        }
+      })
+      const pick = wrapper.get(PICK)
+      expect(pick.attributes('tabindex')).toBe('0')
+
+      await pick.trigger('focus')
+      await flushPromises()
+
+      const card = document.body.querySelector('.dm-tip')
+      expect([...(card?.children ?? [])].map((line) => line.textContent)).toEqual([
+        'Jev chose the frontier tier (90% sure) and Codex (87% sure). Jev picked the model (82% fit).',
+        "Jev's least certain answer was 87%.",
+        'The prompt sent to Jev was trimmed to fit its request budget.'
+      ])
+
+      await pick.trigger('blur')
+      await flushPromises()
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
       wrapper.unmount()
       host.remove()
     })
