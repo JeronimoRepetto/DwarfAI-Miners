@@ -229,11 +229,13 @@ describe('the Permissions select for Codex (#635)', () => {
     permissionsVisible: true
   }
 
-  it("lists Codex's three modes in the design's words, enabled, Ask first first", () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 24; was: "…, Ask first first" and 'Permissions: Ask
+  // first'): a detached `codex exec` can ask no one, so its no-flag mode is "Codex default".
+  it("lists Codex's three modes in the design's words, enabled, Codex default first", () => {
     const [, , permissions] = addPanelSelects(codex)
     expect(permissions!.disabled).toBe(false)
     expect(permissions!.options).toEqual([
-      { value: 'default', label: 'Permissions: Ask first' },
+      { value: 'default', label: 'Permissions: Codex default' },
       { value: 'workspace-write', label: 'Permissions: Auto in workspace' },
       { value: 'read-only', label: 'Permissions: Read only' }
     ])

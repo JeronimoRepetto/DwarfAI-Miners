@@ -80,13 +80,15 @@ export function permissionModeLabel(mode: HeldPermissionMode): string {
 }
 
 /*
- * Codex's permission modes in the design's words (sample-data.md, providers: "Ask first", "Auto in
- * workspace", "Read only" for Codex; #635, PO decision 2026-09-28), in the design's order, so the
- * first — the one a select shows with nothing held — is Ask first, the mode that adds no flag.
- * Which flags each id means is main's table (codexPermissions.ts), not this file's.
+ * Codex's permission modes in the design's words (#635, PO decision 2026-09-28), in the design's
+ * order, so the first — the one a select shows with nothing held — is the mode that adds no flag.
+ * It is "Codex default", never "Ask first" (MESSAGE-QUESTIONS 24): a detached `codex exec` offers
+ * no approval policy (codex-cli 0.153.4, `codex exec --help`), so it can ask no one, and a label
+ * never claims a behaviour the launch cannot deliver. "Ask first" stays held Claude's, whose
+ * launch can ask. Which flags each id means is main's table (codexPermissions.ts), not this file's.
  */
 const CODEX_PERMISSION_LABEL: Record<CodexPermissionMode, string> = {
-  default: 'Ask first',
+  default: 'Codex default',
   'workspace-write': 'Auto in workspace',
   'read-only': 'Read only'
 }

@@ -168,6 +168,11 @@ function afterSelector(line) {
 // hands in at run time (the design lead's ruling on the tokens-port questions: no caption is
 // committed). A plain text is `{ text }`; content the tree prints as `(innerHTML "…")`, a JSON
 // string, is `{ html }`. A line ending `×N` stands for N identical siblings.
+// A quoted text as the tree prints it back to the text itself (MESSAGE-QUESTIONS 25): the tree
+// keeps a line break as \n and so writes a backslash as \\ (the design's tools/lib/render-kit.js,
+// `flat`), so a tool's multi-line output reaches a `pre-wrap` part line by line.
+const treeText = (quoted) => quoted.replace(/\\([\\n])/g, (_, c) => (c === 'n' ? '\n' : '\\'))
+
 export function anatomyTexts(anatomyMd, file) {
   const texts = []
   for (const raw of anatomyTree(anatomyMd, file)) {
@@ -178,7 +183,7 @@ export function anatomyTexts(anatomyMd, file) {
     const body = repeat ? rest.slice(0, repeat.index).trim() : rest
     const html = /^\(innerHTML (".*")\)$/.exec(body)
     const text = /^"(.*)"$/.exec(body)
-    const entry = html ? { html: JSON.parse(html[1]) } : text ? { text: text[1] } : null
+    const entry = html ? { html: JSON.parse(html[1]) } : text ? { text: treeText(text[1]) } : null
     if (entry) for (let n = repeat ? Number(repeat[1]) : 1; n > 0; n--) texts.push({ ...entry })
   }
   return texts
