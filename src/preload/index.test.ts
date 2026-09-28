@@ -1556,9 +1556,9 @@ describe('preload launch view contract (#635)', () => {
 /* --- Dwarf names (#635) — one block, appended ------------------------------- */
 /*
  * Renaming a dwarf and resetting its name: request/response, because a refusal has a reason the
- * header shows. The request is rebuilt field by field, and a value that is not a string crosses
- * as '' — main refuses an empty dwarf id, and reads an empty name as "back to the base name",
- * which is what an unreadable name has to mean rather than a name nobody typed.
+ * header shows. The request is rebuilt field by field. A dwarf id that is not a string crosses as
+ * '', which main refuses; a name that is not a string does not cross at all, so main refuses the
+ * shape rather than reading it as a reset. Only a real empty string removes a custom name.
  */
 describe('preload dwarf-name contract (#635)', () => {
   it('sends a rename on the dwarf:setName channel and answers the verdict', async () => {
@@ -1585,10 +1585,19 @@ describe('preload dwarf-name contract (#635)', () => {
       name: 'Stonebeard'
     })
 
+    // AMENDED for #635 (verifier finding; was: a non-string name crossed as '', which main read as
+    // a reset and answered saved: true, erasing the kept name). It crosses with no name at all
+    // now, a shape main refuses, so a malformed call can never remove a name.
     await api.setDwarfName({ dwarfId: 7, name: null } as unknown as Parameters<
       typeof api.setDwarfName
     >[0])
-    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: '', name: '' })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: '' })
+  })
+
+  it('still sends a real empty name, which removes the custom name', async () => {
+    invoke.mockResolvedValueOnce({ saved: true })
+    await api.setDwarfName({ dwarfId: 'claude:s1', name: '' })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: 'claude:s1', name: '' })
   })
 
   it('sends a reset on the dwarf:resetName channel, naming the dwarf alone', async () => {

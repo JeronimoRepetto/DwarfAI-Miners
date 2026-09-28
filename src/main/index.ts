@@ -31,7 +31,6 @@ import type {
   DwarfTextRequest,
   DwarfTextResult,
   DwarfTuningRequest,
-  DwarfNameRequest,
   DwarfNameResult,
   DwarfTuningResult,
   CopyTextResult,
@@ -148,7 +147,8 @@ import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
 import { createSqliteDwarfNameStore } from './dwarfNames/dwarfNameStore'
-import { DWARF_NAME_NOT_ON_BOARD } from './dwarfNames/dwarfNames'
+// The rename boundary's parser lives beside the names it guards, where it is tested (#635).
+import { DWARF_NAME_NOT_ON_BOARD, parseDwarfNameRequest } from './dwarfNames/dwarfNames'
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
@@ -422,19 +422,6 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
-}
-
-/**
- * Same boundary discipline again, for a rename (#635). Checked for shape and nothing more: a
- * dwarf id that is a non-empty string and a name that is a string. What a name may hold is
- * `cleanDwarfName`'s to decide, in the runtime, and the name is never logged here either.
- */
-function parseDwarfNameRequest(payload: unknown): DwarfNameRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.dwarfId !== 'string' || record.dwarfId === '') return null
-  if (typeof record.name !== 'string') return null
-  return { dwarfId: record.dwarfId, name: record.name }
 }
 
 /**

@@ -23,6 +23,16 @@ const EMOJI =
 // C0 and C1 controls, DEL, and the two Unicode line and paragraph separators.
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g
 
+/**
+ * Half of a character, on its own (#635). Refused here, the one rule both the field and main's
+ * re-validation read, rather than only in main: SQLite stores text as UTF-8, which cannot hold a
+ * lone surrogate, so node:sqlite writes U+FFFD in its place and a name read back after a restart
+ * would differ from the one published. Dropped like a control character, so what the field shows,
+ * what main publishes and what a restart reads back are one string. With the `u` flag a surrogate
+ * PAIR is one code point outside this range, so a whole astral character is untouched.
+ */
+const LONE_SURROGATE = /[\uD800-\uDFFF]/gu
+
 /** Why the field dropped something: characters it refuses, or text past DWARF_NAME_MAX. */
 export type DwarfNameRefusal = 'chars' | 'long'
 
@@ -42,12 +52,12 @@ export function nameChars(text: string): string[] {
 }
 
 /**
- * What the field lets through while typing: no emoji or control characters, at most
+ * What the field lets through while typing: no emoji, control characters or lone surrogates, at most
  * DWARF_NAME_MAX characters. `refused` says why something was dropped, and names refused
  * characters first when both happened.
  */
 export function filterDwarfName(raw: string): { text: string; refused: DwarfNameRefusal | null } {
-  let text = raw.replace(EMOJI, '').replace(CONTROL, '')
+  let text = raw.replace(EMOJI, '').replace(CONTROL, '').replace(LONE_SURROGATE, '')
   let refused: DwarfNameRefusal | null = text !== raw ? 'chars' : null
   const chars = nameChars(text)
   if (chars.length > DWARF_NAME_MAX) {

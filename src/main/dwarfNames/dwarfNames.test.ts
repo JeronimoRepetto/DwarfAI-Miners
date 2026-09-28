@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Dwarf, Mine, MineHistorySpeaker } from '../domain/types'
 import { SqliteWriteError } from '../adapters/sqliteWritable'
-import { createMemoryDwarfNameStore, type DwarfNameStore } from './dwarfNameStore'
+import {
+  createMemoryDwarfNameStore,
+  createSqliteDwarfNameStore,
+  type DwarfNameStore
+} from './dwarfNameStore'
+import { MemoryWritableSqlite } from '../adapters/memoryWritableSqlite'
+import { createAppDatabase } from '../appDatabase/appDatabase'
 import {
   DWARF_NAME_INPUT_LIMIT,
   DWARF_NAME_NOT_SAVED,
   DWARF_NAME_TOO_LONG,
   DwarfNames,
+  parseDwarfNameRequest,
   stampCustomNames,
   stampSpeakerNames
 } from './dwarfNames'
@@ -251,5 +258,62 @@ describe('stampSpeakerNames (#635)', () => {
     )
     expect(stamped[0]).toMatchObject({ name: 'a1b2c3d4', customName: 'Stonebeard' })
     expect(stamped[1]).not.toHaveProperty('customName')
+  })
+})
+
+/*
+ * ADDED for #635 (verifier finding): what is saved, what is published and what a restart reads
+ * back must be the same string. Round-tripped through the real node:sqlite driver behind
+ * MemoryWritableSqlite, which is where a lone surrogate used to become U+FFFD.
+ */
+describe('DwarfNames — a name survives the database byte for byte (#635)', () => {
+  it('reads back after a restart exactly the name it published, lone surrogate included', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = () =>
+      createSqliteDwarfNameStore({
+        database: createAppDatabase({ filePath: 'C:\\userData\\projects-v1.db', sqlite })
+      })
+    const first = names(store()).names
+    const saved = await first.set(WORKER, 'Stone\uD800beard')
+    const published = first.nameOf(WORKER.id)
+    expect(saved).toEqual({ saved: true, customName: published })
+
+    const next = names(store()).names
+    await next.load()
+
+    expect(next.nameOf(WORKER.id)).toBe(published)
+  })
+})
+
+/*
+ * ADDED for #635 (verifier finding): the IPC boundary's shape check. A payload whose name is not a
+ * string is refused, never read as a reset — only a real empty string means "remove the custom
+ * name" (screens/message.md: saved empty, it removes the custom name).
+ */
+describe('parseDwarfNameRequest (#635)', () => {
+  it('takes a dwarf id and a name, and nothing else', () => {
+    expect(
+      parseDwarfNameRequest({ dwarfId: 'claude:s1', name: 'Stonebeard', provider: 'codex' })
+    ).toEqual({ dwarfId: 'claude:s1', name: 'Stonebeard' })
+  })
+
+  it('keeps a real empty name, which removes the custom name', () => {
+    expect(parseDwarfNameRequest({ dwarfId: 'claude:s1', name: '' })).toEqual({
+      dwarfId: 'claude:s1',
+      name: ''
+    })
+  })
+
+  it('refuses a payload whose name is missing or not a string', () => {
+    expect(parseDwarfNameRequest({ dwarfId: 'claude:s1' })).toBeNull()
+    expect(parseDwarfNameRequest({ dwarfId: 'claude:s1', name: null })).toBeNull()
+    expect(parseDwarfNameRequest({ dwarfId: 'claude:s1', name: 7 })).toBeNull()
+  })
+
+  it('refuses a payload with no dwarf id, or none at all', () => {
+    expect(parseDwarfNameRequest({ dwarfId: '', name: 'Stonebeard' })).toBeNull()
+    expect(parseDwarfNameRequest({ name: 'Stonebeard' })).toBeNull()
+    expect(parseDwarfNameRequest(null)).toBeNull()
+    expect(parseDwarfNameRequest('Stonebeard')).toBeNull()
   })
 })

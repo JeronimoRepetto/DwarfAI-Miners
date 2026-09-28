@@ -1,5 +1,11 @@
 import { SqliteWriteError } from '../adapters/sqliteWritable'
-import type { Dwarf, DwarfNameResult, Mine, MineHistorySpeaker } from '../domain/types'
+import type {
+  Dwarf,
+  DwarfNameRequest,
+  DwarfNameResult,
+  Mine,
+  MineHistorySpeaker
+} from '../domain/types'
 import { customNameFor } from '../../shared/dwarfName'
 import type { DwarfNameStore, PersistedDwarfName } from './dwarfNameStore'
 
@@ -25,6 +31,20 @@ export const DWARF_NAME_INPUT_LIMIT = 1024
 export const DWARF_NAME_NOT_ON_BOARD = 'This dwarf is no longer here, so its name cannot change.'
 export const DWARF_NAME_NOT_SAVED = 'The name could not be saved.'
 export const DWARF_NAME_TOO_LONG = 'That name is too long.'
+
+/**
+ * The `dwarf:setName` boundary's shape check: a dwarf id that is a non-empty string and a name
+ * that is a string, rebuilt so nothing else crosses. What a name may hold is `cleanDwarfName`'s to
+ * decide, later. A missing or non-string name is REFUSED, never read as a reset: only a real empty
+ * string removes a custom name (screens/message.md), so a malformed call cannot erase one.
+ */
+export function parseDwarfNameRequest(payload: unknown): DwarfNameRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string' || record.dwarfId === '') return null
+  if (typeof record.name !== 'string') return null
+  return { dwarfId: record.dwarfId, name: record.name }
+}
 
 export interface DwarfNamesOptions {
   store: DwarfNameStore

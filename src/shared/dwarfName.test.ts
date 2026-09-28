@@ -156,3 +156,26 @@ describe('customNameFor (#635)', () => {
     expect(customNameFor('explorer', 'Explorer')).toBe('explorer')
   })
 })
+
+/*
+ * ADDED for #635 (verifier finding): a lone surrogate is half of a character, not a character.
+ * SQLite stores text as UTF-8, where a lone surrogate cannot be written, so node:sqlite turns it
+ * into U+FFFD and a name read back after a restart would differ from the one published. It is
+ * refused here, the one place both the field and main's re-validation read, like a control
+ * character.
+ */
+describe('cleanDwarfName — lone surrogates (#635)', () => {
+  it('drops a lone high or low surrogate', () => {
+    expect(cleanDwarfName('a\uD800b')).toBe('ab')
+    expect(cleanDwarfName('a\uDC00b')).toBe('ab')
+    expect(cleanDwarfName('\uDC00\uD800')).toBe('')
+  })
+
+  it('keeps a surrogate pair, which is one whole character', () => {
+    expect(cleanDwarfName('a\uD800\uDC00b')).toBe('a\uD800\uDC00b')
+  })
+
+  it('says the field dropped characters when it removed one', () => {
+    expect(filterDwarfName('a\uD800b')).toEqual({ text: 'ab', refused: 'chars' })
+  })
+})
