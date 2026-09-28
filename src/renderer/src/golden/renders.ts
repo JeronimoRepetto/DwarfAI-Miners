@@ -1464,7 +1464,10 @@ const LaunchStage = defineComponent({
         modelPicker: launch.modelPicker.value,
         effortPicker: launch.effortPicker.value,
         permissionsVisible: launch.permissionsVisible.value,
-        jev: launch.jev.value
+        jev: launch.jev.value,
+        model: launch.state.value.model,
+        effort: launch.state.value.effort,
+        permissionMode: launch.state.value.permissionMode
       })
   }
 })

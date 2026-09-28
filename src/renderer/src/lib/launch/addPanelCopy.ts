@@ -76,6 +76,15 @@ export interface AddPanelSelect {
   label: 'Model' | 'Effort' | 'Permissions'
   options: { value: string; label: string }[]
   disabled: boolean
+  /** The value the launch model holds, which the select shows; none held, its first. */
+  value?: string
+}
+
+/** What the launch model holds for the three selects (launchState's model, effort, permissionMode). */
+export interface AddPanelSelectValues {
+  model: string | null
+  effort: string | null
+  permissionMode: HeldPermissionMode | null
 }
 
 /*
@@ -83,7 +92,9 @@ export interface AddPanelSelect {
  * supplier is picked, "Jev decides" while Jev is on, "Custom" for Other…, since a command has no
  * lists; with a supplier, its own values, prefixed with the select's name ("Model: opus"). A
  * select the supplier has no values for — no effort levels, no permission modes — stays drawn,
- * disabled, on the session's own default, so the row keeps its three parts.
+ * disabled, on the session's own default, so the row keeps its three parts. Each shows the value
+ * the launch model holds — the person's pick, or Jev's (decision log, Jev's pick fills the
+ * pickers) — so the row reads as what would launch; a value its list lacks shows the first entry.
  */
 export function addPanelSelects(state: {
   choice: LaunchChoice | null
@@ -91,6 +102,7 @@ export function addPanelSelects(state: {
   modelPicker: ModelPicker
   effortPicker: EffortPicker
   permissionsVisible: boolean
+  values?: AddPanelSelectValues
 }): AddPanelSelect[] {
   const LABELS = ['Model', 'Effort', 'Permissions'] as const
   const placeholder = (word: string): AddPanelSelect[] =>
@@ -104,7 +116,8 @@ export function addPanelSelects(state: {
   if (state.choice === OTHER_CHOICE) return placeholder('Custom')
   const listed = (
     label: AddPanelSelect['label'],
-    values: { value: string; label: string }[]
+    values: { value: string; label: string }[],
+    held: string | null | undefined
   ): AddPanelSelect =>
     values.length === 0
       ? { label, options: [{ value: '', label: label + ': Default' }], disabled: true }
@@ -114,14 +127,16 @@ export function addPanelSelects(state: {
             value: entry.value,
             label: label + ': ' + entry.label
           })),
-          disabled: false
+          disabled: false,
+          ...(held === null || held === undefined ? {} : { value: held })
         }
   const model = listed(
     'Model',
     state.modelPicker.models.map((option) => ({
       value: option.value,
       label: option.label ?? option.value
-    }))
+    })),
+    state.values?.model
   )
   return [
     state.modelPicker.disabled ? { ...model, disabled: true } : model,
@@ -129,7 +144,8 @@ export function addPanelSelects(state: {
       'Effort',
       state.effortPicker.visible
         ? state.effortPicker.efforts.map((level) => ({ value: level, label: level }))
-        : []
+        : [],
+      state.values?.effort
     ),
     listed(
       'Permissions',
@@ -138,7 +154,8 @@ export function addPanelSelects(state: {
             value: mode,
             label: PERMISSION_LABEL[mode]
           }))
-        : []
+        : [],
+      state.values?.permissionMode
     )
   ]
 }
