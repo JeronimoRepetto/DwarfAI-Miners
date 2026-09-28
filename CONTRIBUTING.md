@@ -148,6 +148,15 @@ pnpm test:golden
   The stage, and a component's "UI kit framing" rules on its root, come from the design's docs at
   run time; a framing rule the kit writes against its stage (`.kit-stage …`) joins the stage CSS,
   and a state whose framing targets any other element is refused until the harness learns it.
+- **A red state's stated percentage is binding (#635).** Once you have the number the run just
+  printed, add it as `"at": <percent>` beside that state's `"red"` in `states.json` (a state
+  without `red` may not carry `at`). From then on the run fails a red state whose measured
+  percentage exceeds `at` by more than `RED_MEASURE_TOLERANCE` (0.1 percentage points,
+  `scripts/golden/states.mjs`) — a regression from 0.5% to 32% can no longer hide behind "still
+  red". A screens-full state grades several window boxes at once; `at` is the same worst-box figure
+  the run already reports and fails on (`screens.golden.test.mjs` takes the max across
+  `plan.windows`). `at` is optional and additive: an existing red state without it keeps the old
+  boolean-only behaviour until someone backfills a real measurement for it.
 - **Full-screen states are the whole App.** A `screens-full/<screen>#<state>` key in `states.json`
   needs no entry in `renders.ts`: `screens.golden.test.mjs` mounts the real `App.vue` on a bridge
   answered from the sample (`golden/api.ts`), in a page sized to the reference screen's work area,

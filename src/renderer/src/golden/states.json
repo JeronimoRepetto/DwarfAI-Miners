@@ -61,7 +61,8 @@
   },
   {
     "key": "molecules/mine-card#not-enterable",
-    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the state is reachable since the folder check (PANEL-QUESTIONS 6)"
+    "red": "one glyph of the reason sits a sub-pixel off the reference (0.049%, 2 clusters on the n of 'not'); the state is reachable since the folder check (PANEL-QUESTIONS 6)",
+    "at": 0.049
   },
   {
     "key": "molecules/mine-card#max-tier"
@@ -152,7 +153,8 @@
   },
   {
     "key": "organisms/history-panel#dwarfai-miners",
-    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)"
+    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)",
+    "at": 0.972
   },
   {
     "key": "organisms/message-panel#conversation"
@@ -237,7 +239,8 @@
   },
   {
     "key": "organisms/add-panel#jev-suggests-launch-in-flight",
-    "red": "29.827% differing, 140 clusters: the card stays on screen with its Dismiss disabled since MESSAGE-QUESTIONS Q1, but it is still the #509 card, its summary, parts and note lines, where the design draws the eyebrow and one paragraph (the card's resting style is a later slice); and the app applies Jev's pick to the pickers (#509), so the Claude chip is checked and the selects show Claude's values, where the prototype, whose Jev never sets them, draws no chip checked and the selects reading Jev decides"
+    "red": "29.827% differing, 140 clusters: the card stays on screen with its Dismiss disabled since MESSAGE-QUESTIONS Q1, but it is still the #509 card, its summary, parts and note lines, where the design draws the eyebrow and one paragraph (the card's resting style is a later slice); and the app applies Jev's pick to the pickers (#509), so the Claude chip is checked and the selects show Claude's values, where the prototype, whose Jev never sets them, draws no chip checked and the selects reading Jev decides",
+    "at": 36.716
   },
   {
     "key": "molecules/vault-strip#mine-footer"
@@ -250,11 +253,13 @@
   },
   {
     "key": "organisms/settings#general",
-    "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only); and Reset to default stays disabled while the default is set and working, as it always has, where the design draws it enabled (PR5 question). With the row stood in and both kept as today, 2.027% and 1 cluster, all on the disabled Reset"
+    "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only); and Reset to default stays disabled while the default is set and working, as it always has, where the design draws it enabled (PR5 question). With the row stood in and both kept as today, 2.027% and 1 cluster, all on the disabled Reset",
+    "at": 17.567
   },
   {
     "key": "organisms/settings#general-shortcut-failed",
-    "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); and the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only). With the row stood in and the key cap unspaced it passes at 0.000%"
+    "red": "no Mode at launch row: the app has one mode until Veta and Valle land, so the row would offer modes that do not exist (PR5 question; the nav hides its mode lever for the same reason); and the key cap prints the shortcut as formatAccelerator always has, Ctrl + Alt + Shift + P, where the design prints Ctrl+Alt+Shift+P (PR5 question; the shortcut row is restyled only). With the row stood in and the key cap unspaced it passes at 0.000%",
+    "at": 16.56
   },
   {
     "key": "organisms/settings#sound"
@@ -333,7 +338,8 @@
   },
   {
     "key": "foundations/type-presets#dwarfai-pixel-clean-readable",
-    "red": "the presets paint since PR5 (Settings › Appearance), and molecules/chat-bubble is a component of its own since the MessagePanel slice of #635 (ChatBubble), but the specimen that draws the page header, the mine card and two bubbles in each preset is not built yet: renders.ts still draws the unbuilt view for it"
+    "red": "the presets paint since PR5 (Settings › Appearance), and molecules/chat-bubble is a component of its own since the MessagePanel slice of #635 (ChatBubble), but the specimen that draws the page header, the mine card and two bubbles in each preset is not built yet: renders.ts still draws the unbuilt view for it",
+    "at": 95.731
   },
   {
     "key": "atoms/button#secondary"
@@ -535,38 +541,47 @@
   },
   {
     "key": "screens-full/panel#mines",
-    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it. The launch restores the Mines page with DwarfAI-Miners open (PANEL-QUESTIONS 25) and the re-measured ore-ledger keeps its Copper and its place (PANEL-QUESTIONS 29), so with the lever drawn it passes at 0.000%"
+    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it. The launch restores the Mines page with DwarfAI-Miners open (PANEL-QUESTIONS 25) and the re-measured ore-ledger keeps its Copper and its place (PANEL-QUESTIONS 29), so with the lever drawn it passes at 0.000%",
+    "at": 1.051
   },
   {
     "key": "screens-full/panel#map",
-    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 760, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 764, y 710 and y 760). With the lever drawn, 0.078% and 4 sprite-sized clusters on one of the mine column's dwarfs (x 666 to 688, y 394 to 423 of the window)"
+    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 760, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 764, y 710 and y 760). With the lever drawn, 0.078% and 4 sprite-sized clusters on one of the mine column's dwarfs (x 666 to 688, y 394 to 423 of the window)",
+    "at": 1.131
   },
   {
     "key": "screens-full/panel#settings",
-    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 760, y 810 of the window. With the lever drawn, 5.724% and 166 clusters, from the General section's own reds (organisms/settings#general: no Mode at launch row, the spaced key cap, Reset to default disabled), the missing row moving every row below Position up"
+    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 760, y 810 of the window. With the lever drawn, 5.724% and 166 clusters, from the General section's own reds (organisms/settings#general: no Mode at launch row, the spaced key cap, Reset to default disabled), the missing row moving every row below Position up",
+    "at": 6.852
   },
   {
     "key": "screens-full/panel#mines-first-run",
-    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 454, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 458, y 710 and y 760). With the lever drawn it passes at 0.000%"
+    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 454, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 458, y 710 and y 760). With the lever drawn it passes at 0.000%",
+    "at": 1.676
   },
   {
     "key": "screens-full/panel#map-first-run",
-    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 454, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 458, y 710 and y 760). With the lever drawn it passes at 0.000%"
+    "red": "the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1, design lead ruling 2026-09-27), where the reference draws it: 4472px in 52x110 at x 454, y 810 of the window, and the two System slots above it, which its absence moves (42x42 at x 458, y 710 and y 760). With the lever drawn it passes at 0.000%",
+    "at": 1.676
   },
   {
     "key": "screens-full/message-panel#conversation",
-    "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop",
+    "at": 1.341
   },
   {
     "key": "screens-full/message-panel#question",
-    "red": "the MessagePanel window passes at 0.260% with no cluster (the capture draws the focus ring on the first option, which the card takes on open, where the reference draws none; a 2px line); the Dock box fails at 1.456% and the Panel shell at 1.148%: the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "the MessagePanel window passes at 0.260% with no cluster (the capture draws the focus ring on the first option, which the card takes on open, where the reference draws none; a 2px line); the Dock box fails at 1.456% and the Panel shell at 1.148%: the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop",
+    "at": 1.456
   },
   {
     "key": "screens-full/message-panel#permission",
-    "red": "the MessagePanel window matches at 0.000%; the Dock box fails at 1.353% and the Panel shell at 1.126%: the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "the MessagePanel window matches at 0.000%; the Dock box fails at 1.353% and the Panel shell at 1.126%: the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop",
+    "at": 1.386
   },
   {
     "key": "screens-full/message-panel#not-delivered",
-    "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%) now that the outcome line counts the open run (Working · 2 steps so far, MESSAGE-QUESTIONS 7): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%) now that the outcome line counts the open run (Working · 2 steps so far, MESSAGE-QUESTIONS 7): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop",
+    "at": 1.341
   }
 ]

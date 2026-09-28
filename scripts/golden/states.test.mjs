@@ -11,6 +11,7 @@ import {
   componentOf,
   expectation,
   framingFor,
+  RED_MEASURE_TOLERANCE,
   splitFraming,
   stageWidth
 } from './states.mjs'
@@ -74,6 +75,29 @@ describe('checkStates', () => {
     expect(checkStates([{ key: 'atoms/lamp#lit', cell: 'standard' }], manifest)).toEqual([
       'atoms/lamp#lit has a field states.json does not use: cell'
     ])
+  })
+
+  // APPENDED for #635: "at" pins a red state's stated percentage to a real measurement, so it
+  // needs a reason to attach to and a number to compare against.
+  it('accepts an "at" field on a red state', () => {
+    expect(
+      checkStates([{ key: 'atoms/lamp#lit', red: 'not rebuilt yet', at: 0.5 }], manifest)
+    ).toEqual([])
+  })
+
+  it('refuses "at" on a state that is not red: there is no stated measure to pin', () => {
+    expect(checkStates([{ key: 'atoms/lamp#lit', at: 0.5 }], manifest)).toEqual([
+      "atoms/lamp#lit has 'at' without being red"
+    ])
+  })
+
+  it('wants "at" to be a non-negative number, not a string or a negative figure', () => {
+    expect(
+      checkStates([{ key: 'atoms/lamp#lit', red: 'not rebuilt yet', at: '0.5' }], manifest)
+    ).toEqual(["atoms/lamp#lit's at is not a non-negative number"])
+    expect(
+      checkStates([{ key: 'atoms/lamp#lit', red: 'not rebuilt yet', at: -1 }], manifest)
+    ).toEqual(["atoms/lamp#lit's at is not a non-negative number"])
   })
 })
 
@@ -209,6 +233,50 @@ describe('expectation', () => {
     const still = expectation(red, fail)
     expect(still.ok).toBe(true)
     expect(still.message).toContain('12.5')
+    const flipped = expectation(red, pass)
+    expect(flipped.ok).toBe(false)
+    expect(flipped.message).toMatch(/passes.*remove "red"/)
+  })
+
+  // APPENDED for #635: a red state's "at" pins its verdict to the measure its reason was written
+  // against, not just the pass/fail boolean — otherwise a regression from 0.5% to 32% is still
+  // "red as expected" and passes the run silently.
+  it('holds a red state to the measure its reason states, within a small tolerance', () => {
+    const red = { key: 'k', red: 'known issue', at: 0.5 }
+    const close = expectation(red, { pass: false, percent: 0.55, reasons: ['still under 1%'] })
+    expect(close.ok).toBe(true)
+    expect(close.message).toContain('0.55')
+
+    const regressed = expectation(red, { pass: false, percent: 32, reasons: ['grew a lot'] })
+    expect(regressed.ok).toBe(false)
+    expect(regressed.message).toContain('0.5')
+    expect(regressed.message).toContain('32')
+  })
+
+  it('keeps the boolean-only behaviour for a red state with no "at" recorded', () => {
+    const red = { key: 'k', red: 'not rebuilt yet' }
+    const worse = expectation(red, { pass: false, percent: 99, reasons: ['way worse'] })
+    expect(worse.ok).toBe(true)
+  })
+
+  it('is exact at the tolerance boundary, and fails just past it', () => {
+    const red = { key: 'k', red: 'known issue', at: 1 }
+    const boundary = expectation(red, {
+      pass: false,
+      percent: 1 + RED_MEASURE_TOLERANCE,
+      reasons: []
+    })
+    expect(boundary.ok).toBe(true)
+    const justOver = expectation(red, {
+      pass: false,
+      percent: 1 + RED_MEASURE_TOLERANCE + 0.001,
+      reasons: []
+    })
+    expect(justOver.ok).toBe(false)
+  })
+
+  it('a red state that now passes still fails even with an "at" recorded', () => {
+    const red = { key: 'k', red: 'known issue', at: 0.5 }
     const flipped = expectation(red, pass)
     expect(flipped.ok).toBe(false)
     expect(flipped.message).toMatch(/passes.*remove "red"/)
