@@ -27,6 +27,7 @@ import type {
   HostedLaunchRequest,
   HostedLaunchResult,
   DwarfSendSettledPush,
+  CopyTextResult,
   ExternalLinkResult,
   LaunchFailedPush,
   MetricsResetResult,
@@ -269,6 +270,12 @@ export interface DwarfAiMinersApi {
    * navigates and never learns anything about the machine's browser.
    */
   openExternalLink: (url: string) => Promise<ExternalLinkResult>
+  /**
+   * Put a message's text on the system clipboard (#635, decision log, Failed delivery: Copy).
+   * Main owns the clipboard and bounds the text; this carries the string over and hands back
+   * whether it was copied.
+   */
+  copyText: (text: string) => Promise<CopyTextResult>
   sendDwarfText: (request: DwarfTextRequest) => Promise<DwarfTextResult>
   /**
    * The verdict of a message `sendDwarfText` answered a `holdId` for (#457)
@@ -656,6 +663,9 @@ const api: DwarfAiMinersApi = {
   // re-running a rule on somebody else's parse result is not re-running it.
   openExternalLink: (url) =>
     ipcRenderer.invoke(IPC_CHANNELS.openExternalLink, typeof url === 'string' ? url : ''),
+  // The same one-value discipline: a non-string crosses as '', which main refuses.
+  copyText: (text) =>
+    ipcRenderer.invoke(IPC_CHANNELS.copyText, typeof text === 'string' ? text : ''),
   sendDwarfText: (request) => ipcRenderer.invoke(IPC_CHANNELS.sendDwarfText, request),
   // Subscription, exactly like onLaunchFailed: the renderer never sees the
   // IpcRendererEvent, only the push itself.

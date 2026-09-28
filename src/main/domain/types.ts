@@ -61,6 +61,7 @@ export type {
   DwarfTuningRequest,
   DwarfTuningResult,
   DwarfWorkplace,
+  CopyTextResult,
   ExternalLinkResult,
   FeedActivity,
   FeedActivityKind,

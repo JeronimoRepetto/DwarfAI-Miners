@@ -1,6 +1,7 @@
 import { config as loadDotenv } from 'dotenv'
 import {
   app,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -31,6 +32,7 @@ import type {
   DwarfTextResult,
   DwarfTuningRequest,
   DwarfTuningResult,
+  CopyTextResult,
   ExternalLinkResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
@@ -132,6 +134,7 @@ import {
   verifyMinePath
 } from './shell/openMineFile'
 import { EXTERNAL_LINK_REFUSED_REASON, parseExternalLinkRequest } from './shell/openExternalLink'
+import { copyTextToClipboard } from './shell/copyText'
 import { parseDwarfFeedPageRequest } from './providers/feedWindow'
 import { currentPlatform } from './platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from './appDatabase/appDatabase'
@@ -271,6 +274,7 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
   ipcMain.removeHandler(IPC_CHANNELS.openExternalLink)
+  ipcMain.removeHandler(IPC_CHANNELS.copyText)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
@@ -1764,6 +1768,13 @@ async function init(): Promise<void> {
       }
       return { opened: true }
     }
+  )
+
+  // Copy on a message that could not be handed over (#635, decision log, Failed delivery). The
+  // payload is bounded and refused in shell/copyText, which writes through Electron's own
+  // clipboard: no focused document needed, the same call on every platform.
+  ipcMain.handle(IPC_CHANNELS.copyText, (_event, payload: unknown): CopyTextResult =>
+    copyTextToClipboard(payload, clipboard)
   )
 
   const notDelivered: DwarfTextResult = {
