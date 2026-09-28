@@ -179,14 +179,17 @@ const STOP_BLOCKED_TITLE: Record<KickBlocked, string> = {
   stopping: 'Stop dwarf · already stopping'
 }
 
-/**
- * The ⋯ menu (components.md, MessagePanel, Anatomy): Open console, Mine history, a rule, then Stop
- * dwarf… as danger. Reset name, which the design lists while a custom name is set, arrives with
- * the dwarf names slice. Stop is never hidden, so the menu keeps one shape for every dwarf; it is
- * disabled, with its reason as its title, only in the kick's own two cases (`kickBlocked`), and an
- * idle session the app only observes can still be stopped (MESSAGE-QUESTIONS 13).
+/** What a row of the ⋯ menu leads to. */
+export type MessagePanelAction = 'console' | 'history' | 'reset-name' | 'stop'
+
+/*
+ * The ⋯ menu's rows, each with the action it leads to: one list, so a row and what picking it does
+ * can never drift apart when Reset name comes and goes.
  */
-export function messagePanelMenu(stopBlocked: KickBlocked | null): MenuEntry[] {
+function menuRows(
+  stopBlocked: KickBlocked | null,
+  hasCustomName: boolean
+): { entry: MenuEntry; action?: MessagePanelAction }[] {
   const stop: MenuItem =
     stopBlocked === null
       ? { label: 'Stop dwarf…', danger: true, disabled: false }
@@ -197,20 +200,55 @@ export function messagePanelMenu(stopBlocked: KickBlocked | null): MenuEntry[] {
           title: STOP_BLOCKED_TITLE[stopBlocked]
         }
   return [
-    { label: 'Open console', icon: 'console' },
-    { label: 'Mine history', icon: 'history' },
-    { separator: true },
-    stop
+    { entry: { label: 'Open console', icon: 'console' }, action: 'console' },
+    { entry: { label: 'Mine history', icon: 'history' }, action: 'history' },
+    ...(hasCustomName
+      ? [{ entry: { label: RESET_NAME_LABEL }, action: 'reset-name' as const }]
+      : []),
+    { entry: { separator: true } },
+    { entry: stop, action: 'stop' }
   ]
+}
+
+/** The ⋯ menu's row that takes a dwarf's custom name away (molecules/menu). */
+export const RESET_NAME_LABEL = 'Reset name'
+
+/**
+ * The ⋯ menu (components.md, MessagePanel, Anatomy): Open console, Mine history, Reset name while
+ * the dwarf has a custom name, a rule, then Stop dwarf… as danger. Reset name sits above the rule,
+ * apart from Stop dwarf… (decision log, Dwarf names): it acts at once, goes back to the base name
+ * and confirms nothing, so it is no danger item. Stop is never hidden, so the menu keeps one shape
+ * for every dwarf; it is disabled, with its reason as its title, only in the kick's own two cases
+ * (`kickBlocked`), and an idle session the app only observes can still be stopped
+ * (MESSAGE-QUESTIONS 13).
+ */
+export function messagePanelMenu(
+  stopBlocked: KickBlocked | null,
+  hasCustomName = false
+): MenuEntry[] {
+  return menuRows(stopBlocked, hasCustomName).map((row) => row.entry)
+}
+
+/** What picking the row at `index` of `messagePanelMenu` does; undefined for the rule. */
+export function messagePanelMenuAction(
+  index: number,
+  hasCustomName = false
+): MessagePanelAction | undefined {
+  return menuRows(null, hasCustomName)[index]?.action
 }
 
 /** The composer's hint line when it has nothing else to say (screens/message.md, W4·5). */
 export const COMPOSER_HINT = 'Enter sends · Shift+Enter new line · drop files to attach'
 
-/** Where each menu row leads, by its place in `messagePanelMenu`. */
+/**
+ * Where each menu row stands in `messagePanelMenu` for a dwarf with no custom name. Reset name,
+ * when it is there, stands at MENU_RESET_NAME and moves Stop dwarf… one row down: read a pick
+ * through `messagePanelMenuAction` rather than these.
+ */
 export const MENU_CONSOLE = 0
 export const MENU_HISTORY = 1
 export const MENU_STOP = 3
+export const MENU_RESET_NAME = 2
 
 /** The confirmation Stop dwarf… asks first (screens/message.md, As built). */
 export function stopDwarfTitle(name: string): string {

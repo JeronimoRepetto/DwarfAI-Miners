@@ -116,3 +116,39 @@ describe('InputField with its hint', () => {
     expect(hint.attributes('id')).toBe('folder-hint')
   })
 })
+
+/*
+ * APPENDED for #635 (the dwarf names slice): a field that refuses characters as they are typed.
+ * The MessagePanel's "Dwarf name" field drops emoji and control characters live and stops at the
+ * cap (screens/message.md, As built), so what the field holds is what its filter keeps, with the
+ * caret where the person left it less what was dropped before it.
+ */
+describe('InputField with a filter', () => {
+  const noDigits = (raw: string) => raw.replace(/\d/g, '')
+
+  it('holds and reports only what the filter keeps', async () => {
+    const field = mount(InputField, { props: { value: 'ab', filter: noDigits } })
+    const input = field.get('input').element as HTMLInputElement
+    input.value = 'a1b2'
+    input.setSelectionRange(4, 4)
+    await field.get('input').trigger('input')
+    expect(input.value).toBe('ab')
+    expect(input.selectionStart).toBe(2)
+    expect(field.emitted('update:value')).toEqual([['ab']])
+    // What was typed, before the filter: a host that says why something was dropped reads it.
+    expect(field.emitted('typed')).toEqual([['a1b2']])
+    // Kept on the next render, even though the text it reports did not change.
+    await field.vm.$nextTick()
+    expect(input.value).toBe('ab')
+  })
+
+  it('keeps the caret in place when nothing before it was dropped', async () => {
+    const field = mount(InputField, { props: { filter: noDigits } })
+    const input = field.get('input').element as HTMLInputElement
+    input.value = 'ab9cd'
+    input.setSelectionRange(1, 1)
+    await field.get('input').trigger('input')
+    expect(input.value).toBe('abcd')
+    expect(input.selectionStart).toBe(1)
+  })
+})

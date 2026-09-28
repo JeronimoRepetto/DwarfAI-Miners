@@ -1143,7 +1143,7 @@ function renamingOf(
  */
 const customNameMenu: Render = () => ({
   component: MenuList,
-  props: { items: messagePanelMenu(null) }
+  props: { items: messagePanelMenu(null, true) }
 })
 
 /*

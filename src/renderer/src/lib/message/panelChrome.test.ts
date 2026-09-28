@@ -7,6 +7,8 @@ import {
   dayLabel,
   messagePanelChips,
   messagePanelMenu,
+  messagePanelMenuAction,
+  MENU_STOP,
   messagePanelOutcome,
   OUTCOME_TIP_MAX_CHARS,
   stopDwarfTitle
@@ -245,6 +247,30 @@ describe('the ⋯ menu', () => {
       disabled: true,
       title: 'Stop dwarf · already stopping'
     })
+  })
+
+  /*
+   * APPENDED for #635 (the dwarf names slice; molecules/menu, MessagePanel ⋯, custom name): Reset
+   * name, only while a custom name is set, after Mine history and above the rule, so Stop dwarf…
+   * stays apart. It acts at once and confirms nothing, so it is no danger item.
+   */
+  it('holds Reset name above the rule only while the dwarf has a custom name', () => {
+    expect(messagePanelMenu(null, true)).toEqual([
+      { label: 'Open console', icon: 'console' },
+      { label: 'Mine history', icon: 'history' },
+      { label: 'Reset name' },
+      { separator: true },
+      { label: 'Stop dwarf…', danger: true, disabled: false }
+    ])
+    expect(messagePanelMenu(null, false)).toEqual(messagePanelMenu(null))
+  })
+
+  it('says which action each row leads to, with Reset name in the menu or not', () => {
+    const actions = (named: boolean) =>
+      messagePanelMenu(null, named).map((_, i) => messagePanelMenuAction(i, named))
+    expect(actions(false)).toEqual(['console', 'history', undefined, 'stop'])
+    expect(actions(true)).toEqual(['console', 'history', 'reset-name', undefined, 'stop'])
+    expect(messagePanelMenuAction(MENU_STOP)).toBe('stop')
   })
 
   it('asks before it stops, naming the dwarf', () => {

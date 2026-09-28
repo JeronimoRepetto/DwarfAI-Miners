@@ -89,8 +89,7 @@
     "key": "molecules/menu#messagepanel-stop-unavailable"
   },
   {
-    "key": "molecules/menu#messagepanel-custom-name",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "key": "molecules/menu#messagepanel-custom-name"
   },
   {
     "key": "molecules/menu#mine-card"
@@ -236,32 +235,31 @@
     "key": "organisms/message-panel#answer-refused-reason"
   },
   {
-    "key": "organisms/message-panel#name-hover",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "key": "organisms/message-panel#name-hover"
   },
   {
-    "key": "organisms/message-panel#name-focus",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "key": "organisms/message-panel#name-focus"
   },
   {
     "key": "organisms/message-panel#custom-name",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "red": "0.387% differing, 11 clusters, all in the turn outcome line: the golden sample carries no turn outcome for dwarfai-55, so its line reads \"Turn finished\" where the design reads \"Turn stopped at a limit · idle for 41m\"; the name, the base line and the rename field match (#635)",
+    "at": 0.387
   },
   {
     "key": "organisms/message-panel#renaming",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "red": "0.387% differing, 11 clusters, all in the turn outcome line: the golden sample carries no turn outcome for dwarfai-55, so its line reads \"Turn finished\" where the design reads \"Turn stopped at a limit · idle for 41m\"; the name, the base line and the rename field match (#635)",
+    "at": 0.387
   },
   {
-    "key": "organisms/message-panel#renaming-at-the-limit",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "key": "organisms/message-panel#renaming-at-the-limit"
   },
   {
-    "key": "organisms/message-panel#renaming-emoji-refused",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "key": "organisms/message-panel#renaming-emoji-refused"
   },
   {
     "key": "organisms/message-panel#renaming-empty",
-    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+    "red": "0.387% differing, 11 clusters, all in the turn outcome line: the golden sample carries no turn outcome for dwarfai-55, so its line reads \"Turn finished\" where the design reads \"Turn stopped at a limit · idle for 41m\"; the name, the base line and the rename field match (#635)",
+    "at": 0.387
   },
   {
     "key": "organisms/add-panel#live"
