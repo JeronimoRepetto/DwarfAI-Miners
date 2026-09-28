@@ -119,3 +119,12 @@ describe('belongsToComposition', () => {
     expect(belongsToComposition({ isComposing: false, keyCode: 13 })).toBe(false)
   })
 })
+
+// ADDED for #635: the question card's free-answer field keeps the wire's ceiling (#431).
+describe('fieldControlAttributes and a length ceiling', () => {
+  it('caps the native control where a ceiling is given, and nowhere else', () => {
+    expect(fieldControlAttributes({ maxLength: 15 }).maxlength).toBe(15)
+    expect(fieldControlAttributes({ area: true, maxLength: 15 }).maxlength).toBe(15)
+    expect('maxlength' in fieldControlAttributes({})).toBe(false)
+  })
+})

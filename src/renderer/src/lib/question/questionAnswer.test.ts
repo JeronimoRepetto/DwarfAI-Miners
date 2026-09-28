@@ -618,9 +618,11 @@ describe('questionIndex and stepQuestion (#443)', () => {
     expect(questionIndex(moved, pair({ toolUseId: 'toolu_02' }))).toBe(0)
   })
 
+  // AMENDED for #635 (was: "Question 1 of 2"): the question card's step count reads "1 / 3"
+  // (components.md, Question card, as built).
   it('says which question of how many, counted from one', () => {
-    expect(questionStepLine(0, 2)).toBe('Question 1 of 2')
-    expect(questionStepLine(3, 4)).toBe('Question 4 of 4')
+    expect(questionStepLine(0, 2)).toBe('1 / 2')
+    expect(questionStepLine(3, 4)).toBe('4 / 4')
   })
 })
 

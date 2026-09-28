@@ -562,14 +562,22 @@ describe('renderer components against the type scale tokens', () => {
   })
 
   it.each([
-    ['components/dwarf/DwarfQuestionCard.vue', '.question-text'],
-    ['components/dwarf/DwarfPermissionCard.vue', '.permission-description']
+    /*
+     * AMENDED for #635 (was: DwarfQuestionCard.vue's `.question-text` and DwarfPermissionCard.vue's
+     * `.permission-description`, in `var(--font-conversation)`). The two cards are one design card
+     * now, and the agent's words — the question and each option — are drawn by QuestionCard.vue's
+     * `.dm-qcard__q` and QuestionOption.vue's `.dm-qopt`, in the Messages role, `--f-talk`, which
+     * `--font-conversation` itself follows (design-tokens.css). The permission's own words are the
+     * request, set in the code face the decision log rules for it (Permission request).
+     */
+    ['components/message/QuestionCard.vue', '.dm-qcard__q'],
+    ['components/message/QuestionOption.vue', '.dm-qopt']
     // AMENDED for #635 (was: ['components/launch/AddPanel.vue', '.add-panel'], added for #370).
     // The redesigned Add panel draws its prompt with the design's field, so the #370 guarantee —
     // the first thing the person says to a session is in the messaging family — is pinned on the
     // field's area and on the panel's Jev card in the case below.
   ])('sets %s, which carries %s, in the conversation family', (file) => {
-    expect(readFileSync(join(RENDERER_SRC, file), 'utf8')).toContain('var(--font-conversation)')
+    expect(readFileSync(join(RENDERER_SRC, file), 'utf8')).toContain('var(--f-talk)')
   })
 
   /*

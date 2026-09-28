@@ -38,6 +38,7 @@ import DwarfMessagePanel from '../components/message/DwarfMessagePanel.vue'
 import ChatBubble from '../components/message/ChatBubble.vue'
 import DwarfPermissionCard from '../components/dwarf/DwarfPermissionCard.vue'
 import DwarfQuestionCard from '../components/dwarf/DwarfQuestionCard.vue'
+import QuestionOption from '../components/message/QuestionOption.vue'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
 import { bubbleMark } from '../lib/message/panelChrome'
 import type { MessageEcho } from '../lib/message/echo'
@@ -1098,6 +1099,33 @@ const questionCard: Render = (sample, texts, attributes) => {
   }
 }
 
+/*
+ * Question options as their tree prints them (#635, molecules/question-option), in the kit's
+ * column frame: each row's label is its text, and its index, whether it is picked, the Other
+ * thing… row and a forced look are what its element and attributes print. The number key each
+ * row shows is its index plus one, so the texts that are only digits are the keys, not labels.
+ */
+const questionOptions: Render = (_sample, texts, attributes) => {
+  const labels = texts.map((t) => t.text ?? '').filter((text) => !/^\d+$/.test(text))
+  const rows = attributes.filter((entry) => entry.element.startsWith('button.dm-qopt'))
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: rows.map(({ element, attributes: printed }, i) => ({
+        component: QuestionOption,
+        props: {
+          label: labels[i] ?? fail('option label', i),
+          index: Number(printed['data-index']),
+          checked: printed['aria-checked'] === 'true',
+          other: element.includes('.dm-qopt--other'),
+          state: forcedOf(element)
+        }
+      }))
+    }
+  }
+}
+
 // The delivery phase each mark the tree prints stands for, as the panel's own store names it.
 const PHASE_OF_MARK: Record<string, DwarfSendState['phase']> = {
   pending: 'sending',
@@ -1496,8 +1524,8 @@ export const RENDERS: Record<string, Render> = {
   'organisms/question-card#last-step': questionCard,
   'organisms/question-card#permission': questionCard,
   'organisms/question-card#long-request': questionCard,
-  'molecules/question-option#default-hover-selected-pressed-focus': unbuilt,
-  'molecules/question-option#other-thing': unbuilt,
+  'molecules/question-option#default-hover-selected-pressed-focus': questionOptions,
+  'molecules/question-option#other-thing': questionOptions,
   // A failed message's Retry and Copy (#635, decision log, Failed delivery), and its Copy alone on
   // a session that can no longer take text (decision log, Copy alone on a closed session).
   'molecules/chat-bubble#not-delivered-with-actions': userBubbles,

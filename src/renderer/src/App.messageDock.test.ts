@@ -773,8 +773,9 @@ describe('answering an agent question', () => {
 
   it('answers the ask with the agent’s own words, over the answer channel', async () => {
     const { wrapper, api } = await openAskingDwarf()
-    await wrapper.findAll('.option-card')[1]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    // AMENDED for #635 (was: Enter on `.question-card`): the design card's Submit is its one send.
+    await wrapper.findAll('.dm-qopt')[1]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
     expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
@@ -790,14 +791,15 @@ describe('answering an agent question', () => {
     // Only main's next snapshot may drop a pendingQuestion. Clearing it here
     // would claim the ask was closed on the panel's own say-so.
     const { wrapper } = await openAskingDwarf()
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    // AMENDED for #635 (was: Enter, `.question-text` and `.answer-ok`): the design card's parts.
+    await wrapper.findAll('.dm-qopt')[0]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.question-card .question-text').text()).toBe(
+    expect(wrapper.find('.dm-qcard .dm-qcard__q').text()).toBe(
       'Which database should the importer write to?'
     )
-    expect(wrapper.find('.answer-ok').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__ok').exists()).toBe(true)
   })
 
   it('shows main’s reason when the answer was refused', async () => {
@@ -807,11 +809,12 @@ describe('answering an agent question', () => {
         error: 'That session is not one this panel is holding.'
       })
     })
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    // AMENDED for #635 (was: Enter and `.answer-error`): Submit, and the card's alert row.
+    await wrapper.findAll('.dm-qopt')[0]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.answer-error').text()).toBe(
+    expect(wrapper.find('.dm-qcard__alert').text()).toBe(
       'That session is not one this panel is holding.'
     )
   })
@@ -840,8 +843,10 @@ describe('answering an agent question', () => {
     // "Other" row — never a message, which on that channel writes into the
     // console the picker is drawn in.
     const { wrapper, api } = await openWatchedAsk()
-    await wrapper.find('.freeform-input').setValue('put it in Redis')
-    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    // AMENDED for #635 (was: Enter in the always-open box): "Other thing…", then Submit.
+    await wrapper.find('.dm-qopt--other').trigger('click')
+    await wrapper.find('.dm-qopt-other-field input').setValue('put it in Redis')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
     expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
@@ -859,11 +864,13 @@ describe('answering an agent question', () => {
         error: 'There was nothing written to send, so nothing was typed.'
       })
     })
-    await wrapper.find('.freeform-input').setValue('put it in Redis')
-    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    // AMENDED for #635 (was: Enter in the box, and `.answer-error`): the design card's parts.
+    await wrapper.find('.dm-qopt--other').trigger('click')
+    await wrapper.find('.dm-qopt-other-field input').setValue('put it in Redis')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.answer-error').text()).toContain('nothing was typed')
+    expect(wrapper.find('.dm-qcard__alert').text()).toContain('nothing was typed')
   })
 })
 
@@ -891,10 +898,12 @@ describe('deciding a permission prompt', () => {
 
   it('shows the permission card, sends the decision over its own channel, and leaves it standing', async () => {
     const { wrapper, api } = await openOn([BLOCKED_DWARF], 'claude:s1')
-    expect(wrapper.find('.permission-card').exists()).toBe(true)
+    // AMENDED for #635 (was: `.permission-card`, confirmed with Enter): the design card, its
+    // request block, confirmed with Submit.
+    expect(wrapper.find('.dm-qcard__req').exists()).toBe(true)
 
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.permission-card').trigger('keydown', { key: 'Enter' })
+    await wrapper.findAll('.dm-qopt')[0]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
     expect(api.answerDwarfPermission).toHaveBeenCalledWith({
@@ -904,7 +913,7 @@ describe('deciding a permission prompt', () => {
     })
     // Only main's next snapshot may drop a pendingPermission — the panel's
     // part ends at handing the decision over.
-    expect(wrapper.find('.permission-card').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__req').exists()).toBe(true)
   })
 })
 

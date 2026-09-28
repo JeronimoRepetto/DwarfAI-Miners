@@ -1275,8 +1275,9 @@ describe('DwarfMessagePanel question', () => {
    * scrolls inside above the card (decision log, MessagePanel and Add panel anchored).
    */
 
+  // AMENDED for #635 (was: `.question-card`): the design's card is `section.dm-qcard`.
   it('shows no question surface for a dwarf with nothing outstanding', () => {
-    expect(panel().find('.question-card').exists()).toBe(false)
+    expect(panel().find('.dm-qcard').exists()).toBe(false)
   })
 
   it('forwards the jump on a question it cannot answer to the console path (#354)', async () => {
@@ -1303,7 +1304,8 @@ describe('DwarfMessagePanel question', () => {
         }
       })
     })
-    await wrapper.find('.question-card .answer-jump').trigger('click')
+    // AMENDED for #635 (was: `.question-card .answer-jump`): the walk's Jump to terminal.
+    await wrapper.find('.dm-qcard .dm-qcard__jump').trigger('click')
     expect(wrapper.emitted('open-console')).toHaveLength(1)
     expect(wrapper.emitted('answer')).toBeUndefined()
   })
@@ -1314,23 +1316,27 @@ describe('DwarfMessagePanel question', () => {
     // AMENDED for #635 (was: the card first in the composer, the kick and boost column beside it):
     // the card takes the composer's place at the bottom of the panel (W4·7), and no composer and
     // no control column stands beside it.
+    // AMENDED for #635 again (was: `.question-card`): the design's `section.dm-qcard`.
     const wrapper = asking()
     const bottom = [...wrapper.find('.dm-msg__bottom').element.children]
-    expect(bottom[0]?.classList.contains('question-card')).toBe(true)
+    expect(bottom[0]?.classList.contains('dm-qcard')).toBe(true)
     expect(wrapper.find('.dm-composer').exists()).toBe(false)
   })
 
-  it('forwards the chosen option once Enter confirms it', async () => {
+  // AMENDED for #635 (was: once Enter confirms it): the card's Submit is its one send.
+  it('forwards the chosen option once Submit confirms it', async () => {
     const wrapper = asking()
-    await wrapper.findAll('.option-card')[1]!.trigger('click')
-    await wrapper.find('.question-card').trigger('keydown', { key: 'Enter' })
+    await wrapper.findAll('.dm-qopt')[1]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     expect(wrapper.emitted('answer')).toEqual([['SQLite']])
   })
 
+  // AMENDED for #635 (was: Enter in the always-open box): "Other thing…", then Send.
   it('routes a free-form reply through the ordinary message path, not the ask', async () => {
     const wrapper = asking()
-    await wrapper.find('.freeform-input').setValue('neither, keep the file store')
-    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-qopt--other').trigger('click')
+    await wrapper.find('.dm-qopt-other-field input').setValue('neither, keep the file store')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     expect(wrapper.emitted('send')).toEqual([
       [{ text: 'neither, keep the file store', pressEnter: true }]
     ])
@@ -1345,7 +1351,8 @@ describe('DwarfMessagePanel question', () => {
         error: 'That session is not one this panel is holding.'
       }
     })
-    expect(wrapper.find('.answer-error').text()).toBe(
+    // AMENDED for #635 (was: `.answer-error`): the card's own alert row.
+    expect(wrapper.find('.dm-qcard__alert').text()).toBe(
       'That session is not one this panel is holding.'
     )
   })
@@ -1394,16 +1401,19 @@ describe('DwarfMessagePanel permission (#203)', () => {
 
   it('replaces the composer with the permission card, exactly as an ask would', () => {
     // AMENDED for #635, as the ask's own above.
+    // AMENDED for #635 again (was: `.permission-card`): the one card, with its request block.
     const wrapper = withPermission()
     const bottom = [...wrapper.find('.dm-msg__bottom').element.children]
-    expect(bottom[0]?.classList.contains('permission-card')).toBe(true)
+    expect(bottom[0]?.classList.contains('dm-qcard')).toBe(true)
+    expect(wrapper.find('.dm-qcard__req').exists()).toBe(true)
     expect(wrapper.find('.dm-composer').exists()).toBe(false)
   })
 
-  it('forwards the chosen decision once Enter confirms it', async () => {
+  // AMENDED for #635 (was: once Enter confirms it): Submit.
+  it('forwards the chosen decision once Submit confirms it', async () => {
     const wrapper = withPermission()
-    await wrapper.findAll('.option-card')[0]!.trigger('click')
-    await wrapper.find('.permission-card').trigger('keydown', { key: 'Enter' })
+    await wrapper.findAll('.dm-qopt')[0]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     expect(wrapper.emitted('decide')).toEqual([['allow']])
   })
 
@@ -1420,14 +1430,18 @@ describe('DwarfMessagePanel permission (#203)', () => {
         pendingQuestion
       })
     })
-    expect(wrapper.find('.permission-card').exists()).toBe(true)
-    expect(wrapper.find('.question-card').exists()).toBe(false)
+    // AMENDED for #635 (was: `.permission-card` and `.question-card`): the request block shows,
+    // and the ask's question text does not.
+    expect(wrapper.find('.dm-qcard__req').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__q').exists()).toBe(false)
   })
 
+  // AMENDED for #635 (was: Enter in the always-open box): "Other thing…", then Send.
   it('routes a free-form reply through the ordinary message path, not the decision', async () => {
     const wrapper = withPermission()
-    await wrapper.find('.freeform-input').setValue('let me check this first')
-    await wrapper.find('.freeform-input').trigger('keydown', { key: 'Enter' })
+    await wrapper.find('.dm-qopt--other').trigger('click')
+    await wrapper.find('.dm-qopt-other-field input').setValue('let me check this first')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     expect(wrapper.emitted('send')).toEqual([
       [{ text: 'let me check this first', pressEnter: true }]
     ])
@@ -1517,6 +1531,51 @@ describe('DwarfMessagePanel composer focus (#409)', () => {
     await wrapper.vm.$nextTick()
 
     expect(document.activeElement).toBe(wrapper.find('.dm-composer textarea').element)
+  })
+
+  /*
+   * ADDED for #635 (accessibility.md, Focus): an opened chat takes focus "the composer's field,
+   * or the question card's first option while the dwarf waits on you", and when the focused
+   * control goes away focus moves to the one that takes its place.
+   */
+  const asked = {
+    toolUseId: 'toolu_01',
+    channel: 'held' as const,
+    questions: [
+      { question: 'Which database?', multiSelect: false, options: [{ label: 'Postgres' }] }
+    ]
+  }
+
+  it('gives the question card’s first option the keyboard when a selection opens it', async () => {
+    const wrapper = attachedPanel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: asked })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(wrapper.find('.dm-qopt').element)
+  })
+
+  it('takes no keyboard for the card when its host did not open it on a selection', async () => {
+    const wrapper = attachedPanel({
+      focusOnOpen: false,
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: asked })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).not.toBe(wrapper.find('.dm-qopt').element)
+  })
+
+  it('hands the keyboard from a focused composer to the card that replaces it', async () => {
+    const wrapper = attachedPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(wrapper.find('.dm-composer textarea').element)
+    await wrapper.setProps({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion: asked })
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(wrapper.find('.dm-qopt').element)
   })
 })
 
@@ -1632,7 +1691,8 @@ describe('DwarfMessagePanel awaiting approval', () => {
 
   it('offers no answer of its own: the dialog is not this panel’s to decide', () => {
     const wrapper = panel({ dwarf: asked })
-    expect(wrapper.find('.permission-card').exists()).toBe(false)
+    // AMENDED for #635 (was: `.permission-card`): the design's one card.
+    expect(wrapper.find('.dm-qcard').exists()).toBe(false)
     expect(wrapper.find('.dm-composer textarea').exists()).toBe(true)
   })
 
@@ -1694,8 +1754,9 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
 
   it('draws the card for a session it only watches, exactly as for one it holds', () => {
     const wrapper = panel({ dwarf: observed() })
-    expect(wrapper.find('.permission-card').exists()).toBe(true)
-    expect(wrapper.find('.permission-input').text()).toBe('pnpm test')
+    // AMENDED for #635 (was: `.permission-card` and its `.permission-input`): the request block.
+    expect(wrapper.find('.dm-qcard').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__req').text()).toBe('Bash · pnpm test')
   })
 
   it('shows the card instead of the terminal sentence, never both', () => {
@@ -1713,17 +1774,15 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
       })
     })
     expect(wrapper.find('.dm-msg__approval').text()).toContain(APPROVAL_AT_TERMINAL_NOTE)
-    expect(wrapper.find('.permission-card').exists()).toBe(false)
+    // AMENDED for #635 (was: `.permission-card`).
+    expect(wrapper.find('.dm-qcard').exists()).toBe(false)
   })
 
   it('passes a decision made on the card up to whoever owns the channel', async () => {
     const wrapper = panel({ dwarf: observed() })
-    await wrapper.findAll('.option-card')[1]!.trigger('click')
-    wrapper
-      .find('.permission-card')
-      .element.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-      )
+    // AMENDED for #635 (was: Enter on `.permission-card`): the card's Submit is its one send.
+    await wrapper.findAll('.dm-qopt')[1]!.trigger('click')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
     expect(wrapper.emitted('decide')).toEqual([['deny']])
   })
 
@@ -1732,7 +1791,8 @@ describe('DwarfMessagePanel observed permission (#203)', () => {
       dwarf: observed(),
       answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
     })
-    await wrapper.find('.answer-jump').trigger('click')
+    // AMENDED for #635 (was: `.answer-jump`): the walk's Jump to terminal.
+    await wrapper.find('.dm-qcard__jump').trigger('click')
     expect(wrapper.emitted('open-console')).toHaveLength(1)
   })
 })

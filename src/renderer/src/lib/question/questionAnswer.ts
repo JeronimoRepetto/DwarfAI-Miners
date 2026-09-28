@@ -335,6 +335,23 @@ export function toggledAnswer(
 /* --- A call that asks several questions (#443) ------------------------------ */
 
 /**
+ * What the walk helpers below read of an ask (#635): its id and, per step, the text, the options
+ * and whether they toggle. A DwarfQuestion is one; so is the permission card's one step
+ * (questionCard.ts, permissionAsk), which is why the helpers read this rather than DwarfQuestion —
+ * the card walks both alike, and a permission never becomes a DwarfQuestion, whose promise is that
+ * every label is the agent's own (see DwarfPermissionRequest).
+ */
+export interface AskShape {
+  toolUseId: string
+  questions: readonly {
+    question: string
+    header?: string
+    multiSelect: boolean
+    options: readonly DwarfQuestionOption[]
+  }[]
+}
+
+/**
  * Which question of the call the card is showing, and which ask it is showing
  * it for (#443).
  *
@@ -348,7 +365,7 @@ export interface QuestionCursor {
 }
 
 /** The question the card shows: the one the cursor names, or the first. */
-export function questionIndex(cursor: QuestionCursor | null, question: DwarfQuestion): number {
+export function questionIndex(cursor: QuestionCursor | null, question: AskShape): number {
   if (cursor === null || cursor.toolUseId !== question.toolUseId) return 0
   return Math.min(Math.max(cursor.index, 0), Math.max(question.questions.length - 1, 0))
 }
@@ -356,7 +373,7 @@ export function questionIndex(cursor: QuestionCursor | null, question: DwarfQues
 /** Back (`-1`) or Next (`1`), stopping at either end rather than wrapping. */
 export function stepQuestion(
   cursor: QuestionCursor | null,
-  question: DwarfQuestion,
+  question: AskShape,
   delta: number
 ): QuestionCursor {
   const index = questionIndex(
@@ -366,9 +383,12 @@ export function stepQuestion(
   return { toolUseId: question.toolUseId, index }
 }
 
-/** The k-of-n line a walked call shows above its question, counted from one. */
+/**
+ * The step count the question card's head shows, counted from one: "1 / 3" (#635; components.md,
+ * Question card, as built). AMENDED for #635, was: "Question 1 of 3" above the question.
+ */
 export function questionStepLine(index: number, count: number): string {
-  return `Question ${index + 1} of ${count}`
+  return `${index + 1} / ${count}`
 }
 
 /** The controls that walk a call, and the one that sends every answer in it. */
@@ -409,7 +429,7 @@ export interface AskAnswers {
  * this project had no evidence for at #362 is now measured, and the channel
  * this ask arrived on stops deciding its gesture.
  */
-export function togglesAt(question: DwarfQuestion, index: number): boolean {
+export function togglesAt(question: AskShape, index: number): boolean {
   return question.questions[index]?.multiSelect === true
 }
 
@@ -431,7 +451,7 @@ export function chosenAt(
  */
 export function chooseAt(
   answers: AskAnswers | null,
-  question: DwarfQuestion,
+  question: AskShape,
   index: number,
   label: string
 ): AskAnswers {
@@ -455,7 +475,7 @@ export function chooseAt(
  */
 export function optionStateAt(
   answers: AskAnswers | null,
-  question: DwarfQuestion,
+  question: AskShape,
   index: number,
   label: string
 ): OptionState {
@@ -479,7 +499,7 @@ export function isAnsweredAt(
  * of its questions is left waiting on the rest, so a gap anywhere is nothing
  * to send rather than a partial answer.
  */
-export function canSubmit(answers: AskAnswers | null, question: DwarfQuestion): boolean {
+export function canSubmit(answers: AskAnswers | null, question: AskShape): boolean {
   return (
     question.questions.length > 0 &&
     question.questions.every((_, index) => isAnsweredAt(answers, question.toolUseId, index))
@@ -496,10 +516,7 @@ export function canSubmit(answers: AskAnswers | null, question: DwarfQuestion): 
  * rule, for its reason (main presses a digit per option position). A label the
  * question does not offer is dropped, as there.
  */
-export function askAnswerValues(
-  answers: AskAnswers | null,
-  question: DwarfQuestion
-): string[] | null {
+export function askAnswerValues(answers: AskAnswers | null, question: AskShape): string[] | null {
   if (!canSubmit(answers, question)) return null
   const values: string[] = []
   for (const [index, asked] of question.questions.entries()) {

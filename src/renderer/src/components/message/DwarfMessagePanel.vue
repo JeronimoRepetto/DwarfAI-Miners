@@ -273,12 +273,26 @@ async function focusComposer(): Promise<void> {
   composerRef.value?.querySelector('textarea')?.focus()
 }
 
+/** The slot the composer and the question card share, at the foot of the panel. */
+const bottomRef = ref<HTMLElement | null>(null)
+
+/*
+ * Hand the question card's first option the keyboard (#635; accessibility.md, Focus: "the
+ * composer's field, or the question card's first option while the dwarf waits on you").
+ */
+async function focusCard(): Promise<void> {
+  await nextTick()
+  bottomRef.value?.querySelector<HTMLElement>('.dm-qcard .dm-qopt')?.focus()
+}
+
 /*
  * The panel is keyed by dwarf id (App.vue, the dock slot), so MOUNTING is the moment a person
  * selected one. Never on a control the panel is already explaining as dead (#217).
  */
 onMounted(() => {
-  if (props.focusOnOpen && showsComposer.value && canReceive.value) void focusComposer()
+  if (!props.focusOnOpen) return
+  if (showsComposer.value && canReceive.value) void focusComposer()
+  else if (!showsComposer.value) void focusCard()
 })
 
 /*
@@ -390,6 +404,9 @@ function clearAttachments(): void {
  */
 watch(showsComposer, (shows) => {
   if (shows && canReceive.value) void focusComposer()
+  // A card taking a focused composer's place takes its focus too: keyboard focus is never
+  // dropped to the page (accessibility.md, Focus). Read before the composer leaves the DOM.
+  else if (!shows && composerRef.value?.contains(document.activeElement)) void focusCard()
 })
 
 /** One row of the conversation as this panel draws it, with its own delivery mark (#309). */
@@ -801,7 +818,7 @@ function onStopAction(index: number): void {
       </template>
     </div>
 
-    <div class="dm-msg__bottom">
+    <div ref="bottomRef" class="dm-msg__bottom">
       <!--
         A dialog this panel cannot answer, and the way to the one place that can (#203): the
         composer below still takes a message, and this says the session will not read it until the
@@ -825,6 +842,7 @@ function onStopAction(index: number): void {
         v-if="dwarf.pendingPermission"
         class="dm-msg__ask"
         :permission="dwarf.pendingPermission"
+        :name="dwarf.name"
         :answer-state="answerState"
         @decide="emit('decide', $event)"
         @send-text="emit('send', $event)"
@@ -834,6 +852,7 @@ function onStopAction(index: number): void {
         v-else-if="dwarf.pendingQuestion"
         class="dm-msg__ask"
         :question="dwarf.pendingQuestion"
+        :name="dwarf.name"
         :answer-state="answerState"
         @answer="emit('answer', $event)"
         @answer-text="emit('answer-text', $event)"
