@@ -10,7 +10,8 @@ import type {
   DwarfTuningResult,
   FeedActivity,
   FeedMessage,
-  HeldSessionLaunchResult
+  HeldSessionLaunchResult,
+  LaunchFailureCause
 } from '../domain/types'
 import type { CliDetector } from '../platform/cliDetection'
 import { HeldCrew, type HeldSessionSubagentSignal } from './heldCrew'
@@ -315,11 +316,13 @@ interface HeldRecord {
    */
   launchedAt: number
   /**
-   * Told at most once, when this session ends on its own inside
-   * `EARLY_FAILURE_WINDOW_MS` of `launchedAt` (#635, MESSAGE-QUESTIONS 16) —
-   * never for a session the panel closed, which `closeAll` forgets first.
+   * Told at most once, with the cause, when this session ends on its own
+   * inside `EARLY_FAILURE_WINDOW_MS` of `launchedAt` (`exited-at-once`), or
+   * whenever the engine says its CLI was never spawned (`could-not-start`)
+   * (#635, MESSAGE-QUESTIONS 16/17) — never for a session the panel closed,
+   * which `closeAll` forgets first.
    */
-  onEarlyEnd?: () => void
+  onEarlyEnd?: (cause: LaunchFailureCause) => void
   /**
    * The per-launch delegation token `resolveHeldDelegationInjection`
    * (runtime.ts) minted for this held session, if delegation was injected
@@ -447,11 +450,12 @@ export class HeldSessionRegistry {
        */
       onEnded?: () => void
       /**
-       * Told at most once, when this session stops as soon as it started —
-       * see `HeldRecord.onEarlyEnd` (#635). Never called for a launch whose
-       * verdict already said so: one that ended before its start resolved.
+       * Told at most once, with the cause, when this session stops as soon as
+       * it started or never spawned — see `HeldRecord.onEarlyEnd` (#635).
+       * Never called for a launch whose verdict already said so: one that
+       * ended before its start resolved.
        */
-      onEarlyEnd?: () => void
+      onEarlyEnd?: (cause: LaunchFailureCause) => void
       /** Stored on the record verbatim — see `HeldRecord.delegationToken`'s own comment (#601). */
       delegationToken?: string
     } & LaunchTuning
@@ -526,7 +530,8 @@ export class HeldSessionRegistry {
     // and a push sent now would reach a panel not yet told this launch's id.
     const launchedAt = this.now()
     let recorded = false
-    let endedBeforeRecorded = false
+    // The cause an end before `recorded` names, or undefined while none came.
+    let endedBeforeRecorded: LaunchFailureCause | undefined
     try {
       const handle = await engine({
         executablePath: detection.path,
@@ -545,25 +550,29 @@ export class HeldSessionRegistry {
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
         onPermission: (prompt) => this.receivePermission(key, prompt),
         onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
-        onEnd: (reason) => {
+        onEnd: (reason, neverSpawned) => {
           if (!recorded) {
-            endedBeforeRecorded = true
+            endedBeforeRecorded = neverSpawned === true ? 'could-not-start' : 'exited-at-once'
             return
           }
-          this.finish(key, reason)
+          this.finish(key, reason, neverSpawned === true)
         }
       })
-      if (endedBeforeRecorded) {
+      if (endedBeforeRecorded !== undefined) {
         // Gone before it was ever held, so it is not kept: the verdict itself
-        // is the only place left to say it stopped at once. `close` releases
-        // what the engine still holds; its own end latch makes it quiet.
+        // is the only place left to say so. `close` releases what the engine
+        // still holds; its own end latch makes it quiet. A CLI the engine
+        // says never spawned reads exactly as an engine that rejected does
+        // (the catch below), because it is the same machine (#635).
         handle.close()
         this.log(`[held] Session in ${request.mineId} ended as it started`)
-        return {
-          launched: false,
-          error: `${PRODUCT_NAME[request.provider]} stopped as soon as it started.`,
-          cause: 'exited-at-once'
-        }
+        return endedBeforeRecorded === 'could-not-start'
+          ? { launched: false, error: LAUNCH_FAILED, cause: 'could-not-start' }
+          : {
+              launched: false,
+              error: `${PRODUCT_NAME[request.provider]} stopped as soon as it started.`,
+              cause: 'exited-at-once'
+            }
       }
       // Seeded through the same retention rule every later message goes
       // through, so the receipt below is the row the store actually kept —
@@ -1367,7 +1376,7 @@ export class HeldSessionRegistry {
     })
   }
 
-  private finish(key: number, reason: string): void {
+  private finish(key: number, reason: string, neverSpawned = false): void {
     const record = this.held.get(key)
     if (record === undefined) return
     this.dissolve(record, `${DISSOLVED} (${reason})`)
@@ -1375,12 +1384,22 @@ export class HeldSessionRegistry {
     // #511 T4: the ordinary end path — the engine's own stream closing on
     // its own, never a `closeAll()` the app already swept this record from.
     record.onEnded?.()
+    // #635 (MESSAGE-QUESTIONS 17): a CLI the engine says was never spawned
+    // could not be started, whenever the stream got round to saying so — the
+    // same cause the detached runner and held Antigravity name for the same
+    // machine, never "stopped at once" for a start that did not happen.
+    if (neverSpawned) {
+      record.onEarlyEnd?.('could-not-start')
+      return
+    }
     // #635 (MESSAGE-QUESTIONS 16): ended on its own inside the window a
     // watched process gets. Any end counts, clean or not, because a held
     // session is interactive — one that is over within seconds of starting
     // never became the session the person launched. Reached only for an end
     // the engine reported itself, for the reason `onEnded` above is.
-    if (this.now() - record.launchedAt < EARLY_FAILURE_WINDOW_MS) record.onEarlyEnd?.()
+    if (this.now() - record.launchedAt < EARLY_FAILURE_WINDOW_MS) {
+      record.onEarlyEnd?.('exited-at-once')
+    }
   }
 
   private dissolve(record: HeldRecord, reason: string): void {

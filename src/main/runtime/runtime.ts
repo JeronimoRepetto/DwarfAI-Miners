@@ -3849,9 +3849,9 @@ export class AgentRuntime {
         provider: request.provider,
         minePath: mine.path,
         prompt: request.prompt,
-        onEarlyEnd: () => {
+        onEarlyEnd: (cause) => {
           console.log(
-            `[runtime] Held launch of ${request.provider} in ${mine.id}: stopped as soon as it started`
+            `[runtime] Held launch of ${request.provider} in ${mine.id}: failed (${cause})`
           )
           this.onLaunchFailed({
             launchId,
@@ -3861,7 +3861,9 @@ export class AgentRuntime {
             // own to hand back: null and empty, never a guess.
             exitCode: null,
             stderrTail: '',
-            cause: 'exited-at-once'
+            // `exited-at-once`, or `could-not-start` for a CLI the engine says
+            // never spawned (#635) — the registry's reading, carried as given.
+            cause
           })
         },
         ...(request.model === undefined ? {} : { model: request.model }),

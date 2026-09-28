@@ -3134,9 +3134,13 @@ export interface AgentLaunchRequest {
  * - `could-not-start` — something was found and would not start: a shim this
  *   app cannot run (a Windows-only artefact, refused inside cliDetection.ts,
  *   the port) or a spawn error, whatever code the platform attached to it.
+ *   For a held Claude session the Agent SDK reports that spawn error only
+ *   once its stream is read, after the launch already answered, so it can
+ *   also arrive on `LaunchFailedPush` (see `heldSessionNeverSpawned`).
  * - `exited-at-once` — it started, then stopped within
  *   `EARLY_FAILURE_WINDOW_MS`: a watched detached process exiting non-zero, or
- *   a held session ending or erroring before its stream opened. Only ever on
+ *   a held session ending or erroring before its stream opened — never one
+ *   whose CLI was not spawned at all, which is `could-not-start`. Only ever on
  *   `LaunchFailedPush`, or on a held verdict whose session was already gone by
  *   the time the verdict was written.
  *
@@ -3221,9 +3225,13 @@ export interface LaunchFailedPush {
    */
   stderrTail: string
   /**
-   * Always `exited-at-once` today (#635): this push exists only for a launch
-   * that started and stopped inside the early window. Typed as the whole
-   * union so the notice reads one field, whichever channel told it.
+   * `exited-at-once` for a launch that started and stopped inside the early
+   * window (#635). `could-not-start` for a held Claude session whose CLI was
+   * never spawned: the Agent SDK resolves such a start and raises the spawn
+   * error only once its stream is read, so the verdict had already said
+   * `launched: true` — this is the same cause the detached channel and held
+   * Antigravity name for the same machine. Typed as the whole union so the
+   * notice reads one field, whichever channel told it.
    */
   cause: LaunchFailureCause
 }

@@ -2742,6 +2742,35 @@ describe('a held session that stops as soon as it starts (#635)', () => {
       port.end(0, reason)
 
       expect(onEarlyEnd).toHaveBeenCalledTimes(1)
+      // A session that spawned and then stopped: the engine said nothing
+      // about a spawn, so this is the stopped-at-once cause.
+      expect(onEarlyEnd).toHaveBeenCalledWith('exited-at-once')
+      expect(registry.count()).toBe(0)
+    }
+  )
+
+  /*
+   * The REAL shape of a Claude CLI that never spawned (see
+   * heldSessionNeverSpawned in heldSession.test.ts): the SDK engine's start
+   * resolves, and only then does the stream fail — the engine flagging that
+   * failure as a spawn that never happened. That is `could-not-start`, the
+   * cause the detached runner and held Antigravity already name for the same
+   * machine, never "stopped as soon as it started" for a start that did not
+   * happen. Whenever it arrives: a spawn error is not a matter of timing.
+   */
+  it.each([0, EARLY_FAILURE_WINDOW_MS])(
+    'names could-not-start when the engine says the CLI never spawned (%i ms in)',
+    async (elapsed) => {
+      const port = new FakePort()
+      const { registry, clock } = clockedRegistry(port)
+      const onEarlyEnd = vi.fn()
+      await expect(launchWatched(registry, onEarlyEnd)).resolves.toEqual({ launched: true })
+
+      clock.now += elapsed
+      port.started[0]!.onEnd('the session stream failed', true)
+
+      expect(onEarlyEnd).toHaveBeenCalledTimes(1)
+      expect(onEarlyEnd).toHaveBeenCalledWith('could-not-start')
       expect(registry.count()).toBe(0)
     }
   )
@@ -2804,12 +2833,13 @@ describe('a held session that stops as soon as it starts (#635)', () => {
   it('answers exited-at-once in the verdict when the session ended before its start resolved', async () => {
     const onEarlyEnd = vi.fn()
     const onEnded = vi.fn()
+    const close = vi.fn()
     const registry = new HeldSessionRegistry({
       detector: installedDetector(),
       start: {
         claude: async (request) => {
           request.onEnd('the session stream failed')
-          return { close: () => {}, send: () => false }
+          return { close, send: () => false }
         }
       },
       now: () => 1_700_000_000_000,
@@ -2832,5 +2862,38 @@ describe('a held session that stops as soon as it starts (#635)', () => {
     // Never started as far as the caller is concerned: its own refusal path
     // revokes what it issued, exactly as for any launch that did not start.
     expect(onEnded).not.toHaveBeenCalled()
+    // What the engine still holds is released rather than left waiting.
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers could-not-start in the verdict when a CLI that never spawned ended before its start resolved', async () => {
+    const close = vi.fn()
+    const registry = new HeldSessionRegistry({
+      detector: installedDetector(),
+      start: {
+        claude: async (request) => {
+          request.onEnd('the session stream failed', true)
+          return { close, send: () => false }
+        }
+      },
+      now: () => 1_700_000_000_000,
+      log: () => {}
+    })
+
+    const result = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: 'dig',
+      onEarlyEnd: vi.fn()
+    })
+
+    expect(result).toEqual({
+      launched: false,
+      error: 'The agent could not be started.',
+      cause: 'could-not-start'
+    })
+    expect(registry.count()).toBe(0)
+    expect(close).toHaveBeenCalledTimes(1)
   })
 })

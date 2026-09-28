@@ -48,7 +48,7 @@ import {
 } from '../domain/types'
 import type { HookEvent } from '../hooks/hookPayload'
 import type { CodexThreadModel } from '../domain/agentModelCatalog'
-import type { SessionLauncher } from '../sessionLaunch/launchRunner'
+import { EARLY_FAILURE_WINDOW_MS, type SessionLauncher } from '../sessionLaunch/launchRunner'
 import { resolveDelegationServerScriptPath } from '../mcp/delegationServerCommand'
 import {
   MODEL_CATALOG_TIMEOUT_MS,
@@ -9857,17 +9857,31 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
    * is ever stamped with it.
    */
   describe('a held session that stops as soon as it starts (#635)', () => {
+    /*
+     * One mutable clock for the runtime and the registry it holds, advanced
+     * by hand, so the early window this block is about is the injected one
+     * rather than whatever fixed instant `heldRegistry` above stamps.
+     */
+    const clock = { now: 1_700_000_000_000 }
+
     function earlyRuntime(port: HeldPortFake, onLaunchFailed: (push: LaunchFailedPush) => void) {
+      const fs = new FakeFs()
+      fs.addFile(CLAUDE, '#!/bin/sh\n')
       return new AgentRuntime({
         fs: new FakeFs(),
         platformAdapters: worktreePlatformAdapters(),
         config: defaultConfig(),
         providers: [foremanProvider()],
-        heldSessions: heldRegistry(port.port),
+        heldSessions: new HeldSessionRegistry({
+          detector: createCliDetector({ home: '/home/j', platform: 'linux', fs, env: {} }),
+          start: { claude: port.port },
+          now: () => clock.now,
+          log: () => {}
+        }),
         onMinesUpdated: vi.fn(),
         onLaunchFailed,
         heldLaunchId: () => 'held-launch:1',
-        now: () => 9_000
+        now: () => clock.now
       })
     }
 
@@ -9899,6 +9913,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
         prompt: 'dig'
       })
       expect(onLaunchFailed).not.toHaveBeenCalled()
+      clock.now += EARLY_FAILURE_WINDOW_MS - 1
       port.started[0]!.onEnd('the session stream failed')
       runtime.stop()
 
@@ -9913,6 +9928,50 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
         stderrTail: '',
         cause: 'exited-at-once'
       })
+    })
+
+    it('pushes nothing for a session that ends once the window has passed', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+
+      await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      clock.now += EARLY_FAILURE_WINDOW_MS
+      port.started[0]!.onEnd('the session stream ended')
+      runtime.stop()
+
+      expect(onLaunchFailed).not.toHaveBeenCalled()
+    })
+
+    /*
+     * The Agent SDK resolves a start whose CLI never spawned and fails the
+     * stream afterwards (heldSessionNeverSpawned, heldSession.ts). That is the
+     * same machine the detached runner calls `could-not-start`, so the push
+     * says so too.
+     */
+    it('pushes could-not-start when the engine says the CLI never spawned', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+
+      const { launchId } = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      port.started[0]!.onEnd('the session stream failed', true)
+      runtime.stop()
+
+      expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+      expect(onLaunchFailed).toHaveBeenCalledWith(
+        expect.objectContaining({ launchId, cause: 'could-not-start' })
+      )
     })
 
     it('carries no launch id on a held launch that did not start', async () => {
