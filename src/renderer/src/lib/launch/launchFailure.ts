@@ -55,23 +55,19 @@ function supplierName(choice: LaunchChoice | null): string {
 
 const PICK_YOURSELF = 'Pick the supplier and model yourself.'
 
-/** How much of the tool's output the notice title's tooltip carries (MESSAGE-QUESTIONS 23). */
-export const LAUNCH_OUTPUT_TIP_MAX_CHARS = 400
-
 /*
  * The notice title's tooltip (MESSAGE-QUESTIONS 23; decision log, Tool output on a failed launch):
  * the tool's own last lines, verbatim, for the causes where the app captured what it printed —
  * stopped as soon as it started, and could not be started. The blank space around them is
- * trimmed and their line breaks kept; past 400 characters, as a person counts them, they are cut
- * with an ellipsis, the space the cut leaves before it dropped. Null with nothing captured, and
- * then the title has no tooltip.
+ * trimmed and their line breaks kept. Bounded in ONE place, main, before they cross the wire
+ * (`LaunchFailedPush.stderrTail`): the last 400 characters, an ellipsis marking what it dropped
+ * from the front, so the lines that say why the tool stopped are the ones kept. Never cut again
+ * here. Null with nothing captured, and then the title has no tooltip.
  */
 export function launchFailureOutput(failure: LaunchFailure): string | null {
   if (failure.cause !== 'exited-at-once' && failure.cause !== 'could-not-start') return null
-  const chars = Array.from(failure.output?.trim() ?? '')
-  if (chars.length === 0) return null
-  if (chars.length <= LAUNCH_OUTPUT_TIP_MAX_CHARS) return chars.join('')
-  return chars.slice(0, LAUNCH_OUTPUT_TIP_MAX_CHARS).join('').trimEnd() + '…'
+  const output = failure.output?.trim() ?? ''
+  return output === '' ? null : output
 }
 
 /** What the notice says for a failure, and which of its actions it offers (copy.md, Add a dwarf). */

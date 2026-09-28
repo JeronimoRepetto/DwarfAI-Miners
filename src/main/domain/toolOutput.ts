@@ -27,23 +27,44 @@ export function withoutToolWords(reason: string): string {
 }
 
 /*
- * The Claude Agent SDK builds a CLI's exit error with the CLI's stderr in its message: "Claude
- * Code process exited with code 1. stderr: <tail>" (its ProcessTransport's formatStderrTail, read
- * in the installed @anthropic-ai/claude-agent-sdk 0.3.258). The exit is the fact worth logging;
- * the tail is the tool's own writing.
+ * The Claude Agent SDK writes the CLI's own words into the errors it builds, read in the
+ * installed @anthropic-ai/claude-agent-sdk 0.3.258: an exit carries the stderr tail ("Claude
+ * Code process exited with code 1. stderr: <tail>", its ProcessTransport's formatStderrTail), and
+ * an exit after an error result is replaced by that result's own text ("Claude Code returned an
+ * error result: <text>", Query.readMessages). The part before is the fact worth logging.
+ *
+ * Every error it builds is also tagged (its `Cn`) with `telemetryMessage`, the content-free line
+ * it sends its own telemetry, and `errorClass`. That line is what a log names for an SDK error:
+ * never its message, and never its stack, which repeats the message.
  */
 const SDK_STDERR = '. stderr: '
+const SDK_ERROR_RESULT = 'Claude Code returned an error result'
 
-const cutStderr = (text: string): string => {
-  const at = text.indexOf(SDK_STDERR)
-  return at < 0 ? text : text.slice(0, at)
+function cutToolOutput(text: string): string | null {
+  const stderr = text.indexOf(SDK_STDERR)
+  if (stderr >= 0) return text.slice(0, stderr)
+  return text.startsWith(SDK_ERROR_RESULT) ? SDK_ERROR_RESULT : null
+}
+
+function sdkTelemetryLine(error: Error): string | undefined {
+  const tagged = error as Error & { telemetryMessage?: unknown }
+  return typeof tagged.telemetryMessage === 'string' ? tagged.telemetryMessage : undefined
 }
 
 /**
- * Something thrown, as a log line may name it: its class and its message, with any stderr the
- * SDK appended taken off. Never the error object itself, which a console prints whole.
+ * Something thrown, as a log line may name it. An error the SDK built, or one whose message
+ * carries a tool's words in the SDK's forms, by its class and its fact alone, with no stack. Any
+ * other error — an app bug — with its stack, so it stays diagnosable. Never the error object
+ * itself, which a console prints whole.
  */
 export function errorWithoutToolOutput(error: unknown): string {
-  if (error instanceof Error) return `${error.name}: ${cutStderr(error.message)}`
-  return cutStderr(String(error))
+  if (!(error instanceof Error)) {
+    const text = String(error)
+    return cutToolOutput(text) ?? text
+  }
+  const telemetry = sdkTelemetryLine(error)
+  if (telemetry !== undefined) return `${error.name}: ${telemetry}`
+  const fact = cutToolOutput(error.message)
+  if (fact !== null) return `${error.name}: ${fact}`
+  return error.stack ?? `${error.name}: ${error.message}`
 }

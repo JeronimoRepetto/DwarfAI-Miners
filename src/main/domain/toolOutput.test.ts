@@ -32,9 +32,33 @@ describe('errorWithoutToolOutput', () => {
     expect(errorWithoutToolOutput(error)).toBe('Error: Claude Code process exited with code 1')
   })
 
-  it('names an error that carries no tool output by its class and message', () => {
+  /*
+   * AMENDED for #635 (was: 'TypeError: spawn EACCES', the class and message alone): an error that
+   * is not the SDK's carries no tool output, so it keeps its stack and an app bug stays diagnosable.
+   */
+  it('logs an error that carries no tool output with its stack', () => {
     const error = Object.assign(new TypeError('spawn EACCES'), { code: 'EACCES' })
-    expect(errorWithoutToolOutput(error)).toBe('TypeError: spawn EACCES')
+    expect(errorWithoutToolOutput(error)).toBe(error.stack)
+  })
+
+  // ADDED for #635: the SDK replaces the exit error with the CLI's own error result text.
+  it('drops the CLI’s own error result text, keeping that it returned one', () => {
+    const error = new Error('Claude Code returned an error result: signed in as j, quota gone')
+    expect(errorWithoutToolOutput(error)).toBe('Error: Claude Code returned an error result')
+  })
+
+  /*
+   * ADDED for #635: the SDK tags every error it builds with the content-free line it sends to its
+   * own telemetry, which is what a log may say — never the message, nor the stack that repeats it.
+   */
+  it('logs an error the SDK built by the line it tagged it with, and no stack', () => {
+    const error = Object.assign(new Error('Claude Code control request failed: j said no'), {
+      telemetryMessage: 'Claude Code control request failed (interrupt)',
+      errorClass: 'control_request_failed'
+    })
+    expect(errorWithoutToolOutput(error)).toBe(
+      'Error: Claude Code control request failed (interrupt)'
+    )
   })
 
   it('drops the same tail from something thrown that is not an Error', () => {

@@ -598,7 +598,8 @@ export function createAntigravityHeldSession(
         // the CLI prints is not something the agent said. Logged as a fact so
         // a launch that fails on the far side is diagnosable at all — how
         // much, never the words, which can hold local paths or account names
-        // and are shown only in the panel (#635, MESSAGE-QUESTIONS 23).
+        // (#635, MESSAGE-QUESTIONS 23). The words themselves are dropped
+        // here and shown nowhere: a held session keeps no stderr of its own.
         child.stderr?.on('data', (chunk) => {
           const text = (typeof chunk === 'string' ? chunk : chunk.toString('utf8')).trimEnd()
           if (text !== '') console.warn(`[held] agy wrote to stderr (${text.length} chars)`)

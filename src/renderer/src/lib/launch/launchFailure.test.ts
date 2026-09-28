@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { JevFallbackReason } from '../../types'
 import { OTHER_CHOICE, jevFailureOf, type LaunchFailure } from './launchState'
-import {
-  LAUNCH_OUTPUT_TIP_MAX_CHARS,
-  jevFallbackReasonWords,
-  launchFailureNotice,
-  launchFailureOutput
-} from './launchFailure'
+import { jevFallbackReasonWords, launchFailureNotice, launchFailureOutput } from './launchFailure'
 
 /*
  * The Add panel's launch-failure notice (#635; decision log, Five launch-failure causes, MESSAGE-
@@ -197,25 +192,17 @@ describe('launchFailureOutput', () => {
     expect(launchFailureOutput({ cause: 'jev-could-not-choose', reason: 'no-key' })).toBeNull()
   })
 
-  it('cuts past 400 characters with an ellipsis, and not at exactly 400', () => {
-    const at = (output: string) =>
-      launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output })
-    expect(LAUNCH_OUTPUT_TIP_MAX_CHARS).toBe(400)
-    expect(at('a'.repeat(400) + 'bcdef')).toBe('a'.repeat(400) + '…')
-    expect(at('a'.repeat(400))).toBe('a'.repeat(400))
-  })
-
-  it('drops the blank space the cut leaves before its ellipsis', () => {
-    const output = 'a'.repeat(398) + '  bcdef'
-    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output })).toBe(
-      'a'.repeat(398) + '…'
-    )
-  })
-
-  it('never cuts a character in half', () => {
-    const output = 'a'.repeat(399) + '😀😀'
-    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output })).toBe(
-      'a'.repeat(399) + '😀…'
+  /*
+   * REMOVED for #635 (the verifier's finding on MESSAGE-QUESTIONS 23): three tests of a 400-
+   * character cut here — past 400 with a trailing ellipsis, the blank space before it, a whole
+   * character. The cut kept the FRONT, never fired on what main sends, and a second cut in a
+   * second place could only disagree with the first. The bound is main's now, from the end:
+   * shared/truncate.test.ts (truncateTail) and runtime.test.ts pin it.
+   */
+  it('shows the lines exactly as main bounded them, never cutting them again', () => {
+    const sent = '…' + 'a'.repeat(390) + '\nlast line'
+    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output: sent })).toBe(
+      sent
     )
   })
 })

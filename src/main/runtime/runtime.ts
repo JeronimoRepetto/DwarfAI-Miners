@@ -212,7 +212,7 @@ import {
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
 import { redactSecrets } from '../domain/redactSecrets'
-import { truncate } from '../../shared/truncate'
+import { truncateTail } from '../../shared/truncate'
 
 /**
  * How much conversation the message panel asks a provider for — twelve things
@@ -5159,7 +5159,10 @@ export class AgentRuntime {
       provider,
       mineId: mine.id,
       exitCode: failure.exitCode,
-      stderrTail: truncate(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS),
+      // The END of what it wrote, line breaks kept: its last lines say why it stopped, and they
+      // are what the notice title's tooltip shows (#635, MESSAGE-QUESTIONS 23). Redacted first,
+      // so a cut never splits a secret into a shape redaction no longer knows.
+      stderrTail: truncateTail(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS),
       // The only thing this push is ever about (#635): see LaunchFailureCause.
       cause: 'exited-at-once'
     })
