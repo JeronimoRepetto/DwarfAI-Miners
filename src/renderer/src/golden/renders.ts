@@ -1478,7 +1478,9 @@ export const RENDERS: Record<string, Render> = {
   'organisms/tier-info#live': smallIconButton('info'),
   // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
   // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
+  'molecules/menu#messagepanel': menu(['console', 'history']),
   'molecules/menu#mine-card': menu([]),
+  'molecules/menu#item-hovered': menu([]),
   'molecules/menu#danger-hovered': menu(['console']),
   'molecules/menu#live': () => ({ component: MenuButton, props: { items: [], title: 'More' } }),
   'molecules/dialog#confirm-danger': dialog,
