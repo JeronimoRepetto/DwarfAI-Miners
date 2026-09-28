@@ -259,9 +259,7 @@
     "key": "organisms/add-panel#launch-failed-cli-would-not-start"
   },
   {
-    "key": "organisms/add-panel#launch-failure-output-tooltip",
-    "red": "the tooltip draws as the reference in every rule, but the state's tree prints the tool's lines on one line, so the render cannot know where the tool broke them and wraps them as one paragraph; with the reference's three line breaks put back by hand (a local check, never committed) it passes at 0.000%",
-    "at": 7.923
+    "key": "organisms/add-panel#launch-failure-output-tooltip"
   },
   {
     "key": "organisms/add-panel#launch-failed-jev-unreachable"

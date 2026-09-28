@@ -326,6 +326,24 @@ describe('anatomyTexts', () => {
   it('fails when no tree names that image', () => {
     expect(() => anatomyTexts(TEXTS, 'foundations/lamp/none.png')).toThrow(/none\.png/)
   })
+
+  /*
+   * ADDED for #635 (MESSAGE-QUESTIONS 25): the design's tree prints a text's line break as \n
+   * inside the quotes, and so a backslash in the text as \\ (tools/lib/render-kit.js `flat`), so a
+   * multi-line text such as a tool's captured output reaches the render with its breaks.
+   */
+  it('gives a text back its line breaks and backslashes as the tree escapes them', () => {
+    const tree = `
+**Out** · [reference image](reference/foundations/lamp/out.png), 404 × 96px, standard cell
+
+\`\`\`text
+div.out "error: not signed in\\nRun it again.\\nC:\\\\tools\\\\cli and a literal \\\\n"
+\`\`\`
+`
+    expect(anatomyTexts(tree, 'foundations/lamp/out.png')).toEqual([
+      { text: 'error: not signed in\nRun it again.\nC:\\tools\\cli and a literal \\n' }
+    ])
+  })
 })
 
 // APPENDED for #635: the attributes a state's tree prints (a placeholder, a value, an accessible
