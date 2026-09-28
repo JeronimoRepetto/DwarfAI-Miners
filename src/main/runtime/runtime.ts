@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
@@ -735,6 +736,12 @@ export interface RuntimeOptions {
    */
   onLaunchFailed?: (push: LaunchFailedPush) => void
   /**
+   * Mints the id a started held launch answers with, so a later
+   * `LaunchFailedPush` about it can be correlated (#635) — injected in tests
+   * for a deterministic value. Defaults to a fresh random UUID per launch.
+   */
+  heldLaunchId?: () => string
+  /**
    * Pushes the verdict of a message `sendDwarfText` answered a `holdId` for
    * (#457) — see `DwarfSendSettledPush`. Optional on exactly the terms
    * `onLaunchFailed` is: a test that never holds anything need not wire one,
@@ -1090,6 +1097,8 @@ export class AgentRuntime {
    * reaches the log unconditionally, and only the push is optional.
    */
   private readonly onLaunchFailed: (push: LaunchFailedPush) => void
+  /** See `RuntimeOptions.heldLaunchId` (#635). */
+  private readonly heldLaunchId: () => string
   /**
    * Messages the panel is holding for a Codex thread that is mid-turn (#457),
    * and the verdict channel they eventually settle on.
@@ -1522,6 +1531,7 @@ export class AgentRuntime {
     // this build ever wires still logs the failure, since that half of
     // reporting it is unconditional and lives in launchAgent itself.
     this.onLaunchFailed = options.onLaunchFailed ?? ((): void => {})
+    this.heldLaunchId = options.heldLaunchId ?? ((): string => `held:${randomUUID()}`)
     // #457, and the same no-op default for the same reason: a held message
     // still fires and is still logged without anybody to report it to.
     this.onSendSettled = options.onSendSettled ?? ((): void => {})
@@ -3828,12 +3838,32 @@ export class AgentRuntime {
       mine.id
     )
 
+    // #635 (MESSAGE-QUESTIONS 16): minted before the launch so the session's
+    // own early end can be pushed under it, on the same `LaunchFailedPush` a
+    // detached launch's early exit uses. Correlation only — never a board
+    // receipt, so no dwarf is stamped with it and adoption is unchanged.
+    const launchId = this.heldLaunchId()
     try {
       const result = await this.heldSessions.launch({
         mineId: mine.id,
         provider: request.provider,
         minePath: mine.path,
         prompt: request.prompt,
+        onEarlyEnd: () => {
+          console.log(
+            `[runtime] Held launch of ${request.provider} in ${mine.id}: stopped as soon as it started`
+          )
+          this.onLaunchFailed({
+            launchId,
+            provider: request.provider,
+            mineId: mine.id,
+            // A held session reports no exit code and keeps no stderr of its
+            // own to hand back: null and empty, never a guess.
+            exitCode: null,
+            stderrTail: '',
+            cause: 'exited-at-once'
+          })
+        },
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
         ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
@@ -3861,7 +3891,7 @@ export class AgentRuntime {
       if (delegationIssue !== undefined && !result.launched) {
         this.delegation?.revoke(delegationIssue.token)
       }
-      return result
+      return result.launched ? { ...result, launchId } : result
     } catch (error) {
       // #511 L5: `HeldSessionRegistry.launch` catches its own engine's
       // throws internally today, so this is not observed in production —

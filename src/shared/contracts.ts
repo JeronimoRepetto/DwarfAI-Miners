@@ -3195,13 +3195,24 @@ export interface AgentLaunchResult {
  * a dwarf id and never a session id, for the reason `Dwarf.launchId` never is:
  * no dwarf exists to have proved this launch's identity, because the whole
  * point of this push is that none ever will.
+ *
+ * AMENDED for #635 (MESSAGE-QUESTIONS 16): also pushed for a HELD session
+ * (Claude, Antigravity) that ends, or errors before its stream opens, inside
+ * the same early window — correlated then by `HeldSessionLaunchResult.launchId`.
+ * One push rather than a second channel, because the notice is one notice
+ * whatever channel the supplier was launched on. A held session has no exit
+ * code to read and no stderr of its own kept, so it pushes `exitCode: null`
+ * and an empty `stderrTail`.
  */
 export interface LaunchFailedPush {
   launchId: string
   /** Which CLI this launch was for. Never 'none': a refused launch never spawned anything to fail. */
   provider: DwarfProvider
   mineId: string
-  /** The child's own exit code, or null when it went by signal instead. */
+  /**
+   * The child's own exit code, or null when it went by signal instead — or
+   * when the launch was a held session, which reports none (#635).
+   */
   exitCode: number | null
   /**
    * The CLI's own words, redacted and length-capped exactly as every other
@@ -3350,6 +3361,18 @@ export interface HeldSessionLaunchResult {
   error?: string
   /** Why it failed, when it failed to start — see `LaunchFailureCause` (#635). */
   cause?: LaunchFailureCause
+  /**
+   * The id a `LaunchFailedPush` about this launch will carry, present exactly
+   * when `launched` is true (#635, MESSAGE-QUESTIONS 16): a held session that
+   * stops as soon as it started is told on the same push a detached launch's
+   * early exit is, and a push needs something to be correlated by.
+   *
+   * Correlation only. Unlike `AgentLaunchResult.launchId` it is NOT a board
+   * receipt — main stamps no dwarf with it, so `Dwarf.launchId` never equals
+   * it, and a held launch is still adopted by the conversation it was seeded
+   * with. A renderer that matched a held dwarf by this id would wait forever.
+   */
+  launchId?: string
 }
 
 /*

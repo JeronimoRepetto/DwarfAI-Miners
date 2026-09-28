@@ -8828,13 +8828,17 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     })
     await runtime.refresh()
 
+    // AMENDED for #635 (MESSAGE-QUESTIONS 16; was: `{ launched: true }`
+    // exactly). A started held launch now also carries the id its early-
+    // failure push would be correlated by; its value is pinned in the #635
+    // block below, where the id is injected.
     await expect(
       runtime.launchHeldSession({
         provider: 'claude',
         mineId: mineIdForPath(MINE_PATH, 'win32'),
         prompt: 'dig here'
       })
-    ).resolves.toEqual({ launched: true })
+    ).resolves.toEqual({ launched: true, launchId: expect.any(String) })
     runtime.stop()
 
     expect(port.started).toHaveLength(1)
@@ -9330,7 +9334,10 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
       mineId,
       prompt: 'dig the east gallery'
     })
-    expect(result).toEqual({ launched: true })
+    // AMENDED for #635 (MESSAGE-QUESTIONS 16; was: `{ launched: true }`
+    // exactly). The id is for the early-failure push alone — pinned below as
+    // never stamped on the dwarf, so the receipt this test reads is unchanged.
+    expect(result).toEqual({ launched: true, launchId: expect.any(String) })
     port.reportSessionId(0, 'sess-1')
     await runtime.refresh()
 
@@ -9340,6 +9347,7 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // row of a held exchange that still rides the snapshot.
     expect(dwarfsOf()).toHaveLength(1)
     expect(dwarfsOf()[0]).toMatchObject({ id: 'claude:sess-1', sessionId: 'sess-1' })
+    expect(dwarfsOf()[0]!.launchId).not.toBe(result.launchId)
     expect(dwarfsOf()[0]!.openingPrompt).toEqual({
       role: 'user',
       text: 'dig the east gallery',
@@ -9837,6 +9845,91 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     runtime.stop()
 
     expect('permissionMode' in port.started[0]!).toBe(false)
+  })
+
+  /*
+   * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). A held session that
+   * stops as soon as it starts is told to the panel on the SAME push a
+   * detached launch's early exit is (`LaunchFailedPush`, #263), because the
+   * panel already hears it and the notice is one notice whatever the channel.
+   * That push is correlated by a launch id, which a held verdict never carried
+   * — so it carries one now, minted here and never a board receipt: no dwarf
+   * is ever stamped with it.
+   */
+  describe('a held session that stops as soon as it starts (#635)', () => {
+    function earlyRuntime(port: HeldPortFake, onLaunchFailed: (push: LaunchFailedPush) => void) {
+      return new AgentRuntime({
+        fs: new FakeFs(),
+        platformAdapters: worktreePlatformAdapters(),
+        config: defaultConfig(),
+        providers: [foremanProvider()],
+        heldSessions: heldRegistry(port.port),
+        onMinesUpdated: vi.fn(),
+        onLaunchFailed,
+        heldLaunchId: () => 'held-launch:1',
+        now: () => 9_000
+      })
+    }
+
+    it('answers a started held launch with the id its failure push would carry', async () => {
+      const port = heldPort()
+      const runtime = earlyRuntime(port, vi.fn())
+      await runtime.refresh()
+
+      const result = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: 'dig'
+      })
+      runtime.stop()
+
+      expect(result).toEqual({ launched: true, launchId: 'held-launch:1' })
+    })
+
+    it('pushes exited-at-once, correlated by that id, when the session ends at once', async () => {
+      const port = heldPort()
+      const onLaunchFailed = vi.fn()
+      const runtime = earlyRuntime(port, onLaunchFailed)
+      await runtime.refresh()
+      const mineId = mineIdForPath(MINE_PATH, 'win32')
+
+      const { launchId } = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId,
+        prompt: 'dig'
+      })
+      expect(onLaunchFailed).not.toHaveBeenCalled()
+      port.started[0]!.onEnd('the session stream failed')
+      runtime.stop()
+
+      expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+      expect(onLaunchFailed).toHaveBeenCalledWith({
+        launchId,
+        provider: 'claude',
+        mineId,
+        // A held session reports no exit code and keeps no stderr of its own
+        // to hand back: null and empty, never a guess.
+        exitCode: null,
+        stderrTail: '',
+        cause: 'exited-at-once'
+      })
+    })
+
+    it('carries no launch id on a held launch that did not start', async () => {
+      const port = heldPort()
+      const runtime = earlyRuntime(port, vi.fn())
+      await runtime.refresh()
+
+      const result = await runtime.launchHeldSession({
+        provider: 'claude',
+        mineId: mineIdForPath(MINE_PATH, 'win32'),
+        prompt: '   '
+      })
+      runtime.stop()
+
+      expect(result.launched).toBe(false)
+      expect(result).not.toHaveProperty('launchId')
+    })
   })
 })
 

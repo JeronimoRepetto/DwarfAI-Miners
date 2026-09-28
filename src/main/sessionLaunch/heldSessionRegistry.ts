@@ -1,5 +1,6 @@
 import type { LaunchTuning } from '../domain/launchTuning'
-import { detectionFailureCause, notInstalledReason } from '../domain/launchProviders'
+import { PRODUCT_NAME, detectionFailureCause, notInstalledReason } from '../domain/launchProviders'
+import { EARLY_FAILURE_WINDOW_MS } from './launchRunner'
 import { HELDABLE_PROVIDERS } from '../domain/types'
 import type {
   DwarfPermissionDecision,
@@ -309,6 +310,17 @@ interface HeldRecord {
    */
   onEnded?: () => void
   /**
+   * When the engine was asked to start this session, on this registry's own
+   * clock — what `finish` measures `EARLY_FAILURE_WINDOW_MS` from (#635).
+   */
+  launchedAt: number
+  /**
+   * Told at most once, when this session ends on its own inside
+   * `EARLY_FAILURE_WINDOW_MS` of `launchedAt` (#635, MESSAGE-QUESTIONS 16) —
+   * never for a session the panel closed, which `closeAll` forgets first.
+   */
+  onEarlyEnd?: () => void
+  /**
    * The per-launch delegation token `resolveHeldDelegationInjection`
    * (runtime.ts) minted for this held session, if delegation was injected
    * at all (#601). Absent means either this launch never got a token, or
@@ -434,6 +446,12 @@ export class HeldSessionRegistry {
        * launch that never started.
        */
       onEnded?: () => void
+      /**
+       * Told at most once, when this session stops as soon as it started —
+       * see `HeldRecord.onEarlyEnd` (#635). Never called for a launch whose
+       * verdict already said so: one that ended before its start resolved.
+       */
+      onEarlyEnd?: () => void
       /** Stored on the record verbatim — see `HeldRecord.delegationToken`'s own comment (#601). */
       delegationToken?: string
     } & LaunchTuning
@@ -500,6 +518,15 @@ export class HeldSessionRegistry {
     // Date.now() on its own — the reasoning HeldSessionStartRequest.now's
     // own comment states for the two held engines.
     const crew = new HeldCrew(this.now)
+    // #635 (MESSAGE-QUESTIONS 16): the early window a watched process gets
+    // (EARLY_FAILURE_WINDOW_MS, #263), measured for a held session from the
+    // moment its engine was asked. `recorded` tells an end that arrives while
+    // `start` is still settling — the SDK stream can fail in the same tick it
+    // opened — from one `finish` can handle: there is no record to finish yet,
+    // and a push sent now would reach a panel not yet told this launch's id.
+    const launchedAt = this.now()
+    let recorded = false
+    let endedBeforeRecorded = false
     try {
       const handle = await engine({
         executablePath: detection.path,
@@ -518,8 +545,26 @@ export class HeldSessionRegistry {
         onAsk: (toolUseId, input) => this.receiveAsk(key, toolUseId, input),
         onPermission: (prompt) => this.receivePermission(key, prompt),
         onSubagent: (signal: HeldSessionSubagentSignal) => crew.apply(signal),
-        onEnd: (reason) => this.finish(key, reason)
+        onEnd: (reason) => {
+          if (!recorded) {
+            endedBeforeRecorded = true
+            return
+          }
+          this.finish(key, reason)
+        }
       })
+      if (endedBeforeRecorded) {
+        // Gone before it was ever held, so it is not kept: the verdict itself
+        // is the only place left to say it stopped at once. `close` releases
+        // what the engine still holds; its own end latch makes it quiet.
+        handle.close()
+        this.log(`[held] Session in ${request.mineId} ended as it started`)
+        return {
+          launched: false,
+          error: `${PRODUCT_NAME[request.provider]} stopped as soon as it started.`,
+          cause: 'exited-at-once'
+        }
+      }
       // Seeded through the same retention rule every later message goes
       // through, so the receipt below is the row the store actually kept —
       // redacted, trimmed, and absent when the prompt was nothing at all.
@@ -550,10 +595,13 @@ export class HeldSessionRegistry {
         ...(seeded[0] === undefined ? {} : { openingPrompt: seeded[0] }),
         routedByJev: request.routedByJev === true,
         ...(request.onEnded === undefined ? {} : { onEnded: request.onEnded }),
+        launchedAt,
+        ...(request.onEarlyEnd === undefined ? {} : { onEarlyEnd: request.onEarlyEnd }),
         ...(request.delegationToken === undefined
           ? {}
           : { delegationToken: request.delegationToken })
       })
+      recorded = true
       // Length only, never the prompt — the rule every delivery log here holds.
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
       return { launched: true }
@@ -1327,6 +1375,12 @@ export class HeldSessionRegistry {
     // #511 T4: the ordinary end path — the engine's own stream closing on
     // its own, never a `closeAll()` the app already swept this record from.
     record.onEnded?.()
+    // #635 (MESSAGE-QUESTIONS 16): ended on its own inside the window a
+    // watched process gets. Any end counts, clean or not, because a held
+    // session is interactive — one that is over within seconds of starting
+    // never became the session the person launched. Reached only for an end
+    // the engine reported itself, for the reason `onEnded` above is.
+    if (this.now() - record.launchedAt < EARLY_FAILURE_WINDOW_MS) record.onEarlyEnd?.()
   }
 
   private dissolve(record: HeldRecord, reason: string): void {
