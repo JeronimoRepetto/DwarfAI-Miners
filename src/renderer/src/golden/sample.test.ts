@@ -96,6 +96,17 @@ describe('adaptSample', () => {
     expect(d?.waitingReason).toBeUndefined()
   })
 
+  // APPENDED for #635 (decision log, Dwarf names): the name a person gave it, as main stamps it.
+  it('carries a custom name the sample gives a dwarf, and none where it gives none', () => {
+    const named = { ...digger, id: 'n', customName: 'Warden' }
+    const dwarfs = adaptSample(dm({ mines: [shaft], dwarfs: [digger, named] })).mines[0]?.dwarfs
+    expect(dwarfs?.map((d) => [d.id, d.name, d.customName])).toEqual([
+      ['a1', 'digger-1', undefined],
+      ['n', 'digger-1', 'Warden']
+    ])
+    expect(dwarfs?.[0] && 'customName' in dwarfs[0]).toBe(false)
+  })
+
   it('reads asking as waiting on the user, a permission need as waiting on approval, asleep as resting', () => {
     const sample = adaptSample(
       dm({

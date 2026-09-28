@@ -205,6 +205,10 @@ function dwarf(row: Row, mine: Mine): Dwarf {
     id: String(row.id),
     sessionId: String(row.id),
     name: String(row.name),
+    // The name a person gave it (decision log, Dwarf names), as main stamps it onto the board.
+    ...(typeof row.customName === 'string' && row.customName !== ''
+      ? { customName: row.customName }
+      : {}),
     provider,
     role: oneOf('role', row.role, ROLES),
     model: row.model === undefined ? undefined : String(row.model),

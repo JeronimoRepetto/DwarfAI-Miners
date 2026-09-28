@@ -89,6 +89,10 @@
     "key": "molecules/menu#messagepanel-stop-unavailable"
   },
   {
+    "key": "molecules/menu#messagepanel-custom-name",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
     "key": "molecules/menu#mine-card"
   },
   {
@@ -230,6 +234,34 @@
   },
   {
     "key": "organisms/message-panel#answer-refused-reason"
+  },
+  {
+    "key": "organisms/message-panel#name-hover",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
+    "key": "organisms/message-panel#name-focus",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
+    "key": "organisms/message-panel#custom-name",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
+    "key": "organisms/message-panel#renaming",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
+    "key": "organisms/message-panel#renaming-at-the-limit",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
+    "key": "organisms/message-panel#renaming-emoji-refused",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
+  },
+  {
+    "key": "organisms/message-panel#renaming-empty",
+    "red": "the rename in place is not built yet (#635, the dwarf names slice)"
   },
   {
     "key": "organisms/add-panel#live"
