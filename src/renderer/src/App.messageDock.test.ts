@@ -1569,11 +1569,22 @@ describe('the add panel', () => {
     // Local spies for the two members this file's stub does not carry by
     // default — asked is exactly what the no-chip Enter must now do, and the
     // assertion has to reach it even though the base stub answers "hidden".
+    // AMENDED for #635 (MESSAGE-QUESTIONS Q1; was: no `tier` or `parts`): the decision card now
+    // stays on screen while the launch it confirmed is in flight, so it reads the whole answer
+    // the wire carries since jev-routing-profiles T3, and this answer gives it one.
     const askJev = vi.fn().mockResolvedValue({
       kind: 'decision',
       provider: 'claude',
       confidence: 0.9,
-      truncated: false
+      truncated: false,
+      tier: 'balanced',
+      parts: {
+        provider: { value: 'claude', confidence: 0.9, applied: 'answered' },
+        tier: { value: 'balanced', confidence: 0.9, applied: 'answered' },
+        trivial: { value: false, probability: 0.1 },
+        largeContext: { value: false, probability: 0.1 },
+        model: { applied: 'safe-default', reason: 'no-live-model' }
+      }
     })
     const { api, wrapper } = await openAddPanel({
       getJevSettings: vi.fn().mockResolvedValue({ configured: true }),

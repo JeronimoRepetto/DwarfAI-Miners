@@ -221,10 +221,22 @@ const jevDecision = computed(() =>
 )
 
 /**
- * The decision card leaves once the launch is in flight: its Dismiss would put the pickers back
- * under a launch already going, and its invitation to press Send can no longer be acted on.
+ * The decision card stays on screen while the launch is in flight, so the panel stays as it is
+ * (MESSAGE-QUESTIONS Q1, design lead ruling 2026-09-28): what goes out is still what it names.
+ * Its Dismiss waits with every other control instead, because putting the pickers back under a
+ * launch already going would make the card name a launch that is not the one under way.
  */
-const showJevDecision = computed(() => jevDecision.value !== null && !launched.value)
+const showJevDecision = computed(() => jevDecision.value !== null)
+
+/*
+ * Dismiss hands the keyboard to Let Jev choose (components.md, Add a dwarf, Accessibility): the
+ * card takes the pressed button away with it, and the toggle is what brings the card back.
+ */
+const jevToggle = ref<InstanceType<typeof ToggleSwitch> | null>(null)
+function dismissJev(): void {
+  emit('dismiss-jev')
+  ;(jevToggle.value?.$el as HTMLElement | undefined)?.focus()
+}
 
 /** The provider's label off the SAME source the chip row already resolved it from — never the CLI binary name. */
 const jevProviderLabel = computed(() => {
@@ -535,6 +547,7 @@ const jevUnavailableTitle = computed(() =>
         <div class="dm-add__row">
           <span class="t-section">Let Jev choose</span>
           <ToggleSwitch
+            ref="jevToggle"
             label="Let Jev choose"
             :on="jev.enabled"
             :disabled="jev.availability !== 'ready' || launched"
@@ -578,7 +591,8 @@ const jevUnavailableTitle = computed(() =>
             class="jev-dismiss"
             label="Dismiss"
             size="sm"
-            @click="emit('dismiss-jev')"
+            :disabled="launched"
+            @click="dismissJev"
           />
         </div>
         <div v-else-if="jev.routing.phase === 'fellBack'" class="dm-add__jev" role="status">
@@ -592,7 +606,8 @@ const jevUnavailableTitle = computed(() =>
             class="jev-dismiss jev-fallback-dismiss"
             label="Dismiss"
             size="sm"
-            @click="emit('dismiss-jev')"
+            :disabled="launched"
+            @click="dismissJev"
           />
         </div>
       </div>
