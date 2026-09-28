@@ -247,6 +247,30 @@
     "key": "organisms/add-panel#jev-accepted-automatically"
   },
   {
+    "key": "organisms/add-panel#launch-failed-cli-not-installed",
+    "red": "the launch-failure notice per cause arrives with this slice of #635 (PR4b)"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-cli-exited-at-once",
+    "red": "the launch-failure notice per cause arrives with this slice of #635 (PR4b)"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-cli-would-not-start",
+    "red": "the launch-failure notice per cause arrives with this slice of #635 (PR4b)"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-jev-unreachable",
+    "red": "the launch-failure notice per cause arrives with this slice of #635 (PR4b)"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-jev-could-not-choose",
+    "red": "the launch-failure notice per cause arrives with this slice of #635 (PR4b)"
+  },
+  {
+    "key": "organisms/add-panel#launch-failed-no-launchable-provider",
+    "red": "the launch-failure notice per cause arrives with this slice of #635 (PR4b)"
+  },
+  {
     "key": "molecules/vault-strip#mine-footer"
   },
   {
