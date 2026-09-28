@@ -82,8 +82,16 @@ const emit = defineEmits<{
  * square corners every surface has (foundations, Stepped pixel corners). Written one class deeper
  * than MarkdownBubble's rules so they win whatever order the two sheets load in.
  */
+/*
+ * The words are the one part of the panel a person selects (#635, PO request 2026-09-28): a press
+ * and drag picks text to copy out of a conversation, where `body` makes the rest of the panel a
+ * desktop control. Only the body: the foot's time and mark and the Retry and Copy buttons stay
+ * controls, so a drag across bubbles copies what was said, not their chrome.
+ */
 .dm-bubble .dm-bubble__text {
   display: block;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .dm-bubble .dm-bubble__text :deep(.markdown-list) {
   margin: 0;
