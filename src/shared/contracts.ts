@@ -2187,6 +2187,18 @@ export type MineOpenPathResult = { opened: true } | { opened: false; reason: str
  */
 export type ExternalLinkResult = { opened: true } | { opened: false; reason: string }
 
+/**
+ * Main's verdict on a request to put a message's text on the system clipboard (#635, decision
+ * log, Failed delivery: Copy on a message that could not be handed over).
+ *
+ * No reason travels with a refusal: the renderer only sent a string, and the only ways it can be
+ * refused — not a message at all, or the platform's clipboard throwing — say nothing a person
+ * could act on differently.
+ */
+export interface CopyTextResult {
+  copied: boolean
+}
+
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
   /** True when an existing terminal window was found and brought to the foreground. */
@@ -4983,6 +4995,13 @@ export const IPC_CHANNELS = {
    * IS a verdict the panel must render, and nothing else pushes it later.
    */
   openExternalLink: 'shell:openExternalLink',
+  /**
+   * Put a message's text on the system clipboard (#635, decision log, Failed delivery). Through
+   * main rather than `navigator.clipboard`, because Electron's `clipboard.writeText` needs no
+   * focused document and behaves the same on Windows, macOS and Linux. The payload is the raw
+   * string; main bounds it. Request/response so Copy's toast follows a copy that happened.
+   */
+  copyText: 'shell:copyText',
   sendDwarfText: 'dwarf:sendText',
   /**
    * The verdict of a message `sendDwarfText` answered `holdId` for (#457) —

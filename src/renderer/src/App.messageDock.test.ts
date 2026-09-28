@@ -1671,7 +1671,12 @@ describe('the sent message, drawn at once (#309)', () => {
     expect(wrapper.find('.dm-bubble--user .dm-bubble__text').text()).toBe('dig deeper')
   })
 
-  it('sends a failed message again from its own bubble, and keeps the failed one marked', async () => {
+  /*
+   * AMENDED for #635 (decision log, Failed delivery; was: 'sends a failed message again from its
+   * own bubble, and keeps the failed one marked', whose markers read ['✕', '✓'] across two
+   * bubbles, #309). Retry re-sends the same text in place: one bubble, now ✓, and its buttons gone.
+   */
+  it('sends a failed message again from its own bubble, in place, with no second bubble', async () => {
     const sendDwarfText = vi
       .fn()
       .mockResolvedValueOnce({ delivered: false, via: 'terminal', error: 'nope' })
@@ -1691,8 +1696,72 @@ describe('the sent message, drawn at once (#309)', () => {
       pressEnter: true
     })
     const markers = wrapper.findAll('.dm-bubble__mark')
-    // AMENDED for #635 (was: '✕'): the failure spelled as the design writes it.
-    expect(markers.map((marker) => marker.text())).toEqual(['✕ not delivered', '✓'])
+    expect(markers.map((marker) => marker.text())).toEqual(['✓'])
+    expect(wrapper.findAll('.dm-bubble--user')).toHaveLength(1)
+    expect(wrapper.find('.dm-bubble__actions').exists()).toBe(false)
+  })
+
+  /* #635, decision log, Failed delivery — APPENDED: a second failure brings ✕ and both back. */
+  it('brings the ✕ and its two buttons back on the same bubble when the retry fails too', async () => {
+    const sendDwarfText = vi
+      .fn()
+      .mockResolvedValue({ delivered: false, via: 'terminal', error: 'nope' })
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', { sendDwarfText })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+    await wrapper.find('.dm-bubble__actions .dm-btn').trigger('click')
+    await flushPromises()
+
+    expect(sendDwarfText).toHaveBeenCalledTimes(2)
+    expect(wrapper.findAll('.dm-bubble__mark').map((marker) => marker.text())).toEqual([
+      '✕ not delivered'
+    ])
+    expect(wrapper.findAll('.dm-bubble__actions .dm-btn').map((b) => b.text())).toEqual([
+      'Retry',
+      'Copy'
+    ])
+  })
+
+  /*
+   * #635, decision log, Failed delivery — APPENDED. Copy asks main to put the words on the
+   * clipboard, exactly as written, and says "Message copied" only once main says it did.
+   */
+  it('copies a failed message through main and says so in a toast', async () => {
+    const copyText = vi.fn().mockResolvedValue({ copied: true })
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
+      sendDwarfText: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, via: 'terminal', error: 'nope' }),
+      copyText
+    })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+    await wrapper.findAll('.dm-bubble__actions .dm-btn')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(copyText).toHaveBeenCalledWith('dig deeper')
+    expect(toastTexts(wrapper)).toContain('Message copied')
+  })
+
+  it('claims no copy main did not make', async () => {
+    const { wrapper } = await openOn([ECHO_DWARF], 'claude:s1', {
+      sendDwarfText: vi
+        .fn()
+        .mockResolvedValue({ delivered: false, via: 'terminal', error: 'nope' }),
+      copyText: vi.fn().mockResolvedValue({ copied: false })
+    })
+
+    await sendFrom(wrapper, 'dig deeper')
+    await flushPromises()
+    // The toast queue is the window's one singleton, so an earlier test's toast can still be up:
+    // what is asserted is that this press added none.
+    const before = toastTexts(wrapper)
+    await wrapper.findAll('.dm-bubble__actions .dm-btn')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(toastTexts(wrapper)).toEqual(before)
   })
 
   it('shows the words once, not twice, when the transcript catches up', async () => {

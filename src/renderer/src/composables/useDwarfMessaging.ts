@@ -72,8 +72,8 @@ const echoes = reactive<Record<string, MessageEcho[]>>({})
  * which is why every deletion below writes both.
  *
  * What it is FOR is the two things the design asks of a sent message: the
- * person's own bubble shows the chips it was sent with, and `Send again`
- * resends them with the words (#309).
+ * person's own bubble shows the chips it was sent with, and Retry resends
+ * them with the words (#309, #635).
  */
 const echoAttachments = reactive<Record<string, Record<string, readonly DwarfAttachment[]>>>({})
 const clearTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -138,6 +138,21 @@ function markEcho(dwarfId: string, echoId: string, next: DwarfSendState): void {
   const index = list.findIndex((echo) => echo.id === echoId)
   if (index === -1) return
   list[index] = { ...list[index]!, state: next }
+}
+
+/**
+ * Walk a held echo back to sending, in its own place, for a retry (#635).
+ *
+ * Its send time is the retry's: that is when these words were handed over,
+ * and it is what a transcript row is measured against when reconciling
+ * (lib/message/echo) — a row stamped after the retry, measured against the
+ * failed attempt, would fall outside the match window and show twice.
+ */
+function restartEcho(dwarfId: string, echoId: string): void {
+  const list = echoes[dwarfId]
+  const index = list?.findIndex((echo) => echo.id === echoId) ?? -1
+  if (list === undefined || index === -1) return
+  list[index] = { ...list[index]!, sentAt: Date.now(), state: { phase: 'sending' } }
 }
 
 /**
@@ -208,12 +223,16 @@ function plainAttachment(attachment: DwarfAttachment): DwarfAttachment {
  * Hand `text` to `dwarfId` and record both verdicts for it — the dwarf's, and
  * this one message's. The echo is minted BEFORE the await, which is the whole
  * feature: the bubble is on screen before any channel has been asked anything.
+ *
+ * `again` names an echo already held, for a retry (#635): that echo walks back
+ * to sending in its own place instead of a new one being minted — see `retry`.
  */
 async function deliver(
   dwarfId: string,
   text: string,
   pressEnter: boolean,
-  attachments: readonly DwarfAttachment[] = []
+  attachments: readonly DwarfAttachment[] = [],
+  again?: string
 ): Promise<boolean> {
   if (state.byDwarfId[dwarfId]?.phase === 'sending') return false
   clearTimeout(clearTimers.get(dwarfId))
@@ -221,13 +240,22 @@ async function deliver(
   stopWatch(dwarfId)
   state.byDwarfId[dwarfId] = { phase: 'sending' }
 
-  const echoId = `echo-${++mintedEchoes}`
-  const minted: MessageEcho = { id: echoId, text, sentAt: Date.now(), state: { phase: 'sending' } }
-  echoes[dwarfId] = boundEchoes([...(echoes[dwarfId] ?? []), minted])
-  if (attachments.length > 0) {
-    echoAttachments[dwarfId] = { ...echoAttachments[dwarfId], [echoId]: attachments }
+  const echoId = again ?? `echo-${++mintedEchoes}`
+  if (again === undefined) {
+    const minted: MessageEcho = {
+      id: echoId,
+      text,
+      sentAt: Date.now(),
+      state: { phase: 'sending' }
+    }
+    echoes[dwarfId] = boundEchoes([...(echoes[dwarfId] ?? []), minted])
+    if (attachments.length > 0) {
+      echoAttachments[dwarfId] = { ...echoAttachments[dwarfId], [echoId]: attachments }
+    }
+    pruneAttachments(dwarfId)
+  } else {
+    restartEcho(dwarfId, echoId)
   }
-  pruneAttachments(dwarfId)
 
   // Plain objects, never the reactive ones the composer happens to be
   // holding (#417) — see plainAttachment.
@@ -280,7 +308,7 @@ async function deliver(
 function recordVerdict(dwarfId: string, echoId: string, result: DwarfTextResult): boolean {
   // A relay courier killed by its own timeout (#439) is neither a proven
   // delivery nor a proven failure — see DwarfTextResult.unconfirmed — and it
-  // must not draw as the latter: a ✕ with `Send again` risks handing the same
+  // must not draw as the latter: a ✕ with Retry risks handing the same
   // words to the session twice. So it takes the 'delivered' phase, exactly
   // like a confirmed one, carrying the flag that tells the marker and the
   // status line to say so rather than to claim a hand-over this app never saw
@@ -383,26 +411,33 @@ export function useDwarfMessaging() {
   }
 
   /**
-   * Send a message that failed again, from its own bubble (#309).
+   * Send a message that failed again, from its own bubble — IN PLACE (#635).
    *
-   * A NEW echo, and the failed one is left exactly as it is. Two reasons, and
-   * the second is the one that matters: a retry is a second delivery with its
-   * own verdict, and reusing the failed bubble would erase the record that the
-   * first attempt was made at all — which is the only thing on screen saying
-   * the channel is unreliable.
+   * The same echo walks back along the marks: sending, then ✓ handed over (✓✓
+   * once the session is seen acting), or ✕ again, and no second echo is
+   * minted. The decision log's Failed delivery row (PO ruling 2026-09-25) says
+   * so, and it replaces #309's reasoning, which kept the failed bubble and
+   * added a new one so the first attempt stayed on screen: the redesign
+   * shows one message once, and the ✕ it wore is gone once the retry lands.
+   * The dwarf's own verdict, which its sprite reads, walks with it, since
+   * every phase below writes both. The echo keeps its place and its files
+   * (#408); its send time becomes the retry's (see restartEcho). Leaving ✕ is
+   * what drops it from `failedSends`, which reads the echoes' own phase.
    *
-   * Refused for an id this store is not holding, which is the ordinary case
-   * once the transcript has accounted for a message or the cap has dropped it.
+   * Refused for an id this store is not holding — the ordinary case once the
+   * transcript has accounted for a message or the cap has dropped it — and for
+   * one that did not fail: a stale press on a message already on its way
+   * would hand the same words to the session twice. A second press while the
+   * retry is in flight is refused by `deliver`'s own guard, as a send's is.
    */
   async function retry(dwarfId: string, echoId: string): Promise<boolean> {
     const echo = echoes[dwarfId]?.find((candidate) => candidate.id === echoId)
-    if (echo === undefined) return false
+    if (echo === undefined || echo.state.phase !== 'failed') return false
     // Always with the session's own Enter, exactly as the composer sends: the
     // retry is the same message, not a different kind of delivery — which since
-    // #408 includes its files. Read BEFORE the new echo is minted, because
-    // minting one can prune this map.
+    // #408 includes its files.
     const attachments = echoAttachments[dwarfId]?.[echoId] ?? []
-    return deliver(dwarfId, echo.text, true, attachments)
+    return deliver(dwarfId, echo.text, true, attachments, echoId)
   }
 
   /**

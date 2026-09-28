@@ -5,6 +5,8 @@ import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfPaging } from './useDwarfPaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
 import { useMines } from './useMines'
+import { useToasts } from './useToasts'
+import { MESSAGE_COPIED } from '../lib/delivery/deliveryVerdict'
 import { shouldHidePanelAfterActivation } from '../lib/delivery/activation'
 import { feedMessagesOf } from '../lib/message/conversation'
 import { feedPageCursorOf, heldFeedPageCursorOf, joinFeedPages } from '../lib/message/feedPages'
@@ -51,6 +53,7 @@ import type {
  */
 export function useMessageDock() {
   const { state: mines } = useMines()
+  const { showToast } = useToasts()
   const {
     state: messagingState,
     echoes: sentEchoes,
@@ -472,11 +475,28 @@ export function useMessageDock() {
     )
   }
 
-  /** Send a failed message again, from its own bubble (#309): a second delivery, same aftermath. */
-  function sendAgain(dwarf: Dwarf, echoId: string): void {
+  /**
+   * Retry a failed message from its own bubble (#309, #635): the same message re-sent in place
+   * (decision log, Failed delivery), with a send's aftermath.
+   */
+  function retryMessage(dwarf: Dwarf, echoId: string): void {
     void retryDwarfText(dwarf.id, echoId).then((delivered) =>
       refreshAfterDelivery(dwarf.id, delivered)
     )
+  }
+
+  /**
+   * Copy a failed message's words (#635, decision log, Failed delivery). Main owns the clipboard;
+   * the toast says "Message copied" only once main says it copied, and a copy main refused says
+   * nothing, since the design gives no sentence for one.
+   */
+  async function copyMessage(text: string): Promise<void> {
+    try {
+      const result = await window.api.copyText(text)
+      if (result.copied) showToast(MESSAGE_COPIED, 'check')
+    } catch {
+      // The bridge failing is a copy that did not happen, and claims nothing.
+    }
   }
 
   /**
@@ -599,7 +619,8 @@ export function useMessageDock() {
     error,
     observeSnapshot,
     sendText,
-    sendAgain,
+    retryMessage,
+    copyMessage,
     kickDwarf,
     answerQuestion,
     answerQuestionInWords,

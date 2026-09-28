@@ -1066,6 +1066,30 @@ describe('preload open-link contract (#347)', () => {
 })
 
 /**
+ * Copy on a failed message, handed to main (#635, decision log, Failed delivery) — APPENDED,
+ * nothing above changed. The same shape as the open-link contract: the bridge carries one string
+ * over and hands main's verdict back; main owns the clipboard and refuses a bad payload.
+ */
+describe('preload copy-text contract (#635)', () => {
+  it('asks on the shell:copyText channel with the text as written', async () => {
+    invoke.mockResolvedValueOnce({ copied: true })
+    await api.copyText('Also check\nthat it sorts.')
+    expect(invoke).toHaveBeenLastCalledWith('shell:copyText', 'Also check\nthat it sorts.')
+  })
+
+  it('collapses a non-string text to an empty string before it crosses', async () => {
+    invoke.mockResolvedValueOnce({ copied: false })
+    await api.copyText(42 as unknown as string)
+    expect(invoke).toHaveBeenLastCalledWith('shell:copyText', '')
+  })
+
+  it("hands back main's verdict untouched", async () => {
+    invoke.mockResolvedValueOnce({ copied: false })
+    await expect(api.copyText('')).resolves.toEqual({ copied: false })
+  })
+})
+
+/**
  * System notifications (#316) — APPENDED, nothing above changed.
  *
  * Four members, and each one holds the boundary rule its neighbours already do:

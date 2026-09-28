@@ -157,6 +157,16 @@
     "red": "the question card in place of the composer is the old card, restyled with the question and permission cards in the next slice of #635 (PR3); the frame, the header, the outcome line and the conversation above it are the rebuilt ones"
   },
   {
+    "key": "molecules/chat-bubble#not-delivered-with-actions"
+  },
+  {
+    "key": "molecules/chat-bubble#retry-feedback"
+  },
+  {
+    "key": "organisms/message-panel#not-delivered-with-actions",
+    "red": "0.406% differing, 22 clusters, all in two lines: the turn outcome line reads Working where the reference prints the sample's own sentence, Working · 2 steps so far (MESSAGE-QUESTIONS: the outcome line's sentences), and the activity run above the failed message reads Working... where the reference closes it as 2 steps · activity: the app keeps a run open until the dwarf itself speaks, because a message the person sent is not the agent finishing (#294), and the design gives no rule for a run followed only by a message that never arrived (a question for the design lead). The bubble, its ✕ and its Retry and Copy draw as the reference"
+  },
+  {
     "key": "organisms/add-panel#live"
   },
   {
@@ -494,5 +504,9 @@
   {
     "key": "screens-full/message-panel#permission",
     "red": "the permission card in place of the composer is the old card, restyled in PR3 of #635 (97768px in 440x242 at the foot of the window); the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+  },
+  {
+    "key": "screens-full/message-panel#not-delivered",
+    "red": "the MessagePanel window is 0.270% off, 22 clusters in two lines: the turn outcome line reads Working where the reference prints the sample's own sentence, Working · 2 steps so far (MESSAGE-QUESTIONS: the outcome line's sentences), and the activity run above the failed message reads Working... where the reference closes it as 2 steps · activity: the app keeps a run open until the dwarf itself speaks, because a message the person sent is not the agent finishing (#294), and the design gives no rule for a run followed only by a message that never arrived (a question for the design lead). The bubble, its ✕ and its Retry and Copy draw as the reference; the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
   }
 ]

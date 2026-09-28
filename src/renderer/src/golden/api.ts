@@ -122,6 +122,7 @@ export function goldenApi(sample: GoldenSample): Api {
       Promise.resolve(sample.histories[mineId] ?? { readable: true, speakers: [] }),
     openMinePath: refuse('openMinePath'),
     openExternalLink: refuse('openExternalLink'),
+    copyText: refuse('copyText'),
     sendDwarfText: refuse('sendDwarfText'),
     onDwarfSendSettled: unsubscribe,
     pathForDroppedFile: () => '',
