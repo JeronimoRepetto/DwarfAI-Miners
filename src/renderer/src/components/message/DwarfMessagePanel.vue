@@ -24,8 +24,8 @@ import { kickStatusLine, sendMarker, sendStatusLine } from '../../lib/delivery/d
 import { historyClock, historyMarks, HISTORY_MARK } from '../../lib/history/mineHistory'
 import {
   activityStepsLabel,
-  countedRunSteps,
   groupActivity,
+  outcomeSteps,
   runsHaveEnded,
   type PanelEntry
 } from '../../lib/message/activityGroup'
@@ -70,6 +70,7 @@ import {
   type DwarfPermissionDecision,
   type DwarfSendState
 } from '../../types'
+import { useHoverTip } from '../../composables/useHoverTip'
 import ActionButton from '../controls/ActionButton.vue'
 import MetaChip from '../controls/MetaChip.vue'
 import DwarfPermissionCard from '../dwarf/DwarfPermissionCard.vue'
@@ -78,6 +79,7 @@ import DwarfQuestionCard from '../dwarf/DwarfQuestionCard.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
 import MenuButton from '../overlay/MenuButton.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
+import TooltipCard from '../overlay/TooltipCard.vue'
 import ActivityDisclosure from './ActivityDisclosure.vue'
 import ChatBubble from './ChatBubble.vue'
 import MessageComposer from './MessageComposer.vue'
@@ -461,14 +463,29 @@ const echoRows = computed<Row[]>(() =>
  * A run grows only while the dwarf's turn is still going (runsHaveEnded), and the person's own
  * words, the echoes appended after the grouping included, never close it (#294, #635).
  */
-const entries = computed(() =>
-  mergeEchoes(groupActivity(rows.value, { ended: runsHaveEnded(props.dwarf) }), echoRows.value)
+const grouped = computed(() => groupActivity(rows.value, { ended: runsHaveEnded(props.dwarf) }))
+const entries = computed(() => mergeEchoes(grouped.value, echoRows.value))
+
+/*
+ * The turn outcome line under the header, with its status square: the open run's steps while the
+ * dwarf works, the whole turn's once it has finished (MESSAGE-QUESTIONS 11), read off the
+ * transcript's own entries, since a message still on its way started no turn yet.
+ */
+const outcome = computed(() =>
+  messagePanelOutcome(
+    props.dwarf,
+    outcomeSteps(grouped.value, sceneDwarfStatus(props.dwarf) === 'working'),
+    now.value
+  )
 )
 
-/** The turn outcome line under the header, with its status square, counting the run it reads. */
-const outcome = computed(() =>
-  messagePanelOutcome(props.dwarf, countedRunSteps(entries.value), now.value)
-)
+/*
+ * The line's tooltip (MESSAGE-QUESTIONS 9): what the line leaves out, on hover after the tooltip
+ * delay and at once on keyboard focus, as every tooltip here shows (useHoverTip). With nothing to
+ * add the line has no tooltip and takes no focus.
+ */
+const outcomeTip = useHoverTip<'outcome'>()
+const outcomeTipId = 'dm-outcome-tip-' + props.dwarf.id
 
 /** A row as the log draws it: a day divider, a run of steps, or something said. */
 type DrawnEntry = PanelEntry<Row> | { kind: 'day'; key: string; label: string }
@@ -777,10 +794,35 @@ function onStopAction(index: number): void {
       concluded and whether a message was delivered or reacted to are two different facts
       (AGENTS.md), and this line never borrows the other's words.
     -->
-    <div class="dm-msg__outcome" :data-status="outcome.status" role="status">
+    <div
+      class="dm-msg__outcome"
+      :data-status="outcome.status"
+      role="status"
+      :tabindex="outcome.tip === undefined ? undefined : 0"
+      :aria-describedby="
+        outcome.tip !== undefined && outcomeTip.shown.value !== null ? outcomeTipId : undefined
+      "
+      @pointerenter="outcome.tip !== undefined && outcomeTip.hover('outcome', $event)"
+      @pointerleave="outcomeTip.leave"
+      @pointerdown="outcomeTip.press"
+      @focus="outcome.tip !== undefined && outcomeTip.focus('outcome', $event)"
+      @blur="outcomeTip.hide"
+    >
       <i></i>
       <span>{{ outcome.text }}</span>
     </div>
+    <!-- In <body>: the panel's slot is a size container, which would otherwise hold a fixed card. -->
+    <Teleport to="body">
+      <Transition name="dm-tip-pop">
+        <TooltipCard
+          v-if="outcome.tip !== undefined && outcomeTip.shown.value !== null"
+          :id="outcomeTipId"
+          :ref="outcomeTip.card"
+          :style="outcomeTip.style.value"
+          >{{ outcome.tip }}</TooltipCard
+        >
+      </Transition>
+    </Teleport>
 
     <!-- The conversation (W4·3). It scrolls inside the panel, whose height the dock sets. -->
     <div
@@ -1079,5 +1121,21 @@ function onStopAction(index: number): void {
   color: var(--ink-soft);
   background: var(--rock-lo);
   align-items: center;
+}
+/* The tooltip's entry and exit, as every tooltip card here moves (motion.md, transform and opacity). */
+.dm-tip-pop-enter-active {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.dm-tip-pop-leave-active {
+  transition: opacity var(--dur-fast) var(--ease-in);
+}
+.dm-tip-pop-enter-from {
+  opacity: 0;
+  transform: translateY(var(--tip-rise));
+}
+.dm-tip-pop-leave-to {
+  opacity: 0;
 }
 </style>

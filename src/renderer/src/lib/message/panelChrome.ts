@@ -34,6 +34,34 @@ export type OutcomeStatus = 'working' | 'asking' | 'asleep'
 export interface MessagePanelOutcome {
   status: OutcomeStatus
   text: string
+  /**
+   * What the line leaves out, for its tooltip (MESSAGE-QUESTIONS 9): a finished turn's closing
+   * words, trimmed, or the provider's own word for a turn stopped at a limit. Absent when there is
+   * nothing to add, and then the line has no tooltip.
+   */
+  tip?: string
+}
+
+/** How much of a turn's closing words the outcome line's tooltip carries (MESSAGE-QUESTIONS 9). */
+export const OUTCOME_TIP_MAX_CHARS = 200
+
+/*
+ * The tooltip's words for a finished turn. A concluded turn's closing words, trimmed to 200
+ * characters with an ellipsis, cut on a whole character. A turn stopped at a limit gives the
+ * ruling's own sentence and the provider's word, verbatim ("Stopped at a limit: error_max_turns").
+ * A failed or interrupted turn adds nothing yet: the ruling gives no sentence for either, and
+ * this does not invent one.
+ */
+function outcomeTip(lastTurn: Dwarf['lastTurn']): string | undefined {
+  if (lastTurn === undefined) return undefined
+  if (lastTurn.kind === 'capped') {
+    return lastTurn.detail === undefined ? undefined : 'Stopped at a limit: ' + lastTurn.detail
+  }
+  if (lastTurn.kind !== 'concluded') return undefined
+  const words = Array.from(lastTurn.text?.trim() ?? '')
+  if (words.length === 0) return undefined
+  if (words.length <= OUTCOME_TIP_MAX_CHARS) return words.join('')
+  return words.slice(0, OUTCOME_TIP_MAX_CHARS).join('') + '…'
 }
 
 /*
@@ -47,8 +75,9 @@ export interface MessagePanelOutcome {
  * 2. The count the app observes: what the ask carries ("3 questions", "permission"), or the steps
  *    of the run it counts (countedRunSteps), "so far" while the dwarf works. No run, no count.
  * 3. For a finished turn only, how long ago it ended, from the turn outcome's own end time
- *    (`lastTurn.endedAt`), written as the dwarf tooltip writes a silence (compactSilence: "41m",
- *    "2h"). A session the app only observes reports no end, so it says nothing of one.
+ *    (`lastTurn.endedAt`), written as the dwarf tooltip writes a silence and on to days
+ *    (compactSilence: "41m", "2h", "7d"; MESSAGE-QUESTIONS 10). A session the app only observes
+ *    reports no end, so it says nothing of one.
  *
  * `now` is the caller's clock, so the idle time is as fresh as the caller keeps it.
  */
@@ -74,8 +103,11 @@ export function messagePanelOutcome(
     return { status: 'working', text: joinParts(parts) }
   }
   const ended = dwarf.lastTurn?.endedAt
-  const idle = ended === undefined ? undefined : 'idle for ' + compactSilence(now - ended)
-  return { status: 'asleep', text: joinParts([finishedTurnWord(dwarf.lastTurn), counted, idle]) }
+  const idle =
+    ended === undefined ? undefined : 'idle for ' + compactSilence(now - ended, { days: true })
+  const text = joinParts([finishedTurnWord(dwarf.lastTurn), counted, idle])
+  const tip = outcomeTip(dwarf.lastTurn)
+  return tip === undefined ? { status: 'asleep', text } : { status: 'asleep', text, tip }
 }
 
 const joinParts = (parts: readonly (string | undefined)[]): string =>

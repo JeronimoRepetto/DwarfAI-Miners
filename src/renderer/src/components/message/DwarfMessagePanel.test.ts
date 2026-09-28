@@ -24,6 +24,7 @@ import {
 } from '../../lib/message/conversation'
 import { CONVERSATION_START_NOTE, READING_OLDER_NOTE } from '../../lib/message/feedPages'
 import { TOP_OF_LIST_TOLERANCE_PX } from '../../lib/message/listScroll'
+import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
 import type { MessageEcho } from '../../lib/message/echo'
 import { defaultDwarf } from '../../testing/factories'
 import {
@@ -2704,8 +2705,9 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
       })
     })
     const line = wrapper.find('.dm-msg__outcome')
-    // AMENDED for #635 (was: 'Last turn stopped at a limit (error_max_turns)').
-    expect(line.text()).toMatch(/^Turn stopped at a limit · idle for \d+[smh]$/)
+    // AMENDED for #635 (was: 'Last turn stopped at a limit (error_max_turns)'). AMENDED for #635
+    // (MESSAGE-QUESTIONS 10; was: /…idle for \d+[smh]$/): a turn that ended years ago reads in days.
+    expect(line.text()).toMatch(/^Turn stopped at a limit · idle for \d+[smhd]$/)
     expect(line.text()).not.toContain('should never be drawn')
   })
 
@@ -3075,5 +3077,106 @@ describe('DwarfMessagePanel conversation parts (#635)', () => {
     await vi.advanceTimersByTimeAsync(2_000)
     expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn finished · idle for 1m')
     wrapper.unmount()
+  })
+})
+
+/*
+ * A run through an ask, a finished turn's whole count, and what the line leaves out (#635;
+ * MESSAGE-QUESTIONS 9, 11 and 12).
+ */
+describe('DwarfMessagePanel outcome rulings 9 to 12 (#635)', () => {
+  const step = (text: string, t: string) => ({
+    role: 'assistant' as const,
+    text,
+    timestamp: t,
+    activity: { kind: 'run' as const, target: text }
+  })
+
+  // Every panel here is unmounted, so no tooltip or clock outlives its test.
+  const mounted: { unmount: () => void }[] = []
+  const kept = <W extends { unmount: () => void }>(wrapper: W): W => {
+    mounted.push(wrapper)
+    return wrapper
+  }
+
+  afterEach(() => {
+    for (const wrapper of mounted.splice(0)) wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('keeps the run open while the dwarf asks for a permission', () => {
+    const wrapper = kept(
+      panel({
+        dwarf: defaultDwarf({ status: 'working', waitingReason: 'approval' }),
+        feed: heldFeed([{ role: 'user', text: 'Add it.', timestamp: 't0' }, step('Ran one', 't1')])
+      })
+    )
+    expect(wrapper.find('.dm-activity__toggle').text()).toBe('Working...')
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Waiting on you · permission')
+  })
+
+  it('counts every step of a finished turn, across its runs and past the dwarf’s replies', () => {
+    const wrapper = kept(
+      panel({
+        dwarf: defaultDwarf({ status: 'waiting' }),
+        feed: heldFeed([
+          step('Ran old', 't0'),
+          { role: 'user', text: 'Go on.', timestamp: 't1' },
+          step('Ran one', 't2'),
+          step('Ran two', 't3'),
+          { role: 'assistant', text: 'Halfway.', timestamp: 't4' },
+          step('Ran three', 't5'),
+          { role: 'assistant', text: 'Done.', timestamp: 't6' }
+        ])
+      })
+    )
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn finished · 3 steps')
+  })
+
+  function finished(text: string) {
+    return kept(
+      mount(DwarfMessagePanel, {
+        attachTo: document.body,
+        props: {
+          dwarf: defaultDwarf({
+            status: 'waiting',
+            lastTurn: { kind: 'concluded', text, endedAt: Date.now() }
+          }),
+          feed: heldFeed(HELD)
+        }
+      })
+    )
+  }
+
+  it('shows the closing words in the line’s tooltip at once on keyboard focus', async () => {
+    const wrapper = finished('Found the seam.')
+    const line = wrapper.find('.dm-msg__outcome')
+    expect(line.attributes('tabindex')).toBe('0')
+    await line.trigger('focus')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')?.textContent?.trim()).toBe('Found the seam.')
+    await line.trigger('blur')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+  })
+
+  it('shows it after the tooltip delay on hover, and hides it on leave', async () => {
+    vi.useFakeTimers()
+    const wrapper = finished('Found the seam.')
+    const line = wrapper.find('.dm-msg__outcome')
+    await line.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(TIP_DELAY_MS)
+    expect(document.body.querySelector('.dm-tip')).not.toBeNull()
+    await line.trigger('pointerleave')
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+  })
+
+  it('draws no tooltip, and takes no focus, when there is nothing to add', async () => {
+    const wrapper = kept(panel({ dwarf: defaultDwarf({ status: 'waiting' }) }))
+    const line = wrapper.find('.dm-msg__outcome')
+    expect(line.attributes('tabindex')).toBeUndefined()
+    await line.trigger('focus')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
   })
 })

@@ -158,11 +158,40 @@ export function countedRunSteps(entries: readonly PanelEntry[]): number | undefi
 /**
  * Whether the conversation's runs are over as far as `groupActivity`'s `ended` asks (#635;
  * components.md, Activity disclosure, As built): a run grows only while its turn is still going,
- * "the dwarf working, the session not ended". A dwarf asking, resting or leaving adds no steps, so
- * its last run reads as the finished stretch of work it is, with its count, never "Working...".
+ * "the dwarf working, the session not ended". An ask is part of the same turn (MESSAGE-QUESTIONS
+ * 12), so a dwarf asking keeps its run open, and the run grows on once the answer lands. A resting
+ * or leaving dwarf adds no steps, so its last run reads as the finished stretch of work it is.
  */
 export function runsHaveEnded(
   dwarf: Pick<Dwarf, 'status' | 'pendingQuestion' | 'waitingReason'>
 ): boolean {
-  return conversationEnded(dwarf) || sceneDwarfStatus(dwarf) !== 'working'
+  if (conversationEnded(dwarf)) return true
+  const scene = sceneDwarfStatus(dwarf)
+  return scene !== 'working' && scene !== 'asking'
+}
+
+/**
+ * Every step a finished turn took (#635; MESSAGE-QUESTIONS 11): the rows of all its runs since the
+ * person's last message, whether or not the dwarf spoke after them, because the outcome line says
+ * how much the turn did. With no message of the person's in what was read, the turn is counted
+ * from the top of it. Undefined when the turn took no step.
+ */
+export function turnSteps(entries: readonly PanelEntry[]): number | undefined {
+  let steps = 0
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!
+    if (entry.kind === 'activity') steps += entry.rows.length
+    else if (entry.message.from === 'user') break
+  }
+  return steps === 0 ? undefined : steps
+}
+
+/**
+ * The count the outcome line prints (decision log, Turn outcome line; MESSAGE-QUESTIONS 11): the
+ * open run's steps so far while the dwarf works, and the whole turn's once it has finished. Pass
+ * the transcript's own entries, before the panel's echoes join them: a message still on its way
+ * started no turn yet.
+ */
+export function outcomeSteps(entries: readonly PanelEntry[], working: boolean): number | undefined {
+  return working ? countedRunSteps(entries) : turnSteps(entries)
 }

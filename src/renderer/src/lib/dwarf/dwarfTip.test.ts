@@ -94,3 +94,22 @@ describe('dwarfTip', () => {
     expect(tip.silence).toBe('silent 5h · ')
   })
 })
+
+/*
+ * The outcome line's idle time goes one unit further (#635; MESSAGE-QUESTIONS 10): days, rounded
+ * down like the others, and none larger, so a week reads "7d". The dwarf tooltip's silence keeps
+ * hours as its largest unit: no doc gives it days.
+ */
+describe('compactSilence with days', () => {
+  it('writes days as the next unit, rounded down, and nothing past them', () => {
+    expect(compactSilence(2 * 86_400_000, { days: true })).toBe('2d')
+    expect(compactSilence(2 * 86_400_000 - 1, { days: true })).toBe('1d')
+    expect(compactSilence(23 * 3_600_000, { days: true })).toBe('23h')
+    expect(compactSilence(7.5 * 86_400_000, { days: true })).toBe('7d')
+    expect(compactSilence(400 * 86_400_000, { days: true })).toBe('400d')
+  })
+
+  it('keeps hours as the tooltip’s largest unit', () => {
+    expect(compactSilence(49 * 3_600_000)).toBe('49h')
+  })
+})

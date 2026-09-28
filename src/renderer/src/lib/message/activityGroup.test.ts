@@ -7,7 +7,9 @@ import {
   activityStepsLabel,
   countedRunSteps,
   groupActivity,
-  runsHaveEnded
+  outcomeSteps,
+  runsHaveEnded,
+  turnSteps
 } from './activityGroup'
 
 function spoken(key: string, text = 'Found the seam.'): PanelMessage {
@@ -232,17 +234,87 @@ describe('countedRunSteps', () => {
 
 /*
  * Whether a run can still grow is whether the dwarf's turn is still going (#635; components.md,
- * Activity disclosure, As built: "the dwarf working, the session not ended"). A dwarf asking,
- * resting or leaving is not adding steps, so its last run is a finished stretch of work.
+ * Activity disclosure, As built: "the dwarf working, the session not ended"). An ask is part of
+ * the same turn (MESSAGE-QUESTIONS 12), so a dwarf asking keeps its run open; a resting or leaving
+ * dwarf is not adding steps, so its last run is a finished stretch of work.
  */
 describe('runsHaveEnded', () => {
-  it('keeps the last run growing only while the dwarf works', () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 12; was: 'keeps the last run growing only while the dwarf
+  // works'): an asking dwarf's run keeps growing too.
+  it('keeps the last run growing while the dwarf works or asks', () => {
     expect(runsHaveEnded(defaultDwarf({ status: 'working' }))).toBe(false)
+    expect(runsHaveEnded(defaultDwarf({ status: 'working', waitingReason: 'approval' }))).toBe(
+      false
+    )
+    expect(
+      runsHaveEnded(
+        defaultDwarf({
+          status: 'waiting',
+          waitingReason: 'user-input',
+          pendingQuestion: { toolUseId: 't', channel: 'terminal', questions: [] }
+        })
+      )
+    ).toBe(false)
   })
 
-  it('ends it once the turn is over, the session is leaving, or the dwarf asks', () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 12; was: 'ends it once the turn is over, the session is
+  // leaving, or the dwarf asks', with an asking dwarf's run ended): an ask no longer ends it.
+  it('ends it once the turn is over or the session is leaving', () => {
     expect(runsHaveEnded(defaultDwarf({ status: 'waiting' }))).toBe(true)
     expect(runsHaveEnded(defaultDwarf({ status: 'leaving' }))).toBe(true)
-    expect(runsHaveEnded(defaultDwarf({ status: 'working', waitingReason: 'approval' }))).toBe(true)
+  })
+})
+
+/*
+ * A finished turn counts every step it took (#635; MESSAGE-QUESTIONS 11): all its runs since the
+ * person's last message, whether or not the dwarf spoke after them. While the dwarf works the
+ * count stays the open run's (countedRunSteps).
+ */
+describe('turnSteps', () => {
+  const said = (key: string): PanelMessage => ({ from: 'user', text: 'Go on.', key })
+
+  it('counts every run since the person’s last message, past the dwarf’s own replies', () => {
+    const entries = groupActivity(
+      [
+        said('a'),
+        tool('b', 'Ran one'),
+        tool('c', 'Ran two'),
+        spoken('d', 'Halfway.'),
+        tool('e', 'Ran three'),
+        spoken('f', 'Done.')
+      ],
+      { ended: true }
+    )
+    expect(turnSteps(entries)).toBe(3)
+  })
+
+  it('stops at the person’s last message, so an earlier turn’s steps are not this one’s', () => {
+    const entries = groupActivity(
+      [tool('a', 'Ran old'), said('b'), tool('c', 'Ran new'), spoken('d', 'Done.')],
+      { ended: true }
+    )
+    expect(turnSteps(entries)).toBe(1)
+  })
+
+  it('counts a turn the person never started from here, from the top of what was read', () => {
+    const entries = groupActivity([tool('a', 'Ran one'), tool('b', 'Ran two'), spoken('c')], {
+      ended: true
+    })
+    expect(turnSteps(entries)).toBe(2)
+  })
+
+  it('counts nothing for a turn that took no step', () => {
+    expect(turnSteps(groupActivity([said('a'), spoken('b')], { ended: true }))).toBeUndefined()
+    expect(turnSteps([])).toBeUndefined()
+  })
+})
+
+describe('outcomeSteps', () => {
+  const said = (key: string): PanelMessage => ({ from: 'user', text: 'Go on.', key })
+  const rows = [said('a'), tool('b', 'Ran one'), spoken('c', 'Halfway.'), tool('d', 'Ran two')]
+
+  it('counts the open run while the dwarf works, and the whole turn once it has finished', () => {
+    expect(outcomeSteps(groupActivity(rows, { ended: false }), true)).toBe(1)
+    expect(outcomeSteps(groupActivity(rows, { ended: true }), false)).toBe(2)
   })
 })
