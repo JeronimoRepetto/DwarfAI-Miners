@@ -238,19 +238,13 @@
     "key": "organisms/add-panel#custom-command"
   },
   {
-    "key": "organisms/add-panel#jev-suggests",
-    "red": "36.520% differing, 88 clusters: the card is still the #509 card, its summary, parts and note lines, where the design draws the eyebrow and one paragraph, Jev's pick in bold, with the rest in its tooltip (MESSAGE-QUESTIONS 15)",
-    "at": 36.52
+    "key": "organisms/add-panel#jev-suggests"
   },
   {
-    "key": "organisms/add-panel#jev-suggests-launch-in-flight",
-    "red": "29.827% differing, 140 clusters: the card stays on screen with its Dismiss disabled since MESSAGE-QUESTIONS Q1, but it is still the #509 card, its summary, parts and note lines, where the design draws the eyebrow and one paragraph (the card's resting style is a later slice); and the app applies Jev's pick to the pickers (#509), so the Claude chip is checked and the selects show Claude's values, where the prototype, whose Jev never sets them, draws no chip checked and the selects reading Jev decides",
-    "at": 36.716
+    "key": "organisms/add-panel#jev-suggests-launch-in-flight"
   },
   {
-    "key": "organisms/add-panel#jev-accepted-automatically",
-    "red": "36.624% differing, 81 clusters: the card is still the #509 card, its summary, parts and note lines, where the design draws the eyebrow JEV · ACCEPTED AUTOMATICALLY and one paragraph, Jev's pick in bold, with the rest in its tooltip (MESSAGE-QUESTIONS 15)",
-    "at": 36.624
+    "key": "organisms/add-panel#jev-accepted-automatically"
   },
   {
     "key": "molecules/vault-strip#mine-footer"

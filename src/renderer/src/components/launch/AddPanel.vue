@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { belongsToComposition } from '../../lib/controls/input'
+import { useHoverTip } from '../../composables/useHoverTip'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
+import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
 import {
   OTHER_CHOICE,
   type JevState,
@@ -10,20 +12,14 @@ import {
 } from '../../lib/launch/launchState'
 import type { EffortPicker, ModelPicker } from '../../lib/launch/modelTuning'
 import type { ProviderChip } from '../../lib/launch/providerChips'
-import {
-  isHeldPermissionMode,
-  type HeldPermissionMode,
-  type JevFallbackReason,
-  type JevModelFallbackReason,
-  type JevRouteModelPart,
-  type ModelTier
-} from '../../types'
+import { isHeldPermissionMode, type HeldPermissionMode, type JevFallbackReason } from '../../types'
 import ActionButton from '../controls/ActionButton.vue'
 import ChoiceChip from '../controls/ChoiceChip.vue'
 import InputField from '../controls/InputField.vue'
 import SelectField from '../controls/SelectField.vue'
 import ToggleSwitch from '../controls/ToggleSwitch.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
+import TooltipCard from '../overlay/TooltipCard.vue'
 
 /**
  * The redesigned Add panel (#635), `organisms/add-panel` in the design: the surface the mine's
@@ -252,11 +248,15 @@ function dismissJev(): void {
   ;(jevToggle.value?.$el as HTMLElement | undefined)?.focus()
 }
 
-/** The provider's label off the SAME source the chip row already resolved it from — never the CLI binary name. */
+/**
+ * The supplier as the chip row draws it, off the SAME chip — the tool's own name, never the CLI
+ * binary name; the raw id only for a provider no chip stands for.
+ */
 const jevProviderLabel = computed(() => {
   const decision = jevDecision.value
   if (decision === null) return ''
-  return props.chips.find((chip) => chip.choice === decision.provider)?.label ?? decision.provider
+  const chip = props.chips.find((entry) => entry.choice === decision.provider)
+  return chip === undefined ? decision.provider : supplierLabel(chip.choice)
 })
 
 /** The model's label off the picker's own catalogue, falling back to the raw id it could not resolve. */
@@ -269,161 +269,30 @@ const jevModelLabel = computed(() => {
   )
 })
 
-/**
- * #608: `confidence` is `undefined` (never `0`) when no part was actually
- * answered — the MIN is taken over only the parts `applied: 'answered'`, so
- * a discarded safe-default part's own number (the bug's own 19% provider
- * figure) never reaches this computed at all. `null` here, not `0`: `0` was
- * the bug's own overclaim, a number standing in for "nothing to show" that
- * a reader cannot tell apart from a genuine 0% answer.
+/*
+ * The card (MESSAGE-QUESTIONS 15; decision log, Jev card from the decision): the eyebrow, Jev's
+ * pick in bold, and Dismiss. Everything else the decision says is in the pick's tooltip, one
+ * sentence per line, on hover after the tooltip delay and at once on keyboard focus, below the
+ * paragraph and aligned to its start, as the outcome line's (useHoverTip). A hidden copy of the
+ * same lines describes the paragraph for a screen reader. The #509 closing note is gone: the
+ * pickers show the pick themselves.
  */
-const jevConfidencePercent = computed<number | null>(() => {
-  const decision = jevDecision.value
-  if (decision === null || decision.confidence === undefined) return null
-  return Math.round(decision.confidence * 100)
-})
-
-/**
- * The one sentence naming what is about to launch (#608). Deliberately
- * never "Jev chose" — a named part (the provider, in the issue that opened
- * #608) can be a safe default rather than Jev's own answer, while it is
- * still what launches, so this states the plain fact of the launch and
- * leaves WHO chose each part to `jevPartsSummary` below. The confidence
- * shown here, when there is one, is labelled as Jev's own LEAST certain
- * answer — never the raw `decision.confidence`'s meaning misread as "how
- * sure Jev was about this launch", since a part that fell back was never
- * asked and cannot make the launch more or less certain either way.
- */
-const jevDecisionSummary = computed(() => {
+const jevEyebrow = computed(() => jevCardEyebrow(props.jev.autoAccept))
+const jevPick = computed(() => {
   const decision = jevDecision.value
   if (decision === null) return ''
-  const parts = [jevProviderLabel.value]
-  if (jevModelLabel.value !== null) parts.push(jevModelLabel.value)
-  if (decision.effort !== undefined) parts.push(`${decision.effort} effort`)
-  const launch = `Launching ${parts.join(', ')}.`
-  const confidence = jevConfidencePercent.value
-  return confidence === null ? launch : `${launch} Jev's least certain answer was ${confidence}%.`
+  return jevPickText({
+    supplier: jevProviderLabel.value,
+    model: jevModelLabel.value,
+    ...(decision.effort === undefined ? {} : { effort: decision.effort })
+  })
 })
-
-/**
- * The tier in words (jev-routing-profiles T4) — `ModelTier`'s own kebab-case
- * wire values are never shown as-is. `'special-purpose'` is exhaustive
- * against the type only: a routing decision never lands on it (see
- * `ModelTier`'s own comment in contracts.ts), so this card never renders it.
- */
-const TIER_LABELS: Record<ModelTier, string> = {
-  'fast-cheap': 'fast & cheap',
-  balanced: 'balanced',
-  frontier: 'frontier',
-  'long-context': 'long context',
-  'special-purpose': 'special purpose'
-}
-
-/**
- * Which parts Jev itself answered confidently, and which fell to a safe
- * value instead (jev-routing-profiles T4) — `JevRouteParts`' own two
- * confidence-bearing parts, `provider` and `tier`. Confidence is always
- * Jev's OWN raw reported number even for a part that fell back — see
- * `JevRouteAnsweredPart`'s own comment in contracts.ts — so this line can
- * say how close it was, not just that a floor bit. Whether the safe value
- * came from the person's own configured default or the cheapest launchable
- * provider is not on the wire (`applied` only ever says 'safe-default'), so
- * this deliberately says "the safe value" rather than guessing "your
- * default" for a part that might not be.
- */
-const jevPartsSummary = computed(() => {
+const jevTipLines = computed(() => {
   const decision = jevDecision.value
-  if (decision === null) return ''
-  const tierPct = Math.round(decision.parts.tier.confidence * 100)
-  const providerPct = Math.round(decision.parts.provider.confidence * 100)
-  const tierLabel = TIER_LABELS[decision.tier]
-
-  const chosen: string[] = []
-  if (decision.parts.tier.applied === 'answered') {
-    chosen.push(`the ${tierLabel} tier (${tierPct}% sure)`)
-  }
-  if (decision.parts.provider.applied === 'answered') {
-    chosen.push(`${jevProviderLabel.value} (${providerPct}% sure)`)
-  }
-
-  const unsureNames: string[] = []
-  const unsureValues: string[] = []
-  if (decision.parts.tier.applied === 'safe-default') {
-    unsureNames.push(`the tier (${tierPct}%)`)
-    unsureValues.push(tierLabel)
-  }
-  if (decision.parts.provider.applied === 'safe-default') {
-    unsureNames.push(`the provider (${providerPct}%)`)
-    unsureValues.push(jevProviderLabel.value)
-  }
-
-  let sentence = chosen.length === 0 ? '' : `Jev chose ${chosen.join(' and ')}.`
-  if (unsureNames.length > 0) {
-    const plural = unsureValues.length > 1
-    const unsureSentence = `Jev was unsure about ${unsureNames.join(' and ')}; the safe value${
-      plural ? 's' : ''
-    } ${unsureValues.join(' and ')} ${plural ? 'were' : 'was'} used.`
-    sentence = sentence === '' ? unsureSentence : `${sentence} ${unsureSentence}`
-  }
-  const modelSentence = jevModelPartSentence(decision.parts.model)
-  return sentence === '' ? modelSentence : `${sentence} ${modelSentence}`
+  return decision === null ? [] : jevCardTip(decision, jevProviderLabel.value)
 })
-
-/**
- * Fixed English words for every way the model step's own second request
- * (#608) fell back to the local cost/profile choice instead of a winner —
- * `Record<JevModelFallbackReason, string>` is exhaustive over the union on
- * purpose, so a fallback reason added to the wire fails typecheck here
- * rather than rendering silently as nothing. The first nine reuse
- * `JEV_FALLBACK_REASONS`' own wording above (request 1's vocabulary,
- * mid-sentence here rather than sentence-starting); `'no-live-model'` is
- * the one reason that predates #608 entirely — no launchable, catalogued
- * model existed at any tier step, so there was never a candidate and never
- * a second request either.
- */
-const JEV_MODEL_FALLBACK_REASONS: Record<JevModelFallbackReason, string> = {
-  'no-key': 'no TypeSafe key is set',
-  'no-launchable-provider': 'no launchable provider to choose from',
-  unreachable: 'Jev could not be reached',
-  timeout: 'Jev took too long',
-  'rate-limited': 'Jev is rate-limited right now',
-  unauthorized: 'TypeSafe rejected the API key',
-  'low-confidence': 'Jev was not confident enough',
-  'invalid-response': "Jev's answer could not be used",
-  'budget-exceeded': "the prompt and catalogue do not fit Jev's request budget",
-  'no-live-model': 'no live model exists for this provider and tier'
-}
-
-/**
- * The model step's own sentence (#608) — kept out of the chosen/unsure
- * lists above on purpose, because its three `applied` states do not share
- * their vocabulary: `'only-candidate'` is neither Jev's own pick nor a
- * safe default (nothing was defaulted to; it was the only option), so it
- * needs a third sentence shape rather than being forced into "chose" or
- * "unsure about".
- */
-function jevModelPartSentence(model: JevRouteModelPart): string {
-  if (model.applied === 'answered') {
-    // `probability` is always present when `applied === 'answered'` (see
-    // `JevRouteModelPart`'s own comment in contracts.ts) — the `?? 0` is
-    // belt-and-braces for a state the wire's own type rules out, never a
-    // stand-in for "no answer" the way the old `jevConfidencePercent` used
-    // `0` for (#608's own bug).
-    const fitPct = Math.round((model.probability ?? 0) * 100)
-    let modelSentence = `Jev picked the model (${fitPct}% fit).`
-    if (model.choiceProbability !== undefined) {
-      const choicePct = Math.round(model.choiceProbability * 100)
-      modelSentence += ` Tie broken by Jev's ranking (${choicePct}%).`
-    }
-    return modelSentence
-  }
-  if (model.applied === 'only-candidate') {
-    return 'Only one model fits that tier, so no second question was asked.'
-  }
-  const reason =
-    model.reason === undefined ? 'an unknown reason' : JEV_MODEL_FALLBACK_REASONS[model.reason]
-  return `Jev could not pick the model (${reason}); the closest local choice was used.`
-}
+const jevTip = useHoverTip<'pick'>({ side: 'bottom', align: 'start' })
+const jevTipId = 'dm-add-jev-tip-' + ++cards
 
 /**
  * Fixed English sentences per fallback reason (#509's own acceptance
@@ -492,6 +361,11 @@ const jevFallbackMessage = computed(() => {
 const jevUnavailableTitle = computed(() =>
   props.jev.availability === 'hidden' ? JEV_NO_KEY : jevUnavailableMessage.value
 )
+</script>
+
+<script lang="ts">
+/** Every panel's own number, for the id its Jev tooltip's hidden copy is named by. */
+let cards = 0
 </script>
 
 <template>
@@ -582,32 +456,45 @@ const jevUnavailableTitle = computed(() =>
         <!--
           The decision card (#509): shown before it is acted on, and can be overridden — the
           pickers below have already been set to it, so Dismiss puts them back rather than this
-          card undoing anything itself. The fallback line says every way Jev failed still launched,
-          or what is owed instead (#523).
+          card undoing anything itself. Its shape is the design's (MESSAGE-QUESTIONS 15). The
+          fallback line says every way Jev failed still launched, or what is owed instead (#523).
         -->
         <div v-if="showJevDecision && jevDecision !== null" class="dm-add__jev" role="status">
-          <p class="jev-decision-summary">{{ jevDecisionSummary }}</p>
-          <p class="jev-decision-parts">{{ jevPartsSummary }}</p>
-          <p v-if="jevDecision.parts.trivial.value" class="jev-decision-trivial">
-            Treated as a trivial prompt.
+          <span class="t-meta">{{ jevEyebrow }}</span>
+          <p
+            class="dm-add__jev-pick"
+            tabindex="0"
+            :aria-describedby="jevTipId"
+            @pointerenter="jevTip.hover('pick', $event)"
+            @pointerleave="jevTip.leave"
+            @pointerdown="jevTip.press"
+            @focus="jevTip.focus('pick', $event)"
+            @blur="jevTip.hide"
+          >
+            <b>{{ jevPick }}</b
+            >.
           </p>
-          <p v-if="jevDecision.parts.largeContext.value" class="jev-decision-large-context">
-            Large-context model preferred.
-          </p>
-          <p v-if="jevDecision.truncated" class="jev-decision-truncated">
-            The prompt sent to Jev was trimmed to fit its request budget.
-          </p>
-          <p class="jev-decision-note">
-            The pickers below now show this choice — change them, or press Send the dwarf in to
-            start it.
-          </p>
-          <ActionButton
-            class="jev-dismiss"
-            label="Dismiss"
-            size="sm"
-            :disabled="launched"
-            @click="dismissJev"
-          />
+          <span :id="jevTipId" class="sr-only">{{ jevTipLines.join(' ') }}</span>
+          <div class="dm-add__jev-actions">
+            <ActionButton
+              class="jev-dismiss"
+              label="Dismiss"
+              size="sm"
+              :disabled="launched"
+              @click="dismissJev"
+            />
+          </div>
+          <!-- In <body>: the panel's body scrolls, which would otherwise clip a fixed card. -->
+          <Teleport to="body">
+            <Transition name="dm-tip-pop">
+              <TooltipCard
+                v-if="jevTip.shown.value !== null"
+                :ref="jevTip.card"
+                :style="jevTip.style.value"
+                ><div v-for="line in jevTipLines" :key="line">{{ line }}</div></TooltipCard
+              >
+            </Transition>
+          </Teleport>
         </div>
         <div v-else-if="jev.routing.phase === 'fellBack'" class="dm-add__jev" role="status">
           <p class="jev-fallback">{{ jevFallbackMessage }}</p>
@@ -776,6 +663,9 @@ const jevUnavailableTitle = computed(() =>
 }
 .dm-add__jev .t-meta {
   color: var(--info);
+}
+.dm-add__jev-actions {
+  display: flex;
 }
 .dm-add__foot {
   display: flex;
