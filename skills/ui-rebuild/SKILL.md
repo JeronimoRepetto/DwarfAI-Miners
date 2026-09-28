@@ -141,8 +141,8 @@ for access and replicate its behaviour, rather than eyeballing a screenshot.
 - `renderer/src/components/` stays thin; framework-agnostic logic goes to `renderer/src/lib/`.
 - The map and mine-interior art stay untouched, and their spawn points, work points and passable
   paths are not machine-readable in the design docs. Deriving them is its own task, and the
-  coordinate-space rule in `.claude/rules/coordinates.md` still binds — the map and the cave use
-  opposite conventions on purpose.
+  coordinate-space rule in `.claude/rules/coordinates.md` still binds — both paintings author
+  points in image percent and are fitted `contain`, never cropped.
 - Colors, sizes and thresholds from `foundations.md` become named tokens or constants, not hex
   and px literals scattered per component.
 - Verify layout under many sessions with the `simulated-valley` skill before claiming a screen
