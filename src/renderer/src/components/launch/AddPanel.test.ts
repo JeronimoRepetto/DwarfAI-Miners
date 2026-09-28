@@ -460,8 +460,10 @@ describe('the model, effort and permission row', () => {
     })
     const select = wrapper.get('select[aria-label="Permissions"]')
     expect(select.attributes('disabled')).toBeUndefined()
+    // AMENDED for #635 (MESSAGE-QUESTIONS 24; was: 'Permissions: Ask first'): a detached
+    // `codex exec` can ask no one, so its no-flag mode is named for what it is.
     expect(select.findAll('option').map((option) => option.text())).toEqual([
-      'Permissions: Ask first',
+      'Permissions: Codex default',
       'Permissions: Auto in workspace',
       'Permissions: Read only'
     ])
