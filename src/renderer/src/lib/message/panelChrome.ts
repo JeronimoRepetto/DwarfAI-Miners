@@ -4,12 +4,12 @@
  * mark a bubble wears, and the ⋯ menu with the confirmation Stop dwarf… asks first. The panel
  * draws; this decides the words, from facts the dwarf already carries and nothing else.
  */
-import { providerLabel } from '../dwarf/dwarfTip'
+import { compactSilence, providerLabel } from '../dwarf/dwarfTip'
 import type { DeliveryMarker } from '../delivery/deliveryVerdict'
 import type { MenuEntry } from '../overlay/menu'
 import { sceneDwarfStatus } from '../scene/sceneDwarf'
 import { dwarfWorkplaceLabel } from '../worktree'
-import { turnOutcomeLine } from './turnOutcome'
+import { finishedTurnWord } from './turnOutcome'
 import type { Dwarf } from '../../types'
 
 /**
@@ -37,16 +37,25 @@ export interface MessagePanelOutcome {
 }
 
 /*
- * The turn outcome line (screens/message.md, W4·2, "kept from today"): how the dwarf's last turn
- * ended, in today's words (turnOutcomeLine, #510), under the status square the design adds. An
- * asking dwarf says it waits on you first, because that is what the person has to act on, and a
- * permission names itself (copy.md, State: "Waiting on you · permission"). With nothing to say
- * about a turn, the line carries the state word the prototype prints when it has no outcome
- * ("Working", "Idle"). The sample's own outcome sentences are illustrative, and nothing the app
- * observes stands behind their step counts, so none of them is invented here.
+ * The turn outcome line (screens/message.md, W4·2; decision log, Turn outcome line): built only
+ * from what the app observes, in up to three parts joined by " · ", and a part the app cannot stand
+ * behind is left out.
+ *
+ * 1. The status word. An asking dwarf waits on you, first, because that is what the person has to
+ *    act on; a working one is "Working"; any other has finished its turn, in the word for how it
+ *    ended (finishedTurnWord).
+ * 2. The count the app observes: what the ask carries ("3 questions", "permission"), or the steps
+ *    of the run it counts (countedRunSteps), "so far" while the dwarf works. No run, no count.
+ * 3. For a finished turn only, how long ago it ended, from the turn outcome's own end time
+ *    (`lastTurn.endedAt`), written as the dwarf tooltip writes a silence (compactSilence: "41m",
+ *    "2h"). A session the app only observes reports no end, so it says nothing of one.
+ *
+ * `now` is the caller's clock, so the idle time is as fresh as the caller keeps it.
  */
 export function messagePanelOutcome(
-  dwarf: Pick<Dwarf, 'status' | 'waitingReason' | 'pendingQuestion' | 'lastTurn'>
+  dwarf: Pick<Dwarf, 'status' | 'waitingReason' | 'pendingQuestion' | 'lastTurn'>,
+  steps: number | undefined,
+  now: number
 ): MessagePanelOutcome {
   const scene = sceneDwarfStatus(dwarf)
   if (scene === 'asking') {
@@ -59,15 +68,18 @@ export function messagePanelOutcome(
           : count + ' questions'
     return { status: 'asking', text: 'Waiting on you · ' + what }
   }
-  const status: OutcomeStatus = scene === 'working' ? 'working' : 'asleep'
-  const turn = turnOutcomeLine(dwarf.lastTurn)
-  if (turn !== undefined) {
-    const said = turn.text ? turn.headline + ': ' + turn.text : turn.headline
-    // The wire cut the words at its bound (#510), and the line says so rather than passing it off.
-    return { status, text: turn.trimmed ? said + ' (trimmed)' : said }
+  const counted = steps === undefined ? undefined : steps + (steps === 1 ? ' step' : ' steps')
+  if (scene === 'working') {
+    const parts = ['Working', counted === undefined ? undefined : counted + ' so far']
+    return { status: 'working', text: joinParts(parts) }
   }
-  return { status, text: status === 'working' ? 'Working' : 'Idle' }
+  const ended = dwarf.lastTurn?.endedAt
+  const idle = ended === undefined ? undefined : 'idle for ' + compactSilence(now - ended)
+  return { status: 'asleep', text: joinParts([finishedTurnWord(dwarf.lastTurn), counted, idle]) }
 }
+
+const joinParts = (parts: readonly (string | undefined)[]): string =>
+  parts.filter((part): part is string => part !== undefined).join(' · ')
 
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
 

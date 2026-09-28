@@ -2665,36 +2665,34 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
     expect(wrapper.find('.dm-msg__outcome').text()).not.toContain('Last turn')
   })
 
-  it('says a concluded turn ended and carries its own words', () => {
+  /*
+   * AMENDED for #635 (the outcome line ruling, MESSAGE-QUESTIONS 7; was: "says a concluded turn
+   * ended and carries its own words", "Last turn concluded" with the turn's text, on a working
+   * dwarf). A finished turn now reads "Turn finished" and how long ago it ended, on a dwarf at rest,
+   * and never the turn's own closing words, which the conversation shows.
+   *
+   * REMOVED for #635, stated rather than passing unseen: "says the wire itself trimmed a concluded
+   * turn, only when it did". The line no longer carries the turn's words, so it has nothing to
+   * call trimmed; lib/message/panelChrome.test.ts pins that the words stay off the line.
+   */
+  it('says a concluded turn finished and how long ago, never its own words', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
-        lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: 1_700_000_000_000 }
+        status: 'waiting',
+        lastTurn: { kind: 'concluded', text: 'Found the seam.', endedAt: Date.now() - 300_000 }
       })
     })
     const line = wrapper.find('.dm-msg__outcome')
-    expect(line.text()).toContain('Last turn concluded')
-    expect(line.text()).toContain('Found the seam.')
-    expect(line.text()).not.toContain('(trimmed)')
+    expect(line.text()).toBe('Turn finished · idle for 5m')
+    expect(line.attributes('data-status')).toBe('asleep')
   })
 
-  it('says the wire itself trimmed a concluded turn, only when it did', () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 7; was: "naming the provider's own word" in the title, on
+  // a working dwarf): the ruling's word on a dwarf at rest, without the provider's code.
+  it('says a capped turn stopped at a limit, and shows no text', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
-        lastTurn: {
-          kind: 'concluded',
-          text: 'Found the seam.',
-          truncated: true,
-          endedAt: 1_700_000_000_000
-        }
-      })
-    })
-    // AMENDED for #635 (was: a row of its own under the line): at the end of the line itself.
-    expect(wrapper.find('.dm-msg__outcome').text()).toMatch(/\(trimmed\)$/)
-  })
-
-  it('says a capped turn stopped at a limit, naming the provider’s own word, and shows no text', () => {
-    const wrapper = panel({
-      dwarf: defaultDwarf({
+        status: 'waiting',
         lastTurn: {
           kind: 'capped',
           // A capped turn carries no text on the real wire; set here anyway to
@@ -2706,32 +2704,37 @@ describe('DwarfMessagePanel turn outcome (#510)', () => {
       })
     })
     const line = wrapper.find('.dm-msg__outcome')
-    expect(line.text()).toBe('Last turn stopped at a limit (error_max_turns)')
+    // AMENDED for #635 (was: 'Last turn stopped at a limit (error_max_turns)').
+    expect(line.text()).toMatch(/^Turn stopped at a limit · idle for \d+[smh]$/)
     expect(line.text()).not.toContain('should never be drawn')
   })
 
-  it('says an errored turn failed, naming the provider’s own word, and shows no text', () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 7; was: "Last turn failed (error_during_execution)" on a
+  // working dwarf, and "naming the provider's own word" in the title): the ruling's word alone.
+  it('says an errored turn failed, and shows no text', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
+        status: 'waiting',
         lastTurn: {
           kind: 'errored',
           detail: 'error_during_execution',
-          endedAt: 1_700_000_000_000
+          endedAt: Date.now() - 300_000
         }
       })
     })
-    expect(wrapper.find('.dm-msg__outcome').text()).toBe(
-      'Last turn failed (error_during_execution)'
-    )
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn failed · idle for 5m')
   })
 
-  it('says an interrupted turn was interrupted, naming the provider’s own word, and shows no text', () => {
+  // AMENDED for #635 (MESSAGE-QUESTIONS 7; was: "Last turn was interrupted (CANCELED)" on a
+  // working dwarf, and "naming the provider's own word" in the title): the ruling's word alone.
+  it('says an interrupted turn was interrupted, and shows no text', () => {
     const wrapper = panel({
       dwarf: defaultDwarf({
-        lastTurn: { kind: 'interrupted', detail: 'CANCELED', endedAt: 1_700_000_000_000 }
+        status: 'waiting',
+        lastTurn: { kind: 'interrupted', detail: 'CANCELED', endedAt: Date.now() - 300_000 }
       })
     })
-    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Last turn was interrupted (CANCELED)')
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn interrupted · idle for 5m')
   })
 
   it('never claims a delivery or a reaction — only how the turn itself ended', () => {
@@ -2987,5 +2990,90 @@ describe('DwarfMessagePanel, a closed session (#635)', () => {
     expect(wrapper.findAll('.dm-bubble__actions .dm-btn').map((b) => b.text())).toEqual([
       COPY_LABEL
     ])
+  })
+})
+
+/*
+ * The outcome line's count and clock, and a run past the person's own message (#635; decision
+ * log, Turn outcome line and Activity run closes on the dwarf, MESSAGE-QUESTIONS 3 and 7).
+ */
+describe('DwarfMessagePanel conversation parts (#635)', () => {
+  const RUN = [
+    { role: 'user' as const, text: 'Regenerate the skill tables.', timestamp: 't0' },
+    {
+      role: 'assistant' as const,
+      text: 'Read skills/README.md',
+      timestamp: 't1',
+      activity: { kind: 'read' as const, target: 'skills/README.md' }
+    },
+    {
+      role: 'assistant' as const,
+      text: 'Ran skill-sync',
+      timestamp: 't2',
+      activity: { kind: 'run' as const, target: 'skill-sync' }
+    }
+  ]
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('counts the open run’s steps so far on the outcome line while the dwarf works', () => {
+    const wrapper = panel({ dwarf: defaultDwarf({ status: 'working' }), feed: heldFeed(RUN) })
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Working · 2 steps so far')
+  })
+
+  it('keeps the run open past the person’s own message the transcript already carries', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ status: 'working' }),
+      feed: heldFeed([...RUN, { role: 'user', text: 'Also sort it.', timestamp: 't3' }])
+    })
+    expect(wrapper.find('.dm-activity__toggle').text()).toBe('Working...')
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Working · 2 steps so far')
+  })
+
+  it('keeps it open past a message that failed to hand over', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ status: 'working', textDelivery: 'terminal' }),
+      feed: heldFeed(RUN),
+      echoes: [{ id: 'e1', text: 'Also sort it.', sentAt: 0, state: { phase: 'failed' } }]
+    })
+    expect(wrapper.find('.dm-activity__toggle').text()).toBe('Working...')
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Working · 2 steps so far')
+  })
+
+  it('closes the run and counts it once the turn is over, with the idle time', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        status: 'waiting',
+        lastTurn: { kind: 'concluded', endedAt: Date.now() - 41 * 60_000 }
+      }),
+      feed: heldFeed(RUN)
+    })
+    expect(wrapper.find('.dm-activity__toggle').text()).toBe('2 steps · activity')
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn finished · 2 steps · idle for 41m')
+  })
+
+  it('reads the word alone once the dwarf has spoken after its last run', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ status: 'working' }),
+      feed: heldFeed([...RUN, { role: 'assistant', text: 'Done.', timestamp: 't3' }])
+    })
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Working')
+  })
+
+  it('keeps the idle time fresh while the panel stays open', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 28, 10, 0, 0))
+    const wrapper = panel({
+      dwarf: defaultDwarf({
+        status: 'waiting',
+        lastTurn: { kind: 'concluded', endedAt: Date.now() - 59_000 }
+      })
+    })
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn finished · idle for 59s')
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(wrapper.find('.dm-msg__outcome').text()).toBe('Turn finished · idle for 1m')
+    wrapper.unmount()
   })
 })

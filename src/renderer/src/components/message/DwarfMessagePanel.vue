@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { belongsToComposition } from '../../lib/controls/input'
 import {
   CONSOLE_HINT,
@@ -15,8 +15,14 @@ import { ATTACH_LOST_CONTACT, acceptAttachments, attachHint } from '../../lib/de
 /* --- end of the #408 block ----------------------------------------------- */
 import { kickStatusLine, sendMarker, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { historyClock, historyMarks, HISTORY_MARK } from '../../lib/history/mineHistory'
-import { activityStepsLabel, groupActivity, type PanelEntry } from '../../lib/message/activityGroup'
-import { conversationEnded, conversationOf, ENDED_NOTE } from '../../lib/message/conversation'
+import {
+  activityStepsLabel,
+  countedRunSteps,
+  groupActivity,
+  runsHaveEnded,
+  type PanelEntry
+} from '../../lib/message/activityGroup'
+import { conversationOf, ENDED_NOTE } from '../../lib/message/conversation'
 import { echoRowsOf, mergeEchoes, type MessageEcho, type PanelRow } from '../../lib/message/echo'
 import { tailArrivals } from '../../lib/message/entryArrival'
 import { isOpenablePath } from '../../lib/message/openablePath'
@@ -210,8 +216,15 @@ const shownNote = computed(() => {
 
 /** The meta chips under the name: provider · model · effort, and the worktree. */
 const chips = computed(() => messagePanelChips(props.dwarf))
-/** The turn outcome line under the header, with its status square. */
-const outcome = computed(() => messagePanelOutcome(props.dwarf))
+/*
+ * The clock the outcome line's idle time reads (decision log, Turn outcome line: "idle for 41m"),
+ * a second at a time so it never lags the silence the dwarf tooltip counts the same way.
+ */
+const now = ref(Date.now())
+const clock = setInterval(() => {
+  now.value = Date.now()
+}, 1_000)
+onUnmounted(() => clearInterval(clock))
 /** The header portrait wears the dwarf's state, as the scene does. */
 const portraitStatus = computed(() => sceneDwarfStatus(props.dwarf))
 
@@ -444,8 +457,17 @@ const echoRows = computed<Row[]>(() =>
   })
 )
 
+/*
+ * A run grows only while the dwarf's turn is still going (runsHaveEnded), and the person's own
+ * words, the echoes appended after the grouping included, never close it (#294, #635).
+ */
 const entries = computed(() =>
-  mergeEchoes(groupActivity(rows.value, { ended: conversationEnded(props.dwarf) }), echoRows.value)
+  mergeEchoes(groupActivity(rows.value, { ended: runsHaveEnded(props.dwarf) }), echoRows.value)
+)
+
+/** The turn outcome line under the header, with its status square, counting the run it reads. */
+const outcome = computed(() =>
+  messagePanelOutcome(props.dwarf, countedRunSteps(entries.value), now.value)
 )
 
 /** A row as the log draws it: a day divider, a run of steps, or something said. */

@@ -1,4 +1,6 @@
-import type { PanelMessage } from './conversation'
+import { sceneDwarfStatus } from '../scene/sceneDwarf'
+import type { Dwarf } from '../../types'
+import { conversationEnded, type PanelMessage } from './conversation'
 
 /**
  * Consecutive tool calls, folded into one disclosure row (#294).
@@ -48,9 +50,10 @@ export interface ActivityGroup<Row extends PanelMessage = PanelMessage> {
   /** Every line of the run, in the order it happened. Never empty. */
   rows: Row[]
   /**
-   * Whether nothing further can join this run — a spoken row already follows
-   * it, or the session behind the conversation has ended. An open run is the
-   * agent still working; a closed one is a finished stretch of work.
+   * Whether nothing further can join this run — the dwarf has spoken since, a
+   * later run started, or its turn is over (`ended`). The person's own words
+   * after it never close it (#635). An open run is the agent still working; a
+   * closed one is a finished stretch of work.
    */
   closed: boolean
   /** The one line the collapsed row shows. See ACTIVITY_WORKING_LABEL. */
@@ -111,9 +114,19 @@ export function groupActivity<Row extends PanelMessage>(
     runs.push({ key: row.key, rows: [row] })
   }
 
-  // Only the LAST entry can still be growing, and only while the conversation
-  // has somewhere for another line to come from.
-  const growingIndex = options.ended ? -1 : runs.length - 1
+  // Only the LAST run can still be growing, and only while the conversation has somewhere for
+  // another line to come from. The person's own words after it do not close it (#635; decision
+  // log, Activity run closes on the dwarf): a message somebody sent is not the agent finishing,
+  // delivered or not, so they are skipped on the way back, and only the dwarf speaking stops it.
+  let growingIndex = -1
+  for (let i = runs.length - 1; i >= 0 && !options.ended; i--) {
+    const run = runs[i]!
+    if (!('kind' in run)) {
+      growingIndex = i
+      break
+    }
+    if (run.message.from !== 'user') break
+  }
   return runs.map((run, index) => {
     if ('kind' in run) return run
     const closed = index !== growingIndex
@@ -125,4 +138,31 @@ export function groupActivity<Row extends PanelMessage>(
       label: closed ? labelOf(run.rows) : ACTIVITY_WORKING_LABEL
     }
   })
+}
+
+/**
+ * The steps of the run the turn outcome line counts (#635; decision log, Turn outcome line): the
+ * last run with nothing the dwarf said after it, open or closed, the person's own words skipped as
+ * they are for closing one. Undefined when the dwarf has spoken since its last run, or there is
+ * none: with no run to count, the line leaves the count out rather than reach back past a reply.
+ */
+export function countedRunSteps(entries: readonly PanelEntry[]): number | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!
+    if (entry.kind === 'activity') return entry.rows.length
+    if (entry.message.from !== 'user') return undefined
+  }
+  return undefined
+}
+
+/**
+ * Whether the conversation's runs are over as far as `groupActivity`'s `ended` asks (#635;
+ * components.md, Activity disclosure, As built): a run grows only while its turn is still going,
+ * "the dwarf working, the session not ended". A dwarf asking, resting or leaving adds no steps, so
+ * its last run reads as the finished stretch of work it is, with its count, never "Working...".
+ */
+export function runsHaveEnded(
+  dwarf: Pick<Dwarf, 'status' | 'pendingQuestion' | 'waitingReason'>
+): boolean {
+  return conversationEnded(dwarf) || sceneDwarfStatus(dwarf) !== 'working'
 }

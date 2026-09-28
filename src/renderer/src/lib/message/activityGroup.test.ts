@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import { defaultDwarf } from '../../testing/factories'
 import type { FeedActivityKind } from '../../types'
 import type { PanelMessage } from './conversation'
-import { ACTIVITY_WORKING_LABEL, activityStepsLabel, groupActivity } from './activityGroup'
+import {
+  ACTIVITY_WORKING_LABEL,
+  activityStepsLabel,
+  countedRunSteps,
+  groupActivity,
+  runsHaveEnded
+} from './activityGroup'
 
 function spoken(key: string, text = 'Found the seam.'): PanelMessage {
   return { from: 'agent', text, key }
@@ -147,5 +154,95 @@ describe('activityStepsLabel', () => {
   it('counts the steps, singular for one', () => {
     expect(activityStepsLabel(5)).toBe('5 steps · activity')
     expect(activityStepsLabel(1)).toBe('1 step · activity')
+  })
+})
+
+/*
+ * The person's own words never close a run (#294, #635; decision log, Activity run closes on the
+ * dwarf, MESSAGE-QUESTIONS 3): a message somebody sent is not the agent finishing, whether the
+ * transcript already carries it or it is still the panel's own echo. Only the dwarf speaking, or
+ * its turn ending, closes one.
+ */
+describe('a run past the person’s own message', () => {
+  function said(key: string, text = 'Also check the table.'): PanelMessage {
+    return { from: 'user', text, key }
+  }
+
+  it('stays open while only the person has spoken after it', () => {
+    const entries = groupActivity([said('a'), tool('b', 'Ran skill-sync'), said('c')], {
+      ended: false
+    })
+    const run = entries[1]!
+    expect(run.kind === 'activity' && run.closed).toBe(false)
+    expect(run.kind === 'activity' && run.label).toBe(ACTIVITY_WORKING_LABEL)
+  })
+
+  it('closes once the dwarf speaks after the person, as it would have without them', () => {
+    const entries = groupActivity([tool('a', 'Ran one'), said('b'), spoken('c', 'Done.')], {
+      ended: false
+    })
+    expect(entries[0]!.kind === 'activity' && entries[0]!.closed).toBe(true)
+  })
+
+  it('closes when the turn is over, however the conversation ends', () => {
+    const entries = groupActivity([tool('a', 'Ran one'), said('b')], { ended: true })
+    expect(entries[0]!.kind === 'activity' && entries[0]!.closed).toBe(true)
+  })
+
+  it('leaves only the last run open, even with the person between two runs', () => {
+    const entries = groupActivity([tool('a', 'Ran one'), said('b'), tool('c', 'Ran two')], {
+      ended: false
+    })
+    const closed = entries.flatMap((entry) => (entry.kind === 'activity' ? [entry.closed] : []))
+    expect(closed).toEqual([true, false])
+  })
+})
+
+/*
+ * The run the turn outcome line counts (#635; decision log, Turn outcome line): the last run with
+ * nothing the dwarf said after it, the person's own words skipped as they are for closing one.
+ */
+describe('countedRunSteps', () => {
+  const said = (key: string): PanelMessage => ({ from: 'user', text: 'Go on.', key })
+
+  it('counts the last run’s steps when nothing follows it', () => {
+    const entries = groupActivity([spoken('a'), tool('b', 'Ran one'), tool('c', 'Ran two')], {
+      ended: false
+    })
+    expect(countedRunSteps(entries)).toBe(2)
+  })
+
+  it('counts it past the person’s own messages', () => {
+    const entries = groupActivity([tool('a', 'Ran one'), said('b'), said('c')], { ended: false })
+    expect(countedRunSteps(entries)).toBe(1)
+  })
+
+  it('counts nothing once the dwarf has spoken after its last run', () => {
+    const entries = groupActivity([tool('a', 'Ran one'), spoken('b'), said('c')], { ended: false })
+    expect(countedRunSteps(entries)).toBeUndefined()
+  })
+
+  it('counts nothing in a conversation with no run at all', () => {
+    expect(countedRunSteps(groupActivity([said('a'), spoken('b')], { ended: false }))).toBe(
+      undefined
+    )
+    expect(countedRunSteps([])).toBeUndefined()
+  })
+})
+
+/*
+ * Whether a run can still grow is whether the dwarf's turn is still going (#635; components.md,
+ * Activity disclosure, As built: "the dwarf working, the session not ended"). A dwarf asking,
+ * resting or leaving is not adding steps, so its last run is a finished stretch of work.
+ */
+describe('runsHaveEnded', () => {
+  it('keeps the last run growing only while the dwarf works', () => {
+    expect(runsHaveEnded(defaultDwarf({ status: 'working' }))).toBe(false)
+  })
+
+  it('ends it once the turn is over, the session is leaving, or the dwarf asks', () => {
+    expect(runsHaveEnded(defaultDwarf({ status: 'waiting' }))).toBe(true)
+    expect(runsHaveEnded(defaultDwarf({ status: 'leaving' }))).toBe(true)
+    expect(runsHaveEnded(defaultDwarf({ status: 'working', waitingReason: 'approval' }))).toBe(true)
   })
 })

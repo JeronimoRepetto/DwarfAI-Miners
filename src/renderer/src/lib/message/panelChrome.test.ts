@@ -32,10 +32,23 @@ describe('messagePanelChips', () => {
   })
 })
 
+/*
+ * AMENDED for #635 (the turn outcome line ruling, MESSAGE-QUESTIONS 7 and the decision log's Turn
+ * outcome line; was: the last turn's own sentence, "Last turn concluded: Done.", its "(trimmed)"
+ * mark, and "Idle" for a resting dwarf). The line is now built only from what the app observes:
+ * the status word, the steps of the run it counts, and how long ago a finished turn ended. Two
+ * tests went with the old sentence and are stated here rather than lost: "says how the last turn
+ * ended, in today's words" (now "never prints the turn's own closing words", below) and "says so
+ * at the end of the line when the wire itself trimmed the turn's words" (removed: the line no
+ * longer carries the turn's words, so it has nothing to call trimmed).
+ */
 describe('messagePanelOutcome', () => {
+  const NOW = 1_800_000_000_000
+  const MINUTE = 60_000
+
   it('reads a permission as waiting on you, in the asking tone', () => {
     const dwarf = defaultDwarf({ status: 'waiting', waitingReason: 'approval' })
-    expect(messagePanelOutcome(dwarf)).toEqual({
+    expect(messagePanelOutcome(dwarf, undefined, NOW)).toEqual({
       status: 'asking',
       text: 'Waiting on you · permission'
     })
@@ -52,45 +65,109 @@ describe('messagePanelOutcome', () => {
         questions: [question('a'), question('b'), question('c')]
       }
     })
-    expect(messagePanelOutcome(dwarf)).toEqual({
+    expect(messagePanelOutcome(dwarf, undefined, NOW)).toEqual({
       status: 'asking',
       text: 'Waiting on you · 3 questions'
     })
     expect(
-      messagePanelOutcome({
-        ...dwarf,
-        pendingQuestion: { ...dwarf.pendingQuestion!, questions: [question('a')] }
-      }).text
+      messagePanelOutcome(
+        { ...dwarf, pendingQuestion: { ...dwarf.pendingQuestion!, questions: [question('a')] } },
+        undefined,
+        NOW
+      ).text
     ).toBe('Waiting on you · 1 question')
   })
 
-  it('says how the last turn ended, in today’s words, while the dwarf is not asking', () => {
-    const dwarf = defaultDwarf({
-      status: 'working',
-      lastTurn: { kind: 'concluded', text: 'Done.', endedAt: 1 }
-    })
-    expect(messagePanelOutcome(dwarf)).toEqual({
-      status: 'working',
-      text: 'Last turn concluded: Done.'
-    })
+  it('names what the dwarf waits on, never the steps of the run before the ask', () => {
+    const dwarf = defaultDwarf({ status: 'waiting', waitingReason: 'approval' })
+    expect(messagePanelOutcome(dwarf, 4, NOW).text).toBe('Waiting on you · permission')
   })
 
-  it('says so at the end of the line when the wire itself trimmed the turn’s words', () => {
-    const dwarf = defaultDwarf({
-      status: 'working',
-      lastTurn: { kind: 'concluded', text: 'Done.', truncated: true, endedAt: 1 }
-    })
-    expect(messagePanelOutcome(dwarf).text).toBe('Last turn concluded: Done. (trimmed)')
-  })
-
-  it('falls back to the state word the design prints when nothing else is known', () => {
-    expect(messagePanelOutcome(defaultDwarf({ status: 'working' }))).toEqual({
+  it('reads a working dwarf with no run to count as the word alone', () => {
+    expect(messagePanelOutcome(defaultDwarf({ status: 'working' }), undefined, NOW)).toEqual({
       status: 'working',
       text: 'Working'
     })
-    expect(messagePanelOutcome(defaultDwarf({ status: 'waiting' }))).toEqual({
+  })
+
+  it('counts the steps of the open run so far while the dwarf works, singular for one', () => {
+    const dwarf = defaultDwarf({ status: 'working' })
+    expect(messagePanelOutcome(dwarf, 2, NOW).text).toBe('Working · 2 steps so far')
+    expect(messagePanelOutcome(dwarf, 1, NOW).text).toBe('Working · 1 step so far')
+  })
+
+  it('never says how long ago a turn ended while the dwarf is working again', () => {
+    const dwarf = defaultDwarf({
+      status: 'working',
+      lastTurn: { kind: 'concluded', endedAt: NOW - 41 * MINUTE }
+    })
+    expect(messagePanelOutcome(dwarf, undefined, NOW).text).toBe('Working')
+  })
+
+  it('never prints the turn’s own closing words, which are the conversation’s to show', () => {
+    const dwarf = defaultDwarf({
+      status: 'waiting',
+      lastTurn: { kind: 'concluded', text: 'Done.', truncated: true, endedAt: NOW - 2 * MINUTE }
+    })
+    expect(messagePanelOutcome(dwarf, undefined, NOW).text).toBe('Turn finished · idle for 2m')
+  })
+
+  it('reads a finished turn with its last run and how long ago it ended', () => {
+    const dwarf = defaultDwarf({
+      status: 'waiting',
+      lastTurn: { kind: 'concluded', endedAt: NOW - 41 * MINUTE }
+    })
+    expect(messagePanelOutcome(dwarf, 5, NOW)).toEqual({
       status: 'asleep',
-      text: 'Idle'
+      text: 'Turn finished · 5 steps · idle for 41m'
+    })
+    expect(messagePanelOutcome(dwarf, 1, NOW).text).toBe('Turn finished · 1 step · idle for 41m')
+  })
+
+  it('writes the idle time as the dwarf tooltip writes a silence, in its largest whole unit', () => {
+    const dwarf = (endedAt: number) =>
+      defaultDwarf({ status: 'waiting', lastTurn: { kind: 'concluded', endedAt } })
+    expect(messagePanelOutcome(dwarf(NOW - 2 * 60 * MINUTE), undefined, NOW).text).toBe(
+      'Turn finished · idle for 2h'
+    )
+    expect(messagePanelOutcome(dwarf(NOW - 12_000), undefined, NOW).text).toBe(
+      'Turn finished · idle for 12s'
+    )
+    // A clock that reads the end as later than now claims no idle time at all.
+    expect(messagePanelOutcome(dwarf(NOW + 5_000), undefined, NOW).text).toBe(
+      'Turn finished · idle for 0s'
+    )
+  })
+
+  it('leaves the idle time out for a session whose turn end the app never saw', () => {
+    expect(messagePanelOutcome(defaultDwarf({ status: 'waiting' }), undefined, NOW)).toEqual({
+      status: 'asleep',
+      text: 'Turn finished'
+    })
+    expect(messagePanelOutcome(defaultDwarf({ status: 'waiting' }), 3, NOW).text).toBe(
+      'Turn finished · 3 steps'
+    )
+  })
+
+  it('names a turn that ended badly in place of Turn finished, without the provider’s code', () => {
+    const ended = (kind: 'capped' | 'errored' | 'interrupted') =>
+      messagePanelOutcome(
+        defaultDwarf({
+          status: 'waiting',
+          lastTurn: { kind, detail: 'error_max_turns', endedAt: NOW - 5 * MINUTE }
+        }),
+        5,
+        NOW
+      ).text
+    expect(ended('capped')).toBe('Turn stopped at a limit · 5 steps · idle for 5m')
+    expect(ended('errored')).toBe('Turn failed · 5 steps · idle for 5m')
+    expect(ended('interrupted')).toBe('Turn interrupted · 5 steps · idle for 5m')
+  })
+
+  it('reads a leaving dwarf as a finished turn, under the resting square', () => {
+    expect(messagePanelOutcome(defaultDwarf({ status: 'leaving' }), undefined, NOW)).toEqual({
+      status: 'asleep',
+      text: 'Turn finished'
     })
   })
 })
