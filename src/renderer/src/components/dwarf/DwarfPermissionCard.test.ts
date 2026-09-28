@@ -241,7 +241,7 @@ describe('DwarfPermissionCard', () => {
     expect(wrapper.emitted('decide')).toBeUndefined()
   })
 
-  it('re-enables the choices after a refusal and shows main’s reason', async () => {
+  it('re-enables the choices after a refusal, drawing no alert', async () => {
     const wrapper = card({
       answerState: {
         phase: 'refused',
@@ -249,7 +249,8 @@ describe('DwarfPermissionCard', () => {
         error: 'That prompt is no longer open.'
       }
     })
-    expect(wrapper.find('.dm-qcard__alert').text()).toBe('That prompt is no longer open.')
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
     for (const option of options(wrapper)) {
       expect(option.attributes('disabled')).toBeUndefined()
     }
@@ -356,7 +357,7 @@ describe('DwarfPermissionCard on the terminal channel (#203)', () => {
   })
 
   // AMENDED for #635 (was: the jump inside the refusal row): the walk's own Jump to terminal.
-  it('offers the way to that terminal beside a refusal, since the prompt is still there', () => {
+  it('offers the way to that terminal after a refusal, since the prompt is still there', () => {
     const wrapper = terminalCard({
       answerState: {
         phase: 'refused',
@@ -365,9 +366,8 @@ describe('DwarfPermissionCard on the terminal channel (#203)', () => {
         error: 'Could not reach that terminal. Answer the prompt there.'
       }
     })
-    expect(wrapper.find('.dm-qcard__alert').text()).toContain(
-      'Could not reach that terminal. Answer the prompt there.'
-    )
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
     expect(wrapper.find('.dm-qcard__jump').text()).toBe(JUMP_TO_TERMINAL_NAME)
   })
 
@@ -385,7 +385,7 @@ describe('DwarfPermissionCard on the terminal channel (#203)', () => {
    * included (components.md, Question card, as built); it does what the header's Open console
    * does for the same dwarf. The refusal row itself still carries no jump of its own.
    */
-  it('offers the walk’s one jump on a held prompt too, and none inside its refusal', () => {
+  it('offers the walk’s one jump on a held prompt too, and no refusal row', () => {
     const wrapper = mount(DwarfPermissionCard, {
       props: {
         permission: permission(),
@@ -393,8 +393,8 @@ describe('DwarfPermissionCard on the terminal channel (#203)', () => {
         answerState: { phase: 'refused', toolUseId: 'toolu_09', error: 'nope' }
       }
     })
-    expect(wrapper.find('.dm-qcard__alert').text()).toBe('nope')
-    expect(wrapper.find('.dm-qcard__alert .dm-qcard__jump').exists()).toBe(false)
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
     expect(wrapper.findAll('.dm-qcard__jump')).toHaveLength(1)
   })
 
@@ -538,7 +538,7 @@ describe('DwarfPermissionCard on the opencode-permission channel (#588 T5)', () 
     expect(wrapper.find('.dm-qcard__ok').text()).not.toBe(PERMISSION_ESCAPED_LINE)
   })
 
-  it('shows main’s own refusal on a failed POST, with no Jump button — there is no terminal to jump to', () => {
+  it('draws no refusal row on a failed POST, and no Jump button — there is no terminal to jump to', () => {
     const wrapper = opencodeCard({
       answerState: {
         phase: 'refused',
@@ -547,9 +547,8 @@ describe('DwarfPermissionCard on the opencode-permission channel (#588 T5)', () 
         error: "Could not reach OpenCode's own server. The session may have been closed."
       }
     })
-    expect(wrapper.find('.dm-qcard__alert').text()).toContain(
-      "Could not reach OpenCode's own server. The session may have been closed."
-    )
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
     expect(wrapper.find('.dm-qcard__jump').exists()).toBe(false)
   })
 

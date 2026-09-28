@@ -437,6 +437,16 @@ function ownSend(row: Row): boolean {
 }
 
 /*
+ * A refused record's reason, main's own words (MESSAGE-QUESTIONS 21): its ✕ mark's tooltip, as the
+ * bubble draws it, never an alert on the card that came back.
+ */
+function refusalOf(row: Row): string | undefined {
+  return row.echo?.answers === true && row.echo.state.phase === 'failed'
+    ? row.echo.state.error
+    : undefined
+}
+
+/*
  * The transcript's rows, each with the mark a prompt in the transcript wears (#635): the person's
  * words there were handed to the session, so they are at least ✓, and ✓✓ once the session was seen
  * acting after them — historyMarks, the history's own reading of the same record. The dwarf's own
@@ -864,6 +874,7 @@ function onStopAction(index: number): void {
           :is-new="arrivedKeys.has(entry.key)"
           :offers-retry="ownSend(entry.message) && canReceive"
           :session-closed="ownSend(entry.message) && (closed || !canReceive)"
+          :reason="refusalOf(entry.message)"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"

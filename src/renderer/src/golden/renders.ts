@@ -916,7 +916,10 @@ const dwarfScene =
  * line of text (#635, a refused answer's reason on its ✕ mark).
  */
 const TipCard = defineComponent({
-  props: { dwarf: { type: Object as () => Dwarf }, text: { type: String } },
+  props: {
+    dwarf: { type: Object as () => Dwarf, default: undefined },
+    text: { type: String, default: undefined }
+  },
   setup(props) {
     return () =>
       h(TooltipCard, null, () =>

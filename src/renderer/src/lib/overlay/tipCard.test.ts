@@ -63,3 +63,19 @@ describe('placeTip', () => {
     expect(placed.top).toBe(0)
   })
 })
+
+/* --- Aligned to the end (#635, MESSAGE-QUESTIONS 21) — one block, appended ----------------- */
+
+/*
+ * A refused answer's reason shows above its ✕ mark and aligned to its end (components.md, Chat
+ * bubble, "A refusal's reason"): the card's right edge on the mark's right edge.
+ */
+describe('placeTip, aligned to the end', () => {
+  it('puts the card’s end edge on the target’s end edge', () => {
+    expect(placeTip(target, card, view, { align: 'end' })).toEqual({
+      left: 110,
+      top: 92,
+      side: 'top'
+    })
+  })
+})

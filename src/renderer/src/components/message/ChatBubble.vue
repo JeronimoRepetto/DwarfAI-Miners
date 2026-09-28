@@ -21,10 +21,13 @@ import {
   RETRY_LABEL,
   RETRY_TITLE
 } from '../../lib/delivery/deliveryVerdict'
+import { computed } from 'vue'
+import { useHoverTip } from '../../composables/useHoverTip'
 import ActionButton from '../controls/ActionButton.vue'
+import TooltipCard from '../overlay/TooltipCard.vue'
 import MarkdownBubble from './MarkdownBubble.vue'
 
-defineProps<{
+const props = defineProps<{
   /** Who said it: the person's own words sit at the end, the dwarf's at the start. */
   from: 'user' | 'agent'
   text: string
@@ -45,6 +48,12 @@ defineProps<{
    * wins over `offersRetry`, as the design's does. The read-only history never sets it either.
    */
   sessionClosed?: boolean
+  /**
+   * Why a failed mark failed, in main's own words: a refused "Answers:" record's reason (#635,
+   * MESSAGE-QUESTIONS 21; components.md, Chat bubble, "A refusal's reason"). While the mark is ✕
+   * it is the mark's tooltip, never an alert and never a line in the bubble.
+   */
+  reason?: string
 }>()
 
 const emit = defineEmits<{
@@ -55,6 +64,24 @@ const emit = defineEmits<{
   /** Copy was pressed: the host puts the text on the clipboard and says so. */
   copy: []
 }>()
+
+/*
+ * The ✕ mark carrying a refusal's reason (components.md, Chat bubble, "A refusal's reason"): its
+ * tooltip above the mark and aligned to its end, on hover after the tooltip delay and at once on
+ * keyboard focus, as every tooltip shows (useHoverTip). While it carries one the mark takes
+ * keyboard focus, is described by a hidden copy of the reason, and has no native title; the
+ * reason goes once the mark leaves ✕, and a ✕ without one keeps its plain title.
+ */
+const reasonShown = computed(
+  () => props.mark?.mark === 'failed' && props.reason !== undefined && props.reason !== ''
+)
+const reasonTip = useHoverTip<'reason'>({ side: 'top', align: 'end' })
+const reasonId = 'dm-bubble-reason-' + ++bubbles
+</script>
+
+<script lang="ts">
+/** Every bubble's own number, for the id its reason's hidden copy is named by. */
+let bubbles = 0
 </script>
 
 <template>
@@ -67,10 +94,33 @@ const emit = defineEmits<{
     <MarkdownBubble class="dm-bubble__text" :text="text" @open-link="emit('open-link', $event)" />
     <div class="dm-bubble__foot">
       <span v-if="time">{{ time }}</span>
-      <span v-if="mark" class="dm-bubble__mark" :data-mark="mark.mark" :title="mark.title">{{
-        mark.glyph
-      }}</span>
+      <span
+        v-if="mark"
+        class="dm-bubble__mark"
+        :data-mark="mark.mark"
+        :title="reasonShown ? undefined : mark.title"
+        :tabindex="reasonShown ? 0 : undefined"
+        :aria-describedby="reasonShown ? reasonId : undefined"
+        @pointerenter="reasonShown && reasonTip.hover('reason', $event)"
+        @pointerleave="reasonTip.leave"
+        @pointerdown="reasonTip.press"
+        @focus="reasonShown && reasonTip.focus('reason', $event)"
+        @blur="reasonTip.hide"
+        >{{ mark.glyph }}</span
+      >
+      <span v-if="reasonShown" :id="reasonId" class="sr-only">{{ reason }}</span>
     </div>
+    <!-- In <body>: a bubble sits inside a scrolling log, which would otherwise clip a fixed card. -->
+    <Teleport to="body">
+      <Transition name="dm-tip-pop">
+        <TooltipCard
+          v-if="reasonShown && reasonTip.shown.value !== null"
+          :ref="reasonTip.card"
+          :style="reasonTip.style.value"
+          ><div>{{ reason }}</div></TooltipCard
+        >
+      </Transition>
+    </Teleport>
     <slot />
     <div
       v-if="(offersRetry || sessionClosed) && mark?.mark === 'failed'"
@@ -218,5 +268,22 @@ const emit = defineEmits<{
     opacity: 1;
     transform: none;
   }
+}
+
+/* The tooltip's entrance (motion.md, `dm-tip-pop`), as every tooltip owner writes it. */
+.dm-tip-pop-enter-active {
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.dm-tip-pop-leave-active {
+  transition: opacity var(--dur-fast) var(--ease-in);
+}
+.dm-tip-pop-enter-from {
+  opacity: 0;
+  transform: translateY(var(--tip-rise));
+}
+.dm-tip-pop-leave-to {
+  opacity: 0;
 }
 </style>

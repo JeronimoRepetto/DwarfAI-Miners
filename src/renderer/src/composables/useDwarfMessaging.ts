@@ -118,14 +118,22 @@ const heldMessages = new Map<string, { dwarfId: string; echoId: string }>()
  * Apart from the message watch above, because the two are about different things that can both be
  * waiting at once: a message the person typed under a permission's "Other thing…" is watched for
  * its own reaction while the permission is still open, and the answer submitted after it for its
- * own. A dwarf asks one thing at a time, so one per dwarf is all there is. Never written into
- * `state.byDwarfId`: that is the latest MESSAGE's verdict, which the sprite and the composer's hint
- * read, and an answer is not a message.
+ * own. A dwarf asks one thing at a time, so one per dwarf is all there is.
  */
 const answerWatches = new Map<
   string,
   { echoId: string; watch: ReactionWatch; timer: ReturnType<typeof setTimeout> }
 >()
+
+/**
+ * Whose verdict `state.byDwarfId` holds, keyed by dwarf id: a message's or an "Answers:" record's
+ * echo id (#635, MESSAGE-QUESTIONS 20: the dwarf's marker carries the record's marks as it carries
+ * a message's). A message's verdict takes the marker whenever it lands, as it always has: the
+ * marker shows the latest delivery. A record's walks it only while the record still holds it, so
+ * an answer seen acting late never paints over a message sent after it — least of all one still
+ * in flight, whose "sending" is what stops the same words going out twice.
+ */
+const markerOwner = reactive(new Map<string, string>())
 
 /** Monotonic within the session, which is all an echo id has to be. */
 let mintedEchoes = 0
@@ -136,6 +144,7 @@ function scheduleClear(dwarfId: string): void {
     dwarfId,
     setTimeout(() => {
       delete state.byDwarfId[dwarfId]
+      markerOwner.delete(dwarfId)
       clearTimers.delete(dwarfId)
     }, RESULT_VISIBLE_MS)
   )
@@ -162,6 +171,54 @@ function markEcho(dwarfId: string, echoId: string, next: DwarfSendState): void {
   const index = list.findIndex((echo) => echo.id === echoId)
   if (index === -1) return
   list[index] = { ...list[index]!, state: next }
+}
+
+/** Whether this echo's verdict is the one the dwarf's marker shows (see markerOwner). */
+function ownsMarker(dwarfId: string, echoId: string): boolean {
+  return markerOwner.get(dwarfId) === echoId
+}
+
+/** Make this echo the dwarf's last word: its verdict is the marker's from now on. */
+function takeMarker(dwarfId: string, echoId: string, next: DwarfSendState): void {
+  clearTimeout(clearTimers.get(dwarfId))
+  clearTimers.delete(dwarfId)
+  markerOwner.set(dwarfId, echoId)
+  state.byDwarfId[dwarfId] = next
+}
+
+/**
+ * A message's verdict as it now stands: the marker's while the marker is still its own — which it
+ * still is once the transcript has taken the bubble away — or else its bubble's, since a record or
+ * a later message may hold the marker now.
+ */
+function messageVerdict(dwarfId: string, echoId: string): DwarfSendState | undefined {
+  if (ownsMarker(dwarfId, echoId)) return state.byDwarfId[dwarfId]
+  return echoes[dwarfId]?.find((echo) => echo.id === echoId)?.state
+}
+
+/** A message's verdict, on its own bubble and on the dwarf's marker, which it takes. */
+function writeMessage(dwarfId: string, echoId: string, next: DwarfSendState): void {
+  markEcho(dwarfId, echoId, next)
+  markerOwner.set(dwarfId, echoId)
+  state.byDwarfId[dwarfId] = next
+}
+
+/**
+ * A record's verdict, on its own bubble, and on the dwarf's marker while the record still holds
+ * it. Returns whether the marker took it, so the marker's clearing is scheduled only for a verdict
+ * the marker shows.
+ */
+function writeVerdict(dwarfId: string, echoId: string, next: DwarfSendState): boolean {
+  markEcho(dwarfId, echoId, next)
+  if (!ownsMarker(dwarfId, echoId)) return false
+  state.byDwarfId[dwarfId] = next
+  return true
+}
+
+/** Whether the dwarf's last word is an "Answers:" record rather than a message. */
+function markerIsRecord(dwarfId: string): boolean {
+  const owner = markerOwner.get(dwarfId)
+  return owner !== undefined && echoes[dwarfId]?.find((e) => e.id === owner)?.answers === true
 }
 
 function stopAnswerWatch(dwarfId: string): void {
@@ -214,13 +271,12 @@ function startWatch(dwarfId: string, echoId: string): void {
     dwarfId,
     setTimeout(() => {
       stopWatch(dwarfId)
-      const current = state.byDwarfId[dwarfId]
+      const current = messageVerdict(dwarfId, echoId)
       if (current?.phase !== 'delivered') return
       // Decay, never promote: the window closed without proof, and the marker
       // says exactly that before clearing itself.
       const decayed: DwarfSendState = { ...current, awaitingReaction: false }
-      state.byDwarfId[dwarfId] = decayed
-      markEcho(dwarfId, echoId, decayed)
+      writeMessage(dwarfId, echoId, decayed)
       scheduleClear(dwarfId)
     }, REACTION_WINDOW_MS)
   )
@@ -263,13 +319,13 @@ async function deliver(
   attachments: readonly DwarfAttachment[] = [],
   again?: string
 ): Promise<boolean> {
-  if (state.byDwarfId[dwarfId]?.phase === 'sending') return false
-  clearTimeout(clearTimers.get(dwarfId))
-  clearTimers.delete(dwarfId)
+  // A message still in flight, never an answer's record: an answer on its way is no reason to
+  // refuse a message, though its verdict rides on the same marker (MESSAGE-QUESTIONS 20).
+  if (state.byDwarfId[dwarfId]?.phase === 'sending' && !markerIsRecord(dwarfId)) return false
   stopWatch(dwarfId)
-  state.byDwarfId[dwarfId] = { phase: 'sending' }
-
   const echoId = again ?? `echo-${++mintedEchoes}`
+  takeMarker(dwarfId, echoId, { phase: 'sending' })
+
   if (again === undefined) {
     const minted: MessageEcho = {
       id: echoId,
@@ -317,8 +373,7 @@ async function deliver(
   const holdId = result.holdId
   if (holdId !== undefined) {
     const waiting: DwarfSendState = { phase: 'held', via: result.via }
-    state.byDwarfId[dwarfId] = waiting
-    markEcho(dwarfId, echoId, waiting)
+    writeMessage(dwarfId, echoId, waiting)
     heldMessages.set(holdId, { dwarfId, echoId })
     return false
   }
@@ -350,8 +405,7 @@ function recordVerdict(dwarfId: string, echoId: string, result: DwarfTextResult)
   if (result.error !== undefined) next.error = result.error
   if (result.delivered || unconfirmed) next.awaitingReaction = true
   if (unconfirmed) next.unconfirmed = true
-  state.byDwarfId[dwarfId] = next
-  markEcho(dwarfId, echoId, next)
+  writeMessage(dwarfId, echoId, next)
 
   // A failure has nothing to wait for; a delivery does — and an unconfirmed
   // relay decays exactly like one, per DwarfSendState.unconfirmed.
@@ -364,6 +418,15 @@ function recordVerdict(dwarfId: string, echoId: string, result: DwarfTextResult)
 export function useDwarfMessaging() {
   function stateFor(dwarfId: string): DwarfSendState | undefined {
     return state.byDwarfId[dwarfId]
+  }
+
+  /**
+   * The verdict of this dwarf's last MESSAGE, for the composer's hint and its in-flight Send: none
+   * while the dwarf's last word is an "Answers:" record, whose verdict is its own bubble's and the
+   * marker's (MESSAGE-QUESTIONS 20, 21), never a line under the composer.
+   */
+  function messageStateFor(dwarfId: string): DwarfSendState | undefined {
+    return markerIsRecord(dwarfId) ? undefined : state.byDwarfId[dwarfId]
   }
 
   /** The messages the panel is drawing for this dwarf, oldest first (#309). */
@@ -438,26 +501,46 @@ export function useDwarfMessaging() {
    * (useDwarfQuestion), and this is only its record, whose marks `settleAnswer` walks. Returns the
    * record's id, for that verdict to land on it and nowhere else.
    */
-  function recordAnswer(dwarfId: string, text: string): string {
-    const echoId = `echo-${++mintedEchoes}`
-    const minted: MessageEcho = {
+  function recordAnswer(dwarfId: string, text: string, ask?: string): string {
+    const echoId = refusedRecordOf(dwarfId, ask) ?? `echo-${++mintedEchoes}`
+    const record: MessageEcho = {
       id: echoId,
       text,
       sentAt: Date.now(),
       state: { phase: 'sending' },
-      answers: true
+      answers: true,
+      ...(ask === undefined ? {} : { ask })
     }
-    echoes[dwarfId] = boundEchoes([...(echoes[dwarfId] ?? []), minted])
+    const list = echoes[dwarfId] ?? []
+    const index = list.findIndex((echo) => echo.id === echoId)
+    if (index === -1) echoes[dwarfId] = boundEchoes([...list, record])
+    else list[index] = record
     pruneAttachments(dwarfId)
+    stopAnswerWatch(dwarfId)
+    takeMarker(dwarfId, echoId, { phase: 'sending' })
     return echoId
   }
 
   /**
-   * The answer's own verdict, on its record (decision log, Answers bubble is a record), under the
-   * rule every message keeps, delivered is not reacted: ✓ once the channel took it, still
-   * watching; ✓✓ only once `observe` sees the dwarf acting after it; ✕ with the channel's reason
-   * when it refused. A window that closes with nothing seen leaves it at ✓, since when in doubt it
-   * stays there.
+   * The refused record the next Submit on the same ask replaces (MESSAGE-QUESTIONS 19): in place,
+   * walking … → ✓ again as Retry does for a failed message, with the new answer's words and the new
+   * Submit's time, so the conversation shows each answer once. Only a record at ✕ for this very
+   * ask: one that was handed over, or one for another ask, is what happened and stays.
+   */
+  function refusedRecordOf(dwarfId: string, ask: string | undefined): string | undefined {
+    if (ask === undefined) return undefined
+    return echoes[dwarfId]?.find(
+      (echo) => echo.answers === true && echo.ask === ask && echo.state.phase === 'failed'
+    )?.id
+  }
+
+  /**
+   * The answer's own verdict, on its record and on the dwarf's marker while it is the dwarf's last
+   * word (decision log, Answers bubble is a record; MESSAGE-QUESTIONS 20), under the rule every
+   * message keeps, delivered is not reacted: ✓ once the channel took it, still watching; ✓✓ only
+   * once `observe` sees the dwarf acting after it; ✕ with the channel's reason, which is the mark's
+   * title (MESSAGE-QUESTIONS 21), when it refused. A window that closes with nothing seen leaves it
+   * at ✓, since when in doubt it stays there.
    */
   function settleAnswer(
     dwarfId: string,
@@ -466,19 +549,21 @@ export function useDwarfMessaging() {
   ): void {
     stopAnswerWatch(dwarfId)
     if (!verdict.answered) {
-      markEcho(dwarfId, echoId, {
+      const failed: DwarfSendState = {
         phase: 'failed',
         ...(verdict.error === undefined ? {} : { error: verdict.error })
-      })
+      }
+      if (writeVerdict(dwarfId, echoId, failed)) scheduleClear(dwarfId)
       return
     }
-    markEcho(dwarfId, echoId, { phase: 'delivered', awaitingReaction: true })
+    writeVerdict(dwarfId, echoId, { phase: 'delivered', awaitingReaction: true })
     answerWatches.set(dwarfId, {
       echoId,
       watch: openReactionWatch('message', lastSeen.get(dwarfId), Date.now()),
       timer: setTimeout(() => {
         answerWatches.delete(dwarfId)
-        markEcho(dwarfId, echoId, { phase: 'delivered', awaitingReaction: false })
+        const decayed: DwarfSendState = { phase: 'delivered', awaitingReaction: false }
+        if (writeVerdict(dwarfId, echoId, decayed)) scheduleClear(dwarfId)
       }, REACTION_WINDOW_MS)
     })
   }
@@ -548,14 +633,15 @@ export function useDwarfMessaging() {
 
       const echoId = watchedEchoId.get(dwarf.id)
       stopWatch(dwarf.id)
-      const current = state.byDwarfId[dwarf.id]
+      const current =
+        echoId === undefined ? state.byDwarfId[dwarf.id] : messageVerdict(dwarf.id, echoId)
       if (current?.phase !== 'delivered') continue
       const reacted: DwarfSendState = {
         phase: 'reacted',
         ...(current.via === undefined ? {} : { via: current.via })
       }
-      state.byDwarfId[dwarf.id] = reacted
-      if (echoId !== undefined) markEcho(dwarf.id, echoId, reacted)
+      if (echoId === undefined) state.byDwarfId[dwarf.id] = reacted
+      else writeMessage(dwarf.id, echoId, reacted)
       scheduleClear(dwarf.id)
     }
   }
@@ -570,7 +656,7 @@ export function useDwarfMessaging() {
       return
     }
     stopAnswerWatch(dwarfId)
-    markEcho(dwarfId, open.echoId, { phase: 'reacted' })
+    if (writeVerdict(dwarfId, open.echoId, { phase: 'reacted' })) scheduleClear(dwarfId)
   }
 
   /**
@@ -604,7 +690,12 @@ export function useDwarfMessaging() {
    */
   function keepEchoesFor(dwarfId: string | null): void {
     for (const id of Object.keys(echoes)) {
-      if (id !== dwarfId) delete echoes[id]
+      if (id === dwarfId) continue
+      // Each dwarf's "Answers:" records are kept for the app run, like the drafts, whichever chat
+      // is open (MESSAGE-QUESTIONS 22): no transcript row brings them back.
+      const records = echoes[id]!.filter((echo) => echo.answers === true)
+      if (records.length === 0) delete echoes[id]
+      else echoes[id] = records
     }
     for (const id of Object.keys(echoAttachments)) {
       if (id !== dwarfId) delete echoAttachments[id]
@@ -616,6 +707,7 @@ export function useDwarfMessaging() {
     clearTimers.delete(dwarfId)
     stopWatch(dwarfId)
     stopAnswerWatch(dwarfId)
+    markerOwner.delete(dwarfId)
     lastSeen.delete(dwarfId)
     delete state.byDwarfId[dwarfId]
     delete echoes[dwarfId]
@@ -636,6 +728,7 @@ export function useDwarfMessaging() {
     for (const dwarfId of Object.keys(echoAttachments)) delete echoAttachments[dwarfId]
     lastSeen.clear()
     heldMessages.clear()
+    markerOwner.clear()
     routed.value = new Set()
   }
 
@@ -658,6 +751,7 @@ export function useDwarfMessaging() {
     observe,
     reconcile,
     stateFor,
+    messageStateFor,
     echoesFor,
     failedSends,
     keepEchoesFor,

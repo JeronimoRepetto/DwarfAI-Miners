@@ -113,13 +113,11 @@ const otherNote = computed(() =>
   route.value === 'message' || route.value === 'answer' ? null : TYPED_HERE_REACHES_THE_PICKER
 )
 /*
- * One row for both refusals, because they are the same sentence in the same place: main's,
- * verbatim. An unanswerable ask says it up front, a refused answer after the fact.
+ * An unanswerable ask says so up front, in main's own sentence. A refused answer draws no alert
+ * here (MESSAGE-QUESTIONS 21): its reason is the ✕ mark's title on the "Answers:" record, as a
+ * failed message carries its own, and the card that came back is drawn as the design draws it.
  */
-const alert = computed(() => {
-  if (unanswerable.value) return ANSWER_ONLY_WHERE_IT_RUNS
-  return verdict.value?.phase === 'refused' ? verdict.value.error : null
-})
+const alert = computed(() => (unanswerable.value ? ANSWER_ONLY_WHERE_IT_RUNS : null))
 const ok = computed(() => answerStatusLine(verdict.value))
 /*
  * Jump to terminal is in the walk of every state the design draws, and it does what the header's

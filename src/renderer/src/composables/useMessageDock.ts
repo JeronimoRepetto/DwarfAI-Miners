@@ -65,7 +65,8 @@ export function useMessageDock() {
     listenHeld: listenHeldMessages,
     keepEchoesFor,
     failedSends,
-    routeGone
+    routeGone,
+    messageStateFor
   } = useDwarfMessaging()
   /**
    * The pages of conversation older than the newest feed (#364) — held beside `selectedFeed`
@@ -620,6 +621,11 @@ export function useMessageDock() {
     launchOpen,
     launch,
     messagingState,
+    /*
+     * The composer's verdict (#635): the last MESSAGE's, never an "Answers:" record's, whose
+     * verdict is its bubble's and the dwarf's marker's (MESSAGE-QUESTIONS 20, 21).
+     */
+    messageStateFor,
     kickingState,
     questionState,
     sentEchoes,

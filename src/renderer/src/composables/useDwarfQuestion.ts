@@ -123,7 +123,7 @@ export function useDwarfQuestion() {
     if (state.byDwarfId[dwarfId]?.phase === 'answering') return
     const toolUseId = question.toolUseId
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId }
-    const recordId = messaging.recordAnswer(dwarfId, record)
+    const recordId = messaging.recordAnswer(dwarfId, record, toolUseId)
 
     let result: DwarfQuestionAnswerResult
     try {
@@ -159,7 +159,11 @@ export function useDwarfQuestion() {
     // permissionStatusLine). An answer to a QUESTION records none — that
     // vocabulary is the permission prompt's alone.
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId, decision }
-    const recordId = messaging.recordAnswer(dwarfId, permissionAnswerRecord(permission, decision))
+    const recordId = messaging.recordAnswer(
+      dwarfId,
+      permissionAnswerRecord(permission, decision),
+      toolUseId
+    )
 
     let result: DwarfQuestionAnswerResult
     try {

@@ -552,3 +552,50 @@ describe('useDwarfQuestion: the "Answers:" record', () => {
   })
 })
 /* --- end of the "Answers:" record block ------------------------------------- */
+
+/* --- MESSAGE-QUESTIONS 19 and 20 on the "Answers:" record — one block, appended ------------- */
+
+describe('useDwarfQuestion: answering again after a refusal (MESSAGE-QUESTIONS 19, 20)', () => {
+  beforeEach(() => {
+    useDwarfQuestion().clearAll()
+    useDwarfMessaging().clearAll()
+  })
+
+  it('replaces the refused record in place with the new answer, and walks it again', async () => {
+    let answered = false
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        answerDwarfQuestion: vi.fn(() =>
+          Promise.resolve(answered ? { answered: true } : { answered: false, error: 'nope' })
+        )
+      }
+    })
+    await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
+    const [refused] = useDwarfMessaging().echoesFor('claude:s1')
+    expect(refused?.state.phase).toBe('failed')
+
+    answered = true
+    await useDwarfQuestion().answer('claude:s1', question(), 'Postgres')
+    const records = useDwarfMessaging().echoesFor('claude:s1')
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      id: refused!.id,
+      text: 'Answers:\n\n- Which database should the importer write to: **Postgres**',
+      state: { phase: 'delivered', awaitingReaction: true }
+    })
+  })
+
+  it('puts the record’s verdict on the dwarf’s marker', async () => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { answerDwarfQuestion: vi.fn(() => Promise.resolve({ answered: true })) }
+    })
+    await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
+    expect(useDwarfMessaging().stateFor('claude:s1')).toEqual({
+      phase: 'delivered',
+      awaitingReaction: true
+    })
+  })
+})
+/* --- end of the rulings 19 and 20 block ----------------------------------------------------- */

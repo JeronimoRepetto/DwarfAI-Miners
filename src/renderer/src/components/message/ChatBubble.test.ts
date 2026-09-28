@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
 import { sendMarker } from '../../lib/delivery/deliveryVerdict'
 import { bubbleMark } from '../../lib/message/panelChrome'
 import {
@@ -218,3 +218,78 @@ describe('ChatBubble, an "Answers:" record drawn literally (#635)', () => {
   })
 })
 /* --- end of the "Answers:" record block ------------------------------------- */
+
+/* --- A refusal's reason on the ✕ mark (#635, MESSAGE-QUESTIONS 21) — one block, appended ---- */
+
+/*
+ * components.md, Chat bubble ("A refusal's reason"): a refused "Answers:" record passes main's
+ * reason, verbatim, and its ✕ mark carries it as a tooltip, above the mark and aligned to its end,
+ * on hover (300ms) and at once on keyboard focus, never as an alert and never as a line in the
+ * bubble. While it carries a reason the mark takes keyboard focus, is described by the reason (on a
+ * hidden copy) and has no native title; the reason goes once the mark leaves ✕. Without a reason
+ * the mark keeps its plain title.
+ */
+describe('ChatBubble, a refusal’s reason on the ✕ mark (#635)', () => {
+  const REASON = 'That question is no longer open.'
+
+  function refused(phase: DwarfSendState['phase'], reason?: string) {
+    return mount(ChatBubble, {
+      attachTo: document.body,
+      props: {
+        from: 'user',
+        text: 'Answers:\n\n- Which store: **Redis**',
+        mark: bubbleMark(sendMarker({ phase, error: REASON })!),
+        ...(reason === undefined ? {} : { reason })
+      }
+    })
+  }
+
+  it('makes the ✕ focusable and described by the reason, with no native title', () => {
+    const wrapper = refused('failed', REASON)
+    const mark = wrapper.find('.dm-bubble__mark')
+    expect(mark.attributes('tabindex')).toBe('0')
+    expect(mark.attributes('title')).toBeUndefined()
+    const described = document.getElementById(mark.attributes('aria-describedby') ?? '')
+    expect(described?.textContent).toBe(REASON)
+    // A hidden copy, never a line in the bubble.
+    expect(described?.classList.contains('sr-only')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the reason in a tooltip card at once on focus, and hides it on blur', async () => {
+    const wrapper = refused('failed', REASON)
+    await wrapper.find('.dm-bubble__mark').trigger('focus')
+    await flushPromises()
+    const tip = document.body.querySelector('.dm-tip')
+    expect(tip?.textContent?.trim()).toBe(REASON)
+    await wrapper.find('.dm-bubble__mark').trigger('blur')
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('shows it 300ms after the pointer arrives', async () => {
+    vi.useFakeTimers()
+    const wrapper = refused('failed', REASON)
+    await wrapper.find('.dm-bubble__mark').trigger('pointerenter')
+    expect(document.body.querySelector('.dm-tip')).toBeNull()
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(document.body.querySelector('.dm-tip')?.textContent?.trim()).toBe(REASON)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('drops the reason once the mark has left ✕', () => {
+    const mark = refused('delivered', REASON).find('.dm-bubble__mark')
+    expect(mark.attributes('tabindex')).toBeUndefined()
+    expect(mark.attributes('aria-describedby')).toBeUndefined()
+  })
+
+  it('keeps the plain title on a ✕ with no reason', () => {
+    const mark = refused('failed').find('.dm-bubble__mark')
+    expect(mark.attributes('title')).toBe(REASON)
+    expect(mark.attributes('tabindex')).toBeUndefined()
+  })
+})
+/* --- end of the refusal reason block ------------------------------------------------------- */

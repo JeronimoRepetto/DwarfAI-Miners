@@ -61,6 +61,11 @@ export interface MessageEcho {
    * (`reconcileEchoes`), and it is drawn where it happened (`mergeEchoes`), not after everything.
    */
   readonly answers?: true
+  /**
+   * On an "Answers:" record, the id of the ask it answers (its toolUseId): the next Submit on that
+   * same ask replaces a refused record in place rather than adding a second (MESSAGE-QUESTIONS 19).
+   */
+  readonly ask?: string
 }
 
 /**

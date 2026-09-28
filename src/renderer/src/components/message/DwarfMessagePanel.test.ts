@@ -1345,7 +1345,7 @@ describe('DwarfMessagePanel question', () => {
     expect(wrapper.emitted('send')).toBeUndefined()
   })
 
-  it("hands main's refusal down to the card so the panel can explain itself", () => {
+  it("hands main's refusal down to the card, which draws no alert for it", () => {
     const wrapper = asking({
       answerState: {
         phase: 'refused',
@@ -1354,9 +1354,8 @@ describe('DwarfMessagePanel question', () => {
       }
     })
     // AMENDED for #635 (was: `.answer-error`): the card's own alert row.
-    expect(wrapper.find('.dm-qcard__alert').text()).toBe(
-      'That session is not one this panel is holding.'
-    )
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
   })
 })
 
@@ -3304,3 +3303,79 @@ describe('DwarfMessagePanel: the "Answers:" record', () => {
   })
 })
 /* --- end of the "Answers:" record block ------------------------------------- */
+
+/* --- MESSAGE-QUESTIONS 21 on the "Answers:" record — one block, appended ------------------- */
+
+/*
+ * The refusal's reason is the ✕ mark's title on the record, as a failed message carries its own,
+ * and the card is drawn with no alert. The card comes back only while the ask is still open: once
+ * main's snapshot no longer carries it (the reason was that the ask closed), the composer is back
+ * and the ✕ record with its reason is the whole story.
+ */
+/** The words a bubble's ✕ mark is described by: a refused record's reason (MESSAGE-QUESTIONS 21). */
+function describedBy(
+  mark: { attributes(name: string): string | undefined },
+  root: Element
+): string {
+  const id = mark.attributes('aria-describedby') ?? ''
+  return root.querySelector('#' + id)?.textContent ?? ''
+}
+
+describe('DwarfMessagePanel: a refused "Answers:" record (MESSAGE-QUESTIONS 21)', () => {
+  const pendingQuestion = {
+    toolUseId: 'toolu_01',
+    channel: 'held' as const,
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ]
+  }
+
+  function refused(error: string): MessageEcho {
+    return {
+      id: 'r1',
+      text: 'Answers:\n\n- Which database should the importer write to: **SQLite**',
+      sentAt: Date.parse('2026-09-03T09:00:05.000Z'),
+      state: { phase: 'failed', error },
+      answers: true,
+      ask: 'toolu_01'
+    }
+  }
+
+  it('describes the ✕ by the reason, and the card that came back draws no alert', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion }),
+      echoes: [refused('The console did not take the keys.')],
+      answerState: {
+        phase: 'refused',
+        toolUseId: 'toolu_01',
+        error: 'The console did not take the keys.'
+      }
+    })
+    const mark = wrapper.findAll('.dm-bubble').at(-1)!.find('.dm-bubble__mark')
+    expect(mark.text()).toBe('✕ not delivered')
+    expect(mark.attributes('title')).toBeUndefined()
+    expect(describedBy(mark, wrapper.element)).toBe('The console did not take the keys.')
+    expect(wrapper.find('.dm-qcard').exists()).toBe(true)
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
+  })
+
+  it('brings no card back once the ask has closed: the ✕ record is the whole story', () => {
+    const wrapper = panel({
+      echoes: [refused('That question is no longer open.')],
+      answerState: {
+        phase: 'refused',
+        toolUseId: 'toolu_01',
+        error: 'That question is no longer open.'
+      }
+    })
+    expect(wrapper.find('.dm-qcard').exists()).toBe(false)
+    expect(wrapper.find('.dm-composer').exists()).toBe(true)
+    const mark = wrapper.findAll('.dm-bubble').at(-1)!.find('.dm-bubble__mark')
+    expect(describedBy(mark, wrapper.element)).toBe('That question is no longer open.')
+  })
+})
+/* --- end of the ruling 21 block ------------------------------------------------------------- */
