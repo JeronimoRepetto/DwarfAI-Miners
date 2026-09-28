@@ -454,3 +454,23 @@ describe('DwarfPermissionCard on the opencode-permission channel (#588 T5)', () 
     expect(wrapper.findAll('.answer-jump')).toHaveLength(0)
   })
 })
+
+/*
+ * ADDED for #635: an input method's own Enter picks its candidate, and the text it belongs to is
+ * not written yet — the composer's rule (belongsToComposition, lib/controls/input), which the
+ * free-answer box ignored.
+ */
+describe('DwarfPermissionCard and an Enter that belongs to an IME composition', () => {
+  it('sends nothing from the free-answer box while the composition is open', async () => {
+    const wrapper = card()
+    await wrapper.find('.freeform-input').setValue('にほんご')
+    for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+      wrapper
+        .find('.freeform-input')
+        .element.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init })
+        )
+    }
+    expect(wrapper.emitted('send-text')).toBeUndefined()
+  })
+})

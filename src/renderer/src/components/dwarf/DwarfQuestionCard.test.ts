@@ -936,3 +936,30 @@ describe('a call that asks several questions (#443)', () => {
     })
   })
 })
+
+/*
+ * ADDED for #635: an input method's own Enter picks its candidate, and the text it belongs to is
+ * not written yet — the composer's rule (belongsToComposition, lib/controls/input), which the
+ * free-answer box ignored.
+ */
+describe('an Enter that belongs to an IME composition', () => {
+  function composingEnter(element: Element, init: KeyboardEventInit): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+      ...init
+    })
+    element.dispatchEvent(event)
+    return event
+  }
+
+  it('sends nothing from the free-answer box while the composition is open', async () => {
+    const wrapper = card()
+    await wrapper.find('.freeform-input').setValue('にほんご')
+    composingEnter(wrapper.find('.freeform-input').element, { isComposing: true })
+    composingEnter(wrapper.find('.freeform-input').element, { keyCode: 229 })
+    expect(wrapper.emitted('send-text')).toBeUndefined()
+    expect(wrapper.emitted('answer-text')).toBeUndefined()
+  })
+})

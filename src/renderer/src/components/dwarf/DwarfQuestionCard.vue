@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { belongsToComposition } from '../../lib/controls/input'
 import { CONSOLE_HINT, JUMP_TO_TERMINAL_NAME } from '../../lib/delivery/actionBar'
 import {
   NEXT_QUESTION_NAME,
@@ -292,6 +293,8 @@ function onKeydown(event: KeyboardEvent): void {
  */
 function onFreeformKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || event.shiftKey) return
+  // An input method's own Enter picks its candidate; the text is not written yet (#635).
+  if (belongsToComposition(event)) return
   event.preventDefault()
   const text = freeform.value.trim()
   if (text === '') return
