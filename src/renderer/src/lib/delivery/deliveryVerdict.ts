@@ -171,16 +171,20 @@ export function kickHasNothingToAwait(via: string | undefined): boolean {
 }
 
 /**
- * The one control a failed message offers, on its own bubble (#309).
+ * The two controls a failed message offers, under its own bubble (#309, #635).
  *
  * Here rather than in the panel for the reason every other sentence in this
  * file is: what the app says about a delivery verdict is decided in one place
- * and unit-tested. The title is the half that carries the consequence — a
- * retry is a second delivery and the first one's ✕ stays where it is, because
- * it is the only thing on screen saying the channel let the person down once.
+ * and unit-tested. The words are the design's (copy.md, Chat bubble): Retry
+ * re-sends the same text in place and Copy puts it on the clipboard, then says
+ * so in a toast (decision log, Failed delivery, PO ruling 2026-09-25).
  */
-export const SEND_AGAIN_LABEL = 'Send again'
-export const SEND_AGAIN_TITLE = 'Send this message again. The one that failed stays marked.'
+export const RETRY_LABEL = 'Retry'
+export const RETRY_TITLE = 'Send the same message again'
+export const COPY_LABEL = 'Copy'
+export const COPY_TITLE = 'Copy the message text'
+/** The toast once main has put a message's text on the clipboard. */
+export const MESSAGE_COPIED = 'Message copied'
 
 /**
  * Whether a message on this channel reached the session as a relayed note

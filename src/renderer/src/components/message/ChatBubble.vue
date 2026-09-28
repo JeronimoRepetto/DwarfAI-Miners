@@ -2,11 +2,23 @@
 /*
  * One chat bubble (#635), `molecules/chat-bubble` in the design: parchment for the dwarf, parchment
  * low for you, a Markdown body in the talk face, the time and, for your messages, the delivery
- * mark. Anything under the foot — a failed message's actions, the files it was sent with — is the
- * host's, in the default slot. Shared by the MessagePanel and the mine history, whose markup it
- * was until this slice extracted it. Which mark a bubble wears is its host's to decide
- * (lib/message/panelChrome, lib/history/mineHistory); this draws it.
+ * mark. The files a message was sent with are the host's, in the default slot. Shared by the
+ * MessagePanel and the mine history, whose markup it was until this slice extracted it. Which mark
+ * a bubble wears is its host's to decide (lib/message/panelChrome, lib/history/mineHistory); this
+ * draws it.
+ *
+ * A failed message's way out is the bubble's own (decision log, Failed delivery): while its mark
+ * is ✕ and its host offers a retry, Retry and Copy sit under the foot, and they go as soon as the
+ * mark leaves ✕. Nothing retries on its own: the bubble reports the press and its host re-sends
+ * the same message, walking this same bubble's mark.
  */
+import {
+  COPY_LABEL,
+  COPY_TITLE,
+  RETRY_LABEL,
+  RETRY_TITLE
+} from '../../lib/delivery/deliveryVerdict'
+import ActionButton from '../controls/ActionButton.vue'
 import MarkdownBubble from './MarkdownBubble.vue'
 
 defineProps<{
@@ -19,11 +31,20 @@ defineProps<{
   mark?: { mark: string; glyph: string; title: string }
   /** A genuine arrival on this render: it pops in (motion.md, `.dm-bubble.is-new`). */
   isNew?: boolean
+  /**
+   * Whether the host can re-send this message: the design's `onRetry`. Retry and Copy show only
+   * while it is set and the mark is ✕; the read-only history never sets it.
+   */
+  offersRetry?: boolean
 }>()
 
 const emit = defineEmits<{
   /** A link in the body was pressed; the host relays it to main, which opens it (#347). */
   'open-link': [href: string]
+  /** Retry was pressed: the host re-sends the same message in place. */
+  retry: []
+  /** Copy was pressed: the host puts the text on the clipboard and says so. */
+  copy: []
 }>()
 </script>
 
@@ -42,6 +63,15 @@ const emit = defineEmits<{
       }}</span>
     </div>
     <slot />
+    <div
+      v-if="offersRetry && mark?.mark === 'failed'"
+      class="dm-bubble__actions"
+      role="group"
+      aria-label="Not delivered"
+    >
+      <ActionButton :label="RETRY_LABEL" size="sm" :title="RETRY_TITLE" @click="emit('retry')" />
+      <ActionButton :label="COPY_LABEL" size="sm" :title="COPY_TITLE" @click="emit('copy')" />
+    </div>
   </div>
 </template>
 
@@ -148,7 +178,7 @@ const emit = defineEmits<{
 .dm-bubble__mark[data-mark='failed'] {
   color: var(--danger-ink);
 }
-.dm-bubble :deep(.dm-bubble__actions) {
+.dm-bubble__actions {
   display: flex;
   gap: var(--sp-2);
   justify-content: flex-end;

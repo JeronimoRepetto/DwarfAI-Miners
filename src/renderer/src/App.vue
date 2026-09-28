@@ -1278,7 +1278,8 @@ onBeforeUnmount(() => {
               focus-on-open
               @draft="dock.setDraft(dock.selectedDwarf.value.id, $event)"
               @send="dock.sendText(dock.selectedDwarf.value, $event)"
-              @send-again="dock.sendAgain(dock.selectedDwarf.value, $event)"
+              @retry="dock.retryMessage(dock.selectedDwarf.value, $event)"
+              @copy="dock.copyMessage"
               @kick="dock.kickDwarf(dock.selectedDwarf.value)"
               @answer="dock.answerQuestion(dock.selectedDwarf.value, $event)"
               @answer-text="dock.answerQuestionInWords(dock.selectedDwarf.value, $event)"

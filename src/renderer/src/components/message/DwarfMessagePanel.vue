@@ -11,13 +11,7 @@ import {
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { ATTACH_LOST_CONTACT, acceptAttachments, attachHint } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
-import {
-  SEND_AGAIN_LABEL,
-  SEND_AGAIN_TITLE,
-  kickStatusLine,
-  sendMarker,
-  sendStatusLine
-} from '../../lib/delivery/deliveryVerdict'
+import { kickStatusLine, sendMarker, sendStatusLine } from '../../lib/delivery/deliveryVerdict'
 import { historyClock, historyMarks, HISTORY_MARK } from '../../lib/history/mineHistory'
 import { activityStepsLabel, groupActivity, type PanelEntry } from '../../lib/message/activityGroup'
 import { conversationEnded, conversationOf, ENDED_NOTE } from '../../lib/message/conversation'
@@ -157,8 +151,13 @@ const emit = defineEmits<{
   'answer-text': [text: string]
   /** One of Claude Code's own two answers to a permission prompt (#203). */
   decide: [decision: DwarfPermissionDecision]
-  /** Send a failed message again (#309), by its own echo id, never the text. */
-  'send-again': [echoId: string]
+  /**
+   * Retry a failed message (#309, #635): re-send it in place, by its own echo id, never the text,
+   * so the retry cannot land on another bubble.
+   */
+  retry: [echoId: string]
+  /** Copy a failed message's words, exactly as written, to the clipboard (#635). */
+  copy: [text: string]
   /** Focus this session's console: the header's Console tool and the ⋯ menu's Open console. */
   'open-console': []
   /** The mine history, which opens in the dock's slot in place of this panel (#635). */
@@ -746,7 +745,10 @@ function onStopAction(index: number): void {
           :time="entry.message.at === undefined ? undefined : historyClock(entry.message.at)"
           :mark="entry.message.mark"
           :is-new="arrivedKeys.has(entry.key)"
+          :offers-retry="entry.message.echo !== undefined && canReceive"
           @open-link="emit('open-link', $event)"
+          @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
+          @copy="emit('copy', entry.message.text)"
         >
           <!--
             What the message was sent WITH (#408): the same pills, without their remove control —
@@ -766,23 +768,6 @@ function onStopAction(index: number): void {
               <span>{{ item.name }}</span>
             </li>
           </ul>
-          <!--
-            A failed message offers the one control that sends the same words again, and only where
-            the session can still be written to at all (#309).
-          -->
-          <div
-            v-if="entry.message.echo?.state.phase === 'failed' && canReceive"
-            class="dm-bubble__actions"
-            role="group"
-            aria-label="Not delivered"
-          >
-            <ActionButton
-              :label="SEND_AGAIN_LABEL"
-              size="sm"
-              :title="SEND_AGAIN_TITLE"
-              @click="emit('send-again', entry.message.echo.id)"
-            />
-          </div>
         </ChatBubble>
       </template>
     </div>

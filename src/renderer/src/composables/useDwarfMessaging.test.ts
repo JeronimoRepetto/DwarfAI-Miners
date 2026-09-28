@@ -514,7 +514,12 @@ describe('useDwarfMessaging echoes', () => {
     ])
   })
 
-  it('mints a new message when a failed one is sent again, and leaves the failed one marked', async () => {
+  /*
+   * AMENDED for #635 (decision log, Failed delivery; was: 'mints a new message when a failed one
+   * is sent again, and leaves the failed one marked', #309). The PO ruled a retry re-sends the
+   * same text IN PLACE: the same bubble walks the marks again, and no second one is added.
+   */
+  it('re-sends a failed message in place: the same message, no second one', async () => {
     stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
     const { send, retry, echoesFor } = useDwarfMessaging()
     await send('claude:s1', 'dig deeper', true)
@@ -524,10 +529,9 @@ describe('useDwarfMessaging echoes', () => {
     await retry('claude:s1', failed.id)
 
     const echoes = echoesFor('claude:s1')
-    expect(echoes).toHaveLength(2)
-    expect(echoes[0]).toEqual(failed)
-    expect(echoes[1]?.id).not.toBe(failed.id)
-    expect(echoes[1]).toMatchObject({ text: 'dig deeper', state: { phase: 'delivered' } })
+    expect(echoes).toHaveLength(1)
+    expect(echoes[0]?.id).toBe(failed.id)
+    expect(echoes[0]).toMatchObject({ text: 'dig deeper', state: { phase: 'delivered' } })
   })
 
   it("sends the failed message's own words, over the same channel a send uses", async () => {
@@ -553,6 +557,143 @@ describe('useDwarfMessaging echoes', () => {
 
     await expect(retry('claude:s1', 'never-minted')).resolves.toBe(false)
     expect(api).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #635, decision log, Failed delivery — APPENDED. Retry walks the SAME message back along the
+   * marks: … while it is in flight, then ✓ (and ✓✓ once acted on), or ✕ again. Its position,
+   * its words and its files stay; only its verdict and its send time are the retry's.
+   */
+  describe('retrying in place (#635)', () => {
+    async function failedOnce(text = 'dig deeper'): Promise<string> {
+      stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+      await useDwarfMessaging().send('claude:s1', text, true)
+      return useDwarfMessaging().echoesFor('claude:s1').at(-1)!.id
+    }
+
+    it('walks the same message back to sending while the retry is in flight', async () => {
+      const id = await failedOnce()
+      const pending = deferred<DwarfTextResult>()
+      stubApi(() => pending.promise)
+      const { retry, echoesFor, stateFor } = useDwarfMessaging()
+
+      const retrying = retry('claude:s1', id)
+      expect(echoesFor('claude:s1').map((echo) => [echo.id, echo.state])).toEqual([
+        [id, { phase: 'sending' }]
+      ])
+      // The sprite carries the same mark: the dwarf's own verdict is the retry's too.
+      expect(stateFor('claude:s1')).toEqual({ phase: 'sending' })
+
+      pending.release({ delivered: true, via: 'terminal' })
+      await retrying
+      expect(echoesFor('claude:s1')[0]?.state.phase).toBe('delivered')
+    })
+
+    it('marks the same message failed again when the retry fails too', async () => {
+      const id = await failedOnce()
+      stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'still nope' }))
+      const { retry, echoesFor } = useDwarfMessaging()
+
+      await expect(retry('claude:s1', id)).resolves.toBe(false)
+      expect(echoesFor('claude:s1')).toEqual([
+        expect.objectContaining({
+          id,
+          state: { phase: 'failed', via: 'terminal', error: 'still nope' }
+        })
+      ])
+    })
+
+    it('promotes the same message once the session is seen acting on the retry', async () => {
+      const { observe, retry, echoesFor } = useDwarfMessaging()
+      observe([dwarf({ status: 'working', lastMessage: 'a' })])
+      const id = await failedOnce()
+      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      await retry('claude:s1', id)
+
+      observe([dwarf({ status: 'working', lastMessage: 'on it' })])
+      expect(echoesFor('claude:s1').map((echo) => [echo.id, echo.state.phase])).toEqual([
+        [id, 'reacted']
+      ])
+    })
+
+    it('stays where it was among the messages sent after it', async () => {
+      const id = await failedOnce('first')
+      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      const { send, retry, echoesFor } = useDwarfMessaging()
+      await send('claude:s1', 'second', true)
+
+      await retry('claude:s1', id)
+      expect(echoesFor('claude:s1').map((echo) => [echo.text, echo.state.phase])).toEqual([
+        ['first', 'delivered'],
+        ['second', 'delivered']
+      ])
+    })
+
+    /*
+     * The transcript row the retry produces is stamped after the RETRY, and reconciling measures
+     * a row against the echo's send time (lib/message/echo): a send time left at the failed
+     * attempt would put that row outside the match window, and the words would show twice.
+     */
+    it("restamps the message with the retry's own send time", async () => {
+      vi.setSystemTime(1_000)
+      const id = await failedOnce()
+      vi.setSystemTime(1_000 + REACTION_WINDOW_MS * 3)
+      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      const { retry, reconcile, echoesFor } = useDwarfMessaging()
+      await retry('claude:s1', id)
+
+      reconcile('claude:s1', [
+        {
+          role: 'user',
+          text: 'dig deeper',
+          timestamp: new Date(1_000 + REACTION_WINDOW_MS * 3 + 500).toISOString()
+        }
+      ])
+      expect(echoesFor('claude:s1')).toEqual([])
+    })
+
+    it('re-sends the files the message was sent with, and keeps them on it (#408)', async () => {
+      const attachments: DwarfAttachment[] = [
+        { path: 'C:/work/shot.png', name: 'shot.png', kind: 'image', bytes: 10 }
+      ]
+      stubApi(() => Promise.resolve({ delivered: false, via: 'terminal', error: 'nope' }))
+      const { send, retry, echoesFor, attachmentsFor } = useDwarfMessaging()
+      await send('claude:s1', 'look', true, attachments)
+      const id = echoesFor('claude:s1')[0]!.id
+
+      const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+      stubApi(api as never)
+      await retry('claude:s1', id)
+
+      expect(api).toHaveBeenCalledWith({
+        dwarfId: 'claude:s1',
+        text: 'look',
+        pressEnter: true,
+        attachments
+      })
+      expect(attachmentsFor('claude:s1', id)).toEqual(attachments)
+    })
+
+    it('refuses to re-send a message that did not fail, so a stale press never sends it twice', async () => {
+      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      const { send, retry, echoesFor } = useDwarfMessaging()
+      await send('claude:s1', 'arrived', true)
+      const api = vi.fn().mockResolvedValue({ delivered: true, via: 'terminal' })
+      stubApi(api as never)
+
+      await expect(retry('claude:s1', echoesFor('claude:s1')[0]!.id)).resolves.toBe(false)
+      expect(api).not.toHaveBeenCalled()
+    })
+
+    it('drops the message from the failed sends once the retry leaves ✕', async () => {
+      const id = await failedOnce()
+      stubApi(() => Promise.resolve({ delivered: true, via: 'terminal' }))
+      const { retry, failedSends } = useDwarfMessaging()
+      expect(Object.keys(failedSends())).toEqual(['claude:s1'])
+
+      await retry('claude:s1', id)
+      expect(failedSends()).toEqual({})
+    })
   })
 
   it('keeps at most the cap, dropping the oldest, so a long conversation stays bounded', async () => {

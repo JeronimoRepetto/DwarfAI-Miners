@@ -10,7 +10,8 @@ import { APPROVAL_AT_TERMINAL_NOTE } from '../../lib/delivery/actionBar'
 /* --- Message attachments (#408) — one block, appended -------------------- */
 import { NO_ATTACH_CHANNEL_HINT, refusalSentence } from '../../lib/delivery/attachments'
 /* --- end of the #408 block ----------------------------------------------- */
-import { SEND_AGAIN_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
+// AMENDED for #635 (was: SEND_AGAIN_LABEL): the design's Retry, decision log, Failed delivery.
+import { COPY_LABEL, RETRY_LABEL, sendMarker } from '../../lib/delivery/deliveryVerdict'
 import {
   NO_TRANSCRIPT_NOTE,
   NOTHING_SAID_NOTE,
@@ -1850,9 +1851,14 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     )
   })
 
-  it('offers Send again on a failed message, and on no other', () => {
+  // AMENDED for #635 (decision log, Failed delivery; was: 'offers Send again on a failed
+  // message, and on no other', with the one Send again button): Retry, then Copy.
+  it('offers Retry and Copy on a failed message, and on no other', () => {
     const failed = panel({ echoes: [echo({ state: { phase: 'failed', error: 'nope' } })] })
-    expect(failed.find('.dm-bubble__actions .dm-btn').text()).toBe(SEND_AGAIN_LABEL)
+    expect(failed.findAll('.dm-bubble__actions .dm-btn').map((b) => b.text())).toEqual([
+      RETRY_LABEL,
+      COPY_LABEL
+    ])
 
     for (const phase of ['sending', 'delivered', 'reacted'] as const) {
       const other = panel({ echoes: [echo({ state: { phase } })] })
@@ -1889,7 +1895,31 @@ describe('DwarfMessagePanel echoes (#309)', () => {
       ]
     })
     await wrapper.find('.dm-bubble__actions .dm-btn').trigger('click')
-    expect(wrapper.emitted('send-again')).toEqual([['e2']])
+    // AMENDED for #635 (was: the `send-again` event): the design's Retry, by the same id.
+    expect(wrapper.emitted('retry')).toEqual([['e2']])
+  })
+
+  /*
+   * #635, decision log, Failed delivery — APPENDED. Copy copies the words of the message whose
+   * button was pressed, exactly as written; the panel reports them and its host owns the
+   * clipboard and the toast.
+   */
+  it("emits the failed message's own words for Copy", async () => {
+    const wrapper = panel({
+      echoes: [
+        echo({ id: 'e1', text: 'first', state: { phase: 'delivered' } }),
+        echo({ id: 'e2', text: 'second\nline', state: { phase: 'failed', error: 'nope' } })
+      ]
+    })
+    await wrapper.findAll('.dm-bubble__actions .dm-btn')[1]!.trigger('click')
+    expect(wrapper.emitted('copy')).toEqual([['second\nline']])
+  })
+
+  it('keeps one bubble for a failed message while its retry is on its way', () => {
+    // The echo is walked back in place by the store; the panel draws what it holds, once.
+    const wrapper = panel({ echoes: [echo({ id: 'e2', state: { phase: 'sending' } })] })
+    expect(wrapper.findAll('.dm-bubble--user .dm-bubble__mark').map((m) => m.text())).toContain('…')
+    expect(wrapper.find('.dm-bubble__actions').exists()).toBe(false)
   })
 
   it('offers no retry for a session that can no longer be written to', () => {
