@@ -166,6 +166,10 @@
     "key": "organisms/add-panel#custom-command"
   },
   {
+    "key": "organisms/add-panel#jev-suggests-launch-in-flight",
+    "red": "29.827% differing, 140 clusters: the card stays on screen with its Dismiss disabled since MESSAGE-QUESTIONS Q1, but it is still the #509 card, its summary, parts and note lines, where the design draws the eyebrow and one paragraph (the card's resting style is a later slice); and the app applies Jev's pick to the pickers (#509), so the Claude chip is checked and the selects show Claude's values, where the prototype, whose Jev never sets them, draws no chip checked and the selects reading Jev decides"
+  },
+  {
     "key": "molecules/vault-strip#mine-footer"
   },
   {

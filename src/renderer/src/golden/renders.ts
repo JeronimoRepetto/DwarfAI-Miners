@@ -77,6 +77,7 @@ import {
   type DwarfProvider,
   type DwarfSendState,
   type DwarfRole,
+  type JevRouteLaunchResult,
   type Material,
   type MaterialTotals,
   type MineTier
@@ -1028,28 +1029,75 @@ const messagePanel: Render = (sample, _texts, attributes) => {
  * name gives, over the bridge answered from the sample, with the supplier its checked chip names
  * chosen, as a person's click would choose it. Each prop is what App hands the panel from it.
  */
+/*
+ * A launch routed through Jev, as its tree prints it: the prompt, Jev's pick, and whether the
+ * launch it confirmed is in flight. The tree names only the pick, so the rest of Jev's answer is
+ * the least the wire allows: no confidence, and each part answered.
+ */
+interface JevLaunch {
+  prompt: string
+  pick: { provider: DwarfProvider; model: string; effort: string }
+  inFlight: boolean
+}
+
 const LaunchStage = defineComponent({
   props: {
     sample: { type: Object as () => GoldenSample, required: true },
     mineId: { type: String, required: true },
     mineName: { type: String, required: true },
-    choice: { type: String as () => LaunchChoice | null, default: null }
+    choice: { type: String as () => LaunchChoice | null, default: null },
+    jevLaunch: { type: Object as () => JevLaunch | null, default: null }
   },
   setup(props) {
     // The kit draws Jev as a choice the person can make, which is the app with a TypeSafe key set:
     // the bridge answers the stored verdict main keeps once one is (#509).
     const api = goldenApi(props.sample)
+    const jevLaunch = props.jevLaunch
+    // A launch in flight is one whose session never answers: the golden stops the world there.
+    const never = (): Promise<never> => new Promise<never>(() => {})
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
         ...api,
-        getJevSettings: () => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, configured: true })
+        getJevSettings: () => Promise.resolve({ ...DEFAULT_JEV_SETTINGS, configured: true }),
+        ...(jevLaunch === null
+          ? {}
+          : {
+              routeJevLaunch: (): Promise<JevRouteLaunchResult> =>
+                Promise.resolve({
+                  kind: 'decision',
+                  ...jevLaunch.pick,
+                  truncated: false,
+                  tier: 'balanced',
+                  parts: {
+                    provider: {
+                      value: jevLaunch.pick.provider,
+                      confidence: 1,
+                      applied: 'answered'
+                    },
+                    tier: { value: 'balanced', confidence: 1, applied: 'answered' },
+                    trivial: { value: false, probability: 0 },
+                    largeContext: { value: false, probability: 0 },
+                    model: { value: jevLaunch.pick.model, applied: 'only-candidate' }
+                  }
+                }),
+              launchAgent: never,
+              launchHeldSession: never,
+              launchHostedProcess: never
+            })
       }
     })
     const launch = useAgentLaunch()
     launch.close()
-    void launch.open(props.mineId).then(() => {
+    void launch.open(props.mineId).then(async () => {
       if (props.choice !== null) launch.choose(props.choice)
+      if (jevLaunch === null) return
+      // As a person reaches it: Let Jev choose, the prompt, Send (Jev asked, its card shown),
+      // and, in flight, Send again on the pick it applied.
+      launch.toggleJevEnabled()
+      launch.setPrompt(jevLaunch.prompt)
+      await launch.submit()
+      if (jevLaunch.inFlight) void launch.submit()
     })
     return () =>
       h(AddPanel, {
@@ -1069,13 +1117,37 @@ const LaunchStage = defineComponent({
   }
 })
 
-const addPanel: Render = (sample, _texts, attributes) => {
+/*
+ * Jev's launch as the tree prints it, or null with Let Jev choose off: the prompt its field holds,
+ * the pick its card names as "supplier · model · effort" (the supplier by the chip of that label),
+ * and in flight when the prompt is disabled, which only a launch under way does to it.
+ */
+const jevLaunchOf = (texts: GoldenText[], attributes: GoldenAttributes[]): JevLaunch | null => {
+  const toggle = elementsOf(attributes, 'button.dm-toggle').find(
+    (a) => a['aria-label'] === 'Let Jev choose'
+  )
+  if (toggle?.['aria-checked'] !== 'true') return null
+  const field = elementsOf(attributes, 'textarea')[0] ?? fail('prompt', 'textarea')
+  const pick = texts.map((t) => /^(.+) · (.+) · (.+)$/.exec(t.text ?? '')).find((m) => m !== null)
+  if (pick === undefined || pick === null) return fail('Jev pick', texts)
+  const supplier = pick[1]!.toLowerCase()
+  const chip = elementsOf(attributes, 'button.dm-chip').find((a) => a['data-value'] === supplier)
+  const provider = (chip?.['data-value'] ?? fail('supplier', pick[1])) as DwarfProvider
+  return {
+    prompt: field.value ?? '',
+    pick: { provider, model: pick[2]!, effort: pick[3]! },
+    inFlight: 'disabled' in field
+  }
+}
+
+const addPanel: Render = (sample, texts, attributes) => {
   const label = elementsOf(attributes, 'section.dm-add')[0]?.['aria-label'] ?? ''
   const name = label.replace(/^Add a dwarf to /, '')
   const mine = sample.mines.find((m) => m.name === name) ?? fail('mine', name)
   const checked = elementsOf(attributes, 'button.dm-chip').find((a) => a['aria-checked'] === 'true')
   const value = checked?.['data-value']
   const choice = value === undefined ? null : value === 'other' ? OTHER_CHOICE : value
+  const jevLaunch = jevLaunchOf(texts, attributes)
   return {
     component: KitFrame,
     props: {
@@ -1083,7 +1155,7 @@ const addPanel: Render = (sample, _texts, attributes) => {
       parts: [
         {
           component: LaunchStage,
-          props: { sample, mineId: mine.id, mineName: mine.name, choice }
+          props: { sample, mineId: mine.id, mineName: mine.name, choice, jevLaunch }
         }
       ]
     }
@@ -1293,6 +1365,7 @@ export const RENDERS: Record<string, Render> = {
   'organisms/add-panel#live': addPanel,
   'organisms/add-panel#supplier-picked': addPanel,
   'organisms/add-panel#custom-command': addPanel,
+  'organisms/add-panel#jev-suggests-launch-in-flight': addPanel,
   'molecules/vault-strip#mine-footer': vaultStrip,
   'molecules/vault-strip#map-totals': vaultStrip,
   'molecules/vault-strip#empty': vaultStrip,

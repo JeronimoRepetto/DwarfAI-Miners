@@ -1127,8 +1127,12 @@ describe('the Jev option', () => {
      * chips and the prompt stay drawn now, but the card still goes: its Dismiss would put the
      * pickers back under a launch already in flight, and its "press Send the dwarf in" can no
      * longer be acted on.
+     *
+     * AMENDED for #635 (MESSAGE-QUESTIONS Q1; was: card and Dismiss absent). The design lead ruled
+     * that the panel stays as it is while a launch is in flight: the card stays on screen, and
+     * its Dismiss waits, natively disabled, with every other control but Close.
      */
-    it('is gone once the session has launched, Dismiss with it', () => {
+    it('stays on screen once the session has launched, its Dismiss disabled', () => {
       const wrapper = panel({
         chosen: 'codex',
         phase: 'submitted-spawning',
@@ -1137,8 +1141,47 @@ describe('the Jev option', () => {
         jev: { ...READY_JEV, enabled: true, routing: DECISION }
       })
 
-      expect(wrapper.find('.jev-decision-summary').exists()).toBe(false)
-      expect(wrapper.find('.jev-dismiss').exists()).toBe(false)
+      expect(wrapper.find('.jev-decision-summary').exists()).toBe(true)
+      expect(wrapper.get('.jev-dismiss').attributes('disabled')).toBeDefined()
+    })
+
+    // APPENDED for #635 (MESSAGE-QUESTIONS Q1): the other end state that holds the panel.
+    it('stays on screen after a launch the panel cannot watch, its Dismiss disabled', () => {
+      const wrapper = panel({
+        chosen: 'codex',
+        phase: 'started-detached',
+        enabled: true,
+        prompt: 'dig the east gallery',
+        jev: { ...READY_JEV, enabled: true, routing: DECISION }
+      })
+
+      expect(wrapper.find('.jev-decision-summary').exists()).toBe(true)
+      expect(wrapper.get('.jev-dismiss').attributes('disabled')).toBeDefined()
+    })
+
+    // APPENDED for #635 (MESSAGE-QUESTIONS Q1): outside a launch, Dismiss is live whenever shown.
+    it('offers a live Dismiss while no launch is in flight', () => {
+      const wrapper = withDecision({ prompt: 'dig the east gallery', enabled: true })
+
+      expect(wrapper.get('.jev-dismiss').attributes('disabled')).toBeUndefined()
+    })
+
+    /*
+     * APPENDED for #635: pressing Dismiss moves focus to Let Jev choose (screens/launch.md, and
+     * components.md, Add a dwarf, Accessibility), so the keyboard is not left on a button the
+     * card takes away with it.
+     */
+    it('moves focus to Let Jev choose when Dismiss is pressed', async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const wrapper = withDecision({ attachTo: host })
+      await flushPromises()
+
+      await wrapper.get('.jev-dismiss').trigger('click')
+
+      expect(document.activeElement).toBe(wrapper.get(JEV_TOGGLE).element)
+      wrapper.unmount()
+      host.remove()
     })
   })
 
@@ -1341,6 +1384,13 @@ describe('the Jev option', () => {
         await wrapper.get('.jev-fallback-dismiss').trigger('click')
 
         expect(wrapper.emitted('dismiss-jev')).toHaveLength(1)
+      })
+
+      // APPENDED for #635 (MESSAGE-QUESTIONS Q1): the applied default's Dismiss waits in flight too.
+      it('disables that Dismiss while a launch is in flight', () => {
+        const wrapper = fellBackWithDefault({ phase: 'submitted-spawning', enabled: true })
+
+        expect(wrapper.get('.jev-fallback-dismiss').attributes('disabled')).toBeDefined()
       })
 
       it('shows no Dismiss on a plain fallback that applied nothing', () => {
