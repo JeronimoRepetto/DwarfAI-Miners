@@ -451,6 +451,35 @@ describe('the docked message panel', () => {
     expect(wrapper.find('.dm-composer .dm-field').attributes('title')).toContain('ended')
   })
 
+  /*
+   * #635, decision log, Copy alone on a closed session — APPENDED. A dwarf the board showed with a
+   * channel for text that a later poll shows without one is a session whose delivery route went
+   * away, not a session type with no channel yet: the store remembers who had one, and the panel
+   * says the closed sentence in the well.
+   */
+  it('tells a delivery route that went away apart from a session type with no channel', async () => {
+    const { wrapper, api } = await openOn(
+      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
+      'claude:s1'
+    )
+    const box = () => wrapper.find('.dm-composer textarea')
+    expect(box().attributes('disabled')).toBeUndefined()
+
+    pushSnapshot(api, { mines: [{ ...MINE, dwarfs: [OBSERVED_DWARF] }], tokensObserved: 0 })
+    await flushPromises()
+
+    expect(box().attributes('disabled')).toBeDefined()
+    expect(box().attributes('placeholder')).toBe('This session can no longer receive messages.')
+    expect(wrapper.find('.dm-composer__hint').text()).not.toContain("can't receive messages yet")
+  })
+
+  it('keeps the no-channel refusal for a dwarf the board never showed with a channel', async () => {
+    const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1')
+    const box = wrapper.find('.dm-composer textarea')
+    expect(box.attributes('disabled')).toBeDefined()
+    expect(box.attributes('placeholder')).not.toBe('This session can no longer receive messages.')
+  })
+
   it("leaves closing an ended session's panel to the person", async () => {
     const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1')
 

@@ -15,7 +15,9 @@ import {
   oneShotNoExitReason,
   OPEN_TURN_NO_INTERRUPT_HINT,
   refusalLine,
+  SESSION_CLOSED_REASON,
   SESSION_ENDED_REASON,
+  sessionClosed,
   type ActionBarEntry,
   type ActionId,
   type ActionTransientState
@@ -1190,3 +1192,32 @@ describe('an OpenCode session continued with opencode run --session (#534)', () 
   })
 })
 /* --- end of the #534 block ---------------------------------------------------- */
+
+/* --- #635, decision log, Copy alone on a closed session — appended ------------ */
+/*
+ * A session that can no longer take text: it ended, or its delivery route went away. Its own
+ * sentence, never the no-channel one, which is only for a session type with no channel yet.
+ */
+describe('sessionClosed (#635)', () => {
+  it('says the closed sentence in the design’s words, apart from the other two', () => {
+    expect(SESSION_CLOSED_REASON).toBe('This session can no longer receive messages.')
+    expect(SESSION_CLOSED_REASON).not.toBe(NO_CHANNEL_REASON)
+    expect(SESSION_CLOSED_REASON).not.toBe(SESSION_ENDED_REASON)
+  })
+
+  it('is closed once the session has ended, whatever channel it still carries', () => {
+    expect(
+      sessionClosed(defaultDwarf({ status: 'leaving', textDelivery: 'terminal' }), false)
+    ).toBe(true)
+  })
+
+  it('is closed once its delivery route went away', () => {
+    expect(sessionClosed(defaultDwarf({ textDelivery: undefined }), true)).toBe(true)
+  })
+
+  it('is not closed for a session type with no channel yet, nor for a live one', () => {
+    expect(sessionClosed(defaultDwarf({ textDelivery: undefined }), false)).toBe(false)
+    expect(sessionClosed(defaultDwarf({ textDelivery: 'terminal' }), false)).toBe(false)
+  })
+})
+/* --- end of the #635 block ---------------------------------------------------- */

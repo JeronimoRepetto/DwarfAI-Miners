@@ -73,3 +73,51 @@ describe('ChatBubble, not delivered (#635)', () => {
     expect(wrapper.find('.dm-bubble__actions').exists()).toBe(true)
   })
 })
+
+/*
+ * #635, decision log, Copy alone on a closed session (MESSAGE-QUESTIONS 4) — APPENDED. On a
+ * session that can no longer take text, a failed message keeps Copy alone: Retry is absent, not
+ * disabled, since nothing will ever make it work there, and the group keeps its name.
+ */
+describe('ChatBubble, not delivered on a closed session (#635)', () => {
+  function closed(phase: DwarfSendState['phase'], offersRetry = false) {
+    return mount(ChatBubble, {
+      props: {
+        from: 'user',
+        text: 'Also check that the auto-invoke table still sorts.',
+        time: '09:13',
+        mark: bubbleMark(sendMarker({ phase })!),
+        offersRetry,
+        sessionClosed: true
+      }
+    })
+  }
+
+  it('keeps Copy alone in the group named Not delivered, with no Retry element at all', () => {
+    const group = closed('failed').find('.dm-bubble__actions')
+    expect(group.attributes('role')).toBe('group')
+    expect(group.attributes('aria-label')).toBe('Not delivered')
+    expect(group.findAll('.dm-btn').map((b) => [b.text(), b.attributes('title')])).toEqual([
+      ['Copy', 'Copy the message text']
+    ])
+  })
+
+  it('keeps Copy alone even where its host would offer a retry, as the design has it win', () => {
+    const buttons = closed('failed', true).findAll('.dm-bubble__actions .dm-btn')
+    expect(buttons.map((b) => b.text())).toEqual(['Copy'])
+  })
+
+  it.each(['sending', 'delivered', 'reacted'] as const)(
+    'offers nothing once the mark has left ✕ (%s)',
+    (phase) => {
+      expect(closed(phase).find('.dm-bubble__actions').exists()).toBe(false)
+    }
+  )
+
+  it('reports Copy to its host', async () => {
+    const wrapper = closed('failed')
+    await wrapper.find('.dm-bubble__actions .dm-btn').trigger('click')
+    expect(wrapper.emitted('copy')).toEqual([[]])
+    expect(wrapper.emitted('retry')).toBeUndefined()
+  })
+})
