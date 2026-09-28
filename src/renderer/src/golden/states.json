@@ -82,7 +82,13 @@
     "key": "molecules/dialog#live"
   },
   {
+    "key": "molecules/menu#messagepanel"
+  },
+  {
     "key": "molecules/menu#mine-card"
+  },
+  {
+    "key": "molecules/menu#item-hovered"
   },
   {
     "key": "molecules/menu#danger-hovered"
