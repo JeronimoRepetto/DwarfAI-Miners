@@ -4,7 +4,7 @@ description: >
   The generated, read-only design docs behind the interface rebuild, the reading route through
   them, and the decisions resolved there that code must not reopen.
   Trigger: implementing or styling any screen, panel or component of the redesigned UI.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '2.3'

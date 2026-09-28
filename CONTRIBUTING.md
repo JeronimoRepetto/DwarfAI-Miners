@@ -245,7 +245,7 @@ file there, and a credit, when you add a sound.
 **Inbound terms.** Artwork is not an open contribution surface by default. Please discuss an art
 contribution with the maintainer before opening a pull request. Any accepted artwork must have
 separate written terms confirming that it is yours to give, free of third-party claims, and
-specifying the permission granted to this project. It is not automatically covered by the MIT
+specifying the permission granted to this project. It is not automatically covered by the GPLv3
 license for the code, and submitting a pull request does not by itself grant permission to reuse
 the project's existing artwork.
 

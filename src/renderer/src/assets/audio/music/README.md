@@ -5,7 +5,7 @@ The eight tracks in this directory are the **maintainer's own**, produced for Dw
 They are committed so a clone builds and plays without any extra download, exactly as the processed
 art under `../../art/` is.
 
-**They are not covered by the repository's MIT license and they are not licensed for reuse.** The
+**They are not covered by the repository's GPLv3 license and they are not licensed for reuse.** The
 inbound-artwork terms in [`CONTRIBUTING.md`](../../../../../../CONTRIBUTING.md#artwork) apply to audio
 as well: submitting a pull request does not grant permission to reuse what is already here, and any
 audio contributed to the project needs separate written terms.

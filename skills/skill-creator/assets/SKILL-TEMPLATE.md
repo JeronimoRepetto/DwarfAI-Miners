@@ -3,7 +3,7 @@ name: skill-name-in-kebab-case
 description: >
   What this skill covers, as a noun phrase, in one clause.
   Trigger: the moment an agent should reach for it.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

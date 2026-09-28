@@ -3,7 +3,7 @@ name: jev-capabilities
 description: >
   How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet.
   Trigger: before adding a provider or a model the app can launch, changing a model catalogue builder, editing a Jev question, criterion or confidence floor, or adding a provider whose models come from a live catalogue instead of a hand-verified list.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

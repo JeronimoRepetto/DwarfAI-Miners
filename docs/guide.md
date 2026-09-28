@@ -664,7 +664,7 @@ always did.
 
 The three volumes and the startup switch live in [Settings](#settings). The music and the voices
 are the maintainer's own and are covered by [`ARTWORK-LICENSE.md`](../ARTWORK-LICENSE.md), not by the
-code's MIT license; the sound effects are CC0, with their sources in
+code's GPLv3 license; the sound effects are CC0, with their sources in
 [`AUDIO-CREDITS.md`](../AUDIO-CREDITS.md).
 
 ## Notifications

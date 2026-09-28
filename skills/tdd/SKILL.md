@@ -3,7 +3,7 @@ name: tdd
 description: >
   The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here.
   Trigger: before implementing any behaviour change, fixing any bug, or making a failing test pass.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

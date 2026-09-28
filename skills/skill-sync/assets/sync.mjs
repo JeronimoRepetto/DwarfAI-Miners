@@ -158,7 +158,7 @@ function validate(skill, dirName, file, source) {
   else if (!/\bTrigger:/.test(skill.description))
     errs.push('`description` must contain a `Trigger:` clause saying when to reach for the skill')
 
-  if (!skill.license) errs.push('missing `license` (this repo is MIT)')
+  if (!skill.license) errs.push('missing `license` (this repo is GPL-3.0-or-later)')
   if (!meta.author) errs.push('missing `metadata.author`')
   // The quoting has to be checked against the SOURCE, not the parsed value.
   // This parser strips quotes, so `1.0` and `'1.0'` are indistinguishable by

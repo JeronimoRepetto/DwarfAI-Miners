@@ -3,7 +3,7 @@ name: platform-ports
 description: >
   How per-OS behaviour is isolated behind ports so that macOS and Linux assertions run on a Windows host.
   Trigger: before adding or changing anything that behaves differently per operating system, or before reading process.platform anywhere.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

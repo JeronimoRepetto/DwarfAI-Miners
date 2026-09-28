@@ -8,7 +8,7 @@
 [![Latest release](https://img.shields.io/github/v/release/JeronimoRepetto/DwarfAI-Miners?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/JeronimoRepetto/DwarfAI-Miners/total?style=flat-square)](https://github.com/JeronimoRepetto/DwarfAI-Miners/releases)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4a5568?style=flat-square)
-[![License: MIT](https://img.shields.io/badge/license-MIT-4a5568?style=flat-square)](LICENSE)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4a5568?style=flat-square)](LICENSE)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20project-FF5E5B?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/jeronimorepetto)
 
 ![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)
@@ -356,7 +356,7 @@ walked the support matrix on real hardware — including "it all worked". See
 - [`docs/README.md`](docs/README.md) — **the index to every other document in `docs/`**, including
   the provider-format research, the design and evaluation notes, and the measurement records.
 
-- [`LICENSE`](LICENSE) — MIT license for the code.
+- [`LICENSE`](LICENSE) — GPLv3 license for the code.
 - [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md) — proprietary terms for the project's visual and
   audio assets.
 - [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) — where every bundled sound comes from; the sound
@@ -368,7 +368,7 @@ walked the support matrix on real hardware — including "it all worked". See
   Support the project
 </h2>
 
-DwarfAI-Miners' code is free and MIT-licensed. The artwork remains the creator's property and is
+DwarfAI-Miners' code is free and GPLv3-licensed. The artwork remains the creator's property and is
 not separately reusable without authorization. If the project has earned a spot on your desktop,
 you can support its development on [Ko-fi](https://ko-fi.com/jeronimorepetto). Entirely optional —
 nothing in the app is, or will be, gated on it.
@@ -379,7 +379,7 @@ nothing in the app is, or will be, gated on it.
 
 ## License
 
-[MIT](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
+[GPLv3](LICENSE) © 2026 Jeronimo Repetto — code only. The visual and audio assets are protected by
 copyright and covered separately by [`ARTWORK-LICENSE.md`](ARTWORK-LICENSE.md); they may not be
 reused without prior written authorization.
 

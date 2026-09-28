@@ -3,7 +3,7 @@ name: skill-creator
 description: >
   How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all.
   Trigger: when adding a skill, editing skill frontmatter, or noticing a lesson that keeps being re-explained by hand.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

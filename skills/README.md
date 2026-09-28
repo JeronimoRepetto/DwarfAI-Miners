@@ -50,7 +50,7 @@ name: scene-coordinates
 description: >
   What the skill is, in one clause.
   Trigger: when an agent should reach for it.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'
@@ -65,7 +65,7 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 | ---------------------- | -------- | ---------------------------------------------------------------------------------- |
 | `name`                 | yes      | kebab-case, identical to the directory name                                        |
 | `description`          | yes      | one `>` folded block; must contain a `Trigger:` clause                             |
-| `license`              | yes      | `MIT` — this repo's LICENSE                                                        |
+| `license`              | yes      | `GPL-3.0-or-later` — this repo's LICENSE                                           |
 | `metadata.author`      | yes      | `JeronimoRepetto`                                                                  |
 | `metadata.version`     | yes      | **quoted** string like `'1.0'`; unquoted `1.0` is a YAML float                     |
 | `metadata.scope`       | yes      | which `AGENTS.md` files register it; every value must be a known scope             |

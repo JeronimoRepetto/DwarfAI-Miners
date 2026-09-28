@@ -3,7 +3,7 @@ name: release
 description: >
   How an installer release is actually cut — pushing a v-prefixed tag — and the traps in the workflow that do the building.
   Trigger: when asked to cut a release, publish installers, or change anything about packaging or the release workflow.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

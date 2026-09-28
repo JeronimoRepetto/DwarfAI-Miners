@@ -3,7 +3,7 @@ name: simulated-valley
 description: >
   The development-only simulated provider, for seeing the panel under load without launching real agent sessions.
   Trigger: when asked to verify anything visual at scale, reproduce a layout or performance limit, or check behaviour that needs many concurrent sessions.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'
