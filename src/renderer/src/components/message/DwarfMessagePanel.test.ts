@@ -3180,3 +3180,127 @@ describe('DwarfMessagePanel outcome rulings 9 to 12 (#635)', () => {
     expect(document.body.querySelector('.dm-tip')).toBeNull()
   })
 })
+
+/* --- The "Answers:" record (#635, MESSAGE-QUESTIONS 8) — one block, appended ---- */
+
+/*
+ * The record of an answer given on the ask's own channel (decision log, Answers bubble is a
+ * record): the person's bubble, in the design's Markdown, wearing the answer's own verdict. It
+ * carries no Retry and no Copy, even at ✕: the card is how the ask is answered again, and it is
+ * back in the composer's place because the ask is still open (organisms/message-panel, Answer
+ * refused).
+ */
+describe('DwarfMessagePanel: the "Answers:" record', () => {
+  const RECORD = 'Answers:\n\n- Which database should the importer write to: **SQLite**'
+  const pendingQuestion = {
+    toolUseId: 'toolu_01',
+    channel: 'held' as const,
+    questions: [
+      {
+        question: 'Which database should the importer write to?',
+        multiSelect: false,
+        options: [{ label: 'Postgres' }, { label: 'SQLite' }]
+      }
+    ]
+  }
+
+  function record(overrides: Partial<MessageEcho> = {}): MessageEcho {
+    return {
+      id: 'r1',
+      text: RECORD,
+      sentAt: Date.parse('2026-09-03T09:00:05.000Z'),
+      state: { phase: 'delivered', awaitingReaction: true },
+      answers: true,
+      ...overrides
+    }
+  }
+
+  function recordBubble(wrapper: ReturnType<typeof panel>) {
+    return wrapper.findAll('.dm-bubble').find((bubble) => bubble.text().startsWith('Answers:'))!
+  }
+
+  it('draws the record as the person’s bubble: a paragraph and a bulleted list, answer in bold', () => {
+    const bubble = recordBubble(panel({ echoes: [record()] }))
+    expect(bubble.classes()).toContain('dm-bubble--user')
+    const body = bubble.find('.dm-bubble__text')
+    expect(body.find('p').text()).toBe('Answers:')
+    expect(body.findAll('li').map((li) => li.text())).toEqual([
+      'Which database should the importer write to: SQLite'
+    ])
+    expect(body.find('li strong').text()).toBe('SQLite')
+  })
+
+  it('wears the answer’s own marks: …, ✓, then ✓✓', () => {
+    const glyph = (state: DwarfSendState) =>
+      recordBubble(panel({ echoes: [record({ state })] }))
+        .find('.dm-bubble__mark')
+        .text()
+    expect(glyph({ phase: 'sending' })).toBe('…')
+    expect(glyph({ phase: 'delivered', awaitingReaction: false })).toBe('✓')
+    expect(glyph({ phase: 'reacted' })).toBe('✓✓')
+  })
+
+  it('keeps ✕ not delivered with no Retry and no Copy, and the card is back', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', pendingQuestion }),
+      echoes: [record({ state: { phase: 'failed', error: 'That ask is no longer open.' } })]
+    })
+    const bubble = recordBubble(wrapper)
+    expect(bubble.find('.dm-bubble__mark').text()).toBe('✕ not delivered')
+    expect(bubble.find('.dm-bubble__actions').exists()).toBe(false)
+    expect(wrapper.find('.dm-qcard').exists()).toBe(true)
+    expect(wrapper.find('.dm-composer').exists()).toBe(false)
+  })
+
+  it('offers neither on a session that can no longer take text', () => {
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: undefined }),
+      routeGone: true,
+      echoes: [record({ state: { phase: 'failed' } })]
+    })
+    expect(recordBubble(wrapper).find('.dm-bubble__actions').exists()).toBe(false)
+  })
+
+  it('sits where it was answered, before what the dwarf said after it', () => {
+    const wrapper = panel({
+      feed: heldFeed([
+        ...HELD,
+        { role: 'assistant', text: 'Writing to SQLite.', timestamp: '2026-09-03T09:00:09.000Z' }
+      ]),
+      echoes: [record()]
+    })
+    expect(wrapper.findAll('.dm-bubble').map((b) => b.find('.dm-bubble__text').text())).toEqual([
+      'dig here',
+      'Found the seam.',
+      expect.stringMatching(/^Answers:/),
+      'Writing to SQLite.'
+    ])
+  })
+
+  it('leaves the run the dwarf asked in open, growing past the answer', () => {
+    const step = (text: string, timestamp: string): FeedMessage => ({
+      role: 'assistant',
+      text,
+      timestamp,
+      activity: { kind: 'run', target: text }
+    })
+    const wrapper = panel({
+      dwarf: defaultDwarf({ textDelivery: 'terminal', status: 'working' }),
+      feed: heldFeed([
+        ...HELD,
+        step('Ran pnpm test', '2026-09-03T09:00:02.000Z'),
+        step('Ran pnpm build', '2026-09-03T09:00:08.000Z')
+      ]),
+      echoes: [record()]
+    })
+    const run = wrapper.find('.dm-activity')
+    expect(run.text()).toContain('Working...')
+    // The run, whole, above the record: it started before the answer and grew after it.
+    const log = wrapper.find('.dm-msg__log').element
+    const order = [...log.querySelectorAll('.dm-activity, .dm-bubble')].map((el) =>
+      el.classList.contains('dm-activity') ? 'run' : (el.textContent ?? '').slice(0, 8)
+    )
+    expect(order).toEqual(['dig here', 'Found th', 'run', 'Answers:'])
+  })
+})
+/* --- end of the "Answers:" record block ------------------------------------- */

@@ -218,8 +218,7 @@
     "key": "organisms/message-panel#not-delivered-copy-alone"
   },
   {
-    "key": "organisms/message-panel#answer-refused",
-    "red": "the Answers: record draws Retry and Copy under its ✕ like a failed message, where the design gives it neither (#635, MESSAGE-QUESTIONS 8)"
+    "key": "organisms/message-panel#answer-refused"
   },
   {
     "key": "organisms/add-panel#live"

@@ -53,6 +53,14 @@ export interface MessageEcho {
   readonly sentAt: number
   /** This one message's verdict, in the same shape and phases the sprite marker reads. */
   readonly state: DwarfSendState
+  /**
+   * Set on the "Answers:" record (#635; decision log, Answers bubble is a record): the words of an
+   * answer that went out on the ask's own channel — the question tool's result, the prompt, a
+   * permission's decision — and never a message the session reads from its queue. `state` is that
+   * answer's own verdict. No transcript row is ever this message, so none accounts for it
+   * (`reconcileEchoes`), and it is drawn where it happened (`mergeEchoes`), not after everything.
+   */
+  readonly answers?: true
 }
 
 /**
@@ -110,7 +118,8 @@ export function echoRowsOf(echoes: readonly MessageEcho[]): PanelRow[] {
 }
 
 /**
- * The panel's entries with the pending echoes appended after them.
+ * The panel's entries with the pending echoes appended after them — all but the "Answers:" record,
+ * which goes where it happened (`recordIndex`, #635).
  *
  * After the GROUPING and not before it, which is the whole reason this takes
  * entries rather than rows: a trailing run of tool calls reads `Working...`
@@ -119,14 +128,38 @@ export function echoRowsOf(echoes: readonly MessageEcho[]): PanelRow[] {
  * in ahead of the grouping would close that run and put a count on it, saying
  * the agent had stopped because somebody spoke to it.
  */
-export function mergeEchoes<Row extends PanelMessage>(
+export function mergeEchoes<Row extends PanelRow>(
   entries: readonly PanelEntry<Row>[],
   echoRows: readonly Row[]
 ): PanelEntry<Row>[] {
-  return [
-    ...entries,
-    ...echoRows.map((row) => ({ kind: 'message' as const, key: row.key, message: row }))
-  ]
+  const before = new Map<number, PanelEntry<Row>[]>()
+  const tail: PanelEntry<Row>[] = []
+  for (const row of echoRows) {
+    const entry = { kind: 'message' as const, key: row.key, message: row }
+    const index = row.echo?.answers === true ? recordIndex(entries, row.echo.sentAt) : -1
+    if (index === -1) tail.push(entry)
+    else before.set(index, [...(before.get(index) ?? []), entry])
+  }
+  return [...entries.flatMap((entry, i) => [...(before.get(i) ?? []), entry]), ...tail]
+}
+
+/**
+ * Where an "Answers:" record goes among the transcript's entries (#635): in front of the first one
+ * that STARTED at or after the answer, or -1 for after everything.
+ *
+ * Unlike a message on its way, the record is never taken over by a transcript row, so it outlives
+ * the rows that come after it, and appended after everything it would sit under a reply the dwarf
+ * gave once it had the answer. A run is placed by its first step, so one that was going when the
+ * answer landed stays whole above the record and keeps growing there: an ask is part of the same
+ * turn, and the record does not close the run or split it (decision log, Run open while asking;
+ * MESSAGE-QUESTIONS 12). A run that started after it comes below it. An entry with no time says
+ * nothing about when it happened, and is passed over.
+ */
+function recordIndex(entries: readonly PanelEntry<PanelMessage>[], sentAt: number): number {
+  return entries.findIndex((entry) => {
+    const at = entry.kind === 'message' ? entry.message.at : entry.rows[0]?.at
+    return at !== undefined && at >= sentAt
+  })
 }
 
 /**
@@ -301,6 +334,9 @@ function accountsFor(
   message: FeedMessage,
   attachments: readonly DwarfAttachment[]
 ): boolean {
+  // The record of an answer was never a message, so no row is it (decision log, Answers bubble
+  // is a record): dropping it would take the only copy of what was answered off the screen.
+  if (echo.answers === true) return false
   if (message.role !== 'user' || message.issuer !== undefined) return false
   const stripped = stripAttachmentTokens(
     normalizeConsoleText(stripRelayProvenance(message.text)),

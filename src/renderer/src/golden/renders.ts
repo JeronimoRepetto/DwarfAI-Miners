@@ -46,6 +46,12 @@ import { historyClock } from '../lib/history/mineHistory'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
 import { COMPOSER_HINT, bubbleMark } from '../lib/message/panelChrome'
 import type { MessageEcho } from '../lib/message/echo'
+import {
+  ANSWERS_HEADING,
+  permissionAnswerRecord,
+  questionAnswersRecord
+} from '../lib/question/answersRecord'
+import { decisionForLabel } from '../lib/question/questionAnswer'
 import AddPanel from '../components/launch/AddPanel.vue'
 import { useAgentLaunch } from '../composables/useAgentLaunch'
 import { OTHER_CHOICE, type LaunchChoice } from '../lib/launch/launchState'
@@ -1057,7 +1063,7 @@ const messagePanel: Render = (sample, texts, attributes) => {
       dwarf,
       routeGone,
       feed: sample.feeds[dwarf.id],
-      echoes: [...failedEchoesOf(sample, dwarf.id), ...answersRecordsOf(texts, attributes)]
+      echoes: [...failedEchoesOf(sample, dwarf.id), ...answersRecordsOf(dwarf, texts, attributes)]
     }
   }
 }
@@ -1065,11 +1071,16 @@ const messagePanel: Render = (sample, texts, attributes) => {
 /*
  * The "Answers:" records a MessagePanel tree prints (#635; decision log, Answers bubble is a
  * record), as the echoes the panel keeps for them: the record of an answer that went out on the
- * ask's own channel, which no transcript holds. Its words are the tree's own list, read back into
- * the record's Markdown; its time is the text after it, on the sample's day; its mark is the phase
+ * ask's own channel, which no transcript holds. Its words are built as the app builds them, by
+ * lib/question/answersRecord, from the dwarf's own ask and the answers the tree's list prints in
+ * bold, one per step; its time is the text after it, on the sample's day; its mark is the phase
  * its `data-mark` names.
  */
-function answersRecordsOf(texts: GoldenText[], attributes: GoldenAttributes[]): MessageEcho[] {
+function answersRecordsOf(
+  dwarf: Dwarf,
+  texts: GoldenText[],
+  attributes: GoldenAttributes[]
+): MessageEcho[] {
   const marks: (string | undefined)[] = []
   for (const { element, attributes: printed } of attributes) {
     if (element.startsWith('div.dm-bubble.')) marks.push(undefined)
@@ -1081,24 +1092,28 @@ function answersRecordsOf(texts: GoldenText[], attributes: GoldenAttributes[]): 
   const read = document.createElement('template')
   return bubbles.flatMap((bubble, i) => {
     read.innerHTML = bubble.html
-    const head = read.content.querySelector('p')?.textContent
-    if (head !== 'Answers:') return []
-    const items = [...read.content.querySelectorAll('li')].map((li) => {
-      const answer = li.querySelector('strong')?.textContent ?? fail('answer', li.innerHTML)
-      const step = (li.textContent ?? '').slice(0, -answer.length)
-      return `- ${step}**${answer}**`
-    })
+    if (read.content.querySelector('p')?.textContent !== ANSWERS_HEADING) return []
+    const answers = [...read.content.querySelectorAll('li strong')].map((b) => b.textContent ?? '')
     const phase = PHASE_OF_MARK[marks[i] ?? ''] ?? fail('mark', marks[i])
     return [
       {
         id: 'golden-answers-' + i,
-        text: ['Answers:', '', ...items].join('\n'),
+        text: recordOf(dwarf, answers),
         sentAt: sampleTime(bubble.time),
         state: { phase },
         answers: true as const
       }
     ]
   })
+}
+
+/** The record the app draws for these answers to the dwarf's own ask or permission. */
+function recordOf(dwarf: Dwarf, answers: string[]): string {
+  if (dwarf.pendingQuestion !== undefined)
+    return questionAnswersRecord(dwarf.pendingQuestion, answers)
+  const decision = decisionForLabel(answers[0] ?? '')
+  if (dwarf.pendingPermission === undefined || decision === null) return fail('ask', dwarf.id)
+  return permissionAnswerRecord(dwarf.pendingPermission, decision)
 }
 
 /*

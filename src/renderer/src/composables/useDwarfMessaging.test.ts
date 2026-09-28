@@ -1019,3 +1019,120 @@ describe('useDwarfMessaging failed sends', () => {
     expect(failedSends()).toEqual({ 'claude:s1': [{ text: 'never arrived', sentAt: 5_000 }] })
   })
 })
+
+/* --- The "Answers:" record (#635, MESSAGE-QUESTIONS 8) — one block, appended ---- */
+
+/*
+ * The record of an answer given on the ask's own channel (decision log, Answers bubble is a
+ * record). It is drawn with the person's other bubbles, so it lives among the echoes, but it is
+ * never sent: its marks are the answer's own verdict, … until the answer is handed over, ✓ once it
+ * is, ✓✓ only once the dwarf is seen acting after it, ✕ if the channel refused it, and when in
+ * doubt it stays at ✓.
+ */
+describe('useDwarfMessaging: the "Answers:" record', () => {
+  const RECORD = 'Answers:\n\n- Which store: **Redis**'
+  const sendDwarfText = vi.fn(() => Promise.resolve({ delivered: true, via: 'terminal' } as const))
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useDwarfMessaging().clearAll()
+    sendDwarfText.mockClear()
+    stubApi(sendDwarfText)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function dwarf(overrides: Partial<Dwarf> = {}): Dwarf {
+    return defaultDwarf({ id: 'claude:s1', ...overrides })
+  }
+
+  it('draws the record at once, in sending, and sends nothing', () => {
+    vi.setSystemTime(7_000)
+    const { recordAnswer, echoesFor } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD)
+    expect(echoesFor('claude:s1')).toEqual([
+      { id, text: RECORD, sentAt: 7_000, state: { phase: 'sending' }, answers: true }
+    ])
+    expect(sendDwarfText).not.toHaveBeenCalled()
+  })
+
+  it('never writes the dwarf’s own verdict, which is the messages’', () => {
+    const { recordAnswer, settleAnswer, stateFor } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: true })
+    expect(stateFor('claude:s1')).toBeUndefined()
+  })
+
+  it('walks to ✓ once the answer is handed over on its channel, still watching', () => {
+    const { recordAnswer, settleAnswer, echoesFor } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: true })
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'delivered', awaitingReaction: true })
+  })
+
+  it('walks to ✓✓ only once the dwarf is seen acting after the answer', () => {
+    const { recordAnswer, settleAnswer, observe, echoesFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'waiting', lastMessage: 'Which store?' })])
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: true })
+
+    observe([dwarf({ status: 'waiting', lastMessage: 'Which store?' })])
+    expect(echoesFor('claude:s1')[0]?.state.phase).toBe('delivered')
+
+    observe([dwarf({ status: 'working', lastMessage: 'Which store?' })])
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({ phase: 'reacted' })
+  })
+
+  it('stays at ✓ when no action is seen before the window closes', () => {
+    const { recordAnswer, settleAnswer, observe, echoesFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'waiting', lastMessage: 'Which store?' })])
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: true })
+
+    vi.advanceTimersByTime(REACTION_WINDOW_MS)
+    observe([dwarf({ status: 'working', lastMessage: 'Something else' })])
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({
+      phase: 'delivered',
+      awaitingReaction: false
+    })
+  })
+
+  it('reads ✕ with the channel’s reason when the answer was refused', () => {
+    const { recordAnswer, settleAnswer, echoesFor } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: false, error: 'The ask had closed.' })
+    expect(echoesFor('claude:s1')[0]?.state).toEqual({
+      phase: 'failed',
+      error: 'The ask had closed.'
+    })
+  })
+
+  it('keeps a message’s own watch apart from the answer’s', async () => {
+    const { send, recordAnswer, settleAnswer, observe, echoesFor } = useDwarfMessaging()
+    observe([dwarf({ status: 'waiting', lastMessage: 'a' })])
+    await send('claude:s1', 'also this', true)
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: true })
+
+    observe([dwarf({ status: 'working', lastMessage: 'b' })])
+    expect(echoesFor('claude:s1').map((echo) => echo.state.phase)).toEqual(['reacted', 'reacted'])
+  })
+
+  it('is not a failed send for the history, since it was never a message', () => {
+    const { recordAnswer, settleAnswer, failedSends } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: false, error: 'refused' })
+    expect(failedSends()).toEqual({})
+  })
+
+  it('refuses a retry: the card is how the ask is answered again', async () => {
+    const { recordAnswer, settleAnswer, retry } = useDwarfMessaging()
+    const id = recordAnswer('claude:s1', RECORD)
+    settleAnswer('claude:s1', id, { answered: false, error: 'refused' })
+    expect(await retry('claude:s1', id)).toBe(false)
+    expect(sendDwarfText).not.toHaveBeenCalled()
+  })
+})
+/* --- end of the "Answers:" record block ------------------------------------- */

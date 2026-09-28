@@ -111,6 +111,22 @@ const lastSeen = new Map<string, ReactionSnapshot>()
  */
 const heldMessages = new Map<string, { dwarfId: string; echoId: string }>()
 
+/**
+ * The open watch for an "Answers:" record, keyed by dwarf id (#635; decision log, Answers bubble
+ * is a record): which record it is, the watch, and the timer that closes it.
+ *
+ * Apart from the message watch above, because the two are about different things that can both be
+ * waiting at once: a message the person typed under a permission's "Other thing…" is watched for
+ * its own reaction while the permission is still open, and the answer submitted after it for its
+ * own. A dwarf asks one thing at a time, so one per dwarf is all there is. Never written into
+ * `state.byDwarfId`: that is the latest MESSAGE's verdict, which the sprite and the composer's hint
+ * read, and an answer is not a message.
+ */
+const answerWatches = new Map<
+  string,
+  { echoId: string; watch: ReactionWatch; timer: ReturnType<typeof setTimeout> }
+>()
+
 /** Monotonic within the session, which is all an echo id has to be. */
 let mintedEchoes = 0
 
@@ -146,6 +162,11 @@ function markEcho(dwarfId: string, echoId: string, next: DwarfSendState): void {
   const index = list.findIndex((echo) => echo.id === echoId)
   if (index === -1) return
   list[index] = { ...list[index]!, state: next }
+}
+
+function stopAnswerWatch(dwarfId: string): void {
+  clearTimeout(answerWatches.get(dwarfId)?.timer)
+  answerWatches.delete(dwarfId)
 }
 
 /**
@@ -358,8 +379,10 @@ export function useDwarfMessaging() {
   function failedSends(): Record<string, FailedSend[]> {
     const failed: Record<string, FailedSend[]> = {}
     for (const [dwarfId, list] of Object.entries(echoes)) {
+      // An answer the channel refused was never a message (decision log, Answers bubble is a
+      // record): its card comes back to answer it again, and the history keeps messages only.
       const sends = list
-        .filter((echo) => echo.state.phase === 'failed')
+        .filter((echo) => echo.state.phase === 'failed' && echo.answers !== true)
         .map((echo) => ({ text: echo.text, sentAt: echo.sentAt }))
       if (sends.length > 0) failed[dwarfId] = sends
     }
@@ -408,6 +431,58 @@ export function useDwarfMessaging() {
     recordVerdict(held.dwarfId, held.echoId, push.result)
   }
 
+  /**
+   * Draw the record of an answer given on the ask's own channel (#635; decision log, Answers
+   * bubble is a record): the "Answers:" bubble, at once and in sending, before the channel has been
+   * asked anything, as a message's echo is. It SENDS NOTHING: the answer leaves on its own channel
+   * (useDwarfQuestion), and this is only its record, whose marks `settleAnswer` walks. Returns the
+   * record's id, for that verdict to land on it and nowhere else.
+   */
+  function recordAnswer(dwarfId: string, text: string): string {
+    const echoId = `echo-${++mintedEchoes}`
+    const minted: MessageEcho = {
+      id: echoId,
+      text,
+      sentAt: Date.now(),
+      state: { phase: 'sending' },
+      answers: true
+    }
+    echoes[dwarfId] = boundEchoes([...(echoes[dwarfId] ?? []), minted])
+    pruneAttachments(dwarfId)
+    return echoId
+  }
+
+  /**
+   * The answer's own verdict, on its record (decision log, Answers bubble is a record), under the
+   * rule every message keeps, delivered is not reacted: ✓ once the channel took it, still
+   * watching; ✓✓ only once `observe` sees the dwarf acting after it; ✕ with the channel's reason
+   * when it refused. A window that closes with nothing seen leaves it at ✓, since when in doubt it
+   * stays there.
+   */
+  function settleAnswer(
+    dwarfId: string,
+    echoId: string,
+    verdict: { answered: boolean; error?: string }
+  ): void {
+    stopAnswerWatch(dwarfId)
+    if (!verdict.answered) {
+      markEcho(dwarfId, echoId, {
+        phase: 'failed',
+        ...(verdict.error === undefined ? {} : { error: verdict.error })
+      })
+      return
+    }
+    markEcho(dwarfId, echoId, { phase: 'delivered', awaitingReaction: true })
+    answerWatches.set(dwarfId, {
+      echoId,
+      watch: openReactionWatch('message', lastSeen.get(dwarfId), Date.now()),
+      timer: setTimeout(() => {
+        answerWatches.delete(dwarfId)
+        markEcho(dwarfId, echoId, { phase: 'delivered', awaitingReaction: false })
+      }, REACTION_WINDOW_MS)
+    })
+  }
+
   /** Hear main's held-message verdicts. Returns the unsubscribe. */
   function listenHeld(): () => void {
     return window.api.onDwarfSendSettled(settle)
@@ -441,6 +516,8 @@ export function useDwarfMessaging() {
   async function retry(dwarfId: string, echoId: string): Promise<boolean> {
     const echo = echoes[dwarfId]?.find((candidate) => candidate.id === echoId)
     if (echo === undefined || echo.state.phase !== 'failed') return false
+    // The record of an answer is never sent, again or at all: the card answers the ask again.
+    if (echo.answers === true) return false
     // Always with the session's own Enter, exactly as the composer sends: the
     // retry is the same message, not a different kind of delivery — which since
     // #408 includes its files.
@@ -460,6 +537,7 @@ export function useDwarfMessaging() {
       const snapshot: ReactionSnapshot = { status: dwarf.status, lastMessage: dwarf.lastMessage }
       const watch = watches.get(dwarf.id)
       lastSeen.set(dwarf.id, snapshot)
+      observeAnswer(dwarf.id, snapshot)
       if (watch === undefined) continue
 
       const next = observeReaction(watch, snapshot, Date.now())
@@ -480,6 +558,19 @@ export function useDwarfMessaging() {
       if (echoId !== undefined) markEcho(dwarf.id, echoId, reacted)
       scheduleClear(dwarf.id)
     }
+  }
+
+  /** The same proof, for an answer's record: ✓✓ once the dwarf is seen acting after it. */
+  function observeAnswer(dwarfId: string, snapshot: ReactionSnapshot): void {
+    const open = answerWatches.get(dwarfId)
+    if (open === undefined) return
+    const next = observeReaction(open.watch, snapshot, Date.now())
+    if (next.verdict !== 'reacted') {
+      answerWatches.set(dwarfId, { ...open, watch: next })
+      return
+    }
+    stopAnswerWatch(dwarfId)
+    markEcho(dwarfId, open.echoId, { phase: 'reacted' })
   }
 
   /**
@@ -524,6 +615,7 @@ export function useDwarfMessaging() {
     clearTimeout(clearTimers.get(dwarfId))
     clearTimers.delete(dwarfId)
     stopWatch(dwarfId)
+    stopAnswerWatch(dwarfId)
     lastSeen.delete(dwarfId)
     delete state.byDwarfId[dwarfId]
     delete echoes[dwarfId]
@@ -539,6 +631,7 @@ export function useDwarfMessaging() {
   function clearAll(): void {
     for (const dwarfId of Object.keys(state.byDwarfId)) clear(dwarfId)
     for (const dwarfId of [...watches.keys()]) stopWatch(dwarfId)
+    for (const dwarfId of [...answerWatches.keys()]) stopAnswerWatch(dwarfId)
     for (const dwarfId of Object.keys(echoes)) delete echoes[dwarfId]
     for (const dwarfId of Object.keys(echoAttachments)) delete echoAttachments[dwarfId]
     lastSeen.clear()
@@ -557,6 +650,8 @@ export function useDwarfMessaging() {
     echoAttachments,
     attachmentsFor,
     send,
+    recordAnswer,
+    settleAnswer,
     settle,
     listenHeld,
     retry,

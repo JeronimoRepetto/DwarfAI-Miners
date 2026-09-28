@@ -7,6 +7,7 @@ import type {
   DwarfQuestionAnswerRequest,
   DwarfQuestionAnswerResult
 } from '../types'
+import { useDwarfMessaging } from './useDwarfMessaging'
 import { useDwarfQuestion } from './useDwarfQuestion'
 
 function stubApi(
@@ -443,3 +444,111 @@ describe('useDwarfQuestion decide (#203)', () => {
     expect(stateFor('claude:s1')?.decision).toBeUndefined()
   })
 })
+
+/* --- The "Answers:" record (#635, MESSAGE-QUESTIONS 8) — one block, appended ---- */
+
+/*
+ * Submitting an ask draws its "Answers:" record in the conversation (decision log, Answers bubble
+ * is a record): the answer goes out on the ask's own channel, and the record walks that answer's
+ * verdict. It is never a second message — the message channel is never called for it.
+ */
+describe('useDwarfQuestion: the "Answers:" record', () => {
+  const sendDwarfText = vi.fn()
+
+  function stub(result: () => Promise<DwarfQuestionAnswerResult>) {
+    const answerDwarfQuestion = vi.fn(result)
+    const answerDwarfPermission = vi.fn(result)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { answerDwarfQuestion, answerDwarfPermission, sendDwarfText }
+    })
+    return { answerDwarfQuestion, answerDwarfPermission }
+  }
+
+  function perm(): DwarfPermissionRequest {
+    return {
+      toolUseId: 'toolu_p1',
+      toolName: 'Bash',
+      input: 'pnpm install',
+      channel: 'held',
+      askedAt: '2026-09-28T09:00:00.000Z'
+    }
+  }
+
+  beforeEach(() => {
+    useDwarfQuestion().clearAll()
+    useDwarfMessaging().clearAll()
+    sendDwarfText.mockClear()
+  })
+
+  it('draws the record in sending while the answer is on its way', async () => {
+    const pending = deferred<DwarfQuestionAnswerResult>()
+    stub(() => pending.promise)
+    const answering = useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
+
+    expect(useDwarfMessaging().echoesFor('claude:s1')).toMatchObject([
+      {
+        text: 'Answers:\n\n- Which database should the importer write to: **SQLite**',
+        answers: true,
+        state: { phase: 'sending' }
+      }
+    ])
+    pending.release({ answered: true })
+    await answering
+  })
+
+  it('walks the record to ✓ on the answer’s own verdict, and sends no message', async () => {
+    const { answerDwarfQuestion } = stub(() => Promise.resolve({ answered: true }))
+    await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
+
+    expect(useDwarfMessaging().echoesFor('claude:s1')[0]?.state).toEqual({
+      phase: 'delivered',
+      awaitingReaction: true
+    })
+    expect(answerDwarfQuestion).toHaveBeenCalledTimes(1)
+    expect(sendDwarfText).not.toHaveBeenCalled()
+  })
+
+  it('reads ✕ with main’s reason when the channel refused the answer', async () => {
+    stub(() => Promise.resolve({ answered: false, error: 'That ask is no longer open.' }))
+    await useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
+
+    expect(useDwarfMessaging().echoesFor('claude:s1')[0]?.state).toEqual({
+      phase: 'failed',
+      error: 'That ask is no longer open.'
+    })
+  })
+
+  it('records a terminal answer in the person’s own words', async () => {
+    stub(() => Promise.resolve({ answered: true }))
+    await useDwarfQuestion().answerWithText('claude:s1', question({ channel: 'terminal' }), 'Redis')
+
+    expect(useDwarfMessaging().echoesFor('claude:s1')[0]?.text).toBe(
+      'Answers:\n\n- Which database should the importer write to: **Redis**'
+    )
+  })
+
+  it('records a permission’s decision as one item, Allow or Deny in bold', async () => {
+    const { answerDwarfPermission } = stub(() => Promise.resolve({ answered: true }))
+    await useDwarfQuestion().decide('claude:s1', perm(), 'deny')
+
+    expect(useDwarfMessaging().echoesFor('claude:s1')).toMatchObject([
+      { text: 'Answers:\n\n- Bash · pnpm install: **Deny**', answers: true }
+    ])
+    expect(answerDwarfPermission).toHaveBeenCalledTimes(1)
+    expect(sendDwarfText).not.toHaveBeenCalled()
+  })
+
+  it('draws one record for one submit, however many presses reached it', async () => {
+    const pending = deferred<DwarfQuestionAnswerResult>()
+    stub(() => pending.promise)
+    const first = useDwarfQuestion().answer('claude:s1', question(), 'SQLite')
+    await useDwarfQuestion().answer('claude:s1', question(), 'Postgres')
+    await useDwarfQuestion().decide('claude:s1', perm(), 'allow')
+
+    expect(useDwarfMessaging().echoesFor('claude:s1')).toHaveLength(1)
+    pending.release({ answered: true })
+    await first
+  })
+})
+/* --- end of the "Answers:" record block ------------------------------------- */
