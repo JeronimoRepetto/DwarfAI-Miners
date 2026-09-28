@@ -911,12 +911,27 @@ const dwarfScene =
     }
   })
 
-// The tooltip card with a dwarf's body in it, the card being the stage's only child.
+/*
+ * The tooltip card with a body in it, the card being the stage's only child: a dwarf's, or one
+ * line of text (#635, a refused answer's reason on its ✕ mark).
+ */
 const TipCard = defineComponent({
-  props: { dwarf: { type: Object as () => Dwarf, required: true } },
+  props: { dwarf: { type: Object as () => Dwarf }, text: { type: String } },
   setup(props) {
-    return () => h(TooltipCard, null, () => h(DwarfTip, { dwarf: props.dwarf }))
+    return () =>
+      h(TooltipCard, null, () =>
+        props.dwarf === undefined ? h('div', props.text) : h(DwarfTip, { dwarf: props.dwarf })
+      )
   }
+})
+
+/*
+ * A tooltip of one line as its tree prints it (#635): the reason a refused "Answers:" record's ✕
+ * mark shows on hover and focus (organisms/message-panel, Answer refused · reason).
+ */
+const textTooltip: Render = (_sample, texts) => ({
+  component: TipCard,
+  props: { text: texts[0]?.text ?? fail('text', texts) }
 })
 
 /*
@@ -1056,16 +1071,29 @@ const messagePanel: Render = (sample, texts, attributes) => {
   const id = elementsOf(attributes, 'section.dm-msg')[0]?.['data-dwarf'] ?? ''
   const found = sample.mines.flatMap((m) => m.dwarfs).find((d) => d.id === id) ?? fail('dwarf', id)
   const routeGone = elementsOf(attributes, 'textarea').some((box) => 'disabled' in box)
-  const dwarf = routeGone ? { ...found, textDelivery: undefined } : found
+  const reached = routeGone ? { ...found, textDelivery: undefined } : found
+  const dwarf = askClosed(reached, attributes)
   return {
     component: DwarfMessagePanel,
     props: {
       dwarf,
       routeGone,
       feed: sample.feeds[dwarf.id],
-      echoes: [...failedEchoesOf(sample, dwarf.id), ...answersRecordsOf(dwarf, texts, attributes)]
+      echoes: [...failedEchoesOf(sample, dwarf.id), ...answersRecordsOf(reached, texts, attributes)]
     }
   }
+}
+
+/*
+ * The sample dwarf once its ask closed (#635, MESSAGE-QUESTIONS 21, Answer refused · ask closed):
+ * a dwarf the sample has asking whose tree prints it working and draws no card is one whose ask
+ * main's snapshot no longer carries. Its record is still built from the ask it answered.
+ */
+function askClosed(dwarf: Dwarf, attributes: GoldenAttributes[]): Dwarf {
+  const status = elementsOf(attributes, 'span.dm-portrait')[0]?.['data-status']
+  const card = attributes.some((a) => a.element.startsWith('section.dm-qcard'))
+  if (dwarf.pendingQuestion === undefined || card || status !== 'working') return dwarf
+  return { ...dwarf, pendingQuestion: undefined, status: 'working' }
 }
 
 /*
@@ -1086,6 +1114,17 @@ function answersRecordsOf(
     if (element.startsWith('div.dm-bubble.')) marks.push(undefined)
     else if (element === 'span.dm-bubble__mark') marks[marks.length - 1] = printed['data-mark']
   }
+  /*
+   * A refused record's reason is the hidden copy that describes its mark: after the bubble's words,
+   * the one text of its own that is neither its time nor its mark's glyph.
+   */
+  const glyphs = new Set(['…', '✓', '✓✓', '✕ not delivered'])
+  const reasons = texts.flatMap((entry, i) => {
+    if (entry.html === undefined) return []
+    const next = texts.findIndex((later, j) => j > i && later.html !== undefined)
+    const own = texts.slice(i + 2, next === -1 ? undefined : next)
+    return [own.map((t) => t.text).find((t) => t !== undefined && !glyphs.has(t))]
+  })
   const bubbles = texts.flatMap((entry, i) =>
     entry.html === undefined ? [] : [{ html: entry.html, time: texts[i + 1]?.text }]
   )
@@ -1100,7 +1139,10 @@ function answersRecordsOf(
         id: 'golden-answers-' + i,
         text: recordOf(dwarf, answers),
         sentAt: sampleTime(bubble.time),
-        state: { phase },
+        state: {
+          phase,
+          ...(phase === 'failed' && reasons[i] !== undefined ? { error: reasons[i] } : {})
+        },
         answers: true as const
       }
     ]
@@ -1674,6 +1716,8 @@ export const RENDERS: Record<string, Render> = {
   'organisms/message-panel#not-delivered-with-actions': messagePanel,
   'organisms/message-panel#not-delivered-copy-alone': messagePanel,
   'organisms/message-panel#answer-refused': messagePanel,
+  'organisms/message-panel#answer-refused-ask-closed': messagePanel,
+  'organisms/message-panel#answer-refused-reason': textTooltip,
   // The question card and its option (#635, PR3a): a question walked by steps, and a permission.
   'organisms/question-card#live': questionCard,
   'organisms/question-card#last-step': questionCard,
