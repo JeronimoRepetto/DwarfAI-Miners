@@ -725,6 +725,11 @@ describe('preload launch contract (#168)', () => {
    * #239. Held-only, exactly as HeldSessionLaunchRequest.permissionMode is —
    * launchAgent carries no such field, and the bridge must not invent one for
    * it.
+   *
+   * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: the
+   * sentence above, unqualified). launchAgent now carries a permission mode
+   * of its own, Codex's vocabulary rather than the Agent SDK's — see the three
+   * tests after the next one. The two tests here are unchanged.
    */
   it('carries a permission mode on the held channel when the caller named one', async () => {
     invoke.mockResolvedValueOnce({ launched: true })
@@ -746,6 +751,50 @@ describe('preload launch contract (#168)', () => {
   it('crosses no permission mode when the caller named none, rather than an empty string', async () => {
     invoke.mockResolvedValueOnce({ launched: true })
     await api.launchHeldSession({ mineId: 'mine-1', provider: 'claude', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('permissionMode' in sent).toBe(false)
+  })
+
+  /*
+   * #635 (PO decision 2026-09-28). A detached Codex launch now carries a
+   * permission mode of its own. The bridge rebuilds this request field by
+   * field, so a field it forgot would never reach main — the exact loss #671
+   * found on another field.
+   */
+  it('carries a Codex permission mode on the launch channel when the caller named one', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig',
+      permissionMode: 'read-only'
+    })
+
+    expect(invoke).toHaveBeenLastCalledWith('agent:launch', {
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig',
+      permissionMode: 'read-only'
+    })
+  })
+
+  it('crosses no permission mode on the launch channel when the caller named none', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({ mineId: 'mine-1', provider: 'codex', prompt: 'dig' })
+
+    const sent = invoke.mock.calls.at(-1)![1] as object
+    expect('permissionMode' in sent).toBe(false)
+  })
+
+  it('drops a non-string permission mode rather than forwarding it', async () => {
+    invoke.mockResolvedValueOnce({ launched: true, provider: 'codex' })
+    await api.launchAgent({
+      mineId: 'mine-1',
+      provider: 'codex',
+      prompt: 'dig',
+      ...({ permissionMode: { sandbox: 'danger-full-access' } } as object)
+    } as Parameters<typeof api.launchAgent>[0])
 
     const sent = invoke.mock.calls.at(-1)![1] as object
     expect('permissionMode' in sent).toBe(false)

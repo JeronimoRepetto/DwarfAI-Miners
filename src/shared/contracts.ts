@@ -3111,6 +3111,15 @@ export interface AgentLaunchRequest {
    */
   effort?: string
   /**
+   * The permission mode to start a Codex launch under, or absent for the CLI's
+   * own default (#635, PO decision 2026-09-28). Codex only: main refuses the
+   * whole request when any other provider names one, because no other
+   * detached CLI has a mode wired here and a mode it silently ignored would be
+   * a control that looks like it works. Which flags a mode means is main's
+   * table (codexPermissions.ts); the renderer carries only the id.
+   */
+  permissionMode?: CodexPermissionMode
+  /**
    * Whether a Jev DECISION was actually applied to this launch (#511) — never
    * set for a fallback, even one that applied a configured default: see
    * `JevState.launchedOnFallback`, the renderer's own honesty rule for that
@@ -3276,6 +3285,26 @@ export type HeldPermissionMode = (typeof HELD_PERMISSION_MODES)[number]
  */
 export function isHeldPermissionMode(value: unknown): value is HeldPermissionMode {
   return typeof value === 'string' && (HELD_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+/**
+ * Every permission mode a DETACHED Codex launch may be started under (#635,
+ * PO decision 2026-09-28) — ids, not flags: which flags each means is main's
+ * table (`codexPermissionArgs`), read out of codex-cli 0.153.4's own help.
+ *
+ * `default` adds no flag at all, so a launch nobody tuned stays byte for byte
+ * what it was; the other two name `codex exec --sandbox`'s own values. Its
+ * third value, `danger-full-access`, is deliberately not a mode here, for the
+ * reason `HELD_PERMISSION_MODES` has no `bypassPermissions`: starting a
+ * session from this panel must never quietly mean "and let it do anything".
+ */
+export const CODEX_PERMISSION_MODES = ['default', 'workspace-write', 'read-only'] as const
+
+export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
+
+/** Same reason as `isHeldPermissionMode`: this reads a value arriving over IPC. */
+export function isCodexPermissionMode(value: unknown): value is CodexPermissionMode {
+  return typeof value === 'string' && (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
 }
 
 /**

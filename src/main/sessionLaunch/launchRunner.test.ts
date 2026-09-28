@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFs } from '../adapters/fakeFs'
 import type { FsLike } from '../adapters/fsLike'
 import type { LaunchTuning } from '../domain/launchTuning'
-import { MAX_DWARF_TEXT_CHARS, type DwarfProvider } from '../domain/types'
+import { MAX_DWARF_TEXT_CHARS, type CodexPermissionMode, type DwarfProvider } from '../domain/types'
 import { createCliDetector, type CliDetection, type CliDetector } from '../platform/cliDetection'
 import type { Platform } from '../platform/platform'
 import type { LaunchedProcess, LaunchFailure } from './launchedSessions'
@@ -140,6 +140,8 @@ function launch(options: {
   delegation?: DelegationInjectionContext
   /** #511 T4: the `--mcp-config` temp-file port; defaults to a deterministic in-memory fake. */
   delegationConfigFile?: DelegationConfigFile
+  /** #635: the Codex permission mode the Add panel picked; spread only when given. */
+  codexPermissionMode?: CodexPermissionMode
 }) {
   const run = options.run ?? vi.fn().mockResolvedValue(undefined)
   return {
@@ -158,7 +160,10 @@ function launch(options: {
       ...(options.delegationConfigFile === undefined
         ? {}
         : { delegationConfigFile: options.delegationConfigFile }),
-      ...(options.tuning === undefined ? {} : options.tuning)
+      ...(options.tuning === undefined ? {} : options.tuning),
+      ...(options.codexPermissionMode === undefined
+        ? {}
+        : { codexPermissionMode: options.codexPermissionMode })
     })
   }
 }
@@ -2481,5 +2486,73 @@ describe('the cause a failed detached launch names (#635)', () => {
   it('names no cause for a launch that started', async () => {
     const verdict = await launch({}).result
     expect(verdict).not.toHaveProperty('cause')
+  })
+})
+
+/*
+ * #635 (PO decision 2026-09-28). The permission mode the Add panel picked for
+ * Codex reaches its argv on every OS as the same two words: they are Codex's
+ * own CLI flags, so nothing about them is per platform. What IS per platform
+ * is how the program is reached — a Windows npm shim runs `node <entry>` — and
+ * the mode belongs to the CLI's argv, so it lands after that entry.
+ */
+describe('a detached Codex launch that names a permission mode (#635)', () => {
+  const POSIX: readonly Platform[] = ['linux', 'darwin']
+
+  for (const platform of POSIX) {
+    it(`carries read-only as --sandbox read-only on ${platform}`, async () => {
+      const { run, result } = launch({
+        provider: 'codex',
+        platform,
+        cli: installedCodex(),
+        codexPermissionMode: 'read-only'
+      })
+      await result
+      expect(argvOf(run)).toEqual(['exec', '--sandbox', 'read-only', '-o', CODEX_OUTPUT_PATH, '-'])
+    })
+  }
+
+  it('carries workspace-write behind the npm shim’s node entry on win32', async () => {
+    const fs = new FakeFs()
+    fs.addFile(NPM_SHIM, NPM_SHIM_TEXT)
+    const { run, result } = launch({
+      provider: 'codex',
+      platform: 'win32',
+      cli: shimDetector(NPM_SHIM),
+      fs,
+      tuning: { model: 'gpt-5.6-luna' },
+      codexPermissionMode: 'workspace-write'
+    })
+    await result
+    expect(argvOf(run)).toEqual([
+      NPM_ENTRY,
+      'exec',
+      '-m',
+      'gpt-5.6-luna',
+      '--sandbox',
+      'workspace-write',
+      '-o',
+      CODEX_OUTPUT_PATH,
+      '-'
+    ])
+  })
+
+  for (const platform of ['linux', 'darwin', 'win32'] as const) {
+    it(`adds nothing for the default mode on ${platform}, the launch it always was`, async () => {
+      const { run, result } = launch({
+        provider: 'codex',
+        platform,
+        cli: installedCodex(),
+        codexPermissionMode: 'default'
+      })
+      await result
+      expect(argvOf(run)).toEqual(['exec', '-o', CODEX_OUTPUT_PATH, '-'])
+    })
+  }
+
+  it('never hands another provider a Codex sandbox flag', async () => {
+    const { run, result } = launch({ provider: 'claude', codexPermissionMode: 'read-only' })
+    await result
+    expect(argvOf(run)).toEqual(['-p', '--input-format', 'text'])
   })
 })

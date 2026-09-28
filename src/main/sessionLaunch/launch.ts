@@ -1,5 +1,6 @@
 import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
-import type { DwarfProvider } from '../domain/types'
+import { codexPermissionArgs } from '../domain/codexPermissions'
+import type { CodexPermissionMode, DwarfProvider } from '../domain/types'
 
 /**
  * Starting a NEW agent session, as opposed to writing into one that already
@@ -183,11 +184,23 @@ export function buildClaudeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * that positional's own argument rather than as a flag — the exact ordering
  * rule the output path above already follows. So they arrive here, as a
  * fourth parameter, and are placed before the trailing `-` on the same terms.
+ *
+ * ## The permission mode, and why it is a fifth parameter (#635)
+ *
+ * The mode the Add panel picked (PO decision 2026-09-28) is a sandbox and
+ * nothing else — `codexPermissionArgs` (codexPermissions.ts) says why, with
+ * `codex exec --help` quoted. It is not `LaunchTuning` for the reason the
+ * output path is not: `resumeTuning` carries tuning onto a resumed turn, and
+ * `codex exec resume --help` (0.153.4) has no `--sandbox` at all, so a mode
+ * folded into tuning would be handed to a command that refuses it. It lands
+ * after the tuning and before `-o`, and before the trailing `-` like every
+ * other option; `default` adds nothing.
  */
 export function buildCodexLaunchArgs(
   tuning: LaunchTuning = {},
   outputPath?: string,
-  delegationConfigArgs?: readonly string[]
+  delegationConfigArgs?: readonly string[],
+  permissionMode?: CodexPermissionMode
 ): string[] {
   // The two tuning flags above come from `codexTuningArgs` (#462), the one
   // builder this and `buildCodexResumeArgs` both delegate to, so the
@@ -196,6 +209,7 @@ export function buildCodexLaunchArgs(
   return [
     'exec',
     ...codexTuningArgs(tuning),
+    ...(permissionMode === undefined ? [] : codexPermissionArgs(permissionMode)),
     ...(outputPath === undefined ? [] : ['-o', outputPath]),
     ...(delegationConfigArgs ?? []),
     '-'
@@ -348,19 +362,27 @@ export function buildOpenCodeLaunchArgs(tuning: LaunchTuning = {}): string[] {
  * T4) is dispatched on the same terms, for the same reason: it is Codex's
  * own `-c mcp_servers.jev...` argv, placed before the trailing `-` by
  * `buildCodexLaunchArgs` itself (see that function's own comment), and no
- * other provider's builder ever sees it.
+ * other provider's builder ever sees it. `codexPermissionMode` (#635) is
+ * dispatched on the same terms again: `--sandbox` is Codex's own flag, and
+ * the IPC boundary already refused a mode named for any other provider.
  */
 export function buildLaunchArgs(
   provider: DwarfProvider,
   tuning: LaunchTuning = {},
   codexOutputPath?: string,
-  codexDelegationConfigArgs?: readonly string[]
+  codexDelegationConfigArgs?: readonly string[],
+  codexPermissionMode?: CodexPermissionMode
 ): string[] {
   switch (provider) {
     case 'claude':
       return buildClaudeLaunchArgs(tuning)
     case 'codex':
-      return buildCodexLaunchArgs(tuning, codexOutputPath, codexDelegationConfigArgs)
+      return buildCodexLaunchArgs(
+        tuning,
+        codexOutputPath,
+        codexDelegationConfigArgs,
+        codexPermissionMode
+      )
     case 'antigravity':
       // AMENDED for #282 (was: called buildAntigravityLaunchArgs() with no
       // argument, dropping `tuning` on the floor — #237, step 4 gave
