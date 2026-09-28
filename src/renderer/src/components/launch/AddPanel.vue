@@ -4,7 +4,11 @@ import { belongsToComposition } from '../../lib/controls/input'
 import { useHoverTip } from '../../composables/useHoverTip'
 import { addPanelSelects, addPanelWhy, supplierLabel } from '../../lib/launch/addPanelCopy'
 import { jevCardEyebrow, jevCardTip, jevPickText } from '../../lib/launch/jevCardCopy'
-import { jevFallbackReasonWords, launchFailureNotice } from '../../lib/launch/launchFailure'
+import {
+  jevFallbackReasonWords,
+  launchFailureNotice,
+  launchFailureOutput
+} from '../../lib/launch/launchFailure'
 import {
   OTHER_CHOICE,
   type JevState,
@@ -23,6 +27,7 @@ import SelectField from '../controls/SelectField.vue'
 import ToggleSwitch from '../controls/ToggleSwitch.vue'
 import PixelIcon from '../icon/PixelIcon.vue'
 import TooltipCard from '../overlay/TooltipCard.vue'
+import LaunchFailureOutput from './LaunchFailureOutput.vue'
 
 /**
  * The redesigned Add panel (#635), `organisms/add-panel` in the design: the surface the mine's
@@ -138,6 +143,17 @@ const supplierReady = computed(() => props.enabled || commandPending.value)
 const notice = computed(() =>
   props.failure === null || props.failure === undefined ? null : launchFailureNotice(props.failure)
 )
+/*
+ * The title's tooltip (MESSAGE-QUESTIONS 23): the tool's captured last lines, on hover and at once
+ * on keyboard focus, above the title and aligned to its start, as the outcome line's. The title
+ * takes focus only while it has one, and a hidden copy of the same lines describes it.
+ */
+const failOutput = computed(() =>
+  props.failure === null || props.failure === undefined ? null : launchFailureOutput(props.failure)
+)
+const failTip = useHoverTip<'title'>({ side: 'top', align: 'start' })
+const failTipId = 'dm-add-fail-tip-' + ++cards
+
 /** A Jev cause is the notice saying what Jev did, so the fallback line under the toggles steps aside. */
 const jevFailed = computed(
   () =>
@@ -588,8 +604,31 @@ let cards = 0
       <div v-if="notice !== null" class="dm-add__fail" role="alert" :data-cause="failure?.cause">
         <PixelIcon name="warning" />
         <div class="dm-add__fail-body">
-          <p class="dm-add__fail-title">{{ notice.title }}</p>
+          <p
+            class="dm-add__fail-title"
+            :tabindex="failOutput === null ? undefined : 0"
+            :aria-describedby="failOutput === null ? undefined : failTipId"
+            @pointerenter="failOutput !== null && failTip.hover('title', $event)"
+            @pointerleave="failTip.leave"
+            @pointerdown="failTip.press"
+            @focus="failOutput !== null && failTip.focus('title', $event)"
+            @blur="failTip.hide"
+          >
+            {{ notice.title }}
+          </p>
+          <span v-if="failOutput !== null" :id="failTipId" class="sr-only">{{ failOutput }}</span>
           <p class="dm-add__fail-text">{{ notice.text }}</p>
+          <!-- In <body>, as the Jev card's: the footer would otherwise clip a fixed card. -->
+          <Teleport to="body">
+            <Transition name="dm-tip-pop">
+              <TooltipCard
+                v-if="failOutput !== null && failTip.shown.value !== null"
+                :ref="failTip.card"
+                :style="failTip.style.value"
+                ><LaunchFailureOutput :text="failOutput"
+              /></TooltipCard>
+            </Transition>
+          </Teleport>
           <!--
             Drawn even with no action to hold, as the design draws it: with no launchable provider
             the row is empty, and its margin is still part of the notice's height.

@@ -531,7 +531,13 @@ export function launchFailed(state: LaunchState, failure: LaunchFailedPush): Lau
   // `launchFailureMessage`). The push always names its cause now, and a caused failure is the
   // notice. And a HELD launch can be the one it is about: still in flight, correlated by its own
   // `heldLaunchId` rather than the board receipt a detached launch is.
-  const failed = { cause: failure.cause, choice: state.choice }
+  // AMENDED for #635 (MESSAGE-QUESTIONS 23): the CLI's own lines ride along when it left any,
+  // for the notice title's tooltip rather than as the notice's text.
+  const failed: LaunchFailure = {
+    cause: failure.cause,
+    choice: state.choice,
+    ...(failure.stderrTail.trim() === '' ? {} : { output: failure.stderrTail })
+  }
   if (state.detached && state.launchId === failure.launchId) {
     return { ...state, detached: false, launchId: null, error: null, failure: failed }
   }
@@ -863,7 +869,17 @@ export function shouldAskJev(state: LaunchState): boolean {
  * sees as a failed launch at all (contracts.ts says why), so they stay out of contracts.
  */
 export type LaunchFailure =
-  | { cause: LaunchFailureCause; choice: LaunchChoice | null }
+  | {
+      cause: LaunchFailureCause
+      choice: LaunchChoice | null
+      /**
+       * The tool's own last lines, as main captured them (`LaunchFailedPush.stderrTail`, already
+       * redacted and bounded there), for the notice title's tooltip (MESSAGE-QUESTIONS 23). Only
+       * when it printed something. They can hold local paths or account names: shown in the panel
+       * and nowhere else, never logged or sent.
+       */
+      output?: string
+    }
   /** Jev was asked and the service gave no usable answer: a retry can change that. */
   | { cause: 'jev-unreachable' }
   /** Jev fell back for a reason a retry cannot change; `confidence` only as the answer gave it. */

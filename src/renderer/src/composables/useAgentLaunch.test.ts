@@ -988,7 +988,13 @@ describe('a detached launch that fails after it started (#263)', () => {
     listener(failure())
 
     expect(launch.phase.value).toBe('prompt-ready')
-    expect(launch.state.value.failure).toEqual({ cause: 'exited-at-once', choice: 'codex' })
+    // AMENDED for #635 (MESSAGE-QUESTIONS 23; was: { cause, choice } alone): the push's own
+    // stderr lines ride along, for the notice title's tooltip.
+    expect(launch.state.value.failure).toEqual({
+      cause: 'exited-at-once',
+      choice: 'codex',
+      output: 'codex: another instance is already running'
+    })
     expect(launch.state.value.error).toBeNull()
     // The typed prompt survives, so a retry costs one Enter.
     expect(launch.state.value.prompt).toBe('dig the east gallery')
