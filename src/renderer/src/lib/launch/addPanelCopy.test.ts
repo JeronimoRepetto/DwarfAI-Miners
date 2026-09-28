@@ -146,6 +146,32 @@ describe('addPanelSelects', () => {
       'Permissions: Default'
     ])
   })
+
+  /*
+   * APPENDED for #635 (MESSAGE-QUESTIONS 2; decision log, Jev's pick fills the pickers): each
+   * select shows the value the launch model holds, so Jev's pick reads "Effort: high" rather than
+   * the list's first entry while "high" is what would launch; nothing held, the first.
+   */
+  it('shows the value the launch model holds on each select, or the first with none held', () => {
+    const base = {
+      choice: 'claude' as const,
+      jevOn: true,
+      modelPicker: picker,
+      effortPicker: efforts,
+      permissionsVisible: true
+    }
+    const held = addPanelSelects({
+      ...base,
+      values: { model: 'sonnet', effort: 'high', permissionMode: 'plan' }
+    })
+    expect(held.map((select) => select.value)).toEqual(['sonnet', 'high', 'plan'])
+
+    const none = addPanelSelects({
+      ...base,
+      values: { model: null, effort: null, permissionMode: null }
+    })
+    expect(none.map((select) => select.value)).toEqual([undefined, undefined, undefined])
+  })
 })
 
 describe('the supplier and permission names', () => {
