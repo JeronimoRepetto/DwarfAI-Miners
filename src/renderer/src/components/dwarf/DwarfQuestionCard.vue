@@ -51,9 +51,9 @@ import {
  * channel and the ask's own shape — in lib, because the permission card reads the same rule.
  *
  * - **Held** (#125): an ordinary MESSAGE, queued on the stream this panel owns, touching no
- *   picker. The card's Submit reads Send while they are picked, and the card stays (the decision
- *   log's Permission free text, which the ui-rebuild skill applies to "Other thing…" on held
- *   sessions alike).
+ *   picker. On the card they are still the step's free answer (screens/message.md, Question
+ *   card): Submit keeps its name and sends them, because main's held path releases an ask with
+ *   its own labels only (TYPED_ANSWER_ONLY_AT_A_PICKER). Send-and-stay is a permission's rule.
  * - **Watched, one question, one answer** (#481): an ANSWER. Main reaches the row the session's
  *   own picker offers for exactly this — measured 2026-09-18, the digit one past the ask's
  *   options — types the words, and presses Enter once.

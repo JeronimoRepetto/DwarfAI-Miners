@@ -244,17 +244,20 @@ describe('DwarfQuestionCard', () => {
   })
 
   /*
-   * AMENDED for #635 (was: Enter in the box sent it). On a held session the words are an ordinary
-   * message, so Submit reads "Send" while they are picked (decision log, Permission free text,
-   * applied to the question card: "Other thing…" sends free text as an ordinary message on held
-   * sessions only).
+   * AMENDED for #635 (was: Enter in the box sent it).
+   * AMENDED again for #635 (was: Submit read "Send" while the words were picked, the permission's
+   * rule). On a question the words are the step's free answer (screens/message.md, Question card,
+   * as built): Submit keeps its name, and "Send" belongs to a permission alone. What leaves on a
+   * held session is unchanged from today: main's held path releases the ask with its own labels
+   * only (TYPED_ANSWER_ONLY_AT_A_PICKER, resolveAnswers), so the words travel the message path.
    */
   it('sends free-form text as a message and never as an answer to the ask', async () => {
     // The answer channel takes only the agent's own words back — a free-form
     // reply is not one of them, so it travels the ordinary message path.
     const wrapper = card()
     await writeOther(wrapper, 'use whatever is already there')
-    expect(submitButton(wrapper).text()).toBe(SEND_OTHER_NAME)
+    expect(submitButton(wrapper).text()).toBe(SUBMIT_ANSWERS_NAME)
+    expect(submitButton(wrapper).text()).not.toBe(SEND_OTHER_NAME)
     await submit(wrapper)
     expect(wrapper.emitted('send-text')).toEqual([
       [{ text: 'use whatever is already there', pressEnter: true }]
@@ -1210,6 +1213,30 @@ describe('the question card as the design draws it (#635)', () => {
     await wrapper.find('.dm-qcard__next').trigger('click')
     await wrapper.find('.dm-qcard__back').trigger('click')
     expect(document.activeElement).toBe(options(wrapper)[1]!.element)
+  })
+
+  /*
+   * ADDED for #635: on a question "Other thing…" answers its step (screens/message.md, Question
+   * card, as built) — the walk goes on with Next, never a Send in its place, and the step counts as
+   * answered only while the field holds text.
+   */
+  it('walks on from a step answered in the person’s own words, with Next and never Send', async () => {
+    const wrapper = three()
+    await writeOther(wrapper, '   ')
+    expect(wrapper.find('.dm-qcard__next').attributes('disabled')).toBeDefined()
+    expect(submitButton(wrapper).exists()).toBe(false)
+    await wrapper.find('.dm-qopt-other-field input').setValue('Redis')
+    expect(wrapper.find('.dm-qcard__next').attributes('disabled')).toBeUndefined()
+    expect(submitButton(wrapper).exists()).toBe(false)
+    pressEnter(wrapper.find('.dm-qopt-other-field input').element)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dm-qcard__step').text()).toBe('2 / 3')
+    expect(wrapper.findAll('.dm-qcard__dots i').map((dot) => dot.classes().join(' '))).toEqual([
+      'is-done',
+      'is-here',
+      ''
+    ])
+    expect(wrapper.emitted('send-text')).toBeUndefined()
   })
 
   it('opens on the step and with the answers its host hands it', () => {

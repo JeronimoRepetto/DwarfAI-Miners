@@ -11,17 +11,22 @@
  *   which opens the free-answer field under them.
  * - The walk: Back, the step dots, Jump to terminal, then Next, or Submit on the last step.
  *
- * Picking never sends: Submit is the one send, and Enter moves on a step at most. Where the
- * words under "Other thing…" are an ordinary message rather than an answer (`route` 'message'),
- * Submit reads Send while they are picked; pressing it hands them up as a message, clears the
- * field and leaves the card in place (decision log, Permission free text).
+ * Picking never sends: Submit is the one send, and Enter moves on a step at most. On a
+ * question, the words under "Other thing…" are that step's free answer: the step counts as
+ * answered while the field holds text, and Submit sends them by the route the host names —
+ * typed at a watched picker's own Other row (`route` 'answer'), or, on a held session, the
+ * message path the app has always used, since main's held path releases an ask with its own
+ * labels only (`route` 'message'). On a PERMISSION they are never a decision: Submit reads Send
+ * while they are picked, hands them up as a message, clears the field and leaves the card in
+ * place (decision log, Permission free text).
  *
  * Which of those words the design leaves to the app, and how this card reads them:
  * - Next wakes once the step is answered, as designed, except on an ask nothing here may answer,
  *   which walks freely so every question can be read before the person goes to the terminal
  *   (#443).
- * - On a message route the Send takes Submit's place on whatever step "Other thing…" is picked
- *   on, since those words are never part of the answer the last step submits.
+ * - A held ask of several questions with a step answered in words cannot be released: the held
+ *   path takes labels only, and no one message carries a walk's answers today. Submit stays
+ *   asleep until every step holds a label (named in #635's PR, a question for the design lead).
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import ActionButton from '../controls/ActionButton.vue'
@@ -139,8 +144,10 @@ const otherOffered = computed(
   () => props.route === 'message' || (props.route === 'answer' && props.answerable)
 )
 const otherOpen = computed(() => otherText.value !== null && otherOffered.value)
-/** The words under "Other thing…" are a message here, and they are picked: Submit reads Send. */
-const sendsMessage = computed(() => props.route === 'message' && otherText.value !== null)
+/** A permission's words under "Other thing…" are a message, and picked: Submit reads Send. */
+const sendsMessage = computed(
+  () => props.permission && props.route === 'message' && otherText.value !== null
+)
 const answered = computed(() => stepAnswered(props.ask, index.value, picked.value, other.value))
 const nextEnabled = computed(() => answered.value || !props.answerable)
 const showNext = computed(() => !onLast.value && !sendsMessage.value)
@@ -152,10 +159,18 @@ const typedAnswer = computed(() => {
   const text = (otherAt(other.value, id.value, 0) ?? '').trim()
   return text === '' ? null : text
 })
+/** A held question's one step answered in words, which leave on the message path. */
+const typedMessage = computed(() => {
+  if (props.permission || props.route !== 'message' || count.value !== 1) return null
+  const text = (otherAt(other.value, id.value, 0) ?? '').trim()
+  return text === '' ? null : text
+})
 const submitEnabled = computed(() => {
   if (sendsMessage.value) return (otherText.value ?? '').trim() !== ''
   if (!props.answerable) return false
-  return typedAnswer.value !== null || canSubmit(picked.value, props.ask)
+  return (
+    typedAnswer.value !== null || typedMessage.value !== null || canSubmit(picked.value, props.ask)
+  )
 })
 const dots = computed(() => stepDots(props.ask, index.value, picked.value, other.value))
 
@@ -221,6 +236,13 @@ function onSubmit(): void {
   }
   if (typedAnswer.value !== null && otherAt(other.value, id.value, 0) !== null) {
     emit('answer-text', typedAnswer.value)
+    return
+  }
+  if (typedMessage.value !== null && otherAt(other.value, id.value, 0) !== null) {
+    const text = typedMessage.value
+    other.value = dropOtherAt(other.value, id.value, 0)
+    emit('send-text', text)
+    void focusRow(0)
     return
   }
   const values = askAnswerValues(picked.value, props.ask)
