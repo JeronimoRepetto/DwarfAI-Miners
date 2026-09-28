@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 /*
  * AMENDED for #635: motion-v's AnimatePresence and motion, and lib/message/panelHeight, are no
@@ -49,6 +49,10 @@ import {
   MENU_HISTORY,
   MENU_STOP
 } from '../../lib/message/panelChrome'
+
+// Every mounted panel is unmounted after its test, so no outcome clock or tooltip it started
+// outlives the document jsdom's teardown empties (#635: CI caught five updating a detached tree).
+enableAutoUnmount(afterEach)
 
 /*
  * WHERE DwarfActionBar's TESTS WENT (#159).
@@ -3379,3 +3383,17 @@ describe('DwarfMessagePanel: a refused "Answers:" record (MESSAGE-QUESTIONS 21)'
   })
 })
 /* --- end of the ruling 21 block ------------------------------------------------------------- */
+
+/*
+ * No panel outlives its test (#635). A mounted panel keeps its one-second outcome clock running
+ * and its tooltips' Teleport anchors in <body>. The clock is a Node timer, which jsdom's teardown
+ * does not stop, while that teardown empties <body> under the anchors: the next tick re-renders
+ * into a detached tree. CI's macOS runner caught five such unhandled rejections after every test
+ * in this file had passed. `enableAutoUnmount` at the top of the file is what keeps it from
+ * happening; this is its witness, since a panel left mounted leaves its anchors in <body>.
+ */
+describe('DwarfMessagePanel test teardown (#635)', () => {
+  it('finds nothing an earlier test mounted still in the document', () => {
+    expect(document.body.childNodes.length).toBe(0)
+  })
+})
