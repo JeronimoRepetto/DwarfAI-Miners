@@ -2,7 +2,7 @@
  * What a dwarf's custom name may hold (#635, decision log "Dwarf names").
  *
  * A port of the prototype's DM.filterDwarfName and DM.cleanDwarfName (the design's
- * sample-data.md), as amended by the design lead's rulings on NAMES-QUESTIONS 1 and 2
+ * sample-data.md), as amended by the design lead's rulings on NAMES-QUESTIONS 1, 2 and 3
  * (2026-09-28): the renderer's field filters with it while the person types, and main cleans
  * every write with it again, because main never trusts what a renderer
  * says it saved. Shared rather than duplicated so the two ends cannot disagree about a name.
@@ -15,12 +15,14 @@ export const DWARF_NAME_MAX = 24
 
 /**
  * Emoji are refused like control characters (PO ruling 2026-09-26): anything drawn as an emoji by
- * default, plus the pieces emoji are built from — variation selector 16, the zero-width joiner,
- * skin tones, the keycap mark, regional-indicator flags and tag characters. A character that is
+ * default, plus the pieces emoji are built from — variation selector 16, skin tones, the keycap
+ * mark, regional-indicator flags and tag characters. The zero-width joiner also builds emoji
+ * sequences; it is handled below with its other use joining a name's own letters
+ * (NAMES-QUESTIONS 3), not here. A character that is
  * text by default (a digit, ©, ⛏) stays; only the pieces that would dress it as an emoji go.
  */
 const EMOJI =
-  /[\p{Emoji_Presentation}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}\u200D\uFE0F\u20E3\u{E0020}-\u{E007F}]/gu
+  /[\p{Emoji_Presentation}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}\uFE0F\u20E3\u{E0020}-\u{E007F}]/gu
 // C0 and C1 controls, DEL, and the two Unicode line and paragraph separators.
 const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g
 
@@ -42,10 +44,62 @@ const LONE_SURROGATE = /[\uD800-\uDFFF]/gu
  * but draw as blank. Removed like control characters, before trimming, so a name made only of them
  * saves empty and U+202E cannot flip the words around a name wherever it is printed.
  *
- * "Every Cf" includes the zero-width non-joiner and joiner, which some scripts use inside a word;
- * the ruling removes them too.
+ * No 'g' flag: FORMAT is tested one character at a time below, and a global regex's test()
+ * advances lastIndex, which would silently make it skip matches across the separate calls in
+ * that loop.
  */
-const INVISIBLE = /[\p{Cf}\u3164\u115F\u1160]/gu
+const FORMAT = /[\p{Cf}\u3164\u115F\u1160]/u
+
+/**
+ * The zero-width non-joiner and joiner (U+200C, U+200D) are format characters too, but Persian
+ * and Indic scripts such as Devanagari use them inside ordinary words, to keep two letters from
+ * joining or to force a conjunct. NAMES-QUESTIONS 3 (design lead ruling 2026-09-28) corrects
+ * question 2's "every Cf including U+200C" for these two characters: kept only between two
+ * letters of the same name — a letter, or a letter with its combining marks, right before it,
+ * and a letter right after — and removed everywhere else (alone, leading, trailing, next to a
+ * space or punctuation), with the other format characters.
+ *
+ * The check below reads the RAW text, before the emoji pass in withoutRefused runs, not after. A
+ * joined emoji sequence (a technologist, a two-person family) is emoji characters joined by
+ * exactly this character, and an emoji is never a letter — so reading the untouched
+ * neighbours here correctly drops that joiner even when the emoji beside it sits with no space
+ * against a real letter of the name. Reading the neighbours after emoji removal would not: with
+ * the emoji gone, the joiner's new neighbours can be two real letters by coincidence of adjacency
+ * (a single-joiner two-part emoji sequence typed with no surrounding space), and it would wrongly
+ * survive between them — the ordering hazard the design's own prototype fix has in
+ * DM.filterDwarfName (sample-data.js), avoided here by sharing one `withoutRefused` for both the
+ * field and the save.
+ */
+const JOINER = /[\u200C\u200D]/
+const LETTER_OR_MARK = /[\p{L}\p{M}]/u
+const LETTER = /\p{L}/u
+
+/**
+ * `text` with every refused format character removed and a kept joiner kept, read code point by
+ * code point rather than as graphemes: a joiner's neighbours are the raw characters beside it, and
+ * a grapheme segmenter could bundle one of them into a cluster before this ever sees it.
+ */
+function withoutFormat(text: string): string {
+  const chars = Array.from(text)
+  const kept: string[] = []
+  for (const [i, char] of chars.entries()) {
+    if (JOINER.test(char)) {
+      const before = chars[i - 1]
+      const after = chars[i + 1]
+      if (
+        before !== undefined &&
+        after !== undefined &&
+        LETTER_OR_MARK.test(before) &&
+        LETTER.test(after)
+      ) {
+        kept.push(char)
+      }
+      continue
+    }
+    if (!FORMAT.test(char)) kept.push(char)
+  }
+  return kept.join('')
+}
 
 /** Why the field dropped something: characters it refuses, or text past DWARF_NAME_MAX. */
 export type DwarfNameRefusal = 'chars' | 'long'
@@ -67,11 +121,7 @@ export function nameChars(text: string): string[] {
 
 /** The characters a name may never hold, whatever else it holds. */
 function withoutRefused(text: string): string {
-  return text
-    .replace(EMOJI, '')
-    .replace(INVISIBLE, '')
-    .replace(CONTROL, '')
-    .replace(LONE_SURROGATE, '')
+  return withoutFormat(text).replace(EMOJI, '').replace(CONTROL, '').replace(LONE_SURROGATE, '')
 }
 
 const WHITE_SPACE = /^\s+$/u
@@ -108,7 +158,11 @@ export function filterDwarfName(raw: string): { text: string; refused: DwarfName
     spacePending = false
     text += char
   }
-  return { text, refused }
+  // Stopping at the cap can leave the LAST character's own joiner with nothing after it -- the
+  // grapheme that would have followed is exactly the one the cap refused. withoutFormat re-reads
+  // that one boundary character and drops a joiner the cap itself left trailing, so the field
+  // never shows text that would come back different once saved.
+  return { text: withoutFormat(text), refused }
 }
 
 /**
@@ -123,9 +177,13 @@ export function filterDwarfName(raw: string): { text: string; refused: DwarfName
 export function cleanDwarfName(raw: string): string {
   const collapsed = withoutRefused(raw.replace(CONTROL, ' ')).replace(/\s+/g, ' ').trim()
   const chars = nameChars(collapsed)
-  return chars.length <= DWARF_NAME_MAX
-    ? collapsed
-    : chars.slice(0, DWARF_NAME_MAX).join('').trimEnd()
+  if (chars.length <= DWARF_NAME_MAX) return collapsed
+  // The cut lands on a whole grapheme (a kept joiner never splits from the letter before it), but
+  // that letter's OWN joiner can end up with nothing after it once the following grapheme is cut
+  // away -- a joiner the cap itself leaves trailing. withoutFormat re-reads that one boundary
+  // character and drops it, the same way a joiner typed trailing by the person would be dropped,
+  // so the saved name never ends in one.
+  return withoutFormat(chars.slice(0, DWARF_NAME_MAX).join('')).trimEnd()
 }
 
 /**
