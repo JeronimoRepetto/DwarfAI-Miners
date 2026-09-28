@@ -35,6 +35,10 @@ import DwarfTip from '../components/dwarf/DwarfTip.vue'
 import MineColumn from '../components/scene/MineColumn.vue'
 import HistoryPanel from '../components/history/HistoryPanel.vue'
 import DwarfMessagePanel from '../components/message/DwarfMessagePanel.vue'
+import ChatBubble from '../components/message/ChatBubble.vue'
+import { sendMarker } from '../lib/delivery/deliveryVerdict'
+import { bubbleMark } from '../lib/message/panelChrome'
+import type { MessageEcho } from '../lib/message/echo'
 import AddPanel from '../components/launch/AddPanel.vue'
 import { useAgentLaunch } from '../composables/useAgentLaunch'
 import { OTHER_CHOICE, type LaunchChoice } from '../lib/launch/launchState'
@@ -1012,15 +1016,81 @@ const historyPanel: Render = (sample, _texts, attributes) => {
 }
 
 /*
+ * The messages of a dwarf the sample marks failed, as the echoes the panel draws them from
+ * (#635, decision log, Failed delivery): the delivery store's own record of a send that never
+ * reached its session, which no transcript holds. Ids are the golden's own; the words and the
+ * time are the sample's (sample.ts, failedSends).
+ */
+export function failedEchoesOf(sample: GoldenSample, dwarfId: string): MessageEcho[] {
+  const sends = sample.mines.flatMap((m) => sample.failedSends[m.id]?.[dwarfId] ?? [])
+  return sends.map((send, i) => ({
+    id: 'golden-failed-' + i,
+    text: send.text,
+    sentAt: send.sentAt,
+    state: { phase: 'failed' as const }
+  }))
+}
+
+/*
  * The MessagePanel as its tree prints it (#635): the sample dwarf its section names, with the feed
- * main would answer for it (sample.ts). Nothing has been sent from the panel, so no echo is drawn.
+ * main would answer for it (sample.ts), and the messages the sample marks failed as the echoes
+ * the panel keeps for them (failedEchoesOf). Nothing else has been sent from the panel.
  */
 const messagePanel: Render = (sample, _texts, attributes) => {
   const id = elementsOf(attributes, 'section.dm-msg')[0]?.['data-dwarf'] ?? ''
   const dwarf = sample.mines.flatMap((m) => m.dwarfs).find((d) => d.id === id) ?? fail('dwarf', id)
   return {
     component: DwarfMessagePanel,
-    props: { dwarf, feed: sample.feeds[dwarf.id] }
+    props: { dwarf, feed: sample.feeds[dwarf.id], echoes: failedEchoesOf(sample, dwarf.id) }
+  }
+}
+
+// The delivery phase each mark the tree prints stands for, as the panel's own store names it.
+const PHASE_OF_MARK: Record<string, DwarfSendState['phase']> = {
+  pending: 'sending',
+  delivered: 'delivered',
+  reacted: 'reacted',
+  failed: 'failed'
+}
+
+/*
+ * Your messages as their tree prints them (#635, molecules/chat-bubble), in the kit's column
+ * frame: each bubble's words are its printed HTML read back as text, which is the message itself
+ * for the one-paragraph texts these states print; its time is the text after them; its mark is
+ * the phase its `data-mark` names, drawn by the panel's own reading of that phase; and a bubble
+ * whose tree holds the actions group is one its host offers Retry and Copy on, as a failed echo's
+ * panel does.
+ */
+const userBubbles: Render = (_sample, texts, attributes) => {
+  const bubbles: { mark?: string; offersRetry: boolean }[] = []
+  for (const { element, attributes: printed } of attributes) {
+    if (element.startsWith('div.dm-bubble.')) bubbles.push({ offersRetry: false })
+    else if (element === 'span.dm-bubble__mark') bubbles.at(-1)!.mark = printed['data-mark']
+    else if (element.startsWith('div.dm-bubble__actions')) bubbles.at(-1)!.offersRetry = true
+  }
+  const bodies = texts.flatMap((entry, i) =>
+    entry.html === undefined ? [] : [{ html: entry.html, time: texts[i + 1]?.text }]
+  )
+  const read = document.createElement('template')
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: bubbles.map((bubble, i) => {
+        read.innerHTML = bodies[i]?.html ?? ''
+        const phase = PHASE_OF_MARK[bubble.mark ?? ''] ?? fail('mark', bubble.mark)
+        return {
+          component: ChatBubble,
+          props: {
+            from: 'user',
+            text: read.content.textContent ?? '',
+            time: bodies[i]?.time,
+            mark: bubbleMark(sendMarker({ phase })!),
+            offersRetry: bubble.offersRetry
+          }
+        }
+      })
+    }
   }
 }
 
@@ -1362,6 +1432,10 @@ export const RENDERS: Record<string, Render> = {
   // The MessagePanel and the Add panel (#635, their slice), each read off its own tree.
   'organisms/message-panel#conversation': messagePanel,
   'organisms/message-panel#asking': messagePanel,
+  'organisms/message-panel#not-delivered-with-actions': messagePanel,
+  // A failed message's Retry and Copy (#635, decision log, Failed delivery).
+  'molecules/chat-bubble#not-delivered-with-actions': userBubbles,
+  'molecules/chat-bubble#retry-feedback': userBubbles,
   'organisms/add-panel#live': addPanel,
   'organisms/add-panel#supplier-picked': addPanel,
   'organisms/add-panel#custom-command': addPanel,

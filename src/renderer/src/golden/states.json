@@ -157,6 +157,17 @@
     "red": "the question card in place of the composer is the old card, restyled with the question and permission cards in the next slice of #635 (PR3); the frame, the header, the outcome line and the conversation above it are the rebuilt ones"
   },
   {
+    "key": "molecules/chat-bubble#not-delivered-with-actions",
+    "red": "red first (#635): the bubble takes no Retry and Copy of its own yet (decision log, Failed delivery)"
+  },
+  {
+    "key": "molecules/chat-bubble#retry-feedback"
+  },
+  {
+    "key": "organisms/message-panel#not-delivered-with-actions",
+    "red": "red first (#635): a failed message offers only Send again, and a retry adds a second bubble, where the design keeps one bubble with Retry and Copy (decision log, Failed delivery)"
+  },
+  {
     "key": "organisms/add-panel#live"
   },
   {
@@ -494,5 +505,9 @@
   {
     "key": "screens-full/message-panel#permission",
     "red": "the permission card in place of the composer is the old card, restyled in PR3 of #635 (97768px in 440x242 at the foot of the window); the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+  },
+  {
+    "key": "screens-full/message-panel#not-delivered",
+    "red": "red first (#635): a failed message offers only Send again, and a retry adds a second bubble, where the design keeps one bubble with Retry and Copy (decision log, Failed delivery)"
   }
 ]

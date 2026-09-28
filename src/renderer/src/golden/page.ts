@@ -28,7 +28,8 @@ import type { SequencePosition } from '../lib/sprite/spriteSheet'
 import PanelApp from '../App.vue'
 import { goldenApi } from './api'
 import { restoreLaunchView } from '../composables/useView'
-import { RENDERS, type GoldenAttributes, type GoldenText } from './renders'
+import { useDwarfMessaging } from '../composables/useDwarfMessaging'
+import { RENDERS, failedEchoesOf, type GoldenAttributes, type GoldenText } from './renders'
 import { adaptSample, swapSample, type GoldenSample } from './sample'
 
 export interface GoldenBox {
@@ -294,6 +295,22 @@ async function mountScreen(): Promise<void> {
   mounted.provide(FRAME_CLOCK_KEY, spriteClock)
   mounted.mount(host)
   await nextTick()
+  seedFailedSends(sample)
+}
+
+/*
+ * The messages the sample marks failed (#635, decision log, Failed delivery), put in the delivery
+ * store as the echoes a send that never reached its session leaves there: the app keeps no other
+ * record of one, and the bridge answers no send, so no recipe could fail one. After the mount,
+ * because the store keeps only the open chat's echoes and the App starts with none open; opening
+ * that dwarf's chat keeps them, and opening any other drops them, as a real switch does.
+ */
+function seedFailedSends(from: GoldenSample): void {
+  const { echoes } = useDwarfMessaging()
+  for (const dwarf of from.mines.flatMap((m) => m.dwarfs)) {
+    const failed = failedEchoesOf(from, dwarf.id)
+    if (failed.length > 0) echoes[dwarf.id] = failed
+  }
 }
 
 // Every element a recipe's selector matches, in document order: its box and its text.
