@@ -441,6 +441,31 @@ describe('the model, effort and permission row', () => {
     expect(wrapper.emitted('permissionMode')).toEqual([['plan']])
   })
 
+  /* #635 (PO decision 2026-09-28): Codex's own modes, in the design's words, and the pick sticks. */
+  it("draws Codex's three permission modes, reports the one chosen, and shows it held", async () => {
+    const wrapper = panel({
+      chosen: 'codex',
+      phase: 'known-provider-ready',
+      modelPicker: LIVE_MODEL_PICKER,
+      permissionsVisible: true
+    })
+    const select = wrapper.get('select[aria-label="Permissions"]')
+    expect(select.attributes('disabled')).toBeUndefined()
+    expect(select.findAll('option').map((option) => option.text())).toEqual([
+      'Permissions: Ask first',
+      'Permissions: Auto in workspace',
+      'Permissions: Read only'
+    ])
+
+    await select.setValue('workspace-write')
+    expect(wrapper.emitted('permissionMode')).toEqual([['workspace-write']])
+
+    await wrapper.setProps({ permissionMode: 'workspace-write' })
+    expect(
+      (wrapper.get('select[aria-label="Permissions"]').element as HTMLSelectElement).value
+    ).toBe('workspace-write')
+  })
+
   // AMENDED for #635 (was: 'is absent once the session has launched'). The design keeps the
   // panel as it is while the dwarf is sent in; nothing on the row can be changed any more.
   it('cannot be changed once the session has launched, alongside the chips and the prompt', () => {

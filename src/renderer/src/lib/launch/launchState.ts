@@ -1,4 +1,7 @@
 import {
+  isCodexPermissionMode,
+  isHeldPermissionMode,
+  type CodexPermissionMode,
   type DwarfProvider,
   type HeldPermissionMode,
   type JevFallbackReason,
@@ -9,6 +12,12 @@ import {
   type LaunchFailedPush,
   type LaunchFailureCause
 } from '../../types'
+
+/**
+ * A mode the row's Permissions select can hold (#635): held Claude's or Codex's. Renderer-local on
+ * purpose — no request carries this union; each channel carries its own half.
+ */
+export type LaunchPermissionMode = HeldPermissionMode | CodexPermissionMode
 
 /**
  * The Add Panel's gates, as `screens/launch.md` states them (#86).
@@ -99,8 +108,12 @@ export interface LaunchState {
    */
   model: string | null
   effort: string | null
-  /** Held Claude only — see HeldSessionLaunchRequest.permissionMode. */
-  permissionMode: HeldPermissionMode | null
+  /**
+   * Held Claude's mode (HeldSessionLaunchRequest.permissionMode) or, since #635, a detached Codex
+   * launch's (AgentLaunchRequest.permissionMode) — one field, because a switch of supplier resets
+   * it and so it only ever holds the chosen supplier's own vocabulary.
+   */
+  permissionMode: LaunchPermissionMode | null
   /** True from the moment Enter submits until a dwarf is adopted or main refuses. */
   submitting: boolean
   /**
@@ -211,10 +224,10 @@ export function chooseEffort(state: LaunchState, effort: string): LaunchState {
   return { ...state, effort }
 }
 
-/** Pick a permission mode off the same row — held Claude only. */
+/** Pick a permission mode off the same row — held Claude's, or Codex's (#635). */
 export function choosePermissionMode(
   state: LaunchState,
-  permissionMode: HeldPermissionMode
+  permissionMode: LaunchPermissionMode
 ): LaunchState {
   return { ...state, permissionMode }
 }
@@ -286,7 +299,18 @@ export function launchTuning(state: LaunchState): { model?: string; effort?: str
  * `HeldSessionLaunchRequest.permissionMode`.
  */
 export function launchPermissionMode(state: LaunchState): HeldPermissionMode | undefined {
-  return state.permissionMode ?? undefined
+  return isHeldPermissionMode(state.permissionMode) ? state.permissionMode : undefined
+}
+
+/**
+ * The permission mode a DETACHED Codex launch asks to carry (#635), or undefined when the row
+ * named none or the supplier is not Codex — see `AgentLaunchRequest.permissionMode`. Codex only,
+ * because main refuses a mode on any other detached provider rather than dropping it.
+ */
+export function launchCodexPermissionMode(state: LaunchState): CodexPermissionMode | undefined {
+  return state.choice === 'codex' && isCodexPermissionMode(state.permissionMode)
+    ? state.permissionMode
+    : undefined
 }
 
 /**

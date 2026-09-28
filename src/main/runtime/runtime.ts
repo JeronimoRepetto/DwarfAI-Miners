@@ -5008,6 +5008,11 @@ export class AgentRuntime {
           prompt,
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),
+          // #635: Codex's own permission mode, checked at the IPC boundary;
+          // absent stays absent, so an untouched select launches as before.
+          ...(request.permissionMode === undefined
+            ? {}
+            : { codexPermissionMode: request.permissionMode }),
           ...(delegationIssue === undefined ? {} : { delegation: delegationIssue.injection })
         })
       )

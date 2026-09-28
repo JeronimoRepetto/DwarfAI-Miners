@@ -7,7 +7,13 @@
 import { providerLabel } from '../dwarf/dwarfTip'
 import type { EffortPicker, ModelPicker } from './modelTuning'
 import { OTHER_CHOICE, type LaunchChoice, type LaunchPhase } from './launchState'
-import { HELD_PERMISSION_MODES, type HeldPermissionMode } from '../../types'
+import {
+  CODEX_PERMISSION_MODES,
+  HELD_PERMISSION_MODES,
+  type CodexPermissionMode,
+  type HeldPermissionMode
+} from '../../types'
+import type { LaunchPermissionMode } from './launchState'
 
 export interface AddPanelWhy {
   text: string
@@ -73,6 +79,29 @@ export function permissionModeLabel(mode: HeldPermissionMode): string {
   return PERMISSION_LABEL[mode]
 }
 
+/*
+ * Codex's permission modes in the design's words (sample-data.md, providers: "Ask first", "Auto in
+ * workspace", "Read only" for Codex; #635, PO decision 2026-09-28), in the design's order, so the
+ * first — the one a select shows with nothing held — is Ask first, the mode that adds no flag.
+ * Which flags each id means is main's table (codexPermissions.ts), not this file's.
+ */
+const CODEX_PERMISSION_LABEL: Record<CodexPermissionMode, string> = {
+  default: 'Ask first',
+  'workspace-write': 'Auto in workspace',
+  'read-only': 'Read only'
+}
+
+/**
+ * The Permissions select's entries for one supplier: Codex's own modes for Codex, the held
+ * session's for everything else the select is shown for (held Claude). Per supplier because the
+ * vocabularies differ — see PERMISSION_MODE_PROVIDERS.
+ */
+export function permissionModeOptions(choice: LaunchChoice): { value: string; label: string }[] {
+  return choice === 'codex'
+    ? CODEX_PERMISSION_MODES.map((mode) => ({ value: mode, label: CODEX_PERMISSION_LABEL[mode] }))
+    : HELD_PERMISSION_MODES.map((mode) => ({ value: mode, label: PERMISSION_LABEL[mode] }))
+}
+
 /** A supplier chip's name: the tool's own, as people know it, and "Other…" for a command. */
 export function supplierLabel(choice: LaunchChoice): string {
   return choice === OTHER_CHOICE ? 'Other…' : providerLabel(choice)
@@ -90,7 +119,7 @@ export interface AddPanelSelect {
 export interface AddPanelSelectValues {
   model: string | null
   effort: string | null
-  permissionMode: HeldPermissionMode | null
+  permissionMode: LaunchPermissionMode | null
 }
 
 /*
@@ -155,12 +184,7 @@ export function addPanelSelects(state: {
     ),
     listed(
       'Permissions',
-      state.permissionsVisible
-        ? HELD_PERMISSION_MODES.map((mode) => ({
-            value: mode,
-            label: PERMISSION_LABEL[mode]
-          }))
-        : [],
+      state.permissionsVisible ? permissionModeOptions(state.choice) : [],
       state.values?.permissionMode
     )
   ]

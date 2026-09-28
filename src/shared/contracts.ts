@@ -3111,6 +3111,15 @@ export interface AgentLaunchRequest {
    */
   effort?: string
   /**
+   * The permission mode to start a Codex launch under, or absent for the CLI's
+   * own default (#635, PO decision 2026-09-28). Codex only: main refuses the
+   * whole request when any other provider names one, because no other
+   * detached CLI has a mode wired here and a mode it silently ignored would be
+   * a control that looks like it works. Which flags a mode means is main's
+   * table (codexPermissions.ts); the renderer carries only the id.
+   */
+  permissionMode?: CodexPermissionMode
+  /**
    * Whether a Jev DECISION was actually applied to this launch (#511) — never
    * set for a fallback, even one that applied a configured default: see
    * `JevState.launchedOnFallback`, the renderer's own honesty rule for that
@@ -3279,6 +3288,26 @@ export function isHeldPermissionMode(value: unknown): value is HeldPermissionMod
 }
 
 /**
+ * Every permission mode a DETACHED Codex launch may be started under (#635,
+ * PO decision 2026-09-28) — ids, not flags: which flags each means is main's
+ * table (`codexPermissionArgs`), read out of codex-cli 0.153.4's own help.
+ *
+ * `default` adds no flag at all, so a launch nobody tuned stays byte for byte
+ * what it was; the other two name `codex exec --sandbox`'s own values. Its
+ * third value, `danger-full-access`, is deliberately not a mode here, for the
+ * reason `HELD_PERMISSION_MODES` has no `bypassPermissions`: starting a
+ * session from this panel must never quietly mean "and let it do anything".
+ */
+export const CODEX_PERMISSION_MODES = ['default', 'workspace-write', 'read-only'] as const
+
+export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
+
+/** Same reason as `isHeldPermissionMode`: this reads a value arriving over IPC. */
+export function isCodexPermissionMode(value: unknown): value is CodexPermissionMode {
+  return typeof value === 'string' && (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+/**
  * The heldable providers whose held engine reads a permission mode at all
  * (#237, step 5).
  *
@@ -3306,7 +3335,15 @@ export function isHeldPermissionMode(value: unknown): value is HeldPermissionMod
  * own documented three levels, and `agy --mode` is a vocabulary nothing here
  * has wired. A row filling in beside this one is not evidence for this one.
  */
-export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+/*
+ * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: `['claude']`). Codex
+ * joins on the terms above — its own vocabulary wired, not Claude's borrowed — and it is not
+ * heldable: its modes are CODEX_PERMISSION_MODES, carried on the detached
+ * `AgentLaunchRequest.permissionMode` and turned into `codex exec --sandbox` by main. So this list
+ * now reads "providers whose launch reads a permission mode", held or not; which vocabulary a
+ * provider takes is the renderer's `permissionModeOptions`, drawn from the two lists.
+ */
+export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex']
 
 export interface HeldSessionLaunchRequest {
   mineId: string

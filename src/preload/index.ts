@@ -719,6 +719,12 @@ const api: DwarfAiMinersApi = {
       // whole request for it (see parseLaunchTuning).
       ...(typeof request?.model === 'string' ? { model: request.model } : {}),
       ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
+      // Codex's own permission mode (#635), on the model/effort terms: absent
+      // stays absent, a string crosses, and main decides whether it is one
+      // Codex has — anything else is dropped here, never coerced.
+      ...(typeof request?.permissionMode === 'string'
+        ? { permissionMode: request.permissionMode }
+        : {}),
       // Whether a Jev DECISION was applied (#511) — crosses only when true,
       // the same "say nothing" reading `model`/`effort` hold: a caller that
       // never routed through Jev must not cross a `false` main would have to

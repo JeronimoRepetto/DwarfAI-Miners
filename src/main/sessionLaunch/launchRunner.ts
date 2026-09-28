@@ -12,7 +12,12 @@ import {
   notInstalledReason
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
-import type { AgentLaunchResult, DwarfProvider, TurnOutcome } from '../domain/types'
+import type {
+  AgentLaunchResult,
+  CodexPermissionMode,
+  DwarfProvider,
+  TurnOutcome
+} from '../domain/types'
 import {
   describeProgramFailure,
   describeShimRefusal,
@@ -584,6 +589,8 @@ export type SessionLauncher = (
      * sees it.
      */
     delegation?: DelegationInjectionContext
+    /** Codex's own permission mode (#635) — see `ClaudeLaunchOptions.codexPermissionMode`. */
+    codexPermissionMode?: CodexPermissionMode
   } & LaunchTuning
 ) => Promise<SessionLaunchOutcome>
 
@@ -944,6 +951,12 @@ export interface ClaudeLaunchOptions extends LaunchTuning {
    */
   codexOutputPath?: () => string
   /**
+   * The permission mode a Codex launch asked for (#635), already checked at
+   * the IPC boundary — read only for `codex`, whose `--sandbox` it becomes
+   * (`codexPermissionArgs`); every other provider's builder never sees it.
+   */
+  codexPermissionMode?: CodexPermissionMode
+  /**
    * The MCP delegation server this launch's own gate check
    * (`delegationGate.ts`, evaluated in `runtime.ts`) already approved, or
    * absent when it declined (#511 T4) — read only for `claude` (a temp
@@ -1147,7 +1160,8 @@ export async function launchClaudeSession(
             ...(options.effort === undefined ? {} : { effort: options.effort })
           },
           codexOutputPath,
-          injection.codexDelegationArgs
+          injection.codexDelegationArgs,
+          options.provider === 'codex' ? options.codexPermissionMode : undefined
         ),
         ...injection.extraArgs
       ],

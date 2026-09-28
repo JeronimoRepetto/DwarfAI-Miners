@@ -6376,6 +6376,38 @@ describe('AgentRuntime.launchAgent (#86)', () => {
   })
 
   /*
+   * #635 (PO decision 2026-09-28). The Codex permission mode the IPC boundary
+   * checked has one more hop to make, to the launcher that turns it into argv.
+   */
+  it('forwards the Codex permission mode the request named, down to the launcher', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({
+      mineId,
+      provider: 'codex',
+      prompt: 'go',
+      permissionMode: 'read-only'
+    })
+
+    expect(launchSession).toHaveBeenCalledWith({
+      provider: 'codex',
+      minePath: 'C:\\work\\project',
+      prompt: 'go',
+      codexPermissionMode: 'read-only'
+    })
+  })
+
+  it('leaves the permission mode off the launcher call when the request named none', async () => {
+    const launchSession = vi.fn().mockResolvedValue({ launched: true, provider: 'codex' })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'go' })
+
+    expect('codexPermissionMode' in launchSession.mock.calls[0]![0]).toBe(false)
+  })
+
+  /*
    * AMENDED for #534 (was: 'refuses to launch OpenCode before ever probing
    * its own detector', a detection verdict claiming `installed: true` with a
    * path, asserting `cliDetector.detect` was NEVER called and the result was

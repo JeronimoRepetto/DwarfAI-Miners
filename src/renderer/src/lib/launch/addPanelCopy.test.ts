@@ -214,3 +214,48 @@ describe('addPanelWhy after a launch the notice names a cause for', () => {
     )
   })
 })
+
+/*
+ * #635 (PO decision 2026-09-28): Codex's Permissions select lists Codex's own modes in the
+ * design's words (sample-data.md, providers: "Ask first", "Auto in workspace", "Read only"), and
+ * never the held Claude session's.
+ */
+describe('the Permissions select for Codex (#635)', () => {
+  const codex = {
+    choice: 'codex' as const,
+    jevOn: false,
+    modelPicker: { visible: true, models: [{ value: 'gpt-5-codex' }], disabled: false, note: null },
+    effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] },
+    permissionsVisible: true
+  }
+
+  it("lists Codex's three modes in the design's words, enabled, Ask first first", () => {
+    const [, , permissions] = addPanelSelects(codex)
+    expect(permissions!.disabled).toBe(false)
+    expect(permissions!.options).toEqual([
+      { value: 'default', label: 'Permissions: Ask first' },
+      { value: 'workspace-write', label: 'Permissions: Auto in workspace' },
+      { value: 'read-only', label: 'Permissions: Read only' }
+    ])
+    expect(permissions!.value).toBeUndefined()
+  })
+
+  it('shows the mode the launch model holds', () => {
+    const [, , permissions] = addPanelSelects({
+      ...codex,
+      values: { model: null, effort: null, permissionMode: 'read-only' }
+    })
+    expect(permissions!.value).toBe('read-only')
+  })
+
+  it("keeps held Claude's own five modes unchanged", () => {
+    const [, , permissions] = addPanelSelects({ ...codex, choice: 'claude' })
+    expect(permissions!.options.map((option) => option.value)).toEqual([
+      'default',
+      'acceptEdits',
+      'plan',
+      'dontAsk',
+      'auto'
+    ])
+  })
+})

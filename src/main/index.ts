@@ -113,6 +113,7 @@ import {
 } from './config/configFile'
 import { sumTokensObserved } from './domain/aggregate'
 import { parseLaunchTuning } from './domain/launchTuning'
+import { parseLaunchPermissionMode } from './domain/codexPermissions'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { DelegationService } from './mcp/delegationService'
@@ -371,11 +372,18 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   // parseLaunchTuning for why.
   const tuning = parseLaunchTuning(record.provider, record)
   if (tuning === null) return null
+  // The Codex permission mode this launch asked for (#635), on the same
+  // "present and unusable takes the whole request down" terms as the tuning:
+  // an unknown mode, or a mode named for any provider but Codex, is refused
+  // rather than dropped — see parseLaunchPermissionMode.
+  const permission = parseLaunchPermissionMode(record.provider, record)
+  if (permission === null) return null
   return {
     mineId: record.mineId,
     provider: record.provider,
     prompt: record.prompt,
     ...tuning,
+    ...permission,
     // Whether a Jev DECISION was applied to this launch (#511) — trusted only
     // as `true`; anything else (absent, junk) reads as not routed, the same
     // "say nothing" boundary discipline model/effort hold above.
