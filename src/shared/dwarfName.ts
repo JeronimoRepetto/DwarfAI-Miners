@@ -2,8 +2,9 @@
  * What a dwarf's custom name may hold (#635, decision log "Dwarf names").
  *
  * A port of the prototype's DM.filterDwarfName and DM.cleanDwarfName (the design's
- * sample-data.md), kept rule for rule: the renderer's field filters with it while the person
- * types, and main cleans every write with it again, because main never trusts what a renderer
+ * sample-data.md), as amended by the design lead's rulings on NAMES-QUESTIONS 1 and 2
+ * (2026-09-28): the renderer's field filters with it while the person types, and main cleans
+ * every write with it again, because main never trusts what a renderer
  * says it saved. Shared rather than duplicated so the two ends cannot disagree about a name.
  *
  * Free of Electron and Node on purpose: both processes import it directly, like truncate.ts.
@@ -33,6 +34,19 @@ const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g
  */
 const LONE_SURROGATE = /[\uD800-\uDFFF]/gu
 
+/**
+ * Characters that draw as nothing or reorder the text around them (NAMES-QUESTIONS 2, design lead
+ * ruling 2026-09-28): every Unicode format character (general category Cf — zero-width space,
+ * left/right marks, word joiner, soft hyphen, the bidirectional embeddings, overrides and
+ * isolates, the byte order mark, ...) and the three Hangul fillers, which are letters by category
+ * but draw as blank. Removed like control characters, before trimming, so a name made only of them
+ * saves empty and U+202E cannot flip the words around a name wherever it is printed.
+ *
+ * "Every Cf" includes the zero-width non-joiner and joiner, which some scripts use inside a word;
+ * the ruling removes them too.
+ */
+const INVISIBLE = /[\p{Cf}\u3164\u115F\u1160]/gu
+
 /** Why the field dropped something: characters it refuses, or text past DWARF_NAME_MAX. */
 export type DwarfNameRefusal = 'chars' | 'long'
 
@@ -51,31 +65,67 @@ export function nameChars(text: string): string[] {
   return Array.from(text)
 }
 
+/** The characters a name may never hold, whatever else it holds. */
+function withoutRefused(text: string): string {
+  return text
+    .replace(EMOJI, '')
+    .replace(INVISIBLE, '')
+    .replace(CONTROL, '')
+    .replace(LONE_SURROGATE, '')
+}
+
+const WHITE_SPACE = /^\s+$/u
+
 /**
- * What the field lets through while typing: no emoji, control characters or lone surrogates, at most
- * DWARF_NAME_MAX characters. `refused` says why something was dropped, and names refused
- * characters first when both happened.
+ * What the field lets through while typing: no emoji, control, format or lone-surrogate
+ * characters, and no more than the save would keep. `refused` says why something was dropped,
+ * and names refused characters first when both happened.
+ *
+ * The cap measures the name that will be SAVED (NAMES-QUESTIONS 1), so the field counts as the
+ * save does: leading white space is free, a run of it inside the name counts as the one space it
+ * saves as, and trailing white space is free until a character follows it. The field keeps the
+ * person's own spacing and stops at the character that would make the saved name 25 long, so
+ * `cleanDwarfName` of what the field holds is what `cleanDwarfName` makes of the whole text.
  */
 export function filterDwarfName(raw: string): { text: string; refused: DwarfNameRefusal | null } {
-  let text = raw.replace(EMOJI, '').replace(CONTROL, '').replace(LONE_SURROGATE, '')
-  let refused: DwarfNameRefusal | null = text !== raw ? 'chars' : null
-  const chars = nameChars(text)
-  if (chars.length > DWARF_NAME_MAX) {
-    text = chars.slice(0, DWARF_NAME_MAX).join('')
-    refused ??= 'long'
+  const allowed = withoutRefused(raw)
+  let refused: DwarfNameRefusal | null = allowed !== raw ? 'chars' : null
+  let text = ''
+  let saved = 0
+  let spacePending = false
+  for (const char of nameChars(allowed)) {
+    if (WHITE_SPACE.test(char)) {
+      spacePending = saved > 0
+      text += char
+      continue
+    }
+    const next = saved + (spacePending ? 1 : 0) + 1
+    if (next > DWARF_NAME_MAX) {
+      refused ??= 'long'
+      break
+    }
+    saved = next
+    spacePending = false
+    text += char
   }
   return { text, refused }
 }
 
 /**
- * What is saved: filtered, trimmed, and every run of white space inside made one space.
+ * What is saved: refused characters removed, every run of white space made one space, trimmed,
+ * THEN at most DWARF_NAME_MAX characters (NAMES-QUESTIONS 1, reversing the prototype's accidental
+ * cut-before-trim), with no space left at the end of a cut.
  *
- * A control character becomes a space before the filter runs, as in the prototype, so one that
- * sat between two words still separates them. The cut to DWARF_NAME_MAX happens before the trim,
- * also as in the prototype.
+ * A control character becomes a space first, as in the prototype, so one that sat between two
+ * words still separates them. A format character or Hangul filler is removed outright: it draws
+ * as nothing, so it separated nothing.
  */
 export function cleanDwarfName(raw: string): string {
-  return filterDwarfName(raw.replace(CONTROL, ' ')).text.replace(/\s+/g, ' ').trim()
+  const collapsed = withoutRefused(raw.replace(CONTROL, ' ')).replace(/\s+/g, ' ').trim()
+  const chars = nameChars(collapsed)
+  return chars.length <= DWARF_NAME_MAX
+    ? collapsed
+    : chars.slice(0, DWARF_NAME_MAX).join('').trimEnd()
 }
 
 /**

@@ -158,3 +158,29 @@ describe('the dwarf names kept in memory (#635)', () => {
     await expect(createMemoryDwarfNameStore().list()).resolves.toEqual([])
   })
 })
+
+/*
+ * NAMES-QUESTIONS 1 and 2: a row saved under the earlier rule. Every name that rule saved was
+ * already trimmed, collapsed and at most 24 characters, so the new order reads it back unchanged;
+ * only a name holding a format character or a Hangul filler is no longer one this build would
+ * save, and is dropped like any other row it would not have written.
+ */
+describe('the dwarf names on disk — rows from the earlier rule (#635)', () => {
+  it('reads back a name the earlier rule saved, and drops one holding a format character', async () => {
+    const { store, database } = open()
+    const db = await database.connect()
+    for (const [dwarfId, customName] of [
+      ['claude:a', 'a'.repeat(22)],
+      ['claude:b', 'Stone beard'],
+      ['claude:c', 'Gim\u200Bli']
+    ] as const) {
+      db.run(
+        'INSERT INTO dwarf_names (dwarf_id, provider, custom_name, set_at) VALUES (?, ?, ?, ?)',
+        [dwarfId, 'claude', customName, 1]
+      )
+    }
+
+    const names = await store.list()
+    expect(names.map((name) => name.customName).sort()).toEqual(['Stone beard', 'a'.repeat(22)])
+  })
+})

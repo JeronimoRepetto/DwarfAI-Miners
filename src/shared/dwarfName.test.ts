@@ -179,3 +179,114 @@ describe('cleanDwarfName — lone surrogates (#635)', () => {
     expect(filterDwarfName('a\uD800b')).toEqual({ text: 'ab', refused: 'chars' })
   })
 })
+
+/*
+ * NAMES-QUESTIONS 1 (design lead ruling 2026-09-28; proposals/DWARF-NAMES.md D-05): white space is
+ * trimmed and collapsed FIRST, and the 24-character cap measures the name that is saved. The
+ * prototype's cut-before-trim was an accident.
+ */
+describe('cleanDwarfName — the cap measures the saved name (#635, NAMES-QUESTIONS 1)', () => {
+  it('spends none of the 24 characters on leading spaces', () => {
+    expect(cleanDwarfName('  ' + 'a'.repeat(24))).toBe('a'.repeat(24))
+  })
+
+  it('counts a run of inner white space as the one space it is saved as', () => {
+    expect(cleanDwarfName('a'.repeat(22) + '     b')).toBe('a'.repeat(22) + ' b')
+  })
+
+  it('never ends a cut name on a space', () => {
+    expect(cleanDwarfName('a'.repeat(23) + ' bc')).toBe('a'.repeat(23))
+  })
+})
+
+/*
+ * The live field and the save rule agree: the field cuts only where the SAVED name would pass 24
+ * characters, so white space the save drops is never counted against the person, and what the
+ * field holds always saves to what the save rule would have made of the whole text.
+ */
+describe('filterDwarfName — the field caps what will be saved (#635, NAMES-QUESTIONS 1)', () => {
+  it('lets leading and doubled spaces through without spending the cap on them', () => {
+    expect(filterDwarfName('  ' + 'a'.repeat(24))).toEqual({
+      text: '  ' + 'a'.repeat(24),
+      refused: null
+    })
+    expect(filterDwarfName('a'.repeat(12) + '    ' + 'b'.repeat(11))).toEqual({
+      text: 'a'.repeat(12) + '    ' + 'b'.repeat(11),
+      refused: null
+    })
+  })
+
+  it('lets a trailing space through at 24, and stops at the character that would be the 25th', () => {
+    expect(filterDwarfName('a'.repeat(24) + ' ')).toEqual({
+      text: 'a'.repeat(24) + ' ',
+      refused: null
+    })
+    expect(filterDwarfName('a'.repeat(24) + ' b')).toEqual({
+      text: 'a'.repeat(24) + ' ',
+      refused: 'long'
+    })
+  })
+
+  it.each([
+    '  ' + 'a'.repeat(30),
+    'a'.repeat(10) + '      ' + 'b'.repeat(20),
+    ' Gimli   son  of   Glóin, lord of the glittering caves ',
+    'e\u0301'.repeat(30)
+  ])('saves from the field exactly what the save rule makes of the whole text: %j', (typed) => {
+    const saved = cleanDwarfName(filterDwarfName(typed).text)
+    expect(saved).toBe(cleanDwarfName(typed))
+    expect(nameChars(saved).length).toBeLessThanOrEqual(24)
+  })
+})
+
+/*
+ * NAMES-QUESTIONS 2 (design lead ruling 2026-09-28): Unicode format characters (general category
+ * Cf) and the Hangul fillers are removed like control characters, before trimming; a name empty
+ * afterwards removes the custom name.
+ */
+describe('cleanDwarfName — invisible and direction-changing characters (#635, NAMES-QUESTIONS 2)', () => {
+  it.each([
+    '200B',
+    '200E',
+    '200F',
+    '2060',
+    '00AD',
+    '202A',
+    '202B',
+    '202C',
+    '202D',
+    '202E',
+    '2066',
+    '2067',
+    '2068',
+    '2069',
+    '3164',
+    '115F',
+    '1160'
+  ])('removes U+%s, named in the ruling', (hex) => {
+    const char = String.fromCodePoint(parseInt(hex, 16))
+    expect(cleanDwarfName('Gim' + char + 'li')).toBe('Gimli')
+    expect(filterDwarfName('Gim' + char + 'li')).toEqual({ text: 'Gimli', refused: 'chars' })
+  })
+
+  // "Every other Cf": the byte order mark, the Arabic letter mark, the Mongolian vowel separator,
+  // and the zero-width non-joiner, which some scripts use inside a word (see the PR notes).
+  it.each(['FEFF', '061C', '180E', '200C'])('removes U+%s, another format character', (hex) => {
+    expect(cleanDwarfName('Gim' + String.fromCodePoint(parseInt(hex, 16)) + 'li')).toBe('Gimli')
+  })
+
+  it('removes them before trimming, so they cannot hold white space in place', () => {
+    expect(cleanDwarfName(' \u200B Gimli \u2060 ')).toBe('Gimli')
+    expect(cleanDwarfName('\u3164Gimli\u3164')).toBe('Gimli')
+  })
+
+  it('leaves nothing of a name made only of them, which removes the custom name', () => {
+    const invisible = '\u200B\u202E\u3164\u00AD\u2066'
+    expect(cleanDwarfName(invisible)).toBe('')
+    expect(customNameFor(invisible, 'Explorer')).toBeUndefined()
+  })
+
+  it('keeps the words in order around a removed override', () => {
+    expect(cleanDwarfName('\u202EStone beard\u202C')).toBe('Stone beard')
+  })
+})
