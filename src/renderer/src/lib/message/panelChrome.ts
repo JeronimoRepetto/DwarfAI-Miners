@@ -36,8 +36,8 @@ export interface MessagePanelOutcome {
   status: OutcomeStatus
   text: string
   /**
-   * What the line leaves out, for its tooltip (MESSAGE-QUESTIONS 9): a finished turn's closing
-   * words, trimmed, or the provider's own word for a turn stopped at a limit. Absent when there is
+   * What the line leaves out, for its tooltip (MESSAGE-QUESTIONS 9, 18): a finished turn's closing
+   * words, trimmed, or the provider's own word for a turn that ended badly. Absent when there is
    * nothing to add, and then the line has no tooltip.
    */
   tip?: string
@@ -47,18 +47,30 @@ export interface MessagePanelOutcome {
 export const OUTCOME_TIP_MAX_CHARS = 200
 
 /*
+ * The status sentence a turn that ended badly opens its tooltip with, before the provider's own
+ * word (MESSAGE-QUESTIONS 9 and 18).
+ */
+const ENDED_SENTENCE = {
+  capped: 'Stopped at a limit',
+  errored: 'Failed',
+  interrupted: 'Interrupted'
+} as const
+
+/*
  * The tooltip's words for a finished turn. A concluded turn's closing words, trimmed to 200
- * characters with an ellipsis, cut on a whole character. A turn stopped at a limit gives the
- * ruling's own sentence and the provider's word, verbatim ("Stopped at a limit: error_max_turns").
- * A failed or interrupted turn adds nothing yet: the ruling gives no sentence for either, and
- * this does not invent one.
+ * characters with an ellipsis, cut on a whole character. A turn that ended badly gives its status
+ * sentence, a colon and the provider's word, verbatim ("Stopped at a limit: error_max_turns",
+ * "Failed: <detail>", "Interrupted: <detail>"). With no provider word there is none: the line
+ * already says "Turn failed" or "Turn interrupted", and the tooltip would only repeat it.
  */
 function outcomeTip(lastTurn: Dwarf['lastTurn']): string | undefined {
   if (lastTurn === undefined) return undefined
-  if (lastTurn.kind === 'capped') {
-    return lastTurn.detail === undefined ? undefined : 'Stopped at a limit: ' + lastTurn.detail
+  if (lastTurn.kind !== 'concluded') {
+    const detail = lastTurn.detail
+    return detail === undefined || detail === ''
+      ? undefined
+      : ENDED_SENTENCE[lastTurn.kind] + ': ' + detail
   }
-  if (lastTurn.kind !== 'concluded') return undefined
   const words = Array.from(lastTurn.text?.trim() ?? '')
   if (words.length === 0) return undefined
   if (words.length <= OUTCOME_TIP_MAX_CHARS) return words.join('')

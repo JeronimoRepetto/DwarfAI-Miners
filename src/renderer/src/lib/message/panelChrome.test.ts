@@ -320,6 +320,43 @@ describe('messagePanelOutcome, past a day and in its tooltip', () => {
     expect(tip).toBe('Stopped at a limit: error_max_turns')
   })
 
+  // ADDED for #635 (MESSAGE-QUESTIONS 18): question 9's pattern, the provider's word verbatim.
+  it('names a failed or an interrupted turn and the provider’s own word, verbatim', () => {
+    const tip = (lastTurn: Dwarf['lastTurn']) =>
+      messagePanelOutcome(resting(lastTurn), undefined, NOW).tip
+    expect(tip({ kind: 'errored', detail: 'error_during_execution', endedAt: NOW })).toBe(
+      'Failed: error_during_execution'
+    )
+    expect(tip({ kind: 'interrupted', detail: 'user_cancelled', endedAt: NOW })).toBe(
+      'Interrupted: user_cancelled'
+    )
+  })
+
+  // ADDED for #635 (MESSAGE-QUESTIONS 18): the line already says "Turn failed" or "Turn
+  // interrupted", so with no provider word a tooltip would only repeat it.
+  it('has no tooltip for a failed or interrupted turn the provider gave no word for', () => {
+    const tip = (lastTurn: Dwarf['lastTurn']) =>
+      messagePanelOutcome(resting(lastTurn), undefined, NOW).tip
+    expect(tip({ kind: 'errored', endedAt: NOW })).toBeUndefined()
+    expect(tip({ kind: 'interrupted', endedAt: NOW })).toBeUndefined()
+    expect(tip({ kind: 'errored', detail: '', endedAt: NOW })).toBeUndefined()
+  })
+
+  // ADDED for #635 (MESSAGE-QUESTIONS 18): the tooltip is a finished turn's own outcome.
+  it('says nothing of a failed turn while the dwarf works or asks again', () => {
+    const lastTurn = { kind: 'errored' as const, detail: 'error_during_execution', endedAt: NOW }
+    expect(
+      messagePanelOutcome(defaultDwarf({ status: 'working', lastTurn }), undefined, NOW).tip
+    ).toBeUndefined()
+    expect(
+      messagePanelOutcome(
+        defaultDwarf({ status: 'waiting', waitingReason: 'approval', lastTurn }),
+        undefined,
+        NOW
+      ).tip
+    ).toBeUndefined()
+  })
+
   it('has no tooltip when there is nothing to add', () => {
     const tip = (lastTurn: Dwarf['lastTurn']) =>
       messagePanelOutcome(resting(lastTurn), undefined, NOW).tip
