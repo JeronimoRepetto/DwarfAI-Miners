@@ -93,7 +93,7 @@ import {
   type MaterialTotals,
   type MineTier
 } from '../types'
-import { silenceMs, type GoldenSample } from './sample'
+import { at as sampleTime, silenceMs, type GoldenSample } from './sample'
 import {
   EnterFrame,
   IconRow,
@@ -1046,7 +1046,7 @@ export function failedEchoesOf(sample: GoldenSample, dwarfId: string): MessageEc
  * Copy alone on a closed session): the board's dwarf carries no delivery channel any more, and the
  * host's store, which saw it with one, says its route is gone.
  */
-const messagePanel: Render = (sample, _texts, attributes) => {
+const messagePanel: Render = (sample, texts, attributes) => {
   const id = elementsOf(attributes, 'section.dm-msg')[0]?.['data-dwarf'] ?? ''
   const found = sample.mines.flatMap((m) => m.dwarfs).find((d) => d.id === id) ?? fail('dwarf', id)
   const routeGone = elementsOf(attributes, 'textarea').some((box) => 'disabled' in box)
@@ -1057,9 +1057,48 @@ const messagePanel: Render = (sample, _texts, attributes) => {
       dwarf,
       routeGone,
       feed: sample.feeds[dwarf.id],
-      echoes: failedEchoesOf(sample, dwarf.id)
+      echoes: [...failedEchoesOf(sample, dwarf.id), ...answersRecordsOf(texts, attributes)]
     }
   }
+}
+
+/*
+ * The "Answers:" records a MessagePanel tree prints (#635; decision log, Answers bubble is a
+ * record), as the echoes the panel keeps for them: the record of an answer that went out on the
+ * ask's own channel, which no transcript holds. Its words are the tree's own list, read back into
+ * the record's Markdown; its time is the text after it, on the sample's day; its mark is the phase
+ * its `data-mark` names.
+ */
+function answersRecordsOf(texts: GoldenText[], attributes: GoldenAttributes[]): MessageEcho[] {
+  const marks: (string | undefined)[] = []
+  for (const { element, attributes: printed } of attributes) {
+    if (element.startsWith('div.dm-bubble.')) marks.push(undefined)
+    else if (element === 'span.dm-bubble__mark') marks[marks.length - 1] = printed['data-mark']
+  }
+  const bubbles = texts.flatMap((entry, i) =>
+    entry.html === undefined ? [] : [{ html: entry.html, time: texts[i + 1]?.text }]
+  )
+  const read = document.createElement('template')
+  return bubbles.flatMap((bubble, i) => {
+    read.innerHTML = bubble.html
+    const head = read.content.querySelector('p')?.textContent
+    if (head !== 'Answers:') return []
+    const items = [...read.content.querySelectorAll('li')].map((li) => {
+      const answer = li.querySelector('strong')?.textContent ?? fail('answer', li.innerHTML)
+      const step = (li.textContent ?? '').slice(0, -answer.length)
+      return `- ${step}**${answer}**`
+    })
+    const phase = PHASE_OF_MARK[marks[i] ?? ''] ?? fail('mark', marks[i])
+    return [
+      {
+        id: 'golden-answers-' + i,
+        text: ['Answers:', '', ...items].join('\n'),
+        sentAt: sampleTime(bubble.time),
+        state: { phase },
+        answers: true as const
+      }
+    ]
+  })
 }
 
 /*
@@ -1619,6 +1658,7 @@ export const RENDERS: Record<string, Render> = {
   'organisms/message-panel#asking': messagePanel,
   'organisms/message-panel#not-delivered-with-actions': messagePanel,
   'organisms/message-panel#not-delivered-copy-alone': messagePanel,
+  'organisms/message-panel#answer-refused': messagePanel,
   // The question card and its option (#635, PR3a): a question walked by steps, and a permission.
   'organisms/question-card#live': questionCard,
   'organisms/question-card#last-step': questionCard,
