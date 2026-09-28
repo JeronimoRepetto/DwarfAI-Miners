@@ -23,11 +23,10 @@ The redesign's source of truth is `docs/dwarfai-miners-design/` — and it is **
 committed**. The folder is gitignored and exists only in the maintainer's main checkout, so an
 agent that greps the repo finds no design and invents one.
 
-Since 2026-09-25 the folder holds **generated Markdown**, produced from the private design
-repository by that repository's own sync tool. Every file opens with a `GENERATED … DO NOT EDIT`
-header naming the sources it came from. It is no longer the PDF-derived v4 source: the PDF, its
-page renders, the Canva exports and the traceability index are archived in the design repository
-as history only, and nothing here reads them.
+The folder holds **generated Markdown**, produced from the private design repository by that
+repository's own sync tool. Every file opens with a `GENERATED … DO NOT EDIT` header naming the
+sources it came from. The PDF-derived v4 source — the PDF, its page renders, the Canva exports and
+the traceability index — is archived in the design repository, and nothing here reads it.
 
 ## The rule
 
@@ -59,7 +58,7 @@ as history only, and nothing here reads them.
 
 ## Status words
 
-Every rule in the docs carries one (`docs/README.md` defines them). **Decided** is binding.
+Every rule in the docs carries one (the design docs' `README.md` defines them). **Decided** is binding.
 **Proposal** is the design system's recommendation awaiting a ruling. **Question** is open.
 **Implementation** is developer guidance — a rename, a measurement, a check in the app code — and
 awaits no design ruling. **Planned** is an agreed asset not drawn or sourced yet. **Missing** is an
@@ -71,7 +70,7 @@ log is binding for the redesign, and today's code is the baseline only where the
 ## Accepting a built piece
 
 The PO's acceptance rule, checked against the state's reference image captured under the
-documented conditions (`docs/README.md`, "Reference images"): the same size, **under 1%** of
+documented conditions (the design docs' `README.md`, "Reference images"): the same size, **under 1%** of
 pixels differing, and **no 3×3 (or larger) cluster** of differing pixels anywhere. The maintainer
 runs `tools/compare-ref.js` in the design repository, which checks exactly those two and prints
 `PASS` or `FAIL`. The third half is never pixels: **no silent guess**. When a value or behaviour
@@ -80,13 +79,11 @@ you would otherwise make, and where it applies, and ask the maintainer; the desi
 in the design repository, which regenerates the docs. A guess shipped as if it were documented
 fails acceptance even at a perfect pixel score.
 
-App issue #634's golden UI tests apply this rule in code, but run only on the maintainer's
-machine, against the private references — CI never runs them, because the references never leave
-the design repository.
-
 ## Golden first
 
-App issue #634's goldens (`pnpm test:golden`, `scripts/golden/`) apply that rule in code. For a
+App issue #634's goldens (`pnpm test:golden`, `scripts/golden/`) apply that rule in code, on the
+maintainer's machine only: CI never runs them, because the references never leave the design
+repository. For a
 state you rebuild: add its golden first and watch it fail (an entry in
 `src/renderer/src/golden/states.json` marked `red`, and its render in `renders.ts`), build it from
 the Markdown, then watch it pass and remove `red` — a red state that passes fails the run. Never
