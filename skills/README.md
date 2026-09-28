@@ -24,7 +24,7 @@ the metadata cannot disagree, because there is only one of them.
 
 ```
 AGENTS.md                     # committed single source of truth; carries the generated tables
-CLAUDE.md                     # three lines, committed: `@AGENTS.md` (see "Entry points")
+CLAUDE.md                     # committed; imports AGENTS.md via `@AGENTS.md` (see "Entry points")
 skills/
 ├── README.md                 # this file — the spec
 ├── skill-creator/            # the meta-skill: how to write a skill
@@ -172,12 +172,12 @@ So there is **no `setup.sh`**, and nothing is generated or gitignored. Two facts
 unnecessary:
 
 - **Claude Code does not read `AGENTS.md`.** It reads `CLAUDE.md`, which supports `@path` imports
-  that load the target's full content. So `CLAUDE.md` is three committed lines containing
-  `@AGENTS.md`. It holds no rules, so there is nothing in it that can drift.
+  that load the target's full content. So `CLAUDE.md` is a short committed file whose one
+  directive is `@AGENTS.md`. It holds no rules, so there is nothing in it that can drift.
 - **Every other tool reads `AGENTS.md` natively** — Cursor, Copilot, Windsurf, Cline and Gemini all
   resolve it without help. There is no third entry point to generate.
 
-A generator that creates one static three-line file is a moving part that buys nothing.
+A generator that creates one static file is a moving part that buys nothing.
 
 ## Writing style
 

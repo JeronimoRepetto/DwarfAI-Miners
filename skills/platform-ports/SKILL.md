@@ -100,13 +100,6 @@ fails open — an unreadable process list must not make a running dwarf vanish. 
 `taskkill /T` on a recycled pid ends a stranger's program and cannot be undone. A port that decided
 this for both would have to be wrong for one of them.
 
-## One comment not to repeat
-
-The `AgentRuntime` constructor carries a comment saying it is _"the one place the running operating
-system is consulted"_. That is true **within that module** and false for the app, which has three
-more sites elsewhere. Do not quote it as an app-wide claim; it was already restated inaccurately
-once.
-
 ## Getting it wrong
 
 - **Branching on the OS deep in a call chain.** It makes the behaviour unreachable from a test on
