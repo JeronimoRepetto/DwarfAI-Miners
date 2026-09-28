@@ -296,7 +296,7 @@ describe('DwarfQuestionCard', () => {
     expect(wrapper.emitted('answer')).toBeUndefined()
   })
 
-  it('renders main’s reason for a refusal and lets the answer be tried again', async () => {
+  it('draws no alert for a refusal and lets the answer be tried again', async () => {
     const wrapper = card({
       answerState: {
         phase: 'refused',
@@ -304,9 +304,8 @@ describe('DwarfQuestionCard', () => {
         error: 'That session is not one this panel is holding.'
       }
     })
-    expect(wrapper.find('.dm-qcard__alert').text()).toBe(
-      'That session is not one this panel is holding.'
-    )
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
     for (const option of options(wrapper)) {
       expect(option.attributes('disabled')).toBeUndefined()
     }
@@ -664,7 +663,7 @@ describe('a question answered at the session’s own terminal', () => {
     expect(wrapper.find('.dm-qcard__closed').exists()).toBe(false)
   })
 
-  it('shows main’s refusal with the way to the terminal beside it', async () => {
+  it('keeps the way to the terminal after a refusal, with no alert', async () => {
     // A refusal on this channel is about a console, so the jump is what the
     // person needs next — unlike a held refusal, which is about the stream.
     const wrapper = observedSingle()
@@ -675,7 +674,8 @@ describe('a question answered at the session’s own terminal', () => {
         error: 'The panel could not reach the console this session runs in.'
       }
     })
-    expect(wrapper.find('.dm-qcard__alert').text()).toContain('could not reach the console')
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: main's reason in the card's alert row): the card draws no alert; the reason is the ✕ title on the "Answers:" record.
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
     expect(wrapper.find('.dm-qcard__jump').exists()).toBe(true)
   })
 })

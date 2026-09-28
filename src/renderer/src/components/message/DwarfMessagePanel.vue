@@ -428,6 +428,25 @@ watch(showsComposer, (shows) => {
 type Row = PanelRow & { mark?: BubbleMark }
 
 /*
+ * A message the person sent from this panel, which alone may offer Retry and Copy once it failed.
+ * The "Answers:" record is not one (decision log, Answers bubble is a record): it carries neither,
+ * at ✕ too, since the card, back in the composer's place, is how the ask is answered again.
+ */
+function ownSend(row: Row): boolean {
+  return row.echo !== undefined && row.echo.answers !== true
+}
+
+/*
+ * A refused record's reason, main's own words (MESSAGE-QUESTIONS 21): its ✕ mark's tooltip, as the
+ * bubble draws it, never an alert on the card that came back.
+ */
+function refusalOf(row: Row): string | undefined {
+  return row.echo?.answers === true && row.echo.state.phase === 'failed'
+    ? row.echo.state.error
+    : undefined
+}
+
+/*
  * The transcript's rows, each with the mark a prompt in the transcript wears (#635): the person's
  * words there were handed to the session, so they are at least ✓, and ✓✓ once the session was seen
  * acting after them — historyMarks, the history's own reading of the same record. The dwarf's own
@@ -853,8 +872,9 @@ function onStopAction(index: number): void {
           :time="entry.message.at === undefined ? undefined : historyClock(entry.message.at)"
           :mark="entry.message.mark"
           :is-new="arrivedKeys.has(entry.key)"
-          :offers-retry="entry.message.echo !== undefined && canReceive"
-          :session-closed="entry.message.echo !== undefined && (closed || !canReceive)"
+          :offers-retry="ownSend(entry.message) && canReceive"
+          :session-closed="ownSend(entry.message) && (closed || !canReceive)"
+          :reason="refusalOf(entry.message)"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"

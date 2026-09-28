@@ -573,3 +573,86 @@ describe('reconcileEchoes: a message longer than the old cap', () => {
   })
 })
 /* --- end of the #431 block ------------------------------------------------- */
+
+/* --- The "Answers:" record (#635, MESSAGE-QUESTIONS 8) — one block, appended ---- */
+
+/*
+ * An echo marked `answers` is the record of an answer that went out on the ask's own channel (the
+ * question tool's result, the prompt, a permission's decision), never a message the session reads
+ * from its queue (decision log, Answers bubble is a record). No transcript row is ever that
+ * message, so none may account for it, and it is drawn where it happened in the conversation
+ * rather than after everything, since it outlives the rows that come after it.
+ */
+describe('the "Answers:" record', () => {
+  const RECORD = 'Answers:\n\n- Which store: **Redis**'
+
+  function record(overrides: Partial<MessageEcho> = {}): MessageEcho {
+    return echo({ id: 'r1', text: RECORD, answers: true, ...overrides })
+  }
+
+  function at(row: PanelMessage, ms: number): PanelMessage {
+    return { ...row, at: ms }
+  }
+
+  it('is never accounted for by a transcript row, even one with its very words', () => {
+    expect(reconcileEchoes([record()], [turn({ text: RECORD })])).toEqual([record()])
+  })
+
+  it('still lets the same row account for an ordinary echo beside it', () => {
+    const kept = reconcileEchoes([record(), echo({ text: RECORD })], [turn({ text: RECORD })])
+    expect(kept).toEqual([record()])
+  })
+
+  it('sits after what came before the answer and before what the dwarf said after it', () => {
+    const entries = groupActivity(
+      [
+        at(spoken('a', 'I need a decision.'), SENT_AT - 60_000),
+        at(spoken('b', 'Done, using Redis.'), SENT_AT + 30_000)
+      ],
+      { ended: false }
+    )
+    const merged = mergeEchoes(entries, echoRowsOf([record()]))
+    expect(merged.map((entry) => entry.key)).toEqual(['a', 'echo-r1', 'b'])
+  })
+
+  /*
+   * An ask is part of the same turn (decision log, Run open while asking): a run the dwarf asked in
+   * keeps growing once the answer lands, and the record does not close it or split it.
+   */
+  it('never splits a run that was going when the answer landed', () => {
+    const entries = groupActivity(
+      [at(tool('a'), SENT_AT - 60_000), at(tool('b', 'Ran pnpm build'), SENT_AT + 5_000)],
+      { ended: false }
+    )
+    const merged = mergeEchoes(entries, echoRowsOf([record()]))
+    expect(merged.map((entry) => entry.key)).toEqual(['a', 'echo-r1'])
+    const run = merged[0]!
+    expect(run.kind === 'activity' && run.rows.length).toBe(2)
+    expect(run.kind === 'activity' && run.closed).toBe(false)
+  })
+
+  it('comes before a run that started after the answer', () => {
+    const entries = groupActivity(
+      [at(spoken('a', 'I need a decision.'), SENT_AT - 60_000), at(tool('b'), SENT_AT + 5_000)],
+      { ended: false }
+    )
+    const merged = mergeEchoes(entries, echoRowsOf([record()]))
+    expect(merged.map((entry) => entry.key)).toEqual(['a', 'echo-r1', 'b'])
+  })
+
+  it('goes last, in the order it was given, when nothing dated came after it', () => {
+    const entries = groupActivity([at(spoken('a'), SENT_AT - 60_000), spoken('b')], {
+      ended: false
+    })
+    const later = echo({ id: 'e2', sentAt: SENT_AT + 1_000 })
+    const merged = mergeEchoes(entries, echoRowsOf([record(), later]))
+    expect(merged.map((entry) => entry.key)).toEqual(['a', 'b', 'echo-r1', 'echo-e2'])
+  })
+
+  it('leaves an ordinary echo after everything, as before', () => {
+    const entries = groupActivity([at(spoken('b'), SENT_AT + 30_000)], { ended: false })
+    const merged = mergeEchoes(entries, echoRowsOf([echo()]))
+    expect(merged.map((entry) => entry.key)).toEqual(['b', 'echo-e1'])
+  })
+})
+/* --- end of the "Answers:" record block ------------------------------------- */

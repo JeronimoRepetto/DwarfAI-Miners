@@ -814,9 +814,14 @@ describe('answering an agent question', () => {
     await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.dm-qcard__alert').text()).toBe(
-      'That session is not one this panel is holding.'
-    )
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: the reason in the card's alert row): the reason
+    // is the ✕ mark's title on the "Answers:" record, and the card draws no alert.
+    const record = wrapper.findAll('.dm-bubble').at(-1)!
+    expect(record.find('.dm-bubble__text p').text()).toBe('Answers:')
+    const mark = record.find('.dm-bubble__mark')
+    const reason = wrapper.element.querySelector('#' + mark.attributes('aria-describedby'))
+    expect(reason?.textContent).toBe('That session is not one this panel is holding.')
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
   })
 
   /* --- Answering in the person's own words (#481) — one block, appended ---- */
@@ -870,7 +875,13 @@ describe('answering an agent question', () => {
     await wrapper.find('.dm-qcard__submit').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.dm-qcard__alert').text()).toContain('nothing was typed')
+    // AMENDED for #635 (MESSAGE-QUESTIONS 21; was: the reason in the card's alert row): the reason
+    // is the ✕ mark's title on the "Answers:" record, and the card draws no alert.
+    const record = wrapper.findAll('.dm-bubble').at(-1)!
+    const mark = record.find('.dm-bubble__mark')
+    const reason = wrapper.element.querySelector('#' + mark.attributes('aria-describedby'))
+    expect(reason?.textContent).toContain('nothing was typed')
+    expect(wrapper.find('.dm-qcard__alert').exists()).toBe(false)
   })
 
   // ADDED for #635 (PO decision 2026-09-28, held free-text answers).

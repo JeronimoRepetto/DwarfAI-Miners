@@ -15,7 +15,7 @@ export const TIP_DELAY_MS = 300
 export const TIP_GAP = 8
 
 export type TipSide = 'top' | 'bottom' | 'left' | 'right'
-export type TipAlign = 'start' | 'center'
+export type TipAlign = 'start' | 'center' | 'end'
 
 /** A box in window pixels, as getBoundingClientRect() gives it. */
 export interface TipRect {
@@ -60,7 +60,11 @@ const OPPOSITE: Record<TipSide, TipSide> = {
 
 function sideOrigin(target: TipRect, tip: TipSize, side: TipSide, align: TipAlign, gap: number) {
   const across = (start: number, length: number, size: number): number =>
-    align === 'start' ? start : start + length / 2 - size / 2
+    align === 'start'
+      ? start
+      : align === 'end'
+        ? start + length - size
+        : start + length / 2 - size / 2
   switch (side) {
     case 'top':
       return {

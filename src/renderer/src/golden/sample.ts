@@ -293,7 +293,7 @@ const STEP_KIND: Record<string, FeedActivityKind> = {
  * clock, so the day is the same in every run. AMENDED for #635, the MessagePanel slice (was: a
  * fixed arbitrary day, which the history never showed and the MessagePanel's divider does).
  */
-function at(time: unknown): number {
+export function at(time: unknown): number {
   const m = /^(\d{2}):(\d{2})$/.exec(String(time))
   if (!m) return fail('time', time)
   const today = new Date()

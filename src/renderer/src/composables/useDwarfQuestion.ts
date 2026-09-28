@@ -1,5 +1,10 @@
 import { reactive } from 'vue'
 import {
+  permissionAnswerRecord,
+  questionAnswersRecord,
+  wordsAnswerRecord
+} from '../lib/question/answersRecord'
+import {
   answerRequest,
   permissionRequest,
   textAnswerRequest,
@@ -14,6 +19,7 @@ import {
   type DwarfQuestionAnswerRequest,
   type DwarfQuestionAnswerResult
 } from '../types'
+import { useDwarfMessaging } from './useDwarfMessaging'
 
 /**
  * The verdict of an answer the panel gave to an agent's question (#94, #125),
@@ -34,6 +40,12 @@ import {
  * the dwarf's own `pendingQuestion` or `pendingPermission`, which only main's
  * next snapshot can drop: a store that hid one on a successful send would be
  * claiming the prompt was closed on the strength of its own optimism.
+ *
+ * What a submit does draw is its RECORD (#635; decision log, Answers bubble is a record): the
+ * "Answers:" bubble in the conversation, minted in the same step that takes the in-flight guard, so
+ * one submit draws one record however many presses reached it. It is the messaging store's echo,
+ * because it is drawn with the person's other bubbles, but nothing is sent for it: the answer
+ * leaves on the ask's own channel below, and the record walks that answer's verdict.
  */
 
 // Singleton store: module-scope state shared by every useDwarfQuestion()
@@ -43,7 +55,16 @@ const state = reactive(defaultDwarfQuestionState())
 const LOST_BRIDGE = 'The panel lost contact with the app.'
 const NOT_ANSWERED = 'That answer could not be delivered.'
 
+/** The answer's verdict as its record wears it: handed over, or refused with main's reason. */
+function verdictOf(result: DwarfQuestionAnswerResult): { answered: boolean; error?: string } {
+  return result.answered
+    ? { answered: true }
+    : { answered: false, error: result.error ?? NOT_ANSWERED }
+}
+
 export function useDwarfQuestion() {
+  const messaging = useDwarfMessaging()
+
   function stateFor(dwarfId: string): DwarfAnswerState | undefined {
     return state.byDwarfId[dwarfId]
   }
@@ -59,7 +80,12 @@ export function useDwarfQuestion() {
    * blocked tool call.
    */
   async function answer(dwarfId: string, question: DwarfQuestion, label: AskAnswer): Promise<void> {
-    await release(dwarfId, question, answerRequest(dwarfId, question, label))
+    await release(
+      dwarfId,
+      question,
+      answerRequest(dwarfId, question, label),
+      questionAnswersRecord(question, label)
+    )
   }
 
   /**
@@ -80,17 +106,24 @@ export function useDwarfQuestion() {
     question: DwarfQuestion,
     text: string
   ): Promise<void> {
-    await release(dwarfId, question, textAnswerRequest(dwarfId, question, text))
+    await release(
+      dwarfId,
+      question,
+      textAnswerRequest(dwarfId, question, text),
+      wordsAnswerRecord(question, text)
+    )
   }
 
   async function release(
     dwarfId: string,
     question: DwarfQuestion,
-    request: DwarfQuestionAnswerRequest
+    request: DwarfQuestionAnswerRequest,
+    record: string
   ): Promise<void> {
     if (state.byDwarfId[dwarfId]?.phase === 'answering') return
     const toolUseId = question.toolUseId
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId }
+    const recordId = messaging.recordAnswer(dwarfId, record, toolUseId)
 
     let result: DwarfQuestionAnswerResult
     try {
@@ -102,6 +135,7 @@ export function useDwarfQuestion() {
     state.byDwarfId[dwarfId] = result.answered
       ? { phase: 'answered', toolUseId }
       : { phase: 'refused', toolUseId, error: result.error ?? NOT_ANSWERED }
+    messaging.settleAnswer(dwarfId, recordId, verdictOf(result))
   }
 
   /**
@@ -125,6 +159,11 @@ export function useDwarfQuestion() {
     // permissionStatusLine). An answer to a QUESTION records none — that
     // vocabulary is the permission prompt's alone.
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId, decision }
+    const recordId = messaging.recordAnswer(
+      dwarfId,
+      permissionAnswerRecord(permission, decision),
+      toolUseId
+    )
 
     let result: DwarfQuestionAnswerResult
     try {
@@ -138,6 +177,7 @@ export function useDwarfQuestion() {
     state.byDwarfId[dwarfId] = result.answered
       ? { phase: 'answered', toolUseId, decision }
       : { phase: 'refused', toolUseId, decision, error: result.error ?? NOT_ANSWERED }
+    messaging.settleAnswer(dwarfId, recordId, verdictOf(result))
   }
 
   function clear(dwarfId: string): void {

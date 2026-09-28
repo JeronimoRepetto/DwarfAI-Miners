@@ -71,7 +71,10 @@ const otherNote = computed(() => {
     ? OPENCODE_PERMISSION_ANSWERED_ABOVE
     : TYPED_HERE_REACHES_THE_PICKER
 })
-const alert = computed(() => (verdict.value?.phase === 'refused' ? verdict.value.error : null))
+/*
+ * No alert for a refused decision (MESSAGE-QUESTIONS 21): its reason is the ✕ mark's title on the
+ * "Answers:" record, and the card that came back is drawn as the design draws it.
+ */
 const ok = computed(() => permissionStatusLine(verdict.value, props.permission.channel))
 /*
  * Jump to terminal is in the walk of every state the design draws, the Permission state
@@ -98,7 +101,7 @@ function submit(values: (string | OwnWordsAnswer)[]): void {
     :route="route"
     :other-note="otherNote"
     :jump="jump"
-    :alert="alert"
+    :alert="null"
     :ok="ok"
     @submit="submit"
     @send-text="emit('send-text', { text: $event, pressEnter: true })"

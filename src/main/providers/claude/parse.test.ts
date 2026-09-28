@@ -2229,3 +2229,70 @@ describe('parseClaudeTranscriptTail resume records (#338)', () => {
     expect(parseClaudeTranscriptTail(launchLine('agentx')).endedLaunches).toEqual([])
   })
 })
+
+/* --- The "Answers:" record (#635, MESSAGE-QUESTIONS 8) — one block, appended ---- */
+
+/*
+ * The panel draws the answer to an AskUserQuestion as its own "Answers:" record (decision log,
+ * Answers bubble is a record), which no transcript row is ever taken for. So the transcript must
+ * not publish the answer as something the person typed either, or the conversation would show it
+ * twice: Claude Code writes it as the tool's RESULT, a `user` line carrying `toolUseResult` and a
+ * `tool_result` block, and that is never a message. The line's shape here is this suite's own.
+ */
+describe('extractClaudeFeed: the answer to an ask', () => {
+  it('publishes no row of the person’s for the answer, only what the dwarf said', () => {
+    const tail =
+      [
+        {
+          type: 'assistant',
+          timestamp: '2026-09-28T09:00:00.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_ask',
+                name: 'AskUserQuestion',
+                input: {
+                  questions: [
+                    {
+                      question: 'Which store?',
+                      header: 'Store',
+                      multiSelect: false,
+                      options: [{ label: 'Redis', description: '' }]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          type: 'user',
+          timestamp: '2026-09-28T09:00:05.000Z',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_ask',
+                content: 'User has answered your questions: "Which store?"="Redis".'
+              }
+            ]
+          },
+          toolUseResult: { answers: { 'Which store?': 'Redis' } }
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-09-28T09:00:09.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Using Redis.' }] }
+        }
+      ]
+        .map((line) => JSON.stringify(line))
+        .join('\n') + '\n'
+    const feed = extractClaudeFeed(tail, 20)
+    expect(feed.filter((m) => m.role === 'user')).toEqual([])
+    expect(feed.map((m) => m.text)).toContain('Using Redis.')
+  })
+})
+/* --- end of the "Answers:" record block ------------------------------------- */

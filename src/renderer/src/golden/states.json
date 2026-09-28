@@ -220,6 +220,15 @@
     "key": "organisms/message-panel#not-delivered-copy-alone"
   },
   {
+    "key": "organisms/message-panel#answer-refused"
+  },
+  {
+    "key": "organisms/message-panel#answer-refused-ask-closed"
+  },
+  {
+    "key": "organisms/message-panel#answer-refused-reason"
+  },
+  {
     "key": "organisms/add-panel#live"
   },
   {
