@@ -156,6 +156,30 @@
     "red": "the question card in place of the composer is the old card, restyled with the question and permission cards in the next slice of #635 (PR3); the frame, the header, the outcome line and the conversation above it are the rebuilt ones"
   },
   {
+    "key": "organisms/question-card#live",
+    "red": "the old question card: no asks pill, step count or dots, Back and Next above the question, a free-text box in place of the Other thing row (#635, PR3a)"
+  },
+  {
+    "key": "organisms/question-card#last-step",
+    "red": "the old question card: no asks pill, step count or dots, Back and Next above the question, a free-text box in place of the Other thing row (#635, PR3a)"
+  },
+  {
+    "key": "organisms/question-card#permission",
+    "red": "the old permission card: the tool name, a bespoke rounded input block and described options in place of the asks pill, the request code block and the walk (#635, PR3a)"
+  },
+  {
+    "key": "organisms/question-card#long-request",
+    "red": "the old permission card: the tool name, a bespoke rounded input block and described options in place of the asks pill, the request code block and the walk (#635, PR3a)"
+  },
+  {
+    "key": "molecules/question-option#default-hover-selected-pressed-focus",
+    "red": "the question option molecule is not built yet (#635, PR3a)"
+  },
+  {
+    "key": "molecules/question-option#other-thing",
+    "red": "the question option molecule is not built yet (#635, PR3a)"
+  },
+  {
     "key": "molecules/chat-bubble#not-delivered-with-actions"
   },
   {

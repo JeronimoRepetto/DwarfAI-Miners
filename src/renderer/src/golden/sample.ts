@@ -21,6 +21,7 @@ import {
   MINE_TIERS,
   type Dwarf,
   type DwarfFeedResult,
+  type DwarfPermissionRequest,
   type DwarfProvider,
   type FailedSend,
   type FeedActivityKind,
@@ -81,6 +82,11 @@ export interface GoldenSample {
    * carries is the app's to let go of, exactly as a stored one is.
    */
   launch?: LaunchView
+  /**
+   * The sample's long permission request (`DM.data.longPermissionRequest`, #635), which the
+   * question card's Long request state draws for its six-line cap; absent when it carries none.
+   */
+  longPermissionRequest?: DwarfPermissionRequest
 }
 
 type Row = Record<string, unknown>
@@ -115,14 +121,18 @@ function materials(ore: unknown): MaterialTotals {
   return totals
 }
 
-// An asking dwarf's questions, as the app carries an ask it can see: the sample writes each as its
-// text and its option labels.
+/*
+ * An asking dwarf's questions, as the app carries an ask it can see: the sample writes each as its
+ * text and its option labels. On the held channel (#635, the question card slice): the sample's
+ * asks are ones the card answers, and the held channel is the one on which every question of a
+ * walk is answerable — a several-question ask at a terminal is one the app can only show.
+ */
 function pendingQuestion(row: Row): Pick<Dwarf, 'pendingQuestion'> {
   if (!Array.isArray(row.question)) return {}
   return {
     pendingQuestion: {
       toolUseId: String(row.id),
-      channel: 'terminal',
+      channel: 'held',
       questions: (row.question as Row[]).map((q) => ({
         question: String(q.text),
         multiSelect: false,
@@ -132,16 +142,44 @@ function pendingQuestion(row: Row): Pick<Dwarf, 'pendingQuestion'> {
   }
 }
 
+/*
+ * A permission's request as the app carries it (#635, the question card slice). The sample writes
+ * one line, "Bash · pnpm install in …", which is the card's request block exactly as the app
+ * composes it from the tool's name and its input (permissionRequestText); so the tool is what
+ * stands before the first " · " and the input is the rest, with no title or description, which the
+ * sample never writes. The clock is the golden's own: nothing draws it.
+ */
+export function permissionOf(id: string, step: unknown): DwarfPermissionRequest {
+  const text = String((step as Row | undefined)?.text)
+  const at = text.indexOf(' · ')
+  if (at <= 0) return fail('request', text)
+  return {
+    toolUseId: id,
+    toolName: text.slice(0, at),
+    input: text.slice(at + ' · '.length),
+    channel: 'held',
+    askedAt: '2026-09-28T09:00:00.000Z'
+  }
+}
+
 // The sample's status words: working, asking (for an answer, or for a permission when `need`
 // says so) and asleep, a session at rest with nobody asked anything. A permission is the app's
-// approval wait, not a question, so only an answer's ask carries the questions.
-function status(row: Row): Pick<Dwarf, 'status' | 'waitingReason' | 'pendingQuestion'> {
+// approval wait, not a question: its one step is the request its pending permission carries.
+function status(
+  row: Row
+): Pick<Dwarf, 'status' | 'waitingReason' | 'pendingQuestion' | 'pendingPermission'> {
   switch (row.status) {
     case 'working':
       return { status: 'working' }
     case 'asking':
       return row.need === 'permission'
-        ? { status: 'waiting', waitingReason: 'approval' }
+        ? {
+            status: 'waiting',
+            waitingReason: 'approval',
+            ...(Array.isArray(row.question)
+              ? { pendingPermission: permissionOf(String(row.id), row.question[0]) }
+              : {})
+          }
         : { status: 'waiting', waitingReason: 'user-input', ...pendingQuestion(row) }
     case 'asleep':
       return { status: 'waiting' }
@@ -394,6 +432,14 @@ export function adaptSample(dm: unknown): GoldenSample {
     failedSends,
     projects: mineRows.map((row, i) => project(row, mines[i]!, recent)),
     ...(launch === undefined ? {} : { launch }),
+    ...(Array.isArray(data.longPermissionRequest)
+      ? {
+          longPermissionRequest: permissionOf(
+            'longPermissionRequest',
+            data.longPermissionRequest[0]
+          )
+        }
+      : {}),
     ...(floor === undefined
       ? {}
       : {
