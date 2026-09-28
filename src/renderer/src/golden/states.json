@@ -241,14 +241,10 @@
     "key": "organisms/message-panel#name-focus"
   },
   {
-    "key": "organisms/message-panel#custom-name",
-    "red": "0.387% differing, 11 clusters, all in the turn outcome line: the golden sample carries no turn outcome for dwarfai-55, so its line reads \"Turn finished\" where the design reads \"Turn stopped at a limit · idle for 41m\"; the name, the base line and the rename field match (#635)",
-    "at": 0.387
+    "key": "organisms/message-panel#custom-name"
   },
   {
-    "key": "organisms/message-panel#renaming",
-    "red": "0.387% differing, 11 clusters, all in the turn outcome line: the golden sample carries no turn outcome for dwarfai-55, so its line reads \"Turn finished\" where the design reads \"Turn stopped at a limit · idle for 41m\"; the name, the base line and the rename field match (#635)",
-    "at": 0.387
+    "key": "organisms/message-panel#renaming"
   },
   {
     "key": "organisms/message-panel#renaming-at-the-limit"
@@ -257,9 +253,7 @@
     "key": "organisms/message-panel#renaming-emoji-refused"
   },
   {
-    "key": "organisms/message-panel#renaming-empty",
-    "red": "0.387% differing, 11 clusters, all in the turn outcome line: the golden sample carries no turn outcome for dwarfai-55, so its line reads \"Turn finished\" where the design reads \"Turn stopped at a limit · idle for 41m\"; the name, the base line and the rename field match (#635)",
-    "at": 0.387
+    "key": "organisms/message-panel#renaming-empty"
   },
   {
     "key": "organisms/add-panel#live"

@@ -20,6 +20,8 @@ import {
   MATERIAL_TOKENS_PER_UNIT,
   MINE_TIERS,
   type Dwarf,
+  type TurnOutcome,
+  type TurnOutcomeKind,
   type DwarfFeedResult,
   type DwarfPermissionRequest,
   type DwarfProvider,
@@ -92,6 +94,7 @@ export interface GoldenSample {
 type Row = Record<string, unknown>
 
 const ROLES: readonly DwarfRole[] = ['foreman', 'worker', 'worker2']
+const TURN_KINDS: readonly TurnOutcomeKind[] = ['concluded', 'capped', 'errored', 'interrupted']
 const SILENCE_UNIT_MS: Record<'s' | 'm' | 'h', number> = { s: 1_000, m: 60_000, h: 3_600_000 }
 
 function fail(what: string, value: unknown): never {
@@ -195,6 +198,25 @@ function status(
   }
 }
 
+/*
+ * The turn a resting dwarf finished (#635; decision log, Turn outcome line), as the provider's
+ * end-of-turn message would give it: its kind, the provider's own word or the closing words where
+ * the sample writes them, and its end as long ago as the dwarf has been silent, since nothing
+ * followed it. The sample's outcome sentence is the prototype's drawing of these, never read.
+ */
+function lastTurn(row: Row): Pick<Dwarf, 'lastTurn'> {
+  const turn = row.turn as Row | undefined
+  if (turn === undefined) return {}
+  const kind = oneOf<TurnOutcomeKind>('turn', turn.kind, TURN_KINDS)
+  const outcome: TurnOutcome = {
+    kind,
+    ...(typeof turn.text === 'string' ? { text: turn.text } : {}),
+    ...(typeof turn.detail === 'string' ? { detail: turn.detail } : {}),
+    endedAt: Date.now() - (typeof row.silence === 'string' ? silenceMs(row.silence) : 0)
+  }
+  return { lastTurn: outcome }
+}
+
 function dwarf(row: Row, mine: Mine): Dwarf {
   // The sample writes the provider's label ("Claude"); the wire carries its id ("claude").
   const id = typeof row.provider === 'string' ? row.provider.toLowerCase() : ''
@@ -214,6 +236,7 @@ function dwarf(row: Row, mine: Mine): Dwarf {
     model: row.model === undefined ? undefined : String(row.model),
     effort: row.effort === undefined ? undefined : String(row.effort),
     ...status(row),
+    ...lastTurn(row),
     silentForMs: typeof row.silence === 'string' ? silenceMs(row.silence) : undefined,
     workplace:
       typeof row.worktree === 'string' ? { path: mine.path, branch: row.worktree } : undefined,
