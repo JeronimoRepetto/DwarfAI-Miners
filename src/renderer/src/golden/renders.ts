@@ -1890,6 +1890,7 @@ export const RENDERS: Record<string, Render> = {
   'organisms/add-panel#launch-failed-cli-not-installed': addPanel,
   'organisms/add-panel#launch-failed-cli-exited-at-once': addPanel,
   'organisms/add-panel#launch-failed-cli-would-not-start': addPanel,
+  'organisms/add-panel#launch-failure-output-tooltip': textTooltip,
   'organisms/add-panel#launch-failed-jev-unreachable': addPanel,
   'organisms/add-panel#launch-failed-jev-could-not-choose': addPanel,
   'organisms/add-panel#launch-failed-no-launchable-provider': addPanel,

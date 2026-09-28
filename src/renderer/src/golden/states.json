@@ -259,6 +259,11 @@
     "key": "organisms/add-panel#launch-failed-cli-would-not-start"
   },
   {
+    "key": "organisms/add-panel#launch-failure-output-tooltip",
+    "red": "the launch-failure notice's title has no tooltip yet (MESSAGE-QUESTIONS 23): the render draws the tool's lines as a plain tooltip line, in the meta face rather than the code face",
+    "at": 32.954
+  },
+  {
     "key": "organisms/add-panel#launch-failed-jev-unreachable"
   },
   {
