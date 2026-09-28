@@ -18,8 +18,8 @@ paths:
 # One convention, one fit, two modules
 
 Both paintings are drawn into a resizable panel, both author their points as percentages of the
-_painting_ (image percent), projected to the box at render time — and since #153 both are fitted
-the same way: **`contain`, centred, nothing ever cropped.** What differs is only which module you
+_painting_ (image percent), projected to the box at render time — and both are fitted the same
+way: **`contain`, centred, nothing ever cropped.** What differs is only which module you
 are standing in.
 
 **The rule the maintainer set, in their own words:** "the whole painting must be visible, aspect
@@ -35,12 +35,12 @@ percentages of the painting (1856 x 2304), because every one of them is a MEASUR
 specific feature — a ledge, a river fork — and they run from image x 3.4 to 96.8 and y 28.3 to
 98.6, the closest pair 2.65 apart. `mapProjection.projectToMapBox` converts image percent to box
 percent from the measured box; `MapPage.vue` calls it on the art box, which carries the painting's
-own aspect (`.dm-mappage__art`), so the answer is the site's image percent unchanged. Since #635 a
-marker is centred on its site as it is: nothing holds it in by its own half-width any more.
+own aspect (`.dm-mappage__art`), so the answer is the site's image percent unchanged. A marker is
+centred on its site as it is; nothing clamps it in by its own half-width.
 
 **The mine interior.** `interiorMap.ts` carries every workstation and corridor as percentages of
 the painting, because the interiors are a 1184 x 3622 tower. A box-percent point would sit on a
-different gallery at every column height. Since #635 the mine column draws the painting in an art
+different gallery at every column height. The mine column draws the painting in an art
 box of its own aspect (`.dm-minecol__art`), so `mineColumn.ts` stands each dwarf on its station's
 image percent unchanged, as the map does its sites; `sceneGeometry.projectToBox` is left for a box
 of any other shape. One thing more to know before touching a number:

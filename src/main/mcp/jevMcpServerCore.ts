@@ -73,14 +73,19 @@ const TOOL_DESCRIPTION_PREFACE =
  * bundled into the server script).
  */
 export const DELEGATE_SUBTASK_DESCRIPTION =
-  `${TOOL_DESCRIPTION_PREFACE} Blocks until the child session concludes or the wait budget is ` +
-  `spent. A \`pending\` answer means the child is still running — call ${SUBTASK_RESULT_TOOL_NAME} ` +
+  `${TOOL_DESCRIPTION_PREFACE} Use it for a self-contained subtask you would otherwise give a ` +
+  `subagent. The child starts fresh: its whole prompt is \`context\` followed by \`task\`, and it ` +
+  `never sees this conversation. Blocks until the child session concludes or the wait budget is ` +
+  `spent. A \`done\` answer carries the child's last turn as \`outcome\`: \`kind\` is \`concluded\`, ` +
+  `\`capped\`, \`errored\` or \`interrupted\`, and \`text\` is present only when the provider ` +
+  `returned one (\`truncated\` marks a cut). A \`pending\` answer means the child is still running — call ${SUBTASK_RESULT_TOOL_NAME} ` +
   `with its \`ticket\` later to fetch the result. On any \`failed\` answer, ${NATIVE_SUBAGENT_FALLBACK_SENTENCE}`
 
 /** EXPORTED for the same reason `DELEGATE_SUBTASK_DESCRIPTION` above is. */
 export const SUBTASK_RESULT_DESCRIPTION =
   `Fetches the result of a subtask started with ${DELEGATE_SUBTASK_TOOL_NAME}, by its \`ticket\`. ` +
-  `May itself still answer \`pending\` if the child has not concluded yet. On any \`failed\` ` +
+  `Answers in the same shape as ${DELEGATE_SUBTASK_TOOL_NAME}: \`done\` with the child's \`outcome\`, ` +
+  `\`pending\` if the child has not concluded yet, or \`failed\` (an unknown ticket is one). On any \`failed\` ` +
   `answer, ${NATIVE_SUBAGENT_FALLBACK_SENTENCE}`
 
 export function createJevMcpServer(options: JevMcpServerOptions): McpServer {
@@ -99,6 +104,9 @@ export function createJevMcpServer(options: JevMcpServerOptions): McpServer {
           .max(
             MAX_DELEGATION_TASK_CHARS,
             `task must be at most ${MAX_DELEGATION_TASK_CHARS} characters`
+          )
+          .describe(
+            `What the child session should do, written to stand alone: the child never sees this conversation. At most ${MAX_DELEGATION_TASK_CHARS} characters.`
           ),
         context: z
           .string()
@@ -107,6 +115,9 @@ export function createJevMcpServer(options: JevMcpServerOptions): McpServer {
             `context must be at most ${MAX_DELEGATION_CONTEXT_CHARS} characters`
           )
           .optional()
+          .describe(
+            `Background the child needs (file paths, decisions, constraints), placed before task in its prompt. At most ${MAX_DELEGATION_CONTEXT_CHARS} characters.`
+          )
       }
     },
     async (args) => {
@@ -121,7 +132,10 @@ export function createJevMcpServer(options: JevMcpServerOptions): McpServer {
       title: 'Fetch a delegated subtask’s result',
       description: SUBTASK_RESULT_DESCRIPTION,
       inputSchema: {
-        ticket: z.string().min(1, 'ticket must not be empty')
+        ticket: z
+          .string()
+          .min(1, 'ticket must not be empty')
+          .describe(`The ticket a pending ${DELEGATE_SUBTASK_TOOL_NAME} answer returned.`)
       }
     },
     async (args) => {

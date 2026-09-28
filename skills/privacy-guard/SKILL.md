@@ -126,8 +126,8 @@ strings it knows and nothing else in the prompt line.
 
 ## The trap that has actually bitten
 
-**Do not quote the guard's patterns in a tracked file.** There is one exemption and it is for the
-workflow only. Writing the literal strings anywhere else — in agent instructions, in a document
+**Do not quote the guard's patterns in a tracked file.** There is no exemption: the workflow is
+scanned too. Writing the literal strings anywhere — in agent instructions, in a document
 explaining the guard, in a code block, in a commit body — trips the guard against the file that was
 trying to be helpful about it.
 
@@ -149,9 +149,9 @@ Describe the patterns; never reproduce them. That is why this page names none of
 - **Reading only the last line of a red build.** The guard runs as the **first** step of the checks
   job, before typecheck, lint, format and test. If it fails, nothing else runs, and the release job
   is skipped entirely because it depends on that job — see [`release`](../release/SKILL.md).
-- **Trusting the six local commands.** `CONTRIBUTING.md` lists six commands to run before a PR
-  (`skill-sync --check` joined them). The guard is a seventh thing CI does that is not in that
-  list, so all six can pass locally on a change that goes red.
+- **Trusting a local run without the secret.** `CONTRIBUTING.md` lists the guard first of its
+  seven checks, but locally it checks something only with `PRIVACY_GUARD_PATTERN` set; without it
+  the other six can pass on a change CI turns red.
 
 ## References
 

@@ -167,9 +167,9 @@ reasoning, and this list is only the index. None of these is enforced by the typ
   root too. Choose only via `dwarfSilenceWindowMs`; unproven keeps the long window, `'unknown'`
   stays distinct from `'attended'`, and both windows still elapse over an idle registry status
   before anything drops. See `contracts.ts` (#47, #68).
-- **Anchors: check which coordinate space the file uses.** The map and the cave use _opposite_
-  conventions, on purpose. Getting this wrong slides things off their rock when the panel resizes.
-  The path-scoped rule above covers it.
+- **Anchors: points are authored in painting (image) percent, never box percent.** The map and the
+  cave share that convention and the same `contain` fit; a point in the wrong space looks right at
+  one size and slides off its rock at every other. The path-scoped rule above covers it.
 - **`animation.finished` is not a promise of completion.** Web Animations run on the document
   timeline, which Chromium freezes for any window it considers hidden — including one merely
   occluded by another program, since `backgroundThrottling` is on by default — so a run that ends

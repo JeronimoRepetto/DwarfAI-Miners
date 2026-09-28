@@ -23,11 +23,10 @@ The redesign's source of truth is `docs/dwarfai-miners-design/` — and it is **
 committed**. The folder is gitignored and exists only in the maintainer's main checkout, so an
 agent that greps the repo finds no design and invents one.
 
-Since 2026-09-25 the folder holds **generated Markdown**, produced from the private design
-repository by that repository's own sync tool. Every file opens with a `GENERATED … DO NOT EDIT`
-header naming the sources it came from. It is no longer the PDF-derived v4 source: the PDF, its
-page renders, the Canva exports and the traceability index are archived in the design repository
-as history only, and nothing here reads them.
+The folder holds **generated Markdown**, produced from the private design repository by that
+repository's own sync tool. Every file opens with a `GENERATED … DO NOT EDIT` header naming the
+sources it came from. The PDF-derived v4 source — the PDF, its page renders, the Canva exports and
+the traceability index — is archived in the design repository, and nothing here reads it.
 
 ## The rule
 
@@ -36,10 +35,13 @@ as history only, and nothing here reads them.
   overwritten by the next sync. If a doc is wrong, say so in the PR or issue.
 - **Read before you write UI.** `foundations.md` first, then the screen file for what you are
   building, then `components.md` for shared parts, and `decisions.md` before reopening anything.
-- **No folder, no design.** A worktree never has the folder. Ask the maintainer where the design
-  docs are and read them there — do not reconstruct the design from screenshots, existing code,
-  memory or taste, do not copy or link the folder into the worktree, and never write its local
-  path into a tracked file ([`privacy-guard`](../privacy-guard/SKILL.md)).
+- **No folder, no design.** A worktree never has the design folder linked in. The one sanctioned
+  way to have the design there is the real, gitignored copy `pnpm golden:design` makes in
+  `.design/` (it is what golden UI tests need). Never link the folder in and never copy it by hand:
+  `git worktree remove --force` follows a link and empties the target. Without either, ask the
+  maintainer where the design docs are; do not reconstruct the design from screenshots, existing
+  code, memory or taste, and never write its local path into a tracked file
+  ([`privacy-guard`](../privacy-guard/SKILL.md)).
 - **No reference images either.** Every state's PNG lives only in the design repository's
   `docs/reference/` — never copy, commit or link one here, screenshot included (PO ruling,
   2026-09-26). Ask the maintainer to compare a build against one (Accepting a built piece, below).
@@ -59,7 +61,7 @@ as history only, and nothing here reads them.
 
 ## Status words
 
-Every rule in the docs carries one (`docs/README.md` defines them). **Decided** is binding.
+Every rule in the docs carries one (the design docs' `README.md` defines them). **Decided** is binding.
 **Proposal** is the design system's recommendation awaiting a ruling. **Question** is open.
 **Implementation** is developer guidance — a rename, a measurement, a check in the app code — and
 awaits no design ruling. **Planned** is an agreed asset not drawn or sourced yet. **Missing** is an
@@ -71,7 +73,7 @@ log is binding for the redesign, and today's code is the baseline only where the
 ## Accepting a built piece
 
 The PO's acceptance rule, checked against the state's reference image captured under the
-documented conditions (`docs/README.md`, "Reference images"): the same size, **under 1%** of
+documented conditions (the design docs' `README.md`, "Reference images"): the same size, **under 1%** of
 pixels differing, and **no 3×3 (or larger) cluster** of differing pixels anywhere. The maintainer
 runs `tools/compare-ref.js` in the design repository, which checks exactly those two and prints
 `PASS` or `FAIL`. The third half is never pixels: **no silent guess**. When a value or behaviour
@@ -80,13 +82,11 @@ you would otherwise make, and where it applies, and ask the maintainer; the desi
 in the design repository, which regenerates the docs. A guess shipped as if it were documented
 fails acceptance even at a perfect pixel score.
 
-App issue #634's golden UI tests apply this rule in code, but run only on the maintainer's
-machine, against the private references — CI never runs them, because the references never leave
-the design repository.
-
 ## Golden first
 
-App issue #634's goldens (`pnpm test:golden`, `scripts/golden/`) apply that rule in code. For a
+App issue #634's goldens (`pnpm test:golden`, `scripts/golden/`) apply that rule in code, on the
+maintainer's machine only: CI never runs them, because the references never leave the design
+repository. For a
 state you rebuild: add its golden first and watch it fail (an entry in
 `src/renderer/src/golden/states.json` marked `red`, and its render in `renders.ts`), build it from
 the Markdown, then watch it pass and remove `red` — a red state that passes fails the run. Never
@@ -141,8 +141,8 @@ for access and replicate its behaviour, rather than eyeballing a screenshot.
 - `renderer/src/components/` stays thin; framework-agnostic logic goes to `renderer/src/lib/`.
 - The map and mine-interior art stay untouched, and their spawn points, work points and passable
   paths are not machine-readable in the design docs. Deriving them is its own task, and the
-  coordinate-space rule in `.claude/rules/coordinates.md` still binds — the map and the cave use
-  opposite conventions on purpose.
+  coordinate-space rule in `.claude/rules/coordinates.md` still binds — both paintings author
+  points in image percent and are fitted `contain`, never cropped.
 - Colors, sizes and thresholds from `foundations.md` become named tokens or constants, not hex
   and px literals scattered per component.
 - Verify layout under many sessions with the `simulated-valley` skill before claiming a screen
@@ -169,8 +169,9 @@ for access and replicate its behaviour, rather than eyeballing a screenshot.
 
 ## References
 
-All of these live **outside version control**, in the maintainer's main checkout only; the links
-resolve there and nowhere else. If they are missing, ask — do not proceed without them.
+All of these live **outside version control**: the links resolve in the maintainer's main
+checkout, and in a worktree only under the `.design/` copy that `pnpm golden:design` makes. If they
+are missing, ask — do not proceed without them.
 
 - [`docs/dwarfai-miners-design/README.md`](../../docs/dwarfai-miners-design/README.md) — the routing map
 - [`docs/dwarfai-miners-design/foundations.md`](../../docs/dwarfai-miners-design/foundations.md) — tokens, type, spacing, shape
