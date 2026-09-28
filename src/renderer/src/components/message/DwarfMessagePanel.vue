@@ -746,6 +746,7 @@ function onStopAction(index: number): void {
           :mark="entry.message.mark"
           :is-new="arrivedKeys.has(entry.key)"
           :offers-retry="entry.message.echo !== undefined && canReceive"
+          :session-closed="entry.message.echo !== undefined && !canReceive"
           @open-link="emit('open-link', $event)"
           @retry="entry.message.echo && emit('retry', entry.message.echo.id)"
           @copy="emit('copy', entry.message.text)"

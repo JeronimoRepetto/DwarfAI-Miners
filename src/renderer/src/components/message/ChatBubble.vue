@@ -10,7 +10,10 @@
  * A failed message's way out is the bubble's own (decision log, Failed delivery): while its mark
  * is ✕ and its host offers a retry, Retry and Copy sit under the foot, and they go as soon as the
  * mark leaves ✕. Nothing retries on its own: the bubble reports the press and its host re-sends
- * the same message, walking this same bubble's mark.
+ * the same message, walking this same bubble's mark. On a session that can no longer take text
+ * Copy stands alone (decision log, Copy alone on a closed session): Retry is absent rather than
+ * disabled, since nothing will ever make it work there, and Copy never hides, because it is the
+ * one action that still helps.
  */
 import {
   COPY_LABEL,
@@ -36,6 +39,12 @@ defineProps<{
    * while it is set and the mark is ✕; the read-only history never sets it.
    */
   offersRetry?: boolean
+  /**
+   * The session behind the message can no longer take text (it ended, or its delivery route went
+   * away): the design's `sessionClosed`. While the mark is ✕ the group shows Copy alone, and it
+   * wins over `offersRetry`, as the design's does. The read-only history never sets it either.
+   */
+  sessionClosed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -64,12 +73,18 @@ const emit = defineEmits<{
     </div>
     <slot />
     <div
-      v-if="offersRetry && mark?.mark === 'failed'"
+      v-if="(offersRetry || sessionClosed) && mark?.mark === 'failed'"
       class="dm-bubble__actions"
       role="group"
       aria-label="Not delivered"
     >
-      <ActionButton :label="RETRY_LABEL" size="sm" :title="RETRY_TITLE" @click="emit('retry')" />
+      <ActionButton
+        v-if="!sessionClosed"
+        :label="RETRY_LABEL"
+        size="sm"
+        :title="RETRY_TITLE"
+        @click="emit('retry')"
+      />
       <ActionButton :label="COPY_LABEL" size="sm" :title="COPY_TITLE" @click="emit('copy')" />
     </div>
   </div>

@@ -1922,14 +1922,28 @@ describe('DwarfMessagePanel echoes (#309)', () => {
     expect(wrapper.find('.dm-bubble__actions').exists()).toBe(false)
   })
 
-  it('offers no retry for a session that can no longer be written to', () => {
-    // A dwarf whose session has ended, or one with no channel at all: sending
-    // again would promise a delivery the capability model has already refused.
+  /*
+   * AMENDED for #635 (MESSAGE-QUESTIONS 4, decision log, Copy alone on a closed session; was:
+   * 'offers no retry for a session that can no longer be written to', asserting no button in the
+   * group at all). Retry still goes — sending again would promise a delivery the capability model
+   * has already refused — but Copy stays alone in the group, because it is the one action that
+   * still helps. Both ways a session stops taking text: its route went away, or it ended.
+   */
+  it.each([
+    ['its delivery route went away', { textDelivery: undefined }],
+    ['it ended', { status: 'leaving' as const }]
+  ])('keeps Copy alone on a failed message once %s', async (_why, overrides) => {
     const wrapper = panel({
-      dwarf: defaultDwarf({ textDelivery: undefined }),
-      echoes: [echo({ state: { phase: 'failed', error: 'nope' } })]
+      dwarf: defaultDwarf(overrides),
+      echoes: [echo({ id: 'e2', text: 'second', state: { phase: 'failed', error: 'nope' } })]
     })
-    expect(wrapper.find('.dm-bubble__actions .dm-btn').exists()).toBe(false)
+    const group = wrapper.find('.dm-bubble__actions')
+    expect(group.attributes('aria-label')).toBe('Not delivered')
+    const buttons = group.findAll('.dm-btn')
+    expect(buttons.map((b) => b.text())).toEqual([COPY_LABEL])
+    await buttons[0]!.trigger('click')
+    expect(wrapper.emitted('copy')).toEqual([['second']])
+    expect(wrapper.emitted('retry')).toBeUndefined()
   })
 
   /*
