@@ -9,7 +9,9 @@ screenshots, GIFs, and voices or other sound assets.
 
 **Exception.** The sound effects listed under "Sound effects released as CC0" in
 [`AUDIO-CREDITS.md`](AUDIO-CREDITS.md) are not covered by this notice. They are
-released under CC0 1.0, and that file records each one's author and source.
+released under CC0 1.0, and that file records each one's author and source. The typefaces listed
+in [`FONT-CREDITS.md`](FONT-CREDITS.md) are not covered either: they belong to their authors and
+are released under the SIL Open Font License 1.1.
 
 The artwork is **not** licensed under the MIT License that applies to the Code.
 The MIT license grants no permission to copy, extract, modify, adapt, train on,
