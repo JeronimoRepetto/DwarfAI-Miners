@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { belongsToComposition } from '../../lib/controls/input'
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+  type ComponentPublicInstance
+} from 'vue'
 import {
   CONSOLE_HINT,
   JUMP_TO_TERMINAL_NAME,
@@ -64,7 +71,6 @@ import {
   type DwarfSendState
 } from '../../types'
 import ActionButton from '../controls/ActionButton.vue'
-import InputField from '../controls/InputField.vue'
 import MetaChip from '../controls/MetaChip.vue'
 import DwarfPermissionCard from '../dwarf/DwarfPermissionCard.vue'
 import DwarfPortrait from '../dwarf/DwarfPortrait.vue'
@@ -74,6 +80,7 @@ import MenuButton from '../overlay/MenuButton.vue'
 import ModalDialog from '../overlay/ModalDialog.vue'
 import ActivityDisclosure from './ActivityDisclosure.vue'
 import ChatBubble from './ChatBubble.vue'
+import MessageComposer from './MessageComposer.vue'
 
 /**
  * The redesigned MessagePanel (#635), `organisms/message-panel` in the design: the conversation
@@ -314,8 +321,6 @@ onMounted(() => {
  * conversation.
  */
 const pending = ref<readonly DwarfAttachment[]>([])
-/** Whether a drag is over the composer, for its active edge. */
-const dragging = ref(false)
 /** The one sentence a refused file left behind, cleared by the next attempt. */
 const attachRefusal = ref<string | null>(null)
 
@@ -369,12 +374,7 @@ async function describeAndAbsorb(paths: readonly string[]): Promise<void> {
   }
 }
 
-function onDragOver(): void {
-  dragging.value = true
-}
-
 async function onDrop(event: DragEvent): Promise<void> {
-  dragging.value = false
   // Refused here rather than after asking main, so a channel that cannot carry
   // a file never reads one: the sentence is the control's own.
   if (!canAttach.value) {
@@ -691,13 +691,12 @@ function submit(): void {
   clearAttachments()
 }
 
-/** Enter sends, Shift+Enter writes a newline — the convention every composer here uses. */
-function onInputKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Enter' || event.shiftKey) return
-  // An input method's own Enter picks its candidate; the text is not written yet (#635).
-  if (belongsToComposition(event)) return
-  event.preventDefault()
-  submit()
+/*
+ * The composer's own element, for the keyboard (composerRef): the composer is a component now, and
+ * the focus code reads the element it draws.
+ */
+function bindComposer(instance: unknown): void {
+  composerRef.value = (instance as ComponentPublicInstance | null)?.$el ?? null
 }
 
 /** The ⋯ menu: Open console, Mine history, and Stop dwarf…, which confirms first. */
@@ -883,73 +882,27 @@ function onStopAction(index: number): void {
       />
       <!--
         The composer (W4·4, `molecules/composer`): Attach on the left and Send as the one primary
-        button on the right. Dropping files anywhere on it attaches them (#408); `preventDefault`
-        on both dragover and drop is the whole of the navigation guard — a file dropped on a page
-        the browser may navigate REPLACES that page.
+        button on the right; dropping files anywhere on it attaches them (#408).
       -->
-      <div
+      <MessageComposer
         v-else
-        ref="composerRef"
-        class="dm-composer"
-        :class="{ 'is-dragging': dragging }"
-        @dragover.prevent="onDragOver"
-        @dragleave="dragging = false"
-        @drop.prevent="onDrop"
-      >
-        <div class="dm-composer__files">
-          <span
-            v-for="item in pending"
-            :key="item.path"
-            class="dm-composer__file"
-            :title="item.name"
-          >
-            <PixelIcon name="attach" />
-            <span>{{ item.name }}</span>
-            <button
-              type="button"
-              :aria-label="`Remove ${item.name}`"
-              @click="removeAttachment(item.path)"
-            >
-              <PixelIcon name="close" />
-            </button>
-          </span>
-        </div>
-        <div class="dm-composer__row">
-          <ActionButton
-            class="dm-composer__attach"
-            icon="attach"
-            :title="canAttach ? 'Attach a file' : attachTitle"
-            :disabled="!canAttach"
-            @click="onAttachClick"
-          />
-          <InputField
-            area
-            :rows="2"
-            :placeholder="closed ? SESSION_CLOSED_REASON : `Write to ${dwarf.name}…`"
-            label="Message"
-            :value="message"
-            :disabled="!canReceive"
-            :title="composerTitle"
-            @update:value="message = $event"
-            @keydown="onInputKeydown"
-          />
-          <ActionButton
-            class="dm-composer__send"
-            variant="primary"
-            icon="send"
-            label="Send"
-            :disabled="!canSend"
-            @click="submit"
-          />
-        </div>
-        <p
-          class="dm-composer__hint"
-          :class="{ 'is-error': alertLine !== null }"
-          :role="alertLine !== null ? 'alert' : hint !== null ? 'status' : undefined"
-        >
-          {{ hint ?? COMPOSER_HINT }}
-        </p>
-      </div>
+        :ref="bindComposer"
+        :value="message"
+        :placeholder="closed ? SESSION_CLOSED_REASON : `Write to ${dwarf.name}…`"
+        :disabled="!canReceive"
+        :title="composerTitle"
+        :can-attach="canAttach"
+        :attach-title="canAttach ? 'Attach a file' : attachTitle"
+        :can-send="canSend"
+        :files="pending"
+        :hint="hint ?? COMPOSER_HINT"
+        :hint-role="alertLine !== null ? 'alert' : hint !== null ? 'status' : undefined"
+        @update:value="message = $event"
+        @submit="submit"
+        @attach="onAttachClick"
+        @remove="removeAttachment"
+        @drop="onDrop"
+      />
     </div>
 
     <ModalDialog
@@ -1114,47 +1067,10 @@ function onStopAction(index: number): void {
   flex-wrap: wrap;
 }
 
-/* The design's composer.css. */
-.dm-composer {
-  display: grid;
-  gap: 4px;
-  padding: 6px 6px 4px;
-}
-.dm-composer__row {
-  display: flex;
-  gap: 4px;
-  align-items: flex-end;
-}
-.dm-composer__row :deep(.dm-field) {
-  flex: 1;
-  min-width: 0;
-}
-.dm-composer__row :deep(.dm-field textarea) {
-  width: 0;
-  max-height: 120px;
-}
-.dm-composer__row :deep(.dm-btn) {
-  flex: none;
-}
-.dm-composer__row :deep(.dm-composer__send) {
-  min-height: var(--hit-nav);
-}
-.dm-composer__hint {
-  margin: 0;
-  padding: 0 4px;
-  font: var(--fs-meta) / 1.2 var(--f-meta);
-  color: var(--ink-faint);
-}
-/* The hint speaking for a refusal, in the error colour the field hints use (atoms/input). */
-.dm-composer__hint.is-error {
-  color: var(--danger-hi);
-}
-.dm-composer__files {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-/* A file waiting to go, as the design's pill (`DM.ui.pill` with the attach icon). */
+/*
+ * A file a sent message went with, as the composer's own pill (`DM.ui.pill` with the attach icon),
+ * without its remove control.
+ */
 .dm-composer__file {
   display: inline-flex;
   gap: 4px;
@@ -1163,15 +1079,5 @@ function onStopAction(index: number): void {
   color: var(--ink-soft);
   background: var(--rock-lo);
   align-items: center;
-}
-.dm-composer__file button {
-  width: 24px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-}
-/* A drag over the composer lights its well, and nothing else moves. */
-.dm-composer.is-dragging :deep(.dm-field) {
-  --mat-edge: var(--brass);
 }
 </style>

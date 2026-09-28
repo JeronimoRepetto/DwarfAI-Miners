@@ -191,8 +191,7 @@
     "key": "molecules/activity#closed"
   },
   {
-    "key": "molecules/activity#hover",
-    "red": "27.692% differing, 1 cluster: the toggle draws at rest where the reference forces its hover (the wood-hi fill, the brass edge and the ink label), because ActivityDisclosure takes no forced state yet (#635, PR3b)"
+    "key": "molecules/activity#hover"
   },
   {
     "key": "molecules/activity#open"
@@ -201,12 +200,10 @@
     "key": "molecules/activity#working"
   },
   {
-    "key": "molecules/composer#empty",
-    "red": "79.497% differing, 404x96 against 404x137: the composer is still markup inside the MessagePanel, so the state draws the unbuilt specimen until it is its own component (#635, PR3b)"
+    "key": "molecules/composer#empty"
   },
   {
-    "key": "molecules/composer#disabled",
-    "red": "78.456% differing, 404x96 against 404x137: the composer is still markup inside the MessagePanel, so the state draws the unbuilt specimen until it is its own component (#635, PR3b)"
+    "key": "molecules/composer#disabled"
   },
   {
     "key": "organisms/message-panel#not-delivered-with-actions"

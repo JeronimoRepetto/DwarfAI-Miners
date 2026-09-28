@@ -39,11 +39,12 @@ import ChatBubble from '../components/message/ChatBubble.vue'
 import DwarfPermissionCard from '../components/dwarf/DwarfPermissionCard.vue'
 import DwarfQuestionCard from '../components/dwarf/DwarfQuestionCard.vue'
 import QuestionOption from '../components/message/QuestionOption.vue'
+import MessageComposer from '../components/message/MessageComposer.vue'
 import ActivityDisclosure from '../components/message/ActivityDisclosure.vue'
 import { ACTIVITY_WORKING_LABEL, activityStepsLabel } from '../lib/message/activityGroup'
 import { historyClock } from '../lib/history/mineHistory'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
-import { bubbleMark } from '../lib/message/panelChrome'
+import { COMPOSER_HINT, bubbleMark } from '../lib/message/panelChrome'
 import type { MessageEcho } from '../lib/message/echo'
 import AddPanel from '../components/launch/AddPanel.vue'
 import { useAgentLaunch } from '../composables/useAgentLaunch'
@@ -1243,6 +1244,40 @@ const activityRun: Render = (_sample, texts, attributes) => {
 }
 
 /*
+ * The composer as its tree prints it (#635, molecules/composer), in the kit's wood frame, the
+ * classes and style its root prints: the well's placeholder and whether it takes text, Attach and
+ * Send live or not, as their buttons print them. Nothing is typed and nothing attached. The hint is
+ * the panel's own line with nothing else to say, never the tree's words.
+ */
+const composer: Render = (_sample, _texts, attributes) => {
+  const root = attributes[0] ?? fail('composer frame', attributes)
+  const well = elementsOf(attributes, 'textarea')[0] ?? fail('composer well', attributes)
+  const attach = elementsOf(attributes, 'button.dm-btn.m-mat.dm-btn--icon')[0] ?? {}
+  const send = elementsOf(attributes, 'button.dm-btn.m-mat.dm-btn--primary')[0] ?? {}
+  return {
+    component: KitFrame,
+    props: {
+      style: root.attributes.style ?? '',
+      classes: root.element.split('.').slice(1).join(' '),
+      parts: [
+        {
+          component: MessageComposer,
+          props: {
+            value: '',
+            placeholder: well.placeholder ?? '',
+            disabled: 'disabled' in well,
+            canAttach: !('disabled' in attach),
+            ...(attach.title === undefined ? {} : { attachTitle: attach.title }),
+            canSend: !('disabled' in send),
+            hint: COMPOSER_HINT
+          }
+        }
+      ]
+    }
+  }
+}
+
+/*
  * The Add panel as its tree prints it (#635): the real launch composable opened on the mine its
  * name gives, over the bridge answered from the sample, with the supplier its checked chip names
  * chosen, as a person's click would choose it. Each prop is what App hands the panel from it.
@@ -1595,16 +1630,16 @@ export const RENDERS: Record<string, Render> = {
   'molecules/chat-bubble#not-delivered-copy-alone': userBubbles,
   'molecules/chat-bubble#retry-feedback': userBubbles,
   // The conversation's parts (#635, PR3b): a dwarf's rich text and your messages in each mark;
-  // one run of steps closed, hovered, open, and still being added to. The composer is not
-  // extracted from the panel yet, so it draws the unbuilt specimen and fails as it should.
+  // one run of steps closed, hovered, open, and still being added to; the composer empty and with
+  // its well disabled.
   'molecules/chat-bubble#dwarf-rich-text': dwarfBubble,
   'molecules/chat-bubble#your-messages': userBubbles,
   'molecules/activity#closed': activityRun,
   'molecules/activity#hover': activityRun,
   'molecules/activity#open': activityRun,
   'molecules/activity#working': activityRun,
-  'molecules/composer#empty': unbuilt,
-  'molecules/composer#disabled': unbuilt,
+  'molecules/composer#empty': composer,
+  'molecules/composer#disabled': composer,
   'organisms/add-panel#live': addPanel,
   'organisms/add-panel#supplier-picked': addPanel,
   'organisms/add-panel#custom-command': addPanel,
