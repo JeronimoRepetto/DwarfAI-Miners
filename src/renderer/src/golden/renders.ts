@@ -36,6 +36,9 @@ import MineColumn from '../components/scene/MineColumn.vue'
 import HistoryPanel from '../components/history/HistoryPanel.vue'
 import DwarfMessagePanel from '../components/message/DwarfMessagePanel.vue'
 import ChatBubble from '../components/message/ChatBubble.vue'
+import DwarfPermissionCard from '../components/dwarf/DwarfPermissionCard.vue'
+import DwarfQuestionCard from '../components/dwarf/DwarfQuestionCard.vue'
+import QuestionOption from '../components/message/QuestionOption.vue'
 import { RETRY_TITLE, sendMarker } from '../lib/delivery/deliveryVerdict'
 import { bubbleMark } from '../lib/message/panelChrome'
 import type { MessageEcho } from '../lib/message/echo'
@@ -1055,6 +1058,74 @@ const messagePanel: Render = (sample, _texts, attributes) => {
   }
 }
 
+/*
+ * The question card as its tree prints it (#635), in the kit's wood frame its root prints: the
+ * sample dwarf the card is named for, asking what the sample asks it. A permission's card (its
+ * request block in the tree) draws that dwarf's pending permission, or the sample's long request
+ * when the block prints another text. The step count opens the card on the step it names, and a
+ * later step opens with each step before it answered with its first option: the tree shows those
+ * answers only as done dots, which any option draws alike.
+ */
+const questionCard: Render = (sample, texts, attributes) => {
+  const root = attributes[0]!
+  const label = elementsOf(attributes, 'section.dm-qcard')[0]?.['aria-label'] ?? ''
+  const name = label.replace(/ is asking$/, '')
+  const dwarf =
+    sample.mines.flatMap((m) => m.dwarfs).find((d) => d.name === name) ?? fail('dwarf', name)
+  const frame = {
+    style: root.attributes.style ?? '',
+    classes: root.element.split('.').slice(1).join(' ')
+  }
+  if (elementsOf(attributes, 'pre.dm-qcard__req').length > 0) {
+    const own = dwarf.pendingPermission ?? fail('permission', name)
+    const permission = texts.some((t) => t.text === `${own.toolName} · ${own.input}`)
+      ? own
+      : (sample.longPermissionRequest ?? fail('long request', name))
+    return {
+      component: KitFrame,
+      props: { ...frame, parts: [{ component: DwarfPermissionCard, props: { permission, name } }] }
+    }
+  }
+  const question = dwarf.pendingQuestion ?? fail('question', name)
+  const count = texts.map((t) => /^(\d+) \/ \d+$/.exec(t.text ?? '')).find((m) => m !== null)
+  const at = Number(count?.[1] ?? 1) - 1
+  const answers = question.questions.slice(0, at).map((q) => q.options[0]?.label ?? '')
+  return {
+    component: KitFrame,
+    props: {
+      ...frame,
+      parts: [{ component: DwarfQuestionCard, props: { question, name, at, answers } }]
+    }
+  }
+}
+
+/*
+ * Question options as their tree prints them (#635, molecules/question-option), in the kit's
+ * column frame: each row's label is its text, and its index, whether it is picked, the Other
+ * thing… row and a forced look are what its element and attributes print. The number key each
+ * row shows is its index plus one, so the texts that are only digits are the keys, not labels.
+ */
+const questionOptions: Render = (_sample, texts, attributes) => {
+  const labels = texts.map((t) => t.text ?? '').filter((text) => !/^\d+$/.test(text))
+  const rows = attributes.filter((entry) => entry.element.startsWith('button.dm-qopt'))
+  return {
+    component: KitFrame,
+    props: {
+      style: attributes[0]?.attributes.style ?? '',
+      parts: rows.map(({ element, attributes: printed }, i) => ({
+        component: QuestionOption,
+        props: {
+          label: labels[i] ?? fail('option label', i),
+          index: Number(printed['data-index']),
+          checked: printed['aria-checked'] === 'true',
+          other: element.includes('.dm-qopt--other'),
+          state: forcedOf(element)
+        }
+      }))
+    }
+  }
+}
+
 // The delivery phase each mark the tree prints stands for, as the panel's own store names it.
 const PHASE_OF_MARK: Record<string, DwarfSendState['phase']> = {
   pending: 'sending',
@@ -1448,6 +1519,13 @@ export const RENDERS: Record<string, Render> = {
   'organisms/message-panel#asking': messagePanel,
   'organisms/message-panel#not-delivered-with-actions': messagePanel,
   'organisms/message-panel#not-delivered-copy-alone': messagePanel,
+  // The question card and its option (#635, PR3a): a question walked by steps, and a permission.
+  'organisms/question-card#live': questionCard,
+  'organisms/question-card#last-step': questionCard,
+  'organisms/question-card#permission': questionCard,
+  'organisms/question-card#long-request': questionCard,
+  'molecules/question-option#default-hover-selected-pressed-focus': questionOptions,
+  'molecules/question-option#other-thing': questionOptions,
   // A failed message's Retry and Copy (#635, decision log, Failed delivery), and its Copy alone on
   // a session that can no longer take text (decision log, Copy alone on a closed session).
   'molecules/chat-bubble#not-delivered-with-actions': userBubbles,

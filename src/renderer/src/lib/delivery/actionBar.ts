@@ -367,8 +367,11 @@ export const CONSOLE_HINT = "Focus this session's console."
  */
 export const APPROVAL_AT_TERMINAL_NOTE = 'Waiting for your approval in the terminal.'
 
-/** The action beside that sentence, which is the console focus the panel already has. */
-export const JUMP_TO_TERMINAL_NAME = 'Jump to the terminal'
+/**
+ * The action beside that sentence, which is the console focus the panel already has. Worded as
+ * the design writes it (#635, copy.md: "Jump to terminal"), here and on the question card.
+ */
+export const JUMP_TO_TERMINAL_NAME = 'Jump to terminal'
 
 /**
  * That sentence for this dwarf, or null when it does not apply.

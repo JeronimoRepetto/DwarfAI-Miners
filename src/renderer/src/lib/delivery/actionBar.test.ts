@@ -8,6 +8,7 @@ import {
   CHANNEL_HINT,
   DISMISS_HINT,
   ENDED_DISMISS_HINT,
+  JUMP_TO_TERMINAL_NAME,
   KICK_HINT,
   launchedNoInboxReason,
   NO_CHANNEL_REASON,
@@ -1221,3 +1222,11 @@ describe('sessionClosed (#635)', () => {
   })
 })
 /* --- end of the #635 block ---------------------------------------------------- */
+
+/* --- ADDED for #635: the design's copy for the jump ------------------------------ */
+describe('JUMP_TO_TERMINAL_NAME', () => {
+  // copy.md lists "Jump to terminal" as a plain action (the question card, the MessagePanel).
+  it('reads as the design writes it', () => {
+    expect(JUMP_TO_TERMINAL_NAME).toBe('Jump to terminal')
+  })
+})

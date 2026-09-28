@@ -1020,14 +1020,25 @@ export const TYPED_ANSWER_WOULD_STEER_THE_PICKER =
   'Those words carry a line break or an escape, and the picker reads both as keys of its own — ' +
   'the line break would send the answer half-written. Take them out, or answer at the terminal.'
 /**
- * The held channel's own refusal. The held path hands the agent's blocked tool
- * call the labels the ask carried (`resolveAnswers`), and what it does with
- * anything else is unmeasured; the held card offers a message box instead, so
- * nothing on screen reaches this — it is the guard behind that box.
+ * The refusal for words carried as `ownWords` to a session this panel does not hold (#635, PO
+ * decision 2026-09-28): only the held path hands them to the agent's tool as an answer; a
+ * terminal picker takes a person's words through its own Other row (the `text` form), and
+ * nothing is typed for a record meant for the held path.
+ */
+export const OWN_WORDS_ONLY_WHEN_HELD =
+  'An answer in your own words reaches that session only through its own terminal. Answer it ' +
+  'there, or choose an option above.'
+
+/**
+ * The held channel's own refusal for the `text` form, which is keys typed at a picker. AMENDED
+ * for #635 (PO decision 2026-09-28, held free-text answers; was: "an answer can only be one of
+ * the options the agent offered. Write to it as a message instead"): a held ask takes the
+ * person's own words in the label form's `ownWords` record, which the held card sends, so nothing
+ * on screen reaches this — it is the guard behind that card.
  */
 export const TYPED_ANSWER_ONLY_AT_A_PICKER =
-  'This panel is holding that session, where an answer can only be one of the options the agent ' +
-  'offered. Write to it as a message instead, or choose an option above.'
+  'This panel is holding that session, which takes an answer in your own words through Other ' +
+  'thing… on the question, not as keys typed at a terminal.'
 
 /**
  * What both cards show in place of their free-text box, and what main returns
@@ -3383,6 +3394,16 @@ interface DwarfQuestionAnswerAddress {
 /** The answer that repeats the agent's own words back to it — the form #125 shipped. */
 export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
   answers: Record<string, string>
+  /**
+   * The questions of a HELD ask the person answered in their own words, through the card's
+   * "Other thing…" (#635, PO decision 2026-09-28, held free-text answers): keyed by the question's
+   * text as `answers` is, valued by the words exactly as written. Its own record rather than a
+   * label that matches nothing, so the renderer SAYS these are the person's words and main never
+   * guesses it from a label it could not find. A question sits in one record or the other, never
+   * both; together they answer every question of the call (`resolveAnswers`, main). Only the held
+   * channel takes it: a terminal picker is answered through `text` (OWN_WORDS_ONLY_WHEN_HELD).
+   */
+  ownWords?: Record<string, string>
   text?: undefined
 }
 
@@ -3400,6 +3421,7 @@ export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
 export interface DwarfQuestionTextAnswer extends DwarfQuestionAnswerAddress {
   text: string
   answers?: undefined
+  ownWords?: undefined
 }
 
 /**

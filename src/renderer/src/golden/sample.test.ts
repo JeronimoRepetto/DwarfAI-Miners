@@ -145,7 +145,14 @@ describe('adaptSample', () => {
     )
   })
 
-  // ADDED for #635 (PR3): an asking dwarf's questions are what makes it need you in the app.
+  /*
+   * ADDED for #635 (PR3): an asking dwarf's questions are what makes it need you in the app.
+   * AMENDED for #635 (the question card slice; was: the ask on the 'terminal' channel, and a
+   * permission carried as no prompt at all). The sample's asks are ones the card can answer, so
+   * they ride the held channel, the one on which every question of a walk is answerable; and a
+   * permission is the app's pendingPermission, its request split at the sample's own " · " into
+   * the tool and the input (next test).
+   */
   it('carries an asking dwarf’s questions as its pending question, and a permission as none', () => {
     const question = [{ text: 'Which database?', options: ['Postgres', 'SQLite'] }]
     const sample = adaptSample(
@@ -153,14 +160,21 @@ describe('adaptSample', () => {
         mines: [shaft],
         dwarfs: [
           { ...digger, id: 'q', status: 'asking', question },
-          { ...digger, id: 'p', status: 'asking', need: 'permission', question }
+          // AMENDED for #635 (was: the question above): a request has the tool before " · ".
+          {
+            ...digger,
+            id: 'p',
+            status: 'asking',
+            need: 'permission',
+            question: [{ text: 'Bash · ls' }]
+          }
         ]
       })
     )
     const [q, p] = sample.mines[0]?.dwarfs ?? []
     expect(q?.pendingQuestion).toEqual({
       toolUseId: 'q',
-      channel: 'terminal',
+      channel: 'held',
       questions: [
         {
           question: 'Which database?',
@@ -170,6 +184,51 @@ describe('adaptSample', () => {
       ]
     })
     expect(p?.pendingQuestion).toBeUndefined()
+  })
+
+  // ADDED for #635: an option's description, by option index, only where the agent sent one.
+  it('carries the descriptions the sample gives an ask’s options, and none where it gives none', () => {
+    const question = [
+      { text: 'Which?', options: ['A', 'B'], descriptions: [null, 'Only B says why.'] }
+    ]
+    const sample = adaptSample(
+      dm({ mines: [shaft], dwarfs: [{ ...digger, id: 'q', status: 'asking', question }] })
+    )
+    expect(sample.mines[0]?.dwarfs[0]?.pendingQuestion?.questions[0]?.options).toEqual([
+      { label: 'A' },
+      { label: 'B', description: 'Only B says why.' }
+    ])
+  })
+
+  // ADDED for #635 (the question card slice): the permission card's request, and its long one.
+  it('carries a permission need as the pending permission its request names', () => {
+    const question = [{ text: 'Bash · pnpm install in feat/x. It changes the lockfile.' }]
+    const sample = adaptSample(
+      dm({
+        mines: [shaft],
+        dwarfs: [{ ...digger, id: 'p', status: 'asking', need: 'permission', question }],
+        longPermissionRequest: [{ text: 'Bash · a very long command' }]
+      })
+    )
+    expect(sample.mines[0]?.dwarfs[0]?.pendingPermission).toEqual({
+      toolUseId: 'p',
+      toolName: 'Bash',
+      input: 'pnpm install in feat/x. It changes the lockfile.',
+      channel: 'held',
+      askedAt: expect.any(String)
+    })
+    expect(sample.longPermissionRequest).toMatchObject({
+      toolName: 'Bash',
+      input: 'a very long command'
+    })
+    expect(() =>
+      adaptSample(
+        dm({
+          mines: [shaft],
+          dwarfs: [{ ...digger, status: 'asking', need: 'permission', question: [{ text: 'x' }] }]
+        })
+      )
+    ).toThrow(/request "x"/)
   })
 
   it('fails when the sample script did not define its data', () => {

@@ -116,4 +116,27 @@ describe('parseAnswerRequest (#125, #481)', () => {
       answers: {}
     })
   })
+
+  /*
+   * ADDED for #635 (PO decision 2026-09-28, held free-text answers): a question answered in the
+   * person's own words rides in its own record, `ownWords`, beside the label record — the
+   * renderer saying so explicitly, so main never reads words out of a label that matched nothing.
+   */
+  it('carries a record of own words beside the labels, and refuses a malformed one', () => {
+    expect(
+      parseAnswerRequest({ dwarfId: 'd', toolUseId: 't', answers: {}, ownWords: { 'Q?': 'mine' } })
+    ).toEqual({ dwarfId: 'd', toolUseId: 't', answers: {}, ownWords: { 'Q?': 'mine' } })
+    expect(
+      parseAnswerRequest({ dwarfId: 'd', toolUseId: 't', answers: {}, ownWords: { 'Q?': 3 } })
+    ).toBeNull()
+    expect(
+      parseAnswerRequest({ dwarfId: 'd', toolUseId: 't', answers: {}, ownWords: 'mine' })
+    ).toBeNull()
+  })
+
+  it('refuses own words beside the picker’s typed form: exactly one of the two forms travels', () => {
+    expect(
+      parseAnswerRequest({ dwarfId: 'd', toolUseId: 't', text: 'x', ownWords: { 'Q?': 'mine' } })
+    ).toBeNull()
+  })
 })

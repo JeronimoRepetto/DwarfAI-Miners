@@ -45,6 +45,10 @@ function parseAnswerRecord(payload: unknown): Record<string, string> | null {
  * be main answering on the person's behalf; a payload carrying NEITHER answers
  * nothing.
  *
+ * AMENDED for #635 (PO decision 2026-09-28, held free-text answers): the label form may carry a
+ * second record, `ownWords`, for the questions the person answered in their own words. It is a
+ * shape exactly as the labels are; the text form never carries it.
+ *
  * ## What is judged here, and what is not
  *
  * A SHAPE and never a choice — the rule this parser has held since #125. What
@@ -69,11 +73,19 @@ export function parseAnswerRequest(payload: unknown): DwarfQuestionAnswerRequest
   if (hasText === hasAnswers) return null
 
   if (hasText) {
+    // The picker's typed form answers one question alone: a record of own words beside it could
+    // not say which form it meant (#635).
+    if (record.ownWords !== undefined) return null
     if (typeof record.text !== 'string') return null
     if (record.text === '' || record.text.length > MAX_DWARF_TEXT_CHARS) return null
     return { ...address, text: record.text }
   }
 
   const answers = parseAnswerRecord(record.answers)
-  return answers === null ? null : { ...address, answers }
+  if (answers === null) return null
+  if (record.ownWords === undefined) return { ...address, answers }
+  // The person's own words for a held question (#635, PO decision 2026-09-28): the same string
+  // record as the labels, read as a shape here and judged against the ask in resolveAnswers.
+  const ownWords = parseAnswerRecord(record.ownWords)
+  return ownWords === null ? null : { ...address, answers, ownWords }
 }

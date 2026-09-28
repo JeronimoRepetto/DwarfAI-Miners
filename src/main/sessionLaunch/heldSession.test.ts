@@ -6,6 +6,7 @@ import {
   defaultDwarf,
   defaultMine,
   joinAnswerLabels,
+  MAX_DWARF_TEXT_CHARS,
   type DwarfPermissionRequest,
   type FeedMessage,
   type Mine
@@ -461,6 +462,67 @@ describe('resolveAnswers', () => {
     expect(resolveAnswers(ask, { 'First?': 'A', 'Second?': 'D' })).toEqual({
       ok: true,
       answers: { 'First?': 'A', 'Second?': 'D' }
+    })
+  })
+
+  /*
+   * ADDED for #635 (PO decision 2026-09-28, held free-text answers). A question the person
+   * answered in their own words ("Other thing…") arrives in its own record, `ownWords`, so main
+   * never has to guess words from a label that matched nothing. The SDK carries every answer as
+   * "question text -> answer string" (sdk-tools.d.ts, AskUserQuestionOutput.answers), so the
+   * words go to the tool verbatim, as that question's string.
+   */
+  describe('with answers in the person’s own words', () => {
+    const pair = (): HeldAsk =>
+      parseAskUserQuestion('toolu_40', {
+        questions: [
+          { question: 'First?', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+          { question: 'Pick some?', multiSelect: true, options: [{ label: 'C' }, { label: 'D' }] }
+        ]
+      })!
+
+    it('takes a question’s own words verbatim beside another’s label', () => {
+      expect(resolveAnswers(pair(), { 'First?': 'A' }, { 'Pick some?': 'neither, use E' })).toEqual(
+        {
+          ok: true,
+          answers: { 'First?': 'A', 'Pick some?': 'neither, use E' }
+        }
+      )
+    })
+
+    it('never redacts the person’s words, and maps the redacted question back', () => {
+      const resolved = resolveAnswers(redacting(), {}, { 'Use [redacted]?': 'only on staging' })
+      expect(resolved).toEqual({ ok: true, answers: { [`Use ${secret}?`]: 'only on staging' } })
+    })
+
+    it('still refuses a label nobody offered when it is not carried as own words', () => {
+      const resolved = resolveAnswers(pair(), { 'First?': 'Z', 'Pick some?': 'C' })
+      expect(resolved.ok ? '' : resolved.reason).toContain('option')
+    })
+
+    it('refuses own words that say nothing, or run past the wire ceiling', () => {
+      const blank = resolveAnswers(pair(), { 'First?': 'A' }, { 'Pick some?': '   ' })
+      expect(blank.ok ? '' : blank.reason).toContain('empty')
+      const long = resolveAnswers(
+        pair(),
+        { 'First?': 'A' },
+        { 'Pick some?': 'x'.repeat(MAX_DWARF_TEXT_CHARS + 1) }
+      )
+      expect(long.ok ? '' : long.reason).toContain('long')
+    })
+
+    it('refuses one question answered both ways, and a key the ask never carried', () => {
+      const twice = resolveAnswers(pair(), { 'First?': 'A', 'Pick some?': 'C' }, { 'First?': 'B!' })
+      expect(twice.ok).toBe(false)
+      const unknown = resolveAnswers(pair(), { 'First?': 'A' }, { 'Third?': 'x' })
+      expect(unknown.ok ? '' : unknown.reason).toContain('question')
+    })
+
+    it('keeps every other guard: a record of own words must still answer every question', () => {
+      const partial = resolveAnswers(pair(), {}, { 'First?': 'mine' })
+      expect(partial.ok ? '' : partial.reason).toContain('unanswered')
+      expect(resolveAnswers(pair(), {}, { 'First?': 7 }).ok).toBe(false)
+      expect(resolveAnswers(pair(), {}, 'First?').ok).toBe(false)
     })
   })
 })

@@ -25,6 +25,8 @@ export interface InputOptions {
   describedBy?: string
   /** The native input type; a search field is always `search`. */
   type?: string
+  /** The most characters the native control takes, where a route sets a ceiling (#431). */
+  maxLength?: number
   state?: FieldState
 }
 
@@ -35,6 +37,7 @@ export interface FieldControlAttributes {
   'aria-label'?: string
   'aria-invalid'?: 'true'
   'aria-describedby'?: string
+  maxlength?: number
   disabled: boolean
 }
 
@@ -63,6 +66,7 @@ export function fieldControlAttributes(options: InputOptions): FieldControlAttri
   // aria-describedby points at its hint, the hint being a sibling of the field.
   if (options.invalid) attributes['aria-invalid'] = 'true'
   if (options.describedBy) attributes['aria-describedby'] = options.describedBy
+  if (options.maxLength !== undefined) attributes.maxlength = options.maxLength
   attributes.disabled = options.disabled === true
   return attributes
 }
