@@ -6,6 +6,7 @@ import {
   type SDKMessage,
   type SDKUserMessage
 } from '@anthropic-ai/claude-agent-sdk'
+import { errorWithoutToolOutput } from '../domain/toolOutput'
 import type { ClaudeModelInfo } from '../domain/agentModelCatalog'
 import type { HeldMessageContent } from '../textDelivery/attachmentDelivery'
 import { DELEGATION_ALLOWED_TOOLS } from '../mcp/delegationInjection'
@@ -488,7 +489,7 @@ export function createSdkHeldSession(): HeldSessionPort {
         }
         end('the session stream ended')
       } catch (error) {
-        console.warn('[held] The session stream failed', error)
+        console.warn(`[held] The session stream failed: ${errorWithoutToolOutput(error)}`)
         // #635: a CLI the SDK could not spawn surfaces HERE, after `query()`
         // already returned — see heldSessionNeverSpawned for why, and why the
         // registry must hear it as a spawn that never happened.
@@ -536,7 +537,7 @@ export function createSdkHeldSession(): HeldSessionPort {
           await session.interrupt()
           return true
         } catch (error) {
-          console.warn('[held] The session refused an interrupt', error)
+          console.warn(`[held] The session refused an interrupt: ${errorWithoutToolOutput(error)}`)
           return false
         }
       },
@@ -564,7 +565,9 @@ export function createSdkHeldSession(): HeldSessionPort {
             model: usage.model
           }
         } catch (error) {
-          console.warn('[held] Could not read the session’s own context usage', error)
+          console.warn(
+            `[held] Could not read the session’s own context usage: ${errorWithoutToolOutput(error)}`
+          )
           return null
         }
       },
@@ -586,7 +589,9 @@ export function createSdkHeldSession(): HeldSessionPort {
           await session.setModel(model)
           return true
         } catch (error) {
-          console.warn('[held] The session refused a model change', error)
+          console.warn(
+            `[held] The session refused a model change: ${errorWithoutToolOutput(error)}`
+          )
           return false
         }
       },
@@ -616,7 +621,9 @@ export function createSdkHeldSession(): HeldSessionPort {
           await session.applyFlagSettings({ effortLevel: effort as EffortLevel })
           return true
         } catch (error) {
-          console.warn('[held] The session refused an effort change', error)
+          console.warn(
+            `[held] The session refused an effort change: ${errorWithoutToolOutput(error)}`
+          )
           return false
         }
       }

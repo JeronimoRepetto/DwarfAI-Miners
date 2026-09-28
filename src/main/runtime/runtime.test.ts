@@ -92,7 +92,7 @@ import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { CODEX_HOLD_MAX_MS } from '../textDelivery/codexHold'
 import { OPENCODE_HOLD_MAX_MS } from '../textDelivery/opencodeHold'
 import { TierService, type TierThresholds } from '../tier/tierService'
-import { AgentRuntime, expandHomePath } from './runtime'
+import { AgentRuntime, expandHomePath, failureReasonSuffix } from './runtime'
 
 function datePath(date: Date): string {
   const year = String(date.getFullYear())
@@ -14278,5 +14278,29 @@ describe('AgentRuntime launching into a remembered mine (#635, PANEL-QUESTIONS 5
       error: 'That mine is no longer on the map.'
     })
     expect(launchSession).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * ADDED for #635 (MESSAGE-QUESTIONS 23): a resume refusal carries what Codex or OpenCode wrote on
+ * stderr, for the panel. The delivery log line keeps the app's own sentence and never the tool's
+ * words, which can hold local paths or account names.
+ */
+describe('failureReasonSuffix', () => {
+  it('logs a refusal without what the tool said', () => {
+    const suffix = failureReasonSuffix({
+      delivered: false,
+      error:
+        'Codex stopped straight away (exit 1), so nothing was delivered. It said: ' +
+        'error: not signed in as j'
+    })
+    expect(suffix).toBe(': Codex stopped straight away (exit 1), so nothing was delivered.')
+  })
+
+  it('logs the app’s own reason whole, and nothing for a delivered message', () => {
+    expect(failureReasonSuffix({ delivered: false, error: 'The relay never answered.' })).toBe(
+      ': The relay never answered.'
+    )
+    expect(failureReasonSuffix({ delivered: true })).toBe('')
   })
 })

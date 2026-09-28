@@ -595,11 +595,13 @@ export function createAntigravityHeldSession(
           }
         })
         // Read but never ingested: stderr is not this protocol, and a warning
-        // the CLI prints is not something the agent said. Logged so a launch
-        // that fails on the far side is diagnosable at all.
+        // the CLI prints is not something the agent said. Logged as a fact so
+        // a launch that fails on the far side is diagnosable at all — how
+        // much, never the words, which can hold local paths or account names
+        // and are shown only in the panel (#635, MESSAGE-QUESTIONS 23).
         child.stderr?.on('data', (chunk) => {
           const text = (typeof chunk === 'string' ? chunk : chunk.toString('utf8')).trimEnd()
-          if (text !== '') console.warn(`[held] agy said on stderr: ${text}`)
+          if (text !== '') console.warn(`[held] agy wrote to stderr (${text.length} chars)`)
         })
         child.once('exit', (code) => end(code === null ? 'signalled' : `exit ${code}`))
 

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { toolSaid } from '../domain/toolOutput'
 import type { FsLike } from '../adapters/fsLike'
 import { codexTuningArgs, type LaunchTuning } from '../domain/launchTuning'
 import { redactSecrets } from '../domain/redactSecrets'
@@ -296,7 +297,7 @@ function refusalReason(exitCode: number, stderrTail: string | undefined): string
   return said === ''
     ? `${opening} It said nothing about why: a turn may already be running on that session, ` +
         'or it may no longer know it.'
-    : `${opening} It said: ${said}`
+    : opening + toolSaid(said)
 }
 
 /**
