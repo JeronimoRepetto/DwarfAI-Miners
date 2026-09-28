@@ -64,6 +64,8 @@ import {
   type DwarfTextRequest,
   type DwarfTextResult,
   type DwarfTuningRequest,
+  type DwarfNameRequest,
+  type DwarfNameResult,
   type DwarfTuningResult,
   type FeedMessage,
   type HeldSessionLaunchRequest,
@@ -140,6 +142,13 @@ import { stampHostedProcesses } from '../sessionLaunch/hostedBoard'
 import { HostedProcessRegistry } from '../sessionLaunch/hostedProcesses'
 import { createNodeHostedProcess } from '../sessionLaunch/nodeHostedProcess'
 import type { LaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
+import { createMemoryDwarfNameStore, type DwarfNameStore } from '../dwarfNames/dwarfNameStore'
+import {
+  DWARF_NAME_NOT_ON_BOARD,
+  DwarfNames,
+  stampCustomNames,
+  stampSpeakerNames
+} from '../dwarfNames/dwarfNames'
 import {
   LaunchedSessionRegistry,
   stampLaunchedRoutedByJev,
@@ -937,6 +946,15 @@ export interface RuntimeOptions {
    */
   launchedSessionStore?: LaunchedSessionStore | null
   /**
+   * Where the names a person gives dwarfs are kept between runs (#635), or null when this build
+   * has no database to keep them in.
+   *
+   * Null and omitted both keep names for this run only, in memory, so renaming still works and no
+   * test reaches a disk. A simulated valley ignores this and always keeps them in memory: its
+   * dwarfs are invented for one run, and their names must never reach the real database.
+   */
+  dwarfNameStore?: DwarfNameStore | null
+  /**
    * Every command of the person's own this panel is holding (#194). Injected
    * for tests, which must never spawn a process; the default holds real ones.
    */
@@ -1213,6 +1231,10 @@ export class AgentRuntime {
   private readonly cliDetector: CliDetector
   /** Whether this run is a simulated valley, which nothing real may be started in. */
   private readonly simulated: boolean
+  /** The names a person gave dwarfs (#635): stamped onto every board this publishes. */
+  private readonly dwarfNames: DwarfNames
+  /** Held past the constructor so a rename can republish without waiting for a poll (#635). */
+  private readonly onMinesUpdated: RuntimeOptions['onMinesUpdated']
   /** Shared by the lifecycle grace window and the delivery stage timings. */
   private readonly now: () => number
   private readonly ledger: MaterialLedger
@@ -1462,6 +1484,21 @@ export class AgentRuntime {
     this.answerOpenCodePermission =
       options.answerOpenCodePermission ?? postOpenCodePermissionDecision
     this.simulated = simulation !== null
+    // Dwarf names (#635). Read from the store as soon as the runtime exists, so the first board
+    // that carries a renamed dwarf carries its name; a poll that lands before the read finishes
+    // publishes base names, and the read republishes once it is in.
+    this.onMinesUpdated = options.onMinesUpdated
+    this.dwarfNames = new DwarfNames({
+      store:
+        simulation !== null || options.dwarfNameStore == null
+          ? createMemoryDwarfNameStore()
+          : options.dwarfNameStore,
+      now: this.now,
+      warn: (message) => console.warn(message)
+    })
+    void this.dwarfNames.load().then((named) => {
+      if (named) this.republishNames()
+    })
     // Composed here rather than in platformAdapters: holding a session is the
     // same act on all three platforms, so there is no per-OS branch to own.
     // Model and turn ceiling are deliberately left to the CLI's own defaults —
@@ -1973,10 +2010,15 @@ export class AgentRuntime {
         // OpenCodeProvider reads this registry directly (registry.ts's
         // openCodePendingAsk), so nothing here needs to stamp `ranked`.
         this.openCodePermissions.observe()
-        const published = stampPermissionPrompts(
-          ranked,
-          (sessionId) =>
-            !this.heldSessions.holds(sessionId) && this.permissionPrompts.isOpen(sessionId)
+        // Each dwarf's custom name beside its base name (#635), stamped last so it is on every
+        // board this publishes and read by nothing above.
+        const published = stampCustomNames(
+          stampPermissionPrompts(
+            ranked,
+            (sessionId) =>
+              !this.heldSessions.holds(sessionId) && this.permissionPrompts.isOpen(sessionId)
+          ),
+          this.nameOf
         )
         this.mines = published
         pollProfiler.count(
@@ -2028,11 +2070,13 @@ export class AgentRuntime {
         // (#25). getMines() still answers from this.mines, so a renderer that
         // starts or reloads mid-quiet-spell gets the current state regardless.
         const totals = this.ledger.totals()
-        if (this.publishGate.shouldPublish(published, totals)) {
+        // A rename that landed while this pass awaited the watched feed has already republished;
+        // stamping again here keeps this push from carrying the name the dwarf had before it.
+        const board = stampCustomNames(published, this.nameOf)
+        if (board !== published) this.mines = board
+        if (this.publishGate.shouldPublish(board, totals)) {
           pollProfiler.count('push')
-          pollProfiler.measureSync('ipc', () =>
-            options.onMinesUpdated(published, totals, watchedFeed)
-          )
+          pollProfiler.measureSync('ipc', () => options.onMinesUpdated(board, totals, watchedFeed))
         } else {
           pollProfiler.count('skip')
         }
@@ -2849,6 +2893,54 @@ export class AgentRuntime {
 
   getMines(): Mine[] {
     return this.mines
+  }
+
+  /**
+   * Give a dwarf on the board a custom name (#635, decision log "Dwarf names") — the
+   * `dwarf:setName` channel. The dwarf's base name is read off this board, never from the
+   * request, and DwarfNames cleans the text whatever the field already did. A save republishes at
+   * once, so every window shows the name without waiting for a poll.
+   */
+  async setDwarfName(request: DwarfNameRequest): Promise<DwarfNameResult> {
+    const dwarf = this.boardDwarf(request.dwarfId)
+    if (dwarf === undefined) return { saved: false, reason: DWARF_NAME_NOT_ON_BOARD }
+    const result = await this.dwarfNames.set(dwarf, request.name)
+    if (result.saved) this.republishNames()
+    return result
+  }
+
+  /** Take a dwarf's custom name away (#635) — `dwarf:resetName`, the ⋯ menu's "Reset name". */
+  async resetDwarfName(dwarfId: string): Promise<DwarfNameResult> {
+    if (this.boardDwarf(dwarfId) === undefined) {
+      return { saved: false, reason: DWARF_NAME_NOT_ON_BOARD }
+    }
+    const result = await this.dwarfNames.reset(dwarfId)
+    if (result.saved) this.republishNames()
+    return result
+  }
+
+  /** Read by stamping, and bound once so a stamp is one lookup per dwarf. */
+  private readonly nameOf = (dwarfId: string): string | undefined => this.dwarfNames.nameOf(dwarfId)
+
+  private boardDwarf(dwarfId: string): Dwarf | undefined {
+    for (const mine of this.mines) {
+      const dwarf = mine.dwarfs.find((item) => item.id === dwarfId)
+      if (dwarf !== undefined) return dwarf
+    }
+    return undefined
+  }
+
+  /**
+   * Publish the board again with the names as they stand now (#635), through the same gate a
+   * poll goes through. Nothing to do when no dwarf on the board changed name — which is also what
+   * keeps a load that finishes before the first poll from publishing an empty board.
+   */
+  private republishNames(): void {
+    const board = stampCustomNames(this.mines, this.nameOf)
+    if (board === this.mines) return
+    this.mines = board
+    const totals = this.ledger.totals()
+    if (this.publishGate.shouldPublish(board, totals)) this.onMinesUpdated(board, totals)
   }
 
   /**
@@ -5513,7 +5605,10 @@ export class AgentRuntime {
       // mine folded from three worktrees has its history in three places, and
       // reading only the project's would show an empty panel for a mine that
       // has been worked in all day.
-      return { readable: true, speakers: await this.history.readAcross(this.mineFoldersOf(mine)) }
+      // A speaker shares its dwarf's id, so it carries the same custom name (#635); the history
+      // reader itself names no one but by the transcript.
+      const speakers = await this.history.readAcross(this.mineFoldersOf(mine))
+      return { readable: true, speakers: stampSpeakerNames(speakers, this.nameOf) }
     } catch (error) {
       console.warn(`[runtime] Failed to read the history of ${mineId}`, error)
       return unreadableHistory()

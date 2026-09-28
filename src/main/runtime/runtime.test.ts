@@ -82,6 +82,10 @@ import {
 } from '../sessionLaunch/hostedProcesses'
 import { createAppDatabase } from '../appDatabase/appDatabase'
 import { createSqliteLaunchedSessionStore } from '../sessionLaunch/launchedSessionStore'
+// #635: dwarf names.
+import { createSqliteDwarfNameStore } from '../dwarfNames/dwarfNameStore'
+import { DWARF_NAME_NOT_ON_BOARD, DWARF_NAME_NOT_SAVED } from '../dwarfNames/dwarfNames'
+import type { Mine, MineHistorySpeaker } from '../domain/types'
 import {
   LaunchedSessionRegistry,
   type LaunchedProcess,
@@ -413,7 +417,8 @@ describe('AgentRuntime activation', () => {
             role: 'user',
             text: 'survey the seam',
             timestamp: 't0',
-            issuer: { role: 'foreman', name: 'coordinator' }
+            // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
+            issuer: { role: 'foreman', name: 'coordinator', launcherId: 'claude:session-1' }
           },
           { role: 'assistant', text: 'On my way.', timestamp: 't1' }
         ]
@@ -506,7 +511,8 @@ describe('AgentRuntime activation', () => {
             role: 'user',
             text: 'survey the seam',
             timestamp: 't0',
-            issuer: { role: 'foreman', name: 'codex-thread-p' }
+            // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
+            issuer: { role: 'foreman', name: 'codex-thread-p', launcherId: 'codex:thread-p' }
           },
           { role: 'assistant', text: 'On my way.', timestamp: 't1' }
         ]
@@ -763,7 +769,8 @@ describe('AgentRuntime activation', () => {
             role: 'user',
             text: 'survey the seam',
             timestamp: 't0',
-            issuer: { role: 'foreman', name: 'coordinator' }
+            // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
+            issuer: { role: 'foreman', name: 'coordinator', launcherId: 'claude:session-1' }
           }
         ]
       })
@@ -1348,6 +1355,34 @@ describe('AgentRuntime.sendDwarfText', () => {
       sessionName: 'sample-project-70',
       text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] stop digging`
     })
+  })
+
+  // ADDED for #635 (Dwarf names): the agent never sees a custom name. A worker the person renamed
+  // is still addressed by its base name in the prefix its foreman reads, on the next poll too.
+  it("keeps a renamed worker's base name in the prefix its foreman reads", async () => {
+    const { runtime, port } = await runtimeWith({
+      [WORKER_ID]: { kind: 'foreman-relay', foremanDwarfId: FOREMAN_ID, workerName: 'Explorer' },
+      [FOREMAN_ID]: { kind: 'claude-relay', sessionName: 'sample-project-70' }
+    })
+    await expect(
+      runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+    ).resolves.toMatchObject({ saved: true })
+
+    await runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'stop digging', pressEnter: true })
+    await runtime.refresh()
+    await runtime.sendDwarfText({ dwarfId: WORKER_ID, text: 'dig east', pressEnter: true })
+
+    expect(port.relayToClaudeSession).toHaveBeenNthCalledWith(1, {
+      sessionName: 'sample-project-70',
+      text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] stop digging`
+    })
+    expect(port.relayToClaudeSession).toHaveBeenNthCalledWith(2, {
+      sessionName: 'sample-project-70',
+      text: `${RELAY_PROVENANCE_LINE}\n[for agent Explorer] dig east`
+    })
+    expect(JSON.stringify(vi.mocked(port.relayToClaudeSession).mock.calls)).not.toContain(
+      'Stonebeard'
+    )
   })
 
   /*
@@ -14331,3 +14366,281 @@ describe('failureReasonSuffix', () => {
     expect(failureReasonSuffix({ delivered: true })).toBe('')
   })
 })
+
+/* --- Dwarf names (#635) — one block, appended ------------------------------- */
+/*
+ * Main owns the names (handoff, "Dwarf names in the app"): it re-validates every save, keeps it
+ * per machine, and stamps `customName` onto the board it publishes — republishing at once, so
+ * every window follows through the existing push. `name` stays the provider's base name.
+ */
+describe('AgentRuntime dwarf names (#635)', () => {
+  const FOREMAN_ID = 'claude:session-1'
+  const WORKER_ID = 'claude:session-1:agent-9'
+  const DB_PATH = 'C:\\userData\\projects-v1.db'
+
+  function crew(): Provider {
+    return {
+      kind: 'claude',
+      scan: vi.fn<Provider['scan']>().mockResolvedValue([
+        {
+          provider: 'claude',
+          sessionId: 'session-1',
+          cwd: 'C:\\work\\project',
+          status: 'busy',
+          updatedAt: 1,
+          dwarfs: [
+            {
+              id: FOREMAN_ID,
+              provider: 'claude',
+              role: 'foreman',
+              name: 'boss',
+              status: 'working',
+              sessionId: 'session-1'
+            },
+            {
+              id: WORKER_ID,
+              provider: 'claude',
+              role: 'worker',
+              name: 'Explorer',
+              status: 'working',
+              sessionId: 'session-1'
+            }
+          ]
+        }
+      ]),
+      feed: vi.fn().mockResolvedValue([])
+    }
+  }
+
+  function boardDwarf(mines: Mine[], id: string): Dwarf | undefined {
+    return mines.flatMap((mine) => mine.dwarfs).find((dwarf) => dwarf.id === id)
+  }
+
+  type RuntimeOptions = ConstructorParameters<typeof AgentRuntime>[0]
+
+  function runtimeWith(options: Partial<RuntimeOptions> = {}) {
+    const onMinesUpdated = vi.fn<RuntimeOptions['onMinesUpdated']>()
+    const runtime = new AgentRuntime({
+      fs: new FakeFs(),
+      platformAdapters: worktreePlatformAdapters(),
+      config: defaultConfig(),
+      providers: [crew()],
+      onMinesUpdated,
+      ...options
+    })
+    return { runtime, onMinesUpdated }
+  }
+
+  function lastPublished(onMinesUpdated: { mock: { calls: [Mine[], ...unknown[]][] } }): Mine[] {
+    return onMinesUpdated.mock.calls.at(-1)![0]
+  }
+
+  it('stamps a given name beside the base name and republishes at once, without a poll', async () => {
+    const { runtime, onMinesUpdated } = runtimeWith()
+    await runtime.refresh()
+    const pushes = onMinesUpdated.mock.calls.length
+
+    await expect(
+      runtime.setDwarfName({ dwarfId: WORKER_ID, name: '  Stone   beard ' })
+    ).resolves.toEqual({ saved: true, customName: 'Stone beard' })
+
+    expect(onMinesUpdated).toHaveBeenCalledTimes(pushes + 1)
+    expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)).toMatchObject({
+      name: 'Explorer',
+      customName: 'Stone beard'
+    })
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)?.customName).toBe('Stone beard')
+    expect(boardDwarf(runtime.getMines(), FOREMAN_ID)).not.toHaveProperty('customName')
+  })
+
+  it('keeps the name on the board every later poll publishes', async () => {
+    const { runtime } = runtimeWith()
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    await runtime.refresh()
+
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)).toMatchObject({
+      name: 'Explorer',
+      customName: 'Stonebeard'
+    })
+  })
+
+  it('republishes the base name at once on a reset, and on a save that leaves it empty', async () => {
+    const { runtime, onMinesUpdated } = runtimeWith()
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    await expect(runtime.resetDwarfName(WORKER_ID)).resolves.toEqual({ saved: true })
+    expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)).not.toHaveProperty('customName')
+
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+    await expect(runtime.setDwarfName({ dwarfId: WORKER_ID, name: '  ' })).resolves.toEqual({
+      saved: true
+    })
+    expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)).not.toHaveProperty('customName')
+  })
+
+  it('refuses to name a dwarf that is not on the board', async () => {
+    const { runtime } = runtimeWith()
+    await runtime.refresh()
+
+    await expect(
+      runtime.setDwarfName({ dwarfId: 'claude:ghost', name: 'Stonebeard' })
+    ).resolves.toEqual({ saved: false, reason: DWARF_NAME_NOT_ON_BOARD })
+    await expect(runtime.resetDwarfName('claude:ghost')).resolves.toEqual({
+      saved: false,
+      reason: DWARF_NAME_NOT_ON_BOARD
+    })
+  })
+
+  it('lets two dwarfs carry the same name', async () => {
+    const { runtime } = runtimeWith()
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+    await runtime.setDwarfName({ dwarfId: FOREMAN_ID, name: 'Stonebeard' })
+
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)?.customName).toBe('Stonebeard')
+    expect(boardDwarf(runtime.getMines(), FOREMAN_ID)?.customName).toBe('Stonebeard')
+  })
+
+  /*
+   * The point of persisting: a name given before a restart is on the next run's board. Two
+   * runtimes over one database stand in for the two runs. The next run reads the names while its
+   * first poll runs, and republishes once they are in.
+   */
+  it('puts a name given in one run on the board of the next', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const store = () =>
+      createSqliteDwarfNameStore({ database: createAppDatabase({ filePath: DB_PATH, sqlite }) })
+    const first = runtimeWith({ dwarfNameStore: store() }).runtime
+    await first.refresh()
+    await first.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    const { runtime: next, onMinesUpdated } = runtimeWith({ dwarfNameStore: store() })
+    await next.refresh()
+
+    await vi.waitFor(() => {
+      expect(boardDwarf(lastPublished(onMinesUpdated), WORKER_ID)?.customName).toBe('Stonebeard')
+    })
+  })
+
+  it('refuses the save and keeps the dwarf as it was when the database will not write', async () => {
+    const sqlite = new MemoryWritableSqlite()
+    const database = createAppDatabase({ filePath: DB_PATH, sqlite })
+    const { runtime } = runtimeWith({ dwarfNameStore: createSqliteDwarfNameStore({ database }) })
+    await runtime.refresh()
+    sqlite.failWith('locked')
+    database.invalidate()
+
+    await expect(runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })).resolves.toEqual(
+      { saved: false, reason: DWARF_NAME_NOT_SAVED }
+    )
+    expect(boardDwarf(runtime.getMines(), WORKER_ID)).not.toHaveProperty('customName')
+  })
+
+  /*
+   * A simulated valley's dwarfs are invented for one run, so their names are too (handoff): kept
+   * in memory, and never written to the database the app would otherwise use.
+   */
+  it('keeps a simulated dwarf’s name in memory only', async () => {
+    const store = {
+      list: vi.fn().mockResolvedValue([]),
+      put: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined)
+    }
+    const { runtime } = runtimeWith({
+      providers: undefined,
+      sqlite: { openReadOnly: async () => null },
+      appPaths: { isPackaged: false, resourcesPath: '', appPath: 'C:\\app' },
+      simulationEnv: { [SIMULATION_ENV_VAR]: '1' },
+      dwarfNameStore: store
+    })
+    await runtime.refresh()
+    const simulated = runtime.getMines().flatMap((mine) => mine.dwarfs)[0]!
+
+    await expect(
+      runtime.setDwarfName({ dwarfId: simulated.id, name: 'Stonebeard' })
+    ).resolves.toEqual({ saved: true, customName: 'Stonebeard' })
+    expect(boardDwarf(runtime.getMines(), simulated.id)?.customName).toBe('Stonebeard')
+    expect(store.list).not.toHaveBeenCalled()
+    expect(store.put).not.toHaveBeenCalled()
+    runtime.stop()
+  })
+
+  it('carries a speaker’s custom name into the mine history, beside its transcript’s name', async () => {
+    const speakers: MineHistorySpeaker[] = [
+      {
+        id: WORKER_ID,
+        provider: 'claude',
+        role: 'worker',
+        name: 'Explorer',
+        lastMessageAt: 1,
+        messages: []
+      },
+      {
+        id: FOREMAN_ID,
+        provider: 'claude',
+        role: 'foreman',
+        name: 'session-',
+        lastMessageAt: 1,
+        messages: []
+      }
+    ]
+    const history = {
+      read: vi.fn().mockResolvedValue(speakers),
+      readAcross: vi.fn().mockResolvedValue(speakers)
+    }
+    const { runtime } = runtimeWith({ history })
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    const result = await runtime.mineHistory(runtime.getMines()[0]!.id)
+
+    expect(result.speakers.find((speaker) => speaker.id === WORKER_ID)).toMatchObject({
+      name: 'Explorer',
+      customName: 'Stonebeard'
+    })
+    expect(result.speakers.find((speaker) => speaker.id === FOREMAN_ID)).not.toHaveProperty(
+      'customName'
+    )
+  })
+
+  /*
+   * A custom name is user data: never logged, never written into diagnostics (decision log, Dwarf
+   * names). Every console method is watched across everything that touches a name, the failing
+   * database included — the path most likely to log.
+   */
+  it('never hands a custom name to a log line', async () => {
+    const methods = ['log', 'info', 'warn', 'error', 'debug'] as const
+    const spies = methods.map((method) => vi.spyOn(console, method).mockImplementation(() => {}))
+    try {
+      const sqlite = new MemoryWritableSqlite()
+      const database = createAppDatabase({ filePath: DB_PATH, sqlite })
+      const { runtime } = runtimeWith({ dwarfNameStore: createSqliteDwarfNameStore({ database }) })
+      await runtime.refresh()
+      await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+      await runtime.refresh()
+      await runtime.mineHistory(runtime.getMines()[0]!.id)
+      sqlite.failWith('locked')
+      database.invalidate()
+      await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Ironfoot' })
+      await runtime.resetDwarfName(WORKER_ID)
+
+      const lines = spies.flatMap((spy) =>
+        spy.mock.calls.map((call) =>
+          call.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join(' ')
+        )
+      )
+      // The failing writes did log: the check below would pass vacuously on a silent path.
+      expect(lines.some((line) => line.includes('[dwarfNames]'))).toBe(true)
+      for (const line of lines) {
+        expect(line).not.toContain('Stonebeard')
+        expect(line).not.toContain('Ironfoot')
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+  })
+})
+/* --- end of the #635 dwarf names block -------------------------------------- */

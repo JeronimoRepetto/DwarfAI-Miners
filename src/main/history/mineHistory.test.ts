@@ -270,7 +270,8 @@ describe('MineHistoryReader over Claude transcripts', () => {
         role: 'user',
         text: 'Map the seam.',
         timestamp: AT_10,
-        issuer: { role: 'foreman', name: SESSION.slice(0, 8) }
+        // AMENDED for #635 (Dwarf names: an issuer carries its launcher's speaker id, so the panel can show that speaker's custom name; was: role and name only).
+        issuer: { role: 'foreman', name: SESSION.slice(0, 8), launcherId: `claude:${SESSION}` }
       },
       { role: 'assistant', text: 'Mapped it.', timestamp: AT_11 }
     ])
@@ -301,7 +302,12 @@ describe('MineHistoryReader over Claude transcripts', () => {
 
     const speakers = await reader(fs).read(CWD)
     const nested = speakers.find((speaker) => speaker.id === `claude:${SESSION}:${NESTED_AGENT}`)
-    expect(nested?.messages[0]?.issuer).toEqual({ role: 'worker', name: 'Map the seam' })
+    // AMENDED for #635 (Dwarf names: an issuer carries its launcher's speaker id, so the panel can show that speaker's custom name; was: role and name only).
+    expect(nested?.messages[0]?.issuer).toEqual({
+      role: 'worker',
+      name: 'Map the seam',
+      launcherId: `claude:${SESSION}:${AGENT}`
+    })
   })
 
   it('leaves a nested subagent whose parent it cannot find without an issuer rather than guessing one', async () => {
@@ -612,9 +618,11 @@ describe('MineHistoryReader over Codex rollouts', () => {
     const speakers = await readerWith(fs, sqlite).read(CWD)
     const child = speakers.find((speaker) => speaker.id === `codex:${CODEX_CHILD}`)
     expect(child).toMatchObject({ role: 'worker', name: 'Bernoulli', provider: 'codex' })
+    // AMENDED for #635 (Dwarf names: an issuer carries its launcher's speaker id, so the panel can show that speaker's custom name; was: role and name only).
     expect(child?.messages[0]?.issuer).toEqual({
       role: 'foreman',
-      name: `codex-${CODEX_THREAD.slice(0, 8)}`
+      name: `codex-${CODEX_THREAD.slice(0, 8)}`,
+      launcherId: `codex:${CODEX_THREAD}`
     })
   })
 

@@ -31,6 +31,8 @@ import type {
   DwarfTextRequest,
   DwarfTextResult,
   DwarfTuningRequest,
+  DwarfNameRequest,
+  DwarfNameResult,
   DwarfTuningResult,
   CopyTextResult,
   ExternalLinkResult,
@@ -145,6 +147,8 @@ import { MaterialLedger } from './ledger/materialLedger'
 import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
+import { createSqliteDwarfNameStore } from './dwarfNames/dwarfNameStore'
+import { DWARF_NAME_NOT_ON_BOARD } from './dwarfNames/dwarfNames'
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
@@ -272,6 +276,8 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.refreshDwarfTelemetry)
   ipcMain.removeHandler(IPC_CHANNELS.setDwarfTuning)
+  ipcMain.removeHandler(IPC_CHANNELS.setDwarfName)
+  ipcMain.removeHandler(IPC_CHANNELS.resetDwarfName)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
   ipcMain.removeHandler(IPC_CHANNELS.openExternalLink)
@@ -416,6 +422,19 @@ function parseKickRequest(payload: unknown): DwarfKickRequest | null {
   const record = payload as Record<string, unknown>
   if (typeof record.dwarfId !== 'string') return null
   return { dwarfId: record.dwarfId }
+}
+
+/**
+ * Same boundary discipline again, for a rename (#635). Checked for shape and nothing more: a
+ * dwarf id that is a non-empty string and a name that is a string. What a name may hold is
+ * `cleanDwarfName`'s to decide, in the runtime, and the name is never logged here either.
+ */
+function parseDwarfNameRequest(payload: unknown): DwarfNameRequest | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.dwarfId !== 'string' || record.dwarfId === '') return null
+  if (typeof record.name !== 'string') return null
+  return { dwarfId: record.dwarfId, name: record.name }
 }
 
 /**
@@ -989,6 +1008,11 @@ async function init(): Promise<void> {
   // in-memory register #217 added is unaffected.
   const launchedSessionStore =
     projects === null ? null : createSqliteLaunchedSessionStore({ database: appDatabase })
+  // The names a person gives dwarfs (#635), the fourth tenant of that file. Null on the same
+  // terms again: a database that will not open costs the names an earlier run kept, and renaming
+  // still works for this run, in memory (see RuntimeOptions.dwarfNameStore).
+  const dwarfNameStore =
+    projects === null ? null : createSqliteDwarfNameStore({ database: appDatabase })
 
   // Unset (the common case) leaves DARWIN_CONSOLE_INPUT_ENABLED — now `true`
   // — in charge; a stated override wins in either direction (#367 items 1
@@ -1038,6 +1062,7 @@ async function init(): Promise<void> {
     projects,
     projectsRefusal,
     launchedSessionStore,
+    dwarfNameStore,
     home,
     fs,
     appPaths,
@@ -1711,6 +1736,19 @@ async function init(): Promise<void> {
     const request = parseTuningRequest(payload)
     if (request === null) return notTuned
     return runtime?.setDwarfTuning(request) ?? notTuned
+  })
+  // Renaming a dwarf and resetting its name (#635). A payload this boundary cannot read is refused
+  // with the words the runtime uses for a dwarf it is not showing: from the panel's side both mean
+  // the same thing, that no name changed.
+  const notRenamed: DwarfNameResult = { saved: false, reason: DWARF_NAME_NOT_ON_BOARD }
+  ipcMain.handle(IPC_CHANNELS.setDwarfName, (_event, payload: unknown) => {
+    const request = parseDwarfNameRequest(payload)
+    if (request === null) return notRenamed
+    return runtime?.setDwarfName(request) ?? notRenamed
+  })
+  ipcMain.handle(IPC_CHANNELS.resetDwarfName, (_event, dwarfId: unknown) => {
+    if (typeof dwarfId !== 'string' || dwarfId === '') return notRenamed
+    return runtime?.resetDwarfName(dwarfId) ?? notRenamed
   })
   // A mine this process could not read history for (#192) — never "nobody has
   // spoken here", which is what an empty list with `readable: true` would say.

@@ -1552,3 +1552,52 @@ describe('preload launch view contract (#635)', () => {
   })
 })
 /* --- end of the #635 launch view block --------------------------------------- */
+
+/* --- Dwarf names (#635) — one block, appended ------------------------------- */
+/*
+ * Renaming a dwarf and resetting its name: request/response, because a refusal has a reason the
+ * header shows. The request is rebuilt field by field, and a value that is not a string crosses
+ * as '' — main refuses an empty dwarf id, and reads an empty name as "back to the base name",
+ * which is what an unreadable name has to mean rather than a name nobody typed.
+ */
+describe('preload dwarf-name contract (#635)', () => {
+  it('sends a rename on the dwarf:setName channel and answers the verdict', async () => {
+    invoke.mockResolvedValueOnce({ saved: true, customName: 'Stonebeard' })
+    await expect(api.setDwarfName({ dwarfId: 'claude:s1', name: 'Stonebeard' })).resolves.toEqual({
+      saved: true,
+      customName: 'Stonebeard'
+    })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
+      dwarfId: 'claude:s1',
+      name: 'Stonebeard'
+    })
+  })
+
+  it('rebuilds the rename rather than forwarding whatever the caller attached', async () => {
+    invoke.mockResolvedValueOnce({ saved: true })
+    await api.setDwarfName({
+      dwarfId: 'claude:s1',
+      name: 'Stonebeard',
+      provider: 'codex'
+    } as unknown as Parameters<typeof api.setDwarfName>[0])
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', {
+      dwarfId: 'claude:s1',
+      name: 'Stonebeard'
+    })
+
+    await api.setDwarfName({ dwarfId: 7, name: null } as unknown as Parameters<
+      typeof api.setDwarfName
+    >[0])
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:setName', { dwarfId: '', name: '' })
+  })
+
+  it('sends a reset on the dwarf:resetName channel, naming the dwarf alone', async () => {
+    invoke.mockResolvedValueOnce({ saved: true })
+    await expect(api.resetDwarfName('claude:s1')).resolves.toEqual({ saved: true })
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', 'claude:s1')
+
+    await api.resetDwarfName(undefined as unknown as string)
+    expect(invoke).toHaveBeenLastCalledWith('dwarf:resetName', '')
+  })
+})
+/* --- end of the #635 dwarf names block -------------------------------------- */
