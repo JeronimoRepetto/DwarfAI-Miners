@@ -419,8 +419,22 @@ describe('a detached launch that failed after it started (#263)', () => {
 
       expect(failed.detached).toBe(false)
       expect(failed.launchId).toBeNull()
-      expect(failed.failure).toEqual({ cause: 'exited-at-once', choice: 'codex' })
+      // AMENDED for #635 (MESSAGE-QUESTIONS 23; was: { cause, choice } alone): the CLI's own last
+      // lines ride along, for the notice title's tooltip.
+      expect(failed.failure).toEqual({
+        cause: 'exited-at-once',
+        choice: 'codex',
+        output: 'codex: another instance is already running'
+      })
       expect(failed.error).toBeNull()
+    })
+
+    // ADDED for #635 (MESSAGE-QUESTIONS 23): a CLI that printed nothing leaves nothing to show.
+    it('keeps no output when the CLI printed nothing', () => {
+      expect(launchFailed(started(), failure({ stderrTail: ' \n ' })).failure).toEqual({
+        cause: 'exited-at-once',
+        choice: 'codex'
+      })
     })
 
     it('returns straight to prompt-ready, prompt intact, so a retry is one Enter', () => {

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MAX_DWARF_TEXT_CHARS, type FeedActivity, type FeedMessage } from '../domain/types'
 import {
   AntigravityStreamReader,
@@ -416,6 +416,11 @@ class FakeChild implements AntigravityChild {
     this.fire('stdout', text)
   }
 
+  /** ADDED for #635 (MESSAGE-QUESTIONS 23): the CLI writing to its own stderr. */
+  complain(text: string): void {
+    this.fire('stderr', text)
+  }
+
   exit(code: number | null): void {
     this.fire('exit', code)
   }
@@ -551,5 +556,30 @@ describe('createAntigravityHeldSession', () => {
       throw new Error('ENOENT')
     })
     await expect(port(recorder().request)).rejects.toThrow('ENOENT')
+  })
+})
+
+/*
+ * ADDED for #635 (MESSAGE-QUESTIONS 23): what a launched tool writes can hold local paths or
+ * account names, so it is shown only in the panel and never logged. The log keeps the fact that
+ * agy wrote to stderr, and how much, never the words.
+ */
+describe('createAntigravityHeldSession and its stderr', () => {
+  it('logs that agy wrote to stderr, never what it wrote', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const child = new FakeChild()
+      await startOver(child)
+      child.complain('error: not signed in as j at /home/j/.gemini\n')
+
+      const logged = [...warn.mock.calls, ...log.mock.calls].map((call) => call.join(' '))
+      expect(logged.some((line) => line.includes('not signed in'))).toBe(false)
+      expect(logged.some((line) => line.includes('/home/j'))).toBe(false)
+      expect(logged).toEqual(['[held] agy wrote to stderr (44 chars)'])
+    } finally {
+      warn.mockRestore()
+      log.mockRestore()
+    }
   })
 })

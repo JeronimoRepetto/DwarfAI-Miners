@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   COMPOSER_ENABLED_PLACEHOLDER,
   OTHER_CHOICE,
+  chooseProvider,
+  closedLaunch,
+  launchFailed,
+  openLaunch,
+  startedDetached,
+  submitStarted,
+  typePrompt,
   type LaunchPhase
 } from '../../lib/launch/launchState'
+import { TIP_DELAY_MS } from '../../lib/overlay/tipCard'
+import { truncateTail } from '../../../../shared/truncate'
 import type { JevState, LaunchFailure } from '../../lib/launch/launchState'
 import {
   MODEL_HISTORY_SOURCE,
@@ -1986,5 +1995,122 @@ describe('the launch-failure notice (#635)', () => {
     expect(document.activeElement).toBe(prompt)
     wrapper.unmount()
     host.remove()
+  })
+
+  /*
+   * ADDED for #635 (MESSAGE-QUESTIONS 23; components.md, Add a dwarf, Accessibility): with the
+   * tool's own output captured, the title takes keyboard focus, shows it at once in a tooltip in
+   * the code face, and is described by the same lines; with none it is plain text.
+   */
+  describe("the title's output tooltip", () => {
+    const TITLE = `${NOTICE} .dm-add__fail-title`
+    const ready = () => typePrompt(chooseProvider(openLaunch(closedLaunch()), 'codex'), 'dig')
+    const OUTPUT = 'error: not signed in\nSign in with the login command, then run it again.'
+
+    it('shows the tool’s last lines on keyboard focus, verbatim, and hides them on blur', async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const wrapper = panel({
+        ...READY_ON_CLAUDE,
+        failure: { cause: 'exited-at-once', choice: 'claude', output: OUTPUT },
+        attachTo: host
+      })
+      const title = wrapper.get(TITLE)
+      expect(title.attributes('tabindex')).toBe('0')
+      const described = document.getElementById(title.attributes('aria-describedby') ?? '')
+      expect(described?.textContent).toBe(OUTPUT)
+
+      await title.trigger('focus')
+      await flushPromises()
+      const card = document.body.querySelector('.dm-tip')
+      expect(card?.querySelector('.dm-add__fail-out')?.textContent).toBe(OUTPUT)
+
+      await title.trigger('blur')
+      await flushPromises()
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
+      wrapper.unmount()
+      host.remove()
+    })
+
+    /*
+     * ADDED for #635 (the live check of MESSAGE-QUESTIONS 23): on the pointer, after the tooltip
+     * delay, as a person reaches it — not only on keyboard focus.
+     */
+    it('shows the tool’s last lines on hover, after the tooltip delay', async () => {
+      vi.useFakeTimers()
+      const host = document.createElement('div')
+      document.body.append(host)
+      try {
+        const wrapper = panel({
+          ...READY_ON_CLAUDE,
+          failure: { cause: 'exited-at-once', choice: 'claude', output: OUTPUT },
+          attachTo: host
+        })
+        await wrapper.get(TITLE).trigger('pointerenter')
+        expect(document.body.querySelector('.dm-tip')).toBeNull()
+        await vi.advanceTimersByTimeAsync(TIP_DELAY_MS)
+        await flushPromises()
+        expect(document.body.querySelector('.dm-tip .dm-add__fail-out')?.textContent).toBe(OUTPUT)
+
+        await wrapper.get(TITLE).trigger('pointerleave')
+        await flushPromises()
+        expect(document.body.querySelector('.dm-tip')).toBeNull()
+        wrapper.unmount()
+      } finally {
+        host.remove()
+        vi.useRealTimers()
+      }
+    })
+
+    /*
+     * ADDED for #635 (the verifier's finding on MESSAGE-QUESTIONS 23): fed exactly what main now
+     * sends — the captured tail through the same bound main applies, and through the launch
+     * model's own `launchFailed` — the tooltip shows the last lines with their breaks.
+     */
+    it('shows the last lines main keeps of a long stderr, with their breaks', async () => {
+      const noise = Array.from({ length: 40 }, (_, n) => `warning ${n}: retrying the handshake`)
+      const captured = [...noise, 'error: not signed in', 'Run `codex login` first.', ''].join('\n')
+      const failed = launchFailed(startedDetached(submitStarted(ready()), 'L1'), {
+        launchId: 'L1',
+        provider: 'codex',
+        mineId: 'mine-1',
+        exitCode: 1,
+        stderrTail: truncateTail(captured, 400),
+        cause: 'exited-at-once'
+      })
+      const host = document.createElement('div')
+      document.body.append(host)
+      const wrapper = panel({ ...READY_ON_CLAUDE, failure: failed.failure, attachTo: host })
+      await wrapper.get(TITLE).trigger('focus')
+      await flushPromises()
+
+      const shown = document.body.querySelector('.dm-tip .dm-add__fail-out')?.textContent ?? ''
+      expect(shown.endsWith('error: not signed in\nRun `codex login` first.')).toBe(true)
+      expect(shown.startsWith('…')).toBe(true)
+      expect(shown).not.toContain('warning 0:')
+      wrapper.unmount()
+      host.remove()
+    })
+
+    it('leaves the title plain text with nothing captured', async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const wrapper = panel({
+        ...READY_ON_CLAUDE,
+        failure: { cause: 'exited-at-once', choice: 'claude' },
+        attachTo: host
+      })
+      const title = wrapper.get(TITLE)
+      expect(title.attributes('tabindex')).toBeUndefined()
+      expect(title.attributes('aria-describedby')).toBeUndefined()
+
+      await title.trigger('focus')
+      await flushPromises()
+      expect(document.body.querySelector('.dm-tip')).toBeNull()
+      // The notice itself is drawn the same either way.
+      expect(title.text()).toBe('Claude stopped as soon as it started')
+      wrapper.unmount()
+      host.remove()
+    })
   })
 })

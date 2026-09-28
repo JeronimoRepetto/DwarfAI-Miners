@@ -5,8 +5,9 @@
  * draws; this decides the words, from facts the dwarf already carries and nothing else.
  */
 import { compactSilence, providerLabel } from '../dwarf/dwarfTip'
+import type { KickBlocked } from '../delivery/actionBar'
 import type { DeliveryMarker } from '../delivery/deliveryVerdict'
-import type { MenuEntry } from '../overlay/menu'
+import type { MenuEntry, MenuItem } from '../overlay/menu'
 import { sceneDwarfStatus } from '../scene/sceneDwarf'
 import { dwarfWorkplaceLabel } from '../worktree'
 import { finishedTurnWord } from './turnOutcome'
@@ -35,8 +36,8 @@ export interface MessagePanelOutcome {
   status: OutcomeStatus
   text: string
   /**
-   * What the line leaves out, for its tooltip (MESSAGE-QUESTIONS 9): a finished turn's closing
-   * words, trimmed, or the provider's own word for a turn stopped at a limit. Absent when there is
+   * What the line leaves out, for its tooltip (MESSAGE-QUESTIONS 9, 18): a finished turn's closing
+   * words, trimmed, or the provider's own word for a turn that ended badly. Absent when there is
    * nothing to add, and then the line has no tooltip.
    */
   tip?: string
@@ -46,18 +47,30 @@ export interface MessagePanelOutcome {
 export const OUTCOME_TIP_MAX_CHARS = 200
 
 /*
+ * The status sentence a turn that ended badly opens its tooltip with, before the provider's own
+ * word (MESSAGE-QUESTIONS 9 and 18).
+ */
+const ENDED_SENTENCE = {
+  capped: 'Stopped at a limit',
+  errored: 'Failed',
+  interrupted: 'Interrupted'
+} as const
+
+/*
  * The tooltip's words for a finished turn. A concluded turn's closing words, trimmed to 200
- * characters with an ellipsis, cut on a whole character. A turn stopped at a limit gives the
- * ruling's own sentence and the provider's word, verbatim ("Stopped at a limit: error_max_turns").
- * A failed or interrupted turn adds nothing yet: the ruling gives no sentence for either, and
- * this does not invent one.
+ * characters with an ellipsis, cut on a whole character. A turn that ended badly gives its status
+ * sentence, a colon and the provider's word, verbatim ("Stopped at a limit: error_max_turns",
+ * "Failed: <detail>", "Interrupted: <detail>"). With no provider word there is none: the line
+ * already says "Turn failed" or "Turn interrupted", and the tooltip would only repeat it.
  */
 function outcomeTip(lastTurn: Dwarf['lastTurn']): string | undefined {
   if (lastTurn === undefined) return undefined
-  if (lastTurn.kind === 'capped') {
-    return lastTurn.detail === undefined ? undefined : 'Stopped at a limit: ' + lastTurn.detail
+  if (lastTurn.kind !== 'concluded') {
+    const detail = lastTurn.detail
+    return detail === undefined || detail === ''
+      ? undefined
+      : ENDED_SENTENCE[lastTurn.kind] + ': ' + detail
   }
-  if (lastTurn.kind !== 'concluded') return undefined
   const words = Array.from(lastTurn.text?.trim() ?? '')
   if (words.length === 0) return undefined
   if (words.length <= OUTCOME_TIP_MAX_CHARS) return words.join('')
@@ -157,18 +170,37 @@ export function bubbleMark(marker: DeliveryMarker): BubbleMark {
   return { mark, glyph: mark === 'failed' ? '✕ not delivered' : marker.glyph, title: marker.title }
 }
 
+/*
+ * Why Stop dwarf… cannot act, as its title says it (MESSAGE-QUESTIONS 13), in the house form
+ * "<action> · <reason>". The open turn's is OPEN_TURN_NO_INTERRUPT_HINT, shortened.
+ */
+const STOP_BLOCKED_TITLE: Record<KickBlocked, string> = {
+  'open-turn': 'Stop dwarf · this turn can only be stopped where its session runs',
+  stopping: 'Stop dwarf · already stopping'
+}
+
 /**
  * The ⋯ menu (components.md, MessagePanel, Anatomy): Open console, Mine history, a rule, then Stop
  * dwarf… as danger. Reset name, which the design lists while a custom name is set, arrives with
- * the dwarf names slice. Stop is disabled where the session cannot be stopped, the kick's own
- * capability.
+ * the dwarf names slice. Stop is never hidden, so the menu keeps one shape for every dwarf; it is
+ * disabled, with its reason as its title, only in the kick's own two cases (`kickBlocked`), and an
+ * idle session the app only observes can still be stopped (MESSAGE-QUESTIONS 13).
  */
-export function messagePanelMenu(canStop: boolean): MenuEntry[] {
+export function messagePanelMenu(stopBlocked: KickBlocked | null): MenuEntry[] {
+  const stop: MenuItem =
+    stopBlocked === null
+      ? { label: 'Stop dwarf…', danger: true, disabled: false }
+      : {
+          label: 'Stop dwarf…',
+          danger: true,
+          disabled: true,
+          title: STOP_BLOCKED_TITLE[stopBlocked]
+        }
   return [
     { label: 'Open console', icon: 'console' },
     { label: 'Mine history', icon: 'history' },
     { separator: true },
-    { label: 'Stop dwarf…', danger: true, disabled: !canStop }
+    stop
   ]
 }
 

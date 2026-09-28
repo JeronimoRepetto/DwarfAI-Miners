@@ -2897,3 +2897,28 @@ describe('a held session that stops as soon as it starts (#635)', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 })
+
+/*
+ * ADDED for #635 (MESSAGE-QUESTIONS 23): the Agent SDK builds a CLI's exit error with its stderr in
+ * the message (". stderr: …"). A launched tool's own output is shown only in the panel and never
+ * logged, so the registry logs that the start failed, and the exit, without it.
+ */
+describe('HeldSessionRegistry never logs a tool’s own output', () => {
+  it('logs a start that failed without the stderr the engine’s error carried', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const port = new FakePort()
+      port.failWith = new Error(
+        'Claude Code process exited with code 1. stderr: error: not signed in as j'
+      )
+      const registry = registryOver(port)
+      await registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+
+      const logged = warn.mock.calls.map((call) => call.map(String).join(' '))
+      expect(logged.some((line) => line.includes('not signed in'))).toBe(false)
+      expect(logged.some((line) => line.includes('exited with code 1'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+})

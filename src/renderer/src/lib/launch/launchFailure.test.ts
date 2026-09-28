@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { JevFallbackReason } from '../../types'
 import { OTHER_CHOICE, jevFailureOf, type LaunchFailure } from './launchState'
-import { jevFallbackReasonWords, launchFailureNotice } from './launchFailure'
+import { jevFallbackReasonWords, launchFailureNotice, launchFailureOutput } from './launchFailure'
 
 /*
  * The Add panel's launch-failure notice (#635; decision log, Five launch-failure causes, MESSAGE-
@@ -143,5 +143,66 @@ describe('jevFallbackReasonWords', () => {
       'Jev was not confident enough (41%)'
     )
     expect(jevFallbackReasonWords('low-confidence')).toBe('Jev was not confident enough')
+  })
+})
+
+/*
+ * ADDED for #635 (MESSAGE-QUESTIONS 23; decision log, Tool output on a failed launch): the notice
+ * title's tooltip carries the tool's own last lines, verbatim, trimmed to 400 characters with an
+ * ellipsis, for every cause where the app captured them. Nothing captured, no tooltip.
+ */
+describe('launchFailureOutput', () => {
+  const OUTPUT = 'error: not signed in\nSign in with the login command, then run it again.'
+
+  it('carries the lines of a tool that stopped as soon as it started, verbatim', () => {
+    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output: OUTPUT })).toBe(
+      OUTPUT
+    )
+  })
+
+  it('carries them for a tool that could not be started, when the app captured any', () => {
+    expect(
+      launchFailureOutput({ cause: 'could-not-start', choice: 'claude', output: OUTPUT })
+    ).toBe(OUTPUT)
+  })
+
+  it('trims the blank space around them, keeping their line breaks', () => {
+    expect(
+      launchFailureOutput({
+        cause: 'exited-at-once',
+        choice: 'codex',
+        output: '\n  ' + OUTPUT + '\n\n'
+      })
+    ).toBe(OUTPUT)
+  })
+
+  it('has none with nothing captured', () => {
+    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'claude' })).toBeNull()
+    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output: '' })).toBeNull()
+    expect(
+      launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output: ' \n\t ' })
+    ).toBeNull()
+  })
+
+  it('has none for a cause that never ran the tool', () => {
+    expect(
+      launchFailureOutput({ cause: 'not-installed', choice: 'codex', output: OUTPUT })
+    ).toBeNull()
+    expect(launchFailureOutput({ cause: 'jev-unreachable' })).toBeNull()
+    expect(launchFailureOutput({ cause: 'jev-could-not-choose', reason: 'no-key' })).toBeNull()
+  })
+
+  /*
+   * REMOVED for #635 (the verifier's finding on MESSAGE-QUESTIONS 23): three tests of a 400-
+   * character cut here — past 400 with a trailing ellipsis, the blank space before it, a whole
+   * character. The cut kept the FRONT, never fired on what main sends, and a second cut in a
+   * second place could only disagree with the first. The bound is main's now, from the end:
+   * shared/truncate.test.ts (truncateTail) and runtime.test.ts pin it.
+   */
+  it('shows the lines exactly as main bounded them, never cutting them again', () => {
+    const sent = '…' + 'a'.repeat(390) + '\nlast line'
+    expect(launchFailureOutput({ cause: 'exited-at-once', choice: 'codex', output: sent })).toBe(
+      sent
+    )
   })
 })

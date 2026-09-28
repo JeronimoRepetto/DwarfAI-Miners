@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { withoutToolWords } from '../domain/toolOutput'
 import { homedir } from 'node:os'
 import { type FsLike } from '../adapters/fsLike'
 import { NodeSqlite, type SqliteLike } from '../adapters/sqliteLike'
@@ -211,7 +212,7 @@ import {
 import { createStageTimer, formatStageTimings, type StageTimings } from '../textDelivery/timing'
 import { TierService } from '../tier/tierService'
 import { redactSecrets } from '../domain/redactSecrets'
-import { truncate } from '../../shared/truncate'
+import { truncateTail } from '../../shared/truncate'
 
 /**
  * How much conversation the message panel asks a provider for — twelve things
@@ -670,8 +671,15 @@ function stageSuffix(timings: StageTimings): string {
  * outcome's error field is a fixed, curated sentence and never a place the
  * payload could travel through.
  */
-function failureReasonSuffix(outcome: TextDeliveryOutcome): string {
-  return outcome.delivered || outcome.error === undefined ? '' : `: ${outcome.error}`
+/*
+ * A failed delivery's reason for its log line. A resume refusal carries what Codex or OpenCode
+ * wrote on stderr, for the panel; the log keeps the app's own sentence and never the tool's words,
+ * which can hold local paths or account names (#635, MESSAGE-QUESTIONS 23).
+ */
+export function failureReasonSuffix(outcome: TextDeliveryOutcome): string {
+  return outcome.delivered || outcome.error === undefined
+    ? ''
+    : `: ${withoutToolWords(outcome.error)}`
 }
 
 /**
@@ -5151,7 +5159,10 @@ export class AgentRuntime {
       provider,
       mineId: mine.id,
       exitCode: failure.exitCode,
-      stderrTail: truncate(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS),
+      // The END of what it wrote, line breaks kept: its last lines say why it stopped, and they
+      // are what the notice title's tooltip shows (#635, MESSAGE-QUESTIONS 23). Redacted first,
+      // so a cut never splits a secret into a shape redaction no longer knows.
+      stderrTail: truncateTail(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS),
       // The only thing this push is ever about (#635): see LaunchFailureCause.
       cause: 'exited-at-once'
     })

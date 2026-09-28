@@ -3228,9 +3228,13 @@ export interface LaunchFailedPush {
    */
   exitCode: number | null
   /**
-   * The CLI's own words, redacted and length-capped exactly as every other
-   * transcript text crossing this boundary is (see `redactSecrets`) — empty
-   * when it wrote nothing to stderr before it went.
+   * The CLI's own words, redacted (see `redactSecrets`) — empty when it wrote
+   * nothing to stderr before it went. AMENDED for #635 (MESSAGE-QUESTIONS 23;
+   * was: length-capped as a speech bubble is, its first 400 characters on one
+   * line): its LAST 400 characters with their line breaks kept, an ellipsis
+   * marking what was dropped from the front (`truncateTail`), because the last
+   * lines say why it stopped and the Add panel's notice shows them as written.
+   * The only bound on them: the renderer never cuts them again.
    */
   stderrTail: string
   /**

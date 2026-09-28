@@ -1,4 +1,5 @@
 import type { LaunchTuning } from '../domain/launchTuning'
+import { errorWithoutToolOutput } from '../domain/toolOutput'
 import { PRODUCT_NAME, detectionFailureCause, notInstalledReason } from '../domain/launchProviders'
 import { EARLY_FAILURE_WINDOW_MS } from './launchRunner'
 import { HELDABLE_PROVIDERS } from '../domain/types'
@@ -615,7 +616,10 @@ export class HeldSessionRegistry {
       this.log(`[held] Session started in ${request.mineId} (${prompt.length} chars)`)
       return { launched: true }
     } catch (error) {
-      console.warn(`[held] Could not start a session in ${request.mineId}`, error)
+      // The fact and the exit, never the stderr the SDK folds into its error (#635).
+      console.warn(
+        `[held] Could not start a session in ${request.mineId}: ${errorWithoutToolOutput(error)}`
+      )
       // An engine that rejects never opened a session: Antigravity's spawn
       // failing, whatever errno the OS gave it (#635, MESSAGE-QUESTIONS 17).
       return { launched: false, error: LAUNCH_FAILED, cause: 'could-not-start' }
@@ -870,7 +874,9 @@ export class HeldSessionRegistry {
       setTimeout(() => resolve('timeout'), HELD_TUNING_TIMEOUT_MS)
     })
     const accepted = await Promise.race([act(value), timeout]).catch((error: unknown) => {
-      console.warn(`[held] The session refused a ${change.kind} change`, error)
+      console.warn(
+        `[held] The session refused a ${change.kind} change: ${errorWithoutToolOutput(error)}`
+      )
       return false
     })
     if (accepted === 'timeout') return { applied: false, reason: TUNING_TIMED_OUT }

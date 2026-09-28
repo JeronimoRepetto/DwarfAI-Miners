@@ -14,6 +14,11 @@ export interface MenuItem {
   /** A destructive item: kept below a rule, and it always opens a confirmation. */
   danger?: boolean
   disabled?: boolean
+  /**
+   * Why a disabled item cannot act, in the form "<action> · <reason>": a disabled item stays in
+   * the menu, so the menu keeps one shape, and says why rather than hiding (molecules/menu).
+   */
+  title?: string
   /** A short fact at the row's far end, such as a count. */
   hint?: string
   /** A look forced without the pointer, as the UI kit's own states show it. */

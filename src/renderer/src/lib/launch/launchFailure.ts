@@ -55,6 +55,21 @@ function supplierName(choice: LaunchChoice | null): string {
 
 const PICK_YOURSELF = 'Pick the supplier and model yourself.'
 
+/*
+ * The notice title's tooltip (MESSAGE-QUESTIONS 23; decision log, Tool output on a failed launch):
+ * the tool's own last lines, verbatim, for the causes where the app captured what it printed —
+ * stopped as soon as it started, and could not be started. The blank space around them is
+ * trimmed and their line breaks kept. Bounded in ONE place, main, before they cross the wire
+ * (`LaunchFailedPush.stderrTail`): the last 400 characters, an ellipsis marking what it dropped
+ * from the front, so the lines that say why the tool stopped are the ones kept. Never cut again
+ * here. Null with nothing captured, and then the title has no tooltip.
+ */
+export function launchFailureOutput(failure: LaunchFailure): string | null {
+  if (failure.cause !== 'exited-at-once' && failure.cause !== 'could-not-start') return null
+  const output = failure.output?.trim() ?? ''
+  return output === '' ? null : output
+}
+
 /** What the notice says for a failure, and which of its actions it offers (copy.md, Add a dwarf). */
 export function launchFailureNotice(failure: LaunchFailure): LaunchFailureNotice {
   switch (failure.cause) {

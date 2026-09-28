@@ -53,8 +53,9 @@ import {
 } from '../lib/question/answersRecord'
 import { decisionForLabel } from '../lib/question/questionAnswer'
 import AddPanel from '../components/launch/AddPanel.vue'
+import LaunchFailureOutput from '../components/launch/LaunchFailureOutput.vue'
 import { useAgentLaunch } from '../composables/useAgentLaunch'
-import { jevFallbackReasonWords } from '../lib/launch/launchFailure'
+import { jevFallbackReasonWords, launchFailureNotice } from '../lib/launch/launchFailure'
 import { OTHER_CHOICE, type LaunchChoice } from '../lib/launch/launchState'
 import { goldenApi } from './api'
 import SceneDwarf from '../components/scene/SceneDwarf.vue'
@@ -542,8 +543,9 @@ const guildPage =
 
 /*
  * The menu's rows as its tree prints them: an item per menuitem, danger and forced as its classes
- * say, its label the next text and its hint the text of its hint line; a rule per separator. An
- * icon line prints no name a render can read, so a state's icons are its render's, in tree order.
+ * say, disabled with its reason as the tree's attributes print them (MESSAGE-QUESTIONS 13), its
+ * label the next text and its hint the text of its hint line; a rule per separator. An icon line
+ * prints no name a render can read, so a state's icons are its render's, in tree order.
  */
 const menu =
   (icons: IconName[]): Render =>
@@ -551,12 +553,13 @@ const menu =
     const items: MenuEntry[] = []
     let next = 0
     let icon = 0
-    for (const { element } of attributes.slice(1)) {
+    for (const { element, attributes: own } of attributes.slice(1)) {
       const last = items.at(-1) as MenuItem | undefined
       if (element.startsWith('button.dm-menu__item')) {
         items.push({
           label: texts[next++]?.text ?? '',
           ...(element.includes('dm-menu__item--danger') ? { danger: true } : {}),
+          ...('disabled' in own ? { disabled: true, title: own.title } : {}),
           ...(forcedOf(element) === 'hover' ? { state: 'hover' as const } : {})
         })
       } else if (element === 'icon' && last) last.icon = icons[icon++]
@@ -916,18 +919,24 @@ const dwarfScene =
   })
 
 /*
- * The tooltip card with a body in it, the card being the stage's only child: a dwarf's, or one
- * line of text (#635, a refused answer's reason on its ✕ mark).
+ * The tooltip card with a body in it, the card being the stage's only child: a dwarf's, one line
+ * of text (#635, a refused answer's reason on its ✕ mark), or a tool's own output in the code face
+ * (MESSAGE-QUESTIONS 23, the launch-failure notice title's).
  */
 const TipCard = defineComponent({
   props: {
     dwarf: { type: Object as () => Dwarf, default: undefined },
-    text: { type: String, default: undefined }
+    text: { type: String, default: undefined },
+    output: { type: String, default: undefined }
   },
   setup(props) {
     return () =>
       h(TooltipCard, null, () =>
-        props.dwarf === undefined ? h('div', props.text) : h(DwarfTip, { dwarf: props.dwarf })
+        props.dwarf !== undefined
+          ? h(DwarfTip, { dwarf: props.dwarf })
+          : props.output !== undefined
+            ? h(LaunchFailureOutput, { text: props.output })
+            : h('div', props.text)
       )
   }
 })
@@ -939,6 +948,16 @@ const TipCard = defineComponent({
 const textTooltip: Render = (_sample, texts) => ({
   component: TipCard,
   props: { text: texts[0]?.text ?? fail('text', texts) }
+})
+
+/*
+ * The launch-failure notice title's tooltip as its tree prints it (#635, MESSAGE-QUESTIONS 23):
+ * the tool's own lines in the code face. The tree prints those lines on one line, so a line break
+ * the tool wrote is a space here.
+ */
+const failOutputTooltip: Render = (_sample, texts) => ({
+  component: TipCard,
+  props: { output: texts[0]?.text ?? fail('text', texts) }
 })
 
 /*
@@ -1400,8 +1419,9 @@ interface JevLaunch {
 
 /*
  * A launch that failed, as its tree prints it (#635): the notice's cause (`data-cause`, the kit's
- * own key for it), the prompt the field holds, and for "Jev could not choose" the reason its
- * sentence opens with. Each is reached as a person reaches it — the supplier chosen, the prompt
+ * own key for it), the prompt the field holds, for "Jev could not choose" the reason its sentence
+ * opens with, and the tool's captured output its title is described by (MESSAGE-QUESTIONS 23),
+ * the hidden copy's text. Each is reached as a person reaches it — the supplier chosen, the prompt
  * written, Send the dwarf in — over a bridge that answers the failure the cause names.
  */
 type KitFailure = 'missing' | 'exited' | 'start' | 'jev' | 'jevChoose'
@@ -1409,6 +1429,7 @@ interface FailedLaunch {
   cause: KitFailure
   prompt: string
   reason?: JevFallbackReason
+  output?: string
 }
 
 /** What main says for each CLI cause, on the wire (contracts.ts, LaunchFailureCause). */
@@ -1523,7 +1544,7 @@ const LaunchStage = defineComponent({
             provider: props.choice as DwarfProvider,
             mineId: props.mineId,
             exitCode: 1,
-            stderrTail: '',
+            stderrTail: failedLaunch.output ?? '',
             cause: 'exited-at-once'
           })
         }
@@ -1617,6 +1638,15 @@ const failedLaunchOf = (
   }
   const field = elementsOf(attributes, 'textarea')[0] ?? fail('prompt', 'textarea')
   const prompt = field.value ?? ''
+  const cliCause = CLI_CAUSES[cause as KitFailure]
+  if (cliCause !== undefined) {
+    // The hidden copy prints right before the notice's own text, and only while the title has it.
+    const title = elementsOf(attributes, 'p.dm-add__fail-title')[0]
+    const text = launchFailureNotice({ cause: cliCause, choice: null }).text
+    const at = texts.findIndex((t) => t.text === text)
+    const output = title?.['aria-describedby'] === undefined ? undefined : texts[at - 1]?.text
+    return { cause: cause as KitFailure, prompt, ...(output === undefined ? {} : { output }) }
+  }
   if (cause !== 'jevChoose') return { cause: cause as KitFailure, prompt }
   const reason = JEV_CHOOSE_REASONS.find((entry) =>
     texts.some((t) => (t.text ?? '').startsWith(jevFallbackReasonWords(entry)))
@@ -1810,6 +1840,7 @@ export const RENDERS: Record<string, Render> = {
   // The overlays: the menu's rows as its tree prints them; the dialog card in place, its title
   // its name and its actions the tree's buttons; the toast's plate. Each Live state is the trigger.
   'molecules/menu#messagepanel': menu(['console', 'history']),
+  'molecules/menu#messagepanel-stop-unavailable': menu(['console', 'history']),
   'molecules/menu#mine-card': menu([]),
   'molecules/menu#item-hovered': menu([]),
   'molecules/menu#danger-hovered': menu(['console']),
@@ -1887,6 +1918,7 @@ export const RENDERS: Record<string, Render> = {
   'organisms/add-panel#launch-failed-cli-not-installed': addPanel,
   'organisms/add-panel#launch-failed-cli-exited-at-once': addPanel,
   'organisms/add-panel#launch-failed-cli-would-not-start': addPanel,
+  'organisms/add-panel#launch-failure-output-tooltip': failOutputTooltip,
   'organisms/add-panel#launch-failed-jev-unreachable': addPanel,
   'organisms/add-panel#launch-failed-jev-could-not-choose': addPanel,
   'organisms/add-panel#launch-failed-no-launchable-provider': addPanel,

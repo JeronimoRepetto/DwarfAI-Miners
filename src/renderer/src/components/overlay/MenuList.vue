@@ -69,6 +69,7 @@ defineExpose({ focusFirst, focusLast })
         role="menuitem"
         :data-index="index"
         :disabled="entry.disabled === true"
+        :title="entry.title"
         @click="pick(index, entry)"
       >
         <PixelIcon v-if="entry.icon !== undefined" :name="entry.icon" />{{ entry.label
@@ -127,6 +128,12 @@ defineExpose({ focusFirst, focusLast })
   background: var(--danger-lo);
   color: var(--danger-hi);
   box-shadow: inset 2px 0 0 0 var(--danger);
+}
+/* A disabled danger item draws as every disabled item, and the danger hover never reaches it. */
+.dm-menu__item--danger:disabled {
+  color: var(--ink-faint);
+  background: none;
+  box-shadow: none;
 }
 .dm-menu__sep {
   margin: 4px 2px;

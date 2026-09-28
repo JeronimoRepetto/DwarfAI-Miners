@@ -92,7 +92,7 @@ import type { TextDeliveryPort, TextDeliveryTarget } from '../textDelivery/port'
 import { CODEX_HOLD_MAX_MS } from '../textDelivery/codexHold'
 import { OPENCODE_HOLD_MAX_MS } from '../textDelivery/opencodeHold'
 import { TierService, type TierThresholds } from '../tier/tierService'
-import { AgentRuntime, expandHomePath } from './runtime'
+import { AgentRuntime, expandHomePath, failureReasonSuffix } from './runtime'
 
 function datePath(date: Date): string {
   const year = String(date.getFullYear())
@@ -6610,6 +6610,33 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
     expect(push.stderrTail).not.toContain(secret)
     expect(push.stderrTail).toContain('[redacted]')
+  })
+
+  /*
+   * ADDED for #635 (MESSAGE-QUESTIONS 23): the notice title's tooltip shows the tool's LAST lines,
+   * which say why it stopped, with their line breaks. The push used to keep the first 400
+   * characters of the captured tail on one line.
+   */
+  it('keeps the last lines of a long stderr, with their breaks, within 400 characters', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    const noise = Array.from({ length: 40 }, (_, n) => `warning ${n}: retrying the handshake`)
+    const stderrTail = [...noise, 'error: not signed in', 'Run `codex login` first.', ''].join('\n')
+    handle.fail({ exitCode: 1, signal: null, stderrTail })
+
+    const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
+    expect(Array.from(push.stderrTail).length).toBeLessThanOrEqual(400)
+    expect(push.stderrTail.startsWith('…')).toBe(true)
+    expect(
+      push.stderrTail.trimEnd().endsWith('error: not signed in\nRun `codex login` first.')
+    ).toBe(true)
+    expect(push.stderrTail).not.toContain('warning 0:')
   })
 
   it('never pushes when this build has nothing wired to receive it', async () => {
@@ -14278,5 +14305,29 @@ describe('AgentRuntime launching into a remembered mine (#635, PANEL-QUESTIONS 5
       error: 'That mine is no longer on the map.'
     })
     expect(launchSession).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * ADDED for #635 (MESSAGE-QUESTIONS 23): a resume refusal carries what Codex or OpenCode wrote on
+ * stderr, for the panel. The delivery log line keeps the app's own sentence and never the tool's
+ * words, which can hold local paths or account names.
+ */
+describe('failureReasonSuffix', () => {
+  it('logs a refusal without what the tool said', () => {
+    const suffix = failureReasonSuffix({
+      delivered: false,
+      error:
+        'Codex stopped straight away (exit 1), so nothing was delivered. It said: ' +
+        'error: not signed in as j'
+    })
+    expect(suffix).toBe(': Codex stopped straight away (exit 1), so nothing was delivered.')
+  })
+
+  it('logs the app’s own reason whole, and nothing for a delivered message', () => {
+    expect(failureReasonSuffix({ delivered: false, error: 'The relay never answered.' })).toBe(
+      ': The relay never answered.'
+    )
+    expect(failureReasonSuffix({ delivered: true })).toBe('')
   })
 })

@@ -451,11 +451,8 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   // did (#192): the grace window freezes the last real snapshot, so a leaving
   // dwarf still carries the channel it had and main would refuse to use it.
   const ended = hasEnded(dwarf)
-  const channel = ended ? null : (dwarf.capabilities?.cancel ?? null)
-  // The one position the dismissal cannot be honest in (#305): see
-  // OPEN_TURN_NO_INTERRUPT_HINT. Read off the status for the same reason the
-  // channel is — 'leaving' has no turn left to be open.
-  const openTurn = !ended && channel === null && dwarf.status === 'working'
+  const channel = kickChannel(dwarf)
+  const openTurn = isOpenTurn(dwarf)
   const hint =
     channel !== null
       ? KICK_HINT[channel]
@@ -468,6 +465,29 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   // whatever the dwarf started doing since, and the person is owed its progress.
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
   return { id: 'kick', name: 'Kick', enabled: !openTurn, hint }
+}
+
+const kickChannel = (dwarf: Dwarf): TextDeliveryChannel | null =>
+  hasEnded(dwarf) ? null : (dwarf.capabilities?.cancel ?? null)
+
+// The one position the dismissal cannot be honest in (#305): see
+// OPEN_TURN_NO_INTERRUPT_HINT. Read off the status for the same reason the
+// channel is — 'leaving' has no turn left to be open.
+const isOpenTurn = (dwarf: Dwarf): boolean =>
+  !hasEnded(dwarf) && kickChannel(dwarf) === null && dwarf.status === 'working'
+
+/** Why the kick cannot act right now: the only two cases the bar disables it in (#635). */
+export type KickBlocked = 'stopping' | 'open-turn'
+
+/**
+ * Why the kick is disabled, or null while it can act (#635, MESSAGE-QUESTIONS 13): a kick already
+ * in flight, or a turn open on a session nothing here can interrupt. Nothing else disables it — an
+ * idle session the app only observes is still kicked off the rock — so this is exactly the
+ * negation of the kick's `enabled`, for whoever has to say WHICH reason (the ⋯ menu's Stop dwarf…).
+ */
+export function kickBlocked(dwarf: Dwarf, state: ActionTransientState): KickBlocked | null {
+  if (state.kicking) return 'stopping'
+  return isOpenTurn(dwarf) ? 'open-turn' : null
 }
 
 function boostAction(dwarf: Dwarf): ActionBarEntry {
