@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TurnOutcome } from '../../types'
-import { turnOutcomeLine } from './turnOutcome'
+import { finishedTurnWord } from './turnOutcome'
 
 const ENDED_AT = 1_700_000_000_000
 
@@ -8,60 +8,41 @@ function outcome(overrides: Partial<TurnOutcome>): TurnOutcome {
   return { kind: 'concluded', endedAt: ENDED_AT, ...overrides }
 }
 
-describe('turnOutcomeLine (#510)', () => {
-  it('says nothing for a dwarf with no last turn', () => {
-    expect(turnOutcomeLine(undefined)).toBeUndefined()
+/*
+ * AMENDED for #635 (the turn outcome line ruling, MESSAGE-QUESTIONS 7; was: turnOutcomeLine, a
+ * headline per kind, "Last turn concluded" with the turn's own text and a trimmed flag, and the
+ * provider's detail in parentheses). The ruling keeps one fact of a finished turn for the line,
+ * how it ended, in its own four words, and none of the old sentence's other parts: the turn's text
+ * and its trimmed flag, and the provider's detail, leave the line. The seven old tests pinned that
+ * sentence and went with it; the four kinds are pinned below, and "says nothing for a dwarf with
+ * no last turn" became the plain "Turn finished" of a session the app only observes.
+ */
+describe('finishedTurnWord (#510, #635)', () => {
+  it('reads a turn the app never saw end as finished, which a resting session is', () => {
+    expect(finishedTurnWord(undefined)).toBe('Turn finished')
   })
 
-  it('reads a concluded turn as its own headline plus the text it actually said', () => {
-    const line = turnOutcomeLine(outcome({ kind: 'concluded', text: 'Found the seam.' }))
-    expect(line).toEqual({
-      kind: 'concluded',
-      headline: 'Last turn concluded',
-      text: 'Found the seam.',
-      trimmed: false
-    })
-  })
-
-  it('marks a concluded turn trimmed only when the wire itself says so', () => {
-    const line = turnOutcomeLine(
-      outcome({ kind: 'concluded', text: 'Found the seam.', truncated: true })
+  it('reads a concluded turn as finished, never with the words it closed on', () => {
+    expect(finishedTurnWord(outcome({ kind: 'concluded', text: 'Found the seam.' }))).toBe(
+      'Turn finished'
     )
-    expect(line?.trimmed).toBe(true)
   })
 
-  it('never carries text for a capped turn — a limit is not a conclusion', () => {
-    const line = turnOutcomeLine(outcome({ kind: 'capped', detail: 'error_max_turns' }))
-    expect(line).toEqual({
-      kind: 'capped',
-      headline: 'Last turn stopped at a limit (error_max_turns)',
-      text: undefined,
-      trimmed: false
-    })
+  it('names a turn the provider stopped on its own limit — a limit is not a conclusion', () => {
+    expect(finishedTurnWord(outcome({ kind: 'capped', detail: 'error_max_turns' }))).toBe(
+      'Turn stopped at a limit'
+    )
   })
 
-  it('never carries text for an errored turn, and names the provider’s own word', () => {
-    const line = turnOutcomeLine(outcome({ kind: 'errored', detail: 'error_during_execution' }))
-    expect(line).toEqual({
-      kind: 'errored',
-      headline: 'Last turn failed (error_during_execution)',
-      text: undefined,
-      trimmed: false
-    })
+  it('names a failed turn, without the provider’s own code', () => {
+    expect(finishedTurnWord(outcome({ kind: 'errored', detail: 'error_during_execution' }))).toBe(
+      'Turn failed'
+    )
   })
 
-  it('never carries text for an interrupted turn, and names the provider’s own word', () => {
-    const line = turnOutcomeLine(outcome({ kind: 'interrupted', detail: 'CANCELED' }))
-    expect(line).toEqual({
-      kind: 'interrupted',
-      headline: 'Last turn was interrupted (CANCELED)',
-      text: undefined,
-      trimmed: false
-    })
-  })
-
-  it('drops the parenthetical rather than printing empty parens when a provider gave no detail', () => {
-    const line = turnOutcomeLine(outcome({ kind: 'errored' }))
-    expect(line?.headline).toBe('Last turn failed')
+  it('names an interrupted turn, without the provider’s own code', () => {
+    expect(finishedTurnWord(outcome({ kind: 'interrupted', detail: 'CANCELED' }))).toBe(
+      'Turn interrupted'
+    )
   })
 })

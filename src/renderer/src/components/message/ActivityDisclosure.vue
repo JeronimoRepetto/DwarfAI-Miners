@@ -11,6 +11,8 @@ defineProps<{
   open: boolean
   /** The steps, each with the path it opens when it names one (#279). */
   lines: readonly { key: string; text: string; target?: string; title?: string }[]
+  /** A forced look, as the UI kit draws one (`.is-hover`); the pointer's own hover needs none. */
+  state?: 'hover'
 }>()
 
 const emit = defineEmits<{
@@ -24,11 +26,12 @@ const emit = defineEmits<{
   <div class="dm-activity">
     <button
       class="dm-activity__toggle"
+      :class="state === undefined ? undefined : 'is-' + state"
       type="button"
       :aria-expanded="open ? 'true' : 'false'"
       @click="emit('toggle')"
     >
-      <span class="dm-activity__caret"></span>{{ label }}
+      <span class="dm-activity__caret"></span><span class="dm-activity__label">{{ label }}</span>
     </button>
     <ul class="dm-activity__list" :hidden="!open">
       <li v-for="line in lines" :key="line.key">
@@ -68,7 +71,8 @@ const emit = defineEmits<{
   align-items: center;
   text-align: left;
 }
-.dm-activity__toggle:hover {
+.dm-activity__toggle:hover,
+.dm-activity__toggle.is-hover {
   color: var(--ink);
   background: var(--wood-hi);
   box-shadow: inset 2px 0 0 0 var(--brass);
