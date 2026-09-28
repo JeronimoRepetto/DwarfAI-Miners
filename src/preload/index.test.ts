@@ -836,6 +836,55 @@ describe('preload launch-failure contract (#263)', () => {
     stop()
     expect(removeListener).toHaveBeenLastCalledWith('agent:launchFailed', wrapped)
   })
+
+  /*
+   * #635 (MESSAGE-QUESTIONS 16/17). The launch-failure notice branches on
+   * `cause`, and a field this bridge drops never reaches it — the exact way a
+   * held answer's own words were lost in #671, where a request was rebuilt
+   * field by field and the new field was not among them. These pin that the
+   * cause crosses on the push and on all three launch verdicts, as main
+   * answered them.
+   */
+  it('hands the cause on the push to the renderer (#635)', () => {
+    const listener = vi.fn()
+    api.onLaunchFailed(listener)
+    const wrapped = on.mock.lastCall?.[1] as (event: unknown, push: unknown) => void
+    wrapped(null, { ...FAILURE, cause: 'exited-at-once' })
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ cause: 'exited-at-once' }))
+  })
+
+  it('hands the cause on each launch verdict back as main answered it (#635)', async () => {
+    const detached = {
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI is not installed on this machine.',
+      cause: 'not-installed'
+    }
+    invoke.mockResolvedValueOnce(detached)
+    await expect(
+      api.launchAgent({ mineId: 'mine:1', provider: 'codex', prompt: 'dig' })
+    ).resolves.toEqual(detached)
+
+    const held = {
+      launched: false,
+      error: 'The agent could not be started.',
+      cause: 'could-not-start'
+    }
+    invoke.mockResolvedValueOnce(held)
+    await expect(
+      api.launchHeldSession({ mineId: 'mine:1', provider: 'claude', prompt: 'dig' })
+    ).resolves.toEqual(held)
+
+    const hosted = {
+      launched: false,
+      error: 'That command could not be started.',
+      cause: 'could-not-start'
+    }
+    invoke.mockResolvedValueOnce(hosted)
+    await expect(
+      api.launchHostedProcess({ mineId: 'mine:1', command: 'my-agent', prompt: 'dig' })
+    ).resolves.toEqual(hosted)
+  })
 })
 
 describe('preload mine-history contract (#192)', () => {

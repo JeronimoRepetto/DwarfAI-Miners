@@ -8,6 +8,7 @@ import {
   LAUNCHABLE_PROVIDERS,
   NOT_LAUNCHABLE,
   PRODUCT_NAME,
+  detectionFailureCause,
   notInstalledReason
 } from '../domain/launchProviders'
 import type { LaunchTuning } from '../domain/launchTuning'
@@ -1083,7 +1084,8 @@ export async function launchClaudeSession(
     return {
       launched: false,
       provider: options.provider,
-      error: detection.reason === undefined ? reason : `${reason} ${detection.reason}`
+      error: detection.reason === undefined ? reason : `${reason} ${detection.reason}`,
+      cause: detectionFailureCause(detection)
     }
   }
 
@@ -1095,7 +1097,8 @@ export async function launchClaudeSession(
       return {
         launched: false,
         provider: options.provider,
-        error: couldNotStart(options.provider, program.shimPath, describeShimRefusal(program))
+        error: couldNotStart(options.provider, program.shimPath, describeShimRefusal(program)),
+        cause: 'could-not-start'
       }
     }
     // #510. Only Codex has a `-o` flag; every other provider's builder
@@ -1176,10 +1179,15 @@ export async function launchClaudeSession(
       ...(started === undefined ? {} : { retained: started })
     }
   } catch (error) {
+    // `could-not-start` whatever the errno (#635): ENOENT here means the file
+    // detection just found is gone, not that the CLI was never installed, and
+    // classifying by step rather than by code is what keeps the answer the
+    // same on every OS, which attach different codes to the same refusal.
     return {
       launched: false,
       provider: options.provider,
-      error: couldNotStart(options.provider, detection.path, describeProgramFailure(error))
+      error: couldNotStart(options.provider, detection.path, describeProgramFailure(error)),
+      cause: 'could-not-start'
     }
   }
 }

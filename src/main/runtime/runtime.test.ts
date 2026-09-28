@@ -6432,12 +6432,15 @@ describe('AgentRuntime.launchAgent (#86)', () => {
     await runtime.refresh()
     const mineId = runtime.getMines()[0]!.id
 
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact
+    // verdict without `cause`).
     await expect(
       runtime.launchAgent({ mineId, provider: 'opencode', prompt: 'go' })
     ).resolves.toEqual({
       launched: false,
       provider: 'opencode',
-      error: 'OpenCode is not installed on this machine.'
+      error: 'OpenCode is not installed on this machine.',
+      cause: 'not-installed'
     })
     expect(cliDetector.detect).toHaveBeenCalledWith('opencode')
   })
@@ -6529,12 +6532,15 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     })
 
     expect(onLaunchFailed).toHaveBeenCalledTimes(1)
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact push
+    // without `cause`). The push names what it is about as a field now.
     expect(onLaunchFailed).toHaveBeenCalledWith({
       launchId,
       provider: 'codex',
       mineId,
       exitCode: 1,
-      stderrTail: 'codex: another instance is already running'
+      stderrTail: 'codex: another instance is already running',
+      cause: 'exited-at-once'
     })
   })
 
@@ -6597,6 +6603,56 @@ describe('AgentRuntime reporting a launch that failed after it started (#263)', 
     await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
 
     expect(onLaunchFailed).not.toHaveBeenCalled()
+  })
+
+  /*
+   * #635 (proposals/MESSAGE-QUESTIONS.md, question 16). The push is the
+   * launch-failure notice's "stopped as soon as it started", and the notice
+   * reads its cause as a field rather than inferring it from which channel
+   * spoke — so the push says so itself.
+   */
+  it('names the cause exited-at-once on the push (#635)', async () => {
+    const handle = earlyFailureHandle()
+    const launchSession: SessionLauncher = vi
+      .fn()
+      .mockResolvedValue({ launched: true, provider: 'codex', retained: handle.process })
+    const onLaunchFailed = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession, onLaunchFailed)
+    await runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+
+    handle.fail({ exitCode: 2, signal: null, stderrTail: '' })
+
+    const push = onLaunchFailed.mock.calls[0]![0] as LaunchFailedPush
+    expect(push.cause).toBe('exited-at-once')
+  })
+
+  it("carries the launcher's cause onto the verdict unchanged (#635)", async () => {
+    const launchSession: SessionLauncher = vi.fn().mockResolvedValue({
+      launched: false,
+      provider: 'codex',
+      error: 'Codex CLI is not installed on this machine.',
+      cause: 'not-installed'
+    })
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    await expect(
+      runtime.launchAgent({ mineId, provider: 'codex', prompt: 'dig' })
+    ).resolves.toMatchObject({ launched: false, cause: 'not-installed' })
+  })
+
+  it('names no cause for a launch refused before the launcher ran (#635)', async () => {
+    const launchSession: SessionLauncher = vi.fn()
+    const { runtime, mineId } = await runtimeWith(launchSession)
+
+    const noMine = await runtime.launchAgent({
+      mineId: 'mine:nowhere',
+      provider: 'codex',
+      prompt: 'dig'
+    })
+    const empty = await runtime.launchAgent({ mineId, provider: 'codex', prompt: '  ' })
+
+    expect(noMine).not.toHaveProperty('cause')
+    expect(empty).not.toHaveProperty('cause')
   })
 })
 
@@ -11541,6 +11597,27 @@ describe('AgentRuntime hosting a command of the person’s own (#194)', () => {
     expect(result.launched).toBe(false)
     expect(result.error).toBe(SHELL_METACHARACTER_REFUSAL)
     expect(port.started).toHaveLength(0)
+  })
+
+  // #635 (MESSAGE-QUESTIONS 17): the registry's cause crosses this hop as it
+  // came, and a refusal the parse made still names none.
+  it('carries could-not-start for a command that would not start (#635)', async () => {
+    const { runtime, port } = await runtimeWithHost()
+    port.failWith = Object.assign(new Error('spawn my-agent ENOENT'), { code: 'ENOENT' })
+
+    const failed = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent',
+      prompt: 'dig'
+    })
+    const refused = await runtime.launchHostedProcess({
+      mineId: HOSTED_MINE_ID,
+      command: 'my-agent && rm -rf .',
+      prompt: 'dig'
+    })
+
+    expect(failed).toMatchObject({ launched: false, cause: 'could-not-start' })
+    expect(refused).not.toHaveProperty('cause')
   })
 
   /*

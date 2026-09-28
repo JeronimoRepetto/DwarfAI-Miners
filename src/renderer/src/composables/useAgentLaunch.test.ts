@@ -907,6 +907,8 @@ describe('a detached launch that fails after it started (#263)', () => {
     return { api, launch }
   }
 
+  // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same push without
+  // `cause`). The push now always names one; no assertion here reads it.
   function failure(overrides: Partial<LaunchFailedPush> = {}): LaunchFailedPush {
     return {
       launchId: 'receipt:1',
@@ -914,6 +916,7 @@ describe('a detached launch that fails after it started (#263)', () => {
       mineId: MINE,
       exitCode: 1,
       stderrTail: 'codex: another instance is already running',
+      cause: 'exited-at-once',
       ...overrides
     }
   }

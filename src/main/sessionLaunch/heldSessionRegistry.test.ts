@@ -303,7 +303,13 @@ describe('HeldSessionRegistry.launch', () => {
       minePath: MINE,
       prompt: 'dig'
     })
-    expect(result).toEqual({ launched: false, error: 'The agent could not be started.' })
+    // AMENDED for #635 (MESSAGE-QUESTIONS 14/16/17; was: the same exact
+    // verdict without `cause`).
+    expect(result).toEqual({
+      launched: false,
+      error: 'The agent could not be started.',
+      cause: 'could-not-start'
+    })
     expect(registry.count()).toBe(0)
   })
 
@@ -2594,5 +2600,99 @@ describe('HeldSessionRegistry delegation injection (#511 T4)', () => {
     ).resolves.toEqual({ launched: true })
     expect(() => port.end(0)).not.toThrow()
     expect(() => registry.closeAll()).not.toThrow()
+  })
+})
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, questions 16 and 17). The causes a
+ * launch-failure notice names belong to the SUPPLIER, whatever channel the app
+ * launches it on — so a held launch classifies a refusal exactly as the
+ * detached runner does (launchRunner.test.ts, the same heading), by which step
+ * failed, identically on every OS. Detection through the real detector over a
+ * fake disk, with the OS passed in, so macOS and Linux run on a Windows host.
+ */
+describe('the cause a failed held launch names (#635)', () => {
+  const PLATFORMS = ['win32', 'darwin', 'linux'] as const
+  const HOMES = { win32: 'C:\\Users\\j', darwin: '/Users/j', linux: '/home/j' } as const
+
+  function launchOn(registry: HeldSessionRegistry) {
+    return registry.launch({ mineId: 'mine-1', provider: 'claude', minePath: MINE, prompt: 'dig' })
+  }
+
+  it.each(PLATFORMS)('says not-installed when detection finds nothing on %s', async (platform) => {
+    const port = new FakePort()
+    const detector = createCliDetector({
+      home: HOMES[platform],
+      platform,
+      fs: new FakeFs(),
+      env: {}
+    })
+
+    await expect(launchOn(registryOver(port, detector))).resolves.toMatchObject({
+      launched: false,
+      cause: 'not-installed'
+    })
+    expect(port.started).toHaveLength(0)
+  })
+
+  it.each(PLATFORMS)(
+    'says could-not-start when the engine cannot start on %s',
+    async (platform) => {
+      const port = new FakePort()
+      const fs = new FakeFs()
+      const binary = platform === 'win32' ? 'C:\\tools\\claude.exe' : '/opt/tools/claude'
+      fs.addFile(binary, 'binary')
+      const detector = createCliDetector({
+        home: HOMES[platform],
+        platform,
+        fs,
+        env: {},
+        overrides: { claude: binary }
+      })
+      port.failWith = Object.assign(new Error('spawn EACCES'), { code: 'EACCES' })
+
+      await expect(launchOn(registryOver(port, detector))).resolves.toMatchObject({
+        launched: false,
+        cause: 'could-not-start'
+      })
+    }
+  )
+
+  it('says could-not-start when detection found only a shim it cannot run (Windows)', async () => {
+    const port = new FakePort()
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\claude.cmd', '@echo off\r\nrem nothing to run here\r\n')
+    const detector = createCliDetector({
+      home: HOMES.win32,
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin' }
+    })
+
+    await expect(launchOn(registryOver(port, detector))).resolves.toMatchObject({
+      launched: false,
+      cause: 'could-not-start'
+    })
+    expect(port.started).toHaveLength(0)
+  })
+
+  it('names no cause for a refusal that is not a failure to start', async () => {
+    const port = new FakePort()
+    const registry = registryOver(port)
+
+    const empty = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'claude',
+      minePath: MINE,
+      prompt: '   '
+    })
+    const unheldable = await registry.launch({
+      mineId: 'mine-1',
+      provider: 'codex',
+      minePath: MINE,
+      prompt: 'dig'
+    })
+    expect(empty).not.toHaveProperty('cause')
+    expect(unheldable).not.toHaveProperty('cause')
   })
 })

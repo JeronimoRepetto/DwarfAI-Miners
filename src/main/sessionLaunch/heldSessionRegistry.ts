@@ -1,5 +1,5 @@
 import type { LaunchTuning } from '../domain/launchTuning'
-import { notInstalledReason } from '../domain/launchProviders'
+import { detectionFailureCause, notInstalledReason } from '../domain/launchProviders'
 import { HELDABLE_PROVIDERS } from '../domain/types'
 import type {
   DwarfPermissionDecision,
@@ -472,7 +472,11 @@ export class HeldSessionRegistry {
       const notInstalled = notInstalledReason(request.provider)
       return {
         launched: false,
-        error: detection.reason === undefined ? notInstalled : `${notInstalled} ${detection.reason}`
+        error:
+          detection.reason === undefined ? notInstalled : `${notInstalled} ${detection.reason}`,
+        // The detached runner's own reading of the same verdict (#635), so the
+        // two channels cannot classify one machine two ways.
+        cause: detectionFailureCause(detection)
       }
     }
 
@@ -555,7 +559,9 @@ export class HeldSessionRegistry {
       return { launched: true }
     } catch (error) {
       console.warn(`[held] Could not start a session in ${request.mineId}`, error)
-      return { launched: false, error: LAUNCH_FAILED }
+      // An engine that rejects never opened a session: Antigravity's spawn
+      // failing, whatever errno the OS gave it (#635, MESSAGE-QUESTIONS 17).
+      return { launched: false, error: LAUNCH_FAILED, cause: 'could-not-start' }
     }
   }
 

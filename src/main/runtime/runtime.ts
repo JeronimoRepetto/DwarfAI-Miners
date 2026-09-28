@@ -3918,7 +3918,11 @@ export class AgentRuntime {
     })
     return outcome.started
       ? { launched: true }
-      : { launched: false, ...(outcome.error === undefined ? {} : { error: outcome.error }) }
+      : {
+          launched: false,
+          ...(outcome.error === undefined ? {} : { error: outcome.error }),
+          ...(outcome.cause === undefined ? {} : { cause: outcome.cause })
+        }
   }
 
   /**
@@ -5110,7 +5114,9 @@ export class AgentRuntime {
       provider,
       mineId: mine.id,
       exitCode: failure.exitCode,
-      stderrTail: truncate(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS)
+      stderrTail: truncate(redactSecrets(failure.stderrTail), LAUNCH_FAILURE_STDERR_CHARS),
+      // The only thing this push is ever about (#635): see LaunchFailureCause.
+      cause: 'exited-at-once'
     })
   }
 

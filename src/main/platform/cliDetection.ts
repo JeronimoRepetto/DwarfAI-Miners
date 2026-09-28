@@ -46,6 +46,16 @@ export interface CliDetection {
   path?: string
   source?: CliDetectionSource
   reason?: string
+  /**
+   * True when `installed: false` means "found, but cannot be started from
+   * here" rather than "found nothing" (#635) — every candidate was a shim this
+   * build cannot read. `reason` already says so in words; this says it as a
+   * fact, so a launch can name `could-not-start` rather than `not-installed`
+   * without parsing a sentence. Only Windows ever sets it, because only
+   * Windows has batch shims; that difference stops here, at the port, and no
+   * caller has to ask which OS produced the verdict. Absent otherwise.
+   */
+  unrunnable?: true
 }
 
 /** How this platform separates PATH entries. */
@@ -452,7 +462,8 @@ export function createCliDetector(options: CliDetectorOptions): CliDetector {
       return {
         cli,
         installed: false,
-        reason: `${cli} was found at ${refusal.shimPath} but cannot be started from here: ${describeShimRefusal(refusal)}`
+        reason: `${cli} was found at ${refusal.shimPath} but cannot be started from here: ${describeShimRefusal(refusal)}`,
+        unrunnable: true
       }
     }
 
