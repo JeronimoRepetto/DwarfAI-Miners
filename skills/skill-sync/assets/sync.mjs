@@ -275,6 +275,7 @@ const MAIN_TREE_GLOSSES = {
   appDatabase: 'the one SQLite file',
   config: null,
   domain: 'pure rules and the type barrel',
+  dwarfNames: 'the names a person gives dwarfs, kept per machine',
   // Glossed in src/README.md instead.
   history: null,
   hooks: 'the opt-in Claude push channel',

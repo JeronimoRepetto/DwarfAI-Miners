@@ -118,6 +118,9 @@ export function goldenApi(sample: GoldenSample): Api {
     setWatchedDwarf: none,
     refreshDwarfTelemetry: none,
     setDwarfTuning: refuse('setDwarfTuning'),
+    // Dwarf names (#635): the golden stage renames nothing.
+    setDwarfName: refuse('setDwarfName'),
+    resetDwarfName: refuse('resetDwarfName'),
     getMineHistory: (mineId) =>
       Promise.resolve(sample.histories[mineId] ?? { readable: true, speakers: [] }),
     openMinePath: refuse('openMinePath'),

@@ -58,6 +58,9 @@ export type {
   DwarfTuningChange,
   DwarfTuningRequest,
   DwarfTuningResult,
+  /* Dwarf names (#635). */
+  DwarfNameRequest,
+  DwarfNameResult,
   DwarfWorkplace,
   CopyTextResult,
   ExternalLinkResult,

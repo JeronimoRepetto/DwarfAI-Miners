@@ -54,6 +54,7 @@ src/
 │   ├── appDatabase/ the one file the app writes: its schema version, and the migrations between versions
 │   ├── config/      typed settings, and the userData document layered under the environment
 │   ├── domain/      this process's type barrel, and the pure domain rules (materials, ledger, lifecycle)
+│   ├── dwarfNames/  the names a person gives dwarfs: kept per machine in the app database, stamped onto the board
 │   ├── history/     what a mine's transcripts on disk remember: every dwarf that spoke there, read on request
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── jev/         asking TypeSafe's Jev model which provider, model and effort to launch with, behind a port (#509)

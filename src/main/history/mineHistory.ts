@@ -211,7 +211,13 @@ export class MineHistoryReader implements MineHistorySource {
       if (speaker === undefined || candidate.issuerId === undefined) continue
       const launcher = named.get(candidate.issuerId)
       if (launcher === undefined) continue
-      const issuer: MessageIssuer = { role: speakerRole(launcher.position), name: launcher.name }
+      // The launcher's speaker id rides along (#635), so the panel can show its custom name: the
+      // name here is the transcript's own, and main bakes no display name into history.
+      const issuer: MessageIssuer = {
+        role: speakerRole(launcher.position),
+        name: launcher.name,
+        launcherId: launcher.id
+      }
       speaker.messages = attributeIssuedMessages(speaker.messages, issuer)
     }
     return [...speakers.values()]

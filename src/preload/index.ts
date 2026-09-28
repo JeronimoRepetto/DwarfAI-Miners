@@ -22,6 +22,8 @@ import type {
   DwarfTuningChange,
   DwarfTuningRequest,
   DwarfTuningResult,
+  DwarfNameRequest,
+  DwarfNameResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
   HostedLaunchRequest,
@@ -241,6 +243,16 @@ export interface DwarfAiMinersApi {
    * main draws that line, not this bridge.
    */
   setDwarfTuning: (request: DwarfTuningRequest) => Promise<DwarfTuningResult>
+  /**
+   * Give a dwarf a custom name, as the person left it in the field (#635, decision log "Dwarf
+   * names"). Main cleans it again and reads the base name off its own board: saved empty, or equal
+   * to the base name, it removes the custom name. `saved: true` means the board has already been
+   * republished with the name, so the new name arrives on `minesUpdated` like every other change;
+   * `saved: false` carries the reason the header shows.
+   */
+  setDwarfName: (request: DwarfNameRequest) => Promise<DwarfNameResult>
+  /** Take a dwarf's custom name away (#635) — the ⋯ menu's "Reset name". Same verdict. */
+  resetDwarfName: (dwarfId: string) => Promise<DwarfNameResult>
   /**
    * Every dwarf that has spoken in a mine, with its latest messages, read from
    * the transcripts under the mine's folder (#192) — for the Mine History
@@ -644,6 +656,17 @@ const api: DwarfAiMinersApi = {
       dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
       change: tuningChangeFor(request?.change)
     }),
+  // Dwarf names (#635): rebuilt field by field. A dwarf id that is not a string crosses as '',
+  // which main refuses. A name that is not a string does not cross at all, so main refuses the
+  // shape: read as '' it would be a reset, and a malformed call must never erase a kept name.
+  // A real '' still crosses, and still removes the custom name, as the design says.
+  setDwarfName: (request) =>
+    ipcRenderer.invoke(IPC_CHANNELS.setDwarfName, {
+      dwarfId: typeof request?.dwarfId === 'string' ? request.dwarfId : '',
+      ...(typeof request?.name === 'string' ? { name: request.name } : {})
+    }),
+  resetDwarfName: (dwarfId) =>
+    ipcRenderer.invoke(IPC_CHANNELS.resetDwarfName, typeof dwarfId === 'string' ? dwarfId : ''),
   // Same discipline as getDwarfFeed: a mine id crosses as a real string or as
   // '', which main refuses as a mine it does not hold.
   getMineHistory: (mineId) =>

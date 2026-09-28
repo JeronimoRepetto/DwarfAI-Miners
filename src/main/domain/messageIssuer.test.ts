@@ -29,9 +29,11 @@ function codexDwarf(overrides: Partial<Dwarf> & Pick<Dwarf, 'id' | 'role'>): Dwa
 
 describe('launchingAgentOf', () => {
   it('names the foreman that spawned a worker, rank and all', () => {
+    // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
     expect(launchingAgentOf(WORKER, [FOREMAN, WORKER])).toEqual({
       role: 'foreman',
-      name: 'coordinator'
+      name: 'coordinator',
+      launcherId: 'claude:session-1'
     })
   })
 
@@ -77,9 +79,11 @@ describe('launchingAgentOf', () => {
       role: 'worker2',
       parentId: 'claude:session-1:a1'
     })
+    // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
     expect(launchingAgentOf(deep, [FOREMAN, parent, deep])).toEqual({
       role: 'worker',
-      name: 'Explorer'
+      name: 'Explorer',
+      launcherId: 'claude:session-1:a1'
     })
   })
 
@@ -105,9 +109,11 @@ describe('launchingAgentOf', () => {
       name: 'Bernoulli',
       parentId: 'codex:thread-p'
     })
+    // AMENDED for #635 (Dwarf names: an issuer carries its launcher's id; was: role and name only).
     expect(launchingAgentOf(agent, [parent, agent])).toEqual({
       role: 'foreman',
-      name: 'codex-thread-p'
+      name: 'codex-thread-p',
+      launcherId: 'codex:thread-p'
     })
   })
 
@@ -165,3 +171,22 @@ describe('attributeIssuedMessages', () => {
     expect(attributeIssuedMessages(messages, undefined)).toEqual(messages)
   })
 })
+
+/* --- Dwarf names (#635) — one block, appended ------------------------------- */
+describe('launchingAgentOf — a renamed launcher (#635)', () => {
+  /*
+   * The issuer keeps the launcher's BASE name, because it is main's record of who wrote the
+   * prompt, and names only ever reach a provider as base names. The custom name is the renderer's
+   * to show, and it finds it through the launcher's id on the board it already holds (handoff,
+   * "Issuer label").
+   */
+  it('names a renamed launcher by its base name and its id, never by its custom name', () => {
+    const renamed = { ...FOREMAN, customName: 'Stonebeard' }
+    expect(launchingAgentOf(WORKER, [renamed, WORKER])).toEqual({
+      role: 'foreman',
+      name: 'coordinator',
+      launcherId: 'claude:session-1'
+    })
+  })
+})
+/* --- end of the #635 dwarf names block -------------------------------------- */

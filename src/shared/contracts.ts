@@ -404,6 +404,27 @@ export interface DwarfTuningRequest {
 export type DwarfTuningResult = { applied: true } | { applied: false; reason: string }
 
 /**
+ * Give one dwarf a custom name (#635, decision log "Dwarf names"). Named by DWARF, like every
+ * other dwarf channel; main resolves the dwarf against its own board, reads its base name there,
+ * and cleans `name` itself (shared/dwarfName.ts) whatever the field already did.
+ *
+ * `name` is the text as the person left it. Saved empty, or equal to the base name, it removes
+ * the custom name — the same outcome as `resetDwarfName`.
+ */
+export interface DwarfNameRequest {
+  dwarfId: string
+  name: string
+}
+
+/**
+ * Verdict of a rename or a reset (#635). `saved: true` says the name is kept and the board
+ * already republished with it; `customName` is what main saved, absent when the dwarf shows its
+ * base name again. `saved: false` always carries a reason and leaves the dwarf as it was.
+ */
+export type DwarfNameResult =
+  { saved: true; customName?: string } | { saved: false; reason: string }
+
+/**
  * A dwarf's rank, which is TOPOLOGY read off the spawn tree and never a title
  * anything scripted (#86, #157).
  *
@@ -1304,7 +1325,21 @@ export interface Dwarf {
    */
   provider: DwarfObserver
   role: DwarfRole
+  /**
+   * The provider's own BASE name for this dwarf, never changed by this app. Everything that
+   * leaves the app — relay prefixes (`[for agent <name>]`), agent prompts, delivery, Jev, MCP —
+   * reads this, so an agent never sees a name a person gave it.
+   */
   name: string
+  /**
+   * The name a person gave this dwarf on this machine (#635, decision log "Dwarf names"), stamped
+   * by main from its own store onto the board it publishes. DISPLAY ONLY: a renderer label shows
+   * it in place of `name`, and nothing that reaches a provider or a log may read it.
+   *
+   * Absent means the dwarf shows its base name. Already cleaned (shared/dwarfName.ts) and never
+   * equal to `name`: a save that would leave it empty or equal to the base name removes it.
+   */
+  customName?: string
   /**
    * Whichever provider observed it: Claude's transcript tail for an observed
    * session, or (issue #96) a held session's own `init` message, which
@@ -1896,7 +1931,17 @@ export interface ProviderSnapshot {
  */
 export interface MessageIssuer {
   role: DwarfRole
+  /** The launcher's BASE name, the provider's own — see `Dwarf.name`. */
   name: string
+  /**
+   * The launcher's dwarf id (#635, handoff "Issuer label"), so the renderer can show the
+   * launcher's custom name by finding it on the board or among the history's speakers it already
+   * holds. Main never bakes a display name into an issuer.
+   *
+   * Main sets it on every issuer it names. Optional because the renderer also builds an author
+   * for a dwarf's own rows (`authorOf`), which names that dwarf and no launcher.
+   */
+  launcherId?: string
 }
 
 /**
@@ -2122,7 +2167,13 @@ export interface MineHistorySpeaker {
   id: string
   provider: DwarfProvider
   role: DwarfRole
+  /** The name the transcript gives this speaker — its base name, as `Dwarf.name`. */
   name: string
+  /**
+   * The custom name kept for this speaker's dwarf id, when one is (#635) — the same name its live
+   * dwarf carries as `Dwarf.customName`, since the two share one id. Display only, as there.
+   */
+  customName?: string
   lastMessageAt: number
   messages: FeedMessage[]
   reachedStart?: boolean
@@ -5094,6 +5145,17 @@ export const IPC_CHANNELS = {
    * docs/command-surface-evaluation.md §6 item 3 already made for this pair.
    */
   setDwarfTuning: 'dwarf:setTuning',
+  /**
+   * Give a dwarf a custom name, and take it away again (#635, decision log "Dwarf names").
+   *
+   * Request/response for the reason `setDwarfTuning` is one: a refusal has a reason the header
+   * shows. Two channels because the design names two acts (the header's save and the ⋯ menu's
+   * "Reset name"); both answer DwarfNameResult. No names channel beside them: main stamps
+   * `Dwarf.customName` onto the board and republishes at once, so every window follows through
+   * minesUpdated.
+   */
+  setDwarfName: 'dwarf:setName',
+  resetDwarfName: 'dwarf:resetName',
   /**
    * Every dwarf that has spoken in one mine, with its latest messages (#192),
    * read from the transcripts under the mine's project folder on request.
