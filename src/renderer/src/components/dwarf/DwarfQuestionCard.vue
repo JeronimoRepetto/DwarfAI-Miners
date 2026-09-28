@@ -6,7 +6,8 @@ import {
   answerStateForAsk,
   freeTextRoute,
   isAnswerable,
-  type AskAnswer
+  type AskAnswer,
+  type OwnWordsAnswer
 } from '../../lib/question/questionAnswer'
 import {
   ANSWER_ONLY_WHERE_IT_RUNS,
@@ -51,9 +52,10 @@ import {
  * channel and the ask's own shape — in lib, because the permission card reads the same rule.
  *
  * - **Held** (#125): an ordinary MESSAGE, queued on the stream this panel owns, touching no
- *   picker. On the card they are still the step's free answer (screens/message.md, Question
- *   card): Submit keeps its name and sends them, because main's held path releases an ask with
- *   its own labels only (TYPED_ANSWER_ONLY_AT_A_PICKER). Send-and-stay is a permission's rule.
+ *   picker. AMENDED for #635 (PO decision 2026-09-28, held free-text answers; was: sent as an
+ *   ordinary message): they are the step's free answer (screens/message.md, Question card), sent
+ *   on the ANSWER path marked as the person's own words (OwnWordsAnswer → `ownWords`), which
+ *   main's held path hands the agent's tool verbatim. Send-and-stay is a permission's rule.
  * - **Watched, one question, one answer** (#481): an ANSWER. Main reaches the row the session's
  *   own picker offers for exactly this — measured 2026-09-18, the digit one past the ask's
  *   options — types the words, and presses Enter once.
@@ -126,9 +128,11 @@ const ok = computed(() => answerStatusLine(verdict.value))
  */
 const jump = computed(() => props.question.channel !== 'opencode-permission')
 
-function submit(values: string[]): void {
+function submit(values: (string | OwnWordsAnswer)[]): void {
   if (!answerable.value) return
-  emit('answer', props.question.questions.length === 1 ? (values[0] ?? '') : values)
+  // One label alone keeps the one-question shape every caller has used since #125.
+  const only = values[0]
+  emit('answer', values.length === 1 && typeof only === 'string' ? only : values)
 }
 </script>
 

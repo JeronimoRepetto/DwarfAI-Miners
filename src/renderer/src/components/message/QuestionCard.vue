@@ -14,9 +14,9 @@
  * Picking never sends: Submit is the one send, and Enter moves on a step at most. On a
  * question, the words under "Other thing…" are that step's free answer: the step counts as
  * answered while the field holds text, and Submit sends them by the route the host names —
- * typed at a watched picker's own Other row (`route` 'answer'), or, on a held session, the
- * message path the app has always used, since main's held path releases an ask with its own
- * labels only (`route` 'message'). On a PERMISSION they are never a decision: Submit reads Send
+ * typed at a watched picker's own Other row (`route` 'answer'), or, on a held session
+ * (`route` 'message'), as that question's answer marked as the person's own words, which main's
+ * held path hands the agent's tool verbatim (#635, PO decision 2026-09-28). On a PERMISSION they are never a decision: Submit reads Send
  * while they are picked, hands them up as a message, clears the field and leaves the card in
  * place (decision log, Permission free text).
  *
@@ -24,9 +24,6 @@
  * - Next wakes once the step is answered, as designed, except on an ask nothing here may answer,
  *   which walks freely so every question can be read before the person goes to the terminal
  *   (#443).
- * - A held ask of several questions with a step answered in words cannot be released: the held
- *   path takes labels only, and no one message carries a walk's answers today. Submit stays
- *   asleep until every step holds a label (named in #635's PR, a question for the design lead).
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import ActionButton from '../controls/ActionButton.vue'
@@ -49,6 +46,7 @@ import {
   type AskAnswers,
   type AskShape,
   type FreeTextRoute,
+  type OwnWordsAnswer,
   type QuestionCursor
 } from '../../lib/question/questionAnswer'
 import {
@@ -66,6 +64,7 @@ import {
   pickOtherAt,
   stepAnswered,
   stepDots,
+  stepValues,
   writeOtherAt,
   type OtherTexts
 } from '../../lib/question/questionCard'
@@ -106,8 +105,8 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  /** One answer value per step, in the ask's order (askAnswerValues). */
-  submit: [values: string[]]
+  /** One answer value per step, in the ask's order: labels, or the person's own words (stepValues). */
+  submit: [values: (string | OwnWordsAnswer)[]]
   /** The words under "Other thing…" as the ANSWER, where the route takes them as one. */
   'answer-text': [text: string]
   /** The words under "Other thing…" as an ordinary message. */
@@ -159,18 +158,14 @@ const typedAnswer = computed(() => {
   const text = (otherAt(other.value, id.value, 0) ?? '').trim()
   return text === '' ? null : text
 })
-/** A held question's one step answered in words, which leave on the message path. */
-const typedMessage = computed(() => {
-  if (props.permission || props.route !== 'message' || count.value !== 1) return null
-  const text = (otherAt(other.value, id.value, 0) ?? '').trim()
-  return text === '' ? null : text
-})
+/** A held question: every step's words under "Other thing…" are its answer (stepValues). */
+const takesOwnWords = computed(() => !props.permission && props.route === 'message')
 const submitEnabled = computed(() => {
   if (sendsMessage.value) return (otherText.value ?? '').trim() !== ''
   if (!props.answerable) return false
-  return (
-    typedAnswer.value !== null || typedMessage.value !== null || canSubmit(picked.value, props.ask)
-  )
+  if (typedAnswer.value !== null) return true
+  if (takesOwnWords.value) return stepValues(props.ask, picked.value, other.value) !== null
+  return canSubmit(picked.value, props.ask)
 })
 const dots = computed(() => stepDots(props.ask, index.value, picked.value, other.value))
 
@@ -238,14 +233,9 @@ function onSubmit(): void {
     emit('answer-text', typedAnswer.value)
     return
   }
-  if (typedMessage.value !== null && otherAt(other.value, id.value, 0) !== null) {
-    const text = typedMessage.value
-    other.value = dropOtherAt(other.value, id.value, 0)
-    emit('send-text', text)
-    void focusRow(0)
-    return
-  }
-  const values = askAnswerValues(picked.value, props.ask)
+  const values = takesOwnWords.value
+    ? stepValues(props.ask, picked.value, other.value)
+    : askAnswerValues(picked.value, props.ask)
   if (values !== null) emit('submit', values)
 }
 

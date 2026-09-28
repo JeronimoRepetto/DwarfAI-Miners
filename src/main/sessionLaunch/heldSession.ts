@@ -5,7 +5,12 @@ import { redactSecrets } from '../domain/redactSecrets'
 // Shared with the renderer's echo reconciliation (#424) — see
 // shared/heldSessionText.ts for why this cannot stay a local constant.
 import { HELD_IMAGE_PLACEHOLDER } from '../../shared/heldSessionText'
-import { HELD_CONVERSATION_LIMIT, isMcpConnectionStatus, splitAnswerLabels } from '../domain/types'
+import {
+  HELD_CONVERSATION_LIMIT,
+  MAX_DWARF_TEXT_CHARS,
+  isMcpConnectionStatus,
+  splitAnswerLabels
+} from '../domain/types'
 import type {
   Dwarf,
   DwarfContextUsage,
@@ -836,6 +841,15 @@ const MISSING_ANSWER = 'That leaves a question the agent asked unanswered.'
  * that a mutually-exclusive question was answered two ways at once (#443 T3).
  */
 const TOO_MANY_LABELS = 'That is more than one choice for a question that only takes one.'
+/*
+ * The person's own words for a held question (#635, PO decision 2026-09-28): refused when they
+ * say nothing once trimmed, when they run past the wire's own ceiling for a person's words
+ * (MAX_DWARF_TEXT_CHARS, #431 — the widest bound certainly true of every route a message takes),
+ * and when the same question is also answered with a label, which could not say which it meant.
+ */
+const OWN_WORDS_EMPTY = 'That answer in your own words is empty.'
+const OWN_WORDS_TOO_LONG = 'That answer in your own words is too long to send.'
+const ANSWERED_TWICE = 'That question was answered twice, with an option and in your own words.'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -1052,12 +1066,23 @@ const SDK_MULTI_SELECT_SEPARATOR = ','
  *
  * Three properties make this safe to hand to a live agent:
  *
- * 1. **Nothing in it is free text.** Every key must be a question the call
- *    actually asked and every value a label it actually offered, so an answer
- *    can only ever repeat the agent's own words back. The SDK's schema notes
- *    that a picker adds an "Other" choice of its own; this channel does not
- *    offer one, because a free-text answer is a payload the panel would be
- *    putting in the user's mouth.
+ * 1. **Free text only where the person wrote it, and only when it says so.**
+ *    Every key must be a question the call actually asked. A value in
+ *    `answers` must be a label it actually offered, so a label answer can only
+ *    ever repeat the agent's own words back; a label that matches nothing is
+ *    still refused, never read as words. The person's OWN words for a question
+ *    — the card's "Other thing…", the "Other" choice the SDK's schema says a
+ *    picker provides of its own — arrive only in `ownWords`, the renderer's
+ *    explicit statement that these are theirs (#635, PO decision 2026-09-28,
+ *    held free-text answers). They must hold something once trimmed, stay
+ *    within MAX_DWARF_TEXT_CHARS, and are handed to the tool verbatim and
+ *    unredacted, as that question's answer string: `@anthropic-ai/claude-agent-
+ *    sdk` 0.3.258's `AskUserQuestionInput.answers` is `{ [k: string]: string }`,
+ *    "User answers collected by the permission component", and its output
+ *    reads "question text -> answer string" — no marker is documented for an
+ *    Other answer, so none is invented. On a `multiSelect` question the words
+ *    are the whole value, never split at a comma: they are one answer the
+ *    person wrote, not labels. A question answered both ways is refused.
  * 2. **The redacted spellings map back.** The panel was only ever shown the
  *    redacted question and labels (see above), and the agent's tool would not
  *    recognise those — so the match is made against the redacted forms and what
@@ -1082,13 +1107,21 @@ const SDK_MULTI_SELECT_SEPARATOR = ','
  * whichever channel produced it — and this is where they are read back out
  * and re-joined into what the tool call itself expects.
  */
-export function resolveAnswers(ask: HeldAsk, answers: unknown): AnswerResolution {
+export function resolveAnswers(
+  ask: HeldAsk,
+  answers: unknown,
+  ownWords?: unknown
+): AnswerResolution {
   if (!isRecord(answers)) return { ok: false, reason: NOTHING_ANSWERED }
+  if (ownWords !== undefined && !isRecord(ownWords)) return { ok: false, reason: NOTHING_ANSWERED }
   const given = Object.entries(answers)
-  if (given.length === 0) return { ok: false, reason: NOTHING_ANSWERED }
+  const written = Object.entries(ownWords ?? {})
+  if (given.length + written.length === 0) return { ok: false, reason: NOTHING_ANSWERED }
   // A record longer than the ask cannot be an answer to it, whatever the keys
   // say. Checked before the keys so a flood is refused at its size.
-  if (given.length > ask.questions.length) return { ok: false, reason: TOO_MANY_ANSWERS }
+  if (given.length + written.length > ask.questions.length) {
+    return { ok: false, reason: TOO_MANY_ANSWERS }
+  }
 
   const byRedactedQuestion = new Map<string, HeldAskQuestion | 'ambiguous'>()
   for (const question of ask.questions) {
@@ -1117,6 +1150,19 @@ export function resolveAnswers(ask: HeldAsk, answers: unknown): AnswerResolution
     // A lone label joins to itself unchanged, so a single-select answer is
     // still byte for byte what it was before this function read several.
     resolved[question.question] = matched.join(SDK_MULTI_SELECT_SEPARATOR)
+    answeredQuestions.add(question)
+  }
+  for (const [questionText, words] of written) {
+    const question = byRedactedQuestion.get(questionText)
+    if (question === undefined) return { ok: false, reason: UNKNOWN_QUESTION }
+    if (question === 'ambiguous') return { ok: false, reason: AMBIGUOUS_QUESTION }
+    if (answeredQuestions.has(question)) return { ok: false, reason: ANSWERED_TWICE }
+    if (typeof words !== 'string' || words.trim() === '') {
+      return { ok: false, reason: OWN_WORDS_EMPTY }
+    }
+    if (words.length > MAX_DWARF_TEXT_CHARS) return { ok: false, reason: OWN_WORDS_TOO_LONG }
+    // Verbatim: the person's words are theirs, never redacted and never re-joined.
+    resolved[question.question] = words
     answeredQuestions.add(question)
   }
   if (answeredQuestions.size !== ask.questions.length) {

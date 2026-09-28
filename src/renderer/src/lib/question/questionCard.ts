@@ -1,5 +1,12 @@
-import type { DwarfPermissionRequest } from '../../types'
-import { PERMISSION_OPTIONS, chosenAt, type AskAnswers, type AskShape } from './questionAnswer'
+import { joinAnswerLabels, type DwarfPermissionRequest } from '../../types'
+import {
+  PERMISSION_OPTIONS,
+  chosenAt,
+  togglesAt,
+  type AskAnswers,
+  type AskShape,
+  type OwnWordsAnswer
+} from './questionAnswer'
 
 /**
  * The question card as the redesign draws it (#635, `organisms/question-card`): one card for a
@@ -167,4 +174,30 @@ export function stepDots(
   return ask.questions.map((_, index) =>
     index === at ? 'here' : stepAnswered(ask, index, answers, other) ? 'done' : 'open'
   )
+}
+
+/**
+ * One answer value per step, in the ask's order, or null while any step is unanswered: a step's
+ * labels as askAnswerValues builds them, or — where the route takes them (a held question, #635,
+ * PO decision 2026-09-28) — the words under "Other thing…", trimmed and marked as the person's
+ * own, so the request carries them in `ownWords` rather than as a label.
+ */
+export function stepValues(
+  ask: AskShape,
+  answers: AskAnswers | null,
+  other: OtherTexts | null
+): (string | OwnWordsAnswer)[] | null {
+  const values: (string | OwnWordsAnswer)[] = []
+  for (const [index, asked] of ask.questions.entries()) {
+    const words = (otherAt(other, ask.toolUseId, index) ?? '').trim()
+    if (words !== '') {
+      values.push({ ownWords: words })
+      continue
+    }
+    const chosen = chosenAt(answers, ask.toolUseId, index)
+    const labels = asked.options.map((o) => o.label).filter((label) => chosen.includes(label))
+    if (labels.length === 0) return null
+    values.push(togglesAt(ask, index) ? joinAnswerLabels(labels) : labels[0]!)
+  }
+  return values
 }

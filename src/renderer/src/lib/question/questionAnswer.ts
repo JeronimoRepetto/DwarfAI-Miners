@@ -132,6 +132,9 @@ export function canSendAnswer(
  * which is the encoding both sides read. This function is unchanged by any of
  * it: what it takes is one answer VALUE, and it still repeats it verbatim.
  *
+ * AMENDED for #635 (PO decision 2026-09-28): a value may be an OwnWordsAnswer, which fills the
+ * request's `ownWords` record under the same question key rather than `answers`.
+ *
  * AMENDED for #443: `answer` is either one value — the answer to a
  * ONE-question call, keyed by its only question exactly as before — or a list
  * of values, one per question in the call's own order, which fills a key per
@@ -148,11 +151,18 @@ export function answerRequest(
 ): DwarfQuestionLabelAnswer {
   const values = typeof answer === 'string' ? [answer] : answer
   const answers: Record<string, string> = {}
+  const ownWords: Record<string, string> = {}
   question.questions.forEach((asked, index) => {
     const value = values[index]
-    if (value !== undefined) answers[asked.question] = value
+    if (typeof value === 'string') answers[asked.question] = value
+    else if (value !== undefined) ownWords[asked.question] = value.ownWords
   })
-  return { dwarfId, toolUseId: question.toolUseId, answers }
+  return {
+    dwarfId,
+    toolUseId: question.toolUseId,
+    answers,
+    ...(Object.keys(ownWords).length === 0 ? {} : { ownWords })
+  }
 }
 
 /**
@@ -160,7 +170,17 @@ export function answerRequest(
  * call — the shape every caller has used since #125 — or one value per
  * question, in the call's order, for a call that asked several.
  */
-export type AskAnswer = string | readonly string[]
+export type AskAnswer = string | readonly (string | OwnWordsAnswer)[]
+
+/**
+ * A question of a HELD ask answered in the person's own words, through the card's "Other
+ * thing…" (#635, PO decision 2026-09-28, held free-text answers). Marked as such rather than a
+ * bare string, so answerRequest puts it in the wire's `ownWords` record and main never has to
+ * read words out of a label that matched nothing.
+ */
+export interface OwnWordsAnswer {
+  ownWords: string
+}
 
 /**
  * The request that answers `question` in the person's OWN words (#481).

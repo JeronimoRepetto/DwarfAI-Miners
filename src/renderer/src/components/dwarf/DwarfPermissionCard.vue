@@ -6,7 +6,8 @@ import {
   decisionForLabel,
   freeTextRoute,
   isAnswerable,
-  permissionStatusLine
+  permissionStatusLine,
+  type OwnWordsAnswer
 } from '../../lib/question/questionAnswer'
 import { permissionAsk } from '../../lib/question/questionCard'
 import {
@@ -79,8 +80,10 @@ const ok = computed(() => permissionStatusLine(verdict.value, props.permission.c
  */
 const jump = computed(() => props.permission.channel !== 'opencode-permission')
 
-function submit(values: string[]): void {
-  const decision = decisionForLabel(values[0] ?? '')
+function submit(values: (string | OwnWordsAnswer)[]): void {
+  // A permission's only answers are its two labels: words never reach here (they are a message).
+  const first = values[0]
+  const decision = typeof first === 'string' ? decisionForLabel(first) : null
   if (decision === null || !answerable.value) return
   emit('decide', decision)
 }

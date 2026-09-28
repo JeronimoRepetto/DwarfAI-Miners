@@ -250,19 +250,31 @@ describe('DwarfQuestionCard', () => {
    * as built): Submit keeps its name, and "Send" belongs to a permission alone. What leaves on a
    * held session is unchanged from today: main's held path releases the ask with its own labels
    * only (TYPED_ANSWER_ONLY_AT_A_PICKER, resolveAnswers), so the words travel the message path.
+   * AMENDED for #635 (PO decision 2026-09-28, held free-text answers; was: 'sends free-form text
+   * as a message and never as an answer to the ask', expecting `send-text`). Main now takes a
+   * held question's own words as its answer, so Submit sends them on the ANSWER path, marked as
+   * the person's own words, and nothing leaves on the message path.
    */
-  it('sends free-form text as a message and never as an answer to the ask', async () => {
-    // The answer channel takes only the agent's own words back — a free-form
-    // reply is not one of them, so it travels the ordinary message path.
+  it('answers a held question with the person’s own words, never as a message', async () => {
     const wrapper = card()
     await writeOther(wrapper, 'use whatever is already there')
     expect(submitButton(wrapper).text()).toBe(SUBMIT_ANSWERS_NAME)
     expect(submitButton(wrapper).text()).not.toBe(SEND_OTHER_NAME)
     await submit(wrapper)
-    expect(wrapper.emitted('send-text')).toEqual([
-      [{ text: 'use whatever is already there', pressEnter: true }]
-    ])
-    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(wrapper.emitted('answer')).toEqual([[[{ ownWords: 'use whatever is already there' }]]])
+    expect(wrapper.emitted('send-text')).toBeUndefined()
+  })
+
+  // ADDED for #635 (PO decision 2026-09-28, held free-text answers).
+  it('submits a held walk with a step answered in words, one value per step', async () => {
+    const wrapper = card({ question: several() })
+    await writeOther(wrapper, '  a quince  ')
+    await wrapper.find('.dm-qcard__next').trigger('click')
+    await options(wrapper)[0]!.trigger('click')
+    expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
+    await submit(wrapper)
+    expect(wrapper.emitted('answer')).toEqual([[[{ ownWords: 'a quince' }, 'East']]])
+    expect(wrapper.emitted('send-text')).toBeUndefined()
   })
 
   // AMENDED for #635 (was: Shift+Enter kept a newline): the field is one line, and Enter in it

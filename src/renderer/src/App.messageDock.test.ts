@@ -872,6 +872,26 @@ describe('answering an agent question', () => {
 
     expect(wrapper.find('.dm-qcard__alert').text()).toContain('nothing was typed')
   })
+
+  // ADDED for #635 (PO decision 2026-09-28, held free-text answers).
+  it('answers a held ask in the person’s own words over the answer channel, marked as such', async () => {
+    const { wrapper, api } = await openOn(
+      [{ ...ASKING_DWARF, pendingQuestion: { ...PENDING_QUESTION, channel: 'held' } }],
+      'claude:s1'
+    )
+    await wrapper.find('.dm-qopt--other').trigger('click')
+    await wrapper.find('.dm-qopt-other-field input').setValue('keep the file store')
+    await wrapper.find('.dm-qcard__submit').trigger('click')
+    await flushPromises()
+
+    expect(api.answerDwarfQuestion).toHaveBeenCalledWith({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: {},
+      ownWords: { 'Which database should the importer write to?': 'keep the file store' }
+    })
+    expect(api.sendDwarfText).not.toHaveBeenCalled()
+  })
 })
 
 /**

@@ -27,6 +27,7 @@ import {
   NOTHING_TYPED_TO_ANSWER_WITH,
   OPENCODE_PERMISSION_ANSWERED_ABOVE,
   OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
+  OWN_WORDS_ONLY_WHEN_HELD,
   PANEL_OBSERVER,
   RELAY_PROVENANCE_LINE,
   TYPED_ANSWER_ONLY_AT_A_PICKER,
@@ -9399,6 +9400,66 @@ describe('AgentRuntime held sessions (#86, #94)', () => {
     // Never the registry's own wording, which describes this app rather than
     // the session the person is looking at.
     expect(result.error).not.toContain('not one this panel is holding')
+  })
+
+  /*
+   * ADDED for #635 (PO decision 2026-09-28, held free-text answers): a held session takes a
+   * question answered in the person's own words, carried explicitly as `ownWords`, and hands the
+   * words to the agent's tool as that question's answer string.
+   */
+  it('releases a held ask answered in the person’s own words, verbatim', async () => {
+    const port = heldPort()
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider()]
+    })
+    await runtime.refresh()
+    await runtime.launchHeldSession({
+      provider: 'claude',
+      mineId: mineIdForPath(MINE_PATH, 'win32'),
+      prompt: 'dig'
+    })
+    port.reportSessionId(0, 'sess-1')
+    const asked = port.ask(0, 'toolu_live')
+    await Promise.resolve()
+
+    await expect(
+      runtime.answerDwarfQuestion({
+        dwarfId: 'claude:sess-1',
+        toolUseId: 'toolu_live',
+        answers: {},
+        ownWords: { 'Which colour?': 'teal, like the old logo' }
+      })
+    ).resolves.toEqual({ answered: true })
+    await expect(asked).resolves.toEqual({
+      answered: true,
+      answers: { 'Which colour?': 'teal, like the old logo' }
+    })
+    runtime.stop()
+  })
+
+  it('refuses own words for an ask this panel does not hold, before anything is typed', async () => {
+    const port = heldPort()
+    const ask: DwarfQuestion = {
+      toolUseId: 'call_observed',
+      channel: 'terminal',
+      questions: [{ question: 'Which colour?', multiSelect: false, options: [{ label: 'Green' }] }]
+    }
+    const runtime = heldRuntime({
+      heldSessions: heldRegistry(port.port),
+      providers: [foremanProvider(ask)]
+    })
+    await runtime.refresh()
+
+    const result = await runtime.answerDwarfQuestion({
+      dwarfId: 'claude:sess-1',
+      toolUseId: 'call_observed',
+      answers: {},
+      ownWords: { 'Which colour?': 'teal' }
+    })
+    runtime.stop()
+
+    expect(result).toEqual({ answered: false, error: OWN_WORDS_ONLY_WHEN_HELD })
   })
 
   /*

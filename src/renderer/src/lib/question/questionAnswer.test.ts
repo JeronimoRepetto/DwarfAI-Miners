@@ -209,6 +209,21 @@ describe('answerRequest', () => {
     const request = answerRequest('claude:s1', question({ multiSelect: true }), 'Neither')
     expect(Object.values(request.answers)).toEqual(['Neither'])
   })
+
+  // ADDED for #635 (PO decision 2026-09-28, held free-text answers).
+  it('carries a question answered in the person’s own words in its own record, marked as such', () => {
+    const request = answerRequest('claude:s1', question(), [{ ownWords: 'keep the file store' }])
+    expect(request).toEqual({
+      dwarfId: 'claude:s1',
+      toolUseId: 'toolu_01',
+      answers: {},
+      ownWords: { 'Which database should the importer write to?': 'keep the file store' }
+    })
+  })
+
+  it('carries no own-words record for an answer made of labels alone', () => {
+    expect('ownWords' in answerRequest('claude:s1', question(), 'SQLite')).toBe(false)
+  })
 })
 
 describe('answerStatusLine', () => {

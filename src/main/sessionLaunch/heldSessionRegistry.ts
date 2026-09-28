@@ -925,13 +925,15 @@ export class HeldSessionRegistry {
     sessionId: string
     toolUseId: string
     answers: unknown
+    /** The questions answered in the person's own words (#635; see resolveAnswers). */
+    ownWords?: unknown
   }): DwarfQuestionAnswerResult {
     const record = this.recordFor(request.sessionId)
     if (record === undefined) return { answered: false, error: NOT_HELD }
     const open = record.openAsks.get(request.toolUseId)
     if (open === undefined) return { answered: false, error: NO_SUCH_QUESTION }
 
-    const resolved = resolveAnswers(open.ask, request.answers)
+    const resolved = resolveAnswers(open.ask, request.answers, request.ownWords)
     if (!resolved.ok) return { answered: false, error: resolved.reason }
 
     record.openAsks.delete(request.toolUseId)

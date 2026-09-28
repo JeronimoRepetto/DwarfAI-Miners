@@ -29,6 +29,7 @@ import {
   NOTHING_TYPED_TO_ANSWER_WITH,
   OPENCODE_PERMISSION_ANSWERED_ABOVE,
   OTHER_ROW_NOT_MEASURED_FOR_THIS_ASK,
+  OWN_WORDS_ONLY_WHEN_HELD,
   TYPED_ANSWER_ONLY_AT_A_PICKER,
   TYPED_ANSWER_WOULD_STEER_THE_PICKER,
   TYPED_HERE_REACHES_THE_PICKER,
@@ -3943,16 +3944,27 @@ export class AgentRuntime {
     if (dwarf === undefined) return { answered: false, error: NO_SUCH_DWARF }
 
     const pending = dwarf.pendingQuestion
-    // An answer in the person's OWN words is a key pressed at a picker, and
-    // only a WATCHED session is standing at one (#481). The held path releases
-    // the blocked call with the labels the ask carried and nothing else — see
-    // TYPED_ANSWER_ONLY_AT_A_PICKER — so this is refused here rather than
-    // reaching the registry, whose refusal would be about the wrong thing.
+    // The `text` form is a person's words typed at a picker, and only a
+    // WATCHED session is standing at one (#481), so it is refused for any other
+    // here rather than reaching the registry, whose refusal would be about the
+    // wrong thing. A HELD ask takes the person's own words in the label form's
+    // `ownWords` record instead (#635, PO decision 2026-09-28), below.
     if (request.text !== undefined) {
       if (pending?.channel !== 'terminal') {
         return { answered: false, error: TYPED_ANSWER_ONLY_AT_A_PICKER }
       }
       return this.typeQuestionAnswer(dwarf, pending, request)
+    }
+    // The person's own words carried for a HELD ask (#635, PO decision
+    // 2026-09-28): only the held path hands them to the agent's tool as an
+    // answer. Refused for any other ask BEFORE anything is typed — the
+    // keystroke route below reads labels alone and would drop the words — and
+    // for a session this panel does not hold. The board may not have stamped
+    // a just-asked held question yet, so an ask not on it is the registry's
+    // to judge, exactly as a label answer is.
+    const heldAsk = pending === undefined || pending.channel === 'held'
+    if (request.ownWords !== undefined && (!heldAsk || !this.heldSessions.holds(dwarf.sessionId))) {
+      return { answered: false, error: OWN_WORDS_ONLY_WHEN_HELD }
     }
     // An observed session's ask is answered where it is DRAWN, by keystroke
     // (#362) — the same split answerDwarfPermission draws off the same field,
@@ -3970,7 +3982,8 @@ export class AgentRuntime {
     return this.heldSessions.answer({
       sessionId: dwarf.sessionId,
       toolUseId: request.toolUseId,
-      answers: request.answers
+      answers: request.answers,
+      ...(request.ownWords === undefined ? {} : { ownWords: request.ownWords })
     })
   }
 

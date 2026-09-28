@@ -1332,15 +1332,16 @@ describe('DwarfMessagePanel question', () => {
   })
 
   // AMENDED for #635 (was: Enter in the always-open box): "Other thing…", then Send.
-  it('routes a free-form reply through the ordinary message path, not the ask', async () => {
+  // AMENDED for #635 (PO decision 2026-09-28, held free-text answers; was: 'routes a free-form
+  // reply through the ordinary message path, not the ask', expecting `send`): a held question
+  // takes the person's own words as its answer, so they leave on the answer path, marked.
+  it('routes a free-form reply to a held ask as its answer, in the person’s own words', async () => {
     const wrapper = asking()
     await wrapper.find('.dm-qopt--other').trigger('click')
     await wrapper.find('.dm-qopt-other-field input').setValue('neither, keep the file store')
     await wrapper.find('.dm-qcard__submit').trigger('click')
-    expect(wrapper.emitted('send')).toEqual([
-      [{ text: 'neither, keep the file store', pressEnter: true }]
-    ])
-    expect(wrapper.emitted('answer')).toBeUndefined()
+    expect(wrapper.emitted('answer')).toEqual([[[{ ownWords: 'neither, keep the file store' }]]])
+    expect(wrapper.emitted('send')).toBeUndefined()
   })
 
   it("hands main's refusal down to the card so the panel can explain itself", () => {
