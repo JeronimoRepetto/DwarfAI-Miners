@@ -149,8 +149,7 @@
     "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)"
   },
   {
-    "key": "organisms/message-panel#conversation",
-    "red": "0.500% differing: the turn outcome line reads Working where the reference prints the sample's own sentence, Turn finished · 5 steps · read README.md, which nothing the app observes stands behind (MESSAGE-QUESTIONS: the outcome line's sentences); 1365 pixels, 20 clusters, every one in that line"
+    "key": "organisms/message-panel#conversation"
   },
   {
     "key": "organisms/message-panel#asking",
@@ -167,11 +166,11 @@
   },
   {
     "key": "organisms/message-panel#not-delivered-with-actions",
-    "red": "0.406% differing, 22 clusters, all in two lines: the turn outcome line reads Working where the reference prints the sample's own sentence, Working · 2 steps so far (MESSAGE-QUESTIONS: the outcome line's sentences), and the activity run above the failed message reads Working... where the reference closes it as 2 steps · activity: the app keeps a run open until the dwarf itself speaks, because a message the person sent is not the agent finishing (#294), and the design gives no rule for a run followed only by a message that never arrived (a question for the design lead). The bubble, its ✕ and its Retry and Copy draw as the reference"
+    "red": "0.168% differing, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b). The activity run above the failed message, the bubble, its ✕ and its Retry and Copy draw as the reference"
   },
   {
     "key": "organisms/message-panel#not-delivered-copy-alone",
-    "red": "1.707% differing, 56 clusters, in two places: the turn outcome line reads Working where the reference prints the sample's own sentence, Working · 2 steps so far (MESSAGE-QUESTIONS: the outcome line's sentences; 459 pixels, 13 clusters, as on #not-delivered-with-actions), and the composer, the rest: the decision log (Copy alone on a closed session) gives a closed session its own disabled reason, a well reading This session can no longer receive messages. with the keyboard hint kept under it, and the app has no such reason yet, so its disabled box keeps the Write to dwarfai-56… placeholder and the hint line says the no-channel refusal, This session type can't receive messages yet. (NO_CHANNEL_REASON), which the ruling says is never reused here. The bubble with Copy alone and the open run draw as the reference"
+    "red": "0.168% differing, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b). The activity run, the bubble with Copy alone and the closed composer draw as the reference"
   },
   {
     "key": "organisms/add-panel#live"
@@ -502,11 +501,11 @@
   },
   {
     "key": "screens-full/message-panel#conversation",
-    "red": "the MessagePanel window is 0.331% off, the turn outcome line reads Working where the reference prints the sample's own sentence, Turn finished · 5 steps · read README.md, which nothing the app observes stands behind (MESSAGE-QUESTIONS: the outcome line's sentences); 1365 pixels, 20 clusters, every one in that line; the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "1.341% differing, none of it in the MessagePanel window, which draws as the reference (0.000%): the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
   },
   {
     "key": "screens-full/message-panel#question",
-    "red": "the question card in place of the composer is the old card, restyled in PR3 of #635 (73.068% in the window, from y 148 down); the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "the question card in place of the composer is the old card, restyled in PR3 of #635 (73.106% in the window, from y 148 down); the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
   },
   {
     "key": "screens-full/message-panel#permission",
@@ -514,6 +513,6 @@
   },
   {
     "key": "screens-full/message-panel#not-delivered",
-    "red": "the MessagePanel window is 0.270% off, 22 clusters in two lines: the turn outcome line reads Working where the reference prints the sample's own sentence, Working · 2 steps so far (MESSAGE-QUESTIONS: the outcome line's sentences), and the activity run above the failed message reads Working... where the reference closes it as 2 steps · activity: the app keeps a run open until the dwarf itself speaks, because a message the person sent is not the agent finishing (#294), and the design gives no rule for a run followed only by a message that never arrived (a question for the design lead). The bubble, its ✕ and its Retry and Copy draw as the reference; the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
+    "red": "1.379% differing: the MessagePanel window is 0.111% off, 459 pixels in 13 clusters, all in one line: the turn outcome line reads Working where the reference prints Working · 2 steps so far, the open run's step count the outcome-line ruling (MESSAGE-QUESTIONS 7) adds, which the app does not draw yet (the outcome-line work of #635's PR3b); the activity run, the bubble, its ✕ and its Retry and Copy draw as the reference; the nav draws no mode lever, hidden until the Veta slice lands (PANEL-QUESTIONS 1), and the dock box also grades the 8px of desktop between the window and the plate (x 442 to 450 of the box), which the app leaves transparent and the golden page does not paint as the prototype paints its desktop"
   }
 ]
