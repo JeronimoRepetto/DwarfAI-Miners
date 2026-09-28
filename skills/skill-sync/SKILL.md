@@ -70,9 +70,9 @@ node skills/skill-sync/assets/sync.mjs --dry-run   # print, change nothing
 node skills/skill-sync/assets/sync.mjs --scope root
 ```
 
-The generator has its own suite — `node skills/skill-sync/assets/sync.test.mjs` (23 tests,
-deliberately outside vitest's include so `pnpm test` stays src-only; the file's own header
-says why). Run it after changing `sync.mjs`; `pnpm test` will not.
+The generator has its own suite — `node skills/skill-sync/assets/sync.test.mjs`, deliberately
+outside vitest's include (`src/**` and `scripts/**` only; the file's own header says why). Run it
+after changing `sync.mjs`; `pnpm test` will not.
 
 Never edit text between a `<!-- BEGIN GENERATED: … -->` and its `<!-- END GENERATED: … -->`
 marker. The next run overwrites it.

@@ -27,8 +27,10 @@ a parameter instead, so a test can pass `'darwin'` on a Windows host and assert 
 
 The running OS is read in **three call sites (four occurrences)** across production code — inside
 `currentPlatform()`, and twice in the main entry point (shortcut key names, and the platform handed
-to the hook channel). Adding a fourth call site needs a reason. Tests read it **zero** times, and
-that number should stay zero.
+to the hook channel). Adding a fourth call site needs a reason. Tests do not read it, with one
+allowed exception: `it.skipIf(process.platform === 'win32')` on a real-disk proof of a behaviour
+that exists only on POSIX (file modes), whose test says why beside it, as `hookFs.test.ts` does.
+Anything else that differs per OS is asserted through the ports, on every host.
 
 ## Composition
 
@@ -99,13 +101,6 @@ probe answers `null` for "could not determine" and says nothing about what to do
 fails open — an unreadable process list must not make a running dwarf vanish. A kill fails closed —
 `taskkill /T` on a recycled pid ends a stranger's program and cannot be undone. A port that decided
 this for both would have to be wrong for one of them.
-
-## One comment not to repeat
-
-The `AgentRuntime` constructor carries a comment saying it is _"the one place the running operating
-system is consulted"_. That is true **within that module** and false for the app, which has three
-more sites elsewhere. Do not quote it as an app-wide claim; it was already restated inaccurately
-once.
 
 ## Getting it wrong
 
