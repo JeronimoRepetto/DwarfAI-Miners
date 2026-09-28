@@ -186,6 +186,20 @@ describe('adaptSample', () => {
     expect(p?.pendingQuestion).toBeUndefined()
   })
 
+  // ADDED for #635: an option's description, by option index, only where the agent sent one.
+  it('carries the descriptions the sample gives an ask’s options, and none where it gives none', () => {
+    const question = [
+      { text: 'Which?', options: ['A', 'B'], descriptions: [null, 'Only B says why.'] }
+    ]
+    const sample = adaptSample(
+      dm({ mines: [shaft], dwarfs: [{ ...digger, id: 'q', status: 'asking', question }] })
+    )
+    expect(sample.mines[0]?.dwarfs[0]?.pendingQuestion?.questions[0]?.options).toEqual([
+      { label: 'A' },
+      { label: 'B', description: 'Only B says why.' }
+    ])
+  })
+
   // ADDED for #635 (the question card slice): the permission card's request, and its long one.
   it('carries a permission need as the pending permission its request names', () => {
     const question = [{ text: 'Bash · pnpm install in feat/x. It changes the lockfile.' }]

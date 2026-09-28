@@ -7,7 +7,7 @@
  *
  * A description the agent sent shows as Small text under the label, inside the same row, which
  * grows past 40px only for it; the key and the label keep their place (design lead's ruling on
- * MESSAGE-QUESTIONS 6, 2026-09-28). A toggling step's rows are checkboxes rather than radios:
+ * MESSAGE-QUESTIONS 6, 2026-09-28; decision log, Question option description). A toggling step's rows are checkboxes rather than radios:
  * the app's multi-select asks (#362), which the design does not draw.
  */
 const props = withDefaults(
@@ -38,7 +38,7 @@ const props = withDefaults(
     :class="[
       'dm-qopt',
       'm-mat',
-      { 'dm-qopt--other': props.other },
+      { 'dm-qopt--other': props.other, 'dm-qopt--desc': Boolean(props.description) },
       props.state && `is-${props.state}`
     ]"
     type="button"
@@ -48,11 +48,8 @@ const props = withDefaults(
     :disabled="disabled"
   >
     <span class="dm-qopt__box"></span>
-    <span v-if="description" class="dm-qopt__text">
-      <span class="dm-qopt__label">{{ label }}</span>
-      <span class="dm-qopt__desc">{{ description }}</span>
-    </span>
-    <span v-else class="dm-qopt__label">{{ label }}</span>
+    <span class="dm-qopt__label">{{ label }}</span>
+    <span v-if="description" class="dm-qopt__desc">{{ description }}</span>
     <span class="dm-qopt__key">{{ index + 1 }}</span>
   </button>
 </template>
@@ -122,18 +119,26 @@ const props = withDefaults(
   font-style: normal;
 }
 /*
- * The description (MESSAGE-QUESTIONS 6): the label and, under it, the agent's gloss in the Small
- * text role, stacked in the label's own place so the key keeps its. The softer ink follows the
- * key's, on either fill.
+ * An option with the agent's description (decision log, Question option description): the first
+ * grid row is the 40px row's content box, so the box, the label and the key keep their place; the
+ * description takes a second row under the label and the key, and only it grows the row.
  */
-.dm-qopt__text {
+.dm-qopt--desc {
   display: grid;
-  gap: 2px;
-  padding: 4px 0;
+  grid-template-columns: 12px 1fr auto;
+  grid-template-rows: 32px auto;
+  column-gap: 8px;
+  row-gap: 0;
+}
+.dm-qopt--desc .dm-qopt__key {
+  grid-column: 3;
+  grid-row: 1;
 }
 .dm-qopt__desc {
+  grid-column: 2 / 4;
+  grid-row: 2;
   font: 400 var(--fs-meta) / 1.3 var(--f-meta);
-  color: var(--ink-soft);
+  color: var(--ink-faint);
 }
 .dm-qopt[aria-checked='true'] .dm-qopt__desc {
   color: var(--ink-on-light-soft);

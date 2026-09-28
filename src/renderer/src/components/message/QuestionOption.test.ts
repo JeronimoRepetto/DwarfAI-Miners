@@ -45,15 +45,23 @@ describe('QuestionOption', () => {
    * shows as Small text under the label, inside the same option; the row grows past 40px only for
    * it, an option without one stays the 40px row, and the key and the label keep their place.
    */
+  /*
+   * AMENDED for #635 (the design drew the ruling since, decision log, Question option description;
+   * was: the label and description stacked in a `.dm-qopt__text` wrapper, the app's own reading).
+   * The design's row is `.dm-qopt--desc`, a grid with the box, the label, the description and the
+   * key as its direct children, in that order.
+   */
   it('shows the agent’s description under the label, and nothing where it sent none', () => {
     const described = option({ description: 'The one the API already uses.' })
-    const text = described.find('.dm-qopt__text')
-    expect(text.find('.dm-qopt__label').text()).toBe('Postgres 16')
-    expect(text.find('.dm-qopt__desc').text()).toBe('The one the API already uses.')
+    expect(described.classes()).toContain('dm-qopt--desc')
+    const parts = described.findAll(':scope > span').map((part) => part.classes().join(' '))
+    expect(parts).toEqual(['dm-qopt__box', 'dm-qopt__label', 'dm-qopt__desc', 'dm-qopt__key'])
+    expect(described.find('.dm-qopt__label').text()).toBe('Postgres 16')
+    expect(described.find('.dm-qopt__desc').text()).toBe('The one the API already uses.')
     expect(described.find('.dm-qopt__key').text()).toBe('1')
     const plain = option()
     expect(plain.find('.dm-qopt__desc').exists()).toBe(false)
-    expect(plain.find('.dm-qopt__text').exists()).toBe(false)
+    expect(plain.classes()).not.toContain('dm-qopt--desc')
   })
 })
 

@@ -136,7 +136,14 @@ function pendingQuestion(row: Row): Pick<Dwarf, 'pendingQuestion'> {
       questions: (row.question as Row[]).map((q) => ({
         question: String(q.text),
         multiSelect: false,
-        options: ((q.options ?? []) as unknown[]).map((label) => ({ label: String(label) }))
+        // The agent's own description of an option, by option index, only where it sent one
+        // (#635, decision log, Question option description).
+        options: ((q.options ?? []) as unknown[]).map((label, k) => {
+          const description = ((q.descriptions ?? []) as unknown[])[k]
+          return typeof description === 'string'
+            ? { label: String(label), description }
+            : { label: String(label) }
+        })
       }))
     }
   }
