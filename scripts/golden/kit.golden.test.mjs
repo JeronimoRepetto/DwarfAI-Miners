@@ -92,7 +92,7 @@ describe.runIf(runnable)('golden harness', () => {
       'window.golden.showImage(' + JSON.stringify(src) + ', ' + row.x + ', ' + row.y + ')'
     )
     expect(box).toEqual({ x: row.x, y: row.y, width: row.width, height: row.height })
-    await page.settle()
+    await page.settle(LOOPBACK_STATE + ' (loopback)')
     const { stats, verdict } = compareToReference(
       location.root,
       file,
@@ -170,7 +170,7 @@ describe.runIf(runnable)('golden harness', () => {
           ')'
       )
       await page.evaluate('window.golden.mountState(' + JSON.stringify(frame) + ')')
-      await page.settle()
+      await page.settle(state.key)
       const measured = await page.evaluate('window.golden.measureState()')
       // Where the stage sits is the harness's to get right, red or not.
       expect({ x: measured.box.x, y: measured.box.y }).toEqual({ x: row.x, y: row.y })
