@@ -14,7 +14,7 @@ import {
   type ModelPicker
 } from '../../lib/launch/modelTuning'
 import { providerChips } from '../../lib/launch/providerChips'
-import type { AgentProviderOption } from '../../types'
+import type { AgentProviderOption, HeldPermissionMode } from '../../types'
 import AddPanel from './AddPanel.vue'
 
 const HIDDEN_MODEL_PICKER: ModelPicker = { visible: false, models: [], disabled: true, note: null }
@@ -60,6 +60,10 @@ function panel(overrides: Partial<Record<string, unknown>> = {}) {
       effortPicker: (overrides.effortPicker ?? HIDDEN_EFFORT_PICKER) as EffortPicker,
       permissionsVisible: (overrides.permissionsVisible ?? false) as boolean,
       jev: (overrides.jev ?? HIDDEN_JEV) as JevState,
+      // APPENDED for #635 (MESSAGE-QUESTIONS 2): what the launch model holds for the three selects.
+      model: (overrides.model ?? null) as string | null,
+      effort: (overrides.effort ?? null) as string | null,
+      permissionMode: (overrides.permissionMode ?? null) as HeldPermissionMode | null,
       // APPENDED for #635: `onCommit`-style listeners, for the cases that read the ORDER in which
       // the panel reports two gestures, which `emitted()` keeps per event and cannot show.
       ...((overrides.listeners ?? {}) as Record<string, unknown>)
@@ -242,6 +246,66 @@ describe('the model, effort and permission row', () => {
 
     expect(optionTexts(wrapper, 'Model')).toEqual(['Model: Jev decides'])
   })
+
+  /*
+   * APPENDED for #635 (MESSAGE-QUESTIONS 2; decision log, Jev's pick fills the pickers): the
+   * selects show what the launch model holds, so Jev's pick reads on the row as what launches.
+   */
+  it('shows the model, effort and permission mode the launch model holds', () => {
+    const wrapper = panel({
+      chosen: 'claude',
+      phase: 'known-provider-ready',
+      modelPicker: LIVE_MODEL_PICKER,
+      effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] },
+      permissionsVisible: true,
+      model: 'claude-haiku-4-5',
+      effort: 'high',
+      permissionMode: 'plan'
+    })
+    const shown = (label: string) =>
+      (wrapper.get(`select[aria-label="${label}"]`).element as HTMLSelectElement).value
+
+    expect([shown('Model'), shown('Effort'), shown('Permissions')]).toEqual([
+      'claude-haiku-4-5',
+      'high',
+      'plan'
+    ])
+  })
+
+  /*
+   * APPENDED for #635: the PO's report (2026-09-28) that picking an option did not select it.
+   * Every select was drawn on its first option whatever the launch model held, and Vue sets a
+   * bound `value` again on every render, so the next render snapped each pick back to the first.
+   */
+  it.each([
+    ['Model', 'model', 'claude-haiku-4-5'],
+    ['Effort', 'effort', 'high'],
+    ['Permissions', 'permissionMode', 'plan']
+  ])(
+    'keeps a %s picked off its select once the host holds it, through the next render',
+    async (label, event, value) => {
+      const wrapper = panel({
+        chosen: 'claude',
+        phase: 'known-provider-ready',
+        modelPicker: LIVE_MODEL_PICKER,
+        effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] },
+        permissionsVisible: true
+      })
+      const select = wrapper.get(`select[aria-label="${label}"]`)
+
+      await select.setValue(value)
+      expect(wrapper.emitted(event)).toEqual([[value]])
+      // The host answers the pick, as App does through the launch model: a new state, so fresh
+      // pickers of the same content, and the row redraws.
+      await wrapper.setProps({
+        [event]: value,
+        modelPicker: { ...LIVE_MODEL_PICKER },
+        effortPicker: { visible: true, efforts: ['low', 'medium', 'high'] }
+      })
+
+      expect((select.element as HTMLSelectElement).value).toBe(value)
+    }
+  )
 
   // AMENDED for #635 (was: ['Sonnet', 'Haiku']): each option carries the select's name.
   it('draws one option per model the picker offers, labelled where it has one', () => {

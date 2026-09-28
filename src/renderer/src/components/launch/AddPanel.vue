@@ -66,6 +66,15 @@ const props = defineProps<{
   permissionsVisible: boolean
   /** The Jev option (#509): availability, the person's toggle, and where a routed launch is. */
   jev: JevState
+  /**
+   * What the launch model holds for the three selects, which they show (#635). Vue sets a bound
+   * value again on every render, so a select drawn without these snapped each pick back to its
+   * first option (the PO's report, 2026-09-28), and Jev's pick, which sets them without touching
+   * the controls, never showed at all (MESSAGE-QUESTIONS 2). Absent, a select shows its first.
+   */
+  model?: string | null
+  effort?: string | null
+  permissionMode?: HeldPermissionMode | null
 }>()
 
 const emit = defineEmits<{
@@ -137,7 +146,12 @@ const selects = computed(() =>
     jevOn: jevOn.value,
     modelPicker: props.modelPicker,
     effortPicker: props.effortPicker,
-    permissionsVisible: props.permissionsVisible
+    permissionsVisible: props.permissionsVisible,
+    values: {
+      model: props.model ?? null,
+      effort: props.effort ?? null,
+      permissionMode: props.permissionMode ?? null
+    }
   })
 )
 
@@ -625,6 +639,7 @@ const jevUnavailableTitle = computed(() =>
             :key="select.label"
             :label="select.label"
             :options="select.options"
+            :value="select.value"
             :disabled="select.disabled || launched"
             @update:value="pick(select.label, $event)"
           />
