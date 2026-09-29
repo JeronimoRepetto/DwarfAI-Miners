@@ -158,9 +158,10 @@
     "key": "molecules/dwarf-tooltip#asleep"
   },
   {
-    "key": "organisms/history-panel#dwarfai-miners",
-    "red": "0.972% differing, 9 clusters, all in the tabs: the third tab names its dwarf by its custom name Watcher, which the dwarf names slice brings, and the fourth tab stands where that wider name pushes it (#635)",
-    "at": 0.972
+    "key": "molecules/dwarf-tooltip#custom-name"
+  },
+  {
+    "key": "organisms/history-panel#dwarfai-miners"
   },
   {
     "key": "organisms/message-panel#conversation"

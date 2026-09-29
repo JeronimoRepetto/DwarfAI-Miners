@@ -382,6 +382,8 @@ function speakerOf(
     provider: dwarf.provider as DwarfProvider,
     role: dwarf.role,
     name: dwarf.name,
+    // Main stamps the custom name onto the speaker whose dwarf id carries one (#635), as on the board.
+    ...(dwarf.customName === undefined ? {} : { customName: dwarf.customName }),
     lastMessageAt: last,
     messages
   }

@@ -8,6 +8,7 @@ import { focusPid as windowsFocusPid, focusSessionConsole, type ShellRunner } fr
 import {
   launchTranscriptViewer,
   resolveViewerScriptPath,
+  type LauncherFiles,
   type SpawnFn,
   type ViewerPathOptions
 } from './terminalLauncher'
@@ -165,6 +166,8 @@ export interface PlatformAdapterOptions {
   endRun?: EndProcessRunner
   /** Injected for tests; defaults to node:child_process.spawn. */
   spawn?: SpawnFn
+  /** Injected for tests; defaults to the real temp directory (the macOS viewer launcher, #635). */
+  launcherFiles?: LauncherFiles
   /** Injected for tests; defaults to a real claude spawn. */
   runRelay?: RelayRunner
   /** Injected for tests; defaults to a real codex spawn (#97). */
@@ -338,7 +341,8 @@ export function createPlatformAdapters(options: PlatformAdapterOptions): Platfor
         viewerScriptPath,
         platform,
         nodePath,
-        ...(options.spawn === undefined ? {} : { spawn: options.spawn })
+        ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
+        ...(options.launcherFiles === undefined ? {} : { launcherFiles: options.launcherFiles })
       }),
     textDelivery: createTextDelivery(
       platform,

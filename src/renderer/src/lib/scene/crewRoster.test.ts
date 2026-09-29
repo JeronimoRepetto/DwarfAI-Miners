@@ -64,3 +64,14 @@ describe('rosterMenuItems', () => {
     ])
   })
 })
+
+// Dwarf names (#635; decision log, Dwarf names): the roster names a dwarf by its custom name.
+describe('rosterMenuItems, dwarf names (#635)', () => {
+  it('labels a renamed dwarf with its custom name, and any other with its base name', () => {
+    const items = rosterMenuItems([
+      defaultDwarf({ name: 'dwarfai-55', customName: 'Watcher', status: 'working' }),
+      defaultDwarf({ name: 'dwarfai-56', status: 'working' })
+    ])
+    expect(items.map((item) => item.label)).toEqual(['Watcher', 'dwarfai-56'])
+  })
+})

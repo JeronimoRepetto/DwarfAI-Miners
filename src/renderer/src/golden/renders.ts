@@ -965,16 +965,19 @@ const failOutputTooltip: Render = (_sample, texts) => ({
  * The dwarf tooltip card as its tree prints it: its lines are the last six texts (a face's mark
  * glyph may come before them) — the name, the rank, the provider, the model and effort, the
  * silence and the status — and the state its status line carries. The rank's face is the
- * render's, as a portrait's is.
+ * render's, as a portrait's is. A renamed dwarf's card (#635, Custom name) prints one text more
+ * ahead of those: the custom name, over the base name the six start with.
  */
 const dwarfTooltip =
-  (role: DwarfRole): Render =>
+  (role: DwarfRole, { renamed = false }: { renamed?: boolean } = {}): Render =>
   (_sample, texts, attributes) => {
+    const customName = renamed ? (texts.at(-7)?.text ?? fail('custom name', texts)) : undefined
     const [name, , provider, tuning, silence] = texts.slice(-6).map((t) => t.text ?? '')
     const [model, effort] = (tuning ?? '').split(' · ')
     const status = elementsOf(attributes, 'span.dm-dtip__status')[0]?.['data-status'] ?? ''
     const dwarf: Dwarf = {
       ...dwarfOf('tip', name ?? '', role, status),
+      ...(customName === undefined ? {} : { customName }),
       provider: (provider ?? '').toLowerCase() as DwarfProvider,
       model,
       effort: effort?.replace(/ effort$/, ''),
@@ -1914,6 +1917,7 @@ export const RENDERS: Record<string, Render> = {
   'molecules/dwarf-tooltip#working': dwarfTooltip('worker'),
   'molecules/dwarf-tooltip#needs-you': dwarfTooltip('worker2'),
   'molecules/dwarf-tooltip#asleep': dwarfTooltip('foreman'),
+  'molecules/dwarf-tooltip#custom-name': dwarfTooltip('foreman', { renamed: true }),
   'organisms/history-panel#dwarfai-miners': historyPanel,
   // The MessagePanel and the Add panel (#635, their slice), each read off its own tree.
   'organisms/message-panel#conversation': messagePanel,

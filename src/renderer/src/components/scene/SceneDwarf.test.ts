@@ -601,3 +601,17 @@ describe('SceneDwarf footsteps (#330)', () => {
     ])
   })
 })
+
+// Dwarf names (#635; decision log, Dwarf names): the scene tag and the accessible name.
+describe('SceneDwarf, dwarf names (#635)', () => {
+  it('tags and names a renamed dwarf by its custom name', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ name: 'dwarfai-55', customName: 'Watcher' }))
+    expect(wrapper.find('.dm-dwarf__tag').text()).toBe('Watcher')
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-label')).toBe('Watcher, working')
+  })
+
+  it('keeps the base name on a dwarf with no custom name', () => {
+    const { wrapper } = mountDwarf(defaultDwarf({ name: 'dwarfai-53' }))
+    expect(wrapper.find('.dm-dwarf__tag').text()).toBe('dwarfai-53')
+  })
+})

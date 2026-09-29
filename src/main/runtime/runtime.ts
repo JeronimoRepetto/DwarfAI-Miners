@@ -5692,8 +5692,12 @@ export class AgentRuntime {
     // tailing the transcript live before falling back to the static feed.
     const transcriptPath = provider.transcriptPath?.(dwarfId)
     if (transcriptPath !== undefined) {
+      // The window is titled with the name the person calls the dwarf by (#635, handoff "Where
+      // it shows"): its custom name when set. A title for the person only — nothing the viewer
+      // hands the session, and never logged: the warning below names the id.
+      const title = dwarf.customName ?? dwarf.name
       try {
-        if (await this.launchTerminal(dwarf.name, transcriptPath)) {
+        if (await this.launchTerminal(title, transcriptPath)) {
           return { focused: false, openedTerminal: true, feed: [] }
         }
       } catch (error) {

@@ -2,7 +2,7 @@
 /*
  * The dwarf tooltip's body (#635), `molecules/dwarf-tooltip` in the design: the dwarf's face, then
  * its name, rank and provider, model and effort, silence and status, inside the shared tooltip
- * card. Shared by the sprite and its roster portrait, so both always say the same thing; it has no
+ * card; under a custom name, the base name on a line of its own (#635). Shared by the sprite and its roster portrait, so both always say the same thing; it has no
  * controls. The words are lib/dwarf/dwarfTip's. Replaces DwarfTooltip.vue.
  */
 import { computed } from 'vue'
@@ -20,6 +20,7 @@ const tip = computed(() => dwarfTip(props.dwarf))
     <DwarfPortrait :role="dwarf.role" :status="tip.status" size="sm" />
     <div class="dm-dtip__lines">
       <div class="dm-dtip__name">{{ tip.name }}</div>
+      <div v-if="tip.baseName !== undefined" class="dm-dtip__base">{{ tip.baseName }}</div>
       <div class="dm-dtip__line">
         {{ tip.rank }} · <b>{{ tip.provider }}</b>
       </div>
@@ -48,6 +49,11 @@ const tip = computed(() => dwarfTip(props.dwarf))
 .dm-dtip__name {
   font: var(--fs-section) / 1.1 var(--f-label);
   color: var(--parchment);
+}
+.dm-dtip__base {
+  margin-top: -4px;
+  font: var(--fs-meta) / 1.3 var(--f-meta);
+  color: var(--ink-faint);
 }
 .dm-dtip__line {
   color: var(--ink-soft);
