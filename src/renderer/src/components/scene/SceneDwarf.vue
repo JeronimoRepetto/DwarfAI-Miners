@@ -33,6 +33,7 @@ import SpriteStrip from '../dwarf/SpriteStrip.vue'
 import TooltipCard from '../overlay/TooltipCard.vue'
 import { useHoverTip } from '../../composables/useHoverTip'
 import { preloadDwarfArt } from '../../lib/art'
+import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import {
   sceneDwarfLabel,
   sceneDwarfMark,
@@ -95,7 +96,9 @@ const emit = defineEmits<{
 preloadDwarfArt()
 
 const status = computed(() => sceneDwarfStatus(props.dwarf))
-const label = computed(() => sceneDwarfLabel(props.dwarf.name, status.value))
+// The name the app calls it by: its custom name when it has one (#635, decision log, Dwarf names).
+const shownName = computed(() => dwarfDisplayName(props.dwarf))
+const label = computed(() => sceneDwarfLabel(shownName.value, status.value))
 const mark = computed(() => sceneDwarfMark(props.sendState, props.kickState))
 const resting = computed(() => sceneDwarfResting(props.dwarf))
 // Arrival gates the working sequence (#262): a dwarf still walking has arrived at nothing yet.
@@ -269,7 +272,7 @@ const rootStyle = computed(() => ({
       <span class="dm-dwarf__ask">?</span>
       <span class="dm-dwarf__z">z</span>
       <span class="dm-dwarf__mark" :title="mark?.title">{{ mark?.glyph }}</span>
-      <span class="dm-dwarf__tag">{{ dwarf.name }}</span>
+      <span class="dm-dwarf__tag">{{ shownName }}</span>
     </span>
     <span class="dm-dwarf__halo"></span>
     <SpriteStrip :clips="clips" :phase-clips="phaseClips" :flip="!facesLeft" @frame="onFrame" />

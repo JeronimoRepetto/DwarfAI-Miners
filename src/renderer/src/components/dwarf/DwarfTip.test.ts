@@ -52,3 +52,29 @@ describe('DwarfTip', () => {
     expect(wrapper.find('button').exists()).toBe(false)
   })
 })
+
+// Dwarf names (#635; components.md, Dwarf tooltip, Custom name): `.dm-dtip__base` under the name.
+describe('DwarfTip, dwarf names (#635)', () => {
+  it('draws the custom name, then the base name under it, then the lines as usual', () => {
+    const wrapper = mount(DwarfTip, {
+      props: { dwarf: defaultDwarf({ name: 'dwarfai-55', customName: 'Watcher', role: 'foreman' }) }
+    })
+    expect(wrapper.find('.dm-dtip__name').text()).toBe('Watcher')
+    const base = wrapper.find('.dm-dtip__base')
+    expect(base.text()).toBe('dwarfai-55')
+    const order = wrapper.findAll('.dm-dtip__lines > div').map((part) => part.classes()[0])
+    expect(order).toEqual([
+      'dm-dtip__name',
+      'dm-dtip__base',
+      'dm-dtip__line',
+      'dm-dtip__line',
+      'dm-dtip__line'
+    ])
+  })
+
+  it('draws no base line for a dwarf with no custom name', () => {
+    const wrapper = mount(DwarfTip, { props: { dwarf: defaultDwarf({ name: 'dwarfai-53' }) } })
+    expect(wrapper.find('.dm-dtip__name').text()).toBe('dwarfai-53')
+    expect(wrapper.find('.dm-dtip__base').exists()).toBe(false)
+  })
+})

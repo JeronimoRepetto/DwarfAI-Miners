@@ -5,6 +5,7 @@
  * never scrolls. The component draws; this decides who is shown and what the menu says.
  */
 import { sceneDwarfStatus } from './sceneDwarf'
+import { dwarfDisplayName } from '../dwarf/displayName'
 import type { MenuItem } from '../overlay/menu'
 import type { Dwarf } from '../../types'
 
@@ -28,12 +29,13 @@ export function rosterSplit<T>(
 }
 
 /*
- * The +N menu (screens/mine.md, As built): one item per remaining dwarf, labelled with its name,
+ * The +N menu (screens/mine.md, As built): one item per remaining dwarf, labelled with the name
+ * the app calls it by (its custom name when it has one, #635),
  * hinted "?" while it is asking, else its raw status word.
  */
 export function rosterMenuItems(rest: readonly Dwarf[]): MenuItem[] {
   return rest.map((dwarf) => {
     const status = sceneDwarfStatus(dwarf)
-    return { label: dwarf.name, hint: status === 'asking' ? '?' : status }
+    return { label: dwarfDisplayName(dwarf), hint: status === 'asking' ? '?' : status }
   })
 }

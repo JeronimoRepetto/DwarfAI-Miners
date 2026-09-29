@@ -113,3 +113,22 @@ describe('compactSilence with days', () => {
     expect(compactSilence(49 * 3_600_000)).toBe('49h')
   })
 })
+
+/*
+ * Dwarf names (#635; decision log, Dwarf names): the custom name replaces the base name as the
+ * card's name, and the tooltip is one of the two places the base name stays visible, as a line
+ * under it — only while a custom name is set (components.md, Dwarf tooltip, Custom name).
+ */
+describe('dwarfTip, dwarf names (#635)', () => {
+  it('names a renamed dwarf by its custom name, with its base name under it', () => {
+    const tip = dwarfTip(defaultDwarf({ name: 'dwarfai-55', customName: 'Watcher' }))
+    expect(tip.name).toBe('Watcher')
+    expect(tip.baseName).toBe('dwarfai-55')
+  })
+
+  it('names a dwarf with no custom name by its base name, and adds no base line', () => {
+    const tip = dwarfTip(defaultDwarf({ name: 'dwarfai-53' }))
+    expect(tip.name).toBe('dwarfai-53')
+    expect(tip).not.toHaveProperty('baseName')
+  })
+})

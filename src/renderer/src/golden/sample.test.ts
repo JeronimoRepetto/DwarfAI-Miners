@@ -360,6 +360,19 @@ describe('adaptSample histories', () => {
       speakers: []
     })
   })
+
+  // APPENDED for #635 (decision log, Dwarf names): main stamps a speaker's custom name too.
+  it('carries a dwarf’s custom name onto its speaker, and none where it has none', () => {
+    const named = { ...talker, id: 'n', customName: 'Warden' }
+    const speakers = adaptSample(dm({ mines: [shaft], dwarfs: [talker, named] })).histories[
+      'north-shaft'
+    ]!.speakers
+    expect(speakers.map((s) => [s.id, s.name, s.customName])).toEqual([
+      ['a1', 'digger-1', undefined],
+      ['n', 'digger-1', 'Warden']
+    ])
+    expect('customName' in speakers[0]!).toBe(false)
+  })
 })
 
 /*

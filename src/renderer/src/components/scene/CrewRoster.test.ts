@@ -132,3 +132,21 @@ describe('CrewRoster', () => {
     expect(document.body.querySelector('.dm-tip .dm-dtip__name')?.textContent).toBe('dwarfai-54')
   })
 })
+
+// Dwarf names (#635; decision log, Dwarf names): a portrait's accessible name is the custom name.
+describe('CrewRoster, dwarf names (#635)', () => {
+  it('names a renamed dwarf’s portrait by its custom name, any other by its base name', () => {
+    const wrapper = mount(CrewRoster, {
+      props: {
+        dwarfs: [
+          defaultDwarf({ id: 'r0', name: 'dwarfai-55', customName: 'Watcher', status: 'working' }),
+          defaultDwarf({ id: 'r1', name: 'dwarfai-56', status: 'working' })
+        ]
+      }
+    })
+    expect(wrapper.findAll('button.dm-portrait').map((p) => p.attributes('aria-label'))).toEqual([
+      'Watcher, working',
+      'dwarfai-56, working'
+    ])
+  })
+})

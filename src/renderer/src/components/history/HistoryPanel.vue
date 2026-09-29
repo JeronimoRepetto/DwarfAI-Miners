@@ -36,6 +36,7 @@ import { activityStepsLabel, groupActivity, type PanelEntry } from '../../lib/me
 import { isOpenablePath } from '../../lib/message/openablePath'
 import { mineCrew } from '../../lib/scene/mineColumn'
 import { sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
+import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import type { PortraitStatus } from '../../lib/dwarf/portrait'
 import type { FailedSend, Mine, MineHistoryResult } from '../../types'
 
@@ -216,7 +217,7 @@ async function tabKey(event: KeyboardEvent, index: number): Promise<void> {
       >
         <DwarfPortrait :role="speaker.role" :status="tabStatus(speaker.id)" size="sm" />
         <span>
-          <span class="dm-hist__name">{{ speaker.name }}</span>
+          <span class="dm-hist__name">{{ dwarfDisplayName(speaker) }}</span>
           <small>{{ historyTabLast(speaker, failedOf(speaker.id)) }}</small>
         </span>
       </button>

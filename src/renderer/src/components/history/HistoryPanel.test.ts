@@ -451,3 +451,13 @@ describe('HistoryPanel failed sends', () => {
     expect(wrapper.find('.dm-hist__tab small').text()).toBe('last · 18:40')
   })
 })
+
+// Dwarf names (#635; decision log, Dwarf names): the history tabs name a dwarf by its custom name.
+describe('HistoryPanel, dwarf names (#635)', () => {
+  it('labels a renamed speaker’s tab with its custom name, any other with its base name', () => {
+    const wrapper = panel({
+      history: { readable: true, speakers: [{ ...OLDER, customName: 'Watcher' }, NEWEST] }
+    })
+    expect(names(wrapper).sort()).toEqual(['Map the seam', 'Watcher'])
+  })
+})

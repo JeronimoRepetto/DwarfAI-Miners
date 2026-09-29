@@ -23,6 +23,7 @@ import {
 } from '../../lib/scene/crewRoster'
 import { placeFloating } from '../../lib/overlay/menu'
 import { sceneDwarfStatus } from '../../lib/scene/sceneDwarf'
+import { dwarfDisplayName } from '../../lib/dwarf/displayName'
 import type { Dwarf } from '../../types'
 
 const props = withDefaults(
@@ -105,7 +106,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside, true)
       :key="dwarf.id"
       :role="dwarf.role"
       :status="sceneDwarfStatus(dwarf)"
-      :name="dwarf.name"
+      :name="dwarfDisplayName(dwarf)"
       :selected="dwarf.id === selectedId"
       interactive
       :data-dwarf="dwarf.id"
