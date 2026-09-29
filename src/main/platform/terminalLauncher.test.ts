@@ -379,3 +379,48 @@ describe('launchTranscriptViewer', () => {
     expect(ok).toBe(false)
   })
 })
+
+/*
+ * A custom name as the console's title (#635, handoff "Dwarf names in the app", Where it shows).
+ * A person types it, so it is the first title this chain carries that no provider chose: spaces and
+ * an apostrophe are ordinary. On every platform it may land only where the title goes — the argv
+ * of every candidate differs from the base name's at the title's own places and nowhere else — and
+ * on macOS it stays one literal shell word inside the AppleScript string.
+ */
+describe('buildViewerLaunchChain with a custom name as the title (#635)', () => {
+  const CUSTOM = "Old Watcher's"
+  const chainFor = (platform: 'win32' | 'darwin' | 'linux', title: string) =>
+    buildViewerLaunchChain({
+      platform,
+      title,
+      viewerScriptPath: platform === 'win32' ? 'C:\app\viewer.ps1' : '/app/viewer.sh',
+      transcriptPath: platform === 'win32' ? 'C:\logs\s.jsonl' : '/logs/s.jsonl',
+      nodePath: '/app/node'
+    })
+
+  it.each(['win32', 'linux'] as const)(
+    'puts the name only where the title goes on %s',
+    (platform) => {
+      const renamed = chainFor(platform, CUSTOM)
+      const base = chainFor(platform, 'dwarfai-55')
+      expect(renamed.map((c) => c.command)).toEqual(base.map((c) => c.command))
+      renamed.forEach((candidate, i) => {
+        const other = base[i]!.args
+        expect(candidate.args).toHaveLength(other.length)
+        candidate.args.forEach((arg, j) => {
+          if (arg === other[j]) return
+          expect([arg, other[j]]).toEqual([CUSTOM, 'dwarfai-55'])
+          expect(candidate.args[j - 1]).toMatch(/^(--title|-Title)$/)
+        })
+        expect(candidate.args.filter((arg) => arg === CUSTOM).length).toBeGreaterThan(0)
+      })
+    }
+  )
+
+  it('keeps the name one literal shell word in the Terminal.app script on darwin', () => {
+    const [launch] = chainFor('darwin', CUSTOM)
+    expect(launch!.command).toBe('osascript')
+    // The shell's '\'' for the apostrophe, its backslash doubled for the AppleScript string.
+    expect(launch!.args[1]).toContain(`'--title' 'Old Watcher'\\\\''s' '--node'`)
+  })
+})

@@ -14607,6 +14607,34 @@ describe('AgentRuntime dwarf names (#635)', () => {
   })
 
   /*
+   * The console window title (handoff, Dwarf names in the app, Where it shows): the transcript
+   * viewer's terminal is titled with the custom name when one is set, the base name otherwise. It is
+   * a title only — the transcript it tails is the same either way.
+   */
+  it('titles a renamed dwarf’s console with its custom name, and any other with its base name', async () => {
+    const launchTerminal = vi.fn().mockResolvedValue(true)
+    const source: Provider = {
+      ...crew(),
+      transcriptPath: vi.fn((dwarfId: string) => 'C:\\claude\\' + dwarfId + '.jsonl')
+    }
+    const { runtime } = runtimeWith({
+      providers: [source],
+      focus: vi.fn().mockResolvedValue(false),
+      launchTerminal
+    })
+    await runtime.refresh()
+    await runtime.setDwarfName({ dwarfId: WORKER_ID, name: 'Stonebeard' })
+
+    await runtime.activateDwarf(WORKER_ID)
+    await runtime.activateDwarf(FOREMAN_ID)
+
+    expect(launchTerminal.mock.calls).toEqual([
+      ['Stonebeard', 'C:\\claude\\' + WORKER_ID + '.jsonl'],
+      ['boss', 'C:\\claude\\' + FOREMAN_ID + '.jsonl']
+    ])
+  })
+
+  /*
    * A custom name is user data: never logged, never written into diagnostics (decision log, Dwarf
    * names). Every console method is watched across everything that touches a name, the failing
    * database included — the path most likely to log.
