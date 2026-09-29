@@ -61,8 +61,15 @@ export function resolveViewerScriptPath(
  * they would reach the viewer's OSC title escape, and a line break ends a console line anywhere.
  */
 export function displayTitle(title: string): string {
-  return title.replace(/[\p{Cc}\u2028\u2029]+/gu, ' ').trim()
+  return title.replace(/[\p{Cc}\u2028\u2029]+/gu, ' ').trim() || FALLBACK_TITLE
 }
+
+/*
+ * The title of a console whose name is nothing once the above is taken out (a base name of spaces
+ * or control characters). Never empty: the Windows viewer's `$Title` is a Mandatory [string], which
+ * refuses '' and closes the console at once. "dwarf" is the POSIX viewer's own default title.
+ */
+export const FALLBACK_TITLE = 'dwarf'
 
 /*
  * Windows Terminal separates its own commands with `;` and documents no escape for one inside an

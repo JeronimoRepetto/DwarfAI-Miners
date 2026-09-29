@@ -8,6 +8,8 @@ import {
   buildPosixViewerArgv,
   buildViewerLaunchChain,
   buildWtArgs,
+  displayTitle,
+  FALLBACK_TITLE,
   launchTranscriptViewer,
   quotePosixArgv,
   resolveViewerScriptPath,
@@ -612,5 +614,36 @@ describe('the console title is display text only (#635)', () => {
       { command: 'xfce4-terminal', args: ['-x', ...argv] },
       { command: 'xterm', args: ['-e', ...argv] }
     ])
+  })
+})
+
+/*
+ * A title is never empty (#635). Both viewers need one: PowerShell's `$Title` is a Mandatory
+ * [string], which refuses '' and closes the console at once, and a base name made only of spaces or
+ * control characters becomes '' once those are taken out. So an empty title becomes "dwarf", the
+ * POSIX viewer's own default title, on every platform.
+ */
+describe('the console title is never empty (#635)', () => {
+  it.each(['', '   ', '\u0007\t\r\n', '   '])('says "dwarf" for %j', (title) => {
+    expect(displayTitle(title)).toBe(FALLBACK_TITLE)
+    expect(FALLBACK_TITLE).toBe('dwarf')
+  })
+
+  it('carries the fallback on every platform', () => {
+    const options = {
+      title: ' \u0007 ',
+      viewerScriptPath: '/app/viewer',
+      transcriptPath: '/logs/s.jsonl',
+      nodePath: '/app/node',
+      launcherPath: '/tmp/dwarfai-viewer-0123456789abcdef.sh'
+    }
+    const [wt, ps] = buildViewerLaunchChain({ ...options, platform: 'win32' })
+    expect(wt!.args[wt!.args.indexOf('--title') + 1]).toBe('dwarf')
+    expect(wt!.args.at(-1)).toBe('-Title:dwarf')
+    expect(ps!.args.at(-1)).toBe('-Title:dwarf')
+    const [linux] = buildViewerLaunchChain({ ...options, platform: 'linux' })
+    expect(linux!.args[linux!.args.indexOf('--title') + 1]).toBe('dwarf')
+    const [mac] = buildViewerLaunchChain({ ...options, platform: 'darwin' })
+    expect(JSON.stringify(mac)).toContain("'--title' 'dwarf'")
   })
 })
