@@ -394,8 +394,8 @@ describe('buildViewerLaunchChain with a custom name as the title (#635)', () => 
     buildViewerLaunchChain({
       platform,
       title,
-      viewerScriptPath: platform === 'win32' ? 'C:\app\viewer.ps1' : '/app/viewer.sh',
-      transcriptPath: platform === 'win32' ? 'C:\logs\s.jsonl' : '/logs/s.jsonl',
+      viewerScriptPath: platform === 'win32' ? 'C:\\app\\viewer.ps1' : '/app/viewer.sh',
+      transcriptPath: platform === 'win32' ? 'C:\\logs\\s.jsonl' : '/logs/s.jsonl',
       nodePath: '/app/node'
     })
 
@@ -501,7 +501,26 @@ describe('the console title is display text only (#635)', () => {
       'Stone\r\nbeard\u0007!',
       'Stone beard !',
       'Stone beard !'
-    ]
+    ],
+    /*
+     * Seen live against wt.exe on Windows (#635): wt expands environment variables in the command
+     * line it hands PowerShell, so `a%USERNAME%b` arrived as the account's name and
+     * `x%ProgramFiles%y` split into two arguments. Every `%` becomes U+FF05, on both routes.
+     */
+    ['a name with a variable', 'a%USERNAME%b', 'a％USERNAME％b', 'a％USERNAME％b'],
+    [
+      'a name whose variable holds a space',
+      'x%ProgramFiles%y',
+      'x％ProgramFiles％y',
+      'x％ProgramFiles％y'
+    ],
+    /*
+     * Also seen live: wt quotes an argument holding a space without doubling the backslashes
+     * before its closing quote, so `Old Watcher\` arrived as `Old Watcher"`. Every `\` becomes
+     * U+FF3C, on both routes.
+     */
+    ['a name ending in \\ with a space', 'Old Watcher\\', 'Old Watcher＼', 'Old Watcher＼'],
+    ['a name with a \\ inside', 'a\\b', 'a＼b', 'a＼b']
   ])('win32, %s: the exact argv of both candidates', (_case, title, wtTitle, psTitle) => {
     expect(windows(title)).toEqual([
       { command: 'wt.exe', args: wtArgv(wtTitle, psTitle) },
@@ -520,6 +539,23 @@ describe('the console title is display text only (#635)', () => {
       const [wt] = windows(title)
       const value = wt!.args[wt!.args.indexOf('--title') + 1]!
       expect(value.startsWith('-')).toBe(false)
+    }
+  })
+
+  // The paths keep their `\`: only the title is display text a person may have typed.
+  it('win32: no title argument carries a % or a \\, on either route', () => {
+    for (const title of ['%PATH%', 'C:\\x\\', '%%\\%', 'Old Watcher\\']) {
+      const [wt, ps] = windows(title)
+      const titles = [
+        wt!.args[wt!.args.indexOf('--title') + 1]!,
+        wt!.args.at(-1)!,
+        ps!.args.at(-1)!
+      ]
+      for (const shown of titles) {
+        expect(shown).not.toMatch(/[%\\]/)
+      }
+      expect(wt!.args).toContain(SCRIPT)
+      expect(ps!.args).toContain(LOG)
     }
   })
 

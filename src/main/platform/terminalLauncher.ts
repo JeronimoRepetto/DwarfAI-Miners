@@ -69,11 +69,23 @@ export function displayTitle(title: string): string {
  * argument (Microsoft Learn, "Windows Terminal command line arguments"), so a `;` in a title could
  * start another wt command ("x ; new-tab cmd /c …"). Each becomes U+FF1B FULLWIDTH SEMICOLON, which
  * reads the same in a title. wt documents no quoting rule for the command line it hands on either,
- * so a `"` becomes U+FF02 FULLWIDTH QUOTATION MARK. Both Windows routes get the same title, so a
- * dwarf's console reads the same whichever terminal opened it.
+ * so a `"` becomes U+FF02 FULLWIDTH QUOTATION MARK.
+ *
+ * Two more were seen live against wt.exe (#635). wt expands environment variables in the command
+ * line it hands on: `a%USERNAME%b` reached PowerShell as the account's name, and a variable holding
+ * a space split the title into two arguments. So every `%` becomes U+FF05 FULLWIDTH PERCENT SIGN.
+ * And wt quotes an argument holding a space without doubling the backslashes before its closing
+ * quote, so `Old Watcher\` reached PowerShell as `Old Watcher"`: every `\` becomes U+FF3C FULLWIDTH
+ * REVERSE SOLIDUS, rather than doubling the trailing ones, because wt's quoting is undocumented and
+ * a rule that depends on it matching CommandLineToArgvW's is a guess. Both Windows routes get the
+ * same title, so a dwarf's console reads the same whichever terminal opened it.
  */
 function windowsTitle(title: string): string {
-  return displayTitle(title).replaceAll(';', '\uFF1B').replaceAll('"', '\uFF02')
+  return displayTitle(title)
+    .replaceAll(';', '\uFF1B')
+    .replaceAll('"', '\uFF02')
+    .replaceAll('%', '\uFF05')
+    .replaceAll('\\', '\uFF3C')
 }
 
 /*
