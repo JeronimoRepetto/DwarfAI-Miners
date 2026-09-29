@@ -52,6 +52,49 @@ export function resolveViewerScriptPath(
     : join(options.appPath, 'resources', name)
 }
 
+/*
+ * The console title is display text, and since #635 it may be text a person typed (a dwarf's custom
+ * name; a base name is a folder's name, no safer). It is only ever a title: these make sure no
+ * character of it can act as anything else on the command line it rides on.
+ *
+ * Control characters and line breaks are never part of a title on any platform: on macOS and Linux
+ * they would reach the viewer's OSC title escape, and a line break ends a console line anywhere.
+ */
+export function displayTitle(title: string): string {
+  return title.replace(/[\p{Cc}\u2028\u2029]+/gu, ' ').trim()
+}
+
+/*
+ * Windows Terminal separates its own commands with `;` and documents no escape for one inside an
+ * argument (Microsoft Learn, "Windows Terminal command line arguments"), so a `;` in a title could
+ * start another wt command ("x ; new-tab cmd /c …"). Each becomes U+FF1B FULLWIDTH SEMICOLON, which
+ * reads the same in a title. wt documents no quoting rule for the command line it hands on either,
+ * so a `"` becomes U+FF02 FULLWIDTH QUOTATION MARK. Both Windows routes get the same title, so a
+ * dwarf's console reads the same whichever terminal opened it.
+ */
+function windowsTitle(title: string): string {
+  return displayTitle(title).replaceAll(';', '\uFF1B').replaceAll('"', '\uFF02')
+}
+
+/*
+ * PowerShell binds `-Title:<value>` to the parameter whatever the value starts with: a separate
+ * value that starts with `-` is read as a parameter name instead (reproduced against powershell.exe
+ * -File, #635). One argument, so a title can never be mistaken for a flag of the script.
+ */
+function powershellTitleArg(title: string): string {
+  return '-Title:' + windowsTitle(title)
+}
+
+/*
+ * wt's own `--title` documents no one-argument form, so a title that starts with `-` could be read
+ * as a wt option. Its first character becomes U+2010 HYPHEN instead, which reads the same; only
+ * here, since PowerShell's form above needs no such stand-in.
+ */
+function wtTitleValue(title: string): string {
+  const shown = windowsTitle(title)
+  return shown.startsWith('-') ? '\u2010' + shown.slice(1) : shown
+}
+
 /** Argv for `wt.exe`: a titled new tab (reuses the most recently used window, or opens one). */
 export function buildWtArgs(
   title: string,
@@ -63,7 +106,7 @@ export function buildWtArgs(
     '-1',
     'new-tab',
     '--title',
-    title,
+    wtTitleValue(title),
     'powershell',
     '-NoProfile',
     '-ExecutionPolicy',
@@ -72,8 +115,7 @@ export function buildWtArgs(
     viewerScriptPath,
     '-Path',
     transcriptPath,
-    '-Title',
-    title
+    powershellTitleArg(title)
   ]
 }
 
@@ -96,8 +138,7 @@ export function buildFallbackArgs(
     viewerScriptPath,
     '-Path',
     transcriptPath,
-    '-Title',
-    title
+    powershellTitleArg(title)
   ]
 }
 
@@ -126,7 +167,7 @@ export function buildPosixViewerArgv(options: PosixViewerOptions): string[] {
     '--path',
     options.transcriptPath,
     '--title',
-    options.title,
+    displayTitle(options.title),
     '--node',
     options.nodePath
   ]

@@ -99,8 +99,9 @@ describe('buildWtArgs', () => {
       'C:\\app\\resources\\dwarf-feed-viewer.ps1',
       '-Path',
       'C:\\logs\\session.jsonl',
-      '-Title',
-      'Foreman'
+      // AMENDED for #635 (was: '-Title', 'Foreman' as two arguments): one argument, so a title
+      // that starts with '-' can never be read as a parameter of the script.
+      '-Title:Foreman'
     ])
   })
 })
@@ -120,8 +121,8 @@ describe('buildFallbackArgs', () => {
       'C:\\app\\resources\\dwarf-feed-viewer.ps1',
       '-Path',
       'C:\\logs\\session.jsonl',
-      '-Title',
-      'Foreman'
+      // AMENDED for #635 (was: '-Title', 'Foreman' as two arguments), as buildWtArgs's above.
+      '-Title:Foreman'
     ])
   })
 })
@@ -407,12 +408,18 @@ describe('buildViewerLaunchChain with a custom name as the title (#635)', () => 
       renamed.forEach((candidate, i) => {
         const other = base[i]!.args
         expect(candidate.args).toHaveLength(other.length)
+        // AMENDED for #635 (PowerShell's title is one `-Title:<title>` argument now, below; was:
+        // the name alone after a `--title` or `-Title` argument, in every differing place).
         candidate.args.forEach((arg, j) => {
           if (arg === other[j]) return
+          if (arg.startsWith('-Title:')) {
+            expect([arg, other[j]]).toEqual(['-Title:' + CUSTOM, '-Title:dwarfai-55'])
+            return
+          }
           expect([arg, other[j]]).toEqual([CUSTOM, 'dwarfai-55'])
           expect(candidate.args[j - 1]).toMatch(/^(--title|-Title)$/)
         })
-        expect(candidate.args.filter((arg) => arg === CUSTOM).length).toBeGreaterThan(0)
+        expect(candidate.args.some((arg) => arg.endsWith(CUSTOM))).toBe(true)
       })
     }
   )
@@ -422,5 +429,152 @@ describe('buildViewerLaunchChain with a custom name as the title (#635)', () => 
     expect(launch!.command).toBe('osascript')
     // The shell's '\'' for the apostrophe, its backslash doubled for the AppleScript string.
     expect(launch!.args[1]).toContain(`'--title' 'Old Watcher'\\\\''s' '--node'`)
+  })
+})
+
+/*
+ * The console title is display text a person may have typed (#635): a custom name reaches these
+ * command lines now, and a base name is a folder's name. Neither may ever act as anything but a
+ * title, on any platform.
+ *
+ * Windows Terminal separates its own commands with `;` and documents no escape for one inside an
+ * argument (Microsoft Learn, "Windows Terminal command line arguments"), so a `;` in a title could
+ * start another wt command: every `;` becomes U+FF1B, which reads the same. It documents no quoting
+ * rule for the command line it hands on either, so a `"` becomes U+FF02 on that route too.
+ * PowerShell takes the title as one `-Title:<title>` argument, the form that binds a value to its
+ * parameter whatever it starts with (reproduced against powershell.exe -File: `-Title -Path` fails
+ * to bind, `-Title:-Path` binds "-Path"). wt's own `--title` has no documented one-argument form, so
+ * a title starting with `-` starts with U+2010 there instead. Control characters and line breaks
+ * are never part of a title, on any platform.
+ */
+describe('the console title is display text only (#635)', () => {
+  const SCRIPT = 'C:\\app\\viewer.ps1'
+  const LOG = 'C:\\logs\\s.jsonl'
+  const windows = (title: string) =>
+    buildViewerLaunchChain({
+      platform: 'win32',
+      title,
+      viewerScriptPath: SCRIPT,
+      transcriptPath: LOG,
+      nodePath: 'unused'
+    })
+  const wtArgv = (wtTitle: string, psTitle: string) => [
+    '-w',
+    '-1',
+    'new-tab',
+    '--title',
+    wtTitle,
+    'powershell',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    SCRIPT,
+    '-Path',
+    LOG,
+    '-Title:' + psTitle
+  ]
+  const psArgv = (psTitle: string) => [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    SCRIPT,
+    '-Path',
+    LOG,
+    '-Title:' + psTitle
+  ]
+
+  it.each([
+    ['a normal name', 'Watcher', 'Watcher', 'Watcher'],
+    ['a name with ;', 'Rock;Roll', 'Rock\uFF1BRoll', 'Rock\uFF1BRoll'],
+    [
+      'a name that is a wt command',
+      'x ; new-tab cmd /c calc',
+      'x \uFF1B new-tab cmd /c calc',
+      'x \uFF1B new-tab cmd /c calc'
+    ],
+    ['a name starting with -', '-Path', '\u2010Path', '-Path'],
+    ['a name with a quote', 'Old "Iron"', 'Old \uFF02Iron\uFF02', 'Old \uFF02Iron\uFF02'],
+    [
+      'a name with a line break and a bell',
+      'Stone\r\nbeard\u0007!',
+      'Stone beard !',
+      'Stone beard !'
+    ]
+  ])('win32, %s: the exact argv of both candidates', (_case, title, wtTitle, psTitle) => {
+    expect(windows(title)).toEqual([
+      { command: 'wt.exe', args: wtArgv(wtTitle, psTitle) },
+      { command: 'powershell.exe', args: psArgv(psTitle) }
+    ])
+  })
+
+  it('win32: no argument carries a bare ; or a quote, and wt reads no title as an option', () => {
+    for (const title of ['x ; new-tab cmd /c calc', ';;', '-w 0 nt', '--help', 'a"b"c']) {
+      for (const candidate of windows(title)) {
+        for (const arg of candidate.args) {
+          expect(arg).not.toContain(';')
+          expect(arg).not.toContain('"')
+        }
+      }
+      const [wt] = windows(title)
+      const value = wt!.args[wt!.args.indexOf('--title') + 1]!
+      expect(value.startsWith('-')).toBe(false)
+    }
+  })
+
+  /*
+   * macOS: the argv is quoted for the shell and then escaped for the AppleScript string, so `;`,
+   * a leading `-`, `"` and `\` all stay inside one literal word; the viewer script's own parser
+   * takes whatever follows `--title` as its value. Only the control characters go.
+   */
+  it('darwin: the exact Terminal.app script, the title one literal shell word', () => {
+    const script = (title: string) =>
+      buildViewerLaunchChain({
+        platform: 'darwin',
+        title,
+        viewerScriptPath: '/app/viewer.sh',
+        transcriptPath: '/logs/s.jsonl',
+        nodePath: '/app/node'
+      })[0]!.args[1]
+    const expected = (word: string) =>
+      `tell application "Terminal" to do script "'sh' '/app/viewer.sh' '--path' '/logs/s.jsonl' '--title' ${word} '--node' '/app/node'"`
+    expect(script('Watcher')).toBe(expected("'Watcher'"))
+    expect(script('x ; new-tab cmd /c calc')).toBe(expected("'x ; new-tab cmd /c calc'"))
+    expect(script('-Path')).toBe(expected("'-Path'"))
+    expect(script('a"b\\c')).toBe(expected("'a\\\"b\\\\c'"))
+    expect(script('Stone\nbeard\u001b]0;x\u0007')).toBe(expected("'Stone beard ]0;x'"))
+  })
+
+  /*
+   * Linux: no terminal is handed a title flag; the title reaches the viewer script as an argv
+   * element after the terminal's own "run this" flag, so `;` and a leading `-` are data. Only the
+   * control characters go, which would otherwise reach the script's OSC title escape.
+   */
+  it('linux: the exact argv every terminal is given', () => {
+    const chain = buildViewerLaunchChain({
+      platform: 'linux',
+      title: 'x ; -e calc\u001b\u0007',
+      viewerScriptPath: '/app/viewer.sh',
+      transcriptPath: '/logs/s.jsonl',
+      nodePath: '/app/node'
+    })
+    const argv = [
+      'sh',
+      '/app/viewer.sh',
+      '--path',
+      '/logs/s.jsonl',
+      '--title',
+      'x ; -e calc',
+      '--node',
+      '/app/node'
+    ]
+    expect(chain).toEqual([
+      { command: 'x-terminal-emulator', args: ['-e', ...argv] },
+      { command: 'gnome-terminal', args: ['--', ...argv] },
+      { command: 'konsole', args: ['-e', ...argv] },
+      { command: 'xfce4-terminal', args: ['-x', ...argv] },
+      { command: 'xterm', args: ['-e', ...argv] }
+    ])
   })
 })
