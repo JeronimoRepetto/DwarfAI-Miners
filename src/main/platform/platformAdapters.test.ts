@@ -159,10 +159,20 @@ describe('createPlatformAdapters — transcript viewer', () => {
 
   it('resolves the POSIX viewer and opens Terminal.app on macOS', async () => {
     const { spawn, commands } = spawnAlways(true)
-    const adapters = createPlatformAdapters(options('darwin', { spawn }))
+    // AMENDED for #635 (was: no launcherFiles): macOS writes a launcher file first, kept in
+    // memory here so the test touches no real disk.
+    const written: string[] = []
+    const launcherFiles = {
+      directory: () => '/tmp',
+      randomHex: () => '0123456789abcdef',
+      write: async (path: string) => void written.push(path),
+      remove: async () => {}
+    }
+    const adapters = createPlatformAdapters(options('darwin', { spawn, launcherFiles }))
     expect(adapters.viewerScriptPath).toBe('/repo/resources/dwarf-feed-viewer.sh')
     expect(await adapters.launchTranscriptViewer('Foreman', '/log.jsonl')).toBe(true)
     expect(commands).toEqual(['osascript'])
+    expect(written).toEqual(['/tmp/dwarfai-viewer-0123456789abcdef.sh'])
   })
 
   it('walks the terminal chain on Linux', async () => {

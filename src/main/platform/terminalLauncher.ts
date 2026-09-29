@@ -1,4 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { posix, win32 } from 'node:path'
 import { currentPlatform, type Platform } from './platform'
 
@@ -21,6 +24,11 @@ import { currentPlatform, type Platform } from './platform'
 export interface ViewerLaunch {
   command: string
   args: string[]
+  /**
+   * A file the candidate needs on disk before it is spawned (#635: the macOS launcher). Written
+   * exclusively first; removed again if the candidate never starts.
+   */
+  file?: { path: string; content: string }
 }
 
 export interface ViewerPathOptions {
@@ -202,19 +210,50 @@ export function quotePosixArgv(argv: string[]): string {
   return argv.map((argument) => `'${argument.replaceAll("'", `'\\''`)}'`).join(' ')
 }
 
-/**
- * macOS: ask Terminal.app to run the viewer in a new window and come forward.
- * `do script` takes a shell command line, so the argv is quoted for the shell
- * first and then escaped for the AppleScript string literal — two layers,
- * because there are two parsers.
+/*
+ * macOS (#635): `do script` TYPES its line into Terminal's default login shell, and that shell need
+ * not be POSIX. In fish `\'` inside single quotes is an escaped quote, so POSIX quoting lets a name
+ * like `\'&calc&\'` run calc; tcsh expands `!` even inside single quotes. So no data rides that
+ * line: the viewer's argv goes into a launcher file that /bin/sh reads, where POSIX quoting is
+ * exact, and the typed line is only `/bin/sh <launcher>`.
+ *
+ * The launcher's path is the one thing typed, so it is held to a fixed alphabet that no shell and
+ * no AppleScript string treats specially: an absolute path of letters, digits, `/`, `.`, `_`, `+`
+ * and `-`. Its name is the app's own (sixteen hex digits); its directory is the temp directory,
+ * which the user can set (TMPDIR) to anything, so one outside the alphabet is replaced by /tmp.
  */
-export function buildDarwinTerminalCommand(argv: string[]): ViewerLaunch {
-  const commandLine = quotePosixArgv(argv).replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+const SAFE_LAUNCHER_PATH = /^\/[A-Za-z0-9/._+-]*$/
+const LAUNCHER_NAME = /^[0-9a-f]{16}$/
+export const DARWIN_LAUNCHER_FALLBACK_DIR = '/tmp'
+
+export function darwinLauncherPath(directory: string, randomHex: string): string {
+  if (!LAUNCHER_NAME.test(randomHex)) throw new Error('launcher name must be 16 hex digits')
+  const trimmed = directory.replace(/\/+$/, '')
+  const safe = SAFE_LAUNCHER_PATH.test(trimmed + '/') ? trimmed : DARWIN_LAUNCHER_FALLBACK_DIR
+  return posix.join(safe, `dwarfai-viewer-${randomHex}.sh`)
+}
+
+/**
+ * The launcher file /bin/sh runs (#635): it removes itself first, so nothing is left on disk once
+ * the viewer starts, then becomes the viewer with `exec`, so the viewer keeps Terminal's TTY as its
+ * stdin, exactly as when the argv was typed.
+ */
+export function buildPosixLauncherScript(argv: string[]): string {
+  return ['#!/bin/sh', 'rm -f -- "$0"', 'exec ' + quotePosixArgv(argv), ''].join('\n')
+}
+
+/**
+ * macOS: ask Terminal.app to run the launcher in a new window and come forward. The typed line is
+ * `/bin/sh <launcher>` and nothing else; a path outside the fixed alphabet is refused rather than
+ * escaped, so it is never typed.
+ */
+export function buildDarwinTerminalCommand(launcherPath: string): ViewerLaunch {
+  if (!SAFE_LAUNCHER_PATH.test(launcherPath)) throw new Error('unsafe launcher path')
   return {
     command: 'osascript',
     args: [
       '-e',
-      `tell application "Terminal" to do script "${commandLine}"`,
+      `tell application "Terminal" to do script "/bin/sh ${launcherPath}"`,
       '-e',
       'tell application "Terminal" to activate'
     ]
@@ -251,6 +290,8 @@ export function buildLinuxTerminalCommand(terminal: string, argv: string[]): Vie
 
 export interface ViewerLaunchOptions extends PosixViewerOptions {
   platform: Platform
+  /** Where the macOS launcher file goes (darwinLauncherPath). Required on macOS, unused elsewhere. */
+  launcherPath?: string
 }
 
 /**
@@ -270,7 +311,13 @@ export function buildViewerLaunchChain(options: ViewerLaunchOptions): ViewerLaun
   }
   const argv = buildPosixViewerArgv(options)
   if (options.platform === 'darwin') {
-    return [buildDarwinTerminalCommand(argv)]
+    if (options.launcherPath === undefined) throw new Error('macOS needs a launcher path')
+    return [
+      {
+        ...buildDarwinTerminalCommand(options.launcherPath),
+        file: { path: options.launcherPath, content: buildPosixLauncherScript(argv) }
+      }
+    ]
   }
   return LINUX_TERMINALS.map((terminal) => buildLinuxTerminalCommand(terminal, argv))
 }
@@ -326,6 +373,25 @@ export interface LaunchTranscriptViewerOptions {
   nodePath?: string
   /** Injected for tests; defaults to node:child_process.spawn. */
   spawn?: SpawnFn
+  /** The macOS launcher file's disk (#635); injected for tests, the real temp directory otherwise. */
+  launcherFiles?: LauncherFiles
+}
+
+/** Where and how the macOS launcher file is written (#635), injected so tests touch no disk. */
+export interface LauncherFiles {
+  directory(): string
+  /** Sixteen lowercase hex digits, the launcher's own name. */
+  randomHex(): string
+  /** Creates the file exclusively, readable by this user only; rejects if it already exists. */
+  write(path: string, content: string): Promise<void>
+  remove(path: string): Promise<void>
+}
+
+const realLauncherFiles: LauncherFiles = {
+  directory: () => tmpdir(),
+  randomHex: () => randomBytes(8).toString('hex'),
+  write: (path, content) => writeFile(path, content, { flag: 'wx', mode: 0o600 }),
+  remove: (path) => rm(path, { force: true })
 }
 
 /**
@@ -336,15 +402,29 @@ export async function launchTranscriptViewer(
   options: LaunchTranscriptViewerOptions
 ): Promise<boolean> {
   const spawnFn = options.spawn ?? realSpawn
+  const platform = options.platform ?? currentPlatform()
+  const files = options.launcherFiles ?? realLauncherFiles
   const chain = buildViewerLaunchChain({
-    platform: options.platform ?? currentPlatform(),
+    platform,
     title: options.dwarfName,
     viewerScriptPath: options.viewerScriptPath,
     transcriptPath: options.transcriptPath,
-    nodePath: options.nodePath ?? process.execPath
+    nodePath: options.nodePath ?? process.execPath,
+    ...(platform === 'darwin'
+      ? { launcherPath: darwinLauncherPath(files.directory(), files.randomHex()) }
+      : {})
   })
   for (const candidate of chain) {
+    if (candidate.file !== undefined) {
+      try {
+        await files.write(candidate.file.path, candidate.file.content)
+      } catch {
+        continue
+      }
+    }
     if (await trySpawn(spawnFn, candidate.command, candidate.args)) return true
+    // It never started, so nothing will run the launcher and remove it.
+    if (candidate.file !== undefined) await files.remove(candidate.file.path).catch(() => {})
   }
   return false
 }

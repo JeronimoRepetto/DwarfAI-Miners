@@ -5,7 +5,10 @@ import {
   buildDarwinTerminalCommand,
   buildFallbackArgs,
   buildLinuxTerminalCommand,
+  buildPosixLauncherScript,
   buildPosixViewerArgv,
+  darwinLauncherPath,
+  DARWIN_LAUNCHER_FALLBACK_DIR,
   buildViewerLaunchChain,
   buildWtArgs,
   displayTitle,
@@ -14,6 +17,7 @@ import {
   quotePosixArgv,
   resolveViewerScriptPath,
   viewerScriptName,
+  type LauncherFiles,
   type SpawnFn,
   type SpawnedProcess
 } from './terminalLauncher'
@@ -167,8 +171,18 @@ describe('quotePosixArgv', () => {
   })
 })
 
+/*
+ * AMENDED for #635 (was: built from the viewer's argv, "carries the shell-quoted argv as the
+ * script to run" and "escapes the shell command line for the AppleScript literal it sits in").
+ * `do script` types its line into Terminal's login shell, which need not be POSIX (fish reads `\'`
+ * inside single quotes as a quote; tcsh expands `!` inside them), so the quoted argv no longer
+ * rides that line at all: it goes into a launcher file (buildPosixLauncherScript, below), and the
+ * line is `/bin/sh <launcher>` in a fixed alphabet that no shell and no AppleScript string treats
+ * specially. The AppleScript escaping those two tests pinned has nothing left to escape; what
+ * replaces them is the fixed-alphabet line and the refusal of any other path.
+ */
 describe('buildDarwinTerminalCommand', () => {
-  const launch = buildDarwinTerminalCommand(['sh', '/app/viewer.sh', '--title', 'Foreman'])
+  const launch = buildDarwinTerminalCommand('/tmp/dwarfai-viewer-0123456789abcdef.sh')
 
   it('asks Terminal.app to run the command and come forward', () => {
     expect(launch.command).toBe('osascript')
@@ -177,15 +191,16 @@ describe('buildDarwinTerminalCommand', () => {
     expect(launch.args[3]).toBe('tell application "Terminal" to activate')
   })
 
-  it('carries the shell-quoted argv as the script to run', () => {
-    expect(launch.args[1]).toContain("'sh' '/app/viewer.sh' '--title' 'Foreman'")
+  it('types only /bin/sh and the launcher path', () => {
+    expect(launch.args[1]).toBe(
+      'tell application "Terminal" to do script "/bin/sh /tmp/dwarfai-viewer-0123456789abcdef.sh"'
+    )
   })
 
-  it('escapes the shell command line for the AppleScript literal it sits in', () => {
-    // Two parsers, two escapes: the shell must see the quotes literally, and
-    // AppleScript must not end its own string early on them.
-    const quoted = buildDarwinTerminalCommand(['echo', 'say "hi"']).args[1] as string
-    expect(quoted).toBe(`tell application "Terminal" to do script "'echo' 'say \\"hi\\"'"`)
+  it('refuses a launcher path any shell or the AppleScript string would read specially', () => {
+    for (const path of ["/tmp/o'neil/x.sh", '/tmp/a b.sh', '/tmp/x!.sh', '/tmp/$x.sh', 'x.sh']) {
+      expect(() => buildDarwinTerminalCommand(path), path).toThrow()
+    }
   })
 })
 
@@ -221,7 +236,12 @@ describe('buildViewerLaunchChain', () => {
   })
 
   it('has one candidate on macOS: Terminal.app through osascript', () => {
-    const chain = buildViewerLaunchChain({ ...options, platform: 'darwin' })
+    // AMENDED for #635 (was: no launcherPath; macOS now runs the viewer through a launcher file).
+    const chain = buildViewerLaunchChain({
+      ...options,
+      platform: 'darwin',
+      launcherPath: '/tmp/dwarfai-viewer-0123456789abcdef.sh'
+    })
     expect(chain.map((launch) => launch.command)).toEqual(['osascript'])
   })
 
@@ -248,6 +268,31 @@ function fakeChild(): {
       unref: () => {}
     },
     emit: (event, error) => listeners.get(event)?.(error)
+  }
+}
+
+/** The macOS launcher file's disk, in memory (#635): what was written, and what was removed. */
+function fakeLauncherFiles(options: { directory?: string; failWrite?: boolean } = {}): {
+  files: LauncherFiles
+  written: Map<string, string>
+  removed: string[]
+} {
+  const written = new Map<string, string>()
+  const removed: string[] = []
+  return {
+    written,
+    removed,
+    files: {
+      directory: () => options.directory ?? '/var/folders/ab/cd_ef0/T/',
+      randomHex: () => '0123456789abcdef',
+      write: async (path, content) => {
+        if (options.failWrite || written.has(path)) throw new Error('EEXIST')
+        written.set(path, content)
+      },
+      remove: async (path) => {
+        removed.push(path)
+      }
+    }
   }
 }
 
@@ -325,13 +370,16 @@ describe('launchTranscriptViewer', () => {
       return fake.proc
     }
 
+    // AMENDED for #635 (was: no launcherFiles): macOS writes a launcher file, faked here so the
+    // test touches no real disk.
     const ok = await launchTranscriptViewer({
       dwarfName: 'Foreman',
       transcriptPath: '/logs/s.jsonl',
       viewerScriptPath: '/app/viewer.sh',
       platform: 'darwin',
       nodePath: '/app/node',
-      spawn
+      spawn,
+      launcherFiles: fakeLauncherFiles().files
     })
 
     expect(ok).toBe(true)
@@ -426,11 +474,21 @@ describe('buildViewerLaunchChain with a custom name as the title (#635)', () => 
     }
   )
 
-  it('keeps the name one literal shell word in the Terminal.app script on darwin', () => {
-    const [launch] = chainFor('darwin', CUSTOM)
+  // AMENDED for #635 (was: the word inside the Terminal.app script, its backslash doubled for the
+  // AppleScript string): the argv now rides the launcher file that /bin/sh reads, not that script.
+  it('keeps the name one literal shell word in the launcher file on darwin', () => {
+    const [launch] = buildViewerLaunchChain({
+      platform: 'darwin',
+      title: CUSTOM,
+      viewerScriptPath: '/app/viewer.sh',
+      transcriptPath: '/logs/s.jsonl',
+      nodePath: '/app/node',
+      launcherPath: '/tmp/dwarfai-viewer-0123456789abcdef.sh'
+    })
     expect(launch!.command).toBe('osascript')
-    // The shell's '\'' for the apostrophe, its backslash doubled for the AppleScript string.
-    expect(launch!.args[1]).toContain(`'--title' 'Old Watcher'\\\\''s' '--node'`)
+    // The shell's '\'' for the apostrophe.
+    expect(launch!.file!.content).toContain(`'--title' 'Old Watcher'\\''s' '--node'`)
+    expect(launch!.args[1]).not.toContain('Watcher')
   })
 })
 
@@ -566,22 +624,27 @@ describe('the console title is display text only (#635)', () => {
    * a leading `-`, `"` and `\` all stay inside one literal word; the viewer script's own parser
    * takes whatever follows `--title` as its value. Only the control characters go.
    */
-  it('darwin: the exact Terminal.app script, the title one literal shell word', () => {
-    const script = (title: string) =>
+  // AMENDED for #635 (was: "the exact Terminal.app script", which carried the quoted argv): the
+  // same words, now in the launcher file /bin/sh reads, with no AppleScript layer around them.
+  it('darwin: the exact exec line of the launcher file, the title one literal shell word', () => {
+    const exec = (title: string) =>
       buildViewerLaunchChain({
         platform: 'darwin',
         title,
         viewerScriptPath: '/app/viewer.sh',
         transcriptPath: '/logs/s.jsonl',
-        nodePath: '/app/node'
-      })[0]!.args[1]
+        nodePath: '/app/node',
+        launcherPath: '/tmp/dwarfai-viewer-0123456789abcdef.sh'
+      })[0]!
+        .file!.content.split('\n')
+        .find((line) => line.startsWith('exec '))
     const expected = (word: string) =>
-      `tell application "Terminal" to do script "'sh' '/app/viewer.sh' '--path' '/logs/s.jsonl' '--title' ${word} '--node' '/app/node'"`
-    expect(script('Watcher')).toBe(expected("'Watcher'"))
-    expect(script('x ; new-tab cmd /c calc')).toBe(expected("'x ; new-tab cmd /c calc'"))
-    expect(script('-Path')).toBe(expected("'-Path'"))
-    expect(script('a"b\\c')).toBe(expected("'a\\\"b\\\\c'"))
-    expect(script('Stone\nbeard\u001b]0;x\u0007')).toBe(expected("'Stone beard ]0;x'"))
+      `exec 'sh' '/app/viewer.sh' '--path' '/logs/s.jsonl' '--title' ${word} '--node' '/app/node'`
+    expect(exec('Watcher')).toBe(expected("'Watcher'"))
+    expect(exec('x ; new-tab cmd /c calc')).toBe(expected("'x ; new-tab cmd /c calc'"))
+    expect(exec('-Path')).toBe(expected("'-Path'"))
+    expect(exec('a"b\\c')).toBe(expected("'a\"b\\c'"))
+    expect(exec('Stone\nbeard\u001b]0;x\u0007')).toBe(expected("'Stone beard ]0;x'"))
   })
 
   /*
@@ -645,5 +708,154 @@ describe('the console title is never empty (#635)', () => {
     expect(linux!.args[linux!.args.indexOf('--title') + 1]).toBe('dwarf')
     const [mac] = buildViewerLaunchChain({ ...options, platform: 'darwin' })
     expect(JSON.stringify(mac)).toContain("'--title' 'dwarf'")
+  })
+})
+
+/*
+ * macOS: no data rides the line `do script` types (#635). That line goes into Terminal's login
+ * shell, which may be fish (where `\'` inside single quotes is an escaped quote, so a name like
+ * `\'&calc&\'` ran calc) or tcsh (which expands `!` inside single quotes). So the viewer's argv
+ * goes into a launcher file that /bin/sh reads, POSIX-quoted, and the typed line is
+ * `/bin/sh <launcher>`: an app-chosen name in a directory checked against a fixed alphabet.
+ */
+describe('the macOS launcher file (#635)', () => {
+  const HOSTILE = ["\\'&calc&\\'", 'Rock!s', '$(calc)', '`calc`', 'x ; calc', "a'b", '-Path']
+  const LAUNCHER = '/tmp/dwarfai-viewer-0123456789abcdef.sh'
+  const chain = (title: string) =>
+    buildViewerLaunchChain({
+      platform: 'darwin',
+      title,
+      viewerScriptPath: '/Applications/DwarfAI Miners.app/Contents/Resources/viewer.sh',
+      transcriptPath: '/logs/s.jsonl',
+      nodePath: '/Applications/DwarfAI Miners.app/Contents/MacOS/DwarfAI Miners',
+      launcherPath: LAUNCHER
+    })
+
+  it('types the same fixed line whatever the name, and none of the name', () => {
+    for (const title of HOSTILE) {
+      const [launch] = chain(title)
+      expect(launch!.args).toEqual([
+        '-e',
+        `tell application "Terminal" to do script "/bin/sh ${LAUNCHER}"`,
+        '-e',
+        'tell application "Terminal" to activate'
+      ])
+      expect(launch!.args[1]).toMatch(
+        /^tell application "Terminal" to do script "[A-Za-z0-9/._ -]+"$/
+      )
+    }
+  })
+
+  it('writes the viewer argv into the launcher, POSIX-quoted, and the launcher removes itself', () => {
+    const [launch] = chain("\\'&calc&\\'")
+    expect(launch!.file).toEqual({
+      path: LAUNCHER,
+      content: [
+        '#!/bin/sh',
+        'rm -f -- "$0"',
+        "exec 'sh' '/Applications/DwarfAI Miners.app/Contents/Resources/viewer.sh' '--path' " +
+          "'/logs/s.jsonl' '--title' '\\'\\''&calc&\\'\\''' '--node' " +
+          "'/Applications/DwarfAI Miners.app/Contents/MacOS/DwarfAI Miners'",
+        ''
+      ].join('\n')
+    })
+  })
+
+  it('builds the launcher script from any argv, each argument one literal word', () => {
+    expect(buildPosixLauncherScript(['sh', "it's", '!x', '$y'])).toBe(
+      "#!/bin/sh\nrm -f -- \"$0\"\nexec 'sh' 'it'\\''s' '!x' '$y'\n"
+    )
+  })
+
+  it('refuses to build a macOS chain with no launcher path', () => {
+    expect(() =>
+      buildViewerLaunchChain({
+        platform: 'darwin',
+        title: 'x',
+        viewerScriptPath: '/app/viewer.sh',
+        transcriptPath: '/logs/s.jsonl',
+        nodePath: '/app/node'
+      })
+    ).toThrow()
+  })
+
+  describe('darwinLauncherPath', () => {
+    it('names the launcher in the temp directory, with an app-chosen name', () => {
+      expect(darwinLauncherPath('/var/folders/ab/cd_ef0+x/T/', '0123456789abcdef')).toBe(
+        '/var/folders/ab/cd_ef0+x/T/dwarfai-viewer-0123456789abcdef.sh'
+      )
+      expect(darwinLauncherPath('/private/tmp', 'ffffffffffffffff')).toBe(
+        '/private/tmp/dwarfai-viewer-ffffffffffffffff.sh'
+      )
+    })
+
+    // TMPDIR is the user's to set: a directory any shell could read specially is never typed.
+    it('falls back to /tmp when the temp directory holds anything outside the fixed alphabet', () => {
+      for (const directory of ["/Users/o'neil/tmp", '/tmp/a b', '/tmp/x!', '/tmp/$x', 'rel/tmp']) {
+        expect(darwinLauncherPath(directory, '0123456789abcdef'), directory).toBe(
+          DARWIN_LAUNCHER_FALLBACK_DIR + '/dwarfai-viewer-0123456789abcdef.sh'
+        )
+      }
+      expect(DARWIN_LAUNCHER_FALLBACK_DIR).toBe('/tmp')
+    })
+
+    it('refuses a name that is not sixteen lowercase hex digits', () => {
+      for (const hex of ['0123', "x'; calc", '0123456789ABCDEF', '0123456789abcdef0']) {
+        expect(() => darwinLauncherPath('/tmp', hex), hex).toThrow()
+      }
+    })
+  })
+
+  describe('launchTranscriptViewer on macOS', () => {
+    const spawning =
+      (outcome: 'spawn' | 'error', seen: string[][] = []): SpawnFn =>
+      (_command, args) => {
+        seen.push(args)
+        const fake = fakeChild()
+        queueMicrotask(() =>
+          outcome === 'spawn' ? fake.emit('spawn') : fake.emit('error', new Error('ENOENT'))
+        )
+        return fake.proc
+      }
+    const launch = (files: LauncherFiles, spawn: SpawnFn) =>
+      launchTranscriptViewer({
+        dwarfName: "\\'&calc&\\'",
+        transcriptPath: '/logs/s.jsonl',
+        viewerScriptPath: '/app/viewer.sh',
+        platform: 'darwin',
+        nodePath: '/app/node',
+        spawn,
+        launcherFiles: files
+      })
+    const PATH = '/var/folders/ab/cd_ef0/T/dwarfai-viewer-0123456789abcdef.sh'
+
+    it('writes the launcher before Terminal.app is asked to run it, and leaves it to remove itself', async () => {
+      const disk = fakeLauncherFiles()
+      const seen: string[][] = []
+      await expect(launch(disk.files, spawning('spawn', seen))).resolves.toBe(true)
+      expect([...disk.written.keys()]).toEqual([PATH])
+      expect(disk.written.get(PATH)).toContain(`'--title' '\\'\\''&calc&\\'\\'''`)
+      expect(seen[0]![1]).toBe(`tell application "Terminal" to do script "/bin/sh ${PATH}"`)
+      expect(disk.removed).toEqual([])
+    })
+
+    it('removes the launcher when osascript never starts', async () => {
+      const disk = fakeLauncherFiles()
+      await expect(launch(disk.files, spawning('error'))).resolves.toBe(false)
+      expect(disk.removed).toEqual([PATH])
+    })
+
+    it('asks Terminal.app for nothing when the launcher cannot be written', async () => {
+      const disk = fakeLauncherFiles({ failWrite: true })
+      const seen: string[][] = []
+      await expect(launch(disk.files, spawning('spawn', seen))).resolves.toBe(false)
+      expect(seen).toEqual([])
+    })
+
+    it('uses /tmp when the temp directory is not in the fixed alphabet', async () => {
+      const disk = fakeLauncherFiles({ directory: '/Users/a b/tmp' })
+      await launch(disk.files, spawning('spawn'))
+      expect([...disk.written.keys()]).toEqual(['/tmp/dwarfai-viewer-0123456789abcdef.sh'])
+    })
   })
 })
