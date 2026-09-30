@@ -2,7 +2,16 @@
 // adapters/fsLike.ts, transplanted as is; the typed half maps OS error codes to `FsError` so no
 // OS error string crosses the port (16 §2.1). `node:fs` lives only under host/platform (R1, R3).
 import { randomUUID } from 'node:crypto'
-import { open, readFile, readdir, rename, stat as fsStat, unlink } from 'node:fs/promises'
+import {
+  appendFile,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  stat as fsStat,
+  unlink
+} from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { parseJsonText } from '../../../contracts/text'
 import type { Result } from '../../kernel/domain/values'
@@ -143,5 +152,31 @@ export class NodeFs implements FileSystem {
       if (created) await unlink(temp).catch(() => undefined)
       return { ok: false, error: fsErrorOf(error) }
     }
+  }
+
+  async appendFile(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
+    // Flag 'a' creates a missing file but never a missing parent (ENOENT → not-found), so a
+    // deleted folder is recreated only by an explicit makeDir (13 FM-108).
+    return settled(() => appendFile(path, data, { flag: 'a' }))
+  }
+
+  async deleteFile(path: string): Promise<Result<void, FsError>> {
+    return settled(() => unlink(path))
+  }
+
+  async makeDir(path: string): Promise<Result<void, FsError>> {
+    return settled(async () => {
+      await mkdir(path, { recursive: true })
+    })
+  }
+}
+
+/** Runs one OS operation and maps its failure to the typed cause. */
+async function settled(operation: () => Promise<void>): Promise<Result<void, FsError>> {
+  try {
+    await operation()
+    return { ok: true, value: undefined }
+  } catch (error) {
+    return { ok: false, error: fsErrorOf(error) }
   }
 }
