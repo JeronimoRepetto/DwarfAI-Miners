@@ -12,7 +12,6 @@ export interface ProcessControl {
   probe(pid: number): Promise<ProcessIdentity | 'absent' | 'unknown'>
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean
   spawn(spec: SpawnSpec): SpawnedProcess
-  // ISSUE-019: declared here, implemented by the adapters with that issue.
   killTree(
     target: ProcessIdentity,
     opts: { graceMs: number; group: 'owned' | 'foreign' }
@@ -42,9 +41,3 @@ export interface SpawnedProcess {
   stderr: Readable | null
   exited: Promise<{ code: number | null; signal: string | null }>
 }
-
-/**
- * The part of the port implemented today (ISSUE-018); `killTree` and `currentBootIdentity` land
- * with ISSUE-019, so no adapter pretends to have them before then.
- */
-export type ProcessProbeAndSpawn = Pick<ProcessControl, 'probe' | 'sameProcess' | 'spawn'>

@@ -1,26 +1,55 @@
-// The production ProcessControl (16 §3 row `ProcessControl`, ADR-014, ADR-015 item 1): probe,
-// sameProcess and a shell-free spawn (ISSUE-018). killTree and currentBootIdentity land with
-// ISSUE-019. Only host/platform/process/** imports node:child_process (R17).
+// The production ProcessControl (16 §3 row `ProcessControl`, ADR-014, ADR-015): probe,
+// sameProcess and a shell-free spawn (ISSUE-018); the identity-checked tree kill and the boot
+// identity (ISSUE-019). Only host/platform/process/** imports node:child_process (R17).
 //
 // Candidates (ISSUE-018): the legacy process probe's per-OS start-time parsing is kept behind the
 // per-OS readers (Linux now reads procfs directly instead of spawning `cat`); its
 // "null for gone and for unreadable alike" answer is replaced by the port's 'absent' / 'unknown'
 // split; the legacy launch runner's spawn is replaced by one plain spawn per SpawnSpec (its
 // detached two-hop console handling and argv builders belong to the drivers, EPIC-09).
+//
+// Candidate (ISSUE-019): the legacy process-end port (`src/main/platform/processEnd.ts`) is
+// replaced. Its argv builders (`taskkill /PID <pid> /T /F`, a positive-pid guard before any group
+// signal) survive as the per-OS sequences under `kill/`, but it signals a bare pid with no identity
+// check, reports success when a command exits 0 instead of when the root's exit is observed, and
+// answers `false` for every Windows observed session (the observed-tree gap of 16 §3).
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import {
   sameProcess,
   type ProbeResult,
   type ProcessIdentity
 } from '../../kernel/domain/processIdentity'
+import type { DiagnosticEntry, DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type {
-  ProcessProbeAndSpawn,
+  EndOutcome,
+  ProcessControl,
   SpawnSpec,
   SpawnedProcess
 } from '../../kernel/ports/processControl'
+import type { Scheduler } from '../../kernel/ports/scheduler'
+import { createDarwinBootSources } from './bootIdentity/darwin'
+import { createLinuxBootSources } from './bootIdentity/linux'
+import { createWin32BootSources } from './bootIdentity/win32'
+import { killForeignTree } from './kill/posixForeign'
+import { killOwnedTree } from './kill/posixOwned'
+import { createSnapshotReader } from './kill/snapshot'
+import {
+  EXIT_POLL_INTERVAL_MS,
+  type KillDeps,
+  type ProcessRow,
+  type RootCheck,
+  type SignalOutcome
+} from './kill/types'
+import { killWin32Tree, taskkillArgs } from './kill/win32'
 import { createDarwinReader } from './probe/darwin'
 import { createLinuxReader } from './probe/linux'
-import type { OsProcessReader, QueryRunner, ReadOutcome } from './probe/types'
+import {
+  windowsSystemTool,
+  type BootSourceReader,
+  type OsProcessReader,
+  type QueryRunner,
+  type ReadOutcome
+} from './probe/types'
 import { createWin32Reader } from './probe/win32'
 
 export type { OsProcessReader, QueryOutcome, QueryRunner, ReadOutcome } from './probe/types'
@@ -69,17 +98,53 @@ export interface NodeProcessControlOptions {
   signalZero?: (pid: number) => void
   /** Node's `spawn`; injected by tests. */
   spawnProcess?: NodeSpawn
+  /** Which OS's kill sequence, listing and boot sources to use; default this process's OS. */
+  platform?: 'win32' | 'darwin' | 'linux'
+  /** `process.kill(pid, signal)`; a negative pid names a process group. Injected by tests. */
+  sendSignal?: (pid: number, signal: 'SIGTERM' | 'SIGKILL') => void
+  /** Runs the kill commands (taskkill on Windows); default the bounded execFile runner. */
+  runCommand?: QueryRunner
+  /** A listing of every process; default the listing of `platform`. */
+  snapshot?: () => Promise<ReadOutcome<readonly ProcessRow[]>>
+  /** The kill waits run on it (16 §2.6); default Node timers. */
+  scheduler?: Scheduler
+  /** The bootTimeMs and logonSessionId sources; default those of `platform` (ADR-015 item 4). */
+  bootSources?: BootSourceReader
+  /** Where read failures and kill leftovers are logged (ADR-026); default nowhere. */
+  diagnostics?: DiagnosticsLog
+  /** The environment System32 tools are found from (`SystemRoot`); default `process.env`. */
+  env?: Readonly<Record<string, string | undefined>>
 }
 
 type Liveness = 'alive' | 'gone' | 'unknown'
+type Platform = 'win32' | 'darwin' | 'linux'
+type BootIdentity = {
+  bootId: string | 'unknown'
+  bootTimeMs: number | 'unknown'
+  logonSessionId: string | 'unknown'
+}
+
+/**
+ * The bound on one taskkill. The package names none; 5 000 ms is what the legacy kill runner gave
+ * each kill command (`processEnd.ts` `runEndCommand`).
+ */
+export const KILL_COMMAND_TIMEOUT_MS = 5_000
 type ExitOutcome = { code: number | null; signal: string | null }
 /** A probe answer and, for `'unknown'`, which read failed and why. */
 type Inspection = { result: ProbeResult; cause?: string }
 
-export class NodeProcessControl implements ProcessProbeAndSpawn {
+export class NodeProcessControl implements ProcessControl {
   private readonly reader: OsProcessReader
   private readonly signalZero: (pid: number) => void
   private readonly spawnProcess: NodeSpawn
+  private readonly sendSignal: (pid: number, signal: 'SIGTERM' | 'SIGKILL') => void
+  private readonly platform: Platform
+  private readonly runCommand: QueryRunner
+  private readonly listProcesses: () => Promise<ReadOutcome<readonly ProcessRow[]>>
+  private readonly scheduler: Scheduler
+  private readonly bootSources: BootSourceReader
+  private readonly diagnostics: DiagnosticsLog
+  private readonly env: Readonly<Record<string, string | undefined>>
   /**
    * The boot id never changes while this process lives. Its read starts when the adapter is built
    * (ADR-015 item 4 source, bounded by BOOT_ID_QUERY_TIMEOUT_MS), so no probe pays for it: a probe
@@ -88,9 +153,20 @@ export class NodeProcessControl implements ProcessProbeAndSpawn {
   private bootRead: Promise<ReadOutcome<string>>
 
   constructor(options: NodeProcessControlOptions = {}) {
-    this.reader = options.reader ?? readerForThisOs()
+    this.platform = options.platform ?? thisPlatform()
+    this.runCommand = options.runCommand ?? createQueryRunner()
+    this.env = options.env ?? process.env
+    this.reader = options.reader ?? readerFor(this.platform, this.runCommand, this.env)
     this.signalZero = options.signalZero ?? ((pid) => process.kill(pid, 0))
     this.spawnProcess = options.spawnProcess ?? spawn
+    this.sendSignal = options.sendSignal ?? ((pid, signal) => process.kill(pid, signal))
+    this.listProcesses =
+      options.snapshot ??
+      createSnapshotReader(this.platform, { runQuery: this.runCommand, env: this.env })
+    this.scheduler = options.scheduler ?? NODE_SCHEDULER
+    this.bootSources =
+      options.bootSources ?? bootSourcesFor(this.platform, this.runCommand, this.env)
+    this.diagnostics = options.diagnostics ?? { record: () => {} }
     this.bootRead = this.readBootId()
   }
 
@@ -144,6 +220,152 @@ export class NodeProcessControl implements ProcessProbeAndSpawn {
     return { identity, stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, exited }
   }
 
+  /**
+   * ADR-014 items 2–4: the root's identity is re-verified before the first signal and before every
+   * escalation (mismatch or absent = `ended`, unreadable = `no-identity`, nothing signalled); the
+   * tree is ended per OS (`kill/`); `ended` only once the root's exit is observed.
+   */
+  killTree(
+    target: ProcessIdentity,
+    opts: { graceMs: number; group: 'owned' | 'foreign' }
+  ): Promise<EndOutcome> {
+    const deps: KillDeps = {
+      target,
+      graceMs: opts.graceMs,
+      checkRoot: () => this.checkRoot(target),
+      snapshot: () => this.snapshot(),
+      waitForExit: (pid, ms) => this.waitForExit(pid, ms),
+      reportSurvivors: (count) =>
+        this.record({ level: 'warn', event: 'terminate.leftover', subsystem: 'kernel', count })
+    }
+    if (this.platform === 'win32') {
+      return killWin32Tree({ ...deps, taskkill: (pid, tree) => this.taskkill(pid, tree) })
+    }
+    const posix = {
+      ...deps,
+      signal: (pid: number, sig: 'SIGTERM' | 'SIGKILL') => this.signal(pid, sig)
+    }
+    return opts.group === 'owned' ? killOwnedTree(posix) : killForeignTree(posix)
+  }
+
+  /**
+   * 16 §3 (AMENDMENT-3): the boot id from the same read the probes use (one derivation, one bound),
+   * the boot instant and the Host's logon session from the ADR-015 item 4 sources of this OS. Each
+   * unreadable field is `'unknown'` and logged; it never rejects.
+   */
+  async currentBootIdentity(): Promise<BootIdentity> {
+    // Three independent reads in parallel: a slow boot-instant query delays nothing else and makes
+    // only its own field 'unknown' (it is never on the probe path).
+    const [bootId, bootTime, logon] = await Promise.all([
+      this.currentBootId(),
+      settle(() => this.bootSources.bootTimeMs()),
+      settle(() => this.bootSources.logonSessionId())
+    ])
+    return {
+      bootId: this.knownOrUnknown('bootId', bootId, (value) => value !== ''),
+      bootTimeMs: this.knownOrUnknown('bootTimeMs', bootTime, Number.isFinite),
+      logonSessionId: this.knownOrUnknown('logonSessionId', logon, (value) => value !== '')
+    }
+  }
+
+  private knownOrUnknown<T extends string | number>(
+    field: keyof BootIdentity,
+    read: ReadOutcome<T>,
+    valid: (value: T) => boolean
+  ): T | 'unknown' {
+    if (read.ok && valid(read.value) && read.value !== 'unknown') return read.value
+    const cause = read.ok ? 'gave an unusable answer' : read.cause
+    this.record({
+      level: 'warn',
+      event: 'process.boot-identity.unknown',
+      subsystem: 'kernel',
+      outcome: 'degraded',
+      causeClass: field,
+      ...errCodeOf(cause)
+    })
+    return 'unknown'
+  }
+
+  private async checkRoot(target: ProcessIdentity): Promise<RootCheck> {
+    const { result } = await this.inspect(target.pid)
+    if (result === 'absent') return 'gone'
+    if (result === 'unknown') return 'unknown'
+    return sameProcess(result, target) ? 'match' : 'gone'
+  }
+
+  private async snapshot(): Promise<readonly ProcessRow[] | null> {
+    const listed = await this.listProcesses().catch(readFailed)
+    if (listed.ok) return listed.value
+    this.record({
+      level: 'warn',
+      event: 'process.snapshot.unreadable',
+      subsystem: 'kernel',
+      outcome: 'degraded',
+      ...errCodeOf(listed.cause)
+    })
+    return null
+  }
+
+  /** Polls the pid's liveness every EXIT_POLL_INTERVAL_MS on the scheduler until gone or `ms`. */
+  private async waitForExit(pid: number, ms: number): Promise<boolean> {
+    let waited = 0
+    for (;;) {
+      if (this.liveness(pid) === 'gone') return true
+      if (waited >= ms) return false
+      const step = Math.min(EXIT_POLL_INTERVAL_MS, ms - waited)
+      await new Promise<void>((resolve) => this.scheduler.after(step, resolve))
+      waited += step
+    }
+  }
+
+  /**
+   * One POSIX signal. Never pid 0 or -1 (the caller's own group, every process the user owns): the
+   * sequences only ever pass a verified positive pid or its negation.
+   */
+  private signal(pid: number, signal: 'SIGTERM' | 'SIGKILL'): SignalOutcome {
+    if (!Number.isSafeInteger(pid) || pid === 0 || pid === -1) return 'failed'
+    try {
+      this.sendSignal(pid, signal)
+      return 'delivered'
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ESRCH') return 'absent'
+      return code === 'EPERM' ? 'denied' : 'failed'
+    }
+  }
+
+  /**
+   * One taskkill from System32 by absolute path. Exit 128 is "no such process". Any other failure
+   * is `denied` when the process refuses even a liveness check (libuv opens it with terminate
+   * rights for that, so EPERM means this user may not end it), otherwise `failed`.
+   */
+  private async taskkill(pid: number, tree: boolean): Promise<SignalOutcome> {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return 'failed'
+    const out = await this.runCommand(
+      windowsSystemTool('taskkill.exe', this.env),
+      taskkillArgs(pid, tree),
+      { timeoutMs: KILL_COMMAND_TIMEOUT_MS }
+    )
+    if (out.ok) return 'delivered'
+    if (out.cause === 'exited with code 128') return 'absent'
+    try {
+      this.signalZero(pid)
+      return 'failed'
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ESRCH') return 'absent'
+      return code === 'EPERM' ? 'denied' : 'failed'
+    }
+  }
+
+  private record(entry: DiagnosticEntry): void {
+    try {
+      this.diagnostics.record(entry)
+    } catch {
+      // DiagnosticsLog never throws into the caller (16 §3); a faulty double must not either.
+    }
+  }
+
   private async inspect(pid: number): Promise<Inspection> {
     // pid 0 and negative pids name process groups for kill(); they are never one process.
     if (!Number.isSafeInteger(pid) || pid <= 0) return { result: 'absent' }
@@ -194,6 +416,37 @@ export class NodeProcessControl implements ProcessProbeAndSpawn {
 }
 
 const EMPTY_BOOT_ID = { ok: false, cause: 'gave an empty answer' } as const
+
+/** Node timers, for the kill waits; a pending wait never keeps the Host alive. */
+const NODE_SCHEDULER: Scheduler = {
+  after(ms, task) {
+    const timer = setTimeout(task, ms)
+    timer.unref()
+    return { cancel: () => clearTimeout(timer) }
+  }
+}
+
+/** Runs one read that may throw or reject, as a ReadOutcome. */
+function settle<T>(read: () => Promise<ReadOutcome<T>>): Promise<ReadOutcome<T>> {
+  try {
+    return read().catch(readFailed)
+  } catch (error) {
+    return Promise.resolve(readFailed(error))
+  }
+}
+
+/**
+ * The errno-like code of a read-failure cause, for the log's `errCode` (ADR-026: never the free
+ * text, which may name a path): "timed out" is ETIMEDOUT, "(ENOENT)" is ENOENT, an exit code is
+ * that number.
+ */
+function errCodeOf(cause: string): { errCode?: string } {
+  if (cause.startsWith('timed out')) return { errCode: 'ETIMEDOUT' }
+  const errno = /\(([A-Z][A-Z0-9_]+)\)/.exec(cause)
+  if (errno !== null) return { errCode: errno[1] as string }
+  const exit = /exited with code (\d+)/.exec(cause)
+  return exit === null ? {} : { errCode: exit[1] as string }
+}
 
 function readFailed(error: unknown): ReadOutcome<never> {
   return { ok: false, cause: `failed (${error instanceof Error ? error.message : String(error)})` }
@@ -253,9 +506,26 @@ function childEnvironment(
   return { ...env, ...extra }
 }
 
-function readerForThisOs(): OsProcessReader {
-  const runQuery = createQueryRunner()
-  if (process.platform === 'win32') return createWin32Reader({ runQuery })
-  if (process.platform === 'darwin') return createDarwinReader({ runQuery })
+function thisPlatform(): Platform {
+  return process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux'
+}
+
+function readerFor(
+  platform: Platform,
+  runQuery: QueryRunner,
+  env: Readonly<Record<string, string | undefined>>
+): OsProcessReader {
+  if (platform === 'win32') return createWin32Reader({ runQuery, env })
+  if (platform === 'darwin') return createDarwinReader({ runQuery })
   return createLinuxReader()
+}
+
+function bootSourcesFor(
+  platform: Platform,
+  runQuery: QueryRunner,
+  env: Readonly<Record<string, string | undefined>>
+): BootSourceReader {
+  if (platform === 'win32') return createWin32BootSources({ runQuery, env })
+  if (platform === 'darwin') return createDarwinBootSources({ runQuery })
+  return createLinuxBootSources()
 }

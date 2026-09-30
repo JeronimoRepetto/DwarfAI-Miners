@@ -1,13 +1,14 @@
 // The ProcessControl conformance suite (16 §3 row `ProcessControl`, 16 §2.8, 17 §1.3): run against
-// FakeProcessControl and NodeProcessControl. It covers probe, sameProcess and spawn (ISSUE-018);
-// killTree and currentBootIdentity join it with ISSUE-019.
+// FakeProcessControl and NodeProcessControl. probe, sameProcess and spawn (ISSUE-018); killTree
+// (ADR-014 items 2–4) and currentBootIdentity (AMENDMENT-3, ADR-015 item 4) (ISSUE-019).
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   PROCESS_START_TOLERANCE_MS,
   matchesRecorded,
+  sameBootField,
   type ProcessIdentity
 } from '../domain/processIdentity'
-import type { ProcessProbeAndSpawn, SpawnSpec, SpawnedProcess } from '../ports/processControl'
+import type { ProcessControl, SpawnSpec, SpawnedProcess } from '../ports/processControl'
 
 /** What a spawned echo target reports it received. */
 export interface EchoedChild {
@@ -15,8 +16,35 @@ export interface EchoedChild {
   env: Readonly<Record<string, string>>
 }
 
+/** One signal the subject saw sent: to one process, to a POSIX process group, or to a whole tree. */
+export interface SentSignal {
+  pid: number
+  signal: 'term' | 'kill'
+  scope: 'process' | 'group' | 'tree'
+}
+
+/** How a root set up for a kill case reacts to being signalled. */
+export interface TreeBehaviour {
+  /** The first signal that ends the root: a catchable one, only an uncatchable one, or none. */
+  rootEndsOn: 'term' | 'kill' | 'never'
+  /** `denied`: every signal to the root is refused as a missing permission (ADR-014 item 8). */
+  access?: 'denied'
+}
+
+/** The subject's processes for the killTree cases: scripted for a fake, stubs for a real OS. */
+export interface KillWorld {
+  /** A live root with one child, both with the identity the subject reads for them. */
+  liveTree(behaviour: TreeBehaviour): Promise<{ root: ProcessIdentity; child: ProcessIdentity }>
+  /** Every signal sent so far, in order, whether or not it was allowed. */
+  signals(): readonly SentSignal[]
+  /** Whether `pid` still runs, as the subject's own processes know it. */
+  isRunning(pid: number): Promise<boolean>
+}
+
 export interface ProcessControlSubject {
-  control: ProcessProbeAndSpawn
+  control: ProcessControl
+  /** The pid of the process the subject's control runs in; its identity is readable. */
+  ownPid: number
   /** A pid that is alive but whose start time this subject cannot read. */
   unreadablePid: number
   /** A pid that no process has. */
@@ -33,9 +61,17 @@ export interface ProcessControlSubject {
   osAddedEnv: readonly string[]
   /** Puts `name=value` in the environment the subject's own process runs with; returns the undo. */
   setParentVariable(name: string, value: string): () => void
+  /** Processes to end, and the signals the control sent them. */
+  kill: KillWorld
+  /** A control of the same kind whose every boot-identity source fails or times out. */
+  failingBootIdentity(): ProcessControl
   /** Releases whatever the subject started. */
   dispose(): Promise<void>
 }
+
+const OWNED = { graceMs: 3_000, group: 'owned' } as const
+const FOREIGN = { graceMs: 3_000, group: 'foreign' } as const
+const BOOT_FIELDS = ['bootId', 'bootTimeMs', 'logonSessionId'] as const
 
 /** Shell metacharacters that a shell would interpret and a shell-free spawn passes verbatim. */
 export const SHELL_METACHARACTER_ARGS: readonly string[] = [
@@ -121,6 +157,137 @@ export function runProcessControlContract(makeSubject: () => ProcessControlSubje
         expect(Object.keys(got).map(upper)).not.toContain('DWARFAI_CONTRACT_PARENT_ONLY')
       } finally {
         undo()
+      }
+    })
+
+    it('[ADR-014, INV-51, FM-066, CH-10] a target whose identity no longer matches is reported ended and nothing is signalled', async () => {
+      const { control, kill } = setUp()
+      const { root, child } = await kill.liveTree({ rootEndsOn: 'term' })
+      const recycled: ProcessIdentity = {
+        ...root,
+        processStartTimeMs: root.processStartTimeMs - PROCESS_START_TOLERANCE_MS - 1
+      }
+
+      for (const opts of [OWNED, FOREIGN]) {
+        expect(await control.killTree(recycled, opts)).toEqual({ kind: 'ended' })
+      }
+      expect(await control.killTree({ ...root, bootId: 'an-earlier-boot' }, OWNED)).toEqual({
+        kind: 'ended'
+      })
+
+      expect(kill.signals()).toEqual([])
+      expect(await kill.isRunning(root.pid)).toBe(true)
+      expect(await kill.isRunning(child.pid)).toBe(true)
+    })
+
+    it("[ADR-014] killTree reports ended only after the root's exit is observed", async () => {
+      const { control, kill } = setUp()
+      const stubborn = await kill.liveTree({ rootEndsOn: 'never' })
+
+      expect(await control.killTree(stubborn.root, OWNED)).toEqual({
+        kind: 'failed',
+        reason: 'still-alive'
+      })
+      expect(await kill.isRunning(stubborn.root.pid)).toBe(true)
+
+      const yielding = await kill.liveTree({ rootEndsOn: 'kill' })
+      expect(await control.killTree(yielding.root, OWNED)).toEqual({ kind: 'ended' })
+      expect(await kill.isRunning(yielding.root.pid)).toBe(false)
+      expect(await kill.isRunning(yielding.child.pid)).toBe(false)
+      expect(
+        kill.signals().some((sent) => sent.pid === yielding.root.pid && sent.signal === 'kill')
+      ).toBe(true)
+    })
+
+    it('[ADR-014] an access-denied end is failed with reason access-denied, never ended', async () => {
+      const { control, kill } = setUp()
+      const { root } = await kill.liveTree({ rootEndsOn: 'term', access: 'denied' })
+
+      for (const opts of [OWNED, FOREIGN]) {
+        expect(await control.killTree(root, opts)).toEqual({
+          kind: 'failed',
+          reason: 'access-denied'
+        })
+      }
+      expect(await kill.isRunning(root.pid)).toBe(true)
+    })
+
+    it('[ADR-014] group foreign never signals the process group', async () => {
+      const { control, kill } = setUp()
+      const { root, child } = await kill.liveTree({ rootEndsOn: 'term' })
+
+      expect(await control.killTree(root, FOREIGN)).toEqual({ kind: 'ended' })
+
+      expect(kill.signals().length).toBeGreaterThan(0)
+      expect(kill.signals().filter((sent) => sent.scope === 'group')).toEqual([])
+      expect(await kill.isRunning(root.pid)).toBe(false)
+      expect(await kill.isRunning(child.pid)).toBe(false)
+    })
+
+    it('[ADR-014, INV-51] a root whose identity cannot be read now is failed no-identity and nothing is signalled', async () => {
+      const { control, kill, unreadablePid } = setUp()
+      const recorded: ProcessIdentity = {
+        pid: unreadablePid,
+        processStartTimeMs: 1_790_000_000_000,
+        bootId: 'recorded-boot'
+      }
+
+      expect(await control.killTree(recorded, OWNED)).toEqual({
+        kind: 'failed',
+        reason: 'no-identity'
+      })
+      expect(kill.signals()).toEqual([])
+    })
+
+    it('[ADR-015] currentBootIdentity resolves with three fields and never rejects, even when every source fails', async () => {
+      const { control, failingBootIdentity } = setUp()
+
+      const working = await control.currentBootIdentity()
+      expect(Object.keys(working).sort()).toEqual([...BOOT_FIELDS].sort())
+      expect(typeof working.bootId).toBe('string')
+      expect(working.bootTimeMs === 'unknown' || Number.isFinite(working.bootTimeMs)).toBe(true)
+      expect(typeof working.logonSessionId).toBe('string')
+
+      await expect(failingBootIdentity().currentBootIdentity()).resolves.toEqual({
+        bootId: 'unknown',
+        bootTimeMs: 'unknown',
+        logonSessionId: 'unknown'
+      })
+    })
+
+    it('[ADR-015] an unknown field never compares equal, not even to another unknown', async () => {
+      const { control, failingBootIdentity } = setUp()
+      const failing = failingBootIdentity()
+      const first = await failing.currentBootIdentity()
+      const second = await failing.currentBootIdentity()
+      const known = await control.currentBootIdentity()
+
+      for (const field of BOOT_FIELDS) {
+        expect({ field, equal: sameBootField(first[field], second[field]) }).toEqual({
+          field,
+          equal: false
+        })
+        expect({ field, equal: sameBootField(known[field], first[field]) }).toEqual({
+          field,
+          equal: false
+        })
+      }
+      expect(known.bootId).not.toBe('unknown')
+      expect(sameBootField(known.bootId, known.bootId)).toBe(true)
+    })
+
+    it('[ADR-015] bootId agrees with probe(own pid).bootId when both are known, and two calls in one boot return equal known values', async () => {
+      const { control, ownPid } = setUp()
+
+      const probed = await control.probe(ownPid)
+      const first = await control.currentBootIdentity()
+      const second = await control.currentBootIdentity()
+
+      expect(typeof probed).toBe('object')
+      expect(first.bootId).toBe((probed as ProcessIdentity).bootId)
+      for (const field of BOOT_FIELDS) {
+        expect(first[field]).not.toBe('unknown')
+        expect(sameBootField(first[field], second[field])).toBe(true)
       }
     })
   })

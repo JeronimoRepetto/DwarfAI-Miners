@@ -2,8 +2,12 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import type { SpawnedProcess } from '../../kernel/ports/processControl'
-import { runProcessControlContract } from '../../kernel/testing/processControl.contract'
+import {
+  runProcessControlContract,
+  type KillWorld
+} from '../../kernel/testing/processControl.contract'
 import {
   NodeProcessControl,
   OS_ADDED_ENV,
@@ -18,6 +22,15 @@ import { createDarwinReader, parseDarwinLstart } from './probe/darwin'
 import { createLinuxReader, parseLinuxStartTime } from './probe/linux'
 import { WIN32_BOOT_ID_KEY, createWin32Reader, filetimeToEpochMs } from './probe/win32'
 import { windowsPowerShell, windowsSystemTool } from './probe/types'
+import { createDarwinBootSources } from './bootIdentity/darwin'
+import { createWin32BootSources } from './bootIdentity/win32'
+import {
+  FAILING_READER,
+  SCRIPTED_BOOT,
+  ScriptedOs,
+  scriptedBootSources,
+  type ScriptedPlatform
+} from './testing/ScriptedOs'
 
 const SLEEPER = fileURLToPath(
   new URL('../../../../fixtures/bin/sleeper/sleeper.mjs', import.meta.url)
@@ -26,6 +39,42 @@ const SLEEPER = fileURLToPath(
 // fit well below it in practice) and still a valid argument for process.kill.
 const ABSENT_PID = 2_147_483_000
 const BOOT = '6f1c2d0e-1b2a-4c3d-9e8f-0a1b2c3d4e5f'
+const OWN_PID = 4_000
+const UNREADABLE_PID = 4_001
+const T0 = 1_790_000_000_000
+const OWNED = { graceMs: 3_000, group: 'owned' } as const
+const FOREIGN = { graceMs: 3_000, group: 'foreign' } as const
+const ROOT = { pid: 100, processStartTimeMs: T0, bootId: SCRIPTED_BOOT }
+
+/** A NodeProcessControl whose every OS primitive is the scripted OS's. */
+function scriptedControl(
+  os: ScriptedOs,
+  diagnostics?: RecordingDiagnosticsLog
+): NodeProcessControl {
+  return new NodeProcessControl({
+    platform: os.platform,
+    reader: os.reader,
+    signalZero: os.signalZero,
+    sendSignal: os.sendSignal,
+    runCommand: os.runCommand,
+    snapshot: os.snapshot,
+    scheduler: os.scheduler,
+    bootSources: scriptedBootSources('working'),
+    ...(diagnostics === undefined ? {} : { diagnostics })
+  })
+}
+
+/** A root at T0 with a child and a grandchild, all in the root's process group. */
+function scriptedTree(
+  platform: ScriptedPlatform,
+  root: { endsOn?: 'term' | 'kill' | 'never'; pgid?: number } = {}
+): ScriptedOs {
+  const os = new ScriptedOs(platform)
+  os.add({ pid: 100, ppid: 1, startTimeMs: T0, ...root })
+  os.add({ pid: 101, ppid: 100, pgid: root.pgid ?? 100, startTimeMs: T0 + 10 })
+  os.add({ pid: 102, ppid: 101, pgid: root.pgid ?? 100, startTimeMs: T0 + 20 })
+  return os
+}
 
 const FAILED = { ok: false, cause: 'failed for the test' } as const
 const outcome = <T>(value: T | null) => (value === null ? FAILED : { ok: true as const, value })
@@ -58,43 +107,77 @@ async function readAll(stream: NodeJS.ReadableStream | null): Promise<string> {
 }
 
 describe('NodeProcessControl', () => {
-  // The real spawn half runs the sleeper stub under node; the probe half reads the start time
-  // through an injected reader that cannot read it, so `unknown` is exercised on a live pid.
-  runProcessControlContract(() => {
-    const control = new NodeProcessControl({ reader: readerOf(null) })
-    return {
-      control,
-      unreadablePid: process.pid,
-      absentPid: ABSENT_PID,
-      echoSpec: (args, env) => ({
-        executable: process.execPath,
-        args: [SLEEPER, 'echo', ...args],
-        env,
-        cwd: dirname(SLEEPER),
-        processGroup: 'inherit',
-        stdio: 'pipe'
-      }),
-      received: async (child: SpawnedProcess) => {
-        const [stdout] = await Promise.all([readAll(child.stdout), child.exited])
-        try {
-          const echoed = JSON.parse(stdout) as { args: string[]; env: Record<string, string> }
-          return { args: echoed.args, env: echoed.env }
-        } catch {
-          // Not the stub's report (for example a shell ran instead): let the assertion show it.
-          return { args: ['<not the echo report>', stdout], env: {} }
-        }
-      },
-      osAddedEnv: OS_ADDED_ENV[process.platform as keyof typeof OS_ADDED_ENV] ?? [],
-      setParentVariable: (name, value) => {
-        const before = process.env[name]
-        process.env[name] = value
-        return () => {
-          if (before === undefined) delete process.env[name]
-          else process.env[name] = before
-        }
-      },
-      dispose: () => Promise.resolve()
-    }
+  // The real spawn half runs the sleeper stub under node; the probe, kill and boot-identity halves
+  // run on a scripted OS (liveness, reads, signals, taskkill, listing, scheduler), once per
+  // platform's kill sequence, so no real process is signalled and no real time passes.
+  describe.each(['linux', 'darwin', 'win32'] as const)('kill sequence of %s', (platform) => {
+    runProcessControlContract(() => {
+      const os = new ScriptedOs(platform)
+      os.add({ pid: OWN_PID, ppid: 1, startTimeMs: 1_789_000_500_000 })
+      os.add({ pid: UNREADABLE_PID, ppid: 1, startTimeMs: 1_789_000_600_000, readable: false })
+      const control = scriptedControl(os)
+      let nextTreePid = 50_000
+      const kill: KillWorld = {
+        liveTree: ({ rootEndsOn, access }) => {
+          const root = { pid: nextTreePid, processStartTimeMs: T0, bootId: SCRIPTED_BOOT }
+          const child = { ...root, pid: nextTreePid + 1, processStartTimeMs: T0 + 5 }
+          nextTreePid += 2
+          os.add({
+            pid: root.pid,
+            ppid: 1,
+            startTimeMs: T0,
+            endsOn: rootEndsOn,
+            denied: access === 'denied'
+          })
+          os.add({ pid: child.pid, ppid: root.pid, pgid: root.pid, startTimeMs: T0 + 5 })
+          return Promise.resolve({ root, child })
+        },
+        signals: () => os.sent,
+        isRunning: (pid) => Promise.resolve(os.isRunning(pid))
+      }
+      return {
+        control,
+        ownPid: OWN_PID,
+        unreadablePid: UNREADABLE_PID,
+        absentPid: ABSENT_PID,
+        kill,
+        failingBootIdentity: () =>
+          new NodeProcessControl({
+            platform,
+            reader: FAILING_READER,
+            signalZero: os.signalZero,
+            bootSources: scriptedBootSources('failing')
+          }),
+        echoSpec: (args, env) => ({
+          executable: process.execPath,
+          args: [SLEEPER, 'echo', ...args],
+          env,
+          cwd: dirname(SLEEPER),
+          processGroup: 'inherit',
+          stdio: 'pipe'
+        }),
+        received: async (child: SpawnedProcess) => {
+          const [stdout] = await Promise.all([readAll(child.stdout), child.exited])
+          try {
+            const echoed = JSON.parse(stdout) as { args: string[]; env: Record<string, string> }
+            return { args: echoed.args, env: echoed.env }
+          } catch {
+            // Not the stub's report (for example a shell ran instead): let the assertion show it.
+            return { args: ['<not the echo report>', stdout], env: {} }
+          }
+        },
+        osAddedEnv: OS_ADDED_ENV[process.platform as keyof typeof OS_ADDED_ENV] ?? [],
+        setParentVariable: (name, value) => {
+          const before = process.env[name]
+          process.env[name] = value
+          return () => {
+            if (before === undefined) delete process.env[name]
+            else process.env[name] = before
+          }
+        },
+        dispose: () => Promise.resolve()
+      }
+    })
   })
 
   describe('probe', () => {
@@ -483,6 +566,236 @@ describe('NodeProcessControl', () => {
         ],
         darwin: ['__CF_USER_TEXT_ENCODING'],
         linux: []
+      })
+    })
+  })
+
+  describe('killTree', () => {
+    it('[ADR-014] Windows: taskkill /PID <root> /T /F from System32 as an argv array, then /PID <survivor> /F for each identity-checked survivor', async () => {
+      const os = scriptedTree('win32')
+      let first = true
+      const control = new NodeProcessControl({
+        platform: 'win32',
+        reader: os.reader,
+        signalZero: os.signalZero,
+        // The grandchild's parent exits just before the kill, so taskkill /T cannot reach it.
+        runCommand: (file, args, options) => {
+          if (first) {
+            first = false
+            os.end(101)
+          }
+          return os.runCommand(file, args, options)
+        },
+        snapshot: os.snapshot,
+        scheduler: os.scheduler,
+        bootSources: scriptedBootSources('working'),
+        env: { SystemRoot: 'C:\\Windows' }
+      })
+
+      expect(await control.killTree(ROOT, OWNED)).toEqual({ kind: 'ended' })
+
+      expect(os.taskkills).toEqual([
+        { file: 'C:\\Windows\\System32\\taskkill.exe', args: ['/PID', '100', '/T', '/F'] },
+        { file: 'C:\\Windows\\System32\\taskkill.exe', args: ['/PID', '102', '/F'] }
+      ])
+      expect([100, 101, 102].map((pid) => os.isRunning(pid))).toEqual([false, false, false])
+    })
+
+    it("[ADR-014] POSIX owned: one SIGTERM to the root's process group, then SIGKILL only to identity-checked survivors, including one that left the group", async () => {
+      const os = scriptedTree('linux', { endsOn: 'kill' })
+      os.add({ pid: 103, ppid: 100, pgid: 999, startTimeMs: T0 + 30, endsOn: 'kill' })
+
+      expect(await scriptedControl(os).killTree(ROOT, OWNED)).toEqual({ kind: 'ended' })
+
+      expect(os.sent).toEqual([
+        { pid: 100, signal: 'term', scope: 'group' },
+        { pid: 103, signal: 'kill', scope: 'process' },
+        { pid: 100, signal: 'kill', scope: 'process' }
+      ])
+      expect(os.isRunning(103)).toBe(false)
+    })
+
+    it('[ADR-014] POSIX: a root that does not lead its own process group is never signalled as a group, even with group owned', async () => {
+      const os = scriptedTree('darwin', { pgid: 1 })
+
+      expect(await scriptedControl(os).killTree(ROOT, OWNED)).toEqual({ kind: 'ended' })
+
+      expect(os.sent.length).toBeGreaterThan(0)
+      expect(os.sent.filter((sent) => sent.scope === 'group')).toEqual([])
+    })
+
+    it('[ADR-014] POSIX foreign: SIGTERM to the leaves first, then the root, never to a group', async () => {
+      const os = scriptedTree('linux')
+
+      expect(await scriptedControl(os).killTree(ROOT, FOREIGN)).toEqual({ kind: 'ended' })
+
+      expect(os.sent).toEqual([
+        { pid: 102, signal: 'term', scope: 'process' },
+        { pid: 101, signal: 'term', scope: 'process' },
+        { pid: 100, signal: 'term', scope: 'process' }
+      ])
+    })
+
+    it('[ADR-014, FM-065] descendants that survive the first step are killed and logged as terminate.leftover, and the outcome stays ended', async () => {
+      const os = scriptedTree('linux')
+      os.add({ pid: 104, ppid: 102, pgid: 555, startTimeMs: T0 + 40, endsOn: 'kill' })
+      const diagnostics = new RecordingDiagnosticsLog()
+
+      expect(await scriptedControl(os, diagnostics).killTree(ROOT, OWNED)).toEqual({
+        kind: 'ended'
+      })
+
+      expect(os.isRunning(104)).toBe(false)
+      expect(diagnostics.byEvent('terminate.leftover')).toEqual([
+        { level: 'warn', event: 'terminate.leftover', subsystem: 'kernel', count: 1 }
+      ])
+    })
+
+    it('[ADR-014, INV-51] the root identity is re-checked before the escalation: a pid reused during the TERM wait is never killed', async () => {
+      const os = scriptedTree('linux', { endsOn: 'never' })
+      os.onSignal = (pid, signal) => {
+        if (pid !== 100 || signal !== 'SIGTERM') return
+        // The root exits and another process gets its pid within the wait.
+        os.end(100)
+        os.add({ pid: 100, ppid: 1, startTimeMs: T0 + 60_000, endsOn: 'never' })
+      }
+
+      expect(await scriptedControl(os).killTree(ROOT, FOREIGN)).toEqual({ kind: 'ended' })
+
+      expect(os.sent.filter((sent) => sent.pid === 100 && sent.signal === 'kill')).toEqual([])
+      expect(os.isRunning(100)).toBe(true)
+    })
+
+    it('[ADR-014] the waits are the 16 §2.6 values: TERM wait graceMs, then KILL wait 2 000 ms, polled at most every 2 s', async () => {
+      const os = scriptedTree('linux', { endsOn: 'never' })
+
+      expect(await scriptedControl(os).killTree(ROOT, OWNED)).toEqual({
+        kind: 'failed',
+        reason: 'still-alive'
+      })
+
+      expect(os.waits.reduce((sum, ms) => sum + ms, 0)).toBe(3_000 + 2_000)
+      expect(Math.max(...os.waits)).toBeLessThanOrEqual(2_000)
+    })
+
+    it('[ADR-014] a process listing that cannot be read still ends the root, never signals a group, and says why in the log', async () => {
+      const os = scriptedTree('linux')
+      const diagnostics = new RecordingDiagnosticsLog()
+      const control = new NodeProcessControl({
+        platform: 'linux',
+        reader: os.reader,
+        signalZero: os.signalZero,
+        sendSignal: os.sendSignal,
+        snapshot: () => Promise.resolve({ ok: false, cause: 'could not read /proc (EACCES)' }),
+        scheduler: os.scheduler,
+        bootSources: scriptedBootSources('working'),
+        diagnostics
+      })
+
+      expect(await control.killTree(ROOT, OWNED)).toEqual({ kind: 'ended' })
+
+      expect(os.sent.filter((sent) => sent.scope === 'group')).toEqual([])
+      expect(diagnostics.byEvent('process.snapshot.unreadable')).toEqual([
+        {
+          level: 'warn',
+          event: 'process.snapshot.unreadable',
+          subsystem: 'kernel',
+          outcome: 'degraded',
+          errCode: 'EACCES'
+        },
+        {
+          level: 'warn',
+          event: 'process.snapshot.unreadable',
+          subsystem: 'kernel',
+          outcome: 'degraded',
+          errCode: 'EACCES'
+        }
+      ])
+    })
+  })
+
+  describe('currentBootIdentity', () => {
+    it('[ADR-015] when every source fails or times out it resolves three unknown fields within the 2 000 ms bound and logs each failure', async () => {
+      const diagnostics = new RecordingDiagnosticsLog()
+      const bounds: number[] = []
+      const slow: QueryRunner = (file, args, options) => {
+        bounds.push(options.timeoutMs)
+        return answeringAfter(2_100, () => '')(file, args, options)
+      }
+      const control = new NodeProcessControl({
+        platform: 'win32',
+        reader: createWin32Reader({ runQuery: slow }),
+        bootSources: createWin32BootSources({ runQuery: slow }),
+        diagnostics
+      })
+
+      expect(await control.currentBootIdentity()).toEqual({
+        bootId: 'unknown',
+        bootTimeMs: 'unknown',
+        logonSessionId: 'unknown'
+      })
+      expect(bounds.length).toBeGreaterThan(0)
+      expect(bounds.every((ms) => ms === BOOT_ID_QUERY_TIMEOUT_MS)).toBe(true)
+      expect(diagnostics.byEvent('process.boot-identity.unknown')).toEqual(
+        ['bootId', 'bootTimeMs', 'logonSessionId'].map((field) => ({
+          level: 'warn',
+          event: 'process.boot-identity.unknown',
+          subsystem: 'kernel',
+          outcome: 'degraded',
+          causeClass: field,
+          errCode: 'ETIMEDOUT'
+        }))
+      )
+    })
+
+    it('[ADR-015] bootId comes from the same read the probes use: one boot-id read serves both', async () => {
+      let reads = 0
+      const reader: OsProcessReader = {
+        startTimeMs: () => Promise.resolve(outcome(1_000)),
+        bootId: () => {
+          reads += 1
+          return Promise.resolve(outcome(BOOT))
+        }
+      }
+      const control = new NodeProcessControl({
+        platform: 'darwin',
+        reader,
+        signalZero: () => {},
+        bootSources: createDarwinBootSources({
+          runQuery: () =>
+            Promise.resolve({ ok: true, stdout: '{ sec = 1790000000, usec = 0 } Sat Aug 29\n' })
+        })
+      })
+
+      const probed = await control.probe(5)
+      const identity = await control.currentBootIdentity()
+
+      expect(probed).toEqual({ pid: 5, processStartTimeMs: 1_000, bootId: BOOT })
+      expect(identity).toEqual({
+        bootId: BOOT,
+        bootTimeMs: 1_790_000_000_000,
+        logonSessionId: 'unknown'
+      })
+      expect(reads).toBe(1)
+    })
+
+    it('[ADR-015] a source that throws is a field unknown, never a rejection', async () => {
+      const control = new NodeProcessControl({
+        platform: 'linux',
+        reader: readerOf(1, BOOT),
+        bootSources: {
+          bootTimeMs: () => Promise.reject(new Error('boom')),
+          logonSessionId: () => {
+            throw new Error('boom')
+          },
+          sources: { bootId: 'x', bootTimeMs: 'x', logonSessionId: 'x' }
+        }
+      })
+
+      expect(await control.currentBootIdentity()).toEqual({
+        bootId: BOOT,
+        bootTimeMs: 'unknown',
+        logonSessionId: 'unknown'
       })
     })
   })
