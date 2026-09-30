@@ -2,7 +2,7 @@
 // legacy `parseWindowsProcessStart` / `filetimeToEpochMs` rule (candidate adapted, ISSUE-018).
 // PowerShell is run as a program with an argv array (never `shell: true`, never `wmic`); only a
 // number is ever interpolated into its script.
-import type { OsProcessReader, QueryRunner } from './types'
+import { parsed, type OsProcessReader, type QueryRunner, type ReadOutcome } from './types'
 
 /** FILETIME counts 100 ns units since 1601-01-01; epoch ms count from 1970-01-01. */
 const FILETIME_EPOCH_OFFSET = 116_444_736_000_000_000n
@@ -23,10 +23,8 @@ export function filetimeToEpochMs(text: string): number | null {
 }
 
 export function createWin32Reader(deps: { runQuery: QueryRunner }): OsProcessReader {
-  const run = async (script: string): Promise<number | null> => {
-    const out = await deps.runQuery(POWERSHELL, [...PS_FLAGS, script])
-    return out === null ? null : filetimeToEpochMs(out)
-  }
+  const run = async (script: string): Promise<ReadOutcome<number>> =>
+    parsed(await deps.runQuery(POWERSHELL, [...PS_FLAGS, script]), filetimeToEpochMs)
   return {
     startTimeMs(pid) {
       return run(`(Get-Process -Id ${Math.trunc(pid)}).StartTime.ToFileTime()`)
@@ -37,7 +35,9 @@ export function createWin32Reader(deps: { runQuery: QueryRunner }): OsProcessRea
       const bootMs = await run(
         '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToFileTime()'
       )
-      return bootMs === null ? null : String(Math.round(bootMs / 1_000) * 1_000)
+      return bootMs.ok
+        ? { ok: true, value: String(Math.round(bootMs.value / 1_000) * 1_000) }
+        : bootMs
     }
   }
 }

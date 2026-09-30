@@ -1,19 +1,37 @@
 // Shared shapes of the per-OS start-time readers (R18: OS branching only under host/platform).
 
+/**
+ * One read of an OS fact, or why it could not be read. The cause is a short phrase that reads
+ * after "<what> read", e.g. "timed out after 5000 ms", so an `'unknown'` probe can say why.
+ */
+export type ReadOutcome<T> = { ok: true; value: T } | { ok: false; cause: string }
+
 /** What one OS can tell about a pid's start and about the current boot. */
 export interface OsProcessReader {
-  /** Epoch ms the process was created, or null when it cannot be read (gone, denied, garbled). */
-  startTimeMs(pid: number): Promise<number | null>
-  /** The current boot's id (ADR-015 item 4 derivation), or null when it cannot be read. */
-  bootId(): Promise<string | null>
+  /** Epoch ms the process was created. */
+  startTimeMs(pid: number): Promise<ReadOutcome<number>>
+  /** The current boot's id (ADR-015 item 4 derivation). */
+  bootId(): Promise<ReadOutcome<string>>
 }
 
-/**
- * Runs one OS query as an argv array, never through a shell, bounded in time. Resolves its stdout,
- * or null when the query failed, timed out or exited non-zero.
- */
+/** A query's stdout on a zero exit, or why it gave none (timed out, exited non-zero, not started). */
+export type QueryOutcome = { ok: true; stdout: string } | { ok: false; cause: string }
+
+/** Runs one OS query as an argv array, never through a shell, bounded in time. */
 export type QueryRunner = (
   file: string,
   args: readonly string[],
   env?: Record<string, string>
-) => Promise<string | null>
+) => Promise<QueryOutcome>
+
+export const UNPARSEABLE = { ok: false, cause: 'gave an unparseable answer' } as const
+
+/** Maps a query outcome through a parser; a parser's null is an unparseable answer. */
+export function parsed<T>(
+  outcome: QueryOutcome,
+  parse: (stdout: string) => T | null
+): ReadOutcome<T> {
+  if (!outcome.ok) return outcome
+  const value = parse(outcome.stdout)
+  return value === null ? UNPARSEABLE : { ok: true, value }
+}

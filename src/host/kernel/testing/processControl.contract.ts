@@ -26,10 +26,11 @@ export interface ProcessControlSubject {
   /** The argv and environment the echo target received, once it has run. */
   received(child: SpawnedProcess): Promise<EchoedChild>
   /**
-   * Variables the OS itself puts into every child environment whatever the spec says (on Windows,
-   * libuv's required list); names only. Empty where the OS adds none.
+   * Names the OS or its runtime puts into a child's environment whatever the spec says, each with
+   * a primary source in the adapter (Windows: libuv's required list; macOS: CoreFoundation's
+   * `__CF_USER_TEXT_ENCODING`). Only these may appear beyond the spec; empty for the fake.
    */
-  osRequiredEnv: readonly string[]
+  osAddedEnv: readonly string[]
   /** Puts `name=value` in the environment the subject's own process runs with; returns the undo. */
   setParentVariable(name: string, value: string): () => void
   /** Releases whatever the subject started. */
@@ -107,7 +108,7 @@ export function runProcessControlContract(makeSubject: () => ProcessControlSubje
     })
 
     it('[INV-59] spawn passes only the env given in the spec', async () => {
-      const { control, echoSpec, received, osRequiredEnv, setParentVariable } = setUp()
+      const { control, echoSpec, received, osAddedEnv, setParentVariable } = setUp()
       const undo = setParentVariable('DWARFAI_CONTRACT_PARENT_ONLY', 'must-not-arrive')
       const env = { DWARFAI_SPEC_VAR: 'spec value; & | $(x)', SECOND_SPEC_VAR: '2' }
       try {
@@ -115,7 +116,7 @@ export function runProcessControlContract(makeSubject: () => ProcessControlSubje
         const got = (await received(child)).env
 
         expect(got).toMatchObject(env)
-        const allowed = new Set([...Object.keys(env), ...osRequiredEnv].map(upper))
+        const allowed = new Set([...Object.keys(env), ...osAddedEnv].map(upper))
         expect(Object.keys(got).filter((name) => !allowed.has(upper(name)))).toEqual([])
         expect(Object.keys(got).map(upper)).not.toContain('DWARFAI_CONTRACT_PARENT_ONLY')
       } finally {

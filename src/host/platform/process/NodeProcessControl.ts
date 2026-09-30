@@ -20,10 +20,10 @@ import type {
 } from '../../kernel/ports/processControl'
 import { createDarwinReader } from './probe/darwin'
 import { createLinuxReader } from './probe/linux'
-import type { OsProcessReader, QueryRunner } from './probe/types'
+import type { OsProcessReader, QueryRunner, ReadOutcome } from './probe/types'
 import { createWin32Reader } from './probe/win32'
 
-export type { OsProcessReader, QueryRunner } from './probe/types'
+export type { OsProcessReader, QueryOutcome, QueryRunner, ReadOutcome } from './probe/types'
 
 /** Node's `spawn` as the adapter calls it; injected by tests to see the exact options. */
 export type NodeSpawn = (
@@ -33,29 +33,42 @@ export type NodeSpawn = (
 ) => ChildProcess
 
 /**
- * The bound on every OS query of a probe: the 16 §2.6 boot-identity read timeout, 2 000 ms, the
- * one per-OS-query timeout the package names. A timed-out query reads as no answer ('unknown').
+ * The bound on each OS query of a probe. The package names no probe timeout (16 §2.6 lists the
+ * boot-identity read of `currentBootIdentity`, 2 000 ms, which stays that method's, ISSUE-019).
+ * 5 000 ms is the bound the legacy probe ran with in production (`processProbe.ts`
+ * `runProbeCommand`); 2 000 ms left no room for a cold PowerShell start on a CI runner. A query
+ * that outlives it reads as no answer, so the probe says `'unknown'` — never the same process.
  */
-export const PROBE_QUERY_TIMEOUT_MS = 2_000
+export const PROBE_QUERY_TIMEOUT_MS = 5_000
 
 /**
- * The variables libuv copies from the parent into every Windows child environment that lacks them
- * (`required_vars` of libuv `src/win/process.c`), whatever the spec says. Windows programs need
- * them to start; none carries a DwarfAI token or secret (06 INV-59). Other OSes add nothing.
+ * Environment names the OS or its runtime puts into a child whatever the spec says; the contract
+ * allows exactly these beyond the spec (06 INV-59 still holds: none carries a DwarfAI token).
+ * - win32: libuv copies these from the parent into every child environment that lacks them
+ *   (`required_vars` in libuv `src/win/process.c`); Windows programs need them to start.
+ * - darwin: CoreFoundation sets `__CF_USER_TEXT_ENCODING` in the child's own environment when it
+ *   loads and finds it missing (Apple CF `CFStringEncodings.c` `_CFStringGetUserDefaultEncoding`
+ *   calls `setenv(__kCFUserEncodingEnvVariableName, …)`; `CFStringDefaultEncoding.h` defines that
+ *   name as "__CF_USER_TEXT_ENCODING"). It is the user's text encoding, not inherited data.
+ * - linux: nothing.
  */
-export const WIN32_REQUIRED_ENV: readonly string[] = [
-  'HOMEDRIVE',
-  'HOMEPATH',
-  'LOGONSERVER',
-  'PATH',
-  'SYSTEMDRIVE',
-  'SYSTEMROOT',
-  'TEMP',
-  'USERDOMAIN',
-  'USERNAME',
-  'USERPROFILE',
-  'WINDIR'
-]
+export const OS_ADDED_ENV: Readonly<Record<'win32' | 'darwin' | 'linux', readonly string[]>> = {
+  win32: [
+    'HOMEDRIVE',
+    'HOMEPATH',
+    'LOGONSERVER',
+    'PATH',
+    'SYSTEMDRIVE',
+    'SYSTEMROOT',
+    'TEMP',
+    'USERDOMAIN',
+    'USERNAME',
+    'USERPROFILE',
+    'WINDIR'
+  ],
+  darwin: ['__CF_USER_TEXT_ENCODING'],
+  linux: []
+}
 
 export interface NodeProcessControlOptions {
   /** The per-OS start-time and boot-id reader; default the reader of this OS. */
@@ -68,35 +81,28 @@ export interface NodeProcessControlOptions {
 
 type Liveness = 'alive' | 'gone' | 'unknown'
 type ExitOutcome = { code: number | null; signal: string | null }
+/** A probe answer and, for `'unknown'`, which read failed and why. */
+type Inspection = { result: ProbeResult; cause?: string }
 
 export class NodeProcessControl implements ProcessProbeAndSpawn {
   private readonly reader: OsProcessReader
   private readonly signalZero: (pid: number) => void
   private readonly spawnProcess: NodeSpawn
-  /** The boot id never changes while this process lives; a failed read is retried next time. */
-  private bootId: string | null = null
+  /**
+   * The boot id never changes while this process lives. Its read starts when the adapter is built
+   * (ADR-015 item 4 source), so no probe pays for it; a failed read is retried once per probe.
+   */
+  private bootRead: Promise<ReadOutcome<string>>
 
   constructor(options: NodeProcessControlOptions = {}) {
     this.reader = options.reader ?? readerForThisOs()
     this.signalZero = options.signalZero ?? ((pid) => process.kill(pid, 0))
     this.spawnProcess = options.spawnProcess ?? spawn
+    this.bootRead = this.readBootId()
   }
 
   async probe(pid: number): Promise<ProbeResult> {
-    // pid 0 and negative pids name process groups for kill(); they are never one process.
-    if (!Number.isSafeInteger(pid) || pid <= 0) return 'absent'
-    const before = this.liveness(pid)
-    if (before !== 'alive') return before === 'gone' ? 'absent' : 'unknown'
-    const [startTimeMs, bootId] = await Promise.all([
-      this.reader.startTimeMs(pid).catch(() => null),
-      this.readBootId()
-    ])
-    if (startTimeMs === null || !Number.isFinite(startTimeMs)) {
-      // The process may have ended between the two reads; otherwise there is no evidence.
-      return this.liveness(pid) === 'gone' ? 'absent' : 'unknown'
-    }
-    if (bootId === null) return 'unknown'
-    return { pid, processStartTimeMs: startTimeMs, bootId }
+    return (await this.inspect(pid)).result
   }
 
   sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {
@@ -132,16 +138,37 @@ export class NodeProcessControl implements ProcessProbeAndSpawn {
       started.catch(reject)
     })
     const identity = started.then(async (pid) => {
-      const probed = await this.probe(pid)
-      if (typeof probed === 'string') {
-        throw new Error(`the identity of spawned pid ${pid} could not be read: ${probed}`)
+      const { result, cause } = await this.inspect(pid)
+      if (typeof result === 'string') {
+        const why = cause === undefined ? '' : ` (${cause})`
+        throw new Error(`the identity of spawned pid ${pid} could not be read: ${result}${why}`)
       }
-      return probed
+      return result
     })
     // A caller that never awaits one of them must not see an unhandled rejection.
     identity.catch(() => {})
     exited.catch(() => {})
     return { identity, stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, exited }
+  }
+
+  private async inspect(pid: number): Promise<Inspection> {
+    // pid 0 and negative pids name process groups for kill(); they are never one process.
+    if (!Number.isSafeInteger(pid) || pid <= 0) return { result: 'absent' }
+    const before = this.liveness(pid)
+    if (before === 'gone') return { result: 'absent' }
+    if (before === 'unknown') return { result: 'unknown', cause: 'liveness check failed' }
+    const [startTime, bootId] = await Promise.all([
+      this.reader.startTimeMs(pid).catch(readFailed),
+      this.currentBootId()
+    ])
+    if (!startTime.ok || !Number.isFinite(startTime.value)) {
+      // The process may have ended between the two reads; otherwise there is no evidence.
+      if (this.liveness(pid) === 'gone') return { result: 'absent' }
+      const cause = startTime.ok ? 'gave an unparseable answer' : startTime.cause
+      return { result: 'unknown', cause: `start-time read ${cause}` }
+    }
+    if (!bootId.ok) return { result: 'unknown', cause: `boot-id read ${bootId.cause}` }
+    return { result: { pid, processStartTimeMs: startTime.value, bootId: bootId.value } }
   }
 
   private liveness(pid: number): Liveness {
@@ -156,12 +183,27 @@ export class NodeProcessControl implements ProcessProbeAndSpawn {
     }
   }
 
-  private async readBootId(): Promise<string | null> {
-    if (this.bootId !== null) return this.bootId
-    const read = await this.reader.bootId().catch(() => null)
-    if (read !== null && read !== '') this.bootId = read
-    return this.bootId
+  /** The boot id read started at construction; one fresh read when that (or the last) failed. */
+  private async currentBootId(): Promise<ReadOutcome<string>> {
+    const pending = this.bootRead
+    const read = await pending
+    if (read.ok) return read
+    if (this.bootRead === pending) this.bootRead = this.readBootId()
+    return this.bootRead
   }
+
+  private readBootId(): Promise<ReadOutcome<string>> {
+    return this.reader
+      .bootId()
+      .then((read): ReadOutcome<string> => (read.ok && read.value === '' ? EMPTY_BOOT_ID : read))
+      .catch(readFailed)
+  }
+}
+
+const EMPTY_BOOT_ID = { ok: false, cause: 'gave an empty answer' } as const
+
+function readFailed(error: unknown): ReadOutcome<never> {
+  return { ok: false, cause: `failed (${error instanceof Error ? error.message : String(error)})` }
 }
 
 function notStarted(error: unknown): SpawnedProcess {
@@ -170,24 +212,38 @@ function notStarted(error: unknown): SpawnedProcess {
   return { identity: failed, stdin: null, stdout: null, stderr: null, exited: failed }
 }
 
-/** One bounded OS query, argv array, no shell; stdout on a zero exit, else null. */
-const runQuery: QueryRunner = (file, args, env) =>
-  new Promise((resolve) => {
-    execFile(
-      file,
-      [...args],
-      {
-        timeout: PROBE_QUERY_TIMEOUT_MS,
-        windowsHide: true,
-        shell: false,
-        encoding: 'utf8',
-        ...(env === undefined ? {} : { env: { ...process.env, ...env } })
-      },
-      (error, stdout) => resolve(error === null ? stdout : null)
-    )
-  })
+/**
+ * One bounded OS query per call: argv array, no shell, killed at `timeoutMs`. Resolves the stdout
+ * of a zero exit, or why there is none: "timed out after <ms> ms", "exited with code <n>",
+ * "could not start (<errno>)".
+ */
+export function createQueryRunner(timeoutMs: number): QueryRunner {
+  return (file, args, env) =>
+    new Promise((resolve) => {
+      execFile(
+        file,
+        [...args],
+        {
+          timeout: timeoutMs,
+          windowsHide: true,
+          shell: false,
+          encoding: 'utf8',
+          ...(env === undefined ? {} : { env: { ...process.env, ...env } })
+        },
+        (error, stdout) => {
+          if (error === null) resolve({ ok: true, stdout })
+          else if (error.killed === true)
+            resolve({ ok: false, cause: `timed out after ${timeoutMs} ms` })
+          else if (typeof error.code === 'number')
+            resolve({ ok: false, cause: `exited with code ${error.code}` })
+          else resolve({ ok: false, cause: `could not start (${error.code ?? error.message})` })
+        }
+      )
+    })
+}
 
 function readerForThisOs(): OsProcessReader {
+  const runQuery = createQueryRunner(PROBE_QUERY_TIMEOUT_MS)
   if (process.platform === 'win32') return createWin32Reader({ runQuery })
   if (process.platform === 'darwin') return createDarwinReader({ runQuery })
   return createLinuxReader()

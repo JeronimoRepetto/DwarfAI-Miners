@@ -2,7 +2,7 @@
 // files; no process is spawned. Kept from the legacy `parseLinuxProcessStart` rule (candidate
 // adapted, ISSUE-018), which read the same two files through `cat`.
 import { readFile } from 'node:fs/promises'
-import type { OsProcessReader } from './types'
+import { UNPARSEABLE, type OsProcessReader, type ReadOutcome } from './types'
 
 const USER_HZ_MS = 10 // USER_HZ is fixed at 100 by the kernel ABI whatever CONFIG_HZ is
 
@@ -31,15 +31,27 @@ export interface LinuxReaderDeps {
 
 export function createLinuxReader(deps: LinuxReaderDeps = {}): OsProcessReader {
   const readText = deps.readText ?? ((path: string) => readFile(path, 'utf8'))
-  const read = (path: string): Promise<string | null> => readText(path).catch(() => null)
+  const read = (path: string): Promise<ReadOutcome<string>> =>
+    readText(path).then(
+      (value) => ({ ok: true, value }),
+      (error: unknown) => ({
+        ok: false,
+        cause: `could not read ${path} (${(error as NodeJS.ErrnoException).code ?? 'error'})`
+      })
+    )
   return {
     async startTimeMs(pid) {
       const [stat, procStat] = await Promise.all([read(`/proc/${pid}/stat`), read('/proc/stat')])
-      return stat === null || procStat === null ? null : parseLinuxStartTime(stat, procStat)
+      if (!stat.ok) return stat
+      if (!procStat.ok) return procStat
+      const value = parseLinuxStartTime(stat.value, procStat.value)
+      return value === null ? UNPARSEABLE : { ok: true, value }
     },
     async bootId() {
-      const id = (await read('/proc/sys/kernel/random/boot_id'))?.trim() ?? ''
-      return id === '' ? null : id
+      const bootIdFile = await read('/proc/sys/kernel/random/boot_id')
+      if (!bootIdFile.ok) return bootIdFile
+      const id = bootIdFile.value.trim()
+      return id === '' ? UNPARSEABLE : { ok: true, value: id }
     }
   }
 }

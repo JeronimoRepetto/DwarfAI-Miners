@@ -27,7 +27,7 @@ describe('FakeProcessControl', () => {
         if (last === undefined) throw new Error('nothing was spawned')
         return Promise.resolve({ args: last.args, env: last.env })
       },
-      osRequiredEnv: [],
+      osAddedEnv: [],
       // The fake has no environment of its own to leak: every child gets exactly the spec's env.
       setParentVariable: () => () => {},
       dispose: () => Promise.resolve()
