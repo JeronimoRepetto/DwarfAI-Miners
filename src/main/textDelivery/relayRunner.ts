@@ -39,6 +39,8 @@ export interface RelayInvocation {
 export interface RelayResult {
   exitCode: number
   timedOut: boolean
+  /** The courier's stdout, when the spawn reported it. */
+  stdout?: string
 }
 
 /**
@@ -86,8 +88,10 @@ export type RelayRunner = (invocation: RelayInvocation) => Promise<RelayResult>
 
 /**
  * The slice of the spawned child this runner touches (#437) — its stdin, and
- * nothing else. `execFile` reads stdout and stderr for us, and the relay reads
- * neither: its verdict is the exit code.
+ * nothing else. `execFile` collects stdout for us and hands it to the callback;
+ * the relay reads that, and only that (stderr is ignored), because the exit
+ * code alone cannot say a courier found no session: it prints FAILED and still
+ * exits 0 (see `reportsFailed`).
  */
 export interface RelayChild {
   stdin: {
@@ -111,12 +115,15 @@ export type RelayExecFile = (
     windowsHide: boolean
     maxBuffer: number
   },
-  callback: (error: (Error & { killed?: boolean; code?: number | string }) | null) => void
+  callback: (
+    error: (Error & { killed?: boolean; code?: number | string }) | null,
+    stdout?: string
+  ) => void
 ) => RelayChild
 
 /** The real one. Node's own `execFile` satisfies `RelayExecFile` through this. */
 const nodeExecFile: RelayExecFile = (command, args, options, callback) =>
-  execFile(command, [...args], options, (error) => callback(error))
+  execFile(command, [...args], options, (error, stdout) => callback(error, stdout))
 
 /**
  * Run one relay turn, with the instruction on the child's stdin (#437).
@@ -144,9 +151,9 @@ export function runRelayProcess(
         windowsHide: true,
         maxBuffer: 1024 * 1024
       },
-      (error) => {
+      (error, stdout) => {
         if (error === null) {
-          resolve({ exitCode: 0, timedOut: false })
+          resolve({ exitCode: 0, timedOut: false, stdout })
           return
         }
         // execFile reports a timeout kill through `killed`, with no exit code.
@@ -168,6 +175,23 @@ export function runRelayProcess(
     child.stdin?.on('error', () => {})
     child.stdin?.end(invocation.instruction, 'utf8')
   })
+}
+
+/**
+ * Whether the courier's final verdict is FAILED: the last non-empty stdout
+ * line, trimmed, is `FAILED`. The instruction tells the courier to print it
+ * when ListAgents shows no session with that name, and that turn exits 0.
+ *
+ * Deliberately narrow, so a success is never turned into a failure: only the
+ * last line counts (an earlier FAILED the courier recovered from does not),
+ * and the whole line must be the word, not a sentence containing it. One
+ * trailing period is tolerated because a model often punctuates a bare word;
+ * missing it would silently report an unsent message as delivered.
+ */
+function reportsFailed(stdout: string | undefined): boolean {
+  const lines = (stdout ?? '').split(/\r?\n/).map((line) => line.trim())
+  const verdict = lines.filter((line) => line !== '').pop()
+  return verdict === 'FAILED' || verdict === 'FAILED.'
 }
 
 export interface RelayDeliveryOptions {
@@ -230,6 +254,15 @@ export async function deliverViaRelay(options: RelayDeliveryOptions): Promise<Te
       return {
         delivered: false,
         error: `The relay could not deliver the message (exit ${result.exitCode}).`
+      }
+    }
+    if (reportsFailed(result.stdout)) {
+      // Exit 0 with the courier's own FAILED verdict: no session had that name,
+      // so nothing was sent. Not `neverStarted` — the turn did run — and not
+      // `unconfirmed`, because the courier said it did not deliver.
+      return {
+        delivered: false,
+        error: 'The relay could not deliver the message (no session with that name).'
       }
     }
     return { delivered: true }

@@ -25,7 +25,7 @@ import {
 /** A recording `execFile` that never starts a process. */
 function fakeExecFile(
   settle: (
-    callback: (error: (Error & { killed?: boolean; code?: number }) | null) => void
+    callback: (error: (Error & { killed?: boolean; code?: number }) | null, stdout?: string) => void
   ) => void = (callback) => callback(null)
 ) {
   const stdinEnd = vi.fn()
@@ -171,6 +171,15 @@ describe('runRelayProcess', () => {
     })
   })
 
+  it('carries the courier stdout out of a clean turn', async () => {
+    const fake = fakeExecFile((callback) => callback(null, 'FAILED\n'))
+    await expect(runRelayProcess({ ...invocation }, fake.execFile)).resolves.toEqual({
+      exitCode: 0,
+      timedOut: false,
+      stdout: 'FAILED\n'
+    })
+  })
+
   it('rejects when the binary could not be started at all', async () => {
     const fake = fakeExecFile((callback) => callback(new Error('ENOENT')))
     await expect(runRelayProcess({ ...invocation }, fake.execFile)).rejects.toThrow('ENOENT')
@@ -264,6 +273,75 @@ describe('deliverViaRelay', () => {
     await expect(deliverViaRelay(options(run))).resolves.toMatchObject({
       delivered: false,
       neverStarted: true
+    })
+  })
+
+  // The courier is told to print FAILED when ListAgents shows no such session,
+  // and it still exits 0: the exit code alone called that delivered.
+  describe('a courier that exits 0 but reports FAILED', () => {
+    const exitedWith = (stdout: string | undefined) =>
+      vi.fn<RelayRunner>().mockResolvedValue({ exitCode: 0, timedOut: false, stdout })
+
+    it('is not delivered, and says why without echoing the message', async () => {
+      const outcome = await deliverViaRelay({
+        ...options(exitedWith('FAILED')),
+        text: 'my-secret-payload'
+      })
+      expect(outcome.delivered).toBe(false)
+      expect(outcome.error).toBe(
+        'The relay could not deliver the message (no session with that name).'
+      )
+      expect(outcome.error).not.toContain('my-secret-payload')
+      expect(outcome.neverStarted).toBeUndefined()
+      expect(outcome.unconfirmed).toBeUndefined()
+    })
+
+    it('reads FAILED as the last non-empty line, trimmed, after other words', async () => {
+      const outcome = await deliverViaRelay(
+        options(exitedWith('Looking for the session.\r\n  FAILED  \r\n\n'))
+      )
+      expect(outcome.delivered).toBe(false)
+    })
+
+    it('tolerates a trailing period the model may add', async () => {
+      const outcome = await deliverViaRelay(options(exitedWith('FAILED.\n')))
+      expect(outcome.delivered).toBe(false)
+    })
+
+    it('still counts DELIVERED as delivered', async () => {
+      await expect(deliverViaRelay(options(exitedWith('DELIVERED\n')))).resolves.toEqual({
+        delivered: true
+      })
+    })
+
+    it('counts a success with extra words as delivered, not requiring DELIVERED', async () => {
+      await expect(deliverViaRelay(options(exitedWith('Sent it. All done.\n')))).resolves.toEqual({
+        delivered: true
+      })
+    })
+
+    it('does not read FAILED from earlier lines or from inside a sentence', async () => {
+      await expect(
+        deliverViaRelay(options(exitedWith('FAILED once, retried\nDELIVERED\n')))
+      ).resolves.toEqual({ delivered: true })
+      await expect(deliverViaRelay(options(exitedWith('The send FAILED')))).resolves.toEqual({
+        delivered: true
+      })
+    })
+
+    it('treats missing or empty stdout as delivered, as before', async () => {
+      await expect(deliverViaRelay(options(exitedWith(undefined)))).resolves.toEqual({
+        delivered: true
+      })
+      await expect(deliverViaRelay(options(exitedWith('')))).resolves.toEqual({ delivered: true })
+    })
+
+    it('keeps a non-zero exit its own failure even when stdout says FAILED', async () => {
+      const run = vi
+        .fn<RelayRunner>()
+        .mockResolvedValue({ exitCode: 2, timedOut: false, stdout: 'FAILED' })
+      const outcome = await deliverViaRelay(options(run))
+      expect(outcome.error).toBe('The relay could not deliver the message (exit 2).')
     })
   })
 
