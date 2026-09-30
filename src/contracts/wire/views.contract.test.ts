@@ -3,13 +3,17 @@ import type { z } from 'zod'
 import {
   activitySummarySchema,
   activityWireSchema,
+  askIdSchema,
   askRecordSchema,
   attachmentMetaSchema,
   deliverySchema,
   dwarfNameWireSchema,
+  dwarfIdSchema,
   dwarfWorkplaceSchema,
   feedPageRequestSchema,
   feedPageSchema,
+  folderPathSchema,
+  hostEpochSchema,
   hostPreferencesSchema,
   hostRecoveryReportSchema,
   hostRecoveryReportViewSchema,
@@ -17,9 +21,12 @@ import {
   integrationSettingSchema,
   launchFailureSchema,
   launchWireSchema,
+  launchIdSchema,
   materialAmountSchema,
   messageViewSchema,
+  messageIdSchema,
   mineHistoryViewSchema,
+  mineIdSchema,
   mineNameWireSchema,
   mineWireSchema,
   modelOptionViewSchema,
@@ -28,6 +35,7 @@ import {
   providerIdentitySchema,
   questionPayloadSchema,
   questionStepSchema,
+  resetIdSchema,
   secretStatusSchema,
   sessionProfileSchema,
   stopUnavailableReasonSchema,
@@ -47,11 +55,13 @@ import {
   type FeedPage,
   type FeedPageRequest,
   type FolderPath,
+  type HostEpoch,
   type HostPreferences,
   type HostRecoveryReport,
   type HostRecoveryReportView,
   type HostToast,
   type IntegrationSetting,
+  type Instant,
   type LaunchFailure,
   type LaunchId,
   type LaunchWire,
@@ -70,6 +80,7 @@ import {
   type ProviderIdentity,
   type QuestionPayload,
   type QuestionStep,
+  type ResetId,
   type SecretStatus,
   type SessionProfile,
   type StopUnavailableReason,
@@ -416,6 +427,9 @@ describe('wire view types (14 §3.6)', () => {
     const uuidV4 = '01920000-0000-4000-8000-000000000001'
     expect(mineWireSchema.safeParse({ ...mineWire, id: uuidV4 }).success).toBe(false)
     expect(askRecordSchema.safeParse({ ...questionAsk, dwarfId: 'dwarf-1' }).success).toBe(false)
+    // HostEpoch is a plain string (06 §0.1; ADR-003 `HelloOk.epoch: string`), not a UUIDv7 id.
+    expect(hostEpochSchema.safeParse('boot-epoch-1').success).toBe(true)
+    expect(hostEpochSchema.safeParse(1).success).toBe(false)
     expect(feedPageRequestSchema.safeParse({ limit: 51 }).success).toBe(false)
     expect(
       launchFailureSchema.safeParse({ ...launchFailure, toolOutputTail: 'x'.repeat(401) }).success
@@ -496,6 +510,20 @@ describe('wire view types (14 §3.6)', () => {
 
   it('[ADR-019] each zod-inferred view type equals its 14 §3.6 TypeScript type', () => {
     // Enforced by `pnpm typecheck`: a drift between a schema and its 14 / owner type fails compilation here.
+    // ids and scalars as 06 §0.1 defines them: branded only where the owner says "branded".
+    expectTypeOf<z.infer<typeof hostEpochSchema>>().toEqualTypeOf<HostEpoch>()
+    expectTypeOf<HostEpoch>().toEqualTypeOf<string>()
+    expectTypeOf<ProviderId>().toEqualTypeOf<string>()
+    expectTypeOf<Instant>().toEqualTypeOf<number>()
+    expectTypeOf<z.infer<typeof mineIdSchema>>().toEqualTypeOf<MineId>()
+    expectTypeOf<z.infer<typeof dwarfIdSchema>>().toEqualTypeOf<DwarfId>()
+    expectTypeOf<z.infer<typeof askIdSchema>>().toEqualTypeOf<AskId>()
+    expectTypeOf<z.infer<typeof messageIdSchema>>().toEqualTypeOf<MessageId>()
+    expectTypeOf<z.infer<typeof launchIdSchema>>().toEqualTypeOf<LaunchId>()
+    expectTypeOf<z.infer<typeof resetIdSchema>>().toEqualTypeOf<ResetId>()
+    expectTypeOf<z.infer<typeof folderPathSchema>>().toEqualTypeOf<FolderPath>()
+    expectTypeOf<MineId>().not.toEqualTypeOf<string>()
+    expectTypeOf<FolderPath>().not.toEqualTypeOf<string>()
     expectTypeOf<z.infer<typeof mineWireSchema>>().toEqualTypeOf<MineWire>()
     expectTypeOf<
       z.infer<typeof stopUnavailableReasonSchema>
