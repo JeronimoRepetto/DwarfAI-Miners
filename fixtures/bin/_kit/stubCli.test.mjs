@@ -375,6 +375,35 @@ describe('stub CLI kit (17 §1.9)', () => {
     }
   })
 
+  it('[ADR-008] every POSIX wrapper starts node with shell built-ins only, never an external utility', () => {
+    // A launcher may start the wrapper with a PATH that holds only the stub folder and node's
+    // folder, so the wrapper may run nothing but `exec node`: no command substitution, and every
+    // other line is a comment, a variable assignment or part of a `case`.
+    const allowed = [
+      /^[A-Za-z_][A-Za-z0-9_]*=\S*$/, // an assignment
+      /^case\s.*\sin$/,
+      /^\S+\)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s*)?;;$/, // a case branch that at most assigns
+      /^esac$/,
+      /^exec node\s/
+    ]
+    for (const name of Object.keys(STUBS)) {
+      const wrapper = path.join(BIN, name, name)
+      const lines = readFileSync(wrapper, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && !line.startsWith('#'))
+
+      expect(lines.at(-1), `${wrapper} ends by starting node`).toMatch(/^exec node\s/)
+      for (const line of lines) {
+        expect(line, `${wrapper}: no command substitution`).not.toMatch(/\$\(|`/)
+        expect(
+          allowed.some((pattern) => pattern.test(line)),
+          `${wrapper}: "${line}" runs a command other than node`
+        ).toBe(true)
+      }
+    }
+  })
+
   it('[ADR-008] the kit holds no credential, home path or e-mail address, and nothing under fixtures/bin is packaged', () => {
     const files = []
     const walk = (dir) => {

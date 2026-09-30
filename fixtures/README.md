@@ -32,12 +32,12 @@ a small Node program named exactly as the real binary, whose folder `e2e/_harnes
 hands to `launchApp`, which prepends it to the app's `PATH`. Detection, spawn and argv building then take their
 production paths; no production code knows the kit.
 
-| Path                                         | Content                                                                                    |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `bin/_kit/stubCli.mjs`                       | the shared engine: `--version`, the scripted replay, the scripted exit                     |
-| `bin/_kit/scripts/<scenario>.json`           | hand-written scenarios, scrubbed, in the shapes of the provider's own files (`15` §5)      |
-| `bin/<name>/<name>.mjs`                      | the stub: a thin wrapper calling the engine with its provider directory and default script |
-| `bin/<name>/<name>.cmd`, `bin/<name>/<name>` | the Windows shim and the POSIX executable wrapper (mode `100755`), both `node <name>.mjs`  |
+| Path                                         | Content                                                                                                         |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `bin/_kit/stubCli.mjs`                       | the shared engine: `--version`, the scripted replay, the scripted exit                                          |
+| `bin/_kit/scripts/<scenario>.json`           | hand-written scenarios, scrubbed, in the shapes of the provider's own files (`15` §5)                           |
+| `bin/<name>/<name>.mjs`                      | the stub: a thin wrapper calling the engine with its provider directory and default script                      |
+| `bin/<name>/<name>.cmd`, `bin/<name>/<name>` | the Windows shim and the POSIX executable wrapper (mode `100755`, shell built-ins only), both `node <name>.mjs` |
 
 Stubs today: `claude` (replays into `CLAUDE_CONFIG_DIR`), `codex` (`CODEX_HOME`) and `opencode`
 (`XDG_DATA_HOME`, the store root holding `opencode/opencode.db`).

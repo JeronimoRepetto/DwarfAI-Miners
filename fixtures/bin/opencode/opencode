@@ -1,3 +1,10 @@
 #!/bin/sh
 # StubOpenCodeCli: the POSIX wrapper of the opencode stub CLI (fixtures/README.md).
-exec node "$(dirname "$0")/opencode.mjs" "$@"
+# Shell built-ins only: a launcher may start it with a PATH holding just this folder and node's.
+# $0 is the path the wrapper was started by; a PATH lookup always gives it a slash, and a bare
+# name (sh opencode, run from this folder) means the current folder.
+case "$0" in
+  */*) dir=${0%/*} ;;
+  *) dir=. ;;
+esac
+exec node "$dir/opencode.mjs" "$@"
