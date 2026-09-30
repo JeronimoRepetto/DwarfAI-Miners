@@ -11,9 +11,15 @@
 //   3. the future: a highest applied version above the build's opens `query_only` with the
 //      capability `db-read-only`, and nothing is written (ADR-005 item 5, FM-100);
 //   4. pending: the known versions above the highest applied; none → done;
-//   5. backup: a non-empty database goes through the `BackupStep` first (later: ISSUE-040);
+//   5. backup: a non-empty database is copied `VACUUM INTO` first (`../backup.ts`, FM-099); when
+//      no complete backup could be written nothing is migrated, `BACKUP_FAILED` (FM-105);
 //   6. dev guard: a dev or test build whose database lies in the release data directory refuses
-//      to migrate it, `DEV_BUILD_ON_RELEASE_DATA` (ADR-005 item 6, FM-107);
+//      to migrate it, `DEV_BUILD_ON_RELEASE_DATA` (ADR-005 item 6, FM-107). It is checked before
+//      step 5 writes anything: a backup there would be a write into the release data directory,
+//      and its rotation would delete the oldest of the person's own backups. The refused open
+//      leaves that directory byte-identical, which is the guard's purpose ("no dev build can
+//      corrupt a user's DB", ADR-005; FM-107 "data-directory check before migrating"). Every
+//      outcome of 09 §6.2 is unchanged; only a refused dev build writes less;
 //   7. `foreign_keys = OFF` outside any transaction, one `BEGIN IMMEDIATE` for every pending
 //      migration and its `schema_migrations` row, `PRAGMA foreign_key_check` before `COMMIT`,
 //      then `foreign_keys = ON`, verified. A failure rolls everything back: the file stays at its
@@ -28,15 +34,18 @@ import { pathToFileURL } from 'node:url'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { Result } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
+import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { SqliteDatabase, SqliteRow } from '../../../kernel/ports/sqliteDatabase'
+import { VacuumIntoBackup } from '../backup'
 import { NodeSqliteDatabase, toInfrastructureError } from '../NodeSqliteDatabase'
 import { SqliteTransactionRunner } from '../SqliteTransactionRunner'
 import { knownMigrations } from './index'
-import { migrationChecksum, noBackup, type BackupStep, type Migration } from './types'
+import { migrationChecksum, type BackupStep, type Migration } from './types'
 
 export type BuildKind = 'release' | 'dev' | 'test'
 
-export type HostDbRefusal = 'NOT_A_DWARFAI_DB' | 'SCHEMA_TAMPERED' | 'DEV_BUILD_ON_RELEASE_DATA'
+export type HostDbRefusal =
+  'NOT_A_DWARFAI_DB' | 'SCHEMA_TAMPERED' | 'DEV_BUILD_ON_RELEASE_DATA' | 'BACKUP_FAILED'
 
 export interface OpenHostDbOptions {
   buildKind: BuildKind
@@ -44,11 +53,18 @@ export interface OpenHostDbOptions {
   releaseDataDir: string
   /** Written to `schema_migrations.app_version` for each migration applied. */
   appVersion: string
-  /** The source of `schema_migrations.applied_at`. */
+  /** The source of `schema_migrations.applied_at` and of the backup and quarantine stamps. */
   clock: Clock
+  /** Where the `db.*` records of 19 §9.5 go. */
+  log: DiagnosticsLog
   /** The build's migrations; the registered list (`./index`) by default. */
   migrations?: readonly Migration[]
-  /** Step 5; writes nothing by default (later: ISSUE-040). */
+  /**
+   * Opens the writer; `NodeSqliteDatabase` logging to `log` by default. The fault-injecting
+   * writer of `../testing/FaultySqlite.ts` in tests (17 §1.10).
+   */
+  openWriter?: (path: string) => SqliteDatabase
+  /** Step 5; the `VACUUM INTO` backup (`../backup.ts`) over `clock` and `log` by default. */
   backup?: BackupStep
 }
 
@@ -258,10 +274,14 @@ function runSteps(
 
   const pending = migrations.slice(from)
   if (pending.length > 0) {
-    if (isNonEmpty(db))
-      (options.backup ?? noBackup).beforeMigrating({ db, path, fromVersion: from })
+    // Step 6 is decided before step 5 writes anything (see the header).
     if (isDevBuildOnReleaseData(path, options)) {
       return { ok: false, error: 'DEV_BUILD_ON_RELEASE_DATA' }
+    }
+    if (isNonEmpty(db)) {
+      const backup = options.backup ?? new VacuumIntoBackup(options)
+      const written = backup.beforeMigrating({ db, path, fromVersion: from })
+      if (!written.ok) return written
     }
     applyPending(db, pending, options)
   }
@@ -284,7 +304,7 @@ export function openHostDb(path: string, options: OpenHostDbOptions): OpenResult
   if (migrations.length > 0 && !existsSync(path) && isDevBuildOnReleaseData(path, options)) {
     return { ok: false, error: 'DEV_BUILD_ON_RELEASE_DATA' }
   }
-  const db = NodeSqliteDatabase.open(path)
+  const db = options.openWriter?.(path) ?? NodeSqliteDatabase.open(path, { log: options.log })
   let result: OpenResult
   try {
     result = runSteps(db, path, migrations, options)
