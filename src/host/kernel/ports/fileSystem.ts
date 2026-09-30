@@ -58,4 +58,14 @@ export interface FileSystem {
    * temporary file is left behind. A missing parent directory is `not-found`.
    */
   writeFileAtomic(path: string, data: Uint8Array | string): Promise<Result<void, FsError>>
+
+  // --- typed writes of the diagnostics segment writer (16 §3 row `FileSystem`: "writes ... by
+  // diagnostics"; ADR-026 items 1–2; 13 FM-108) ---------------------------------------------
+
+  /** Adds `data` at the end of the file, creating it when missing; a missing parent is `not-found`. */
+  appendFile(path: string, data: Uint8Array | string): Promise<Result<void, FsError>>
+  /** Deletes one file; a file that is already gone is `not-found` (a benign race for the caller). */
+  deleteFile(path: string): Promise<Result<void, FsError>>
+  /** Creates the directory and any missing parents; an existing directory is a success. */
+  makeDir(path: string): Promise<Result<void, FsError>>
 }

@@ -10,6 +10,8 @@ import type { ScriptedFsFault } from '../testing/fileSystem.contract'
 interface FakeFile {
   content: Uint8Array
   mtimeMs: number
+  /** Spare capacity behind `content` so a long run of appends stays linear (a 5 MB segment). */
+  storage?: Uint8Array
 }
 
 /** What NodeFs maps each scripted OS code to (its `fsErrorOf`). */
@@ -42,12 +44,14 @@ function parentOf(normalized: string): string {
 
 /**
  * In-memory FileSystem used by unit tests. Files are registered with addFile();
- * directories exist implicitly for every ancestor of a registered file.
+ * directories exist implicitly for every ancestor of a registered file, and
+ * explicitly once made with makeDir() (so an empty directory can exist).
  * Paths accept / or \ separators and are matched case-sensitively.
  */
 export class FakeFs implements FileSystem {
   private readonly files = new Map<string, FakeFile>()
   private readonly faults = new Map<string, ScriptedFsFault>()
+  private readonly dirs = new Set<string>()
 
   /**
    * Awaited before every read. Tests set it to suspend a scan mid-flight and
@@ -69,10 +73,46 @@ export class FakeFs implements FileSystem {
     this.faults.set(normalize(path), fault)
   }
 
+  /** The disk is writable again at `path` (the fault scripted on it is lifted). */
+  clearFault(path: string): void {
+    this.faults.delete(normalize(path))
+  }
+
+  /** Deletes a directory with everything under it, as a person emptying the folder would (FM-108). */
+  removeDir(path: string): void {
+    const key = normalize(path)
+    const prefix = key + '\\'
+    for (const file of [...this.files.keys()]) if (file.startsWith(prefix)) this.files.delete(file)
+    for (const dir of [...this.dirs])
+      if (dir === key || dir.startsWith(prefix)) this.dirs.delete(dir)
+  }
+
+  /**
+   * Synchronous view of a directory's direct children, for a double whose port is synchronous
+   * (`FakeLogDirectory`); `null` when the directory does not exist or is faulted.
+   */
+  entriesNow(path: string): SizedDirEntry[] | null {
+    if (this.faults.has(normalize(path)) || !this.isDir(path)) return null
+    return this.entriesOf(path)
+  }
+
+  /** Synchronous read of up to `maxBytes` from the start of a file; `null` when unreadable. */
+  headNow(path: string, maxBytes: number): string | null {
+    const key = normalize(path)
+    const file = this.faults.has(key) ? undefined : this.files.get(key)
+    if (!file) return null
+    return Buffer.from(file.content.subarray(0, maxBytes)).toString('utf8')
+  }
+
   private isDir(path: string): boolean {
-    const prefix = normalize(path) + '\\'
-    for (const key of this.files.keys()) {
-      if (key.startsWith(prefix)) return true
+    const key = normalize(path)
+    if (this.dirs.has(key)) return true
+    const prefix = key + '\\'
+    for (const file of this.files.keys()) {
+      if (file.startsWith(prefix)) return true
+    }
+    for (const dir of this.dirs) {
+      if (dir.startsWith(prefix)) return true
     }
     return false
   }
@@ -160,6 +200,48 @@ export class FakeFs implements FileSystem {
     return { ok: true, value: undefined }
   }
 
+  async appendFile(path: string, data: Uint8Array | string): Promise<Result<void, FsError>> {
+    const key = normalize(path)
+    const fault = this.faults.get(key)
+    // A fault leaves the file as it was: nothing of the failed append lands.
+    if (fault) return { ok: false, error: FAULT_ERRORS[fault] }
+    const parent = parentOf(key)
+    if (parent !== '' && !this.isDir(parent)) return { ok: false, error: 'not-found' }
+    if (this.isDir(path)) return { ok: false, error: 'io' }
+    const added = typeof data === 'string' ? Buffer.from(data, 'utf8') : data
+    const file = this.files.get(key) ?? { content: new Uint8Array(0), mtimeMs: 0 }
+    const length = file.content.byteLength + added.byteLength
+    let storage = file.storage
+    if (storage === undefined || storage.byteLength < length) {
+      storage = new Uint8Array(Math.max(1024, length * 2))
+      storage.set(file.content)
+    }
+    storage.set(added, file.content.byteLength)
+    this.files.set(key, { content: storage.subarray(0, length), mtimeMs: file.mtimeMs, storage })
+    return { ok: true, value: undefined }
+  }
+
+  async deleteFile(path: string): Promise<Result<void, FsError>> {
+    const key = normalize(path)
+    const fault = this.faults.get(key)
+    if (fault) return { ok: false, error: FAULT_ERRORS[fault] }
+    if (!this.files.has(key)) return { ok: false, error: this.isDir(path) ? 'io' : 'not-found' }
+    this.files.delete(key)
+    return { ok: true, value: undefined }
+  }
+
+  async makeDir(path: string): Promise<Result<void, FsError>> {
+    const key = normalize(path)
+    const fault = this.faults.get(key)
+    if (fault) return { ok: false, error: FAULT_ERRORS[fault] }
+    // A file in the way of the directory or of one of its parents fails as on disk (EEXIST / ENOTDIR).
+    for (let at: string = key; at !== ''; at = parentOf(at)) {
+      if (this.files.has(at)) return { ok: false, error: at === key ? 'io' : 'not-found' }
+    }
+    this.dirs.add(key)
+    return { ok: true, value: undefined }
+  }
+
   /** The direct children of a directory, with each file's byte size (a directory's is 0). */
   private entriesOf(path: string): SizedDirEntry[] {
     const prefix = normalize(path) + '\\'
@@ -174,6 +256,11 @@ export class FakeFs implements FileSystem {
         const name = rest.slice(0, separatorAt)
         entries.set(name, { name, isDirectory: true, size: 0 })
       }
+    }
+    for (const dir of this.dirs) {
+      if (!dir.startsWith(prefix)) continue
+      const name = dir.slice(prefix.length).split('\\')[0] ?? ''
+      if (name !== '' && !entries.has(name)) entries.set(name, { name, isDirectory: true, size: 0 })
     }
     return [...entries.values()]
   }

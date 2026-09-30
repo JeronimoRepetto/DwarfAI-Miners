@@ -124,6 +124,62 @@ export function runFileSystemContract(
         error: 'not-found'
       })
     })
+
+    it('[ADR-026] an append creates a missing file and adds bytes at the end of an existing one; a missing parent is not-found', async () => {
+      const { fs, pathOf, seed } = await makeSubject()
+      const segment = pathOf('logs', 'host-000001.jsonl')
+      await seed(pathOf('logs', 'ui-000001.jsonl'), 'other writer\n')
+
+      await expect(fs.appendFile(segment, '{"n":1}\n')).resolves.toEqual({
+        ok: true,
+        value: undefined
+      })
+      await expect(fs.appendFile(segment, new TextEncoder().encode('{"n":2}\n'))).resolves.toEqual({
+        ok: true,
+        value: undefined
+      })
+      const read = await fs.readFile(segment)
+      expect(read.ok && utf8(read.value)).toBe('{"n":1}\n{"n":2}\n')
+      const listed = await fs.listDirWithSizes(pathOf('logs'))
+      expect(listed.ok && listed.value.find((e) => e.name === 'host-000001.jsonl')?.size).toBe(16)
+
+      await expect(fs.appendFile(pathOf('gone', 'host-000001.jsonl'), 'x\n')).resolves.toEqual({
+        ok: false,
+        error: 'not-found'
+      })
+      await expect(fs.exists(pathOf('gone'))).resolves.toBe(false)
+    })
+
+    it('[ADR-026] deleting a file removes only that file; deleting a missing file is not-found', async () => {
+      const { fs, pathOf, seed } = await makeSubject()
+      await seed(pathOf('logs', 'host-000001.jsonl'), 'old\n')
+      await seed(pathOf('logs', 'host-000002.jsonl'), 'new\n')
+
+      await expect(fs.deleteFile(pathOf('logs', 'host-000001.jsonl'))).resolves.toEqual({
+        ok: true,
+        value: undefined
+      })
+      const listed = await fs.listDirWithSizes(pathOf('logs'))
+      expect(listed.ok && listed.value.map((e) => e.name)).toEqual(['host-000002.jsonl'])
+      await expect(fs.deleteFile(pathOf('logs', 'host-000001.jsonl'))).resolves.toEqual({
+        ok: false,
+        error: 'not-found'
+      })
+    })
+
+    it('[ADR-026, FM-108] making a directory creates it with its parents, is a success when it exists, and a file can then be appended in it', async () => {
+      const { fs, pathOf } = await makeSubject()
+      const logs = pathOf('userData', 'logs')
+
+      await expect(fs.makeDir(logs)).resolves.toEqual({ ok: true, value: undefined })
+      await expect(fs.stat(logs)).resolves.toMatchObject({ isDirectory: true })
+      await expect(fs.listDirWithSizes(logs)).resolves.toEqual({ ok: true, value: [] })
+      await expect(fs.makeDir(logs)).resolves.toEqual({ ok: true, value: undefined })
+
+      await expect(
+        fs.appendFile(pathOf('userData', 'logs', 'host-000001.jsonl'), 'a\n')
+      ).resolves.toEqual({ ok: true, value: undefined })
+    })
   })
 }
 
@@ -148,6 +204,22 @@ export function runFileSystemFaultContract(
       // Nothing half-written (13 FM-104): the directory holds the target alone.
       const listed = await fs.listDirWithSizes(pathOf('logs'))
       expect(listed.ok && listed.value.map((entry) => entry.name)).toEqual(['host.log'])
+    })
+
+    it('[FM-108, CH-06] a scripted ENOSPC on append surfaces as no-space and leaves the file as it was', async () => {
+      const { fs, pathOf, seed, scriptFault } = await makeSubject()
+      const segment = pathOf('logs', 'host-000001.jsonl')
+      await seed(segment, 'first\n')
+      scriptFault(segment, 'ENOSPC')
+
+      await expect(fs.appendFile(segment, 'second\n')).resolves.toEqual({
+        ok: false,
+        error: 'no-space'
+      })
+      const listed = await fs.listDirWithSizes(pathOf('logs'))
+      expect(listed.ok && listed.value).toEqual([
+        { name: 'host-000001.jsonl', isDirectory: false, size: 6 }
+      ])
     })
 
     it('[FM-125, CH-07] a scripted EBUSY or EPERM on a chosen path surfaces as its typed error', async () => {
