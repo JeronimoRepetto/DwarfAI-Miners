@@ -1,0 +1,1 @@
+{ "rule": "R2-ports-type-only", "tool": "depcruise" }

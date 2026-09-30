@@ -1,0 +1,1 @@
+{ "rule": "no-restricted-syntax", "tool": "eslint" }

@@ -1,0 +1,1 @@
+{ "rule": "R11-no-claude-agent-sdk", "tool": "depcruise" }
