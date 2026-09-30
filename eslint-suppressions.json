@@ -1,9 +1,4 @@
 {
-  "src/preload/index.ts": {
-    "arch/legacy-only-through-bridge": {
-      "count": 2
-    }
-  },
   "src/renderer/src/components/launch/AddPanel.test.ts": {
     "arch/legacy-only-through-bridge": {
       "count": 1

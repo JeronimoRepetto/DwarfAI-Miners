@@ -20,7 +20,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  * hashed `out/main/chunks/*` that `emptyOutDir: false` would then leave behind
  * build after build (see electron.vite.config.ts's own top comment). Its own
  * folder next to `out/preload` and `out/renderer`, so the legacy window's
- * `../preload/index.mjs` and `../renderer/index.html` (src/main/shell/window.ts)
+ * `../preload/index.cjs` and `../renderer/index.html` (src/main/shell/window.ts)
  * resolve from it exactly as from `out/main`. `emptyOutDir: false` because
  * this build writes only `out/ui-main/index.js` and never owns the folder's
  * other files. Only `main` is built: preload and renderer are the app's own.
