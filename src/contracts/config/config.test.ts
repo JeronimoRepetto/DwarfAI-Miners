@@ -55,6 +55,11 @@ describe('defaultConfig', () => {
         opencode: {
           cliPath: '',
           storeRoot: '~/.local/share/opencode'
+        },
+        // AMENDED for ISSUE-009/ISSUE-010 (was: no simulated block). The catalog gained the
+        // simulated provider (15 §4.12); it has no CLI, so its block is the shared sub-shape alone.
+        simulated: {
+          cliPath: ''
         }
       }
     })
