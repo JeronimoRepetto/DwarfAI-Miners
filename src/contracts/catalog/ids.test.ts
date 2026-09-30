@@ -19,6 +19,17 @@ describe('catalog provider ids (05 §5.3, R12)', () => {
     }
   })
 
+  it('[R12] CATALOG_PROVIDER_IDS lists one id per provider family, the simulated provider appended last', () => {
+    // Append-only data: the first four keep their order; 'simulated' is 15 §4.12's SimulatedDriver.
+    expect([...CATALOG_PROVIDER_IDS]).toEqual([
+      'claude',
+      'codex',
+      'antigravity',
+      'opencode',
+      'simulated'
+    ])
+  })
+
   it('[R12] providerLiteralPattern covers every catalog id and a synthetic id added to the list', () => {
     const synthetic = 'synthetic-provider'
     const ids = [...CATALOG_PROVIDER_IDS, synthetic]
