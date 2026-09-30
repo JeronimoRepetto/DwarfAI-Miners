@@ -1,0 +1,132 @@
+[
+  {
+    "object": "run\\ (helper, protected)",
+    "dacl": "D:P(A;OICI;FA;;;<owner-sid>)(A;OICI;FA;;;SY)",
+    "protectedDacl": true,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\ui.token (inherits from the protected run\\)",
+    "dacl": "D:(A;ID;FA;;;<owner-sid>)(A;ID;FA;;;SY)",
+    "protectedDacl": false,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\viewers\\<viewId>.token (inherits from the protected run\\)",
+    "dacl": "D:(A;ID;FA;;;<owner-sid>)(A;ID;FA;;;SY)",
+    "protectedDacl": false,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\mcp\\<launchId>.cred (inherits from the protected run\\)",
+    "dacl": "D:(A;ID;FA;;;<owner-sid>)(A;ID;FA;;;SY)",
+    "protectedDacl": false,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "pipe (ADR-003 item 2 helper)",
+    "dacl": "D:P(D;;FA;;;NU)(A;;FA;;;<owner-sid>)(A;;FA;;;SY)",
+    "protectedDacl": true,
+    "foreignGrants": [],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 393216,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "pipe (Node net.Server default)",
+    "dacl": "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<owner-sid>)(A;;FR;;;WD)(A;;FR;;;AN)",
+    "protectedDacl": false,
+    "foreignGrants": ["BA", "WD", "AN"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 1179785,
+      "anonymous": 1179785,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 1179785
+    }
+  },
+  {
+    "object": "run\\ (Node mkdirSync 0o700)",
+    "dacl": "D:AI(A;OICIID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;<owner-sid>)",
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "BA"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\ui.token (Node, inherited from %APPDATA%)",
+    "dacl": "D:AI(A;ID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<owner-sid>)",
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "BA"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\viewers\\<viewId>.token (Node, inherited from %APPDATA%)",
+    "dacl": "D:AI(A;ID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<owner-sid>)",
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "BA"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  },
+  {
+    "object": "run\\mcp\\<launchId>.cred (Node, inherited from %APPDATA%)",
+    "dacl": "D:AI(A;ID;0x1200a9;;;S-1-5-21-<machine>-1003)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<owner-sid>)",
+    "protectedDacl": false,
+    "foreignGrants": ["S-1-5-21-<machine>-1003", "BA"],
+    "granted": {
+      "owner": 2032127,
+      "otherUser": 0,
+      "anonymous": 0,
+      "remoteOwner": 2032127,
+      "remoteOtherUser": 0
+    }
+  }
+]
