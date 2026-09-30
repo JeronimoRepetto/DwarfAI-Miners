@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
@@ -59,17 +60,28 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  * no `out/main/chunks/`), so there is nothing this build ever produced that
  * skipping the empty step could leave stale.
  */
+// `@dwarfai/contracts` is the one contracts barrel (ADR-004 P13, 05 §2.1), resolved the same way
+// in every build and in both tsconfigs and vitest.config.ts.
 export default defineConfig({
   main: {
+    resolve: {
+      alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
+    },
     plugins: [externalizeDepsPlugin()],
     build: {
       emptyOutDir: false
     }
   },
   preload: {
+    resolve: {
+      alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
+    },
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
+    resolve: {
+      alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
+    },
     plugins: [vue()]
   }
 })
