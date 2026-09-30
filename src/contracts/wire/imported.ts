@@ -566,3 +566,152 @@ export const secretBackendSchema = z.enum(['os-secret-store', 'unavailable'])
 export const secretStatusSchema = z
   .object({ name: secretNameSchema, configured: z.boolean() })
   .strict()
+
+// ---- conversation: the outcome line (06 §0.2, §9.2; field types chosen in development, owner ruling on ISSUE-009)
+
+/** 06 §9.2 `TurnOutcomeKind`: exactly these six (lead decision 2026-09-30; ADR-021 D1 `TurnEndKind` + in-progress kinds). */
+export type TurnOutcomeKind =
+  'working' | 'concluded' | 'capped' | 'errored' | 'interrupted' | 'waiting-on-you'
+
+export const turnOutcomeKindSchema = z.enum([
+  'working',
+  'concluded',
+  'capped',
+  'errored',
+  'interrupted',
+  'waiting-on-you'
+])
+
+/**
+ * A count carried by a part. A part exists only from one on: with no step yet the line reads "Working" alone
+ * (US-MSG-011.AC13), steps are counted "from one step on" (AC14), and an unknown count is left out (AC10).
+ */
+const partCountSchema = z.number().int().positive()
+
+/**
+ * The outcome line's parts, structured so the renderer words them from the story copy (`contracts/text`) and keeps
+ * the idle time live without a Host timer (06 §9.2; NFR-TIM-15). This list is the ONE table of part kinds: a new
+ * kind is one more entry here, and the `OutcomeLinePart` type and `OUTCOME_LINE_PART_KINDS` follow from it. A kind
+ * this version does not know is refused.
+ */
+export const outcomeLinePartSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('steps'), n: partCountSchema }).strict(), // `steps(n)`: steps of a finished turn
+  z.object({ kind: z.literal('steps-so-far'), n: partCountSchema }).strict(), // `steps-so-far(n)`: open run
+  z.object({ kind: z.literal('waiting-questions'), n: partCountSchema }).strict(), // `waiting-questions(n)`
+  z.object({ kind: z.literal('waiting-permission') }).strict(),
+  z.object({ kind: z.literal('answers-received') }).strict(),
+  z.object({ kind: z.literal('reading-your-message') }).strict(),
+  z.object({ kind: z.literal('idle-since'), at: instantSchema }).strict() // `idle-since(instant)`, worded live
+])
+
+/** One structured part of an outcome line (06 §9.2 closed part union). */
+export type OutcomeLinePart = z.infer<typeof outcomeLinePartSchema>
+
+/** The part kinds this version knows, in table order. */
+export const OUTCOME_LINE_PART_KINDS: ReadonlyArray<OutcomeLinePart['kind']> = Object.freeze(
+  outcomeLinePartSchema.options.map((option) => option.shape.kind.value)
+)
+
+/** At most three parts per line (06 §9.2 "`parts` (≤ 3 …)"; 10 `outcome_lines.parts_json` "≤ 3 items"). */
+const OUTCOME_LINE_PARTS_MAX = 3
+
+/** `closingWords` is "trimmed to 200 chars" (06 §9.2). */
+const CLOSING_WORDS_MAX = 200
+
+/**
+ * 06 §0.2 / §9.2 `OutcomeLine`: one per dwarf, replaced at every turn change. Types where 06 names only the field:
+ * `stepCount` is a count (10 `outcome_lines.step_count` "≥ 0"); `detail` is "provider word, tooltip only" and
+ * `closingWords` tooltip text, both strings; `at` is "when the turn ended" (10 `outcome_lines.at`), an `Instant`.
+ */
+export interface OutcomeLine {
+  dwarfId: DwarfId
+  kind: TurnOutcomeKind
+  stepCount: number
+  parts: OutcomeLinePart[]
+  detail?: string
+  closingWords?: string
+  reliability: 'reliable' | 'inferred'
+  at: Instant
+}
+
+export const outcomeLineSchema = z
+  .object({
+    dwarfId: dwarfIdSchema,
+    kind: turnOutcomeKindSchema,
+    stepCount: countSchema,
+    parts: z.array(outcomeLinePartSchema).max(OUTCOME_LINE_PARTS_MAX),
+    detail: z.string().optional(),
+    closingWords: z.string().max(CLOSING_WORDS_MAX).optional(),
+    reliability: z.enum(['reliable', 'inferred']),
+    at: instantSchema
+  })
+  .strict()
+
+// ---- jev: the transient suggestion (06 §12; field types chosen in development, owner ruling on ISSUE-009)
+
+/**
+ * Jev's own model tier for its pick, never `Mine.tier` (06 §12 "Jev's own confidence tier, not `Mine.tier`";
+ * US-LAUNCH-008 "the frontier tier"). The values are the tiers a routing decision can land on in the found tree
+ * (`src/main/jev/routeDecision.ts` `RoutingTier`); the capability-table-only 'special-purpose' is never a pick.
+ */
+export type JevModelTier = 'fast-cheap' | 'balanced' | 'frontier' | 'long-context'
+
+/** Where a suggested part came from: Jev answered it, or it fell back to a safe value (06 §12 `parts`). */
+export type JevPartOrigin = 'answered' | 'safe-default'
+
+/**
+ * 06 §12 `JevSuggestion` (VO, transient, never persisted, INV-87). It names no permission mode and carries no
+ * reason sentence or fallback supplier (06 §12). The parts are the pick's own four: supplier, model, effort, tier.
+ * - `confidence` is "per part": how sure Jev was of each part it answered, as a fraction in [0, 1] that the tooltip
+ *   shows as a percentage ("88% sure", US-LAUNCH-008); a part Jev did not answer has none.
+ * - `parts` is "answered vs fallen back": each part present in the pick with its origin.
+ * - `truncated` is a boolean: "the prompt sent to Jev was itself trimmed to fit its request budget" (US-LAUNCH-008).
+ */
+export interface JevSuggestion {
+  providerId?: ProviderId
+  model?: string
+  effort?: string
+  tier?: JevModelTier
+  confidence: { providerId?: number; model?: number; effort?: number; tier?: number }
+  truncated: boolean
+  parts: {
+    providerId?: JevPartOrigin
+    model?: JevPartOrigin
+    effort?: JevPartOrigin
+    tier?: JevPartOrigin
+  }
+  fallback?: JevFallbackReason
+}
+
+export const jevModelTierSchema = z.enum(['fast-cheap', 'balanced', 'frontier', 'long-context'])
+
+export const jevPartOriginSchema = z.enum(['answered', 'safe-default'])
+
+const confidenceSchema = z.number().min(0).max(1)
+
+export const jevSuggestionSchema = z
+  .object({
+    providerId: providerIdSchema.optional(),
+    model: z.string().optional(),
+    effort: z.string().optional(),
+    tier: jevModelTierSchema.optional(),
+    confidence: z
+      .object({
+        providerId: confidenceSchema.optional(),
+        model: confidenceSchema.optional(),
+        effort: confidenceSchema.optional(),
+        tier: confidenceSchema.optional()
+      })
+      .strict(),
+    truncated: z.boolean(),
+    parts: z
+      .object({
+        providerId: jevPartOriginSchema.optional(),
+        model: jevPartOriginSchema.optional(),
+        effort: jevPartOriginSchema.optional(),
+        tier: jevPartOriginSchema.optional()
+      })
+      .strict(),
+    fallback: jevFallbackReasonSchema.optional()
+  })
+  .strict()

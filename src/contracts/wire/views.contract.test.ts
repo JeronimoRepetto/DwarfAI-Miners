@@ -8,6 +8,7 @@ import {
   attachmentMetaSchema,
   deliverySchema,
   dwarfNameWireSchema,
+  dwarfWireSchema,
   dwarfIdSchema,
   dwarfWorkplaceSchema,
   feedPageRequestSchema,
@@ -19,6 +20,8 @@ import {
   hostRecoveryReportViewSchema,
   hostToastSchema,
   integrationSettingSchema,
+  jevSuggestionSchema,
+  jevSuggestionViewSchema,
   launchFailureSchema,
   launchWireSchema,
   launchIdSchema,
@@ -29,6 +32,9 @@ import {
   mineIdSchema,
   mineNameWireSchema,
   mineWireSchema,
+  OUTCOME_LINE_PART_KINDS,
+  outcomeLinePartSchema,
+  outcomeLineSchema,
   modelOptionViewSchema,
   permissionPayloadSchema,
   preferencesViewSchema,
@@ -51,6 +57,7 @@ import {
   type Delivery,
   type DwarfId,
   type DwarfNameWire,
+  type DwarfWire,
   type DwarfWorkplace,
   type FeedPage,
   type FeedPageRequest,
@@ -61,6 +68,8 @@ import {
   type HostRecoveryReportView,
   type HostToast,
   type IntegrationSetting,
+  type JevSuggestion,
+  type JevSuggestionView,
   type Instant,
   type LaunchFailure,
   type LaunchId,
@@ -74,6 +83,8 @@ import {
   type MineNameWire,
   type MineWire,
   type ModelOptionView,
+  type OutcomeLine,
+  type OutcomeLinePart,
   type PermissionPayload,
   type PreferencesView,
   type ProviderId,
@@ -85,6 +96,7 @@ import {
   type SessionProfile,
   type StopUnavailableReason,
   type StranglerDwarfIdentity,
+  type TurnOutcomeKind,
   type SupplierEntry,
   type SupplierEntryView,
   type WelcomeStepState
@@ -313,12 +325,62 @@ const dwarfWorkplace = {
   path: '/work/alpha-tree' as FolderPath,
   branch: 'main'
 } satisfies DwarfWorkplace
+const outcomeLine = {
+  dwarfId: DWARF,
+  kind: 'capped',
+  stepCount: 5,
+  parts: [
+    { kind: 'steps', n: 5 },
+    { kind: 'idle-since', at: 100 }
+  ],
+  detail: 'max_tokens',
+  closingWords: 'Stopped here.',
+  reliability: 'reliable',
+  at: 90
+} satisfies OutcomeLine
+
+const dwarfWire = {
+  id: DWARF,
+  mineId: MINE,
+  providerId: 'claude',
+  baseName: 'Borin',
+  customName: null,
+  rank: 'foreman',
+  parentDwarfId: null,
+  delegated: false,
+  sessionProfile,
+  presence: 'present',
+  processState: 'running',
+  status: 'idle',
+  needsYou: false,
+  askedAt: 3,
+  canReceiveMessages: true,
+  stopInFlight: false,
+  stopUnavailableReason: null,
+  owned: true,
+  workplace: dwarfWorkplace,
+  outcome: outcomeLine,
+  arrivedAt: 1
+} satisfies DwarfWire
+
+const jevSuggestion = {
+  providerId: 'claude',
+  model: 'model',
+  effort: 'high',
+  tier: 'frontier',
+  confidence: { providerId: 0.91, model: 0.74, tier: 0.88 },
+  truncated: false,
+  parts: { providerId: 'answered', model: 'answered', effort: 'safe-default', tier: 'answered' },
+  fallback: 'effort-ceiling'
+} satisfies JevSuggestionView
+
 const attachmentMeta = { name: 'a.png', bytes: 10 } satisfies AttachmentMeta
 const activitySummary = { steps: 2, summaries: ['one', 'two'] } satisfies ActivitySummary
 
 /** Every object-shaped wire schema with one valid payload. */
 const objectCases: Array<[string, z.ZodTypeAny, Record<string, unknown>]> = [
   ['MineWire', mineWireSchema, mineWire],
+  ['DwarfWire', dwarfWireSchema, dwarfWire],
   ['ActivityWire', activityWireSchema, activityWire],
   ['LaunchWire', launchWireSchema, launchWire],
   ['FeedPageRequest', feedPageRequestSchema, feedPageRequest],
@@ -326,6 +388,7 @@ const objectCases: Array<[string, z.ZodTypeAny, Record<string, unknown>]> = [
   ['MineHistoryView', mineHistoryViewSchema, mineHistoryView],
   ['ModelOptionView', modelOptionViewSchema, modelOptionView],
   ['SupplierEntryView', supplierEntryViewSchema, supplierEntryView],
+  ['JevSuggestionView', jevSuggestionViewSchema, jevSuggestion],
   ['HostRecoveryReportView', hostRecoveryReportViewSchema, hostRecoveryReportView],
   ...hostToasts.map((toast): [string, z.ZodTypeAny, Record<string, unknown>] => [
     `HostToast ${toast.kind}`,
@@ -360,7 +423,14 @@ const objectCases: Array<[string, z.ZodTypeAny, Record<string, unknown>]> = [
   ['SecretStatus', secretStatusSchema, secretStatus],
   ['ProviderIdentity', providerIdentitySchema, providerIdentity],
   ['SessionProfile', sessionProfileSchema, sessionProfile],
-  ['DwarfWorkplace', dwarfWorkplaceSchema, dwarfWorkplace]
+  ['DwarfWorkplace', dwarfWorkplaceSchema, dwarfWorkplace],
+  ['OutcomeLine', outcomeLineSchema, outcomeLine],
+  ...outcomeLine.parts.map((part): [string, z.ZodTypeAny, Record<string, unknown>] => [
+    `OutcomeLinePart ${part.kind}`,
+    outcomeLinePartSchema,
+    part
+  ]),
+  ['JevSuggestion', jevSuggestionSchema, jevSuggestion]
 ]
 
 /** Nested objects are strict too: an extra key one level down is refused. */
@@ -399,6 +469,27 @@ const nestedExtraKeyCases: Array<[string, z.ZodTypeAny, unknown]> = [
     'PreferencesView.preferences',
     preferencesViewSchema,
     { ...preferencesView, preferences: { ...hostPreferences, x: 1 } }
+  ],
+  ['DwarfWire.outcome', dwarfWireSchema, { ...dwarfWire, outcome: { ...outcomeLine, x: 1 } }],
+  [
+    'DwarfWire.sessionProfile',
+    dwarfWireSchema,
+    { ...dwarfWire, sessionProfile: { ...sessionProfile, x: 1 } }
+  ],
+  [
+    'OutcomeLine.parts[]',
+    outcomeLineSchema,
+    { ...outcomeLine, parts: [{ kind: 'steps', n: 1, x: 1 }] }
+  ],
+  [
+    'JevSuggestion.confidence',
+    jevSuggestionViewSchema,
+    { ...jevSuggestion, confidence: { model: 0.5, permissionMode: 0.5 } }
+  ],
+  [
+    'JevSuggestion.parts',
+    jevSuggestionViewSchema,
+    { ...jevSuggestion, parts: { model: 'answered', permissionMode: 'answered' } }
   ]
 ]
 
@@ -508,6 +599,144 @@ describe('wire view types (14 §3.6)', () => {
     expectTypeOf<StranglerDwarfIdentity['identity']>().toEqualTypeOf<ProviderIdentity>()
   })
 
+  it('[ADR-032] DwarfWire carries no StatusFacts and no process ids', () => {
+    const parsed = dwarfWireSchema.safeParse(dwarfWire)
+    expect(parsed.success).toBe(true)
+    // Exactly the 14 §3.6 fields.
+    expect(Object.keys(parsed.data ?? {}).sort()).toEqual(Object.keys(dwarfWire).sort())
+
+    const statusFacts = {
+      processState: 'running',
+      turn: { state: 'ended', endedAt: 5, reliability: 'reliable' },
+      lastActivityAt: 5
+    }
+    const processIdentity = { pid: 4242, processStartTimeMs: 1, bootId: 'boot-1' }
+    for (const extra of [
+      { facts: statusFacts }, // the Host's internal StatusFacts (ADR-032 D1)
+      { process: processIdentity }, // ProcessIdentity (ADR-014 item 1)
+      { pid: 4242 },
+      { processStartTimeMs: 1 },
+      { identity: providerIdentity } // the provider's own ids stay in the Host (ADR-015 item 7)
+    ]) {
+      expect(
+        dwarfWireSchema.safeParse({ ...dwarfWire, ...extra }).success,
+        `DwarfWire refuses ${Object.keys(extra)[0]}`
+      ).toBe(false)
+    }
+    // The status is the Host's product status, never a legacy or UI-derived value.
+    expect(dwarfWireSchema.safeParse({ ...dwarfWire, status: 'leaving' }).success).toBe(false)
+
+    expectTypeOf<
+      Extract<keyof DwarfWire, 'facts' | 'process' | 'pid' | 'processStartTimeMs' | 'identity'>
+    >().toEqualTypeOf<never>()
+  })
+
+  it('[ADR-019] OutcomeLine parts are at most three structured parts of the kinds this version knows', () => {
+    expect([...OUTCOME_LINE_PART_KINDS]).toEqual([
+      'steps',
+      'steps-so-far',
+      'waiting-questions',
+      'waiting-permission',
+      'answers-received',
+      'reading-your-message',
+      'idle-since'
+    ])
+    const onePerKind: OutcomeLinePart[] = [
+      { kind: 'steps', n: 1 },
+      { kind: 'steps-so-far', n: 3 },
+      { kind: 'waiting-questions', n: 2 },
+      { kind: 'waiting-permission' },
+      { kind: 'answers-received' },
+      { kind: 'reading-your-message' },
+      { kind: 'idle-since', at: 100 }
+    ]
+    for (const part of onePerKind) {
+      expect(outcomeLinePartSchema.safeParse(part).success, `part ${part.kind}`).toBe(true)
+    }
+    const line = (patch: Record<string, unknown>) =>
+      outcomeLineSchema.safeParse({ ...outcomeLine, ...patch }).success
+
+    // Parts are structured, never pre-worded strings, and only the known kinds.
+    expect(line({ parts: ['Turn finished · 5 steps'] })).toBe(false)
+    expect(line({ parts: [{ kind: 'celebrating' }] })).toBe(false)
+    // Each kind carries exactly its own value.
+    expect(line({ parts: [{ kind: 'idle-since' }] })).toBe(false)
+    expect(line({ parts: [{ kind: 'idle-since', at: 'yesterday' }] })).toBe(false)
+    expect(line({ parts: [{ kind: 'steps' }] })).toBe(false)
+    expect(line({ parts: [{ kind: 'waiting-permission', n: 1 }] })).toBe(false)
+    // A count part exists only from one on (US-MSG-011.AC13/AC14 leave the count out otherwise).
+    for (const n of [0, -1, 1.5]) {
+      expect(line({ parts: [{ kind: 'steps-so-far', n }] }), `n = ${n}`).toBe(false)
+    }
+    // At most three parts.
+    expect(line({ parts: onePerKind.slice(0, 3) })).toBe(true)
+    expect(line({ parts: onePerKind.slice(0, 4) })).toBe(false)
+    expect(line({ parts: [] })).toBe(true)
+    // The six outcome kinds and nothing else; closing words trimmed to 200 characters.
+    for (const kind of [
+      'working',
+      'concluded',
+      'capped',
+      'errored',
+      'interrupted',
+      'waiting-on-you'
+    ]) {
+      expect(line({ kind }), `kind ${kind}`).toBe(true)
+    }
+    expect(line({ kind: 'done' })).toBe(false)
+    expect(line({ reliability: 'guessed' })).toBe(false)
+    expect(line({ closingWords: 'x'.repeat(200) })).toBe(true)
+    expect(line({ closingWords: 'x'.repeat(201) })).toBe(false)
+
+    expectTypeOf<OutcomeLinePart>().toEqualTypeOf<
+      | { kind: 'steps'; n: number }
+      | { kind: 'steps-so-far'; n: number }
+      | { kind: 'waiting-questions'; n: number }
+      | { kind: 'waiting-permission' }
+      | { kind: 'answers-received' }
+      | { kind: 'reading-your-message' }
+      | { kind: 'idle-since'; at: Instant }
+    >()
+    expectTypeOf<(typeof OUTCOME_LINE_PART_KINDS)[number]>().toEqualTypeOf<
+      OutcomeLinePart['kind']
+    >()
+    expectTypeOf<TurnOutcomeKind>().toEqualTypeOf<
+      'working' | 'concluded' | 'capped' | 'errored' | 'interrupted' | 'waiting-on-you'
+    >()
+  })
+
+  it('[ADR-019] JevSuggestionView carries the pick with per-part confidence and origin, and no permission mode or reason', () => {
+    const view = (patch: Record<string, unknown>) =>
+      jevSuggestionViewSchema.safeParse({ ...jevSuggestion, ...patch }).success
+
+    // A decision that left parts out carries only what it answered (US-LAUNCH-003.AC03).
+    expect(
+      jevSuggestionViewSchema.safeParse({ confidence: {}, truncated: false, parts: {} }).success
+    ).toBe(true)
+    // No permission mode, no reason sentence, no fallback supplier (06 §12).
+    expect(view({ permissionMode: 'default' })).toBe(false)
+    expect(view({ reasonSentence: 'Because.' })).toBe(false)
+    expect(view({ fallbackProvider: 'codex' })).toBe(false)
+    // Confidence is a fraction per part, shown as a percentage by the tooltip (US-LAUNCH-008).
+    for (const value of [-0.01, 1.01]) {
+      expect(view({ confidence: { model: value } }), `confidence ${value}`).toBe(false)
+    }
+    expect(view({ confidence: { model: 0, tier: 1 } })).toBe(true)
+    // A part is answered or fell back to a safe value, nothing else.
+    expect(view({ parts: { model: 'guessed' } })).toBe(false)
+    // Jev's model tier is never a mine's ore tier.
+    expect(view({ tier: 'gold' })).toBe(false)
+    expect(view({ tier: 'special-purpose' })).toBe(false)
+    expect(view({ fallback: 'no-reason-at-all' })).toBe(false)
+    // truncated is required: the tooltip reads it on every suggestion.
+    const { truncated, ...withoutTruncated } = jevSuggestion
+    expect(truncated).toBe(false)
+    expect(jevSuggestionViewSchema.safeParse(withoutTruncated).success).toBe(false)
+
+    expectTypeOf<JevSuggestionView>().toEqualTypeOf<JevSuggestion>()
+    expectTypeOf<keyof JevSuggestion['confidence']>().toEqualTypeOf<keyof JevSuggestion['parts']>()
+  })
+
   it('[ADR-019] each zod-inferred view type equals its 14 §3.6 TypeScript type', () => {
     // Enforced by `pnpm typecheck`: a drift between a schema and its 14 / owner type fails compilation here.
     // ids and scalars as 06 §0.1 defines them: branded only where the owner says "branded".
@@ -525,6 +754,10 @@ describe('wire view types (14 §3.6)', () => {
     expectTypeOf<MineId>().not.toEqualTypeOf<string>()
     expectTypeOf<FolderPath>().not.toEqualTypeOf<string>()
     expectTypeOf<z.infer<typeof mineWireSchema>>().toEqualTypeOf<MineWire>()
+    expectTypeOf<z.infer<typeof dwarfWireSchema>>().toEqualTypeOf<DwarfWire>()
+    expectTypeOf<z.infer<typeof jevSuggestionViewSchema>>().toEqualTypeOf<JevSuggestionView>()
+    expectTypeOf<z.infer<typeof jevSuggestionSchema>>().toEqualTypeOf<JevSuggestion>()
+    expectTypeOf<z.infer<typeof outcomeLineSchema>>().toEqualTypeOf<OutcomeLine>()
     expectTypeOf<
       z.infer<typeof stopUnavailableReasonSchema>
     >().toEqualTypeOf<StopUnavailableReason>()

@@ -17,6 +17,14 @@ import {
   type ProviderId
 } from './ids'
 import {
+  dwarfPresenceSchema,
+  dwarfProcessStateSchema,
+  dwarfRankSchema,
+  dwarfStatusSchema,
+  dwarfWorkplaceSchema,
+  jevSuggestionSchema,
+  outcomeLineSchema,
+  sessionProfileSchema,
   hostPreferencesSchema,
   hostRecoveryReportSchema,
   integrationSettingSchema,
@@ -29,8 +37,16 @@ import {
   supplierEntrySchema,
   tierSchema,
   welcomeStepStateSchema,
+  type DwarfPresence,
+  type DwarfProcessState,
+  type DwarfRank,
+  type DwarfStatus,
+  type DwarfWorkplace,
   type HostPreferences,
   type HostRecoveryReport,
+  type JevSuggestion,
+  type OutcomeLine,
+  type SessionProfile,
   type IntegrationSetting,
   type LaunchFailure,
   type LaunchState,
@@ -60,6 +76,31 @@ export interface MineWire {
 
 /** 14 §3.6 `StopUnavailableReason` (US-MSG-016.AC02; an open turn no longer disables Stop, OQ-54, AMENDMENT-2). */
 export type StopUnavailableReason = 'already-stopping'
+
+/** 14 §3.6 `DwarfWire`: DwarfView (06 §0.2) wire subset; no StatusFacts, no process ids (ADR-032 D1). */
+export interface DwarfWire {
+  id: DwarfId
+  mineId: MineId
+  providerId: ProviderId
+  baseName: string
+  customName: string | null
+  rank: DwarfRank
+  parentDwarfId: DwarfId | null
+  delegated: boolean
+  sessionProfile: SessionProfile
+  presence: DwarfPresence
+  processState: DwarfProcessState
+  status: DwarfStatus
+  needsYou: boolean
+  askedAt?: Instant
+  canReceiveMessages: boolean
+  stopInFlight: boolean
+  stopUnavailableReason: StopUnavailableReason | null
+  owned: boolean
+  workplace?: DwarfWorkplace
+  outcome?: OutcomeLine
+  arrivedAt: Instant
+}
 
 /** 14 §3.6 `ActivityWire`: ActivityDisclosure (06 §0.2). */
 export interface ActivityWire {
@@ -123,6 +164,9 @@ export interface SupplierEntryView extends Omit<SupplierEntry, 'models' | 'effor
   offeredModes: string[]
 }
 
+/** 14 §3.6 `JevSuggestionView` = `JevSuggestion` (06 §12, transient, never persisted, INV-87). */
+export type JevSuggestionView = JevSuggestion
+
 /** 14 §3.6 `HostRecoveryReportView`: ADR-015 item 5 + display state. */
 export interface HostRecoveryReportView extends HostRecoveryReport {
   state: 'pending-display' | 'shown' | 'retrying' | 'settled'
@@ -168,6 +212,32 @@ export const mineWireSchema = z
   .strict()
 
 export const stopUnavailableReasonSchema = z.literal('already-stopping')
+
+export const dwarfWireSchema = z
+  .object({
+    id: dwarfIdSchema,
+    mineId: mineIdSchema,
+    providerId: providerIdSchema,
+    baseName: z.string(),
+    customName: z.string().nullable(),
+    rank: dwarfRankSchema,
+    parentDwarfId: dwarfIdSchema.nullable(),
+    delegated: z.boolean(),
+    sessionProfile: sessionProfileSchema,
+    presence: dwarfPresenceSchema,
+    processState: dwarfProcessStateSchema,
+    status: dwarfStatusSchema,
+    needsYou: z.boolean(),
+    askedAt: instantSchema.optional(),
+    canReceiveMessages: z.boolean(),
+    stopInFlight: z.boolean(),
+    stopUnavailableReason: stopUnavailableReasonSchema.nullable(),
+    owned: z.boolean(),
+    workplace: dwarfWorkplaceSchema.optional(),
+    outcome: outcomeLineSchema.optional(),
+    arrivedAt: instantSchema
+  })
+  .strict()
 
 export const activityWireSchema = z
   .object({
@@ -245,6 +315,8 @@ export const supplierEntryViewSchema = supplierEntrySchema
   .omit({ models: true, efforts: true })
   .extend({ models: z.array(modelOptionViewSchema), offeredModes: z.array(z.string()) })
   .strict()
+
+export const jevSuggestionViewSchema = jevSuggestionSchema
 
 export const hostRecoveryReportViewSchema = hostRecoveryReportSchema
   .extend({
