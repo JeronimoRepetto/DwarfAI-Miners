@@ -34,6 +34,11 @@ docs/dwarfai-miners-design/*
 # Raw fixture recordings (`<case>.raw.*`): only their scrubbed output is committed (fixtures/README.md).
 fixtures/**/*.raw.*
 
+# Traceability build outputs (testing strategy 17 §3.2): the extractor's map and the id catalogs
+# generated from the architecture package, which is never copied into a tracked path.
+traceability.json
+scripts/traceability/catalogs/
+
 # ODD feature documents: the orchestrator's working notes, kept local and mirrored to Engram
 odd/
 
