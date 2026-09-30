@@ -8,10 +8,11 @@
  * authoritative one, because a renderer's word is never a permission. Two
  * copies of the rule would be two chances for one of them to widen.
  *
- * Here rather than in `contracts.ts` for the reason `truncate.ts` and
- * `accelerator.ts` are: this is a pure rule both processes run, not a shape
- * that crosses between them. No Electron and no Node, like everything in
- * `shared/` — `URL` is the platform's own parser on both sides.
+ * Here in `contracts/text` rather than beside the wire shapes, for the reason
+ * `truncate.ts` and `accelerator.ts` are: this is a pure rule both processes
+ * run, not a shape that crosses between them. No Electron and no Node, like
+ * everything in `contracts/text` — `URL` is the platform's own parser on both
+ * sides.
  */
 
 /**

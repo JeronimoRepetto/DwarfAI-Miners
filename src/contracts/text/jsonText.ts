@@ -11,8 +11,8 @@
  * the entire configuration — on the one document whose own comment says it is
  * meant to be edited by hand.
  *
- * So the tolerance lives in one place rather than at each call site, beside
- * the fs seam it belongs to.
+ * So the tolerance lives in one place rather than at each call site: here in
+ * `contracts/text`, where every reader of a document off disk can reach it.
  *
  * What does NOT read through here, on purpose: `JSON.parse` over a CLI's
  * stdout, an HTTP body, or a SQLite TEXT column (`platform/focus.ts`,

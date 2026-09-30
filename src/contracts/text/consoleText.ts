@@ -54,8 +54,8 @@ export const MAX_CONSOLE_CHUNK_CODE_POINTS = 500
  * `consoleInputWrite.ts`: both are pure text-shaping rules with no Electron
  * or Node import, and both callers that need bounding —
  * `buildConsoleInputWriteCommand` and `consoleChunksFor` — already reach into
- * `shared/` for `toConsoleLine`'s own rule, so this is the one place both
- * already import from.
+ * the text helpers for `toConsoleLine`'s own rule, so `contracts/text` is the
+ * one place both can import from.
  */
 export function boundedChunks(text: string): string[] {
   const points = Array.from(text)
