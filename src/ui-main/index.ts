@@ -1,9 +1,11 @@
-import { app, clipboard, dialog, globalShortcut, nativeImage, shell } from 'electron'
+import { app, clipboard, dialog, globalShortcut, ipcMain, nativeImage, shell } from 'electron'
 import {
   composeLegacyRuntime,
   createLegacyRuntimeRoute,
   type LegacyRuntimeRoute
 } from '../legacy-bridge/LegacyRuntimeRoute'
+import { createRouter, type IpcMainRegistrar } from './ipc/router'
+import { ROUTES } from './ipc/routes'
 import { ElectronSingleInstanceLock } from './window/adapters/ElectronSingleInstanceLock'
 import { wireSecondLaunch } from './window/application/secondLaunch'
 import type { SingleInstanceLock } from './window/ports/singleInstanceLock'
@@ -21,7 +23,9 @@ export interface UiMainLifecycle {
 export interface UiMainDeps {
   lock: SingleInstanceLock
   lifecycle: UiMainLifecycle
-  legacyRuntime: Pick<LegacyRuntimeRoute, 'compose' | 'beforeQuit' | 'willQuit'>
+  legacyRuntime: Pick<LegacyRuntimeRoute, 'compose' | 'serve' | 'beforeQuit' | 'willQuit'>
+  /** Electron's `ipcMain`, where the router registers the seam A listeners (ADR-001 item 3). */
+  ipc: IpcMainRegistrar
 }
 
 /**
@@ -29,17 +33,26 @@ export interface UiMainDeps {
  * taken first; a process that does not get it quits before composing anything (UC-033, PO #73).
  * The holder wires the second-launch use case (S10.02), then, once Electron is ready, composes
  * today's runtime through its one door `LegacyRuntimeRoute` (21 §3) and hands that runtime's Panel
- * window to the second-launch use case. The router (ISSUE-043), the Host client (ISSUE-051) and
- * the rebuilt window module (ISSUE-046, ISSUE-047) join here in their own issues.
+ * window to the second-launch use case. The router (ISSUE-043) registers the seam A listeners
+ * right after the lock and dispatches each call by the route table (`ipc/routes.ts`); the Host
+ * client (ISSUE-051) and the rebuilt window module (ISSUE-046, ISSUE-047) join it as route
+ * targets in their own issues.
  *
  * The answer settles when the start has finished: at once for a process that quit, after the
  * composition (or the exit it caused) for the lock holder.
  */
-export async function startUiMain({ lock, lifecycle, legacyRuntime }: UiMainDeps): Promise<void> {
+export async function startUiMain({
+  lock,
+  lifecycle,
+  legacyRuntime,
+  ipc
+}: UiMainDeps): Promise<void> {
   if (!lock.acquire()) {
     lifecycle.quit()
     return
   }
+  // Every seam A call goes through the router table from the first renderer load (21 §1 item 1).
+  createRouter({ routes: ROUTES, legacy: legacyRuntime }).register(ipc)
   const secondLaunch = wireSecondLaunch(lock)
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
   lifecycle.onWillQuit(() => legacyRuntime.willQuit())
@@ -73,6 +86,17 @@ function electronLifecycle(): UiMainLifecycle {
   }
 }
 
+/** Electron's `ipcMain` behind `IpcMainRegistrar`: the renderer's one payload argument, the event dropped. */
+function electronIpcMain(): IpcMainRegistrar {
+  return {
+    handle: (channel, listener) =>
+      ipcMain.handle(channel, (_event, payload: unknown) => listener(payload)),
+    on: (channel, listener) => {
+      ipcMain.on(channel, (_event, payload: unknown) => listener(payload))
+    }
+  }
+}
+
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it.
@@ -82,6 +106,7 @@ if (process.type === 'browser') {
     lifecycle: electronLifecycle(),
     legacyRuntime: createLegacyRuntimeRoute(
       composeLegacyRuntime({ app, dialog, nativeImage, shell, clipboard, globalShortcut })
-    )
+    ),
+    ipc: electronIpcMain()
   })
 }
