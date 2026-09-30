@@ -1,6 +1,7 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { startUiMain, type UiMainDeps, type UiMainLifecycle } from './index'
+import type { IpcMainRegistrar } from './ipc/router'
 import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 
@@ -46,15 +47,32 @@ describe('ui-main composition root (05 §2.3)', () => {
     }
   }
 
+  /** Records the listeners the router registers on `ipcMain`, by wire name. */
+  class RecordingIpcMain implements IpcMainRegistrar {
+    readonly handled = new Map<string, (payload: unknown) => Promise<unknown>>()
+    readonly listened = new Map<string, (payload: unknown) => void>()
+    handle(channel: string, listener: (payload: unknown) => Promise<unknown>): void {
+      this.handled.set(channel, listener)
+    }
+    on(channel: string, listener: (payload: unknown) => void): void {
+      this.listened.set(channel, listener)
+    }
+  }
+
   /** A stand-in for LegacyRuntimeRoute that counts compositions and quit teardowns. */
   function countingLegacyRuntime(outcome: 'composes' | 'fails' = 'composes') {
     const panel = new FakePanelWindowController({ visible: false })
     const counts = { composed: 0, beforeQuit: 0, willQuit: 0 }
+    const served: [string, unknown][] = []
     const legacyRuntime: UiMainDeps['legacyRuntime'] = {
       async compose() {
         counts.composed += 1
         if (outcome === 'fails') throw new Error('today’s runtime could not start')
         return panel
+      },
+      async serve(channel, payload) {
+        served.push([channel, payload])
+        return channel === 'app:build' ? { version: '0.0.0-test' } : undefined
       },
       beforeQuit() {
         counts.beforeQuit += 1
@@ -63,7 +81,7 @@ describe('ui-main composition root (05 §2.3)', () => {
         counts.willQuit += 1
       }
     }
-    return { legacyRuntime, counts, panel }
+    return { legacyRuntime, counts, panel, served }
   }
 
   it('[ADR-001] when the single-instance lock is not acquired the root quits before composing the legacy runtime or any window', async () => {
@@ -71,7 +89,7 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime, counts, panel } = countingLegacyRuntime()
 
-    await startUiMain({ lock, lifecycle, legacyRuntime })
+    await startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
     lifecycle.becomeReady()
     await Promise.resolve()
 
@@ -87,7 +105,7 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime, counts, panel } = countingLegacyRuntime()
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime })
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
     lock.launchAgain() // the lock is taken but the window does not exist yet (UC-033)
     expect(counts.composed).toBe(0)
 
@@ -106,7 +124,7 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime, counts } = countingLegacyRuntime()
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime })
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
     lifecycle.becomeReady()
     await started
     lifecycle.handlers.get('window-all-closed')?.()
@@ -123,10 +141,41 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime } = countingLegacyRuntime('fails')
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime })
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
     lifecycle.becomeReady()
     await started
 
     expect(lifecycle.calls).toContain('exit 1')
+  })
+
+  it('[ADR-001] the lock holder registers the router’s seam A listeners before composing, and a renderer call is served by today’s handler through LegacyRuntimeRoute', async () => {
+    const lock = new FakeSingleInstanceLock(true)
+    const lifecycle = new RecordingLifecycle()
+    const { legacyRuntime, counts, served } = countingLegacyRuntime()
+    const ipc = new RecordingIpcMain()
+
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc })
+    expect(counts.composed).toBe(0)
+    expect(ipc.handled.has('app:build')).toBe(true)
+    expect(ipc.listened.has('panel:openMine')).toBe(true)
+
+    lifecycle.becomeReady()
+    await started
+    expect(await ipc.handled.get('app:build')?.(undefined)).toEqual({ version: '0.0.0-test' })
+    expect(served).toEqual([['app:build', undefined]])
+  })
+
+  it('[ADR-001] a process that does not hold the single-instance lock registers no seam A listener', async () => {
+    const ipc = new RecordingIpcMain()
+    const { legacyRuntime } = countingLegacyRuntime()
+
+    await startUiMain({
+      lock: new FakeSingleInstanceLock(false),
+      lifecycle: new RecordingLifecycle(),
+      legacyRuntime,
+      ipc
+    })
+
+    expect([...ipc.handled.keys(), ...ipc.listened.keys()]).toEqual([])
   })
 })
