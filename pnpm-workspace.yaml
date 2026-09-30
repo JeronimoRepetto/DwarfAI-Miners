@@ -29,8 +29,7 @@ allowBuilds:
 # harmless in node_modules itself: `scripts/pruneSdkRuntimes.mjs` (wired in as
 # `build.afterPack`) is what actually strips every arch but the one being
 # built out of the packaged app before it ships — electron-builder 26.15.3,
-# which this project pins, does not do that pruning on its own (see the trap
-# in skills/release/SKILL.md and #349).
+# which this project pins, does not do that pruning on its own (see #349).
 supportedArchitectures:
   os:
     - current

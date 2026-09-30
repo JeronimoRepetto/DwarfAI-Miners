@@ -536,7 +536,7 @@ instruction files where they are known and sourced — Claude Code's own `AskUse
 `CLAUDE.md`, Codex's own `request_user_input` tool and `AGENTS.md`, OpenCode's own `question` tool —
 so a prompt that names one of them (#625) has something to route on besides session style alone. A
 name shared by more than one CLI (`AGENTS.md` is read by all three above) is never presented as
-exclusive to one; see the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for the
+exclusive to one; see [`providerTooling.ts`](../src/main/jev/capabilities/providerTooling.ts) for the
 full sourced list and its evidence rule. If Jev's own provider answer is confident enough
 (above 60%), that is the provider; otherwise your own configured default provider is used instead,
 and only when no default is set does the cheapest launchable provider at the resolved tier stand in.
@@ -596,7 +596,7 @@ the composer; with no provider chosen either, nothing launches and your prompt i
 
 Settings' Jev section, visible only once a key is configured, also holds the **routing profile** —
 economy, balanced or premium; see [Configuration](../README.md#configuration) for what each one
-means, and the [`jev-capabilities`](../skills/jev-capabilities/SKILL.md) skill for how a model earns
+means, and the [`modelCapability.ts`](../src/main/jev/capabilities/modelCapability.ts) header for how a model earns
 a place in the table the profile routes through. `JEV_DEBUG=1` traces every routing call to the
 terminal — see [Diagnostic switches](#diagnostic-switches).
 

@@ -148,7 +148,7 @@ Describe the patterns; never reproduce them. That is why this page names none of
   credit CI for a catch without checking the run.
 - **Reading only the last line of a red build.** The guard runs as the **first** step of the checks
   job, before typecheck, lint, format and test. If it fails, nothing else runs, and the release job
-  is skipped entirely because it depends on that job — see [`release`](../release/SKILL.md).
+  is skipped entirely because it depends on that job.
 - **Trusting a local run without the secret.** `CONTRIBUTING.md` lists the guard first of its
   seven checks, but locally it checks something only with `PRIVACY_GUARD_PATTERN` set; without it
   the other six can pass on a change CI turns red.
