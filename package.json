@@ -125,6 +125,7 @@
     "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.258"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "26.4.0",
     "@vitejs/plugin-vue": "6.0.8",
     "@vue/test-utils": "^2.5.0",
