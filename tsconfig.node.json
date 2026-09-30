@@ -15,12 +15,19 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@dwarfai/contracts": ["./src/contracts/index.ts"]
+    }
   },
   "include": [
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "src/contracts/**/*.ts",
+    "src/host/**/*.ts",
+    "src/ui-main/**/*.ts",
+    "src/legacy-bridge/**/*.ts",
     "electron.vite.config.ts",
     "electron.vite.jevMcpServer.config.ts",
     "vitest.config.ts",

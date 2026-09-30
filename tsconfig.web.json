@@ -15,7 +15,15 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@dwarfai/contracts": ["./src/contracts/index.ts"]
+    }
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.vue", "src/preload/index.d.ts"]
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.vue",
+    "src/preload/index.d.ts",
+    "src/contracts/**/*.ts"
+  ]
 }

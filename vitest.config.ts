@@ -1,8 +1,15 @@
+import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [vue()],
+  resolve: {
+    // The one contracts barrel (ADR-004 P13), same alias as both tsconfigs and electron-vite.
+    alias: {
+      '@dwarfai/contracts': fileURLToPath(new URL('./src/contracts/index.ts', import.meta.url))
+    }
+  },
   test: {
     // Renderer/main code is TypeScript under src/; the art pipeline is plain
     // ESM under scripts/ because it runs straight from node with no build step.
