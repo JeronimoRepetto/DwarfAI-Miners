@@ -1,393 +1,698 @@
 {
-  "source": "Hand-written from 14-ipc-contract.md §2.1 and §2.2 (frozen, with its approved amendments): seam A ids and statuses only, reviewed against the §7 counts (KEEP 35, CHANGE 16, NEW 33, RETIRE 13). Data for scripts/checks/ipc-reinventory.test.mjs, not a copy of the contract.",
+  "source": "Hand-written from 14-ipc-contract.md (frozen, with its approved amendments): the seam A rows of §2.1 and §2.2 with their id, wire name, member name, kind and status, reviewed against the §7 counts (KEEP 35, CHANGE 16, NEW 33, RETIRE 13); plus the two legacy channels of §8 I-21 (AMENDMENT-12, OQ-82), which have no §2 id: RETIRE at cut 5, successors A-N08 and A-N09, wire and member names as I-21 gives them, kind as found (invoke). Data for scripts/checks/ipc-reinventory.test.mjs, not a copy of the contract.",
   "rows": [
     {
       "id": "A-01",
+      "wire": "panel:hide",
+      "member": "hidePanel",
+      "kind": "send",
       "status": "KEEP"
     },
     {
       "id": "A-02",
+      "wire": "panel:raise",
+      "member": "raisePanel",
+      "kind": "send",
       "status": "KEEP"
     },
     {
       "id": "A-03",
+      "wire": "panel:getAlwaysOnTop",
+      "member": "getAlwaysOnTop",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-04",
+      "wire": "panel:setAlwaysOnTop",
+      "member": "setAlwaysOnTop",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-05",
+      "wire": "panel:visible:get",
+      "member": "getPanelVisible",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-06",
+      "wire": "audio:preferences:get",
+      "member": "getAudioPreferences",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-07",
+      "wire": "audio:preferences:set",
+      "member": "setAudioPreferences",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-08",
+      "wire": "panel:layout:get",
+      "member": "getPanelLayout",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-09",
+      "wire": "panel:layout:set",
+      "member": "setPanelLayout",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-10",
+      "wire": "shortcut:get",
+      "member": "getToggleShortcut",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-11",
+      "wire": "shortcut:set",
+      "member": "setToggleShortcut",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-12",
+      "wire": "mines:get",
+      "member": "getMines",
+      "kind": "invoke",
       "status": "RETIRE"
     },
     {
       "id": "A-13",
+      "wire": "dwarf:activate",
+      "member": "activateDwarf",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-14",
+      "wire": "dwarf:feed",
+      "member": "getDwarfFeed",
+      "kind": "invoke",
       "status": "RETIRE"
     },
     {
       "id": "A-15",
+      "wire": "dwarf:feed:page",
+      "member": "getDwarfFeedPage",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-16",
+      "wire": "panel:watchDwarfFeed",
+      "member": "setWatchedDwarf",
+      "kind": "send",
       "status": "RETIRE"
     },
     {
       "id": "A-17",
+      "wire": "dwarf:refreshTelemetry",
+      "member": "refreshDwarfTelemetry",
+      "kind": "send",
       "status": "RETIRE"
     },
     {
       "id": "A-18",
+      "wire": "dwarf:setTuning",
+      "member": "setDwarfTuning",
+      "kind": "invoke",
       "status": "RETIRE"
     },
     {
       "id": "A-19",
+      "wire": "mine:history",
+      "member": "getMineHistory",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-20",
+      "wire": "mine:openPath",
+      "member": "openMinePath",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-21",
+      "wire": "shell:openExternalLink",
+      "member": "openExternalLink",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-22",
+      "wire": "shell:copyText",
+      "member": "copyText",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-23",
+      "wire": "dwarf:sendText",
+      "member": "sendDwarfText",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-24",
+      "wire": "dwarf:attachments:choose",
+      "member": "chooseDwarfAttachments",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-25",
+      "wire": "dwarf:attachments:describe",
+      "member": "describeDwarfAttachments",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-26",
+      "wire": "dwarf:kick",
+      "member": "kickDwarf",
+      "kind": "invoke",
       "status": "RETIRE"
     },
     {
       "id": "A-27",
+      "wire": "dwarf:retire",
+      "member": "retireDwarf",
+      "kind": "send",
       "status": "RETIRE"
     },
     {
       "id": "A-28",
+      "wire": "app:build",
+      "member": "getAppBuild",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-29",
+      "wire": "app:features",
+      "member": "getFeatureFlags",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-30",
+      "wire": "mine:declare",
+      "member": "declareMine",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-31",
+      "wire": "mine:declare-main",
+      "member": "declareMainProject",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-32",
+      "wire": "mine:undeclare",
+      "member": "undeclareMine",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-33",
+      "wire": "metrics:reset",
+      "member": "resetMetrics",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-34",
+      "wire": "projects:query",
+      "member": "queryProjects",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-35",
+      "wire": "agent:launch",
+      "member": "launchAgent",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-36",
+      "wire": "agent:providers",
+      "member": "listAgentProviders",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-37",
+      "wire": "agent:models",
+      "member": "listAgentModels",
+      "kind": "invoke",
       "status": "RETIRE"
     },
     {
       "id": "A-38",
+      "wire": "agent:launchHeld",
+      "member": "launchHeldSession",
+      "kind": "invoke",
       "status": "RETIRE"
     },
     {
       "id": "A-39",
+      "wire": "agent:launchHosted",
+      "member": "launchHostedProcess",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-40",
+      "wire": "agent:answerQuestion",
+      "member": "answerDwarfQuestion",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-41",
+      "wire": "agent:answerPermission",
+      "member": "answerDwarfPermission",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-42",
+      "wire": "notifications:enabled:get",
+      "member": "getNotificationsEnabled",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-43",
+      "wire": "notifications:enabled:set",
+      "member": "setNotificationsEnabled",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-44",
+      "wire": "panel:openMine",
+      "member": "setOpenMine",
+      "kind": "send",
       "status": "CHANGE"
     },
     {
       "id": "A-45",
+      "wire": "typography:preferences:get",
+      "member": "getTypographyPreferences",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-46",
+      "wire": "typography:preferences:set",
+      "member": "setTypographyPreferences",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-47",
+      "wire": "jev:settings:get",
+      "member": "getJevSettings",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-48",
+      "wire": "jev:apiKey:set",
+      "member": "setJevApiKey",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-49",
+      "wire": "jev:apiKey:clear",
+      "member": "clearJevApiKey",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-50",
+      "wire": "jev:route",
+      "member": "routeJevLaunch",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-51",
+      "wire": "jev:preferences:set",
+      "member": "setJevPreferences",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-52",
+      "wire": "opencode:settings:get",
+      "member": "getOpenCodeSettings",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-53",
+      "wire": "opencode:plugin:set",
+      "member": "setOpenCodePluginEnabled",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-54",
+      "wire": "opencode:password:set",
+      "member": "setOpenCodeServerPassword",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-55",
+      "wire": "opencode:password:clear",
+      "member": "clearOpenCodeServerPassword",
+      "kind": "invoke",
       "status": "CHANGE"
     },
     {
       "id": "A-56",
+      "wire": "launch-view:get",
+      "member": "getLaunchView",
+      "kind": "invoke",
       "status": "KEEP"
     },
     {
       "id": "A-57",
+      "wire": "launch-view:set",
+      "member": "setLaunchView",
+      "kind": "send",
       "status": "KEEP"
     },
     {
       "id": "A-P1",
+      "wire": "panel:visible:changed",
+      "member": "onPanelVisibility",
+      "kind": "push",
       "status": "KEEP"
     },
     {
       "id": "A-P2",
+      "wire": "mines:update",
+      "member": "onMinesUpdated",
+      "kind": "push",
       "status": "RETIRE"
     },
     {
       "id": "A-P3",
+      "wire": "agent:launchFailed",
+      "member": "onLaunchFailed",
+      "kind": "push",
       "status": "RETIRE"
     },
     {
       "id": "A-P4",
+      "wire": "dwarf:sendText:settled",
+      "member": "onDwarfSendSettled",
+      "kind": "push",
       "status": "RETIRE"
     },
     {
       "id": "A-P5",
+      "wire": "panel:mine:show",
+      "member": "onShowMine",
+      "kind": "push",
       "status": "RETIRE"
     },
     {
       "id": "A-P6",
+      "wire": "typography:preferences:changed",
+      "member": "onTypographyPreferences",
+      "kind": "push",
       "status": "KEEP"
     },
     {
       "id": "A-X1",
+      "wire": null,
+      "member": "pathForDroppedFile",
+      "kind": "helper",
       "status": "KEEP"
     },
     {
       "id": "A-N01",
+      "wire": "host:snapshot",
+      "member": "getHostSnapshot",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N02",
+      "wire": "host:event",
+      "member": "onHostEvent",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N03",
+      "wire": "host:connection:get",
+      "member": "getHostConnection",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N04",
+      "wire": "host:connection:changed",
+      "member": "onHostConnection",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N05",
+      "wire": "host:connection:retry",
+      "member": "retryHostConnection",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N06",
+      "wire": "dwarf:message:retry",
+      "member": "retryDwarfMessage",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N07",
+      "wire": "ask:step:set",
+      "member": "setAskStep",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N08",
+      "wire": "dwarf:rename",
+      "member": "renameDwarf",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N09",
+      "wire": "dwarf:name:reset",
+      "member": "resetDwarfName",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N10",
+      "wire": "host:recovery:retry",
+      "member": "retryRecovery",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N11",
+      "wire": "host:recovery:dismiss",
+      "member": "dismissRecovery",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N12",
+      "wire": "ui:preferences:reset",
+      "member": "onUiPreferencesReset",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N13",
+      "wire": "mode:move",
+      "member": "moveToMode",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N14",
+      "wire": "mode:transition",
+      "member": "onModeTransition",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N15",
+      "wire": "mode:transition:done",
+      "member": "modeTransitionDone",
+      "kind": "send",
       "status": "NEW"
     },
     {
       "id": "A-N16",
+      "wire": "mode:revealDwarfChat",
+      "member": "onRevealDwarfChat",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N17",
+      "wire": "ui:session:get",
+      "member": "getUiSession",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N18",
+      "wire": "ui:session:patch",
+      "member": "patchUiSession",
+      "kind": "send",
       "status": "NEW"
     },
     {
       "id": "A-N19",
+      "wire": "ui:session:changed",
+      "member": "onUiSessionChanged",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N20",
+      "wire": "ui:preferences:get",
+      "member": "getUiPreferences",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N21",
+      "wire": "ui:preferences:set",
+      "member": "setUiPreference",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N22",
+      "wire": "veta:clickThrough",
+      "member": "setVetaClickThrough",
+      "kind": "send",
       "status": "NEW"
     },
     {
       "id": "A-N23",
+      "wire": "veta:layout",
+      "member": "layoutVeta",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N24",
+      "wire": "window:limits",
+      "member": "getWindowingLimits",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N25",
+      "wire": "tray:stopEverything:requested",
+      "member": "onStopEverythingRequested",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N26",
+      "wire": "tray:stopEverything:confirm",
+      "member": "confirmStopEverything",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N27",
+      "wire": "tray:stopEverything:cancel",
+      "member": "cancelStopEverything",
+      "kind": "send",
       "status": "NEW"
     },
     {
       "id": "A-N28",
+      "wire": "veta:dock:changed",
+      "member": "onVetaDockChanged",
+      "kind": "push",
       "status": "NEW"
     },
     {
       "id": "A-N29",
+      "wire": "dwarf:stop",
+      "member": "stopDwarf",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N30",
+      "wire": "diag:renderer:report",
+      "member": "reportRendererDiagnostic",
+      "kind": "send",
       "status": "NEW"
     },
     {
       "id": "A-N31",
+      "wire": "claude:hooks:set",
+      "member": "setClaudeHooksEnabled",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N32",
+      "wire": "welcome:answer",
+      "member": "answerWelcome",
+      "kind": "invoke",
       "status": "NEW"
     },
     {
       "id": "A-N33",
+      "wire": "host:connection:confirm-restart",
+      "member": "confirmHostRestart",
+      "kind": "invoke",
       "status": "NEW"
+    },
+    {
+      "id": "§8 I-21",
+      "wire": "dwarf:resetName",
+      "member": "resetDwarfName",
+      "kind": "invoke",
+      "status": "RETIRE"
+    },
+    {
+      "id": "§8 I-21",
+      "wire": "dwarf:setName",
+      "member": "setDwarfName",
+      "kind": "invoke",
+      "status": "RETIRE"
     }
   ]
 }

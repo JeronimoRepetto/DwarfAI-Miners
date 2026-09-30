@@ -105,14 +105,18 @@ describe('ipc re-inventory scanner', () => {
 })
 
 /**
- * The seam A ids of `14` §2.1/§2.2 with their status: a hand-written, reviewed data fixture (ids and
- * statuses only, not the contract text).
+ * The seam A rows of `14` §2.1/§2.2 (id, wire name, member name, kind, status) plus the two legacy
+ * channels of `14` §8 I-21, which share the reference `§8 I-21` and are told apart by wire name: a
+ * hand-written, reviewed data fixture, not the contract text.
  */
-const catalog14 = new Map(
-  JSON.parse(readFileSync(path.join(fixtureRoot, 'catalog-14-seam-a.json'), 'utf8')).rows.map(
-    (row) => [row.id, row.status]
-  )
-)
+const catalog14 = JSON.parse(
+  readFileSync(path.join(fixtureRoot, 'catalog-14-seam-a.json'), 'utf8')
+).rows
+const I21 = '§8 I-21'
+
+/** The fixture entry a row's `14` reference names, or undefined when there is none. */
+const entryOf = (row) =>
+  catalog14.find((entry) => entry.id === row.id && (row.id !== I21 || entry.wire === row.wire))
 
 /** A channel is known by its wire name; the one preload helper with no wire, by its member name. */
 const keyOf = (wire, member) => wire ?? `helper ${member}`
@@ -178,6 +182,8 @@ describe('registry re-inventory (14 §6.5, P-3)', () => {
       const key = keyOf(row.wire, row.member)
       if (row.status === 'UNLISTED') {
         if (row.id !== null) problems.push(`${key}: UNLISTED but names ${row.id}`)
+        const listed = catalog14.find((entry) => row.wire !== null && entry.wire === row.wire)
+        if (listed) problems.push(`${key}: UNLISTED but 14 lists it as ${listed.id}`)
         if (!/^AR-P3-\d{2}$/.test(row.request ?? ''))
           problems.push(`${key}: UNLISTED without an AR-P3 id`)
         else if (seenRequests.has(row.request))
@@ -185,15 +191,22 @@ describe('registry re-inventory (14 §6.5, P-3)', () => {
         seenRequests.add(row.request)
         continue
       }
-      if (!catalog14.has(row.id)) problems.push(`${key}: ${row.id} is not a 14 §2 id`)
-      else if (catalog14.get(row.id) !== row.status) {
-        problems.push(
-          `${key}: ${row.id} is ${catalog14.get(row.id)} in 14, the row says ${row.status}`
-        )
+      const entry = entryOf(row)
+      if (!entry) {
+        problems.push(`${key}: ${row.id} is not a 14 §2 id or a 14 §8 I-21 entry`)
+        continue
       }
-      if (seenIds.has(row.id)) problems.push(`${key}: ${row.id} has a second row`)
+      if (entry.status !== row.status) {
+        problems.push(`${key}: ${row.id} is ${entry.status} in 14, the row says ${row.status}`)
+      }
+      const said = `${row.wire} ${row.member} ${row.kind}`
+      const listed = `${entry.wire} ${entry.member} ${entry.kind}`
+      if (said !== listed)
+        problems.push(`${key}: ${row.id} is ${listed} in 14, the row says ${said}`)
+      const reference = row.id === I21 ? `${row.id} ${row.wire}` : row.id
+      if (seenIds.has(reference)) problems.push(`${key}: ${reference} has a second row`)
       if (row.request !== null) problems.push(`${key}: a listed row carries ${row.request}`)
-      seenIds.add(row.id)
+      seenIds.add(reference)
     }
 
     expect(problems).toEqual([])
