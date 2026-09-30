@@ -22,3 +22,12 @@ export {
   type PollSample
 } from './perf/perf'
 export type { DirEntry, FileStat, FileSystem, FsError, SizedDirEntry } from './ports/fileSystem'
+export { SqliteInfrastructureError } from './domain/errors'
+export type {
+  SqliteDatabase,
+  SqliteParam,
+  SqliteReader,
+  SqliteRow,
+  SqliteRunResult
+} from './ports/sqliteDatabase'
+export type { TransactionRunner } from './ports/transactionRunner'
