@@ -4,7 +4,16 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # `labeled` joins the default pull-request activity types so that adding the
+  # `e2e` label starts the E2E release lane on that pull request (17 §1.13).
+  # The checks job also runs again on a label change; its result stays the
+  # merge check for the same commit.
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  # Nightly release lanes, E2E and perf (17 §1.11, §1.13; 20 §2.1). The checks
+  # job runs too, so a nightly run also shows main's merge checks.
+  schedule:
+    - cron: '0 3 * * *'
 
 permissions:
   contents: read
@@ -275,6 +284,128 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # Release lane L9, E2E (17 §1.9, §1.13, §5.2; 20 §2.1): the built app under
+  # Playwright's `_electron`, on every push to main, nightly, on release tags
+  # and on a pull request labelled `e2e`. It is required for a release, never
+  # for a merge (HO-38: flaky real-process lanes never block normal merges): the
+  # "Protect main" ruleset requires only the checks job's name above, and that
+  # job does not wait for this one. On a pull request it runs only with the
+  # `e2e` label, and a label event starts it only when that label is the one
+  # added. Linux runs the app under Xvfb (an X11 session, 17 §1.13). The build
+  # carries the E2E build profile (build-time data, 17 §1.9) through
+  # DWARFAI_BUILD_PROFILE; docs/e2e.md describes the lane.
+  e2e:
+    name: E2E release lane (${{ matrix.os }})
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'e2e') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # pnpm-workspace.yaml does not let electron's own install script run, so
+      # the Electron binary the tests launch is fetched here (from the cache
+      # above when it holds this version).
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Build (E2E build profile)
+        env:
+          DWARFAI_BUILD_PROFILE: e2e
+        run: pnpm build
+
+      - name: E2E (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum pnpm test:e2e
+
+      - name: E2E
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e
+
+      # Traces are kept only for a failed test (playwright.config.ts).
+      - name: Upload E2E traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-traces-${{ matrix.os }}
+          path: test-results/e2e/**
+          if-no-files-found: ignore
+
+  # Release lane L11, perf (17 §1.11, §1.13, §5.2): `pnpm test:perf` nightly and
+  # on release tags, per OS, and never on a pull request. It appends its records
+  # to perf-results/<os>/<date>.json, uploaded as this run's artifact. No
+  # threshold exists yet, so it gates nothing until the lead records each OS's
+  # baseline in 17 §1.11; it never blocks a merge (HO-38).
+  perf:
+    name: Perf release lane (${{ matrix.os }})
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Perf
+        run: pnpm test:perf
+
+      - name: Upload perf results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-results-${{ matrix.os }}
+          path: perf-results/**
+          if-no-files-found: warn
 
   # electron-builder cannot cross-build a dmg or a deb, so macOS/Linux
   # artifacts each need their own runner — hence the matrix below. Each leg

@@ -1,0 +1,89 @@
+# E2E and perf lanes
+
+The two release lanes of the rebuild: **E2E** (`pnpm test:e2e`, layer L9) and **perf** (`pnpm test:perf`, layer L11).
+Both are required for a release and never for a merge: a flaky real-process lane must not block normal merges (testing
+strategy `17` §1.13, §5.2, HO-38). CI runs them as their own jobs in `.github/workflows/ci.yml`; the required merge
+check stays the `checks` job.
+
+| Lane | Command          | CI trigger                                                                    | Runs on                      |
+| ---- | ---------------- | ----------------------------------------------------------------------------- | ---------------------------- |
+| E2E  | `pnpm test:e2e`  | push to `main`, nightly (03:00 UTC), `v*` tags, a pull request labelled `e2e` | Windows, macOS, Linux (Xvfb) |
+| Perf | `pnpm test:perf` | nightly (03:00 UTC), `v*` tags                                                | Windows, macOS, Linux        |
+
+## Running the E2E lane locally
+
+```sh
+pnpm exec install-electron              # once per checkout: the Electron binary (pnpm skips electron's install script)
+DWARFAI_BUILD_PROFILE=e2e pnpm build    # the built app, with the E2E build profile
+pnpm test:e2e
+```
+
+- The lane launches the **built** app (`out/`), never the dev server, with Playwright's `_electron`
+  (`@playwright/test`, pinned). Rebuild after every source change.
+- One worker, so one app at a time. Cases may retry once (`17` §5.4); a case that passed only on retry is reported as
+  flaky. The harness self-test (`e2e/_harness/harness.e2e.ts`) never retries.
+- A failed case keeps its folder under `test-results/e2e/` (git-ignored) with its Playwright trace; a passing case keeps
+  nothing. Open a trace with `pnpm exec playwright show-trace <trace.zip>`.
+- On Linux without a display, run it as CI does: `xvfb-run --auto-servernum pnpm test:e2e`.
+
+### The isolated profile
+
+`e2e/_harness/launchApp.ts` starts every case under a fresh profile in a `mkdtemp` folder:
+
+- a new `userData`, passed as `--user-data-dir`, so the app's single-instance lock and data never meet the developer's
+  own app (and, once a Host exists, its `hostDataDir` and profile-keyed endpoint, ADR-002 D2);
+- temp `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, so the app never reads the developer's provider data;
+- `stubs`: a directory of stub CLIs prepended to `PATH` (the stub kit lands with ISSUE-313);
+- `teardown()` quits the app, waits for its process to exit and removes the profile.
+
+Assertions go through the UI, Playwright's main-process `evaluate`, or the profile's `dwarfai.db` opened read-only after
+the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in production code.
+
+### The E2E build profile
+
+The E2E build profile is build-time data (`17` §1.9): its built-modes list includes Veta and Valle before they ship, so
+their L9 cases can run, while a release build lists a mode only from the issue that ships it. The lane selects it with
+`DWARFAI_BUILD_PROFILE=e2e` at `pnpm build`. Nothing reads it yet: the built-modes list arrives with ISSUE-267, which
+makes the build read this variable. The harness never changes what a build contains.
+
+### Which entry a case launches
+
+`launchApp({ entry })` (`e2e/_harness/resolveEntry.ts`):
+
+| `entry`               | Main file                                        |
+| --------------------- | ------------------------------------------------ |
+| `'current'` (default) | `package.json` `main`, today `out/main/index.js` |
+| `'ui-main'`           | `out/ui-main/index.js`                           |
+
+`out/ui-main/index.js` is the output file of the UI-main composition root's build target (`src/ui-main/index.ts`, added
+by ISSUE-042), which exists before the cut-0 switch (ISSUE-056) makes it `main`. A build without it is refused with a
+clear message; the harness never falls back to the current entry. The current entry starts from the app folder, as the
+packaged app does, so Electron reads `package.json` and `app.getAppPath()` is the app folder; before the switch the
+ui-main target starts from its file. After the switch both values start the same entry.
+
+## Running the perf lane locally
+
+```sh
+pnpm test:perf
+```
+
+`perf/_harness/runPerf.mjs` runs every `perf/**/*.perf.ts` case one after the other and appends one record per case to
+`perf-results/<os>/<date>.json` (git-ignored locally; CI uploads it as the run's artifact). No threshold is applied yet
+(`17` §1.11). `perf/README.md` explains how to add a case. Keep local runs short: a perf case measures this machine,
+so nothing else heavy should run beside it.
+
+## Measured answers to the UNVERIFIED items of `17` §1.9
+
+For the lead to record in `17` §1.9. Measured with `@playwright/test` 1.63.0 and Electron 44.0.0 against today's built
+app (legacy entry), on 2026-09-30.
+
+| Item                                 | Windows 11                                                                                                                                                                                                                                                                                                                | macOS                                         | Linux (Xvfb)                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------- |
+| Electron 44 support                  | Works: `_electron.launch`, `firstWindow()`, main-process `evaluate`, `app.context().tracing` and `close()`; `process.versions.electron` reads `44.0.0`. The harness self-test passes (3 of 3).                                                                                                                            | pending: first `e2e` CI run on `macos-latest` | pending: first `e2e` CI run on `ubuntu-latest` |
+| Multi-window                         | Works: two more `BrowserWindow`s opened from the main process each arrive as a `window` event; `app.windows()` lists 3 pages, each with its own `title()`, `evaluate()` and locators.                                                                                                                                     | pending                                       | pending                                        |
+| `emulateMedia` in an Electron window | Reaches the page: after `page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' })`, the renderer's `matchMedia('(prefers-reduced-motion: reduce)')` and `matchMedia('(prefers-color-scheme: dark)')` match. Not measured: whether main-process `nativeTheme` or the OS setting sees it (it is page emulation). | pending                                       | pending                                        |
+| `sandbox: true` renderers            | Works: a window created with `webPreferences: { sandbox: true, contextIsolation: true }` is reached like any other (`title()`, `evaluate()`, locators). Today's Panel window runs with `sandbox: false`.                                                                                                                  | pending                                       | pending                                        |
+
+Also observed: today's app starts to the tray with its first window loaded (`out/renderer/index.html`) but hidden until
+the tray, the global shortcut or a second launch shows it; the harness smoke therefore asserts the loaded built page, not
+visibility.

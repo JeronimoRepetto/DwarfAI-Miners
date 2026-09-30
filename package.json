@@ -100,6 +100,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:os": "vitest run --config vitest.os.config.ts",
+    "test:e2e": "playwright test -c playwright.config.ts",
+    "test:perf": "node perf/_harness/runPerf.mjs",
     "test:golden": "node scripts/golden/run.mjs",
     "test:canaries": "node scripts/checks/run-canaries.mjs",
     "trace:check": "node scripts/traceability/extract.mjs && node scripts/traceability/check.mjs",

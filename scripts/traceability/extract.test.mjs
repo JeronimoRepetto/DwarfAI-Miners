@@ -9,7 +9,7 @@ import { extractTraceability } from './extract.mjs'
 
 /**
  * The traceability extractor (17 §3.2) over the small repository tree in
- * `__fixtures__/repo/`: test files under `src/`, `scripts/`, `e2e/` and `spikes/`, a file that is
+ * `__fixtures__/repo/`: test files under `src/`, `scripts/`, `e2e/`, `spikes/` and `perf/`, a file that is
  * not a test, a test file under a `__fixtures__/` folder, and a test file that throws at import.
  */
 
@@ -28,6 +28,8 @@ const THROWS_AT_IMPORT = 'src/renderer/src/lib/throwsAtImport.test.ts'
 const SP_02 = 'spikes/SP-02/hostSurvivesJob.os.test.ts'
 const HOST_SURVIVES = '[SP-02, ADR-002] the Host survives the end of the UI job'
 const S_030_1 = 'spikes/S-030-1/caseFolding.os.test.ts'
+const PERF_RUNNER = 'perf/_harness/runner.test.ts'
+const APPENDS = '[NFR-OBS-03] appends one record per perf case'
 
 const entry = (file, title, layer) => ({ file, title, layer })
 
@@ -73,6 +75,7 @@ const EXPECTED = {
       'L12'
     )
   ],
+  'NFR-OBS-03': [entry(PERF_RUNNER, APPENDS, 'L7')],
   'NFR-TIM-05': [entry(SEND_MESSAGE, DELIVERED, 'L2')],
   R1: [
     entry('scripts/tools/layered.test.ts', '[R1] reads its layer from the comment at the top', 'L7')
@@ -151,6 +154,7 @@ describe('traceability extractor (17 §3.2)', () => {
 
     expect(layers).toEqual({
       'e2e/launch/launch.e2e.ts': 'L9',
+      [PERF_RUNNER]: 'L7',
       'scripts/tools/layered.test.ts': 'L7',
       [S_030_1]: 'L8',
       [SP_02]: 'L8',
@@ -173,5 +177,11 @@ describe('traceability extractor (17 §3.2)', () => {
     expect(map['S-030-1']).toEqual([
       entry(S_030_1, '[S-030-1] detects a case-insensitive volume', 'L8')
     ])
+  })
+
+  it('[ADR-001] a titled test under perf/ is extracted with the layer of its layer comment', () => {
+    const map = extractTraceability(fixtureRoot)
+
+    expect(map['NFR-OBS-03']).toEqual([entry(PERF_RUNNER, APPENDS, 'L7')])
   })
 })

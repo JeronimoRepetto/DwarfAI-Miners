@@ -9,9 +9,10 @@
  * writes `traceability.json`: `{ id → [{ file, title, layer }] }`, a git-ignored build output that
  * `check.mjs` compares with the id catalogs.
  *
- * - Walked: `src/`, `scripts/`, `e2e/` and `spikes/` (the spike harnesses kept as regression
- *   tests, `17` §4). Test data under a `__fixtures__/` folder (`17` §2.2 "Fixtures") and
- *   `node_modules/` are not test files; symbolic links and junctions are never followed.
+ * - Walked: `src/`, `scripts/`, `e2e/`, `spikes/` (the spike harnesses kept as regression
+ *   tests, `17` §4) and `perf/` (the perf runner's own test, `17` §1.11). Test data under a
+ *   `__fixtures__/` folder (`17` §2.2 "Fixtures") and `node_modules/` are not test files;
+ *   symbolic links and junctions are never followed.
  * - Test files (`17` §2.2): `*.test.ts`, `*.test.mjs` (so `*.os.test.*` and `*.golden.test.mjs`),
  *   `*.contract.ts` suites and `*.e2e.ts`.
  * - Layer, from the path and suffix first: `*.os.test.*` → L8 (`17` §1.8), `e2e/**` and `*.e2e.ts`
@@ -27,7 +28,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const WALKED_ROOTS = ['src', 'scripts', 'e2e', 'spikes']
+const WALKED_ROOTS = ['src', 'scripts', 'e2e', 'spikes', 'perf']
 const SKIPPED_FOLDERS = new Set(['__fixtures__', 'node_modules'])
 const TEST_FILE = /(?:\.test\.(?:ts|mjs)|\.contract\.ts|\.e2e\.ts)$/
 
