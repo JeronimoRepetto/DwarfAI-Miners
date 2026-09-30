@@ -99,6 +99,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:golden": "node scripts/golden/run.mjs",
+    "trace:check": "node scripts/traceability/extract.mjs && node scripts/traceability/check.mjs",
     "golden:design": "node scripts/golden/design-copy.mjs"
   },
   "dependencies": {
