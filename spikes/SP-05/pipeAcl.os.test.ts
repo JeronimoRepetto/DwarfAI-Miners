@@ -31,6 +31,7 @@ const CSHARP = String.raw`
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 
 static class Sp05 {
@@ -71,6 +72,8 @@ static class Sp05 {
     IntPtr sacl, out IntPtr sd);
   [DllImport("kernel32.dll")]
   static extern IntPtr LocalFree(IntPtr memory);
+  [DllImport("advapi32.dll")]
+  static extern int GetSecurityDescriptorLength(IntPtr sd);
   [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
   static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags,
     IntPtr template);
@@ -171,6 +174,23 @@ static class Sp05 {
     ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, DACL_ONLY, out text, out length);
     Console.WriteLine("dacl " + Marshal.PtrToStringUni(text));
     LocalFree(text);
+    // The entries with resolved SIDs: SDDL abbreviates well-known and machine-relative SIDs (the built-in
+    // Administrator account is "LA", Administrators "BA"), so principals are compared as SIDs, never as aliases.
+    byte[] raw = new byte[GetSecurityDescriptorLength(sd)];
+    Marshal.Copy(sd, raw, 0, raw.Length);
+    RawSecurityDescriptor descriptor = new RawSecurityDescriptor(raw, 0);
+    bool isProtected = (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0;
+    Console.WriteLine("protected " + (isProtected ? "true" : "false"));
+    if (descriptor.DiscretionaryAcl != null) {
+      foreach (GenericAce generic in descriptor.DiscretionaryAcl) {
+        KnownAce ace = generic as KnownAce;
+        if (ace == null) { Console.WriteLine("ace other " + generic.AceType); continue; }
+        string type = ace.AceType == AceType.AccessAllowed ? "A" : ace.AceType == AceType.AccessDenied ? "D" : ace.AceType.ToString();
+        bool inherited = (ace.AceFlags & AceFlags.Inherited) != 0;
+        Console.WriteLine("ace " + type + " " + (inherited ? "inherited" : "explicit") + " 0x" +
+          ((uint)ace.AccessMask).ToString("x8") + " " + ace.SecurityIdentifier.Value);
+      }
+    }
     IntPtr manager;
     if (!AuthzInitializeResourceManager(1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, "sp05", out manager)) {
       Console.WriteLine("error AuthzInitializeResourceManager " + Marshal.GetLastWin32Error()); return 1;
@@ -263,20 +283,27 @@ const OWNER_IMPLICIT = 0x00060000
 type Principal = 'owner' | 'otherUser' | 'anonymous' | 'remoteOwner' | 'remoteOtherUser'
 
 interface Ace {
+  /** `A` (allow), `D` (deny) or another ACE type name. */
   type: string
-  flags: string
-  rights: string
+  inherited: boolean
+  mask: number
+  /** The resolved SID (`S-1-…`), never an SDDL alias such as `LA` or `BA`. */
   sid: string
 }
 
 interface AclReport {
   object: string
+  /** The DACL in SDDL, for reading only: SDDL abbreviates SIDs, so no check compares its text. */
   dacl: string
+  aces: Ace[]
   protectedDacl: boolean
   /** SIDs other than the owner and SYSTEM that an allow ACE grants anything to. */
   foreignGrants: string[]
   granted: Record<Principal, number>
 }
+
+/** LocalSystem (SDDL `SY`). */
+const SYSTEM_SID = 'S-1-5-18'
 
 /** `SP05_HOLD_SECONDS`: keep the protected pipe and run files alive for the owner's manual checks. */
 const HOLD_SECONDS = Number(process.env['SP05_HOLD_SECONDS'] ?? '0') || 0
@@ -296,12 +323,33 @@ function principals(): string[] {
   ]
 }
 
-/** The ACEs of an SDDL DACL string, `D:<flags>(type;flags;rights;object;inherited object;sid)…`. */
-function parseAces(dacl: string): Ace[] {
-  return [...dacl.matchAll(/\(([^)]*)\)/g)].map((match) => {
-    const [type = '', flags = '', rights = '', , , sid = ''] = (match[1] ?? '').split(';')
-    return { type, flags, rights, sid }
+/** The helper's `ace <type> inherited|explicit 0x<mask> <sid>` lines. */
+function parseAceLines(lines: string[]): Ace[] {
+  return lines.flatMap((line) => {
+    const match = /^ace (\S+) (inherited|explicit) 0x([0-9a-f]{8}) (S-1-[\d-]+)$/.exec(line)
+    if (!match?.[1] || !match[3] || !match[4]) return []
+    return [
+      {
+        type: match[1],
+        inherited: match[2] === 'inherited',
+        mask: Number.parseInt(match[3], 16),
+        sid: match[4]
+      }
+    ]
   })
+}
+
+/**
+ * The SIDs an allow entry grants anything to, other than the owner and SYSTEM. Compared as resolved SIDs, so the
+ * result is the same for any owner account, including the built-in Administrator (SDDL `LA`), and a group the owner
+ * belongs to (Administrators, Everyone) still counts as foreign.
+ */
+function foreignGrantsOf(aces: Ace[], owner: string): string[] {
+  return aces
+    .filter(
+      (ace) => ace.type === 'A' && ace.mask !== 0 && ace.sid !== owner && ace.sid !== SYSTEM_SID
+    )
+    .map((ace) => ace.sid)
 }
 
 /** Reads the object's DACL and the access Windows grants each principal. */
@@ -316,13 +364,15 @@ function checkAcl(object: string, label: string): AclReport {
     const match = /^granted (\w+) 0x([0-9a-f]{8})$/.exec(line)
     if (match?.[1] && match[2]) granted[match[1] as Principal] = Number.parseInt(match[2], 16)
   }
+  const aces = parseAceLines(lines)
+  const protectedLine = lines.find((line) => line.startsWith('protected '))
+  if (!protectedLine || aces.length === 0) throw new Error(`no ACEs read for ${label}: ${out}`)
   const report: AclReport = {
     object: label,
     dacl,
-    protectedDacl: /^D:[A-Z]*P/.test(dacl),
-    foreignGrants: parseAces(dacl)
-      .filter((ace) => ace.type === 'A' && ace.sid !== ownerSid && ace.sid !== 'SY')
-      .map((ace) => ace.sid),
+    aces,
+    protectedDacl: protectedLine === 'protected true',
+    foreignGrants: foreignGrantsOf(aces, ownerSid),
     granted
   }
   reports.push(report)
@@ -345,9 +395,8 @@ function expectOwnerOnly(report: AclReport, source: 'protected' | 'inherited' = 
       true
     )
   } else {
-    const aces = parseAces(report.dacl)
     expect(
-      aces.length > 0 && aces.every((ace) => ace.flags.includes('ID')),
+      report.aces.every((ace) => ace.inherited),
       `${object}: every entry is inherited from run\\`
     ).toBe(true)
   }
@@ -502,6 +551,44 @@ describe.runIf(process.platform === 'win32')('SP-05: pipe and run-file ACLs (ADR
     60000 + HOLD_SECONDS * 1000
   )
 
+  it('[SP-05, ADR-003] foreign grants are compared as resolved SIDs: the owner is never foreign, whatever its account, and a group it belongs to always is', () => {
+    const administrators = 'S-1-5-32-544'
+    const allow = (sid: string): Ace => ({ type: 'A', inherited: false, mask: 0x1f01ff, sid })
+    // An owner that is the built-in Administrator account (RID 500, SDDL "LA"), as on CI runners, and an ordinary one.
+    for (const owner of ['S-1-5-21-1000000001-1000000002-1000000003-500', OTHER_USER]) {
+      const aces: Ace[] = [
+        { type: 'D', inherited: false, mask: 0x1f01ff, sid: SID.network },
+        allow(owner),
+        allow(SYSTEM_SID)
+      ]
+      expect(foreignGrantsOf(aces, owner), `owner ${owner.slice(-4)}`).toEqual([])
+      expect(
+        foreignGrantsOf([...aces, allow(administrators), allow(SID.everyone)], owner),
+        `Administrators and Everyone with owner ${owner.slice(-4)}`
+      ).toEqual([administrators, SID.everyone])
+    }
+  })
+
+  it('[SP-05, ADR-003] an Administrators or Everyone entry on a protected run directory is reported as foreign for this owner', () => {
+    const hostDataDir = makeHostDataDir()
+    try {
+      const run = path.join(hostDataDir, 'run')
+      execFileSync(helperExe, [
+        'mkdir',
+        run,
+        `D:P(A;OICI;FA;;;${ownerSid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;WD)`
+      ])
+      const report = checkAcl(run, 'run\\ (helper, protected, with BA and WD added on purpose)')
+      expect(report.protectedDacl, 'the DACL is protected').toBe(true)
+      expect(report.foreignGrants, 'Administrators and Everyone are foreign').toEqual([
+        'S-1-5-32-544',
+        SID.everyone
+      ])
+    } finally {
+      rmSync(hostDataDir, { recursive: true, force: true })
+    }
+  })
+
   it("[SP-05] a pipe created by Node's net.Server keeps the default DACL, which grants read to another user and to anonymous", async () => {
     // Why the native helper is adopted (ADR-003 item 2): Node's `net` cannot set a pipe DACL.
     const pipe = `\\\\.\\pipe\\dwarfai-sp05-node-${randomBytes(8).toString('hex')}`
@@ -532,9 +619,8 @@ describe.runIf(process.platform === 'win32')('SP-05: pipe and run-file ACLs (ADR
       for (const [label, file] of Object.entries(writeRunFiles(run))) {
         const report = checkAcl(file, `${label} (Node, inherited from %APPDATA%)`)
         expect(report.protectedDacl, `${label} created by Node`).toBe(false)
-        const aces = parseAces(report.dacl)
         expect(
-          aces.every((ace) => ace.flags.includes('ID')),
+          report.aces.every((ace) => ace.inherited),
           `${label}: every entry is inherited`
         ).toBe(true)
       }
