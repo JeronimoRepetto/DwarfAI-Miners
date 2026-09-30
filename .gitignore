@@ -15,6 +15,7 @@ docs/investigations/*
 .claude/*
 .agent/*
 .engram/*
+new-architecture/*
 
 .env
 *.local
@@ -34,3 +35,6 @@ docs/dwarfai-miners-design/*
 
 # ODD feature documents: the orchestrator's working notes, kept local and mirrored to Engram
 odd/
+
+#OLD AGENT.md NO DELETE
+Deprecated_AGENTS.md
