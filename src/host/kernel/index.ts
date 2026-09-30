@@ -21,3 +21,4 @@ export {
   type PollProfilerOptions,
   type PollSample
 } from './perf/perf'
+export type { DirEntry, FileStat, FileSystem, FsError, SizedDirEntry } from './ports/fileSystem'
