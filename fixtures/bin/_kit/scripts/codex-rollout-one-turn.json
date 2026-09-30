@@ -1,0 +1,72 @@
+{
+  "version": "codex-cli 0.150.1",
+  "replay": [
+    {
+      "file": "sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-4000-8000-000000000002.jsonl",
+      "records": [
+        {
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "type": "session_meta",
+          "payload": {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "cwd": "/work/sample-project",
+            "originator": "codex_cli_rs",
+            "cli_version": "0.150.1",
+            "source": "cli"
+          }
+        },
+        {
+          "timestamp": "2026-01-01T00:00:00.100Z",
+          "type": "event_msg",
+          "payload": { "type": "task_started", "turn_id": "00000000-0000-4000-8000-000000000201" }
+        },
+        {
+          "timestamp": "2026-01-01T00:00:00.200Z",
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{ "type": "input_text", "text": "Summarize the sample project." }]
+          }
+        },
+        {
+          "timestamp": "2026-01-01T00:00:03.000Z",
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "The sample project is a placeholder." }]
+          }
+        },
+        {
+          "timestamp": "2026-01-01T00:00:03.100Z",
+          "type": "event_msg",
+          "payload": {
+            "type": "token_count",
+            "info": {
+              "total_token_usage": {
+                "input_tokens": 12,
+                "cached_input_tokens": 0,
+                "output_tokens": 8,
+                "reasoning_output_tokens": 0,
+                "total_tokens": 20
+              }
+            }
+          }
+        },
+        {
+          "timestamp": "2026-01-01T00:00:03.200Z",
+          "type": "event_msg",
+          "payload": {
+            "type": "task_complete",
+            "turn_id": "00000000-0000-4000-8000-000000000201",
+            "last_agent_message": "The sample project is a placeholder."
+          }
+        }
+      ]
+    }
+  ],
+  "exitCode": 0,
+  "ignoreStdin": false
+}

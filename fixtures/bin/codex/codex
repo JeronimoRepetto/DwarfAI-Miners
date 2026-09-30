@@ -1,0 +1,3 @@
+#!/bin/sh
+# StubCodexCli: the POSIX wrapper of the codex stub CLI (fixtures/README.md).
+exec node "$(dirname "$0")/codex.mjs" "$@"
