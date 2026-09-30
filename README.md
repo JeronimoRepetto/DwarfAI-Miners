@@ -320,8 +320,8 @@ default launch is the provider, model and effort a session falls back to when Je
 leaving any of the three unset keeps that part of a launch on the CLI's own default, exactly like
 an ordinary untuned launch. Neither is ever a guess this app makes for you — see
 [`docs/privacy.md`](docs/privacy.md#what-it-transmits) for what changed on the wire, and the
-[`jev-capabilities`](skills/jev-capabilities/SKILL.md) skill for how a model earns a place in the
-table the profile routes through.
+[`src/main/jev/capabilities/modelCapability.ts`](src/main/jev/capabilities/modelCapability.ts) header for
+how a model earns a place in the table the profile routes through.
 
 ## Reporting a problem
 

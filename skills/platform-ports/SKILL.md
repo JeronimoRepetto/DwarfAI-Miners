@@ -16,6 +16,14 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # Per-OS behaviour goes behind a port
 
+**Scope.** This skill governs today's legacy code under `src/main/platform/` and
+`src/main/textDelivery/`, which stays in force until cut 5 deletes it (ISSUE-336 and ISSUE-340).
+Rebuild work follows the rebuild manual and the architecture package instead. Per-OS code moves to
+`host/platform/process`, the kernel `ProcessControl` and the window adapters (`21-migration-plan.md`
+§6, rows "Per-OS builders" and "Text delivery family"), and new code is governed by lint rules R17
+and R18 (`05-modules-and-ports.md` §5.1): `node:child_process` and `process.platform` are allowed
+only in the paths those rules list.
+
 Windows is the only platform verified end to end here, and the whole suite has to keep running on
 it. That is only possible because almost nothing asks the OS what it is — it takes a `Platform` as
 a parameter instead, so a test can pass `'darwin'` on a Windows host and assert real behaviour.
@@ -65,11 +73,11 @@ keeps the console. A capability flag is only as honest as its scope.
 
 ## An absent method is a per-OS answer too
 
-`TextDeliveryPort` has four optional methods, and each absence states something true about a
-platform rather than marking a gap somebody forgot to fill. The runtime turns every one of them
-into a stated refusal, never a silent no-op.
+Each optional `TextDeliveryPort` method's absence states something true about a platform rather
+than marking a gap somebody forgot to fill. The runtime turns every absence into a stated refusal,
+never a silent no-op.
 
-`endConsoleSession` is the one to read before adding a fifth (#329, #366). Both ports implement it
+`endConsoleSession` is the one to read before adding another optional method (#329, #366). Both ports implement it
 now, and the way the POSIX one arrived is the lesson. It was absent because `ProcessEndPort`'s POSIX
 branch signals the process **group** (`kill -TERM -<pid>`) — correct for a process this panel
 started as a group leader (#217) and wrong for a session somebody else launched, whose pid leads no

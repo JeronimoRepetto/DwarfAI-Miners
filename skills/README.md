@@ -98,9 +98,11 @@ components with different languages, toolchains and test runners, so a rule that
 Django API is meaningless in the Next.js UI.
 
 This project is **one Electron app**: one `package.json`, one `tsconfig` set, one `vitest.config.ts`,
-one lint config, one build. `src/main/` and `src/renderer/` are process boundaries, not component
-boundaries — they share `src/shared/contracts.ts` as a contract and ship as a single artifact. A
-second level would carry the same toolchain twice and earn nothing.
+one lint config, one build. Today, `src/main/` and `src/renderer/` are process boundaries, not
+component boundaries — they share `src/shared/contracts.ts` as a contract and ship as a single
+artifact. That is the legacy shape the rebuild replaces; the target layout is the rebuild manual
+§3.2 and the architecture package's `05` §2.1. A second level would carry the same toolchain twice
+and earn nothing, in either shape.
 
 Two further reasons this is a decision rather than laziness:
 
@@ -122,6 +124,9 @@ node skills/skill-sync/assets/sync.mjs             # rewrite the generated regio
 node skills/skill-sync/assets/sync.mjs --check     # exit 1 if stale — for CI
 node skills/skill-sync/assets/sync.mjs --dry-run   # print, change nothing
 ```
+
+During the rebuild, run the rewrite in a fresh worktree that holds the tracked `AGENTS.md`; the
+live rebuild manual carries no markers. [`skill-sync`](skill-sync/SKILL.md) has the flow.
 
 Everything below is a **hard failure**, not a warning:
 
@@ -186,9 +191,8 @@ A generator that creates one static file is a moving part that buys nothing.
 - **Name the incident.** Every rule here should be traceable to something that actually happened.
   A rule with a scar behind it gets followed; an invented best practice gets skimmed.
 - **Point, do not restate.** `CONTRIBUTING.md` is the human-facing guide. Link to it.
-- **Verify before writing.** Claims in these files are checked against the code. Three claims in
-  the brief for this harness turned out to be wrong, one of them outright false — including one
-  that had already been copied from an inaccurate source comment into a rule file. Restating an
-  unverified claim is how that spreads.
+- **Verify before writing.** Claims in these files are checked against the code: an inaccurate
+  source comment was once copied into a rule file and read there as fact. Restating an unverified
+  claim is how that spreads.
 - Keep a `SKILL.md` readable in one sitting. Adherence drops as length grows, so when a skill keeps
   growing, split it rather than trim the reasons out of it.

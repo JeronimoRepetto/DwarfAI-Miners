@@ -68,14 +68,12 @@ Be precise about this; it is narrower than it sounds.
   `3a8b0e3`.
 - It skips **binary files**. A path baked into PNG metadata, or a project name legible in a
   committed screenshot, cannot be caught — see the next section.
-- It excludes no file. It used to exclude the workflow itself, because that file spelled the
-  patterns it searched for, which made the single most identifier-dense file in the repository the
-  one file never scanned. Since the patterns moved into the `PRIVACY_GUARD_PATTERN` secret (done
-  just before the repository went public) the workflow is scanned like everything else. Two
-  consequences the step's own comment states: a missing secret fails the run rather than passing
-  it, and a fork's pull request, which gets no secrets, is skipped with a notice and caught by the
-  push to `main` after merge. The git history before that change still carries the literals;
-  issue #51 decided to publish it as it was, and the maintainer confirmed that before going public.
+- It excludes no file: the workflow is scanned like everything else, because the patterns live in
+  the `PRIVACY_GUARD_PATTERN` secret rather than in `ci.yml`. Two consequences the step's own
+  comment states: a missing secret fails the run rather than passing it, and a fork's pull request,
+  which gets no secrets, is skipped with a notice and caught by the push to `main` after merge.
+  Older revisions of the workflow still carry the literals in git history; issue #51 decided to
+  publish that history as it was.
 
 So a green build is not proof of privacy. It is proof that four specific strings are absent from
 the text of tracked files.
@@ -93,12 +91,8 @@ and `1fe418c` replaced the file seven minutes later. The guard was green across 
 the pre-scrub blob is still in history: that is why issue #51 exists, and why replacing the file is
 not the same as removing what was in it.
 
-**This page said "two" until someone opened the blob.** The number was inherited from a written
-report — issue #51 carried the same two — and nobody had run the one check this page exists to
-demand, in a skill whose entire subject is that an image cannot be verified by grep. Four is what
-the blob shows; #51's decision comment records the reading. The lesson is not the number. It is
-that a count about an image, taken from a document, is not a measurement, and restating it makes it
-look like one.
+A count about an image taken from a written report is not a measurement: open the blob before
+restating it.
 
 Before staging any capture, open it at full size and read it — do not skim the thumbnail:
 
@@ -115,11 +109,8 @@ Before staging any capture, open it at full size and read it — do not skim the
 Crop or repaint what you find; assume the reader zooms in. And say in the commit body that you
 looked — an image nobody claims to have read is the state that produced the incident above.
 
-That last part has already been skipped once. `fc98771` refreshed the mine capture with an **empty
-commit body**, so nothing recorded that anyone had looked. The blob (`b83c7d3`) was finally read
-during #51 and is clean — its labels are this repository's own issue numbers. A clean outcome from
-a check nobody ran is luck, and the near miss is the part worth keeping: the commit body is the
-only evidence the look ever happened.
+The commit body is the only evidence the look ever happened; an empty one records that nobody
+looked, even when the image turns out clean.
 
 The same applies to a captured terminal transcript pasted as text: the guard will catch the four
 strings it knows and nothing else in the prompt line.
@@ -148,7 +139,7 @@ Describe the patterns; never reproduce them. That is why this page names none of
   credit CI for a catch without checking the run.
 - **Reading only the last line of a red build.** The guard runs as the **first** step of the checks
   job, before typecheck, lint, format and test. If it fails, nothing else runs, and the release job
-  is skipped entirely because it depends on that job — see [`release`](../release/SKILL.md).
+  is skipped entirely because it depends on that job.
 - **Trusting a local run without the secret.** `CONTRIBUTING.md` lists the guard first of its
   seven checks, but locally it checks something only with `PRIVACY_GUARD_PATTERN` set; without it
   the other six can pass on a change CI turns red.

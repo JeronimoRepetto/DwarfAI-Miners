@@ -16,6 +16,12 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # Reach for the simulator, not for twenty real sessions
 
+**Scope.** This skill governs today's legacy simulated provider (`src/main/providers/simulated/`
+and `DWARFAI_SIMULATE=1`), which stays in force until cut 1 replaces it. Rebuild work follows the
+rebuild manual and the architecture package instead. The successor is `SimulatedDriver`
+(`15-provider-driver.md` §4.12, ISSUE-143), the reference implementation every driver is measured
+against, plus `SimulatedObservationAdapter` (ISSUE-070, cut 1).
+
 A development-only simulated provider exists. **Use it instead of asking the owner to launch real
 agent sessions**, which costs quota and is not reproducible.
 

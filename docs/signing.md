@@ -191,7 +191,7 @@ electron-builder's own documented defaults, both already covered above:
 The alternative design was a CI-only flag threaded through `package:mac` (e.g. a `--publish`-style
 switch, or a second script) that only enables `notarize`/signing when the workflow passes it. That
 was rejected: it would duplicate the target list `package:mac` already owns as the single source
-of truth for what gets built (release skill trap 7 — the package script and the workflow are
+of truth for what gets built (the package script and the workflow are
 already coupled through artifact-name globs; a flag adds a second axis of coupling for no
 behavioral gain over what electron-builder already does by itself). The tradeoff is that this
 leans on electron-builder's internal env-gating rather than an explicit switch this repo controls

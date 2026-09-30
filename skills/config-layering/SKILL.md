@@ -16,6 +16,15 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # Three layers, most specific first
 
+**Scope.** This skill governs today's legacy configuration code (`src/main/config/` and the
+`jevApiKey.ts` secret path), which stays in force until the rebuild replaces it. Rebuild work
+follows the rebuild manual and the architecture package instead. The config parser moves to
+`contracts/config` plus the preferences `FeatureFlagReader` at cut 0 (`21-migration-plan.md` §6,
+row "Config + config file"). There an invalid value becomes a logged default (`16-internal-ports.md`,
+`FeatureFlagReader`), not the fail-fast described below. Secrets go through the `SecretStore` port
+backed by the OS keyring (ADR-017), not through a ciphertext file. ISSUE-341 deletes the legacy
+tree.
+
 Configuration resolves **environment, then a JSON file under Electron's `userData`, then
 defaults**. The file layer is stored _underneath_ a real environment, so `pnpm dev` with a repo
 `.env` behaves exactly as it always did — dotenv has already populated the environment by the time
