@@ -188,6 +188,40 @@ describe('spike records (17 §4)', () => {
     )
   })
 
+  it('[S-019-1, SP-03, S-015-2] the cut-0 exit records exist, pass the record check and state what their gated issues follow', () => {
+    const dir = path.join(repoRoot, 'spike-results')
+    const read = (id) => {
+      const file = path.join(dir, `${id}.md`)
+      expect(existsSync(file), `spike-results/${id}.md exists`).toBe(true)
+      const text = readFileSync(file, 'utf8')
+      expect(checkSpikeRecord(text, `${id}.md`), `spike-results/${id}.md`).toEqual([])
+      expect(existsSync(path.join(dir, id)), `spike-results/${id}/ holds the raw outputs`).toBe(
+        true
+      )
+      return { text, decision: decisionText(parseFrontMatter(text).body) }
+    }
+    // TC-315-02: the window factory and parity-cut-0.md read one sentence (later: ISSUE-046, ISSUE-056).
+    expect(read('S-019-1').decision, 'S-019-1 says whether the renderer runs sandboxed').toMatch(
+      /\bthe renderer (runs|does not run) sandboxed\b/
+    )
+    // TC-315-03: the copy rule per recorded layout, or the alternative copy source (later: ISSUE-031).
+    expect(read('SP-03').decision, 'SP-03 states the copy rule per layout').toMatch(
+      /^\| Layout +\|.*\bCopy rule\b/m
+    )
+    // TC-315-04: the per-OS identity source table proposed for ADR-015 item 4.
+    const bootIdentity = read('S-015-2').text
+    const proposal =
+      /^## Proposed table for ADR-015 item 4\s*\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(
+        bootIdentity
+      )
+    expect(proposal, 'S-015-2 has the proposed table section').not.toBeNull()
+    for (const os of ['Windows', 'macOS', 'Linux']) {
+      expect(proposal?.[1], `the proposed table has a ${os} row`).toMatch(
+        new RegExp(`^\\| ${os}\\b`, 'm')
+      )
+    }
+  })
+
   it('[SP-02, SP-04, SP-05] every committed spike record passes the record check', () => {
     const dir = path.join(repoRoot, 'spike-results')
     const records = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.md')) : []
