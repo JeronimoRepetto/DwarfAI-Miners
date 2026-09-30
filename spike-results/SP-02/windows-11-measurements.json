@@ -1,0 +1,271 @@
+{
+  "runs": [
+    {
+      "testProcessInJob": "true",
+      "measurements": [
+        {
+          "jobKind": "plain",
+          "mode": "d6",
+          "launcher": "wmi",
+          "hostPid": 14416,
+          "launchMs": 133.5969,
+          "createMs": 67,
+          "breakawayRefused": true,
+          "breakawayRefusal": "refused still-in-job",
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "breakaway-ok",
+          "mode": "d6",
+          "launcher": "breakaway",
+          "hostPid": 63164,
+          "launchMs": 93.97540000000001,
+          "createMs": 27,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "scoop-shim",
+          "mode": "d6",
+          "launcher": "breakaway",
+          "hostPid": 49208,
+          "launchMs": 90.3154,
+          "createMs": 33,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "plain",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 98128,
+          "launchMs": 14.9479,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": true,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": false
+        },
+        {
+          "jobKind": "breakaway-ok",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 56476,
+          "launchMs": 18.733500000000003,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": true,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": false
+        },
+        {
+          "jobKind": "scoop-shim",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 65044,
+          "launchMs": 13.263,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        }
+      ]
+    },
+    {
+      "testProcessInJob": "true",
+      "measurements": [
+        {
+          "jobKind": "plain",
+          "mode": "d6",
+          "launcher": "wmi",
+          "hostPid": 32468,
+          "launchMs": 109.65320000000001,
+          "createMs": 58,
+          "breakawayRefused": true,
+          "breakawayRefusal": "refused still-in-job",
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "breakaway-ok",
+          "mode": "d6",
+          "launcher": "breakaway",
+          "hostPid": 44020,
+          "launchMs": 73.13680000000001,
+          "createMs": 20,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "scoop-shim",
+          "mode": "d6",
+          "launcher": "breakaway",
+          "hostPid": 54592,
+          "launchMs": 91.0135,
+          "createMs": 24,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "plain",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 13284,
+          "launchMs": 16.0405,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": true,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": false
+        },
+        {
+          "jobKind": "breakaway-ok",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 75520,
+          "launchMs": 17.784499999999998,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": true,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": false
+        },
+        {
+          "jobKind": "scoop-shim",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 89456,
+          "launchMs": 20.3382,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        }
+      ]
+    },
+    {
+      "testProcessInJob": "true",
+      "measurements": [
+        {
+          "jobKind": "plain",
+          "mode": "d6",
+          "launcher": "wmi",
+          "hostPid": 42704,
+          "launchMs": 118.62129999999999,
+          "createMs": 46,
+          "breakawayRefused": true,
+          "breakawayRefusal": "refused still-in-job",
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "breakaway-ok",
+          "mode": "d6",
+          "launcher": "breakaway",
+          "hostPid": 26196,
+          "launchMs": 78.3931,
+          "createMs": 22,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "scoop-shim",
+          "mode": "d6",
+          "launcher": "breakaway",
+          "hostPid": 44788,
+          "launchMs": 91.81859999999999,
+          "createMs": 25,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        },
+        {
+          "jobKind": "plain",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 11380,
+          "launchMs": 17.2809,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": true,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": false
+        },
+        {
+          "jobKind": "breakaway-ok",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 99864,
+          "launchMs": 22.146400000000003,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": true,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": false
+        },
+        {
+          "jobKind": "scoop-shim",
+          "mode": "node-detached",
+          "launcher": "node-detached",
+          "hostPid": 31024,
+          "launchMs": 22.417600000000004,
+          "createMs": null,
+          "breakawayRefused": false,
+          "breakawayRefusal": null,
+          "uiInJob": true,
+          "hostInJobBeforeClose": false,
+          "uiExitedWithJob": true,
+          "hostAnswersAfterClose": true
+        }
+      ]
+    }
+  ]
+}

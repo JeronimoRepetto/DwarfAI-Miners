@@ -1,0 +1,199 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+/**
+ * L7 check of the spike records (testing strategy `17` §4; NFR-OBS-04).
+ *
+ * A spike closes only when `spike-results/<ID>.md` exists with the front matter
+ * `{ id, date, os[], versions{}, verdict: passed | failed | partial, exitCriterion }` and the decision taken.
+ * This file holds the checker and runs it over every record present, so a later spike record that breaks the
+ * form fails `pnpm test`.
+ */
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+const VERDICTS = ['passed', 'failed', 'partial']
+const SPIKE_ID = /^(SP-\d{2}|S-\d{3}-\d)$/
+
+/** Removes one pair of matching surrounding quotes. */
+function unquote(value) {
+  const match = /^(["'])(.*)\1$/.exec(value)
+  return match ? match[2] : value
+}
+
+/**
+ * Parses the YAML subset the records use: `key: scalar`, `key: [a, b]`, and `key:` followed by an indented
+ * block of `  sub: scalar` (a map) or `  - item` (a list). Returns null when there is no front matter.
+ */
+function parseFrontMatter(text) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(text)
+  if (!match) return null
+  const data = {}
+  let open = null
+  for (const line of match[1].split(/\r?\n/)) {
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    const nested = /^\s+(?:-\s+(.*)|([\w.@/-]+):\s*(.*))$/.exec(line)
+    if (nested && open) {
+      if (nested[1] !== undefined) {
+        if (!Array.isArray(data[open])) data[open] = []
+        data[open].push(unquote(nested[1].trim()))
+      } else {
+        if (data[open] === null) data[open] = {}
+        if (typeof data[open] === 'object' && !Array.isArray(data[open])) {
+          data[open][nested[2]] = unquote(nested[3].trim())
+        }
+      }
+      continue
+    }
+    const top = /^([\w]+):\s*(.*)$/.exec(line)
+    if (!top) continue
+    const [, key, raw] = top
+    const value = raw.trim()
+    open = null
+    if (value === '') {
+      data[key] = null
+      open = key
+    } else if (value.startsWith('[') && value.endsWith(']')) {
+      const inner = value.slice(1, -1).trim()
+      data[key] = inner === '' ? [] : inner.split(',').map((item) => unquote(item.trim()))
+    } else {
+      data[key] = unquote(value)
+    }
+  }
+  return { data, body: text.slice(match[0].length) }
+}
+
+/** Whether `value` is a real calendar date written as YYYY-MM-DD. */
+function isIsoDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value)
+}
+
+/** The text of the `## Decision` section, or null when the record has none. */
+function decisionText(body) {
+  const match = /^## Decision[^\S\r\n]*\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body)
+  return match ? match[1].trim() : null
+}
+
+/** Checks one record; returns the list of problems (empty when the record is valid). */
+function checkSpikeRecord(text, fileName) {
+  const parsed = parseFrontMatter(text)
+  if (!parsed) return ['no front matter (--- … ---) at the top of the record']
+  const { data, body } = parsed
+  const problems = []
+  const expectedId = path.basename(fileName, '.md')
+  if (typeof data.id !== 'string' || !SPIKE_ID.test(data.id)) {
+    problems.push('id is missing or is not a spike id (SP-nn or S-nnn-n)')
+  } else if (data.id !== expectedId) {
+    problems.push(`id ${data.id} does not match the file name ${fileName}`)
+  }
+  if (!isIsoDate(data.date)) problems.push('date is missing or is not a YYYY-MM-DD date')
+  const osValid =
+    Array.isArray(data.os) &&
+    data.os.length > 0 &&
+    data.os.every((os) => typeof os === 'string' && os !== '')
+  if (!osValid) problems.push('os is missing or is not a non-empty list')
+  const versions = data.versions
+  const versionsValid =
+    versions !== null &&
+    typeof versions === 'object' &&
+    !Array.isArray(versions) &&
+    Object.keys(versions).length > 0 &&
+    Object.values(versions).every((version) => typeof version === 'string' && version !== '')
+  if (!versionsValid) problems.push('versions is missing or is not a non-empty map')
+  if (!VERDICTS.includes(data.verdict)) {
+    problems.push(`verdict is missing or is not one of ${VERDICTS.join(', ')}`)
+  }
+  if (typeof data.exitCriterion !== 'string' || data.exitCriterion.trim() === '') {
+    problems.push('exitCriterion is missing or empty')
+  }
+  const decision = decisionText(body)
+  if (!decision) {
+    const why = data.verdict === 'failed' ? ' (a failed record names the fallback it adopts)' : ''
+    problems.push(`the ## Decision section is missing or empty${why}`)
+  }
+  return problems
+}
+
+const VALID = `---
+id: SP-02
+date: 2026-09-30
+os: [windows-11]
+versions:
+  node: 24.11.1
+verdict: passed
+exitCriterion: A Host started from the UI survives closing the UI's job
+---
+
+# SP-02
+
+## Decision
+
+The breakaway launcher is kept.
+`
+
+/** The valid record with the front matter line starting with `key:` removed. */
+function without(key) {
+  const lines = VALID.split('\n')
+  const start = lines.findIndex((line) => line.startsWith(`${key}:`))
+  let end = start + 1
+  while (end < lines.length && lines[end].startsWith('  ')) end += 1
+  lines.splice(start, end - start)
+  return lines.join('\n')
+}
+
+describe('spike records (17 §4)', () => {
+  it('[SP-02] a spike record without id, date, os, versions, verdict or exitCriterion fails', () => {
+    expect(checkSpikeRecord(VALID, 'SP-02.md'), 'the complete record').toEqual([])
+    for (const key of ['id', 'date', 'os', 'versions', 'verdict', 'exitCriterion']) {
+      const problems = checkSpikeRecord(without(key), 'SP-02.md')
+      expect(problems.join('\n'), `a record without ${key}`).toMatch(new RegExp(`\\b${key}\\b`))
+    }
+    expect(checkSpikeRecord('# SP-02\n\nno front matter\n', 'SP-02.md').length).toBeGreaterThan(0)
+    const emptyOs = VALID.replace('os: [windows-11]', 'os: []')
+    expect(checkSpikeRecord(emptyOs, 'SP-02.md').join('\n'), 'an empty os list').toMatch(/\bos\b/)
+    const emptyVersions = VALID.replace('versions:\n  node: 24.11.1\n', 'versions:\n')
+    expect(checkSpikeRecord(emptyVersions, 'SP-02.md').join('\n'), 'no versions').toMatch(
+      /\bversions\b/
+    )
+    const badDate = VALID.replace('date: 2026-09-30', 'date: 30/09/2026')
+    expect(checkSpikeRecord(badDate, 'SP-02.md').join('\n'), 'a non-ISO date').toMatch(/\bdate\b/)
+    expect(checkSpikeRecord(VALID, 'SP-04.md').join('\n'), 'id differs from the file').toMatch(
+      /\bid\b/
+    )
+  })
+
+  it('[SP-02] a record whose verdict is not passed, failed or partial fails, and a failed record must name its decision', () => {
+    for (const verdict of ['passed', 'failed', 'partial']) {
+      const record = VALID.replace('verdict: passed', `verdict: ${verdict}`)
+      expect(checkSpikeRecord(record, 'SP-02.md'), `verdict ${verdict}`).toEqual([])
+    }
+    for (const verdict of ['pass', 'ok', 'open', '']) {
+      const record = VALID.replace('verdict: passed', `verdict: ${verdict}`)
+      expect(checkSpikeRecord(record, 'SP-02.md').join('\n'), `verdict "${verdict}"`).toMatch(
+        /\bverdict\b/
+      )
+    }
+    const failed = VALID.replace('verdict: passed', 'verdict: failed')
+    const noDecision = failed.replace(/## Decision[\s\S]*$/, '')
+    expect(checkSpikeRecord(noDecision, 'SP-02.md').join('\n'), 'failed, no decision').toMatch(
+      /\bDecision\b/
+    )
+    const emptyDecision = failed.replace('The breakaway launcher is kept.\n', '')
+    expect(checkSpikeRecord(emptyDecision, 'SP-02.md').join('\n'), 'empty decision').toMatch(
+      /\bDecision\b/
+    )
+  })
+
+  it('[SP-02, SP-04, SP-05] every committed spike record passes the record check', () => {
+    const dir = path.join(repoRoot, 'spike-results')
+    const records = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.md')) : []
+    for (const name of records) {
+      const problems = checkSpikeRecord(readFileSync(path.join(dir, name), 'utf8'), name)
+      expect(problems, `spike-results/${name}`).toEqual([])
+    }
+  })
+})
