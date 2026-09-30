@@ -31,3 +31,4 @@ export type {
   SqliteRunResult
 } from './ports/sqliteDatabase'
 export type { TransactionRunner } from './ports/transactionRunner'
+export type { DiagnosticEntry, DiagnosticsLog } from './ports/diagnosticsLog'
