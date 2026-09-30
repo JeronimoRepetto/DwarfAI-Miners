@@ -38,7 +38,7 @@ describe('AMBIENCE_CROSSFADE_MS', () => {
  * is read off the FRAMES each sprite is drawing instead, in
  * `lib/sprite/crewSound.ts` and its own tests, one dwarf at a time.
  *
- * `mine-inside-working.mp3` is left on disk, unimported, for the maintainer.
+ * The retired bed's file stayed on disk, unimported, until #637 deleted it.
  */
 
 describe('AMBIENCE_BEDS', () => {

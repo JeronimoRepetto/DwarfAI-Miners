@@ -702,3 +702,56 @@ describe('describeProgramFailure', () => {
     expect(describeProgramFailure('disk unplugged')).toBe('disk unplugged')
   })
 })
+
+/*
+ * #635 (proposals/MESSAGE-QUESTIONS.md, question 17). "Found nothing" and
+ * "found something it cannot start" were already two different sentences in
+ * `reason`; the launch-failure notice needs them as two different FACTS, and
+ * prose is not a fact a caller may parse. So the second one is a field of the
+ * verdict. It is only ever produced on Windows, because only Windows has batch
+ * shims to refuse — the per-OS difference stops here, at the port, and every
+ * caller classifies the verdict without asking which OS produced it.
+ */
+describe('createCliDetector: present but unrunnable is a field (#635)', () => {
+  // A wrapper shim naming no .js entry — the same dialect the #544 tests use.
+  const GUARD_SHIM = '@echo off\r\npy "%~dp0..\\tools\\launch_guard.py" opencode %*\r\n'
+
+  it('marks a verdict whose only candidates were shims it cannot read', async () => {
+    const fs = new FakeFs()
+    fs.addFile('C:\\guard\\bin\\opencode.cmd', GUARD_SHIM)
+    const detector = createCliDetector({
+      home: 'C:\\Users\\x',
+      platform: 'win32',
+      fs,
+      env: { PATH: 'C:\\guard\\bin' }
+    })
+
+    const verdict = await detector.detect('opencode')
+    expect(verdict.installed).toBe(false)
+    expect(verdict.unrunnable).toBe(true)
+  })
+
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'leaves it off a verdict that found nothing at all, on %s',
+    async (platform) => {
+      const detector = createCliDetector({
+        home: platform === 'win32' ? 'C:\\Users\\x' : '/home/x',
+        platform,
+        fs: new FakeFs(),
+        env: {}
+      })
+
+      const verdict = await detector.detect('codex')
+      expect(verdict.installed).toBe(false)
+      expect(verdict).not.toHaveProperty('unrunnable')
+    }
+  )
+
+  it('leaves it off a verdict that found a runnable install', async () => {
+    const fs = new FakeFs()
+    fs.addFile('/home/j/.local/bin/claude', '#!/bin/sh\n')
+    const detector = createCliDetector({ home: HOME, platform: 'linux', fs, env: {} })
+
+    expect(await detector.detect('claude')).not.toHaveProperty('unrunnable')
+  })
+})

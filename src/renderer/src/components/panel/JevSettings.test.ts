@@ -7,7 +7,23 @@ import type {
   JevSettings as JevSettingsType
 } from '../../types'
 import { DEFAULT_JEV_PREFERENCES } from '../../types'
+import JevPrivacyNotice from './JevPrivacyNotice.vue'
 import JevSettings from './JevSettings.vue'
+
+/*
+ * AMENDED (#635): drawn as the design's rows of Settings › Integrations. The key field is the
+ * design's input, its native control inside the `.jev-key-input` well; the routing profile is a
+ * row of radio chips (aria-checked) whose one-line descriptions are the row's help; the delegation
+ * checkbox is a switch in the danger zone; the privacy notice stands at the foot of the section
+ * (JevPrivacyNotice, drawn by SettingsPanel whatever the Jev rows show). Each amended test says
+ * what it was.
+ */
+const KEY = '.jev-key-input input'
+const checkedProfiles = (wrapper: ReturnType<typeof render>) =>
+  wrapper
+    .findAll('.profile-option')
+    .filter((option) => option.attributes('aria-checked') === 'true')
+    .map((option) => option.text())
 
 /**
  * The Jev section of the Settings screen (#509): the TypeSafe API key the
@@ -49,7 +65,7 @@ describe('JevSettings — rendering, not configured', () => {
 
   it('offers a password-type input for the key, and a Save control', () => {
     const wrapper = render({ configured: false })
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     expect(input.attributes('type')).toBe('password')
     expect(wrapper.find('.jev-save').exists()).toBe(true)
   })
@@ -69,7 +85,8 @@ describe('JevSettings — rendering, not configured', () => {
     // would not be the honest notice this feature requires — and neither
     // would claiming the key never leaves, because it does, to exactly one
     // place.
-    const notice = render({ configured: false }).find('.privacy-notice').text()
+    // AMENDED (#635): the notice is JevPrivacyNotice, at the foot of Integrations.
+    const notice = mount(JevPrivacyNotice).text()
     expect(notice).toContain('api.typesafe.ai')
     expect(notice).toContain('prompt')
     expect(notice.toLowerCase()).toContain('encrypted')
@@ -84,7 +101,7 @@ describe('JevSettings — typing and saving a key', () => {
     // only from what it was given, so a value main never confirmed cannot
     // sit in the box as if it had been.
     const wrapper = render({ configured: false })
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
     expect((input.element as HTMLInputElement).value).toBe('sk-typesafe-abc123')
@@ -92,7 +109,7 @@ describe('JevSettings — typing and saving a key', () => {
 
   it('enables Save once something is typed', async () => {
     const wrapper = render({ configured: false })
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
     expect(wrapper.find('.jev-save').attributes('disabled')).toBeUndefined()
@@ -100,7 +117,7 @@ describe('JevSettings — typing and saving a key', () => {
 
   it('emits save with the typed key on submit', async () => {
     const wrapper = render({ configured: false })
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
     await wrapper.find('.jev-save').trigger('click')
@@ -114,7 +131,7 @@ describe('JevSettings — typing and saving a key', () => {
 
   it('clears the draft after a confirmed save, returning to the Configured state', async () => {
     const wrapper = render({ configured: false }, { saving: true })
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
 
@@ -123,13 +140,13 @@ describe('JevSettings — typing and saving a key', () => {
       saving: false,
       settings: { configured: true, preferences: DEFAULT_JEV_PREFERENCES }
     })
-    expect(wrapper.find('.jev-key-input').exists()).toBe(false)
+    expect(wrapper.find(KEY).exists()).toBe(false)
     expect(wrapper.find('.jev-configured').exists()).toBe(true)
   })
 
   it('keeps the draft when a save does not take, so the person need not retype it', async () => {
     const wrapper = render({ configured: false }, { saving: true })
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-abc123'
     await input.trigger('input')
 
@@ -138,9 +155,7 @@ describe('JevSettings — typing and saving a key', () => {
       saving: false,
       settings: { configured: false, preferences: DEFAULT_JEV_PREFERENCES }
     })
-    expect((wrapper.find('.jev-key-input').element as HTMLInputElement).value).toBe(
-      'sk-typesafe-abc123'
-    )
+    expect((wrapper.find(KEY).element as HTMLInputElement).value).toBe('sk-typesafe-abc123')
   })
 })
 
@@ -150,7 +165,7 @@ describe('JevSettings — the Configured state', () => {
     expect(wrapper.find('.jev-configured').exists()).toBe(true)
     expect(wrapper.find('.jev-replace').exists()).toBe(true)
     expect(wrapper.find('.jev-clear').exists()).toBe(true)
-    expect(wrapper.find('.jev-key-input').exists()).toBe(false)
+    expect(wrapper.find(KEY).exists()).toBe(false)
   })
 
   it('emits clear when Clear is pressed', async () => {
@@ -162,14 +177,14 @@ describe('JevSettings — the Configured state', () => {
   it('shows the input again from Replace, to enter a new key over the old one', async () => {
     const wrapper = render({ configured: true })
     await wrapper.find('.jev-replace').trigger('click')
-    expect(wrapper.find('.jev-key-input').exists()).toBe(true)
+    expect(wrapper.find(KEY).exists()).toBe(true)
     expect(wrapper.find('.jev-configured').exists()).toBe(false)
   })
 
   it('emits save with the new key from the Replace flow', async () => {
     const wrapper = render({ configured: true })
     await wrapper.find('.jev-replace').trigger('click')
-    const input = wrapper.find('.jev-key-input')
+    const input = wrapper.find(KEY)
     ;(input.element as HTMLInputElement).value = 'sk-typesafe-new'
     await input.trigger('input')
     await wrapper.find('.jev-save').trigger('click')
@@ -180,15 +195,19 @@ describe('JevSettings — the Configured state', () => {
 describe('JevSettings — storage unavailable, no plaintext fallback', () => {
   it('shows the reason and hides the input and every control', () => {
     const wrapper = render({ configured: false, unavailableReason: 'encryption-unavailable' })
-    expect(wrapper.find('.jev-key-input').exists()).toBe(false)
+    expect(wrapper.find(KEY).exists()).toBe(false)
     expect(wrapper.find('.jev-save').exists()).toBe(false)
     expect(wrapper.find('.jev-configured').exists()).toBe(false)
     expect(wrapper.find('.jev-unavailable').exists()).toBe(true)
   })
 
+  // AMENDED (#635): the notice left these rows for the foot of Integrations, where SettingsPanel
+  // draws it whatever they show (SettingsPanel.test.ts pins it with storage unavailable); these
+  // rows no longer carry a copy of it.
   it('still draws the privacy notice — the section explains itself either way', () => {
     const wrapper = render({ configured: false, unavailableReason: 'encryption-unavailable' })
-    expect(wrapper.find('.privacy-notice').exists()).toBe(true)
+    expect(wrapper.find('.privacy-notice').exists()).toBe(false)
+    expect(mount(JevPrivacyNotice).classes()).toContain('privacy-notice')
   })
 })
 
@@ -209,7 +228,8 @@ describe('JevSettings — the routing profile, gated on configured', () => {
 
   it('offers exactly Economy, Balanced and Premium, in that order', () => {
     const wrapper = render({ configured: true })
-    const names = wrapper.findAll('.profile-option .profile-name').map((node) => node.text())
+    // AMENDED (#635): each chip is its name alone.
+    const names = wrapper.findAll('.profile-option').map((node) => node.text())
     expect(names).toEqual(['Economy', 'Balanced', 'Premium'])
   })
 
@@ -218,22 +238,17 @@ describe('JevSettings — the routing profile, gated on configured', () => {
       configured: true,
       preferences: { profile: 'premium', default: {}, delegation: false }
     })
-    const options = wrapper.findAll('.profile-option')
-    const selected = options.filter((node) => node.classes('is-selected'))
-    expect(selected).toHaveLength(1)
-    expect(selected[0]?.find('.profile-name').text()).toBe('Premium')
+    // AMENDED (#635): radio chips, aria-checked, where it was the is-selected class.
+    expect(checkedProfiles(wrapper)).toEqual(['Premium'])
   })
 
+  // AMENDED (#635): the three lines are the row's help now, each after its profile's name, as
+  // the design's row prints them (they were one line under each chip).
   it('describes each profile in one line', () => {
     const wrapper = render({ configured: true })
-    const descriptions = wrapper
-      .findAll('.profile-option .profile-description')
-      .map((node) => node.text())
-    expect(descriptions).toEqual([
-      'Cheapest model that can do the job',
-      'Cost and capability weighed per prompt',
-      'Most capable model when the task warrants it; trivial prompts still go cheap'
-    ])
+    expect(wrapper.get('.jev-profile .dm-srow__help').text()).toBe(
+      'Economy: cheapest model that can do the job. Balanced: cost and capability weighed per prompt. Premium: most capable model when the task warrants it; trivial prompts still go cheap.'
+    )
   })
 
   it('emits the whole preferences document with the new profile, default untouched', async () => {
@@ -272,13 +287,15 @@ describe('JevSettings — the default launch, gated on configured', () => {
     }
   ]
 
+  // AMENDED (#635): by the name people know each tool by, the design's own words ("Default
+  // provider shows Claude"), where it was the product names Claude Code and Codex CLI.
   it('offers only the launchable providers, by product name, plus None', () => {
     const wrapper = render({ configured: true }, { providers: PROVIDERS })
     const options = wrapper
       .find('[aria-label="Default provider"]')
       .findAll('option')
       .map((node) => node.text())
-    expect(options).toEqual(['None', 'Claude Code', 'Codex CLI'])
+    expect(options).toEqual(['None', 'Claude', 'Codex'])
   })
 
   it('selects None when no default provider is stored', () => {
@@ -419,7 +436,10 @@ describe('JevSettings — the default launch, gated on configured', () => {
 
   it('names what the default is for', () => {
     const wrapper = render({ configured: true }, { providers: PROVIDERS })
-    expect(wrapper.find('.jev-default-launch .hint').text()).toBe('Used when Jev cannot decide.')
+    // AMENDED (#635): the row's help line.
+    expect(wrapper.find('.jev-default-launch .dm-srow__help').text()).toBe(
+      'Used when Jev cannot decide.'
+    )
   })
 
   it('redraws the provider select only from a new settings prop, not from the DOM change alone', async () => {
@@ -457,11 +477,13 @@ describe('JevSettings — the default launch, gated on configured', () => {
 })
 
 /* --- MCP subtask delegation: the gate preference (#511) — one block, appended --- */
+// AMENDED (#635): the checkbox is the design's switch now, in the danger zone row
+// "Subagent delegation · beta"; every guarantee below is the checkbox's, on the switch.
 describe('JevSettings — the delegation checkbox, gated on configured', () => {
+  const toggle = (wrapper: ReturnType<typeof render>) => wrapper.find('.delegation-toggle')
+
   it('is unchecked by default', () => {
-    const wrapper = render({ configured: true })
-    const checkbox = wrapper.find('.delegation-checkbox')
-    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+    expect(toggle(render({ configured: true })).attributes('aria-checked')).toBe('false')
   })
 
   it('reflects a stored delegation of true', () => {
@@ -469,14 +491,18 @@ describe('JevSettings — the delegation checkbox, gated on configured', () => {
       configured: true,
       preferences: { profile: 'balanced', default: {}, delegation: true }
     })
-    const checkbox = wrapper.find('.delegation-checkbox')
-    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+    expect(toggle(wrapper).attributes('aria-checked')).toBe('true')
   })
 
+  // AMENDED (#635): was the checkbox's label, "Let Jev choose subagents by subtask complexity
+  // (BETA - CRITICAL WARNING)"; the row names it, warns in the danger zone, and the switch keeps
+  // the sentence as its accessible name.
   it('names what the checkbox does', () => {
     const wrapper = render({ configured: true })
-    expect(wrapper.find('.jev-delegation').text()).toContain(
-      'Let Jev choose subagents by subtask complexity (BETA - CRITICAL WARNING)'
+    expect(wrapper.get('.jev-delegation .dm-srow__label').text()).toBe('Subagent delegation · beta')
+    expect(wrapper.get('.jev-delegation').classes()).toContain('dm-srow--danger')
+    expect(toggle(wrapper).attributes('aria-label')).toBe(
+      'Let Jev choose subagents by subtask complexity'
     )
   })
 
@@ -485,7 +511,7 @@ describe('JevSettings — the delegation checkbox, gated on configured', () => {
       configured: true,
       preferences: { profile: 'premium', default: { provider: 'claude' }, delegation: false }
     })
-    await wrapper.find('.delegation-checkbox').setValue(true)
+    await toggle(wrapper).trigger('click')
     expect(wrapper.emitted('preferences-change')).toEqual([
       [{ profile: 'premium', default: { provider: 'claude' }, delegation: true }]
     ])
@@ -493,7 +519,7 @@ describe('JevSettings — the delegation checkbox, gated on configured', () => {
 
   it('disables the checkbox while a preferences save is in flight', () => {
     const wrapper = render({ configured: true }, { saving: true })
-    expect(wrapper.find('.delegation-checkbox').attributes('disabled')).toBeDefined()
+    expect(toggle(wrapper).attributes('disabled')).toBeDefined()
   })
 })
 /* --- end of the #511 block ---------------------------------------------------- */
@@ -552,11 +578,12 @@ describe('JevSettings reporting a preference write that did not happen', () => {
     // The honesty rule: the mark follows what is STORED, never what was
     // asked for. A failed click must not leave the panel claiming a profile
     // nothing is routing under.
+    // AMENDED (#635): read through aria-checked on the radio chips.
     const wrapper = withError('nope')
     const selected = wrapper
       .findAll('.profile-option')
-      .filter((option) => option.classes('is-selected'))
-      .map((option) => option.get('.profile-name').text())
+      .filter((option) => option.attributes('aria-checked') === 'true')
+      .map((option) => option.text())
     expect(selected).toEqual(['Balanced'])
   })
 })

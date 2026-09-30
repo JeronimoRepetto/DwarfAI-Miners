@@ -12,11 +12,21 @@ import type {
 } from '../../types'
 import { DEFAULT_JEV_PREFERENCES, JEV_ROUTING_PROFILES } from '../../types'
 import { effortPicker, modelPicker } from '../../lib/launch/modelTuning'
+import { providerLabel } from '../../lib/dwarf/dwarfTip'
+import ActionButton from '../controls/ActionButton.vue'
+import ChoiceChip from '../controls/ChoiceChip.vue'
+import InputField from '../controls/InputField.vue'
+import SelectField from '../controls/SelectField.vue'
+import ToggleSwitch from '../controls/ToggleSwitch.vue'
+import StatePill from '../dwarf/StatePill.vue'
+import SegmentedChoice from './SegmentedChoice.vue'
+import SettingsRow from './SettingsRow.vue'
 
 /**
- * The Jev section of the Settings screen (#509): the TypeSafe API key a
+ * The Jev rows of Settings › Integrations (#509, #635): the TypeSafe API key a
  * person enters, replaces and clears themselves — this app never ships or
- * generates one — plus the privacy notice the new outbound call requires.
+ * generates one. The privacy notice the outbound call requires stands at the
+ * foot of the section, in JevPrivacyNotice (#635).
  *
  * The key never reaches a store or a wire from here. It lives only in
  * `draftKey`, this component's own local state, for as long as it takes to
@@ -29,7 +39,7 @@ import { effortPicker, modelPicker } from '../../lib/launch/modelTuning'
  *
  * `replacing` is the other piece of local display state: whether the input is
  * shown OVER an already-configured key. Nothing outside this screen needs
- * either local ref, the same reason ResetMetricsModal's open/closed flag
+ * either local ref, the same reason the reset dialog's open flag
  * stays in SettingsPanel rather than crossing a prop.
  *
  * AMENDED for the #509 follow-up: below the key controls, once `configured`
@@ -140,20 +150,28 @@ const PROFILE_DESCRIPTION: Record<JevRoutingProfile, string> = {
 }
 
 /**
- * Display names for the default-launch provider select (#509 follow-up) —
- * mirrors `launchProviders.ts`'s own `PRODUCT_NAME` table, copied rather than
- * imported: main/ and renderer/ never cross in production code (AGENTS.md),
- * and this is copy a person reads, not a value read for capability.
+ * The Routing profile row's help (#635): each profile's one line after its name, in order, as the
+ * design's row prints them.
  */
-const PRODUCT_NAME: Record<DwarfProvider, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex CLI',
-  antigravity: 'Antigravity CLI',
-  opencode: 'OpenCode'
-}
+const PROFILE_HELP = JEV_ROUTING_PROFILES.map((profile) => {
+  const line = PROFILE_DESCRIPTION[profile]
+  return PROFILE_LABEL[profile] + ': ' + line.charAt(0).toLowerCase() + line.slice(1) + '.'
+}).join(' ')
 
-/** Only a provider a launch could actually start with belongs in this picker. */
-const launchableProviders = computed(() => props.providers.filter((entry) => entry.launchable))
+/*
+ * AMENDED (#635): the default-launch provider select names each tool as people know it
+ * ("Claude", "Codex"), the design's own words (screens/settings.md: "Default provider shows
+ * Claude"), from the table the dwarf tooltip reads — no longer the product names copied from
+ * launchProviders.ts.
+ */
+const providerOptions = computed(() => [
+  { value: '', label: 'None' },
+  ...props.providers
+    .filter((entry) => entry.launchable)
+    .map((entry) => ({ value: entry.provider, label: providerLabel(entry.provider) }))
+])
+
+/* Only a provider a launch could actually start with belongs in the picker above. */
 
 const defaultProvider = computed(() => preferences.value.default.provider)
 
@@ -165,6 +183,19 @@ const defaultModelPicker = computed(() =>
 const defaultEffortPicker = computed(() =>
   effortPicker(props.catalogs, defaultProvider.value ?? null)
 )
+
+/** "CLI default" first, then the provider's own models, as the launch surface lists them. */
+const modelOptions = computed(() => [
+  { value: '', label: 'CLI default' },
+  ...defaultModelPicker.value.models.map((option) => ({
+    value: option.value,
+    label: option.label ?? option.value
+  }))
+])
+const effortOptions = computed(() => [
+  { value: '', label: 'CLI default' },
+  ...defaultEffortPicker.value.efforts.map((level) => ({ value: level, label: level }))
+])
 
 /** No provider chosen means nothing here CAN be validated against a ladder or CLI yet. */
 const modelSelectDisabled = computed(
@@ -224,332 +255,158 @@ function toggleDelegation(checked: boolean): void {
 </script>
 
 <template>
-  <section class="jev-settings">
-    <span class="field-label">Jev</span>
-
-    <p v-if="unavailableMessage" class="jev-unavailable">{{ unavailableMessage }}</p>
-
-    <template v-else>
-      <div v-if="!showingInput" class="jev-configured-row">
-        <span class="jev-configured">Configured</span>
-        <button class="jev-replace" type="button" @click="startReplace">Replace</button>
-        <button class="jev-clear" type="button" @click="emit('clear')">Clear</button>
-      </div>
-
-      <div v-else class="jev-key-row">
-        <input
-          class="jev-key-input"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="TypeSafe API key"
-          placeholder="Paste your TypeSafe API key"
-          :value="draftKey"
-          @input="draftKey = ($event.target as HTMLInputElement).value"
-          @keydown.enter="submit"
-        />
-        <button class="jev-save" type="button" :disabled="!canSave" @click="submit">Save</button>
-        <button
-          v-if="props.settings.configured"
-          class="jev-cancel-replace"
-          type="button"
-          @click="cancelReplace"
-        >
-          Cancel
-        </button>
-      </div>
-
-      <div v-if="props.settings.configured" class="jev-profile">
-        <span class="row-label">Routing profile</span>
-        <div class="segments">
-          <button
-            v-for="profile in JEV_ROUTING_PROFILES"
-            :key="profile"
-            class="profile-option"
-            type="button"
-            :class="{ 'is-selected': preferences.profile === profile }"
-            :aria-pressed="preferences.profile === profile ? 'true' : 'false'"
-            :disabled="props.saving"
-            @click="selectProfile(profile)"
-          >
-            <span class="profile-name">{{ PROFILE_LABEL[profile] }}</span>
-            <span class="profile-description">{{ PROFILE_DESCRIPTION[profile] }}</span>
-          </button>
-        </div>
-      </div>
-
-      <!--
-        Why the last preference write did not take. Absent when it did.
-
-        `role="alert"`, because nothing else on screen moved: the mark stays
-        on the profile actually in force, which is the honest drawing and also
-        the reason a failure is invisible without this line.
-      -->
-      <p v-if="props.settings.preferencesError" class="preferences-error" role="alert">
-        {{ props.settings.preferencesError }}
+  <!--
+    AMENDED (#635): the rows are the design's (screens/settings.md, As built: Integrations, in
+    order — the Jev row, Routing profile, Default launch, Subagent delegation · beta); every
+    behaviour below is today's, only drawn with the design's row and controls.
+  -->
+  <SettingsRow
+    class="jev-settings"
+    label="Jev"
+    stack
+    help="Your TypeSafe API key. Jev routes each new dwarf to a supplier, model and effort."
+  >
+    <template #notes>
+      <p v-if="unavailableMessage" class="dm-srow__help jev-unavailable">
+        {{ unavailableMessage }}
       </p>
-
-      <div v-if="props.settings.configured" class="jev-default-launch">
-        <span class="row-label">Default launch</span>
-        <div class="default-launch-row">
-          <select
-            class="tuning-select"
-            aria-label="Default provider"
-            :value="defaultProvider ?? ''"
-            :disabled="props.saving"
-            @change="selectDefaultProvider(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">None</option>
-            <option
-              v-for="entry in launchableProviders"
-              :key="entry.provider"
-              :value="entry.provider"
-            >
-              {{ PRODUCT_NAME[entry.provider] }}
-            </option>
-          </select>
-          <select
-            class="tuning-select"
-            aria-label="Default model"
-            :value="preferences.default.model ?? ''"
-            :disabled="modelSelectDisabled"
-            @change="selectDefaultModel(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">CLI default</option>
-            <option
-              v-for="option in defaultModelPicker.models"
-              :key="option.value"
-              :value="option.value"
-            >
-              {{ option.label ?? option.value }}
-            </option>
-          </select>
-          <select
-            class="tuning-select"
-            aria-label="Default effort"
-            :value="preferences.default.effort ?? ''"
-            :disabled="effortSelectDisabled"
-            @change="selectDefaultEffort(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">CLI default</option>
-            <option v-for="level in defaultEffortPicker.efforts" :key="level" :value="level">
-              {{ level }}
-            </option>
-          </select>
-        </div>
-        <p class="hint">Used when Jev cannot decide.</p>
-      </div>
-
-      <div v-if="props.settings.configured" class="jev-delegation">
-        <label class="delegation-label">
-          <input
-            class="delegation-checkbox"
-            type="checkbox"
-            :checked="preferences.delegation"
-            :disabled="props.saving"
-            @change="toggleDelegation(($event.target as HTMLInputElement).checked)"
-          />
-          Let Jev choose subagents by subtask complexity (BETA - CRITICAL WARNING)
-        </label>
-        <p class="hint">
-          A launched session may hand a subtask back through Jev, so a bigger job can be split
-          across cheaper models instead of running entirely on the one you started.
-        </p>
-      </div>
     </template>
+    <span
+      v-if="!unavailableMessage && !showingInput"
+      class="dm-settings__inline jev-configured-row"
+    >
+      <StatePill class="jev-configured" text="Configured" tone="ok" icon="check" />
+      <ActionButton class="jev-replace" label="Replace" @click="startReplace" />
+      <ActionButton class="jev-clear" label="Clear" @click="emit('clear')" />
+    </span>
+    <span v-else-if="!unavailableMessage" class="dm-settings__inline jev-key-row">
+      <InputField
+        class="jev-key-input"
+        type="password"
+        label="TypeSafe API key"
+        placeholder="Paste your TypeSafe API key"
+        :value="draftKey"
+        @update:value="draftKey = $event"
+        @keydown.enter="submit"
+      />
+      <ActionButton
+        class="jev-save"
+        label="Save"
+        variant="primary"
+        :disabled="!canSave"
+        @click="submit"
+      />
+      <ActionButton
+        v-if="props.settings.configured"
+        class="jev-cancel-replace"
+        label="Cancel"
+        @click="cancelReplace"
+      />
+    </span>
+  </SettingsRow>
 
-    <p class="hint privacy-notice">
-      With Jev on, the prompt text and the list of providers and models this machine can launch are
-      sent to TypeSafe's API (api.typesafe.ai) when a session starts, so it can choose one for you.
-      The key is stored encrypted on this machine and is sent only to TypeSafe, to authenticate that
-      request.
-    </p>
-  </section>
+  <template v-if="!unavailableMessage && props.settings.configured">
+    <SettingsRow class="jev-profile" label="Routing profile" stack :help="PROFILE_HELP">
+      <template #notes>
+        <!--
+          Why the last preference write did not take. Absent when it did.
+
+          `role="alert"`, because nothing else on screen moved: the mark stays on the profile
+          actually in force, which is the honest drawing and also the reason a failure is
+          invisible without this line.
+        -->
+        <p
+          v-if="props.settings.preferencesError"
+          class="dm-srow__help preferences-error"
+          role="alert"
+        >
+          {{ props.settings.preferencesError }}
+        </p>
+      </template>
+      <SegmentedChoice>
+        <ChoiceChip
+          v-for="profile in JEV_ROUTING_PROFILES"
+          :key="profile"
+          class="profile-option"
+          role="radio"
+          :data-value="PROFILE_LABEL[profile]"
+          :label="PROFILE_LABEL[profile]"
+          :pressed="preferences.profile === profile"
+          :disabled="props.saving"
+          @click="selectProfile(profile)"
+        />
+      </SegmentedChoice>
+    </SettingsRow>
+
+    <SettingsRow
+      class="jev-default-launch"
+      label="Default launch"
+      stack
+      help="Used when Jev cannot decide."
+    >
+      <SelectField
+        held
+        class="tuning-select provider-select"
+        label="Default provider"
+        :value="defaultProvider ?? ''"
+        :options="providerOptions"
+        :disabled="props.saving"
+        @update:value="selectDefaultProvider"
+      />
+      <span class="dm-settings__slot">
+        <SelectField
+          held
+          class="tuning-select model-select"
+          label="Default model"
+          :value="preferences.default.model ?? ''"
+          :options="modelOptions"
+          :disabled="modelSelectDisabled"
+          @update:value="selectDefaultModel"
+        />
+      </span>
+      <span class="dm-settings__slot">
+        <SelectField
+          held
+          class="tuning-select effort-select"
+          label="Default effort"
+          :value="preferences.default.effort ?? ''"
+          :options="effortOptions"
+          :disabled="effortSelectDisabled"
+          @update:value="selectDefaultEffort"
+        />
+      </span>
+    </SettingsRow>
+
+    <SettingsRow
+      class="jev-delegation"
+      label="Subagent delegation · beta"
+      tone="danger"
+      help="Let Jev choose subagents by subtask complexity. A launched session may hand a subtask back through Jev, so a bigger job can be split across cheaper models instead of running entirely on the one you started."
+    >
+      <ToggleSwitch
+        class="delegation-toggle"
+        label="Let Jev choose subagents by subtask complexity"
+        held
+        :on="preferences.delegation"
+        :disabled="props.saving"
+        @update:on="toggleDelegation"
+      />
+    </SettingsRow>
+  </template>
 </template>
 
 <style scoped>
-/* The Audio and Notifications sections' own layout, because this sits beside
-   them and a third spacing rule would read as a different kind of section. */
-.jev-settings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-settings);
-}
-.field-label {
-  padding-top: var(--space-settings);
-  color: var(--color-cream);
-  font-size: var(--text-section);
-}
-.jev-configured-row,
-.jev-key-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-settings);
-}
-.jev-configured {
-  color: var(--color-accent);
-  font-size: var(--text-meta);
-}
-.jev-key-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-panel-deep);
-  font: inherit;
-  font-size: var(--text-meta);
-}
-/* The shared button model (components.md), identical to Audio's and
-   Notifications' own controls: an active, pressable rectangle rather than a
-   second visual language for this section's actions. */
-.jev-replace,
-.jev-clear,
-.jev-save,
-.jev-cancel-replace {
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-control);
-  font: inherit;
-  font-size: var(--text-meta);
-  cursor: pointer;
-}
-.jev-save:disabled {
-  border: 2px solid var(--color-control-disabled);
-  color: var(--color-control-disabled);
-  background: var(--color-panel-deep);
-  cursor: default;
-}
-.jev-key-input:focus-visible,
-.jev-replace:focus-visible,
-.jev-clear:focus-visible,
-.jev-save:focus-visible,
-.jev-cancel-replace:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-.jev-unavailable,
-.hint {
-  margin: 0;
-  color: var(--color-cream);
-  font-size: var(--text-helper);
-  line-height: 1.4;
-}
-
-/* The routing profile (#509 follow-up): TypographySettings' own row-label +
-   segments model, because this is the same kind of mutually-exclusive choice
-   — reused rather than reinvented, down to the class names. */
-.jev-profile,
-.jev-default-launch {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.row-label {
-  color: var(--color-cream);
-  font-size: var(--text-meta);
-}
-.segments {
+/* The design's settings.css `.dm-settings__inline` and `.dm-settings__slot`. */
+.dm-settings__inline {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-settings);
-}
-.profile-option {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px var(--space-settings);
-  border: 2px solid var(--color-control-idle);
-  border-radius: var(--radius-default);
-  color: var(--color-control-idle);
-  cursor: pointer;
-  background: var(--color-panel-deep);
-  font: inherit;
-  text-align: left;
-}
-.profile-option.is-selected {
-  border: var(--border-active);
-  color: var(--color-cream);
-  background: var(--color-control);
-}
-.profile-option:disabled {
-  cursor: default;
-}
-.profile-option:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-.preferences-error {
-  margin: 0;
-  color: var(--color-cream);
-  font-size: var(--text-helper);
-  line-height: 1.4;
-}
-.profile-name {
-  font-size: var(--text-meta);
-}
-.profile-description {
-  font-size: var(--text-helper);
-  line-height: 1.4;
-}
-
-/* The default-launch row: AddPanel's own `.tuning-select` (launch.md),
-   because the model and effort pickers ARE that row's controls, reused for a
-   stored default instead of a live composer. */
-.default-launch-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-settings);
-}
-.tuning-select {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-panel-deep);
-  font: inherit;
-  font-size: var(--text-meta);
-}
-.tuning-select:disabled {
-  border: 2px solid var(--color-control-disabled);
-  color: var(--color-control-disabled);
-  cursor: default;
-}
-.tuning-select:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-
-/* The delegation checkbox (#511): a row-label-less control, because the
-   sentence beside it already names what it is — a second label would repeat
-   it rather than add to it. */
-.jev-delegation {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.delegation-label {
-  display: flex;
   align-items: center;
-  gap: var(--space-settings);
-  color: var(--color-cream);
-  font-size: var(--text-meta);
-  cursor: pointer;
+  gap: 8px;
 }
-.delegation-checkbox {
-  cursor: pointer;
+.dm-settings__slot {
+  display: inline-flex;
 }
-.delegation-checkbox:disabled {
-  cursor: default;
-}
-.delegation-checkbox:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
+.dm-srow__help.preferences-error {
+  color: var(--danger-hi);
 }
 </style>

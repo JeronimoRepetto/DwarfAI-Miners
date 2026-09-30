@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { SpriteSheet } from './spriteSheet'
 import {
+  REDUCED_MOTION_FRAME_MS,
   SPRITE_FRAME_SIZE,
   backgroundSizePercent,
+  frameDurationMs,
   framePositionPercent,
-  isGlowFrame,
   isImpactFrame,
   loopOf,
   onceOf,
   sequenceCycle,
   sequenceDurationMs,
   sequenceFrameAt,
-  sequenceIsStill
+  sequenceIsStill,
+  sequenceNextChangeMs,
+  sequenceOffsetMs
 } from './spriteSheet'
 
 /** A six-frame strip, the shape the worker's idle sheet actually ships as. */
@@ -278,32 +281,157 @@ describe('isImpactFrame', () => {
   })
 })
 
-describe('isGlowFrame', () => {
-  /*
-   * A separate declaration from impactFrames, deliberately: the strike that
-   * throws debris and the frames bright enough to earn a glow are two
-   * different artistic calls (#74) — a swing can draw more brightness than
-   * it draws hits, and marking every bright frame a hit would retrigger the
-   * whole spark burst on each of them instead of showing a light.
-   */
-  it('is true only on a frame the sheet names as glowing', () => {
-    const swing: SpriteSheet = { src: 'swing.png', frames: 9, frameMs: 100, glowFrames: [4, 5] }
-    expect(isGlowFrame(swing, 4)).toBe(true)
-    expect(isGlowFrame(swing, 5)).toBe(true)
-    expect(isGlowFrame(swing, 6)).toBe(false)
-    expect(isGlowFrame(swing, 3)).toBe(false)
-  })
-
-  it('is false throughout a sheet that names none, rather than guessing one', () => {
-    for (let frame = 0; frame < SIX.frames; frame++) {
-      expect(isGlowFrame(SIX, frame), String(frame)).toBe(false)
-    }
-  })
-})
+/*
+ * REMOVED for #635, stated rather than passing unseen: isGlowFrame and its two tests ("is true
+ * only on a frame the sheet names as glowing", "is false throughout a sheet that names none"),
+ * with the strike glow they served: the PO removed the strike glow and the sparks from the redesign on every rank (PANEL-QUESTIONS 15, 2026-09-27); the pick strike sound on the impact frame stays.
+ */
 
 describe('loopOf and onceOf', () => {
   it('carry the sheet and say how it is played', () => {
     expect(loopOf(SIX)).toEqual({ sheet: SIX, playback: 'loop' })
     expect(onceOf(SIX)).toEqual({ sheet: SIX, playback: 'once' })
+  })
+})
+
+/*
+ * Per-frame timing (#635). Every sheet the app plays now carries its own durations from its
+ * Aseprite sidecar (motion.md, Sprite frame timing), and under reduced motion every frame of every
+ * sheet is a flat 200ms instead — replaced, not scaled. The functions above take that flat hold as
+ * an optional last argument; absent, a sheet's durations decide, and a sheet with none falls back
+ * to its `frameMs`.
+ */
+describe('per-frame durations (#635)', () => {
+  /** The shape of the pick swing: a slow wind-up, a hurried swing, the impact held. */
+  const SWING: SpriteSheet = {
+    src: 'swing.png',
+    frames: 4,
+    frameMs: 100,
+    durations: [120, 60, 200, 90]
+  }
+  const START: SpriteSheet = { src: 'start.png', frames: 2, frameMs: 100, durations: [150, 50] }
+
+  it('holds each frame for its own duration', () => {
+    const clips = [loopOf(SWING)]
+    expect(sequenceFrameAt(clips, 0)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(clips, 119)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(clips, 120)).toEqual({ clip: 0, frame: 1 })
+    expect(sequenceFrameAt(clips, 179)).toEqual({ clip: 0, frame: 1 })
+    expect(sequenceFrameAt(clips, 180)).toEqual({ clip: 0, frame: 2 })
+    expect(sequenceFrameAt(clips, 379)).toEqual({ clip: 0, frame: 2 })
+    expect(sequenceFrameAt(clips, 380)).toEqual({ clip: 0, frame: 3 })
+    // 470ms a lap: the cycle is the sum of its holds.
+    expect(sequenceFrameAt(clips, 470)).toEqual({ clip: 0, frame: 0 })
+  })
+
+  it('plays a transition by its own durations before the loop it hands over to', () => {
+    const clips = [onceOf(START), loopOf(SWING)]
+    expect(sequenceFrameAt(clips, 149)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(clips, 150)).toEqual({ clip: 0, frame: 1 })
+    expect(sequenceFrameAt(clips, 200)).toEqual({ clip: 1, frame: 0 })
+    expect(sequenceDurationMs(clips)).toBe(200)
+  })
+
+  it('replaces every duration with the flat hold under reduced motion, never scaling them', () => {
+    // A four-frame swing lasts 4 x 200ms = 800ms, whatever its own durations add up to.
+    const clips = [loopOf(SWING)]
+    expect(sequenceFrameAt(clips, 199, REDUCED_MOTION_FRAME_MS)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceFrameAt(clips, 200, REDUCED_MOTION_FRAME_MS)).toEqual({ clip: 0, frame: 1 })
+    expect(sequenceFrameAt(clips, 800, REDUCED_MOTION_FRAME_MS)).toEqual({ clip: 0, frame: 0 })
+    expect(sequenceDurationMs([onceOf(START), loopOf(SWING)], REDUCED_MOTION_FRAME_MS)).toBe(400)
+  })
+
+  it('is 200ms, the design’s reduced-motion frame', () => {
+    expect(REDUCED_MOTION_FRAME_MS).toBe(200)
+  })
+
+  it('reads one frame’s hold: its duration, the fallback, or the flat hold', () => {
+    expect(frameDurationMs(SWING, 2)).toBe(200)
+    expect(frameDurationMs(SIX, 2)).toBe(100)
+    expect(frameDurationMs(SWING, 2, REDUCED_MOTION_FRAME_MS)).toBe(200)
+    expect(frameDurationMs(SWING, 1, REDUCED_MOTION_FRAME_MS)).toBe(200)
+  })
+})
+
+/*
+ * What the shared frame clock asks of a sequence (#635): how long until the drawing next changes,
+ * so one timer can be set to the earliest change among every sprite rather than ticking at a fixed
+ * rate, and where a given frame starts, so a sprite can begin on its phase frame and keep its frame
+ * when the timing switches.
+ */
+describe('sequenceNextChangeMs (#635)', () => {
+  const SWING: SpriteSheet = {
+    src: 'swing.png',
+    frames: 3,
+    frameMs: 100,
+    durations: [120, 60, 200]
+  }
+
+  it('is the rest of the current frame’s hold', () => {
+    const clips = [loopOf(SWING)]
+    expect(sequenceNextChangeMs(clips, 0)).toBe(120)
+    expect(sequenceNextChangeMs(clips, 100)).toBe(20)
+    expect(sequenceNextChangeMs(clips, 120)).toBe(60)
+    expect(sequenceNextChangeMs(clips, 180)).toBe(200)
+    // A lap later the same answers come back.
+    expect(sequenceNextChangeMs(clips, 380 + 100)).toBe(20)
+  })
+
+  it('follows the flat hold under reduced motion', () => {
+    expect(sequenceNextChangeMs([loopOf(SWING)], 150, REDUCED_MOTION_FRAME_MS)).toBe(50)
+  })
+
+  it('never changes again once a sequence of transitions has settled on its last frame', () => {
+    const clips = [onceOf(SWING)]
+    expect(sequenceNextChangeMs(clips, 150)).toBe(30)
+    // Frame 2 is the last: reaching it is settling, however long its own hold.
+    expect(sequenceNextChangeMs(clips, 180)).toBeUndefined()
+    expect(sequenceNextChangeMs(clips, 10_000)).toBeUndefined()
+  })
+
+  it('never changes a still sequence, nor an empty one', () => {
+    expect(sequenceNextChangeMs([loopOf(ONE)], 0)).toBeUndefined()
+    expect(sequenceNextChangeMs([], 0)).toBeUndefined()
+  })
+
+  it('crosses from a transition into its loop', () => {
+    const clips = [onceOf(THREE), loopOf(SWING)]
+    expect(sequenceNextChangeMs(clips, 550)).toBe(50)
+    expect(sequenceNextChangeMs(clips, 600)).toBe(120)
+  })
+})
+
+describe('sequenceOffsetMs (#635)', () => {
+  const SWING: SpriteSheet = {
+    src: 'swing.png',
+    frames: 3,
+    frameMs: 100,
+    durations: [120, 60, 200]
+  }
+
+  it('is when a frame starts: the holds of every frame before it', () => {
+    const clips = [onceOf(THREE), loopOf(SWING)]
+    expect(sequenceOffsetMs(clips, { clip: 0, frame: 0 })).toBe(0)
+    expect(sequenceOffsetMs(clips, { clip: 0, frame: 2 })).toBe(400)
+    expect(sequenceOffsetMs(clips, { clip: 1, frame: 0 })).toBe(600)
+    expect(sequenceOffsetMs(clips, { clip: 1, frame: 2 })).toBe(780)
+  })
+
+  it('lands back on the frame it names', () => {
+    const clips = [onceOf(THREE), loopOf(SWING)]
+    for (const position of [
+      { clip: 0, frame: 1 },
+      { clip: 1, frame: 1 },
+      { clip: 1, frame: 2 }
+    ]) {
+      expect(sequenceFrameAt(clips, sequenceOffsetMs(clips, position))).toEqual(position)
+      expect(
+        sequenceFrameAt(
+          clips,
+          sequenceOffsetMs(clips, position, REDUCED_MOTION_FRAME_MS),
+          REDUCED_MOTION_FRAME_MS
+        )
+      ).toEqual(position)
+    }
   })
 })

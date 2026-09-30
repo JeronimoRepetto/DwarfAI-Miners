@@ -54,6 +54,7 @@ src/
 │   ├── appDatabase/ the one file the app writes: its schema version, and the migrations between versions
 │   ├── config/      typed settings, and the userData document layered under the environment
 │   ├── domain/      this process's type barrel, and the pure domain rules (materials, ledger, lifecycle)
+│   ├── dwarfNames/  the names a person gives dwarfs: kept per machine in the app database, stamped onto the board
 │   ├── history/     what a mine's transcripts on disk remember: every dwarf that spoke there, read on request
 │   ├── hooks/       the opt-in Claude hooks push channel
 │   ├── jev/         asking TypeSafe's Jev model which provider, model and effort to launch with, behind a port (#509)
@@ -70,26 +71,27 @@ src/
 │   └── tier/        measuring a project to a tier
 └── renderer/src/
     ├── App.vue      the SHELL window's root; types.ts beside it is this process's type barrel
-    ├── MessagePanelWindow.vue  the message panel's own window (#162) — the second root, one entry
     ├── assets/      processed art, css, and fonts/ — the one face this repo carries files for
-    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ — thin, and decide nothing
+    ├── components/  shell/ · map/ · scene/ · dwarf/ · message/ · history/ · launch/ · vault/ · panel/ · controls/ · icon/ · overlay/ · browse/ — thin, and decide nothing
     ├── composables/ the Vue-bound state (`use*`), one per concern
     ├── lib/         framework-agnostic logic, unit-tested without a component:
-    │                  shell/     the frame every screen sits in: the areas the rail opens onto, how its ground folds into the rail, the one bounded runner every panel's motion goes through and the motion-v engine it drives, the timing that runner derives from that engine, and the presence vocabulary popups and tooltips animate through instead
+    │                  shell/     the frame every screen sits in: the areas the nav opens, how its ground folds round the mine column, the one bounded runner every panel's motion goes through and the motion-v engine it drives, the timing that runner derives from that engine, and the presence vocabulary popups and tooltips animate through instead
     │                  map/       the authored dig sites of the valley and the trails between them
     │                  scene/     the cave: anchors, geometry, who stands where, motion, sizing
     │                  vault/     ore: tokens into units of a material, and how a heap of it is drawn
-    │                  message/   what a dwarf's panel may honestly show, how far back it pages, how tall it opens, and what its Markdown means
+    │                  message/   what a dwarf's panel may honestly show, what its chrome says, how far back it pages, and what its Markdown means
     │                  history/   the mine-wide history: tab order, the 50-message cap, the timestamp's spelling
     │                  launch/    starting an agent: the gates, the chips, and whose dwarf arrived
     │                  delivery/  reaching a session: the four actions, and whether it provably worked
-    │                  overlay/   the boxes that float over a sprite: speech bubbles and the tooltip
+    │                  overlay/   the boxes that float above the panel: speech bubbles and the tooltip over a sprite, the tooltip card hover tooltips share, and the menus, dialogs and toasts over a page
     │                  sprite/    the dwarf drawing: packed sheets, which frame shows, which loop plays
     │                  typography/ the chosen faces: a stored identifier, the token that draws it, its name
+    │                  controls/  the redesign's shared controls: what the options of a button, input, select, toggle, slider or chip decide — classes, native attributes, readouts
+    │                  icon/      every glyph the panel shows: the provisional 16x16 set and the one registry a drawn icon replaces it through
     │                  art.ts · presentation.ts · placement.ts — see rule 3
     └── testing/     factories for tests
 ```
 
 `components/` and `lib/` share the family names `shell`, `map`, `scene`, `message`, `history`,
-`launch` and `vault` on purpose: a component may read from several `lib/` families, but when a name exists in
+`launch`, `vault`, `controls`, `icon`, `overlay` and `browse` on purpose: a component may read from several `lib/` families, but when a name exists in
 both, it means the same thing in both.

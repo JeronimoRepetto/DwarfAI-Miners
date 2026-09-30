@@ -9,7 +9,6 @@ import {
   MAP_BG_SRC,
   NUGGET_SRC,
   PORTRAIT_SRC,
-  SHELL_ICON_SRC,
   SLEEP_ICON_SRC,
   SORT_ICON_SRC,
   maskImageValue
@@ -77,7 +76,7 @@ describe('MAP_BG_SRC', () => {
 })
 
 /*
- * The Mines panel's own glyphs (#135). Same reasoning as SHELL_ICON_SRC: they
+ * The Mines panel's own glyphs (#135). Same reasoning as the paintings: they
  * are the designer's committed SVGs at the path the source names, resolved
  * through explicit imports so a renamed file fails the build instead of
  * rendering as an empty masked square nobody notices.
@@ -143,8 +142,9 @@ describe('maskImageValue', () => {
   })
 
   it('produces a value every committed glyph can actually be drawn with', () => {
+    // AMENDED for #635 (PR3): the shell's six nav icons left this list with SHELL_ICON_SRC, which
+    // nothing drew since the redesigned nav (PanelNav) draws the provisional pixel icons.
     const every = [
-      ...Object.values(SHELL_ICON_SRC),
       SORT_ICON_SRC,
       ADD_ICON_SRC,
       DIALOG_ICON_SRC,

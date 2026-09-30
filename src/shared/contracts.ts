@@ -404,6 +404,27 @@ export interface DwarfTuningRequest {
 export type DwarfTuningResult = { applied: true } | { applied: false; reason: string }
 
 /**
+ * Give one dwarf a custom name (#635, decision log "Dwarf names"). Named by DWARF, like every
+ * other dwarf channel; main resolves the dwarf against its own board, reads its base name there,
+ * and cleans `name` itself (shared/dwarfName.ts) whatever the field already did.
+ *
+ * `name` is the text as the person left it. Saved empty, or equal to the base name, it removes
+ * the custom name — the same outcome as `resetDwarfName`.
+ */
+export interface DwarfNameRequest {
+  dwarfId: string
+  name: string
+}
+
+/**
+ * Verdict of a rename or a reset (#635). `saved: true` says the name is kept and the board
+ * already republished with it; `customName` is what main saved, absent when the dwarf shows its
+ * base name again. `saved: false` always carries a reason and leaves the dwarf as it was.
+ */
+export type DwarfNameResult =
+  { saved: true; customName?: string } | { saved: false; reason: string }
+
+/**
  * A dwarf's rank, which is TOPOLOGY read off the spawn tree and never a title
  * anything scripted (#86, #157).
  *
@@ -1020,14 +1041,25 @@ export const TYPED_ANSWER_WOULD_STEER_THE_PICKER =
   'Those words carry a line break or an escape, and the picker reads both as keys of its own — ' +
   'the line break would send the answer half-written. Take them out, or answer at the terminal.'
 /**
- * The held channel's own refusal. The held path hands the agent's blocked tool
- * call the labels the ask carried (`resolveAnswers`), and what it does with
- * anything else is unmeasured; the held card offers a message box instead, so
- * nothing on screen reaches this — it is the guard behind that box.
+ * The refusal for words carried as `ownWords` to a session this panel does not hold (#635, PO
+ * decision 2026-09-28): only the held path hands them to the agent's tool as an answer; a
+ * terminal picker takes a person's words through its own Other row (the `text` form), and
+ * nothing is typed for a record meant for the held path.
+ */
+export const OWN_WORDS_ONLY_WHEN_HELD =
+  'An answer in your own words reaches that session only through its own terminal. Answer it ' +
+  'there, or choose an option above.'
+
+/**
+ * The held channel's own refusal for the `text` form, which is keys typed at a picker. AMENDED
+ * for #635 (PO decision 2026-09-28, held free-text answers; was: "an answer can only be one of
+ * the options the agent offered. Write to it as a message instead"): a held ask takes the
+ * person's own words in the label form's `ownWords` record, which the held card sends, so nothing
+ * on screen reaches this — it is the guard behind that card.
  */
 export const TYPED_ANSWER_ONLY_AT_A_PICKER =
-  'This panel is holding that session, where an answer can only be one of the options the agent ' +
-  'offered. Write to it as a message instead, or choose an option above.'
+  'This panel is holding that session, which takes an answer in your own words through Other ' +
+  'thing… on the question, not as keys typed at a terminal.'
 
 /**
  * What both cards show in place of their free-text box, and what main returns
@@ -1263,6 +1295,16 @@ export type TurnOutcomeKind = 'concluded' | 'capped' | 'errored' | 'interrupted'
  * such as `error_max_turns`, or an Antigravity `status` such as `ERROR` —
  * carried verbatim rather than reworded into this app's own taxonomy, so a
  * reader can always trace a reading back to what the provider actually said.
+ *
+ * `cancelledFromApp: true` marks a turn THIS APP asked to end — a Kick on a
+ * held session (its interrupt) or on a session it launched (ending the
+ * process) — and is present only then (#635, PANEL-QUESTIONS Q24). It is the
+ * app's own fact, stamped where the app sends the cancel, because the
+ * provider's reading of one cannot carry it: Claude answers an interrupt with
+ * an ordinary error result, and a killed one-shot reads SIGTERM like any other
+ * signal. `kind` and `detail` stay exactly what the provider said. Absent
+ * means the app did not ask, never "the provider says nobody did": an
+ * interruption the user did not cause from here reads unmarked.
  */
 export interface TurnOutcome {
   kind: TurnOutcomeKind
@@ -1270,6 +1312,7 @@ export interface TurnOutcome {
   truncated?: boolean
   detail?: string
   endedAt: number
+  cancelledFromApp?: true
 }
 
 export interface Dwarf {
@@ -1282,7 +1325,21 @@ export interface Dwarf {
    */
   provider: DwarfObserver
   role: DwarfRole
+  /**
+   * The provider's own BASE name for this dwarf, never changed by this app. Everything that
+   * leaves the app — relay prefixes (`[for agent <name>]`), agent prompts, delivery, Jev, MCP —
+   * reads this, so an agent never sees a name a person gave it.
+   */
   name: string
+  /**
+   * The name a person gave this dwarf on this machine (#635, decision log "Dwarf names"), stamped
+   * by main from its own store onto the board it publishes. DISPLAY ONLY: a renderer label shows
+   * it in place of `name`, and nothing that reaches a provider or a log may read it.
+   *
+   * Absent means the dwarf shows its base name. Already cleaned (shared/dwarfName.ts) and never
+   * equal to `name`: a save that would leave it empty or equal to the base name removes it.
+   */
+  customName?: string
   /**
    * Whichever provider observed it: Claude's transcript tail for an observed
    * session, or (issue #96) a held session's own `init` message, which
@@ -1772,6 +1829,18 @@ export interface Mine {
    */
   declared?: boolean
   /**
+   * This run's measured source weight in bytes (#635), the same reading
+   * `ProjectSummary.weightBytes` is and off the same TierService cache, by path.
+   * Absent until a walk has answered in this process; a stale one counts.
+   *
+   * It is on the board because the board is what main pushes: the Mines list
+   * reads store rows once, and a walk that answers while it is on screen has no
+   * other way to reach it. The panel compares the two and reads the list again
+   * when the board has a reading the list lacks (lib/browse/browseRefresh.ts).
+   * Absent for a simulated valley, which has no walk.
+   */
+  weightBytes?: number
+  /**
    * Which of the world map's spawn locations this mine stands on (#136), from
    * `1` to `MAP_SPAWN_SITE_COUNT`.
    *
@@ -1862,7 +1931,17 @@ export interface ProviderSnapshot {
  */
 export interface MessageIssuer {
   role: DwarfRole
+  /** The launcher's BASE name, the provider's own — see `Dwarf.name`. */
   name: string
+  /**
+   * The launcher's dwarf id (#635, handoff "Issuer label"), so the renderer can show the
+   * launcher's custom name by finding it on the board or among the history's speakers it already
+   * holds. Main never bakes a display name into an issuer.
+   *
+   * Main sets it on every issuer it names. Optional because the renderer also builds an author
+   * for a dwarf's own rows (`authorOf`), which names that dwarf and no launcher.
+   */
+  launcherId?: string
 }
 
 /**
@@ -2088,7 +2167,13 @@ export interface MineHistorySpeaker {
   id: string
   provider: DwarfProvider
   role: DwarfRole
+  /** The name the transcript gives this speaker — its base name, as `Dwarf.name`. */
   name: string
+  /**
+   * The custom name kept for this speaker's dwarf id, when one is (#635) — the same name its live
+   * dwarf carries as `Dwarf.customName`, since the two share one id. Display only, as there.
+   */
+  customName?: string
   lastMessageAt: number
   messages: FeedMessage[]
   reachedStart?: boolean
@@ -2163,6 +2248,18 @@ export type MineOpenPathResult = { opened: true } | { opened: false; reason: str
  * file channel has three.
  */
 export type ExternalLinkResult = { opened: true } | { opened: false; reason: string }
+
+/**
+ * Main's verdict on a request to put a message's text on the system clipboard (#635, decision
+ * log, Failed delivery: Copy on a message that could not be handed over).
+ *
+ * No reason travels with a refusal: the renderer only sent a string, and the only ways it can be
+ * refused — not a message at all, or the platform's clipboard throwing — say nothing a person
+ * could act on differently.
+ */
+export interface CopyTextResult {
+  copied: boolean
+}
 
 /** Result of trying to open the terminal that hosts a visualized dwarf. */
 export interface DwarfActivation {
@@ -2893,93 +2990,12 @@ export interface DwarfKickResult {
   error?: string
 }
 
-/**
- * What the panel shows about one dwarf's most recent message: in flight, or
- * the verdict, kept just long enough to be read.
- *
- * 'delivered' and 'reacted' are two different facts, and the panel must never
- * blur them (issue #21): delivered means the text reached the session's queue,
- * reacted means the session was then SEEN acting on it. A delivery that is
- * never observed reacting stays 'delivered' — it never promotes on a guess.
- *
- * On the wire since #162, having been a renderer-local type until then. The
- * send happens in the message-panel WINDOW and the marker is drawn on the
- * dwarf's sprite in the SHELL window, so this verdict now crosses a process
- * boundary — see DwarfDeliveryReport, which is the one direction it travels.
+/*
+ * MOVED to renderer/src/types.ts for #635, stated rather than passing unseen: DwarfSendState,
+ * DwarfKickState, DwarfDeliveryReport and FailedSend. They crossed the bridge only because the send and the kick
+ * happened in the message panel's own window and the markers were drawn in the shell's (#162);
+ * that window is gone, and nothing in main reads any of them.
  */
-export interface DwarfSendState {
-  /**
-   * 'held' is the one phase that claims NOTHING (#457, #534). A message the
-   * panel is holding for a Codex thread or an OpenCode session whose turn is
-   * still running sits in this app's own memory: no channel has been asked
-   * anything, so 'sending' would say it is in flight and 'delivered' would
-   * say it was handed over, and both are false. It is its own phase for
-   * exactly that reason, and it is never a resting place — every held
-   * message ends as 'delivered' when its continuation fires, or as 'failed'
-   * when it cannot (the session was kicked, the wait ran out, or the
-   * continuation itself refused).
-   */
-  phase: 'sending' | 'held' | 'delivered' | 'reacted' | 'failed'
-  /** The channel the delivery used, once one was chosen. */
-  via?: string
-  /** Why it failed, shown on the marker. */
-  error?: string
-  /**
-   * True while a delivered message is still watching its dwarf's snapshots for
-   * proof the session acted. False once that bounded window closed unobserved.
-   */
-  awaitingReaction?: boolean
-  /**
-   * True on a 'delivered' state that got there because a relay courier was
-   * killed by its own timeout, not because anything confirmed the hand-over
-   * (#439) — carried straight from DwarfTextResult.unconfirmed. Read only
-   * alongside `phase === 'delivered'`, and never on 'failed': the whole point
-   * is that this is NOT the same claim as a failure, so it decays exactly like
-   * an ordinary delivered message (the reaction watch may still promote it to
-   * 'reacted') while the marker keeps showing its own honest sentence instead
-   * of the plain "watching" or "no reaction seen" copy — see
-   * renderer/lib/delivery/deliveryVerdict.ts.
-   */
-  unconfirmed?: boolean
-}
-
-/**
- * What the panel shows about one dwarf's most recent kick: in flight, or the
- * verdict. Same two-phase honesty as DwarfSendState — an interrupt handed to a
- * session is not the same as a session that stopped.
- */
-export interface DwarfKickState {
-  phase: 'kicking' | 'delivered' | 'reacted' | 'failed'
-  /** The channel the kick used, once one was chosen. */
-  via?: string
-  /** Why it failed, shown on the marker. */
-  error?: string
-  /** True while a delivered kick is still watching for proof the session stopped. */
-  awaitingReaction?: boolean
-}
-
-/**
- * Every delivery verdict the message-panel window currently holds, reported to
- * the shell so the mine can draw its markers (#162).
- *
- * One writer, one reader, one direction. The composer and the kick control
- * live in the panel window, so that window owns both stores — including the
- * reaction watch, which folds each poll's snapshot in (see the renderer's
- * `useDwarfMessaging`). The marker is drawn on the dwarf's own sprite, inside
- * the mine, which is in the shell window. So the state is published rather
- * than duplicated: the shell renders these and writes none of them, and a
- * second store there could only ever disagree with this one.
- *
- * Whole maps rather than deltas, because the stores expire their own entries
- * on timers: a delta stream would need the shell to run the same timers to
- * know when a marker should be gone, which is the duplication this avoids.
- */
-export interface DwarfDeliveryReport {
-  /** Send verdicts, keyed by dwarf id. */
-  send: Record<string, DwarfSendState>
-  /** Kick verdicts, keyed by dwarf id. */
-  kick: Record<string, DwarfKickState>
-}
 
 /**
  * One provider the Add Panel may draw a chip for (#86, over detection's #91).
@@ -3146,6 +3162,15 @@ export interface AgentLaunchRequest {
    */
   effort?: string
   /**
+   * The permission mode to start a Codex launch under, or absent for the CLI's
+   * own default (#635, PO decision 2026-09-28). Codex only: main refuses the
+   * whole request when any other provider names one, because no other
+   * detached CLI has a mode wired here and a mode it silently ignored would be
+   * a control that looks like it works. Which flags a mode means is main's
+   * table (codexPermissions.ts); the renderer carries only the id.
+   */
+  permissionMode?: CodexPermissionMode
+  /**
    * Whether a Jev DECISION was actually applied to this launch (#511) — never
    * set for a fallback, even one that applied a configured default: see
    * `JevState.launchedOnFallback`, the renderer's own honesty rule for that
@@ -3155,6 +3180,40 @@ export interface AgentLaunchRequest {
    */
   routedByJev?: boolean
 }
+
+/**
+ * Why a launch of a supplier's CLI went nowhere, as a fact the panel can
+ * branch on (#635, proposals/MESSAGE-QUESTIONS.md questions 16 and 17) — the
+ * Add panel's launch-failure notice names its cause first, and it may not read
+ * one out of `error`, whose prose is for people and changes with them.
+ *
+ * Classified by WHICH STEP failed, never by errno, which is what makes it the
+ * same answer on Windows, macOS and Linux:
+ *
+ * - `not-installed` — detection found no CLI to run.
+ * - `could-not-start` — something was found and would not start: a shim this
+ *   app cannot run (a Windows-only artefact, refused inside cliDetection.ts,
+ *   the port) or a spawn error, whatever code the platform attached to it.
+ *   For a held Claude session the Agent SDK reports that spawn error only
+ *   once its stream is read, after the launch already answered, so it can
+ *   also arrive on `LaunchFailedPush` (see `heldSessionNeverSpawned`).
+ * - `exited-at-once` — it started, then stopped within
+ *   `EARLY_FAILURE_WINDOW_MS`: a watched detached process exiting non-zero, or
+ *   a held session ending or erroring before its stream opened — never one
+ *   whose CLI was not spawned at all, which is `could-not-start`. Only ever on
+ *   `LaunchFailedPush`, or on a held verdict whose session was already gone by
+ *   the time the verdict was written.
+ *
+ * Main produces only these three. The notice's two other causes — Jev could
+ * not be reached, Jev could not choose — are the renderer's own reading of a
+ * `JevFallbackReason` and never cross this boundary, so they are not here: a
+ * wider union would let main claim a cause it has no way to know.
+ *
+ * Absent on every failure that is none of them — a refusal (an empty prompt,
+ * no such mine, a provider with no launch path, the demo), or a throw nobody
+ * classified — and on every launch that started.
+ */
+export type LaunchFailureCause = 'not-installed' | 'could-not-start' | 'exited-at-once'
 
 /**
  * Verdict of one launch attempt. Never carries the prompt back, and never
@@ -3169,6 +3228,8 @@ export interface AgentLaunchResult {
   provider: DwarfProvider | 'none'
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /** Why it failed, when it failed to start — see `LaunchFailureCause` (#635). */
+  cause?: LaunchFailureCause
   /**
    * The receipt this launch will be recognised by, when main opened one (#191).
    *
@@ -3198,20 +3259,45 @@ export interface AgentLaunchResult {
  * a dwarf id and never a session id, for the reason `Dwarf.launchId` never is:
  * no dwarf exists to have proved this launch's identity, because the whole
  * point of this push is that none ever will.
+ *
+ * AMENDED for #635 (MESSAGE-QUESTIONS 16): also pushed for a HELD session
+ * (Claude, Antigravity) that ends, or errors before its stream opens, inside
+ * the same early window — correlated then by `HeldSessionLaunchResult.launchId`.
+ * One push rather than a second channel, because the notice is one notice
+ * whatever channel the supplier was launched on. A held session has no exit
+ * code to read and no stderr of its own kept, so it pushes `exitCode: null`
+ * and an empty `stderrTail`.
  */
 export interface LaunchFailedPush {
   launchId: string
   /** Which CLI this launch was for. Never 'none': a refused launch never spawned anything to fail. */
   provider: DwarfProvider
   mineId: string
-  /** The child's own exit code, or null when it went by signal instead. */
+  /**
+   * The child's own exit code, or null when it went by signal instead — or
+   * when the launch was a held session, which reports none (#635).
+   */
   exitCode: number | null
   /**
-   * The CLI's own words, redacted and length-capped exactly as every other
-   * transcript text crossing this boundary is (see `redactSecrets`) — empty
-   * when it wrote nothing to stderr before it went.
+   * The CLI's own words, redacted (see `redactSecrets`) — empty when it wrote
+   * nothing to stderr before it went. AMENDED for #635 (MESSAGE-QUESTIONS 23;
+   * was: length-capped as a speech bubble is, its first 400 characters on one
+   * line): its LAST 400 characters with their line breaks kept, an ellipsis
+   * marking what was dropped from the front (`truncateTail`), because the last
+   * lines say why it stopped and the Add panel's notice shows them as written.
+   * The only bound on them: the renderer never cuts them again.
    */
   stderrTail: string
+  /**
+   * `exited-at-once` for a launch that started and stopped inside the early
+   * window (#635). `could-not-start` for a held Claude session whose CLI was
+   * never spawned: the Agent SDK resolves such a start and raises the spawn
+   * error only once its stream is read, so the verdict had already said
+   * `launched: true` — this is the same cause the detached channel and held
+   * Antigravity name for the same machine. Typed as the whole union so the
+   * notice reads one field, whichever channel told it.
+   */
+  cause: LaunchFailureCause
 }
 
 /*
@@ -3257,6 +3343,26 @@ export function isHeldPermissionMode(value: unknown): value is HeldPermissionMod
 }
 
 /**
+ * Every permission mode a DETACHED Codex launch may be started under (#635,
+ * PO decision 2026-09-28) — ids, not flags: which flags each means is main's
+ * table (`codexPermissionArgs`), read out of codex-cli 0.153.4's own help.
+ *
+ * `default` adds no flag at all, so a launch nobody tuned stays byte for byte
+ * what it was; the other two name `codex exec --sandbox`'s own values. Its
+ * third value, `danger-full-access`, is deliberately not a mode here, for the
+ * reason `HELD_PERMISSION_MODES` has no `bypassPermissions`: starting a
+ * session from this panel must never quietly mean "and let it do anything".
+ */
+export const CODEX_PERMISSION_MODES = ['default', 'workspace-write', 'read-only'] as const
+
+export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
+
+/** Same reason as `isHeldPermissionMode`: this reads a value arriving over IPC. */
+export function isCodexPermissionMode(value: unknown): value is CodexPermissionMode {
+  return typeof value === 'string' && (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+/**
  * The heldable providers whose held engine reads a permission mode at all
  * (#237, step 5).
  *
@@ -3284,7 +3390,15 @@ export function isHeldPermissionMode(value: unknown): value is HeldPermissionMod
  * own documented three levels, and `agy --mode` is a vocabulary nothing here
  * has wired. A row filling in beside this one is not evidence for this one.
  */
-export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude']
+/*
+ * AMENDED for #635 (PO decision 2026-09-28, Codex permission modes; was: `['claude']`). Codex
+ * joins on the terms above — its own vocabulary wired, not Claude's borrowed — and it is not
+ * heldable: its modes are CODEX_PERMISSION_MODES, carried on the detached
+ * `AgentLaunchRequest.permissionMode` and turned into `codex exec --sandbox` by main. So this list
+ * now reads "providers whose launch reads a permission mode", held or not; which vocabulary a
+ * provider takes is the renderer's `permissionModeOptions`, drawn from the two lists.
+ */
+export const PERMISSION_MODE_PROVIDERS: readonly DwarfProvider[] = ['claude', 'codex']
 
 export interface HeldSessionLaunchRequest {
   mineId: string
@@ -3345,6 +3459,20 @@ export interface HeldSessionLaunchResult {
   launched: boolean
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /** Why it failed, when it failed to start — see `LaunchFailureCause` (#635). */
+  cause?: LaunchFailureCause
+  /**
+   * The id a `LaunchFailedPush` about this launch will carry, present exactly
+   * when `launched` is true (#635, MESSAGE-QUESTIONS 16): a held session that
+   * stops as soon as it started is told on the same push a detached launch's
+   * early exit is, and a push needs something to be correlated by.
+   *
+   * Correlation only. Unlike `AgentLaunchResult.launchId` it is NOT a board
+   * receipt — main stamps no dwarf with it, so `Dwarf.launchId` never equals
+   * it, and a held launch is still adopted by the conversation it was seeded
+   * with. A renderer that matched a held dwarf by this id would wait forever.
+   */
+  launchId?: string
 }
 
 /*
@@ -3401,6 +3529,12 @@ export interface HostedLaunchResult {
   launched: boolean
   /** Human-readable reason shown in the panel when launched is false. */
   error?: string
+  /**
+   * Why it failed, when it failed to start — see `LaunchFailureCause` (#635).
+   * Never `not-installed`: nothing detects a typed command before it is
+   * spawned, so a program that is not there is a spawn error like any other.
+   */
+  cause?: LaunchFailureCause
 }
 
 /**
@@ -3429,6 +3563,16 @@ interface DwarfQuestionAnswerAddress {
 /** The answer that repeats the agent's own words back to it — the form #125 shipped. */
 export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
   answers: Record<string, string>
+  /**
+   * The questions of a HELD ask the person answered in their own words, through the card's
+   * "Other thing…" (#635, PO decision 2026-09-28, held free-text answers): keyed by the question's
+   * text as `answers` is, valued by the words exactly as written. Its own record rather than a
+   * label that matches nothing, so the renderer SAYS these are the person's words and main never
+   * guesses it from a label it could not find. A question sits in one record or the other, never
+   * both; together they answer every question of the call (`resolveAnswers`, main). Only the held
+   * channel takes it: a terminal picker is answered through `text` (OWN_WORDS_ONLY_WHEN_HELD).
+   */
+  ownWords?: Record<string, string>
   text?: undefined
 }
 
@@ -3446,6 +3590,7 @@ export interface DwarfQuestionLabelAnswer extends DwarfQuestionAnswerAddress {
 export interface DwarfQuestionTextAnswer extends DwarfQuestionAnswerAddress {
   text: string
   answers?: undefined
+  ownWords?: undefined
 }
 
 /**
@@ -3624,49 +3769,40 @@ export type PanelEdge = 'left' | 'right'
  *
  * The same honesty rule the pin surface has, for the same reason: main derives
  * the panel's bounds from the display it is on, so a display too narrow for the
- * expanded panel, or an edge the user has not chosen, must reach the renderer as
- * a fact rather than being assumed by whoever pressed the arrow. The rail draws
- * its arrow from `edge`, so a panel drawn against the wrong edge would point the
- * user off the screen.
+ * whole composition, or an edge the user has not chosen, must reach the renderer
+ * as a fact rather than being assumed by whoever asked.
  *
- * `mineOpen` is here because it changes the WINDOW: the design keeps an open
- * mine beside one secondary panel, and that second column is width the window
- * has to be given before the renderer can draw into it.
+ * Both booleans are here because each changes the WINDOW, which is exactly as
+ * wide as what it shows (#635, PO ruling 2026-09-27): the nav and the page are
+ * always there, `mineOpen` adds the mine column, and `dockOpen` the dock's
+ * window slot beside the shell (`screens/shell.md`, Layout), which holds one
+ * thing at a time. Each is width the window has to be given before the
+ * renderer can draw into it, and none is reserved while it is not shown.
  *
- * The two booleans are INDEPENDENT since #153, and that is the whole of the
- * maintainer's fifth acceptance correction. `expanded` says whether the
- * SECONDARY panel — map, mines, settings, lab, market — is drawn; `mineOpen`
- * says whether the mine column is. The rail's arrow toggles the first and leaves
- * the second alone, the app mark above the navigation stack clears both, and the
- * interior's own round close clears only the mine. All four combinations are
- * real: neither is the closed rail, both is the design's concurrent model, and
- * a mine with no secondary beside it is the mine mock's own composition.
+ * `expanded` stood here until #635: whether the page was drawn, which only the
+ * closed rail's arrow could turn off. The rail is gone, and closing the Panel
+ * hides its window as the app mark always did, so a shown window always has
+ * its page.
  */
 export interface PanelLayout {
   edge: PanelEdge
-  /** Whether the SECONDARY panel is drawn — never "the shell is open at all". */
-  expanded: boolean
   mineOpen: boolean
+  /** Whether the dock's window slot beside the shell holds something (#635). */
+  dockOpen: boolean
 }
 
 /**
- * What the panel asks the shell window to become (#90, #138).
+ * What the panel asks the shell window to become (#90, #138, #635).
  *
  * `edge` is optional and absent from every request EXCEPT the Settings
  * position control (#138): omitting it means "keep whatever edge main already
- * has", which is what the rail toggle and the mine-open resize both do — they
+ * has", which is what a mine opening and the dock opening both do — they
  * are not the position control and must never nudge the docked side by
  * accident. Only the position control's Left/Right segments ever set it.
- *
- * Two dimensions, and there is no third (#162). #159's report named one that
- * was missing: the message panel was a band docked INSIDE this window, so the
- * shell had to grow to host it and nothing here could ask for that. The panel
- * is a window of its own now (see MessagePanelState) and the shell never grows
- * for it, so the gap closed by the request staying exactly this shape.
  */
 export interface PanelLayoutRequest {
-  expanded: boolean
   mineOpen: boolean
+  dockOpen: boolean
   edge?: PanelEdge
 }
 
@@ -3703,6 +3839,15 @@ export interface AudioPreferences {
    * wants the panel to stop talking back means both.
    */
   voiceVolume: number
+  /**
+   * Whether the three attention cues — a question, a permission, a finished
+   * turn — play at all (#635; sound.md, "Attention cues are global"). This is
+   * the ONLY thing that turns them off: never a mine's own mute, never the
+   * focused mine, and not Notifications › "System notifications", which is the
+   * operating system's notification centre and a different ladder rung. Off,
+   * nothing else changes; the cues still ride the `Effects` slider when on.
+   */
+  notificationSounds: boolean
 }
 
 /**
@@ -3726,7 +3871,10 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   musicAtStartup: true,
   musicVolume: 0.1,
   ambienceVolume: 1,
-  voiceVolume: 0.7
+  voiceVolume: 0.7,
+  // On: a document written before the switch existed reads as on, so an
+  // upgrade is silent about it rather than silencing the cues it adds.
+  notificationSounds: true
 }
 
 /**
@@ -3771,103 +3919,83 @@ export function parseAudioPreferences(document: unknown): AudioPreferences {
       record.ambienceVolume,
       DEFAULT_AUDIO_PREFERENCES.ambienceVolume
     ),
-    voiceVolume: clampAudioVolume(record.voiceVolume, DEFAULT_AUDIO_PREFERENCES.voiceVolume)
+    voiceVolume: clampAudioVolume(record.voiceVolume, DEFAULT_AUDIO_PREFERENCES.voiceVolume),
+    notificationSounds:
+      typeof record.notificationSounds === 'boolean'
+        ? record.notificationSounds
+        : DEFAULT_AUDIO_PREFERENCES.notificationSounds
   }
 }
 
+/* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
 /**
- * Which of the message-panel window's two surfaces is open, or neither (#162).
+ * The six areas the shell's navigation selects, in the design's own order (#90, #335).
  *
- * The two SHARE one window because they share one slot in the design: the Add
- * Panel is replaced by the MessagePanel when a launch is submitted, which is
- * one surface changing rather than two surfaces swapping. 'none' is the window
- * closed — hidden, not destroyed, so reopening costs no page load.
+ * A mine is deliberately NOT one of them. The design keeps an opened mine beside one of these
+ * rather than instead of one, so it is a second, concurrent thing the shell holds — see `useView`.
+ * The Laboral Union is last because that is where the source puts it.
+ *
+ * Declared here rather than in the renderer's `lib/shell/shellNav.ts`, where it stood until #635:
+ * the page the app opens on is stored by main (`LaunchView` below), so the list the stored page is
+ * checked against crosses the wire, and a second copy in main could disagree with the nav.
  */
-export type MessagePanelSurface = 'none' | 'launch' | 'message'
+export const SHELL_AREAS = ['settings', 'map', 'mines', 'lab', 'market', 'laboral-union'] as const
+
+export type ShellArea = (typeof SHELL_AREAS)[number]
 
 /**
- * Whether a value is one of the three surfaces this build has.
+ * The page and the mine the shell opens on: the ones that were open when it last closed (PO
+ * ruling 2026-09-27, PANEL-QUESTIONS 25; decision log, "Launch restores the last page and mine"),
+ * kept per machine in main's userData.
  *
- * Exists for the reason isDwarfProvider does: the preload refuses to guess
- * one. A surface collapsed to a default would be the bridge deciding what the
- * panel shows — 'none' above all, which would CLOSE a window nobody asked to
- * close — so an unrecognised value crosses as '' and main refuses the request
- * outright.
+ * It is the renderer's `ViewState` as it is stored, and the renderer's type IS this one rather than
+ * a copy of it. The mine is only a CLAIM about the last session: a remembered mine that has since
+ * been removed, or whose folder is gone, opens nothing, and the page still opens — the renderer
+ * decides that against the board and the remembered projects, because main's copy of neither is
+ * what the panel draws.
  */
-export function isMessagePanelSurface(value: unknown): value is MessagePanelSurface {
-  return value === 'none' || value === 'launch' || value === 'message'
+export interface LaunchView {
+  area: ShellArea
+  /** The mine held open beside the page, or null when none was. */
+  mineId: string | null
 }
 
-/**
- * The two ends of a drag on the message panel's own header (#296).
- *
- * This is the whole of what the renderer says about moving the window: the
- * press landed on the header, and the press is over. Everything between them
- * is main's — it reads the cursor on its own clock, moves the window, clamps it
- * to the display and remembers where it ended up — which is the rule
- * `PanelLayout` already holds for the shell, applied to the one thing about
- * this window a renderer could otherwise have decided.
- *
- * There is deliberately no 'move' phase, and the reason is not economy. A
- * pointer event's own position is measured inside the window, and a window
- * that is tracking the cursor moves WITH it — so the coordinates stop changing
- * and the events stop arriving exactly when the drag is working. A renderer
- * driving each step would then stall the very gesture it was driving. The
- * position that is still true throughout is the one the OS holds, and only
- * main can ask for it.
- */
-export type MessagePanelDragPhase = 'start' | 'end'
+/** A first run, with nothing remembered: the Map page with no mine open. */
+export const DEFAULT_LAUNCH_VIEW: LaunchView = { area: 'map', mineId: null }
 
 /**
- * Whether a value is one of the two phases a drag has.
+ * Stored or wire document -> launch view, degrading field by field.
  *
- * Exists for the reason `isMessagePanelSurface` does: the preload refuses to
- * guess one. A phase collapsed to a default would be the bridge deciding that
- * a window should move — 'start' above all, which would begin a drag nobody
- * asked for — so an unrecognised value crosses as '' and main refuses it.
+ * The shape half of the `config-layering` rule: a document that is not an object is corruption,
+ * indistinguishable from one never written, and reads as the default — a launch is never worth
+ * failing over. A readable document keeps each field that is still good: a page this build does
+ * not draw opens the Map, and the mine still opens; a mine id that is not a non-empty string opens
+ * no mine. Used by main (what it stores), the preload (what may cross) and the renderer (what it
+ * restores), which is why it is declared here.
  */
-export function isMessagePanelDragPhase(value: unknown): value is MessagePanelDragPhase {
-  return value === 'start' || value === 'end'
+export function parseLaunchView(document: unknown): LaunchView {
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    return { ...DEFAULT_LAUNCH_VIEW }
+  }
+  const record = document as Record<string, unknown>
+  return {
+    area: (SHELL_AREAS as readonly unknown[]).includes(record.area)
+      ? (record.area as ShellArea)
+      : DEFAULT_LAUNCH_VIEW.area,
+    mineId: typeof record.mineId === 'string' && record.mineId !== '' ? record.mineId : null
+  }
 }
+/* --- end of the #635 launch view block --------------------------------------- */
 
-/**
- * Which of the app's two windows a renderer is running in (#162).
- *
- * One renderer ENTRY serves both. The panel window is the same page loaded
- * with the query below, and the renderer picks its root component from it —
- * one bundle, one stylesheet, one Content-Security-Policy, rather than a
- * second build target that would duplicate all three for one component.
+/*
+ * REMOVED for #635, stated rather than passing unseen: MessagePanelSurface and its guard,
+ * MessagePanelDragPhase and its guard, RendererSurface with RENDERER_SURFACE_PARAM and
+ * MESSAGE_PANEL_SURFACE, and MessagePanelState. They described the message panel's own window
+ * (#162, #296): which surface main held for both windows, the drag on its header, and the query
+ * its page was loaded with. The panel is anchored in the shell's dock slot now (decision log,
+ * MessagePanel and Add panel anchored), so the surface is the renderer's own state
+ * (renderer/src/types.ts) and none of the rest exists.
  */
-export type RendererSurface = 'shell' | 'message-panel'
-
-/** The query parameter that names the surface (see RendererSurface). */
-export const RENDERER_SURFACE_PARAM = 'surface'
-
-/** The value main loads the message-panel window's page with. */
-export const MESSAGE_PANEL_SURFACE = 'message-panel'
-
-/**
- * What the message-panel window is showing (#162).
- *
- * Held in MAIN and written by BOTH windows, which is the whole reason it is a
- * wire type: the shell opens the panel (a dwarf was clicked, or the mine's Add
- * action was pressed) and the panel window closes itself and adopts the dwarf
- * a launch produced. Main is the single serialization point, so the last write
- * wins and both windows are told what it became — the same read-back rule
- * `PanelLayout` follows, for the same reason.
- *
- * `mineId` and `dwarfId` are '' rather than absent where they do not apply,
- * matching how every id already crosses this bridge (see the preload's own
- * collapsing): a surface of 'none' names neither, and 'launch' names only the
- * mine, because the dwarf does not exist yet.
- */
-export interface MessagePanelState {
-  surface: MessagePanelSurface
-  /** The mine the surface belongs to; '' when nothing is open. */
-  mineId: string
-  /** The dwarf a message surface is open on; '' for the other two. */
-  dwarfId: string
-}
 
 /**
  * Which build of the app is running (see #79) — the number, and which of the
@@ -3897,6 +4025,20 @@ export interface MessagePanelState {
 export interface AppBuild {
   version: string
   packaged: boolean
+}
+
+/**
+ * The features that ship hidden, as main resolved them (#635).
+ *
+ * Each is designed in full and switched by a configuration flag, off by
+ * default and never a Settings row, so an installed app turns one on through
+ * its userData configuration file. Resolved once at startup and pull-only, like
+ * the build: nothing changes it while the process lives. While a flag is off,
+ * nothing anywhere points at its feature — no dead buttons.
+ */
+export interface FeatureFlags {
+  /** The nav's Guild group, and the Lab, Market and Laboral Union pages. */
+  guildAreasEnabled: boolean
 }
 
 /**
@@ -4132,6 +4274,12 @@ export interface ProjectSummary {
    */
   mapSite?: number
   live: boolean
+  /**
+   * True when the project's folder no longer exists (#635, PANEL-QUESTIONS 6): the one reason a mine
+   * is not enterable. Absent when the folder is there, the wire saying "nothing to report" by
+   * saying nothing.
+   */
+  folderMissing?: true
 }
 
 /**
@@ -4181,114 +4329,142 @@ export type OpenMineId = string | null
 
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 
-/**
- * The faces Settings offers for the INTERFACE (#370, maintainer amendment
- * 2026-09-10) — everything outside messaging: labels, controls, metadata,
- * headlines, the activity lines.
- *
- * Identifiers rather than family names, and that is deliberate: what crosses
- * the wire and lands in a userData document has to survive a font's own name
- * being spelled differently by whoever hosts it (the variable cuts are
- * `Pixelify Sans Variable` and `Roboto Variable`, not `Pixelify Sans` and
- * `Roboto`). The renderer maps an identifier to a stack once, in
- * `lib/typography/fontFamilies.ts`, against tokens declared in
- * design-tokens.css.
- *
- * Ordered as the design's amendment lists them, because Settings draws the
- * segments in this order and a second ordering somewhere else would be a
- * second answer.
+/*
+ * AMENDED for the type presets (#635): the two faces #370 stored, Interface and Messaging, are
+ * now a FONT STYLE — one of three presets, or Custom — and the four faces the type roles are drawn
+ * in (foundations.md, Typography). The document on disk migrates once (handoff.md, "Typography
+ * preference migration"); reading the old one is main's alone, in
+ * main/shell/typographyPreference.ts, because it no longer crosses any boundary.
  */
-export const INTERFACE_FONTS = ['tiny5', 'pixelify-sans', 'roboto', 'arial'] as const
-
-export type InterfaceFont = (typeof INTERFACE_FONTS)[number]
 
 /**
- * The faces Settings offers for MESSAGING — what a dwarf or the person SAYS,
- * plus the Add Panel, which composes exactly that.
+ * Every face a role may be drawn in (foundations.md, Presets and Custom).
  *
- * The same list MINUS Tiny5, and the omission is the load-bearing part. Tiny5
- * has one display weight, and #347's ruling is that a single-weight pixel face
- * cannot draw bold or carry a paragraph; #370 keeps that constraint rather
- * than reopening it. So messaging is a NARROWER vocabulary than the interface,
- * not a second one — everything here is also an interface face.
+ * Identifiers rather than family names, and that is deliberate: what crosses the wire and lands in
+ * a userData document has to survive a font's own name being spelled differently by whoever hosts
+ * it (the variable cuts are `Pixelify Sans Variable` and `Roboto Variable`, not `Pixelify Sans`
+ * and `Roboto`). The renderer maps an identifier to a stack once, in
+ * `lib/typography/fontFamilies.ts`, against tokens declared in design-tokens.css.
  */
-export const MESSAGING_FONTS = ['pixelify-sans', 'roboto', 'arial'] as const
+export const TYPE_FACES = ['jacquard-12', 'tiny5', 'pixelify-sans', 'roboto', 'arial'] as const
 
-export type MessagingFont = (typeof MESSAGING_FONTS)[number]
+export type TypeFace = (typeof TYPE_FACES)[number]
 
-/** Whether a value is a face this build can draw the interface in. */
-export function isInterfaceFont(value: unknown): value is InterfaceFont {
-  return INTERFACE_FONTS.includes(value as InterfaceFont)
+/**
+ * The four type roles, in the order Settings lists them: Titles, Labels, Small text, Messages. A
+ * component names a role and a size, never a face; each role is one custom property the renderer
+ * repoints (`--f-display`, `--f-label`, `--f-meta`, `--f-talk`).
+ */
+export const TYPE_ROLES = ['display', 'label', 'meta', 'talk'] as const
+
+export type TypeRole = (typeof TYPE_ROLES)[number]
+
+export type TypeRoleFaces = Record<TypeRole, TypeFace>
+
+/**
+ * The faces each role offers under Custom, in the design's order, and the omissions are the
+ * load-bearing part: blackletter cannot be read at label size, Tiny5 blurs below it, and a
+ * single-weight pixel face cannot draw bold or hold a paragraph — the reason Tiny5 was never
+ * offered for messages (#347). They are checked here, at the boundary, rather than only in
+ * Settings, because the userData document is a file a person can edit.
+ */
+export const TYPE_ROLE_FACES: Readonly<Record<TypeRole, readonly TypeFace[]>> = {
+  display: ['jacquard-12', 'tiny5', 'pixelify-sans', 'roboto', 'arial'],
+  label: ['tiny5', 'pixelify-sans', 'roboto', 'arial'],
+  meta: ['pixelify-sans', 'roboto', 'arial'],
+  talk: ['pixelify-sans', 'roboto', 'arial']
+}
+
+/** Whether a value is a face this build may draw the role in. */
+export function isTypeFaceFor(role: TypeRole, value: unknown): value is TypeFace {
+  return TYPE_ROLE_FACES[role].includes(value as TypeFace)
+}
+
+/** The three presets, in the order Settings lists them. */
+export const TYPE_PRESET_IDS = ['dwarfai', 'pixel-clean', 'readable'] as const
+
+export type TypePresetId = (typeof TYPE_PRESET_IDS)[number]
+
+/**
+ * Each preset's faces (foundations.md, Presets and Custom). Here rather than beside the sizes in
+ * the renderer's typePresets.ts, because main's migration reads them too: a pair that is exactly a
+ * preset becomes that preset, and two copies of what a preset is could disagree.
+ */
+export const TYPE_PRESET_FACES: Readonly<Record<TypePresetId, Readonly<TypeRoleFaces>>> = {
+  dwarfai: { display: 'jacquard-12', label: 'tiny5', meta: 'pixelify-sans', talk: 'pixelify-sans' },
+  'pixel-clean': {
+    display: 'pixelify-sans',
+    label: 'pixelify-sans',
+    meta: 'pixelify-sans',
+    talk: 'pixelify-sans'
+  },
+  readable: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+}
+
+/** What Settings › Appearance › Font style offers: a preset, or Custom. */
+export type FontStyle = TypePresetId | 'custom'
+
+export function isTypePresetId(value: unknown): value is TypePresetId {
+  return TYPE_PRESET_IDS.includes(value as TypePresetId)
 }
 
 /**
- * Whether a value is a face this build may set a MESSAGE in.
- *
- * `'tiny5'` answers false here and true above, which is the whole exclusion in
- * one line. It is checked at the boundary rather than only in Settings because
- * the userData document is a file a person can edit, and the parser below is
- * the one thing every process reads it through.
- */
-export function isMessagingFont(value: unknown): value is MessagingFont {
-  return MESSAGING_FONTS.includes(value as MessagingFont)
-}
-
-/**
- * What the person chose in Settings' Typography section (#370).
- *
- * Two INDEPENDENT choices rather than one theme, which is the acceptance
- * criterion itself: the pixel identity is worth keeping on the chrome while an
- * agent's reply — paragraphs, bold, lists — reads better in a text face, and a
- * single control could not say that. Picking the same family in both is how
- * the whole app becomes one face.
+ * What the person chose in Settings › Appearance (#370, #635): the font style, and the face each
+ * role is drawn in. For a preset the faces are that preset's own, always; only Custom holds faces
+ * of the person's choosing, and it starts from the faces in force when it was picked.
  */
 export interface TypographyPreferences {
-  /** Everything outside messaging. */
-  interfaceFont: InterfaceFont
-  /** The bubbles, the echoes, the question and permission prose, and the Add Panel. */
-  messagingFont: MessagingFont
+  style: FontStyle
+  faces: TypeRoleFaces
 }
 
 /**
- * What Settings' Typography section reads before anybody has chosen.
- *
- * Exactly the look #347 settled — Tiny5 for the chrome, Pixelify Sans for what
- * the crew says — so shipping this feature changes nothing for a person who
- * never opens the section. Here rather than in the store beside it, for the
- * reason DEFAULT_AUDIO_PREFERENCES is here: the renderer paints before main has
- * answered, and two copies of the starting value could disagree.
+ * What Settings reads before anybody has chosen: the DwarfAI preset, which keeps the look #347
+ * settled where it was — Tiny5 labels, Pixelify Sans for small text and for what the crew says —
+ * and adds the blackletter titles. Here rather than in the store, for the reason
+ * DEFAULT_AUDIO_PREFERENCES is here: the renderer paints before main has answered, and two copies
+ * of the starting value could disagree.
  */
 export const DEFAULT_TYPOGRAPHY_PREFERENCES: TypographyPreferences = {
-  interfaceFont: 'tiny5',
-  messagingFont: 'pixelify-sans'
+  style: 'dwarfai',
+  faces: { ...TYPE_PRESET_FACES.dwarfai }
 }
 
 /**
  * Stored or wire document -> preferences, degrading field by field.
  *
- * The same asymmetry `parseAudioPreferences` carries, and for the same reasons
- * (see the `config-layering` skill): a document that is not an object at all is
- * corruption and reads as the defaults, while a readable document with one
- * unusable field keeps the other. A person who moved the interface to Roboto
- * must not lose that because the messaging field arrived as a face this build
- * cannot draw.
+ * The same asymmetry `parseAudioPreferences` carries, and for the same reasons (see the
+ * `config-layering` skill): a document that is not an object at all is corruption and reads as the
+ * defaults, while a readable document with one unusable field keeps the others. A style this
+ * build does not know reads as the default preset; a preset is drawn in its own faces whatever
+ * the document says beside it; under Custom each role that holds a face it cannot carry falls back
+ * to the DwarfAI face for that role, and the other three are kept.
  *
- * Used by main (what it stores), by the preload (what may cross) and by the
- * renderer (what it paints with), which is why it is declared here.
+ * Used by main (what it stores), by the preload (what may cross) and by the renderer (what it
+ * paints with), which is why it is declared here. A fresh record every call, so a caller that
+ * edits what it got cannot edit a preset.
  */
 export function parseTypographyPreferences(document: unknown): TypographyPreferences {
   if (typeof document !== 'object' || document === null || Array.isArray(document)) {
-    return { ...DEFAULT_TYPOGRAPHY_PREFERENCES }
+    return { style: DEFAULT_TYPOGRAPHY_PREFERENCES.style, faces: { ...TYPE_PRESET_FACES.dwarfai } }
   }
   const record = document as Record<string, unknown>
-  return {
-    interfaceFont: isInterfaceFont(record.interfaceFont)
-      ? record.interfaceFont
-      : DEFAULT_TYPOGRAPHY_PREFERENCES.interfaceFont,
-    messagingFont: isMessagingFont(record.messagingFont)
-      ? record.messagingFont
-      : DEFAULT_TYPOGRAPHY_PREFERENCES.messagingFont
+  if (isTypePresetId(record.style)) {
+    return { style: record.style, faces: { ...TYPE_PRESET_FACES[record.style] } }
   }
+  if (record.style !== 'custom') {
+    return { style: DEFAULT_TYPOGRAPHY_PREFERENCES.style, faces: { ...TYPE_PRESET_FACES.dwarfai } }
+  }
+  const stored =
+    typeof record.faces === 'object' && record.faces !== null
+      ? (record.faces as Record<string, unknown>)
+      : {}
+  const faces = { ...TYPE_PRESET_FACES.dwarfai }
+  for (const role of TYPE_ROLES) {
+    const face = stored[role]
+    if (isTypeFaceFor(role, face)) faces[role] = face
+  }
+  return { style: 'custom', faces }
 }
 
 /* --- end of the #370 block ------------------------------------------------- */
@@ -4868,68 +5044,12 @@ export const IPC_CHANNELS = {
    */
   getPanelLayout: 'panel:layout:get',
   setPanelLayout: 'panel:layout:set',
-  /**
-   * The message-panel window: what it shows, what it reports, and how tall it
-   * is (#162).
-   *
-   * `setMessagePanel` answers with the REAL MessagePanelState after main
-   * applied it, for the reason the layout channels do — main creates, moves,
-   * shows and hides an actual window off the back of it. Both windows may
-   * send it: the shell opens the panel, and the panel closes itself and adopts
-   * the dwarf a launch produced. `messagePanelChanged` is how the OTHER window
-   * hears about it, so neither has to poll the state it does not own.
-   *
-   * `reportDwarfDelivery` carries the send and kick verdicts the panel window
-   * is the only writer of, so the mine in the shell window can draw its
-   * markers (see DwarfDeliveryReport). One-way: there is no verdict about a
-   * verdict.
-   *
-   * `setMessagePanelHeight` is the design's vertical-only resize reaching the
-   * window that has to carry it. The renderer measures its own surface in
-   * DESIGN pixels — the height derived from the latest message, or the one a
-   * drag left behind — and main multiplies by the same `uiScale` every other
-   * dimension goes through. One-way, and the first one also reveals the
-   * window: it is created hidden, so nobody sees it at a height nothing had
-   * measured yet.
-   *
-   * `dragMessagePanel` and `dockMessagePanel` are where that window stops being
-   * glued to the shell (#296). Both are one-way, and for a stronger reason than
-   * the height report: there is no verdict here for a renderer to draw at all.
-   * Main reads the cursor, moves the window, clamps it to the display and
-   * remembers where it ended up — the panel's position is not state the page
-   * renders, so answering with it would be inventing a copy that could
-   * disagree. `dockMessagePanel` is the way back: it forgets the position and
-   * puts the panel beside the shell again.
+  /*
+   * REMOVED for #635, stated rather than passing unseen: the message panel window's nine channels
+   * — its surface (get, set, changed), the delivery report and its relay, its height, the drag and
+   * the dock-back on its header, and the settled report its deferred hide waited on (#162, #296,
+   * #389). The panel is in the shell's own window, so none of them has two ends any more.
    */
-  getMessagePanel: 'panel:message:get',
-  setMessagePanel: 'panel:message:set',
-  messagePanelChanged: 'panel:message:changed',
-  reportDwarfDelivery: 'panel:message:delivery',
-  dwarfDeliveryReported: 'panel:message:delivery:changed',
-  setMessagePanelHeight: 'panel:message:height',
-  dragMessagePanel: 'panel:message:drag',
-  dockMessagePanel: 'panel:message:dock',
-  /**
-   * The panel window saying its surface has finished leaving (#389).
-   *
-   * The mirror image of the height report above. That one reveals a window
-   * created hidden; this one releases a hide main is holding back, so the
-   * surface can settle — lower and fade, on the shell's own 250ms — while the
-   * window it is in is still on screen. Without it main hides the window in the
-   * frame the state changed and there is nothing left to animate.
-   *
-   * One-way, and carrying nothing. Main already knows which window sent it and
-   * what surface it holds, and the renderer has no verdict to draw: the window
-   * either hid on this report or on main's own bound, and a panel that has
-   * closed is closed either way.
-   *
-   * Deliberately NOT a fourth MessagePanelSurface. A 'closing' surface would
-   * cross to the SHELL as well, which draws the selected dwarf's halo from it
-   * and would have to decide what a halo means during a close — a one-way door
-   * for a state that has nothing to say. This says the one thing main is
-   * waiting to hear and adds nothing to what either window renders.
-   */
-  reportMessagePanelSettled: 'panel:message:settled',
   /**
    * Whether the shell window is on screen at all (#174, #173).
    *
@@ -5026,6 +5146,17 @@ export const IPC_CHANNELS = {
    */
   setDwarfTuning: 'dwarf:setTuning',
   /**
+   * Give a dwarf a custom name, and take it away again (#635, decision log "Dwarf names").
+   *
+   * Request/response for the reason `setDwarfTuning` is one: a refusal has a reason the header
+   * shows. Two channels because the design names two acts (the header's save and the ⋯ menu's
+   * "Reset name"); both answer DwarfNameResult. No names channel beside them: main stamps
+   * `Dwarf.customName` onto the board and republishes at once, so every window follows through
+   * minesUpdated.
+   */
+  setDwarfName: 'dwarf:setName',
+  resetDwarfName: 'dwarf:resetName',
+  /**
    * Every dwarf that has spoken in one mine, with its latest messages (#192),
    * read from the transcripts under the mine's project folder on request.
    *
@@ -5066,6 +5197,13 @@ export const IPC_CHANNELS = {
    * IS a verdict the panel must render, and nothing else pushes it later.
    */
   openExternalLink: 'shell:openExternalLink',
+  /**
+   * Put a message's text on the system clipboard (#635, decision log, Failed delivery). Through
+   * main rather than `navigator.clipboard`, because Electron's `clipboard.writeText` needs no
+   * focused document and behaves the same on Windows, macOS and Linux. The payload is the raw
+   * string; main bounds it. Request/response so Copy's toast follows a copy that happened.
+   */
+  copyText: 'shell:copyText',
   sendDwarfText: 'dwarf:sendText',
   /**
    * The verdict of a message `sendDwarfText` answered `holdId` for (#457) —
@@ -5114,6 +5252,11 @@ export const IPC_CHANNELS = {
    * push and nothing to keep in step.
    */
   getAppBuild: 'app:build',
+  /**
+   * The features that ship hidden (#635). Pull-only, for the reason the build
+   * is: main resolves them from configuration once at startup.
+   */
+  getFeatureFlags: 'app:features',
   /**
    * Adopting a folder as a mine, and removing one (#85, #169).
    *
@@ -5344,6 +5487,16 @@ export const IPC_CHANNELS = {
   getOpenCodeSettings: 'opencode:settings:get',
   setOpenCodePluginEnabled: 'opencode:plugin:set',
   setOpenCodeServerPassword: 'opencode:password:set',
-  clearOpenCodeServerPassword: 'opencode:password:clear'
+  clearOpenCodeServerPassword: 'opencode:password:clear',
   /* --- end of the #588 T6 block ------------------------------------------------ */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  /**
+   * The page and the mine the shell opens on (`LaunchView`). `get` is read once, before the
+   * shell's first paint. `set` is one-way, like `setOpenMine`: the renderer reports each change
+   * and main stores the latest, coalescing a burst of changes into at most one write in flight
+   * and one waiting behind it, so there is no verdict to wait for.
+   */
+  getLaunchView: 'launch-view:get',
+  setLaunchView: 'launch-view:set'
+  /* --- end of the #635 launch view block --------------------------------------- */
 } as const

@@ -3,7 +3,7 @@ name: jev-capabilities
 description: >
   How a launchable model earns a place in Jev's routing table, and the evidence rule every entry must meet.
   Trigger: before adding a provider or a model the app can launch, changing a model catalogue builder, editing a Jev question, criterion or confidence floor, or adding a provider whose models come from a live catalogue instead of a hand-verified list.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'
@@ -18,20 +18,18 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 # A model Jev can route to needs a sourced capability entry
 
-Jev never sees a model name — that still holds, but since #608 the model step is no longer purely
-local. Request 1 answers five questions about the prompt (`src/main/jev/routeRequest.ts`) and
-resolves a provider and a tier; `decideLaunch` (`src/main/jev/routeDecision.ts`) then narrows that
-provider's own table down to its live, launchable candidates at that tier (`candidatesAtTier`). With
-two or more candidates, request 2 asks Jev to pick among them directly — one Noul "does it fit"
-question per candidate plus a tie-breaking Choice, over the SAME sourced capability text this table
-already carries (`what`/`notFor`/`examples`/`tier`/`relativeCost`/`contextWindowTokens`), never the
-model's own id, name, alias or family (`buildJevModelRouteRequest`, `MODEL_TIE_BAND`,
-`selectModelWinner`, `src/main/jev/routeDecision.ts`). With one candidate, or whenever request 2
-cannot be sent, fails, or comes back unusable, the model is picked locally instead — what used to be
-one `pickModel` function is now three, doing that same job: `candidatesAtTier` (the tier's own live
-candidates), `cheapestOrPriciestCandidate` (the cost/profile pick among them, and request 2's own
-tiebreak of last resort), and `finalizeModel` (the shared tail end — effort narrowing plus the launch
-gate check — that both the local pick and request 2's own winner go through). Either path still ends
+Jev never sees a model name. Request 1 answers five questions about the prompt
+(`src/main/jev/routeRequest.ts`) and resolves a provider and a tier; `decideLaunch`
+(`src/main/jev/routeDecision.ts`) then narrows that provider's own table down to its live,
+launchable candidates at that tier (`candidatesAtTier`). With two or more candidates, request 2 asks
+Jev to pick among them directly — one Noul "does it fit" question per candidate plus a tie-breaking
+Choice, over the sourced capability text this table carries
+(`what`/`notFor`/`examples`/`tier`/`relativeCost`/`contextWindowTokens`), never the model's own id,
+name, alias or family (`buildJevModelRouteRequest`, `MODEL_TIE_BAND`, `selectModelWinner`). With one
+candidate, or whenever request 2 cannot be sent, fails, or comes back unusable, the model is picked
+locally: `candidatesAtTier` (the tier's live candidates), `cheapestOrPriciestCandidate` (the
+cost/profile pick among them, and request 2's tiebreak of last resort), and `finalizeModel` (effort
+narrowing plus the launch gate check, which request 2's winner goes through too). Either path ends
 at `src/main/jev/capabilities/`: a catalogue id with no entry there is an id neither path can
 route — and the exhaustiveness suite (`capabilities.test.ts`) fails, naming it, before that ever
 ships.
@@ -126,12 +124,10 @@ model.` versus `... "Haiku" ...` — the consistency cookbook's own documented f
 
 ## Provider tooling markers (#625)
 
-Model ids are not the only thing that needs a sourced entry. The `provider` question's own criteria
-(`providerChoiceCriteria`, `routeRequest.ts`) used to describe a provider ONLY by held-vs-detached
-session style — true, but it gave Jev nothing to connect a prompt naming a CLI's own tool to that
-CLI. A live prompt that named Codex's own `request_user_input` tool ("Before proposing any plan,
-call the `request_user_input` tool ONCE with three questions…") routed to Claude at 0.68 confidence
-instead — issue #625's own reported root cause, from a live `JEV_DEBUG` trace.
+Model ids are not the only thing that needs a sourced entry. Held-vs-detached session style alone
+(`providerChoiceCriteria`, `routeRequest.ts`) gives Jev nothing to connect a prompt naming a CLI's
+own tool to that CLI: a live prompt naming Codex's `request_user_input` tool routed to Claude at
+0.68 confidence (#625, from a `JEV_DEBUG` trace). The provider's tooling markers close that gap.
 
 **What a marker is.** `PROVIDER_TOOLING_MARKERS`
 (`src/main/jev/capabilities/providerTooling.ts`) — the `provider`-level sibling of

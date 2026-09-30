@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_AUDIO_PREFERENCES } from '../../types'
-import { AUDIO_BASE_VOLUME, channelVolume, crewVolume, sfxVolume, UI_SFX_KINDS } from './volume'
+import {
+  ATTENTION_SFX_KINDS,
+  AUDIO_BASE_VOLUME,
+  channelVolume,
+  crewVolume,
+  sfxVolume,
+  UI_SFX_KINDS
+} from './volume'
 
 const OPEN = { hidden: false, collapsed: false }
 
@@ -152,5 +159,36 @@ describe('crewVolume (#330)', () => {
     // a crew to be heard in (#174).
     expect(crewVolume(FULL, { hidden: true, collapsed: false }, 1)).toBe(0)
     expect(crewVolume(FULL, { hidden: false, collapsed: true }, 1)).toBe(0)
+  })
+})
+
+/*
+ * The attention cues (#635) — APPENDED. sound.md, "Mapping onto the engine":
+ * question, permission and finished are UiSfx kinds on the voice channel and
+ * the Effects slider, they play in Veta (the set SFX_SURVIVES_COLLAPSE names),
+ * `hidden` still silences them, and Notification sounds is the one switch.
+ */
+describe('sfxVolume — attention cues (#635)', () => {
+  it('declares the three attention cues as interface kinds, beside the click and the panel', () => {
+    expect([...ATTENTION_SFX_KINDS]).toEqual(['question', 'permission', 'finished'])
+    for (const kind of ATTENTION_SFX_KINDS) expect(UI_SFX_KINDS).toContain(kind)
+  })
+
+  it('plays every attention cue through a collapsed shell, where level 1 is smallest', () => {
+    const gates = { hidden: false, collapsed: true }
+    for (const kind of ATTENTION_SFX_KINDS) expect(sfxVolume(kind, FULL, gates)).toBe(0.75)
+  })
+
+  it('is silenced by Notification sounds, and that switch touches nothing else', () => {
+    const off = { ...FULL, notificationSounds: false }
+    for (const kind of ATTENTION_SFX_KINDS) expect(sfxVolume(kind, off, OPEN)).toBe(0)
+    expect(sfxVolume('click', off, OPEN)).toBe(0.75)
+    expect(sfxVolume('panel', off, OPEN)).toBe(0.75)
+    expect(channelVolume('voice', off, OPEN)).toBe(0.75)
+  })
+
+  it("still lets hidden win: a hidden window is level 3's job", () => {
+    const gates = { hidden: true, collapsed: true }
+    for (const kind of ATTENTION_SFX_KINDS) expect(sfxVolume(kind, FULL, gates)).toBe(0)
   })
 })

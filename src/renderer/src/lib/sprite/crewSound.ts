@@ -53,9 +53,13 @@ export interface CrewSoundSignal {
  * hit is drawn, the sound is drawn with it. A shift belongs to a MOMENT inside
  * a strip that plays for a second and a half, and a tick that arrives late can
  * step straight over the exact frame it names — so it fires when the position
- * moves from below that frame to at or past it, within the same clip. A grind
- * that silently failed to start is a worker2 miming its entire shift; one that
- * fires a frame late is inaudible.
+ * reaches that frame or passes it, within the named strip: from below it in the
+ * same clip, or by ENTERING the strip at all, from another clip or on a first
+ * reading. Entering matters since the worker2's grind opens as its shift does,
+ * on the pick-up's first frame (design lead ruling 2026-09-26,
+ * SPRITE-QUESTIONS.md question 2), which no position inside the strip can be
+ * "below". A grind that silently failed to start is a worker2 miming its
+ * entire shift; one that fires a frame late is inaudible.
  *
  * Nothing is remembered between calls, which is what makes the next lap — and
  * a re-render that restarts the sequence — a shift of its own. A flag saying
@@ -85,14 +89,12 @@ export function crewFrameSignals(
   const shift = declared.shift
   if (
     shift !== undefined &&
-    previous !== undefined &&
-    previous.clip === now.clip &&
     // The declaration names a STRIP as well as a frame, because the same frame
-    // number exists in several of them: the worker2's set-down has a frame 14
+    // number exists in several of them: the worker2's set-down has a frame 0
     // too, and it is not where a grind begins.
     sheet.src === DWARF_SHEETS[role][shift.sheet]?.src &&
-    previous.frame < shift.frame &&
-    now.frame >= shift.frame
+    now.frame >= shift.frame &&
+    (previous === undefined || previous.clip !== now.clip || previous.frame < shift.frame)
   ) {
     signals.push({ cue: 'shift' })
   }

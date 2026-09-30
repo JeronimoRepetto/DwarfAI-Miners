@@ -1,0 +1,90 @@
+/*
+ * The design's badge.css, rule for rule and in its order (#635). One stylesheet for the badge and
+ * the pill, as the design has it: CountBadge and StatePill each load it scoped, so every rule
+ * reaches only its own elements.
+ */
+.dm-badge {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  font: var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-on-light);
+  background: var(--brass);
+  box-shadow:
+    0 -2px 0 0 var(--rock-lo),
+    0 2px 0 0 var(--rock-lo),
+    -2px 0 0 0 var(--rock-lo),
+    2px 0 0 0 var(--rock-lo),
+    inset 2px 2px 0 0 var(--brass-hi);
+  place-items: center;
+  font-variant-numeric: tabular-nums;
+}
+.dm-badge--info {
+  background: var(--info);
+  box-shadow:
+    0 -2px 0 0 var(--rock-lo),
+    0 2px 0 0 var(--rock-lo),
+    -2px 0 0 0 var(--rock-lo),
+    2px 0 0 0 var(--rock-lo);
+}
+.dm-badge--danger {
+  background: var(--danger-badge);
+  color: var(--parch-hi);
+  box-shadow:
+    0 -2px 0 0 var(--rock-lo),
+    0 2px 0 0 var(--rock-lo),
+    -2px 0 0 0 var(--rock-lo),
+    2px 0 0 0 var(--rock-lo);
+}
+.dm-pill {
+  display: inline-flex;
+  height: 20px;
+  gap: 4px;
+  padding: 0 6px;
+  margin: var(--px);
+  font: var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-soft);
+  background: var(--wood-lo);
+  box-shadow:
+    0 -2px 0 0 var(--rock-lo),
+    0 2px 0 0 var(--rock-lo),
+    -2px 0 0 0 var(--rock-lo),
+    2px 0 0 0 var(--rock-lo);
+  align-items: center;
+  white-space: nowrap;
+}
+.dm-pill .dm-icon {
+  margin-left: -2px;
+}
+.dm-pill--needs {
+  color: var(--brass-hi);
+  background: var(--rock-lo);
+  box-shadow:
+    0 -2px 0 0 var(--brass),
+    0 2px 0 0 var(--brass),
+    -2px 0 0 0 var(--brass),
+    2px 0 0 0 var(--brass);
+}
+.dm-pill--ok {
+  color: var(--ok);
+  background: var(--ok-lo);
+}
+.dm-pill--warn {
+  color: var(--warn);
+  background: var(--warn-lo);
+}
+.dm-pill--danger {
+  color: var(--danger-hi);
+  background: var(--danger-lo);
+}
+.dm-pill--info {
+  color: var(--info);
+  background: var(--info-lo);
+}
+.dm-pill__q {
+  padding: 0 4px;
+  line-height: 14px;
+  color: var(--rock-lo);
+  background: var(--brass);
+}

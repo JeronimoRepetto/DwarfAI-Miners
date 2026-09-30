@@ -35,11 +35,24 @@ import {
   type AmbienceBed,
   type AmbienceStanding
 } from './ambience'
-import { CREW_POLYPHONY, CREW_RELEASE_MS, crewVariantIndex, type CrewSoundEvent } from './crew'
+import {
+  CREW_LOOPED_CUES,
+  CREW_POLYPHONY,
+  CREW_RELEASE_MS,
+  crewVariantIndex,
+  type CrewSoundEvent
+} from './crew'
 import { musicTimeline, MUSIC_GAP_MS } from './musicTimeline'
 import type { AudioClip, AudioPlayer } from './player'
 import { createPlaylist, type Playlist } from './playlist'
-import { channelVolume, crewVolume, sfxVolume, type AudioGates, type UiSfx } from './volume'
+import {
+  channelVolume,
+  crewVolume,
+  isAttentionSfx,
+  sfxVolume,
+  type AudioGates,
+  type UiSfx
+} from './volume'
 
 /**
  * What the engine needs to know about the mine on screen, which since #330 is
@@ -61,7 +74,10 @@ export interface AudioEngineOptions {
   tracks: readonly string[]
   beds: Record<AmbienceBed, string>
   voices: Record<DwarfRole, string>
-  /** The interface sounds (#323): the navigation click and the panel's own. */
+  /**
+   * The interface sounds (#323): the navigation click and the panel's own, and
+   * the three attention cues (#635).
+   */
   sfx: Record<UiSfx, string>
   /**
    * The crew's own recordings (#330), by rank and cue, each a list of variants
@@ -87,7 +103,10 @@ export interface AudioEngine {
   setAmbienceMuted: (muted: boolean) => void
   /** A dwarf was clicked: its rank speaks, once. */
   playVoice: (role: DwarfRole) => void
-  /** The interface answering a press (#323): a navigation click, or the panel. */
+  /**
+   * The interface answering a press (#323): a navigation click, or the panel —
+   * or an attention cue (#635), which the caller fires when a state BEGINS.
+   */
   playSfx: (kind: UiSfx) => void
   /**
    * A crew member's drawing did something audible (#330) — or, with `ending`,
@@ -168,12 +187,23 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
 
   let voice: AudioClip | undefined
   /**
-   * The interface sound playing, held apart from `voice` on purpose: one press
+   * The interface sounds playing, held apart from `voice` on purpose: one press
    * can be both — a dwarf clicked inside a mine speaks while the interface
-   * answers the press — and they must not cut each other. One of EACH at a
-   * time, never two of either.
+   * answers the press — and they must not cut each other.
+   *
+   * ONE SLOT PER KIND (#635; sound.md, "One per kind at a time"): a new cue
+   * cuts the previous one of its kind and no other, so a question arriving
+   * while a permission chimes does not swallow it, and a click cuts neither.
    */
-  let interfaceSfx: AudioClip | undefined
+  const interfaceSfx = new Map<UiSfx, AudioClip>()
+
+  function stopInterfaceSfx(which: (kind: UiSfx) => boolean = () => true): void {
+    for (const [kind, clip] of interfaceSfx) {
+      if (!which(kind)) continue
+      clip.stop()
+      interfaceSfx.delete(kind)
+    }
+  }
 
   function volumeOf(channel: 'music' | 'ambience' | 'voice'): number {
     return channelVolume(channel, settings, gates)
@@ -374,6 +404,8 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       for (const sounding of crew) {
         sounding.clip.retargetVolume(crewVolume(settings, gates, sounding.count) * sounding.gain)
       }
+      // Off means no cue plays anywhere (sound.md), including one mid-chime.
+      if (!settings.notificationSounds) stopInterfaceSfx(isAttentionSfx)
     },
     setGates(next: AudioGates): void {
       if (disposed) return
@@ -388,8 +420,13 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
         voice?.stop()
         voice = undefined
         // Same reasoning, same act: an interface sound is shorter still.
-        interfaceSfx?.stop()
-        interfaceSfx = undefined
+        //
+        // AMENDED for #635 (PANEL-QUESTIONS Q22): except the panel cue, which
+        // is the sound OF the hide. It is started on the very push that shuts
+        // this gate, so cutting it here would make the close cue inaudible by
+        // construction. It is 0.134 s and it is not restarted: a hidden window
+        // still opens no new panel cue (`sfxVolume` answers 0).
+        stopInterfaceSfx((kind) => kind !== 'panel')
       } else if (wasHidden && musicOn) {
         // Resumed if there is a track, STARTED if there is not. The second
         // half is the ordinary launch: the window is created hidden and the
@@ -446,15 +483,15 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       // own reason: a slider at zero must not decode a sound nobody can hear.
       const volume = sfxVolume(kind, settings, gates)
       if (volume <= 0) return
-      interfaceSfx?.stop()
+      stopInterfaceSfx((playing) => playing === kind)
       const clip = player.open(sfx[kind], {
         volume,
         onEnded: () => {
           clip.stop()
-          if (interfaceSfx === clip) interfaceSfx = undefined
+          if (interfaceSfx.get(kind) === clip) interfaceSfx.delete(kind)
         }
       })
-      interfaceSfx = clip
+      interfaceSfx.set(kind, clip)
       clip.play()
     },
     playCrew(event: CrewSoundEvent): void {
@@ -500,6 +537,9 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       if (volume <= 0) return
       const clip = player.open(src, {
         volume,
+        // A looped walk never reaches `onEnded`; its slot comes back through
+        // the release its dwarf's `ending` asks for, like a grind's does.
+        loop: CREW_LOOPED_CUES.has(event.cue),
         onEnded: () => {
           clip.stop()
           const at = crew.findIndex((sounding) => sounding.clip === clip)
@@ -522,8 +562,7 @@ export function createAudioEngine(options: AudioEngineOptions): AudioEngine {
       stopAmbience()
       voice?.stop()
       voice = undefined
-      interfaceSfx?.stop()
-      interfaceSfx = undefined
+      stopInterfaceSfx()
     }
   }
 }

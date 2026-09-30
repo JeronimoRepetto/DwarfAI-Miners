@@ -183,6 +183,21 @@ describe('withConfigFileFallback', () => {
     expect(loadConfig(layered).providers.opencode.storeRoot).toBe('~/from-file/opencode')
   })
 
+  /*
+   * ADDED for #635. The guild areas flag reaches an installed app through the
+   * userData file, not only a repo .env (config-layering), and the
+   * environment still wins over it.
+   */
+  it('applies GUILD_AREAS_ENABLED from the file, and lets the environment win', () => {
+    expect(
+      loadConfig(withConfigFileFallback({}, { GUILD_AREAS_ENABLED: 'true' })).guildAreasEnabled
+    ).toBe(true)
+    expect(
+      loadConfig(withConfigFileFallback({ GUILD_AREAS_ENABLED: '0' }, { GUILD_AREAS_ENABLED: '1' }))
+        .guildAreasEnabled
+    ).toBe(false)
+  })
+
   it('still resolves keys the file never mentions', () => {
     const layered = withConfigFileFallback({ HOOKS_PORT: '51000' }, { POLL_INTERVAL_MS: '5000' })
     expect(loadConfig(layered).hooksPort).toBe(51000)

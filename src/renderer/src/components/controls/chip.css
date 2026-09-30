@@ -1,0 +1,116 @@
+/*
+ * The design's chip.css, rule for rule and in its order (#635). One stylesheet for the three chip
+ * parts, as the design has it: ChoiceChip, TierChip and MetaChip each load it scoped, so every
+ * rule reaches only its own elements. The tier rules map a data-tier to the colour a gem and a
+ * tier chip paint; they are the chip's own, not the tier tokens themselves.
+ */
+.dm-chip {
+  --mat-fill: var(--control);
+  --mat-hi: var(--control-hi);
+  --mat-lo: var(--control-lo);
+  --mat-edge: var(--rock-lo);
+  display: inline-flex;
+  min-height: var(--hit);
+  gap: 6px;
+  padding: 0 10px;
+  margin: var(--px);
+  font: var(--fs-meta) / 1 var(--f-meta);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  align-items: center;
+  white-space: nowrap;
+  transition: transform var(--dur-press) var(--ease-step);
+}
+button.dm-chip:hover:not(:disabled),
+.dm-chip.is-hover {
+  --mat-edge: var(--brass);
+  color: var(--ink);
+}
+/* Press sinks one art pixel, stepped, and the light swaps to the far lip. */
+button.dm-chip:active:not(:disabled),
+.dm-chip.is-active {
+  transform: translateY(var(--px));
+  --mat-hi: var(--control-lo);
+  --mat-lo: var(--control-hi);
+}
+.dm-chip[aria-pressed='true'],
+.dm-chip[aria-checked='true'],
+.dm-chip.is-selected {
+  --mat-fill: var(--gold-select);
+  --mat-hi: var(--gold);
+  --mat-lo: var(--gold-deep);
+  --mat-edge: var(--brass-lo);
+  color: var(--parch-hi);
+}
+.dm-chip:disabled {
+  color: var(--ink-faint);
+  --mat-fill: var(--rock);
+  --mat-hi: var(--rock-hi);
+  --mat-lo: var(--rock-lo);
+}
+.dm-gem {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--tier-c, var(--steel));
+  box-shadow:
+    0 0 0 var(--px) var(--rock-lo),
+    inset 2px 2px 0 0 var(--parch-hi);
+}
+.dm-tier {
+  display: inline-flex;
+  height: 20px;
+  gap: 4px;
+  padding: 0 6px;
+  margin: var(--px);
+  font: var(--fs-meta) / 1 var(--f-meta);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tier-c);
+  background: var(--tier-lo);
+  box-shadow:
+    0 -2px 0 0 var(--rock-lo),
+    0 2px 0 0 var(--rock-lo),
+    -2px 0 0 0 var(--rock-lo),
+    2px 0 0 0 var(--rock-lo);
+  align-items: center;
+  white-space: nowrap;
+}
+[data-tier='bronze'] {
+  --tier-c: var(--tier-bronze);
+  --tier-lo: var(--tier-bronze-lo);
+}
+[data-tier='copper'] {
+  --tier-c: var(--tier-copper);
+  --tier-lo: var(--tier-copper-lo);
+}
+[data-tier='silver'] {
+  --tier-c: var(--tier-silver);
+  --tier-lo: var(--tier-silver-lo);
+}
+[data-tier='gold'] {
+  --tier-c: var(--tier-gold);
+  --tier-lo: var(--tier-gold-lo);
+}
+[data-tier='uranium'] {
+  --tier-c: var(--tier-uranium);
+  --tier-lo: var(--tier-uranium-lo);
+}
+.dm-tier[data-tier='copper'] {
+  color: var(--danger-hi);
+}
+.dm-meta {
+  display: inline-flex;
+  height: 20px;
+  max-width: 100%;
+  padding: 0 6px;
+  margin: var(--px);
+  font: var(--fs-meta) / 1 var(--f-meta);
+  color: var(--ink-soft);
+  background: var(--wood-lo);
+  box-shadow: inset 2px 2px 0 0 var(--rock-lo);
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

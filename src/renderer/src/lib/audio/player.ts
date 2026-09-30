@@ -86,9 +86,13 @@ export interface AudioPlayer {
   /**
    * Open `src` at `volume`, not yet playing. `onEnded` fires when the sound
    * reaches its own end, which is what drives the music gap for a track whose
-   * duration never became readable.
+   * duration never became readable. `loop` wraps the sound at its end instead,
+   * so `onEnded` never fires for it — see the note in the real player below.
    */
-  open: (src: string, options?: { volume?: number; onEnded?: () => void }) => AudioClip
+  open: (
+    src: string,
+    options?: { volume?: number; onEnded?: () => void; loop?: boolean }
+  ) => AudioClip
 }
 
 /**
@@ -104,11 +108,13 @@ export function createElementAudioPlayer(): AudioPlayer {
     open(src, options) {
       const element = new Audio(src)
       element.preload = 'auto'
-      // Never `element.loop`: both the music's gap and the ambience's seam are
-      // scheduled BEFORE the end of the sound, and a looping element gives no
-      // moment to schedule from — it just wraps, with an audible click at the
-      // join that is exactly what the crossfade exists to remove.
-      element.loop = false
+      // `element.loop` only when asked for, which only the walk does (#637):
+      // both the music's gap and the ambience's seam are scheduled BEFORE the
+      // end of the sound, and a looping element gives no moment to schedule
+      // from — it just wraps, with an audible click at the join that is
+      // exactly what the crossfade exists to remove. The walk's recording is
+      // silent at both ends, so its wrap has no join to click at.
+      element.loop = options?.loop === true
       element.volume = clamp01(options?.volume ?? 0)
       if (options?.onEnded) element.addEventListener('ended', options.onEnded)
 

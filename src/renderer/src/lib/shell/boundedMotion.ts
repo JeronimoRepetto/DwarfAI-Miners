@@ -234,9 +234,8 @@ export interface BoundedMotion {
    * had already ended, is withdrawn regardless: an old run's answer must
    * never land on top of whichever run owns the element next.
    *
-   * A caller that is about to write the element's OWN state right after —
-   * `MessagePanelWindow`'s `armRise` and its cut branch — wants the
-   * opposite guarantee and calls `claim`, below, instead.
+   * A caller that is about to write the element's OWN state right after
+   * wants the opposite guarantee and calls `claim`, below, instead.
    */
   release: (element: Element) => void
   /**
@@ -245,9 +244,9 @@ export interface BoundedMotion {
    * — because THIS caller is about to write the element's state itself, and
    * nothing the runner still owes it may land afterward.
    *
-   * This is `MessagePanelWindow`'s `armRise` and the cut branch of its
-   * `panel` watch, both of which call this and then write `holdHidden` /
-   * `releaseHidden` right after — the exact case `release`, above, is not
+   * It was the message panel's own window's rise and the cut branch of its
+   * surface watch (#389, gone with that window in #635), both of which called
+   * this and then wrote the surface's state right after — the exact case `release`, above, is not
    * safe for, because THAT method would leave whatever it just ended free to
    * fire its own re-apply over what this caller wrote. The cut branch meets
    * this ACTIVE: a reopen or a dwarf switch landing while the leave it cuts

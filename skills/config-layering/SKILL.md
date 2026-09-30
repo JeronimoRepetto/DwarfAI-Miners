@@ -3,7 +3,7 @@ name: config-layering
 description: >
   The three configuration layers, why a packaged app never sees .env, and the deliberate split between a bad shape and a bad value.
   Trigger: before adding a setting, changing how configuration is read, or documenting a configuration option.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'

@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { OpenCodePasswordUnavailableReason, OpenCodeSettings } from '../../types'
+import ActionButton from '../controls/ActionButton.vue'
+import InputField from '../controls/InputField.vue'
+import ToggleSwitch from '../controls/ToggleSwitch.vue'
+import StatePill from '../dwarf/StatePill.vue'
+import SettingsRow from './SettingsRow.vue'
 
 /**
- * The OpenCode section of the Settings screen (#588 T6): the consent to the
- * permission relay, and the optional OpenCode server password.
- *
- * An UNSPECIFIED placement, like every section after Notifications:
- * `screens/settings.md` draws no OpenCode section, so this reuses the
- * vocabulary Notifications (one pressed/unpressed switch) and Jev (a masked
- * field with Save, Replace and Clear) already draw, and lands after Jev.
+ * The OpenCode rows of Settings › Integrations (#588 T6, #635): the consent to
+ * the permission relay, and the optional OpenCode server password, after the
+ * Jev rows, as screens/settings.md orders them.
  *
  * The consent copy is product text and carries two facts on purpose. What
  * turning it on does — one file written into OpenCode's own configuration —
@@ -86,168 +87,91 @@ const unavailableMessage = computed(() => {
 </script>
 
 <template>
-  <section class="opencode-settings">
-    <span class="field-label">OpenCode</span>
-
-    <div class="switch-row">
-      <button
-        class="opencode-plugin-enabled"
-        type="button"
-        aria-label="Answer OpenCode permission requests from the panel"
-        :aria-pressed="props.settings.pluginEnabled ? 'true' : 'false'"
-        :disabled="props.applying"
-        @click="emit('plugin-change', !props.settings.pluginEnabled)"
-      >
-        Permission requests
-      </button>
-    </div>
-
-    <p class="hint consent">
-      Turning this on writes one plugin file into OpenCode's own configuration folder, so a
-      permission an OpenCode session asks for appears on its dwarf and can be answered from the
-      panel. That file holds, in plain text, the same token this app uses to trust Claude Code's
-      instant updates, so any program on this machine that can read it could also send this app
-      false Claude Code session events.
-    </p>
-
-    <p v-if="props.settings.pluginError" class="plugin-error" role="alert">
-      {{ props.settings.pluginError }}
-    </p>
-
-    <span class="row-label">Server password</span>
-    <p v-if="unavailableMessage" class="password-unavailable">{{ unavailableMessage }}</p>
-    <template v-else>
-      <div v-if="!showingInput" class="password-stored-row">
-        <span class="password-stored">Password stored</span>
-        <button class="opencode-password-replace" type="button" @click="startReplace">
-          Replace
-        </button>
-        <button
-          class="opencode-password-clear"
-          type="button"
-          :disabled="props.applying"
-          @click="emit('password-clear')"
-        >
-          Clear
-        </button>
-      </div>
-      <div v-else class="password-row">
-        <input
-          class="opencode-password-input"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="OpenCode server password"
-          placeholder="Optional"
-          :value="draftPassword"
-          @input="draftPassword = ($event.target as HTMLInputElement).value"
-          @keydown.enter="submit"
-        />
-        <button class="opencode-password-save" type="button" :disabled="!canSave" @click="submit">
-          Save
-        </button>
-        <button
-          v-if="props.settings.passwordConfigured"
-          class="opencode-password-cancel"
-          type="button"
-          @click="cancelReplace"
-        >
-          Cancel
-        </button>
-      </div>
+  <!--
+    AMENDED (#635): the design's two rows (screens/settings.md, As built: "OpenCode · permission
+    requests" with its switch, then Server password); every behaviour is today's.
+  -->
+  <SettingsRow
+    class="opencode-settings"
+    label="OpenCode · permission requests"
+    stack
+    help="Turning this on writes one plugin file into OpenCode’s own configuration folder, so a permission an OpenCode session asks for appears on its dwarf and can be answered from the panel. That file holds, in plain text, the same token this app uses to trust Claude Code’s instant updates, so any program on this machine that can read it could also send this app false Claude Code session events."
+  >
+    <template #notes>
+      <p v-if="props.settings.pluginError" class="dm-srow__help plugin-error" role="alert">
+        {{ props.settings.pluginError }}
+      </p>
     </template>
-    <p class="hint password-hint">
-      Only needed if you start OpenCode with OPENCODE_SERVER_PASSWORD set; leave it empty otherwise,
-      since OpenCode asks for no password by default. It is stored encrypted on this machine and
-      sent only to the OpenCode server on this machine whose permission you answer.
-    </p>
-  </section>
+    <ToggleSwitch
+      class="opencode-plugin-enabled"
+      label="Answer OpenCode permission requests from the panel"
+      held
+      :on="props.settings.pluginEnabled"
+      :disabled="props.applying"
+      @update:on="emit('plugin-change', $event)"
+    />
+  </SettingsRow>
+
+  <SettingsRow
+    class="opencode-password"
+    label="Server password"
+    stack
+    help="Only needed if you start OpenCode with OPENCODE_SERVER_PASSWORD set; leave it empty otherwise, since OpenCode asks for no password by default. It is stored encrypted on this machine and sent only to the OpenCode server on this machine whose permission you answer."
+  >
+    <template #notes>
+      <p v-if="unavailableMessage" class="dm-srow__help password-unavailable">
+        {{ unavailableMessage }}
+      </p>
+    </template>
+    <span
+      v-if="!unavailableMessage && !showingInput"
+      class="dm-settings__inline password-stored-row"
+    >
+      <StatePill class="password-stored" text="Password stored" tone="ok" icon="check" />
+      <ActionButton class="opencode-password-replace" label="Replace" @click="startReplace" />
+      <ActionButton
+        class="opencode-password-clear"
+        label="Clear"
+        :disabled="props.applying"
+        @click="emit('password-clear')"
+      />
+    </span>
+    <span v-else-if="!unavailableMessage" class="dm-settings__inline password-row">
+      <InputField
+        class="opencode-password-input"
+        type="password"
+        label="OpenCode server password"
+        placeholder="Optional"
+        :value="draftPassword"
+        @update:value="draftPassword = $event"
+        @keydown.enter="submit"
+      />
+      <ActionButton
+        class="opencode-password-save"
+        label="Save"
+        variant="primary"
+        :disabled="!canSave"
+        @click="submit"
+      />
+      <ActionButton
+        v-if="props.settings.passwordConfigured"
+        class="opencode-password-cancel"
+        label="Cancel"
+        @click="cancelReplace"
+      />
+    </span>
+  </SettingsRow>
 </template>
 
 <style scoped>
-/* The Notifications and Jev sections' own layout, because this sits beside
-   them and a different spacing rule would read as a different kind of section. */
-.opencode-settings {
+/* The design's settings.css `.dm-settings__inline`. */
+.dm-settings__inline {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-settings);
-}
-.field-label {
-  padding-top: var(--space-settings);
-  color: var(--color-cream);
-  font-size: var(--text-section);
-}
-.row-label {
-  color: var(--color-cream);
-  font-size: var(--text-meta);
-}
-.switch-row,
-.password-row,
-.password-stored-row {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-settings);
+  gap: 8px;
 }
-.password-stored {
-  color: var(--color-accent);
-  font-size: var(--text-meta);
-}
-.opencode-password-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-panel-deep);
-  font: inherit;
-  font-size: var(--text-meta);
-}
-/* The shared button model (components.md), identical to Notifications' switch
-   and Jev's actions: pressed reads as an active control, unpressed fades to
-   the deep background. */
-.opencode-plugin-enabled,
-.opencode-password-replace,
-.opencode-password-clear,
-.opencode-password-save,
-.opencode-password-cancel {
-  padding: 6px var(--space-settings);
-  border: var(--border-active);
-  border-radius: var(--radius-default);
-  color: var(--color-cream);
-  background: var(--color-control);
-  font: inherit;
-  font-size: var(--text-meta);
-  cursor: pointer;
-}
-.opencode-plugin-enabled[aria-pressed='false'],
-.opencode-plugin-enabled:disabled,
-.opencode-password-save:disabled,
-.opencode-password-clear:disabled {
-  border: 2px solid var(--color-control-idle);
-  color: var(--color-control-idle);
-  background: var(--color-panel-deep);
-}
-.opencode-plugin-enabled:disabled,
-.opencode-password-save:disabled,
-.opencode-password-clear:disabled {
-  cursor: default;
-}
-.opencode-plugin-enabled:focus-visible,
-.opencode-password-replace:focus-visible,
-.opencode-password-clear:focus-visible,
-.opencode-password-save:focus-visible,
-.opencode-password-cancel:focus-visible,
-.opencode-password-input:focus-visible {
-  outline: 2px solid var(--color-cream);
-  outline-offset: 2px;
-}
-.hint,
-.plugin-error,
-.password-unavailable {
-  margin: 0;
-  color: var(--color-cream);
-  font-size: var(--text-helper);
-  line-height: 1.4;
+.dm-srow__help.plugin-error {
+  color: var(--danger-hi);
 }
 </style>

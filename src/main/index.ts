@@ -1,6 +1,7 @@
 import { config as loadDotenv } from 'dotenv'
 import {
   app,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -19,6 +20,7 @@ import type {
   AgentProviderList,
   AgentLaunchResult,
   AppBuild,
+  FeatureFlags,
   DwarfFeedPage,
   DwarfFeedResult,
   DwarfKickRequest,
@@ -29,7 +31,9 @@ import type {
   DwarfTextRequest,
   DwarfTextResult,
   DwarfTuningRequest,
+  DwarfNameResult,
   DwarfTuningResult,
+  CopyTextResult,
   ExternalLinkResult,
   HeldSessionLaunchRequest,
   HeldSessionLaunchResult,
@@ -65,9 +69,9 @@ import {
   IPC_CHANNELS,
   isDwarfProvider,
   isHeldPermissionMode,
-  isMessagePanelDragPhase,
   isMineTier,
   parseAudioPreferences,
+  parseLaunchView,
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   parseTypographyPreferences,
   /* --- end of the #370 block ----------------------------------------------- */
@@ -110,6 +114,7 @@ import {
 } from './config/configFile'
 import { sumTokensObserved } from './domain/aggregate'
 import { parseLaunchTuning } from './domain/launchTuning'
+import { parseLaunchPermissionMode } from './domain/codexPermissions'
 import { HookChannel } from './hooks/hookChannel'
 import { NodeHookFs } from './hooks/hookFs'
 import { DelegationService } from './mcp/delegationService'
@@ -131,6 +136,7 @@ import {
   verifyMinePath
 } from './shell/openMineFile'
 import { EXTERNAL_LINK_REFUSED_REASON, parseExternalLinkRequest } from './shell/openExternalLink'
+import { copyTextToClipboard } from './shell/copyText'
 import { parseDwarfFeedPageRequest } from './providers/feedWindow'
 import { currentPlatform } from './platform/platform'
 import { APP_DB_FILENAME, createAppDatabase } from './appDatabase/appDatabase'
@@ -140,9 +146,13 @@ import { MaterialLedger } from './ledger/materialLedger'
 import { openLedgerStore } from './ledger/openLedgerStore'
 import { openProjectsStore } from './projects/openProjectsStore'
 import { createSqliteLaunchedSessionStore } from './sessionLaunch/launchedSessionStore'
+import { createSqliteDwarfNameStore } from './dwarfNames/dwarfNameStore'
+// The rename boundary's parser lives beside the names it guards, where it is tested (#635).
+import { DWARF_NAME_NOT_ON_BOARD, parseDwarfNameRequest } from './dwarfNames/dwarfNames'
 import { TUNING_NOT_HELD } from './sessionLaunch/heldSessionRegistry'
 import type { ProjectsStore } from './projects/projectsStore'
 import { createAudioPreferenceStore } from './shell/audioPreference'
+import { createLaunchViewStore } from './shell/launchViewPreference'
 import { createJevApiKeyStore, type JevKeyVerdict } from './shell/jevApiKey'
 import {
   createJevPreferenceStore,
@@ -150,7 +160,6 @@ import {
 } from './shell/jevPreferences'
 import { createJevLaunchRouter } from './jev/routeLaunch'
 import { createTypesafeJevRouter, jevDebugEnabled } from './jev/typesafeJevRouter'
-import { createMessagePanelPositionStore } from './shell/messagePanelPosition'
 import { createPanelEdgePreferenceStore } from './shell/panelEdgePreference'
 import { createPinPreferenceStore } from './shell/pinPreference'
 import { AgentRuntime, expandHomePath } from './runtime/runtime'
@@ -161,32 +170,18 @@ import { createTray } from './shell/tray'
 import {
   applyAlwaysOnTop,
   createMainWindow,
-  dockMessagePanel,
-  dragMessagePanel,
   hidePanel,
   loadPanelPage,
   markQuitting,
-  messagePanelState,
-  messagePanelSurfaceSettled,
-  messagePanelWebContents,
-  mirrorMessagePanelPin,
   panelLayout,
   raiseWindowOf,
-  seedMessagePanelPosition,
   seedPanelEdge,
-  setMessagePanel,
-  setMessagePanelHeight,
   setPanelLayout,
   shellWebContents,
   showPanel,
   togglePanel
 } from './shell/window'
-import {
-  parseAnswerRequest,
-  parseDwarfDeliveryReport,
-  parseMessagePanelHeight,
-  parseMessagePanelState
-} from './shell/messagePanelState'
+import { parseAnswerRequest } from './shell/answerRequest'
 /* --- System notifications (#316) — one block, appended --------------------- */
 import { APP_USER_MODEL_ID, needsAppUserModelId } from './notifications/appUserModelId'
 import { createElectronNotifications } from './notifications/electronNotifications'
@@ -261,16 +256,13 @@ function removeIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.setAlwaysOnTop)
   ipcMain.removeHandler(IPC_CHANNELS.getPanelLayout)
   ipcMain.removeHandler(IPC_CHANNELS.setPanelLayout)
-  ipcMain.removeHandler(IPC_CHANNELS.getMessagePanel)
-  ipcMain.removeHandler(IPC_CHANNELS.setMessagePanel)
-  ipcMain.removeAllListeners(IPC_CHANNELS.setMessagePanelHeight)
-  ipcMain.removeAllListeners(IPC_CHANNELS.dragMessagePanel)
-  ipcMain.removeAllListeners(IPC_CHANNELS.dockMessagePanel)
-  ipcMain.removeAllListeners(IPC_CHANNELS.reportMessagePanelSettled)
-  ipcMain.removeAllListeners(IPC_CHANNELS.reportDwarfDelivery)
   ipcMain.removeHandler(IPC_CHANNELS.getPanelVisible)
   ipcMain.removeHandler(IPC_CHANNELS.getAudioPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setAudioPreferences)
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  ipcMain.removeHandler(IPC_CHANNELS.getLaunchView)
+  ipcMain.removeAllListeners(IPC_CHANNELS.setLaunchView)
+  /* --- end of the #635 launch view block --------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
   ipcMain.removeHandler(IPC_CHANNELS.getTypographyPreferences)
   ipcMain.removeHandler(IPC_CHANNELS.setTypographyPreferences)
@@ -284,13 +276,17 @@ function removeIpcHandlers(): void {
   ipcMain.removeAllListeners(IPC_CHANNELS.setWatchedDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.refreshDwarfTelemetry)
   ipcMain.removeHandler(IPC_CHANNELS.setDwarfTuning)
+  ipcMain.removeHandler(IPC_CHANNELS.setDwarfName)
+  ipcMain.removeHandler(IPC_CHANNELS.resetDwarfName)
   ipcMain.removeHandler(IPC_CHANNELS.getMineHistory)
   ipcMain.removeHandler(IPC_CHANNELS.openMinePath)
   ipcMain.removeHandler(IPC_CHANNELS.openExternalLink)
+  ipcMain.removeHandler(IPC_CHANNELS.copyText)
   ipcMain.removeHandler(IPC_CHANNELS.sendDwarfText)
   ipcMain.removeHandler(IPC_CHANNELS.kickDwarf)
   ipcMain.removeAllListeners(IPC_CHANNELS.retireDwarf)
   ipcMain.removeHandler(IPC_CHANNELS.getAppBuild)
+  ipcMain.removeHandler(IPC_CHANNELS.getFeatureFlags)
   ipcMain.removeHandler(IPC_CHANNELS.declareMine)
   ipcMain.removeHandler(IPC_CHANNELS.declareMainProject)
   ipcMain.removeHandler(IPC_CHANNELS.undeclareMine)
@@ -382,11 +378,18 @@ function parseLaunchRequest(payload: unknown): AgentLaunchRequest | null {
   // parseLaunchTuning for why.
   const tuning = parseLaunchTuning(record.provider, record)
   if (tuning === null) return null
+  // The Codex permission mode this launch asked for (#635), on the same
+  // "present and unusable takes the whole request down" terms as the tuning:
+  // an unknown mode, or a mode named for any provider but Codex, is refused
+  // rather than dropped — see parseLaunchPermissionMode.
+  const permission = parseLaunchPermissionMode(record.provider, record)
+  if (permission === null) return null
   return {
     mineId: record.mineId,
     provider: record.provider,
     prompt: record.prompt,
     ...tuning,
+    ...permission,
     // Whether a Jev DECISION was applied to this launch (#511) — trusted only
     // as `true`; anything else (absent, junk) reads as not routed, the same
     // "say nothing" boundary discipline model/effort hold above.
@@ -672,15 +675,13 @@ function toMinesSnapshot(
 /**
  * Every window of this app whose page is still alive (#162).
  *
- * Two surfaces now share one poll and one set of pushes, and both can be gone
- * — the panel window does not exist until a panel is first opened, and either
- * page can be mid-teardown on quit. A push to a destroyed webContents throws,
- * so the check is here once rather than at each of the four call sites.
+ * AMENDED for #635 (was: the shell and the message panel's own window, which
+ * is gone): the one window's page, when it is still alive. A push to a
+ * destroyed webContents throws, so the check is here once rather than at each
+ * call site, and the list shape stays for the pushes that go to every page.
  */
 function appWebContents(): WebContents[] {
-  return [shellWebContents(), messagePanelWebContents()].filter(
-    (contents): contents is WebContents => contents !== null
-  )
+  return [shellWebContents()].filter((contents): contents is WebContents => contents !== null)
 }
 
 async function init(): Promise<void> {
@@ -750,16 +751,14 @@ async function init(): Promise<void> {
   })
   seedPanelEdge(await panelEdgeStore.load())
 
-  // Where the person left the message panel (#296) — the fifth userData
-  // marker, read before any window exists for the reason the edge preference
-  // is: a panel that had been dragged somewhere should open there rather than
-  // dock beside the shell and jump on the first apply. A missing or corrupt
-  // file reads as "never moved", which is the docked placement.
-  const messagePanelPositionStore = createMessagePanelPositionStore({
-    filePath: join(app.getPath('userData'), 'message-panel-position-v1.json')
-  })
-  seedMessagePanelPosition(await messagePanelPositionStore.load())
-
+  /*
+   * REMOVED for #635, stated rather than passing unseen: the message panel's remembered position
+   * (#296, `message-panel-position-v1.json`), read here before any window existed. The panel is
+   * anchored in the shell's dock slot and remembers no position of its own (decision log). A file a
+   * past run left in userData is never read again; it is not deleted, because a leftover file of a
+   * few bytes that nothing opens is harmless and a startup that deletes files the person may be
+   * looking at is not.
+   */
   const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
 
   // Settings' Audio section (#174, #173) is the sixth userData preference.
@@ -848,10 +847,23 @@ async function init(): Promise<void> {
   // first frame and corrects itself on mount. Not held in a variable beside the
   // file, unlike the notifications switch — nothing in main READS a face, so
   // there is no poll to keep off the disk.
+  //
+  // AMENDED for the type presets (#635): the font style lives in its own v2 document, and the v1
+  // document #370 wrote is read once to migrate it and never written again (see the store).
   const typographyStore = createTypographyPreferenceStore({
-    filePath: join(app.getPath('userData'), 'typography-preferences-v1.json')
+    filePath: join(app.getPath('userData'), 'typography-preferences-v2.json'),
+    legacyFilePath: join(app.getPath('userData'), 'typography-preferences-v1.json')
   })
   /* --- end of the #370 block ----------------------------------------------- */
+
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  // The page and the mine the shell opens on: the ones open when it last closed, kept per machine.
+  // Not read here: the renderer asks for it once, before its first paint, and nothing in main
+  // needs it. Written on every change the renderer reports, coalesced by the store itself.
+  const launchViewStore = createLaunchViewStore({
+    filePath: join(app.getPath('userData'), 'launch-view-v1.json')
+  })
+  /* --- end of the #635 launch view block --------------------------------------- */
 
   /*
    * Whether the shell is really on screen (#174, #173).
@@ -983,6 +995,11 @@ async function init(): Promise<void> {
   // in-memory register #217 added is unaffected.
   const launchedSessionStore =
     projects === null ? null : createSqliteLaunchedSessionStore({ database: appDatabase })
+  // The names a person gives dwarfs (#635), the fourth tenant of that file. Null on the same
+  // terms again: a database that will not open costs the names an earlier run kept, and renaming
+  // still works for this run, in memory (see RuntimeOptions.dwarfNameStore).
+  const dwarfNameStore =
+    projects === null ? null : createSqliteDwarfNameStore({ database: appDatabase })
 
   // Unset (the common case) leaves DARWIN_CONSOLE_INPUT_ENABLED — now `true`
   // — in charge; a stated override wins in either direction (#367 items 1
@@ -1032,6 +1049,7 @@ async function init(): Promise<void> {
     projects,
     projectsRefusal,
     launchedSessionStore,
+    dwarfNameStore,
     home,
     fs,
     appPaths,
@@ -1298,6 +1316,11 @@ async function init(): Promise<void> {
   const appBuild: AppBuild = { version: app.getVersion(), packaged: app.isPackaged }
   ipcMain.handle(IPC_CHANNELS.getAppBuild, () => appBuild)
 
+  // The features that ship hidden (#635), read off the configuration this
+  // process already resolved; the renderer never reads a flag of its own.
+  const featureFlags: FeatureFlags = { guildAreasEnabled: config.guildAreasEnabled }
+  ipcMain.handle(IPC_CHANNELS.getFeatureFlags, () => featureFlags)
+
   const noActivation = { focused: false, openedTerminal: false, feed: [] }
   /** A dwarf this process cannot read at all — never "it has said nothing". */
   const noFeed: DwarfFeedResult = { readable: false, messages: [] }
@@ -1310,10 +1333,9 @@ async function init(): Promise<void> {
   ipcMain.on(IPC_CHANNELS.hidePanel, () => hidePanel())
   // The shell reports every click on itself, because a frameless transparent
   // window is not reliably raised by the platform's own click-to-front (#165).
-  // Answers for the SENDER rather than always for the shell (#162): the panel
-  // is the same frameless transparent window and needs the same help, and a
-  // press on it that raised the shell instead would leave the surface being
-  // typed into exactly where it was.
+  // It also gives the keyboard to the chat's composer, which is in the shell's
+  // own dock slot since #635: a press on the composer raises and focuses the
+  // window it is in.
   ipcMain.on(IPC_CHANNELS.raisePanel, (event) => raiseWindowOf(event.sender))
   ipcMain.handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
   ipcMain.handle(IPC_CHANNELS.setAlwaysOnTop, async (_event, payload: unknown) => {
@@ -1321,9 +1343,6 @@ async function init(): Promise<void> {
     // and the caller still gets the real state back.
     if (typeof payload !== 'boolean') return mainWindow.isAlwaysOnTop()
     const real = applyAlwaysOnTop(mainWindow, payload)
-    // One surface in two windows, one answer about its stacking (#162): the
-    // panel mirrors what the SHELL actually became, never the request.
-    mirrorMessagePanelPin(real)
     try {
       // Persist what the window actually is, not the request — a declined
       // change must not resurrect itself as a stored preference.
@@ -1366,16 +1385,15 @@ async function init(): Promise<void> {
    * Settings' Typography section (#370).
    *
    * `set` answers with what was STORED, the discipline every preference channel
-   * here holds: the shared parser refuses a face this build cannot draw — Tiny5
-   * for messaging above all — so a segment can only ever be drawn selected for
+   * here holds: the shared parser refuses a face a role cannot carry — Tiny5
+   * for messages above all — so a style can only ever be drawn selected for
    * a choice that is really in force.
    *
-   * And then it BROADCASTS, which no other preference does. Settings is in the
-   * shell; the messaging face is what the panel window draws its bubbles and
-   * its Add Panel in, so a change made in one window has to reach the other in
-   * the same frame rather than at its next reload. Sent to every window
-   * including the sender: the renderer adopts main's verdict from one path, so
-   * a window that also awaits the reply simply applies the same document twice.
+   * And then it BROADCASTS, which no other preference does. It was for the
+   * message panel's own window (#162), which painted the messaging face on a
+   * page of its own; that window is gone (#635), so the one page that hears it
+   * is the sender, which adopts main's verdict from one path and simply applies
+   * the same document twice.
    */
   ipcMain.handle(IPC_CHANNELS.getTypographyPreferences, () => typographyStore.load())
   ipcMain.handle(IPC_CHANNELS.setTypographyPreferences, async (_event, payload: unknown) => {
@@ -1426,6 +1444,14 @@ async function init(): Promise<void> {
     openMineId = typeof payload === 'string' && payload !== '' ? payload : null
   })
   /* --- end of the #316 block ---------------------------------------------- */
+  /* --- The launch view (#635, PANEL-QUESTIONS 25) — one block, appended ----- */
+  // Parsed again here whatever the preload sent: the store writes only what the next start reads.
+  // One-way, and the store never rejects — a write it could not make is warned by name.
+  ipcMain.handle(IPC_CHANNELS.getLaunchView, () => launchViewStore.load())
+  ipcMain.on(IPC_CHANNELS.setLaunchView, (_event, payload: unknown) => {
+    void launchViewStore.remember(parseLaunchView(payload))
+  })
+  /* --- end of the #635 launch view block --------------------------------------- */
   /* --- Jev launch routing: the API key setting (#509) — one block, appended - */
   /*
    * Settings' Jev API-key control (#509).
@@ -1599,17 +1625,17 @@ async function init(): Promise<void> {
     // Boundary discipline as elsewhere: a malformed payload moves nothing and
     // the caller still gets the real layout back.
     if (typeof payload !== 'object' || payload === null) return panelLayout()
-    const { expanded, mineOpen, edge } = payload as Record<string, unknown>
-    if (typeof expanded !== 'boolean' || typeof mineOpen !== 'boolean') return panelLayout()
+    const { mineOpen, dockOpen, edge } = payload as Record<string, unknown>
+    if (typeof mineOpen !== 'boolean' || typeof dockOpen !== 'boolean') return panelLayout()
     // edge is optional (#138): only the Settings position control ever sends
     // one, and an unrecognised value is treated exactly like an absent one —
-    // the rail toggle and the mine-open resize must never nudge the docked
-    // side by accident.
+    // a mine opening and the dock opening must never nudge the docked side by
+    // accident.
     const requestedEdge: PanelEdge | undefined =
       edge === 'left' || edge === 'right' ? edge : undefined
     const result = setPanelLayout({
-      expanded,
       mineOpen,
+      dockOpen,
       ...(requestedEdge ? { edge: requestedEdge } : {})
     })
     if (requestedEdge !== undefined) {
@@ -1624,94 +1650,12 @@ async function init(): Promise<void> {
     return result
   })
   /*
-   * The message panel's own window (#162).
-   *
-   * `setMessagePanel` answers with what main STORED, for the reason the layout
-   * channels do: a real BrowserWindow is created, moved, shown or hidden off
-   * the back of it, and the caller must render the fact. Both windows may send
-   * it — the shell opens the panel on a dwarf or on the mine's Add action, the
-   * panel closes itself and adopts the dwarf a launch produced — so the window
-   * that did NOT ask is told, and neither renderer ever polls state it does
-   * not own. `getMessagePanel` exists for the one moment a push cannot reach:
-   * the panel window's own first mount, when the state that opened it was set
-   * before its page existed.
+   * REMOVED for #635, stated rather than passing unseen: the message panel's own window's nine
+   * channels (#162, #296, #389) — its surface and the push to the other window, its height report,
+   * the drag and the dock-back on its header with the position they persisted, the settled report
+   * its deferred hide waited on, and the delivery report relayed to the shell. The panel is in the
+   * shell's dock slot, so none of them had two windows to join any more.
    */
-  ipcMain.handle(IPC_CHANNELS.getMessagePanel, () => messagePanelState())
-  ipcMain.handle(IPC_CHANNELS.setMessagePanel, (event, payload: unknown) => {
-    // Boundary discipline as elsewhere: a malformed payload opens nothing and
-    // the caller still gets the real state back. See parseMessagePanelState
-    // for the one refusal that is not about types — a surface has to be ABOUT
-    // something, and a message panel open on nobody is not a narrower request.
-    const request = parseMessagePanelState(payload)
-    if (request === null) return messagePanelState()
-    // #409: only the shell's OWN click selects or switches a dwarf. The panel
-    // window can set this same surface for itself — adopting the dwarf its
-    // own launch produced (#162) — and that transition must not steal the
-    // keyboard from wherever the person already is. `event.sender` is the
-    // one place that distinction is knowable at all.
-    const fromShell = event.sender === shellWebContents()
-    const applied = setMessagePanel(request, fromShell)
-    for (const contents of appWebContents()) {
-      if (contents !== event.sender) contents.send(IPC_CHANNELS.messagePanelChanged, applied)
-    }
-    return applied
-  })
-  // The design's vertical-only resize reaching the window that has to carry it
-  // (#162): the renderer measures its own surface in DESIGN pixels and main
-  // multiplies by the same uiScale every other dimension goes through. One-way
-  // — there is no verdict, and the first report is also what reveals a window
-  // deliberately created hidden.
-  ipcMain.on(IPC_CHANNELS.setMessagePanelHeight, (_event, payload: unknown) => {
-    const height = parseMessagePanelHeight(payload)
-    if (height === null) return
-    setMessagePanelHeight(height)
-  })
-  /*
-   * The panel window being dragged anywhere, and snapped back (#296).
-   *
-   * Both are one-way for the reason the height report is, and a stronger one:
-   * neither page draws the panel's position, so there is no verdict to answer
-   * with. What comes back from main is for THIS process to persist — the
-   * position the window actually ended up at, never the gesture that asked for
-   * it, which is the same discipline the pin and the edge preference hold.
-   */
-  ipcMain.on(IPC_CHANNELS.dragMessagePanel, (_event, payload: unknown) => {
-    // Boundary discipline as elsewhere: a phase main cannot read moves
-    // nothing. There is no safe default — see isMessagePanelDragPhase.
-    if (!isMessagePanelDragPhase(payload)) return
-    const anchor = dragMessagePanel(payload)
-    // Persisted once per gesture rather than once per frame: 'start' answers
-    // with the position that was already stored, and only the release can have
-    // produced a new one.
-    if (payload !== 'end') return
-    void messagePanelPositionStore.save(anchor).catch((error: unknown) => {
-      console.warn('[panel] Failed to persist the message panel position:', error)
-    })
-  })
-  ipcMain.on(IPC_CHANNELS.dockMessagePanel, () => {
-    void messagePanelPositionStore.save(dockMessagePanel()).catch((error: unknown) => {
-      console.warn('[panel] Failed to forget the message panel position:', error)
-    })
-  })
-  // The panel's surface has finished leaving (#389), so the window main held
-  // open for exactly that can go. Nothing crosses and nothing is validated:
-  // the message IS the report, and main re-checks its own state before acting
-  // on it — see messagePanelHideIsDue for what a report can still be refused
-  // for, a reopen inside the wait above all.
-  ipcMain.on(IPC_CHANNELS.reportMessagePanelSettled, () => {
-    messagePanelSurfaceSettled()
-  })
-  // The delivery verdicts the panel window is the only writer of, relayed to
-  // the shell so the mine can draw its markers (#162, see DwarfDeliveryReport).
-  // Relayed rather than held: the stores expire their own entries, so main
-  // keeping a copy would mean main deciding when a marker is stale.
-  ipcMain.on(IPC_CHANNELS.reportDwarfDelivery, (event, payload: unknown) => {
-    const report = parseDwarfDeliveryReport(payload)
-    if (report === null) return
-    for (const contents of appWebContents()) {
-      if (contents !== event.sender) contents.send(IPC_CHANNELS.dwarfDeliveryReported, report)
-    }
-  })
   ipcMain.handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
   ipcMain.handle(IPC_CHANNELS.setToggleShortcut, async (_event, payload: unknown) => {
     // Boundary discipline as elsewhere: a malformed payload changes nothing
@@ -1780,6 +1724,19 @@ async function init(): Promise<void> {
     if (request === null) return notTuned
     return runtime?.setDwarfTuning(request) ?? notTuned
   })
+  // Renaming a dwarf and resetting its name (#635). A payload this boundary cannot read is refused
+  // with the words the runtime uses for a dwarf it is not showing: from the panel's side both mean
+  // the same thing, that no name changed.
+  const notRenamed: DwarfNameResult = { saved: false, reason: DWARF_NAME_NOT_ON_BOARD }
+  ipcMain.handle(IPC_CHANNELS.setDwarfName, (_event, payload: unknown) => {
+    const request = parseDwarfNameRequest(payload)
+    if (request === null) return notRenamed
+    return runtime?.setDwarfName(request) ?? notRenamed
+  })
+  ipcMain.handle(IPC_CHANNELS.resetDwarfName, (_event, dwarfId: unknown) => {
+    if (typeof dwarfId !== 'string' || dwarfId === '') return notRenamed
+    return runtime?.resetDwarfName(dwarfId) ?? notRenamed
+  })
   // A mine this process could not read history for (#192) — never "nobody has
   // spoken here", which is what an empty list with `readable: true` would say.
   const noHistory: MineHistoryResult = { readable: false, speakers: [] }
@@ -1844,6 +1801,13 @@ async function init(): Promise<void> {
       }
       return { opened: true }
     }
+  )
+
+  // Copy on a message that could not be handed over (#635, decision log, Failed delivery). The
+  // payload is bounded and refused in shell/copyText, which writes through Electron's own
+  // clipboard: no focused document needed, the same call on every platform.
+  ipcMain.handle(IPC_CHANNELS.copyText, (_event, payload: unknown): CopyTextResult =>
+    copyTextToClipboard(payload, clipboard)
   )
 
   const notDelivered: DwarfTextResult = {

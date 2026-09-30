@@ -25,17 +25,35 @@ function fakeApi(overrides: Record<string, unknown> = {}) {
   return api
 }
 
-function paintedFonts(): { interfaceFont: string; messagingFont: string } {
+/*
+ * AMENDED for the type presets (#635): a choice is now a font style and four role faces, painted
+ * through `--f-display`, `--f-label`, `--f-meta` and `--f-talk` with the sizes they are sharp at,
+ * and `set` takes the whole document Settings built (lib/settings/fontStyle.ts builds it). Each
+ * test below keeps its #370 guarantee and says what it was.
+ */
+const ROLE_PROPERTIES = ['--f-display', '--f-label', '--f-meta', '--f-talk'] as const
+const SIZE_PROPERTIES = ['--fs-title', '--fs-headline', '--fs-section', '--fs-meta', '--fs-body']
+
+function paintedFonts(): Record<string, string> {
   const root = document.documentElement
-  return {
-    interfaceFont: root.style.getPropertyValue('--font-pixel'),
-    messagingFont: root.style.getPropertyValue('--font-conversation')
-  }
+  return Object.fromEntries(
+    ROLE_PROPERTIES.map((property) => [property, root.style.getPropertyValue(property)])
+  )
+}
+
+const READABLE: TypographyPreferences = {
+  style: 'readable',
+  faces: { display: 'roboto', label: 'roboto', meta: 'roboto', talk: 'roboto' }
+}
+const CUSTOM: TypographyPreferences = {
+  style: 'custom',
+  faces: { display: 'tiny5', label: 'roboto', meta: 'arial', talk: 'pixelify-sans' }
 }
 
 afterEach(() => {
-  document.documentElement.style.removeProperty('--font-pixel')
-  document.documentElement.style.removeProperty('--font-conversation')
+  for (const property of [...ROLE_PROPERTIES, ...SIZE_PROPERTIES]) {
+    document.documentElement.style.removeProperty(property)
+  }
 })
 
 describe('useTypography', () => {
@@ -47,22 +65,23 @@ describe('useTypography', () => {
   it('paints nothing until it has been told something, leaving the stylesheet in charge', () => {
     fakeApi()
     useTypography()
-    expect(paintedFonts()).toEqual({ interfaceFont: '', messagingFont: '' })
+    expect(Object.values(paintedFonts())).toEqual(['', '', '', ''])
   })
 
-  it('adopts the stored faces on sync and repoints both roles on the document root', async () => {
-    fakeApi({
-      getTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'roboto', messagingFont: 'arial' })
-    })
+  // AMENDED (#635): was "…repoints both roles on the document root".
+  it('adopts the stored faces on sync and repoints every role on the document root', async () => {
+    fakeApi({ getTypographyPreferences: vi.fn().mockResolvedValue(CUSTOM) })
     const { preferences, sync } = useTypography()
     await sync()
-    expect(preferences.value).toEqual({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    expect(preferences.value).toEqual(CUSTOM)
     expect(paintedFonts()).toEqual({
-      interfaceFont: 'var(--font-family-roboto)',
-      messagingFont: 'var(--font-family-arial)'
+      '--f-display': 'var(--font-family-tiny5)',
+      '--f-label': 'var(--font-family-roboto)',
+      '--f-meta': 'var(--font-family-arial)',
+      '--f-talk': 'var(--font-family-pixelify-sans)'
     })
+    // Crisp sizes on: Tiny5 titles snap from 21px to 24px, where each of its pixels is whole.
+    expect(document.documentElement.style.getPropertyValue('--fs-title')).toBe('24px')
   })
 
   it('keeps the last known faces when the bridge is unreachable', async () => {
@@ -72,57 +91,54 @@ describe('useTypography', () => {
     expect(preferences.value).toEqual(DEFAULT_TYPOGRAPHY_PREFERENCES)
   })
 
-  it('changes one role and leaves the other exactly where it was', async () => {
-    // The whole point of the feature: keep the pixel chrome, read the messages
-    // in something else — or the reverse.
+  // AMENDED (#635): was "changes one role and leaves the other exactly where it was", when set
+  // merged a one-role patch here. Settings now builds the whole document, and this sends exactly
+  // that, so a role nobody touched arrives as it was.
+  it('sends the whole document it was handed and adopts the answer', async () => {
     const api = fakeApi()
     const { preferences, set } = useTypography()
-    await set({ messagingFont: 'roboto' })
-    expect(api.setTypographyPreferences).toHaveBeenCalledWith({
-      interfaceFont: 'tiny5',
-      messagingFont: 'roboto'
-    })
-    expect(preferences.value).toEqual({ interfaceFont: 'tiny5', messagingFont: 'roboto' })
+    await set(CUSTOM)
+    expect(api.setTypographyPreferences).toHaveBeenCalledWith(CUSTOM)
+    expect(preferences.value).toEqual(CUSTOM)
   })
 
-  it('lets both roles name one family, which is how the whole app becomes that face', async () => {
+  // AMENDED (#635): was "lets both roles name one family, which is how the whole app becomes that
+  // face"; a preset that names one family in every role is how that happens now.
+  it('lets every role name one family, which is how the whole app becomes that face', async () => {
     fakeApi()
     const { preferences, set } = useTypography()
-    await set({ interfaceFont: 'arial' })
-    await set({ messagingFont: 'arial' })
-    expect(preferences.value).toEqual({ interfaceFont: 'arial', messagingFont: 'arial' })
-    expect(paintedFonts()).toEqual({
-      interfaceFont: 'var(--font-family-arial)',
-      messagingFont: 'var(--font-family-arial)'
-    })
+    await set(READABLE)
+    expect(preferences.value).toEqual(READABLE)
+    expect(Object.values(paintedFonts())).toEqual(
+      ROLE_PROPERTIES.map(() => 'var(--font-family-roboto)')
+    )
   })
 
+  // AMENDED (#635): the same rule, on a Tiny5 message face main refuses.
   it('renders what main STORED, never what the press asked for', async () => {
-    // Main refuses Tiny5 for messaging at its boundary, so what comes back is
-    // the face really in force and that is what has to be drawn.
-    const api = fakeApi({
-      setTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'tiny5', messagingFont: 'pixelify-sans' })
-    })
+    // Main refuses Tiny5 for messages at its boundary, so what comes back is the face really in
+    // force and that is what has to be drawn.
+    const stored: TypographyPreferences = {
+      style: 'custom',
+      faces: { ...CUSTOM.faces, talk: 'pixelify-sans' }
+    }
+    const api = fakeApi({ setTypographyPreferences: vi.fn().mockResolvedValue(stored) })
     const { preferences, set } = useTypography()
-    await set({ messagingFont: 'tiny5' as never })
+    await set({ style: 'custom', faces: { ...CUSTOM.faces, talk: 'tiny5' as never } })
     expect(api.setTypographyPreferences).toHaveBeenCalled()
-    expect(preferences.value.messagingFont).toBe('pixelify-sans')
-    expect(paintedFonts().messagingFont).toBe('var(--font-family-pixelify-sans)')
+    expect(preferences.value.faces.talk).toBe('pixelify-sans')
+    expect(paintedFonts()['--f-talk']).toBe('var(--font-family-pixelify-sans)')
   })
 
   it('re-reads the real faces when a change breaks mid-flight', async () => {
     const api = fakeApi({
       setTypographyPreferences: vi.fn().mockRejectedValue(new Error('no bridge')),
-      getTypographyPreferences: vi
-        .fn()
-        .mockResolvedValue({ interfaceFont: 'roboto', messagingFont: 'roboto' })
+      getTypographyPreferences: vi.fn().mockResolvedValue(READABLE)
     })
     const { preferences, set } = useTypography()
-    await set({ interfaceFont: 'arial' })
+    await set(CUSTOM)
     expect(api.getTypographyPreferences).toHaveBeenCalled()
-    expect(preferences.value).toEqual({ interfaceFont: 'roboto', messagingFont: 'roboto' })
+    expect(preferences.value).toEqual(READABLE)
   })
 
   it('ignores a second press while one is still in flight', async () => {
@@ -136,17 +152,16 @@ describe('useTypography', () => {
       )
     })
     const { set } = useTypography()
-    const first = set({ interfaceFont: 'roboto' })
-    await set({ interfaceFont: 'arial' })
+    const first = set(READABLE)
+    await set(CUSTOM)
     expect(api.setTypographyPreferences).toHaveBeenCalledTimes(1)
-    release({ interfaceFont: 'roboto', messagingFont: 'pixelify-sans' })
+    release(READABLE)
     await first
   })
 
   it('adopts a change this window did not make, which is how the other one keeps up', async () => {
-    // The shell owns Settings; the message panel is a second window drawing the
-    // messaging face. Without this push it would stay on the old one until a
-    // reload.
+    // The shell owns Settings; the message panel is a second window drawing the message face.
+    // Without this push it would stay on the old one until a reload.
     let push: ((preferences: TypographyPreferences) => void) | undefined
     fakeApi({
       onTypographyPreferences: vi.fn((listener: (p: TypographyPreferences) => void) => {
@@ -156,12 +171,9 @@ describe('useTypography', () => {
     })
     const { preferences, listen } = useTypography()
     listen()
-    push?.({ interfaceFont: 'arial', messagingFont: 'roboto' })
-    expect(preferences.value).toEqual({ interfaceFont: 'arial', messagingFont: 'roboto' })
-    expect(paintedFonts()).toEqual({
-      interfaceFont: 'var(--font-family-arial)',
-      messagingFont: 'var(--font-family-roboto)'
-    })
+    push?.(READABLE)
+    expect(preferences.value).toEqual(READABLE)
+    expect(paintedFonts()['--f-talk']).toBe('var(--font-family-roboto)')
   })
 
   it('hands back an unsubscribe, so a window can stop listening with its own teardown', () => {
@@ -170,5 +182,20 @@ describe('useTypography', () => {
     const unlisten = useTypography().listen()
     unlisten()
     expect(stop).toHaveBeenCalled()
+  })
+
+  // APPENDED (#635): what reaches the page is read through the shared parser once more, so a
+  // document this build cannot draw (an older window's, a stale bridge's) paints the defaults
+  // rather than throwing out of the window's setup.
+  it('paints a document it cannot read as the defaults, never throwing', async () => {
+    fakeApi({
+      getTypographyPreferences: vi
+        .fn()
+        .mockResolvedValue({ interfaceFont: 'roboto', messagingFont: 'arial' })
+    })
+    const { preferences, sync } = useTypography()
+    await sync()
+    expect(preferences.value).toEqual(DEFAULT_TYPOGRAPHY_PREFERENCES)
+    expect(paintedFonts()['--f-display']).toBe('var(--font-family-jacquard-12)')
   })
 })

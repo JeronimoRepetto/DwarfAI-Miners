@@ -36,7 +36,19 @@ export interface ActionTransientState {
   kicking: boolean
 }
 
+/**
+ * Only for a session TYPE with no delivery channel yet — a gap in this app, not a fact about the
+ * session. Never said for a session that can no longer take text: that one has its own sentence,
+ * SESSION_CLOSED_REASON (decision log, Copy alone on a closed session).
+ */
 export const NO_CHANNEL_REASON = "This session type can't receive messages yet."
+
+/**
+ * The well of a closed session's composer (#635, decision log, Copy alone on a closed session):
+ * the session ended, or its delivery route went away. Nothing will make a send work there again,
+ * which is why a failed message on it keeps Copy alone.
+ */
+export const SESSION_CLOSED_REASON = 'This session can no longer receive messages.'
 
 /**
  * How each provider is started detached, in its own argv (#217).
@@ -355,8 +367,11 @@ export const CONSOLE_HINT = "Focus this session's console."
  */
 export const APPROVAL_AT_TERMINAL_NOTE = 'Waiting for your approval in the terminal.'
 
-/** The action beside that sentence, which is the console focus the panel already has. */
-export const JUMP_TO_TERMINAL_NAME = 'Jump to the terminal'
+/**
+ * The action beside that sentence, which is the console focus the panel already has. Worded as
+ * the design writes it (#635, copy.md: "Jump to terminal"), here and on the question card.
+ */
+export const JUMP_TO_TERMINAL_NAME = 'Jump to terminal'
 
 /**
  * That sentence for this dwarf, or null when it does not apply.
@@ -385,6 +400,17 @@ export const SESSION_ENDED_REASON = 'This session has ended.'
 
 function hasEnded(dwarf: Dwarf): boolean {
   return dwarf.status === 'leaving'
+}
+
+/**
+ * Whether the session behind a dwarf can no longer take text (#635, decision log, Copy alone on a
+ * closed session): it ended, or its delivery route went away. The route is the caller's to know
+ * (lib/delivery/deliveryRoute): only a store that watched the board over time can tell a channel
+ * that went away from one that never was, and a dwarf that never had one is not closed — its
+ * session type has no channel yet.
+ */
+export function sessionClosed(dwarf: Dwarf, routeGone: boolean): boolean {
+  return hasEnded(dwarf) || routeGone
 }
 
 /**
@@ -425,11 +451,8 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   // did (#192): the grace window freezes the last real snapshot, so a leaving
   // dwarf still carries the channel it had and main would refuse to use it.
   const ended = hasEnded(dwarf)
-  const channel = ended ? null : (dwarf.capabilities?.cancel ?? null)
-  // The one position the dismissal cannot be honest in (#305): see
-  // OPEN_TURN_NO_INTERRUPT_HINT. Read off the status for the same reason the
-  // channel is — 'leaving' has no turn left to be open.
-  const openTurn = !ended && channel === null && dwarf.status === 'working'
+  const channel = kickChannel(dwarf)
+  const openTurn = isOpenTurn(dwarf)
   const hint =
     channel !== null
       ? KICK_HINT[channel]
@@ -442,6 +465,29 @@ function kickAction(dwarf: Dwarf, state: ActionTransientState): ActionBarEntry {
   // whatever the dwarf started doing since, and the person is owed its progress.
   if (state.kicking) return { id: 'kick', name: 'Kicking...', enabled: false, hint }
   return { id: 'kick', name: 'Kick', enabled: !openTurn, hint }
+}
+
+const kickChannel = (dwarf: Dwarf): TextDeliveryChannel | null =>
+  hasEnded(dwarf) ? null : (dwarf.capabilities?.cancel ?? null)
+
+// The one position the dismissal cannot be honest in (#305): see
+// OPEN_TURN_NO_INTERRUPT_HINT. Read off the status for the same reason the
+// channel is — 'leaving' has no turn left to be open.
+const isOpenTurn = (dwarf: Dwarf): boolean =>
+  !hasEnded(dwarf) && kickChannel(dwarf) === null && dwarf.status === 'working'
+
+/** Why the kick cannot act right now: the only two cases the bar disables it in (#635). */
+export type KickBlocked = 'stopping' | 'open-turn'
+
+/**
+ * Why the kick is disabled, or null while it can act (#635, MESSAGE-QUESTIONS 13): a kick already
+ * in flight, or a turn open on a session nothing here can interrupt. Nothing else disables it — an
+ * idle session the app only observes is still kicked off the rock — so this is exactly the
+ * negation of the kick's `enabled`, for whoever has to say WHICH reason (the ⋯ menu's Stop dwarf…).
+ */
+export function kickBlocked(dwarf: Dwarf, state: ActionTransientState): KickBlocked | null {
+  if (state.kicking) return 'stopping'
+  return isOpenTurn(dwarf) ? 'open-turn' : null
 }
 
 function boostAction(dwarf: Dwarf): ActionBarEntry {

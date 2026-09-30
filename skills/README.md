@@ -24,7 +24,7 @@ the metadata cannot disagree, because there is only one of them.
 
 ```
 AGENTS.md                     # committed single source of truth; carries the generated tables
-CLAUDE.md                     # three lines, committed: `@AGENTS.md` (see "Entry points")
+CLAUDE.md                     # committed; imports AGENTS.md via `@AGENTS.md` (see "Entry points")
 skills/
 ├── README.md                 # this file — the spec
 ├── skill-creator/            # the meta-skill: how to write a skill
@@ -50,7 +50,7 @@ name: scene-coordinates
 description: >
   What the skill is, in one clause.
   Trigger: when an agent should reach for it.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'
@@ -65,7 +65,7 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 | ---------------------- | -------- | ---------------------------------------------------------------------------------- |
 | `name`                 | yes      | kebab-case, identical to the directory name                                        |
 | `description`          | yes      | one `>` folded block; must contain a `Trigger:` clause                             |
-| `license`              | yes      | `MIT` — this repo's LICENSE                                                        |
+| `license`              | yes      | `GPL-3.0-or-later` — this repo's LICENSE                                           |
 | `metadata.author`      | yes      | `JeronimoRepetto`                                                                  |
 | `metadata.version`     | yes      | **quoted** string like `'1.0'`; unquoted `1.0` is a YAML float                     |
 | `metadata.scope`       | yes      | which `AGENTS.md` files register it; every value must be a known scope             |
@@ -172,12 +172,12 @@ So there is **no `setup.sh`**, and nothing is generated or gitignored. Two facts
 unnecessary:
 
 - **Claude Code does not read `AGENTS.md`.** It reads `CLAUDE.md`, which supports `@path` imports
-  that load the target's full content. So `CLAUDE.md` is three committed lines containing
-  `@AGENTS.md`. It holds no rules, so there is nothing in it that can drift.
+  that load the target's full content. So `CLAUDE.md` is a short committed file whose one
+  directive is `@AGENTS.md`. It holds no rules, so there is nothing in it that can drift.
 - **Every other tool reads `AGENTS.md` natively** — Cursor, Copilot, Windsurf, Cline and Gemini all
   resolve it without help. There is no third entry point to generate.
 
-A generator that creates one static three-line file is a moving part that buys nothing.
+A generator that creates one static file is a moving part that buys nothing.
 
 ## Writing style
 
@@ -190,4 +190,5 @@ A generator that creates one static three-line file is a moving part that buys n
   the brief for this harness turned out to be wrong, one of them outright false — including one
   that had already been copied from an inaccurate source comment into a rule file. Restating an
   unverified claim is how that spreads.
-- Keep a `SKILL.md` under ~150 lines. Adherence drops as length grows.
+- Keep a `SKILL.md` readable in one sitting. Adherence drops as length grows, so when a skill keeps
+  growing, split it rather than trim the reasons out of it.

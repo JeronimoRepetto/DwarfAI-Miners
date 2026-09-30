@@ -20,6 +20,8 @@ export interface FakeAudioClip extends AudioClip {
   readonly playing: boolean
   readonly stopped: boolean
   readonly volume: number
+  /** Whether it was opened to loop — the element wraps it rather than ending. */
+  readonly loop: boolean
   /** The ramp currently in flight, or undefined when the volume was cut. */
   readonly ramp: { to: number; ms: number } | undefined
   /** Pretend the sound is this long; `NaN` is the pre-metadata reading. */
@@ -28,7 +30,11 @@ export interface FakeAudioClip extends AudioClip {
   seekMs: (ms: number) => void
   /** Finish every ramp in flight, as if its time had passed. */
   settleRamp: () => void
-  /** Fire the element's own `ended`, which is what drives the music gap. */
+  /**
+   * Reach the end of the sound. A clip opened to loop WRAPS, exactly as the
+   * element does: it rewinds, keeps playing, and fires nothing. Any other
+   * fires the element's own `ended`, which is what drives the music gap.
+   */
   end: () => void
 }
 
@@ -55,9 +61,11 @@ export function createFakeAudioPlayer(): FakeAudioPlayer {
       let ramp: { to: number; ms: number } | undefined
       let durationMs = Number.NaN
       let positionMs = 0
+      const loop = options?.loop === true
 
       const clip: FakeAudioClip = {
         src,
+        loop,
         get playing() {
           return playing
         },
@@ -112,6 +120,10 @@ export function createFakeAudioPlayer(): FakeAudioPlayer {
           ramp = undefined
         },
         end() {
+          if (loop) {
+            positionMs = 0
+            return
+          }
           playing = false
           options?.onEnded?.()
         }

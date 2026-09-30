@@ -9,40 +9,63 @@ import {
   type ComponentPublicInstance
 } from 'vue'
 import { MotionConfig } from 'motion-v'
-import MineHistoryPanel from './components/history/MineHistoryPanel.vue'
-import EdgeRail from './components/shell/EdgeRail.vue'
-import MapView from './components/map/MapView.vue'
-import MineScene from './components/scene/MineScene.vue'
-import MinesPanel from './components/browse/MinesPanel.vue'
-import PanelFrame from './components/shell/PanelFrame.vue'
+import HistoryPanel from './components/history/HistoryPanel.vue'
+import AddPanel from './components/launch/AddPanel.vue'
+import DwarfMessagePanel from './components/message/DwarfMessagePanel.vue'
+import MapPage from './components/map/MapPage.vue'
+import MineColumn from './components/scene/MineColumn.vue'
+import MinesList from './components/browse/MinesList.vue'
+import ToastHost from './components/overlay/ToastHost.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
-import ShellNav from './components/shell/ShellNav.vue'
-import UnavailablePanel from './components/shell/UnavailablePanel.vue'
+import PanelNav from './components/shell/PanelNav.vue'
+import GuildPage from './components/shell/GuildPage.vue'
 import { useAudio } from './composables/useAudio'
-import { useDwarfDelivery } from './composables/useDwarfDelivery'
-import { useMessagePanel } from './composables/useMessagePanel'
+import { useMessageDock } from './composables/useMessageDock'
 import { useMines } from './composables/useMines'
+import { useMapTime } from './composables/useMapTime'
 import { usePanelLayout } from './composables/usePanelLayout'
 import { usePinnedWindow } from './composables/usePinnedWindow'
 import { useShellFold } from './composables/useShellFold'
 import type { MotionAnimate } from './lib/shell/boundedMotion'
 import { useProjectBrowse } from './composables/useProjectBrowse'
+import { useToasts } from './composables/useToasts'
+import { createAttentionWatch } from './lib/audio/attentionCues'
+import { browseRows } from './lib/browse/boardRows'
+import { createBrowseRefresh } from './lib/browse/browseRefresh'
+import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/columnMine'
+import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
+import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
 import { useToggleShortcut } from './composables/useToggleShortcut'
-import { useView } from './composables/useView'
+import { takeLaunchMine, useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
 import { INTERIOR_ART_SIZE } from './lib/art'
+import {
+  MINE_COLUMN_ART_INSET,
+  MINE_COLUMN_CHROME_HEIGHT,
+  MINE_COLUMN_MIN_WIDTH,
+  SHELL_CONTENT_INSET
+} from './lib/scene/sceneSizing'
 import { prefersReducedMotion, watchReducedMotion } from './lib/scene/sceneMotion'
 import { REDUCED_MOTION_TRANSITION } from './lib/shell/presence'
-import { shellComposition } from './lib/shell/composition'
+import { dockReplaceMotion, dockWindowMotion } from './lib/shell/dockMotion'
 import { mineOnScreen } from './lib/shell/mineOnScreen'
 import { unavailableAreaOf } from './lib/shell/shellNav'
+import { needsYouCount, reachableArea } from './lib/shell/panelNav'
 import { versionLabel, versionTitle } from './lib/appBuild'
-import type { AppBuild, Dwarf, Mine, MineHistoryResult, MinesSnapshot, ShellArea } from './types'
+import type {
+  AppBuild,
+  Dwarf,
+  FeatureFlags,
+  Mine,
+  MineHistoryResult,
+  MinesSnapshot,
+  ShellArea
+} from './types'
 
 const props = defineProps<{
   /**
@@ -57,7 +80,7 @@ const props = defineProps<{
 
 /**
  * Whether this viewer asked their operating system for less movement (#71),
- * read and watched the same way `DwarfSprite` already does — the one query
+ * read and watched the same way the old `DwarfSprite` did — the one query
  * lives in `sceneMotion`, and this is a second place that asks it rather
  * than a second query, the same relationship `boundedMotion.ts`'s own
  * `still()` and `PanelTransition`'s watch already have with it.
@@ -74,38 +97,73 @@ const stopWatchingReducedMotion = watchReducedMotion((asked) => {
 onBeforeUnmount(stopWatchingReducedMotion)
 
 const { state, setMines } = useMines()
+/** The painting the Map page wears, by the time of day (#136). */
+const mapVariant = useMapTime()
 const { state: viewState, openMine, closeMine, showArea, showMap, syncWithMines } = useView()
 
 /**
- * What the message panel's own window is showing (#162).
+ * The MessagePanel and the Add panel, anchored in the dock's window slot (#635).
  *
- * The conversation left this window. The MessagePanel and the Add Panel — which
- * share one slot, because submitting a launch replaces the first with the
- * second — are a second BrowserWindow beside the shell now, the way the design
- * draws them, and everything they need to DO lives there with them: the launch,
- * the send, the kick, the answers, the observed session's transcript. See
- * MessagePanelWindow.vue.
- *
- * What is left here is the request and one reading. The shell asks for a
- * surface when a dwarf is clicked or the mine's Add action is pressed, and it
- * reads this state back to draw the selected dwarf's red halo — including for a
- * dwarf the shell never chose, because a launch handing over is something only
- * that window can know. Main holds the state for both.
+ * AMENDED for #635 (was: a second BrowserWindow beside the shell, #162, whose surface main held
+ * for both windows and whose delivery verdicts were published back here). The decision log
+ * anchors both panels in the Panel, and the PO chose one OS window for it (2026-09-27), so the
+ * slot the history stands in holds them too, one thing at a time. Everything they DO — the
+ * launch, the send, the kick, the answers, the observed session's feed, one draft per dwarf — is
+ * useMessageDock's, alive as long as this shell is; the halo and the sprite markers read it here.
  */
-const {
-  state: messagePanel,
-  sync: syncMessagePanel,
-  listen: listenMessagePanel,
-  openMessage,
-  openLaunch: openLaunchPanel,
-  close: closeMessagePanel
-} = useMessagePanel()
+const dock = useMessageDock()
+const { close: closeMessagePanel } = dock
 
 /**
- * The send and kick verdicts that window holds (#162), so the mine can draw
- * each one on the sprite it belongs to. Read-only here — see useDwarfDelivery.
+ * The control that opened what the dock's window slot holds (#635): "+ Dwarf" for the Add panel,
+ * the pressed dwarf for its chat. Esc closes the topmost layer and focus returns to whatever
+ * opened it (accessibility.md, Focus), and keyboard focus is never dropped to the page: the panel
+ * that had it is gone, so the opener takes it back. Remembered at the press, before the panel
+ * takes the keyboard for itself; a launch handing over to its dwarf's chat keeps the one it had.
  */
-const { report: dwarfDelivery, listen: listenDwarfDelivery } = useDwarfDelivery()
+let dockOpener: HTMLElement | null = null
+/** Whether that opener was pressed with the pointer, so taking the keyboard back draws no ring. */
+let dockOpenerPressed = false
+
+/**
+ * The button a pointer press is on, until a key is pressed. A dwarf takes no focus from a mouse
+ * press (`@mousedown.prevent`, so its ring shows only for the keyboard), which leaves the focused
+ * element wherever it was: for a pointer gesture the pressed button is the opener, not the focus.
+ */
+let pressedButton: HTMLElement | null = null
+
+function notePress(event: PointerEvent): void {
+  const target = event.target
+  pressedButton = target instanceof Element ? target.closest<HTMLElement>('button') : null
+}
+
+function forgetPress(): void {
+  pressedButton = null
+}
+
+function rememberDockOpener(): void {
+  const pressed = pressedButton
+  pressedButton = null
+  if (pressed !== null && pressed.isConnected) {
+    dockOpener = pressed
+    dockOpenerPressed = true
+    return
+  }
+  const active = document.activeElement
+  dockOpener = active instanceof HTMLElement && active !== document.body ? active : null
+  dockOpenerPressed = false
+}
+
+/** The panels' own close, Esc among it: the slot empties and the opener takes the keyboard back. */
+function closeDockToOpener(): void {
+  const opener = dockOpener
+  const focusVisible = !dockOpenerPressed
+  dockOpener = null
+  closeMessagePanel()
+  // The opener may have been redrawn away since; a control no longer in the page takes nothing.
+  if (opener !== null) void nextTick(() => opener.isConnected && opener.focus({ focusVisible }))
+}
+const dwarfDelivery = dock.delivery
 const { pinned, sync: syncPinned, toggle: togglePinned } = usePinnedWindow()
 
 /* --- System notifications (#316) — one block, appended --------------------- */
@@ -199,7 +257,6 @@ const {
   toggleAmbienceMute,
   setSettings: setAudioSettings,
   setScene: setAudioScene,
-  setCollapsed: setAudioCollapsed,
   playVoice,
   playSfx,
   playCrew,
@@ -207,10 +264,18 @@ const {
 } = useAudio()
 
 /**
+ * The attention cues (#635): every snapshot, however it arrived, goes through
+ * one watch, which answers the cues whose state BEGAN since the last one — never
+ * a state that was already pending at launch or merely re-polled. The engine
+ * decides whether each is heard (Notification sounds, the hidden window).
+ */
+const attentionWatch = createAttentionWatch()
+
+/**
  * The docked shell's own shape (#90). `layout` is only ever what MAIN reported,
- * because the window's rectangle is derived from the display: the rail's arrow
- * is drawn from `layout.edge`, and drawing it from a guess would point the user
- * off the screen.
+ * because the window's rectangle is derived from the display: the columns and
+ * the dock slot are drawn into width main gave the window, and drawing them from
+ * a guess would paint into width it does not have.
  */
 const {
   layout,
@@ -218,13 +283,12 @@ const {
   applying: layoutApplying,
   sync: syncLayout,
   apply: applyLayout,
-  toggle: toggleLayout,
   setEdge
 } = usePanelLayout(waitForPanelLeaves)
 
 /**
- * The shell's own ground, and the fold that is now the panel's whole motion
- * (#388).
+ * The shell's own ground, and the fold that moves it when the mine column opens
+ * or closes (#388).
  *
  * The columns used to fade inside a window that then jumped to its new
  * rectangle in one frame — the pixels main added or removed were painted at the
@@ -235,25 +299,24 @@ const {
  * clipped to the footprint it had. See composables/useShellFold.ts.
  */
 const shellEl = ref<HTMLElement | null>(null)
+/** The plate's `.m-mat` edge, one art pixel (--px) outside its box (#635). */
+const PLATE_OUTLINE = 2
 /*
- * The rail travels with the fold (#464), so the composable is handed it as well
- * as the ground: it is the one column standing on the free side of everything
- * that leaves, and the free side is the end of the shell a fold clips away.
+ * `railEl` stood here until #635: the closed rail, which travelled with the fold
+ * (#464). The rail is gone (PO ruling 2026-09-27).
  *
- * Read off the component rather than queried out of the DOM, and guarded rather
- * than asserted: what a template ref answers for a component with more than one
- * root is not an element, and a fold is what a shrink waits on — it may lose the
- * travel, never the shrink.
- */
-const railEl = ref<ComponentPublicInstance | null>(null)
-/*
- * The secondary panel and the navigation stack, which now travel with the
- * fold too whenever the mine column is what closes or opens beside them
- * (#566 T5b): both dock beyond the mine column's own free side, which #464
- * had no evidence for and so never carried. `secondaryEl` is a plain
- * element's own ref; `navEl` reads `ShellNav`'s root the same guarded way
- * `railEl` reads `EdgeRail`'s, because a component ref answers an instance,
- * not a node.
+ * The page travels with the fold whenever the mine column is what closes or
+ * opens beside it (#566 T5b): it stands on the mine column's free side.
+ * `secondaryEl` is a plain element's own ref.
+ *
+ * The nav is no longer carried (#635). It stands at the screen edge now, docked
+ * of every other column, so nothing that leaves or arrives is ever between it
+ * and the edge: "opening or closing a mine never moves the nav" is the design's
+ * rule and this is the fold keeping it. It is still named as the strip, the
+ * wall a drawer goes behind — the mine column slides out from behind it now.
+ * `navEl` reads the nav's root guarded rather than asserted, because a
+ * component ref answers an instance, not a node, and a fold is what a shrink
+ * waits on — it may lose the travel, never the shrink.
  */
 const secondaryEl = ref<HTMLElement | null>(null)
 const navEl = ref<ComponentPublicInstance | null>(null)
@@ -264,15 +327,13 @@ const {
 } = useShellFold({
   shell: () => shellEl.value,
   edge: () => layout.value.edge,
-  remaining: () => shellComposition(visibleLayout.value),
-  rail: () => (railEl.value?.$el instanceof HTMLElement ? railEl.value.$el : null),
+  // The plate's 2px edge is drawn outside the shell's box (#635), so the fold
+  // leaves it room.
+  outline: () => PLATE_OUTLINE,
   // The strip is named as well as carried (#585 round 3): it is the wall a
   // drawer goes behind, and the one column whose room a drawer never follows.
   strip: () => (navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null),
-  carried: () => [
-    secondaryEl.value,
-    navEl.value?.$el instanceof HTMLElement ? navEl.value.$el : null
-  ],
+  carried: () => [secondaryEl.value],
   /*
    * The layout queue's own flag, which the fold reads as "not yet" (#585): the
    * browser's `resize` for a grow arrives before Vue has mounted the columns
@@ -301,13 +362,14 @@ const {
  * true — a whole IPC round trip before anything had moved, so a no-op by
  * construction, and two of them on a swap (#396).
  */
+/*
+ * AMENDED for #635: the reservation is read off `mineOpen` alone. The dock slot
+ * stands beside the plate rather than on it, so a window reserved for the slot
+ * is not width the ground is folding in or out of.
+ */
 watch(
   [layout, visibleLayout],
-  () =>
-    settleShellFold(
-      layout.value.expanded !== visibleLayout.value.expanded ||
-        layout.value.mineOpen !== visibleLayout.value.mineOpen
-    ),
+  () => settleShellFold(layout.value.mineOpen !== visibleLayout.value.mineOpen),
   { flush: 'post' }
 )
 
@@ -332,17 +394,12 @@ async function waitForPanelLeaves(): Promise<void> {
   await Promise.allSettled(batch)
 }
 
-/**
- * Which of the book's three compositions is on screen (#156).
- *
- * Named once, here, and handed to everything that has to know — the shell's own
- * ground and padding, and the rail. Read from `expanded` alone, the mine-only
- * composition was indistinguishable from the collapsed rail, which is what left
- * a void between the navigation column and the mine, took the amber frame with
- * it, grew the interior into padding that was no longer reserved, and put a
- * second app mark in the gap. See lib/shell/composition.ts.
+/*
+ * `composition` stood here until #635: which of the rail, the mine alone and the
+ * pages was on screen (#156). The rail and the mine-alone composition it made
+ * are gone (PO ruling 2026-09-27), so the shell always paints its plate, the
+ * nav and the page; lib/shell/composition.ts went with them.
  */
-const composition = computed(() => shellComposition(layout.value))
 
 // The hover line explains what the CURRENT state does; the accessible name
 // stays stable and aria-pressed carries the state (see the pin button below).
@@ -392,22 +449,23 @@ const {
   projects,
   loading: browseLoading,
   error: browseError,
-  exhausted: browseExhausted,
   adding: addingProject,
   addError: addProjectError,
   removing: removingMine,
   removeError: removeMineError,
   load: loadProjects,
-  loadMore: loadMoreProjects,
+  refresh: refreshProjects,
   setSearch: setProjectSearch,
   setTier: setProjectTier,
-  toggleDirection: toggleProjectOrder,
+  setSort: setProjectSort,
   addProject,
   worktreeQuestion,
   openMainProject,
   dismissWorktreeQuestion,
   removeProject
 } = useProjectBrowse()
+// Reads the list again while Mines is on screen when the board shows a measurement it lacks (#635).
+const browseRefresh = createBrowseRefresh()
 
 /**
  * A shortcut the OS refused is flagged on the navigation stack's Settings
@@ -419,6 +477,35 @@ const shortcutBroken = computed(
   () => shortcutState.value !== null && !shortcutState.value.registered
 )
 
+/* --- Features that ship hidden (#635) — one block, appended --------------- */
+/**
+ * The features that ship hidden, as main resolved them from configuration.
+ *
+ * Off until main answers, and off for good if the read fails: a flag is the
+ * permission to show something, and a bridge that could not say so has not
+ * given it. Read once, like the build — nothing changes it while main lives.
+ */
+const featureFlags = ref<FeatureFlags>({ guildAreasEnabled: false })
+
+async function loadFeatureFlags(): Promise<void> {
+  try {
+    featureFlags.value = await window.api.getFeatureFlags()
+  } catch {
+    // Nothing to fall back on but the closed default, which is what stands.
+  }
+}
+
+/**
+ * The page the shell shows: the view's own area, unless that is a guild area
+ * while the guild areas are hidden — nothing may point at them then, so the
+ * view shows the map instead (see `reachableArea`).
+ */
+const page = computed(() => reachableArea(viewState.area, featureFlags.value.guildAreasEnabled))
+
+/** How many dwarfs need you, on the nav's Mines slot (screens/shell.md, W1·10). */
+const needsYou = computed(() => needsYouCount(state.mines))
+/* --- end of the #635 block ------------------------------------------------- */
+
 /**
  * The area the panel is on, when that area is one the design ships as
  * unavailable — the Lab, the Market, or the Laboral Union (#335).
@@ -426,7 +513,7 @@ const shortcutBroken = computed(
  * The list belongs to shellNav rather than to this template: `undefined` here
  * means the area has a screen of its own and one of the branches above draws it.
  */
-const unavailableArea = computed(() => unavailableAreaOf(viewState.area))
+const unavailableArea = computed(() => unavailableAreaOf(page.value))
 
 /**
  * Selecting an area never closes the mine held open beside it — that is the
@@ -456,19 +543,90 @@ function openFromBrowse(projectId: string): void {
 }
 
 /**
- * Remove the mine a card asked about, once MinesPanel has had it confirmed
- * (#169).
+ * Remove the mine a card asked about, once the Mines page has had it confirmed (#169), and say it
+ * happened ("<name> removed", screens/browse.md).
  *
- * Nothing else to do here, and two things deliberately not done. The map is not
- * told: it draws the board, and the poll main publishes as part of the removal
- * no longer carries this mine. Neither is the mine held open beside the list —
- * `syncWithMines` already lets go of an open mine that has left the board, on
- * that same push, and a second path closing it here would be a rule with two
- * homes.
+ * Nothing else to do here, and two things deliberately not done. The map is not told: it draws
+ * the board, and the poll main publishes as part of the removal no longer carries this mine.
+ * Neither is the mine held open beside the list — `syncWithMines` already lets go of an open mine
+ * that has left the board, on that same push, and a second path closing it here would be a rule
+ * with two homes.
  */
-function removeFromBrowse(projectId: string): void {
-  void removeProject(projectId)
+async function removeFromBrowse(projectId: string): Promise<void> {
+  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
+  if (await removeProject(projectId)) showToast(removedToast(name))
 }
+
+/* --- The Mines page (#635) — one block, appended ------------------------- */
+const { showToast } = useToasts()
+
+/**
+ * Every mine as its card, built once per change of the list or the board: the page filters and
+ * orders them itself, so the board rows are joined unfiltered (lib/browse/boardRows.ts).
+ */
+const mineCards = computed(() =>
+  browseRows(projects.value, state.mines, { search: '', tier: null }).map((row) =>
+    mineCardView(row, state.mines)
+  )
+)
+
+/*
+ * A press on a mine that cannot be entered (PANEL-QUESTIONS 6): nothing opens, and a toast says
+ * why, "<name>: <reason>", with the warning icon, from the Mines page and the map alike.
+ */
+function refuseMine(projectId: string): void {
+  const name = projects.value.find((project) => project.id === projectId)?.name ?? projectId
+  showToast(mineRefusalToast(name), 'warning')
+}
+
+function sortProjects(mode: MineSort): void {
+  setProjectSort(mode)
+  showToast(sortToast(mode))
+}
+
+/**
+ * The mine an add just made, until it is on the board (decision log, First run: add a mine: the
+ * folder picked becomes the mine and opens in the mine column at once). Main publishes the new mine
+ * on its next push, so a mine not on the board yet opens as soon as it arrives; the page scrolls
+ * its card into view either way. Adding a mine never opens the Add panel.
+ */
+const pendingOpen = ref<string | null>(null)
+const revealMine = ref<string | null>(null)
+
+function openAdded(mineId: string | undefined): void {
+  if (mineId === undefined) return
+  revealMine.value = mineId
+  if (state.mines.some((mine) => mine.id === mineId)) openFromBrowse(mineId)
+  else pendingOpen.value = mineId
+}
+
+watch(
+  () => state.mines,
+  (mines) => {
+    const id = pendingOpen.value
+    if (id === null || !mines.some((mine) => mine.id === id)) return
+    pendingOpen.value = null
+    openFromBrowse(id)
+  }
+)
+
+async function addMine(): Promise<void> {
+  openAdded(await addProject())
+}
+
+async function adoptMainProject(): Promise<void> {
+  openAdded(await openMainProject())
+}
+
+/** The Music slot says what it did: "Music on" or "Music off", with that icon (components.md, Nav). */
+function toggleMusicAndSay(): void {
+  toggleMusic()
+  showToast(
+    musicPlaying.value ? 'Music on' : 'Music off',
+    musicPlaying.value ? 'music-on' : 'music-off'
+  )
+}
+/* --- end of the #635 block ----------------------------------------------- */
 
 /**
  * Which build is running (see #79). Read from main once on mount, because a
@@ -486,97 +644,108 @@ const versionText = computed(() => (build.value === null ? null : versionLabel(b
 const versionHint = computed(() => (build.value === null ? '' : versionTitle(build.value)))
 
 /**
- * The interior painting's own shape, published to CSS so the mine column can
- * derive its width from the height the shell gives it (#153). Bound from
- * `INTERIOR_ART_SIZE` rather than written into the stylesheet, so the column and
- * the projection inside it cannot disagree about the painting.
+ * The mine column's width, published to CSS from the same constants main
+ * reserves it with (#153, #635): the painting drawn whole at the column's
+ * height less its chrome, plus 16px, never under 300px (screens/shell.md,
+ * Layout). The column is the shell's height, which is the window's less the
+ * dock inset and the plate's padding, so `100vh` less that inset is the
+ * height it is derived from. Bound from `INTERIOR_ART_SIZE` and sceneSizing
+ * rather than written into the stylesheet, so the column, the window main
+ * sized for it and the projection inside it cannot disagree.
  */
-const interiorColumnAspect = `${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height}`
+const mineColumnWidth =
+  `max(${MINE_COLUMN_MIN_WIDTH}px, calc((100vh - ${SHELL_CONTENT_INSET + MINE_COLUMN_CHROME_HEIGHT}px)` +
+  ` * ${INTERIOR_ART_SIZE.width} / ${INTERIOR_ART_SIZE.height} + ${MINE_COLUMN_ART_INSET}px))`
+
+/**
+ * The shell's own height, which the mine column derives its art from (#635): the window's less
+ * the dock inset and the plate's padding, the same inset main reserves the column with.
+ */
+const shellHeight = `calc(100vh - ${SHELL_CONTENT_INSET}px)`
 
 const loading = ref(true)
 const error = ref<string | null>(null)
 let unsubscribe: (() => void) | undefined
-let unlistenMessagePanel: (() => void) | undefined
-let unlistenDwarfDelivery: (() => void) | undefined
 let unlistenAudio: (() => void) | undefined
 /* --- Typography preferences (#370) — one block, appended ------------------- */
 let unlistenTypography: (() => void) | undefined
 /* --- end of the #370 block ------------------------------------------------- */
 
 /**
- * The dwarf the message panel is open on (#159, #162).
- *
- * At most one in the whole app, which is why it never lived in a sprite: the
- * design puts the panel beside the mine rather than beside the dwarf, so no
- * sprite can hold the fact that it is the selected one.
- *
- * READ from the state main holds rather than kept here, since #162. The panel
- * is another window now, and it is the one that learns which dwarf a launch
- * turned out to have started — so a local copy would be a second answer to a
- * question that already has one, and the halo would be drawn from the older of
- * the two.
+ * The dwarf the chat is open on (#159, #162), for the halo on its sprite: at most one in the whole
+ * app. Read off the dock, which is the one that learns which dwarf a launch turned out to have
+ * started — so the halo is drawn from the same answer the chat is.
  */
-const openDwarfId = computed(() =>
-  messagePanel.value.surface === 'message' && messagePanel.value.dwarfId !== ''
-    ? messagePanel.value.dwarfId
-    : null
+const openDwarfId = dock.openDwarfId
+
+/*
+ * WHAT CAME BACK WITH THE PANEL (#635): the observed session's feed and everything around it —
+ * `selectedFeed`, its token, the pushed-feed signal (#196), the shrink log (#249), both re-read
+ * watches (#183, #195), `setWatchedDwarf` — went to MessagePanelWindow.vue for #162 and live in
+ * useMessageDock now, which this shell calls once.
+ */
+
+/*
+ * The board's mine, or else a remembered one nobody is working (PANEL-QUESTIONS 5): it opens like
+ * any other card, onto the empty roster and + Dwarf, drawn from its store row (lib/browse/columnMine).
+ */
+const currentMine = computed<Mine | undefined>(() =>
+  viewState.mineId === null ? undefined : columnMine(viewState.mineId, state.mines, projects.value)
 )
 
 /*
- * WHAT WENT WITH THE PANEL (#162).
+ * A remembered mine held open has no board push to let it go when it is removed, so a change of the
+ * remembered list asks the same question the board push does (useView.syncWithMines).
  *
- * The observed session's transcript and everything around it — `selectedFeed`,
- * its token, the dwarf it answers for, the pushed-feed signal (#196), the
- * shrink log (#249) and both re-read watches (#183, #195) — moved to
- * MessagePanelWindow.vue, whole. They belong to the surface that shows the
- * words, and that surface is a window of its own; reading a transcript here to
- * push it across a process boundary would be a round trip for nothing.
- *
- * `setWatchedDwarf` went with them for the same reason: it is the panel saying
- * which dwarf it has open, and it is no longer this window that knows.
+ * AMENDED for #635 (PANEL-QUESTIONS 25): the question waits until the board AND the remembered list
+ * have each been read once. The app now opens on the mine it last closed on, and the board usually
+ * answers first: a remembered mine nobody is working is only in the list, so asking on the board
+ * alone let it go before the list could say it was still there. Once both are read, a mine that was
+ * removed, or whose folder is gone, is let go of as before — it opens nothing, and the page stays.
  */
-
-const currentMine = computed<Mine | undefined>(() =>
-  viewState.mineId === null ? undefined : state.mines.find((mine) => mine.id === viewState.mineId)
-)
-
-/**
- * The mine column is width the WINDOW has to be given before anything can be
- * drawn into it, so opening or closing a mine reshapes the shell. Serialized in
- * usePanelLayout behind whatever the rail is doing, because the two overlap.
- *
- * The secondary panel is left exactly as it is (#153): the two columns are
- * independent now, so a mine opening beside a closed secondary must not reopen
- * it, and a mine closing while the secondary is closed leaves the rail.
- */
-watch(
-  () => viewState.mineId !== null,
-  (mineOpen) => {
-    // Collapsed into the rail: nothing is drawn, and a mine opened behind it
-    // must not pop the window back out.
-    if (!layout.value.expanded && !layout.value.mineOpen) return
-    void applyLayout({ expanded: layout.value.expanded, mineOpen })
-  }
-)
-
-/**
- * The rail's arrow (#153): it closes the SECONDARY panel and leaves a mine held
- * open beside it standing — the design's own mine mock is exactly that state.
- * With no mine open there is nothing left to show, so it lands on the rail.
- */
-function toggleSecondary(): void {
-  /*
-   * The panel's own sound, both ways (#323), fired HERE rather than off the
-   * layout that comes back: this is the one place the secondary panel's state
-   * is flipped, so it is once per transition however many controls lead to it,
-   * and the press is what the sound is answering. It plays before the layout
-   * has been asked for on purpose — a press whose sound waited for main would
-   * be feedback arriving after the animation it belongs to, and opening from
-   * the rail is the press the collapse gate is exempted for (see volume.ts).
-   */
-  playSfx('panel')
-  void toggleLayout(viewState.mineId !== null)
+let boardRead = false
+let projectsRead = false
+function pruneOpenMine(): void {
+  if (!boardRead || !projectsRead) return
+  syncWithMines(openableMineIds(state.mines, projects.value))
+  settleLaunchMine()
 }
+
+/*
+ * The mine the launch remembered (#635, PANEL-QUESTIONS 25) is judged here, once, with both lists
+ * read: it opens only if it still does, its folder included (launchMineOpens), and it never opens
+ * first to close a moment later. One the person has already replaced by opening another mine stays
+ * unopened. A mine that no longer opens is forgotten in main at once, so the next launch does not
+ * look for it again.
+ */
+function settleLaunchMine(): void {
+  const remembered = takeLaunchMine()
+  if (remembered === null) return
+  if (viewState.mineId !== null) return
+  if (launchMineOpens(remembered, state.mines, projects.value)) openMine(remembered)
+  else window.api.setLaunchView({ area: viewState.area, mineId: null })
+}
+watch(projects, () => {
+  projectsRead = true
+  pruneOpenMine()
+})
+
+/*
+ * The page and the mine the next launch opens on (#635, PANEL-QUESTIONS 25): each change is
+ * reported to main as it happens, one-way, and main coalesces the writes. The two fields are
+ * watched apart so a write-back of an unchanged value reports nothing, and the view the entry
+ * restored before mounting is not reported back — only what changes from it.
+ */
+watch([() => viewState.area, () => viewState.mineId], ([area, mineId]) =>
+  window.api.setLaunchView({ area, mineId })
+)
+
+/*
+ * `toggleSecondary` stood here until #635: the closed rail's arrow, which closed
+ * the page and landed on the rail. The rail is gone (PO ruling 2026-09-27):
+ * closing the Panel is the app mark's `hidePanel`, and the page is always there.
+ * The window's width follows what the Panel shows, in `panelShape` below.
+ */
 
 function hidePanel(): void {
   window.api.hidePanel()
@@ -602,10 +771,17 @@ function raisePanel(): void {
 
 function update(snapshot: MinesSnapshot): void {
   setMines(snapshot)
+  if (viewState.area === 'mines' && browseRefresh.due(snapshot.mines, projects.value)) {
+    void refreshProjects()
+  }
+  for (const cue of attentionWatch.observe(snapshot.mines)) playSfx(cue)
   loading.value = false
-  syncWithMines(snapshot.mines.map((mine) => mine.id))
+  boardRead = true
+  pruneOpenMine()
   // A launch in flight is watching for its own dwarf, which arrives on an
-  // ordinary poll like every other session's — this is that poll.
+  // ordinary poll like every other session's — this is that poll — and the
+  // open chat adopts the feed main pushed with it (#196).
+  dock.observeSnapshot(snapshot)
   if (import.meta.env.DEV) {
     console.log(
       '[renderer] mines:',
@@ -651,19 +827,18 @@ function selectDwarf(dwarf: Dwarf): void {
   // makes one speak. Before the toggle below, deliberately: clicking the
   // selected dwarf again closes its panel and is still a click on the dwarf.
   playVoice(dwarf.role)
-  // The mine's own History panel still shares the shell's dock, and one
-  // conversation surface at a time is the rule whether or not the two overlap
-  // any more: opening this puts that away.
+  // The dock's window slot holds one thing at a time (screens/shell.md,
+  // Layout): opening a chat replaces the history in it (#635).
   historyOpen.value = false
   if (openDwarfId.value === dwarf.id) {
-    void closeMessagePanel()
+    closeMessagePanel()
     return
   }
-  // Naming the mine as well as the dwarf, because the panel window is opened
-  // on a surface rather than handed a selection: the Add Panel that shares its
-  // slot needs the mine, and a message panel that could not name one would be
-  // a window with no way back to the board it came from.
-  if (viewState.mineId !== null) void openMessage(viewState.mineId, dwarf.id)
+  // Naming the mine as well as the dwarf: the Add panel that shares the slot
+  // needs the mine, and the chat follows its mine rather than the board.
+  if (viewState.mineId === null) return
+  rememberDockOpener()
+  dock.openMessage(viewState.mineId, dwarf.id)
 }
 
 /**
@@ -687,15 +862,71 @@ const mineHistory = ref<MineHistoryResult | undefined>(undefined)
 /** Which read is the current one, so a slow answer cannot land on a later mine. */
 let historyToken = 0
 
-/** The mine's History action (#192): one conversation surface at a time (#162). */
+/**
+ * The mine's History action (#192), and the MessagePanel's (#635): the history opens in the dock's
+ * window slot, which holds one thing at a time, so the chat or the Add panel is put away.
+ */
 function openHistory(): void {
-  void closeMessagePanel()
+  closeMessagePanel()
   historyOpen.value = true
 }
+
+/**
+ * What the dock's window slot holds, or `null` when it holds nothing and takes
+ * no width (#635, screens/shell.md, Layout: "the window slot none while no
+ * chat, Add panel or history is open in it").
+ *
+ * One thing at a time: the Add panel while a launch is the dock's (through its
+ * spawn, until its dwarf is handed over), the chat while it is open on a dwarf,
+ * or the history. Keyed so that replacing one with another — a chat for the
+ * history, one dwarf's chat for another's — is fresh content in the same slot.
+ */
+type DockItem = { kind: 'history' | 'launch' | 'message'; key: string }
+const dockItem = computed<DockItem | null>(() => {
+  const mine = currentMine.value
+  if (mine === undefined) return null
+  if (dock.launchOpen.value) return { kind: 'launch', key: `launch:${mine.id}` }
+  const dwarf = dock.selectedDwarf.value
+  if (dwarf !== undefined) return { kind: 'message', key: `message:${dwarf.id}` }
+  return historyOpen.value ? { kind: 'history', key: `history:${mine.id}` } : null
+})
+
+/*
+ * The window is exactly as wide as what the Panel shows (#635, PO ruling
+ * 2026-09-27): the nav and the page always, the mine column while a mine is
+ * open, the dock's window slot while it holds something. Both are width the
+ * WINDOW has to be given before anything can be drawn into it, so each change
+ * reshapes it, serialized in usePanelLayout because the two can overlap.
+ * Watched as two booleans so switching mines, or history from one mine to the
+ * next, asks nothing of the window.
+ */
+/**
+ * The slot's own motion (motion.md, "MessagePanel window (Panel)"): in from its far side, out
+ * toward the shell, read against the edge main reports so a left dock mirrors it.
+ */
+function dockMotion(leaving: boolean): ReturnType<typeof dockWindowMotion> {
+  // Leaving with its mine (the mine is already let go of when the leave starts), the window is
+  // removed at once, before the column fades (motion.md, "Mine column leaves").
+  return dockWindowMotion(leaving, layout.value.edge, { withMine: viewState.mineId === null })
+}
+
+watch([() => viewState.mineId !== null, () => dockItem.value !== null], ([mineOpen, dockOpen]) => {
+  void applyLayout({ mineOpen, dockOpen })
+})
 
 function closeHistory(): void {
   historyOpen.value = false
 }
+
+/*
+ * What the chat or the launch could not do (#159, #279, #347): the console that could not be
+ * brought forward, a path or a link main refused. Said in a toast with the warning icon, where the
+ * app says every other refusal (PANEL-QUESTIONS 10), since the anchored panel has no line of its
+ * own for it; AMENDED for #635 (was: a notice above the panel in its own window).
+ */
+watch(dock.error, (text) => {
+  if (text !== null) showToast(text, 'warning')
+})
 
 async function readMineHistory(mineId: string): Promise<void> {
   const token = ++historyToken
@@ -734,6 +965,19 @@ async function openHistoryPath(payload: { key: string; target: string }): Promis
     if (!result.opened) historyPathRefusal.value = { key: payload.key, reason: result.reason }
   } catch {
     historyPathRefusal.value = { key: payload.key, reason: 'That file could not be opened.' }
+  }
+}
+
+/**
+ * A link in a history message (#635): relayed to main, which validates it again and owns the only
+ * `shell.openExternal` in the app, as the MessagePanel's are (#347). A refusal has nowhere to be
+ * said in a read-only panel, and the link stays where it was.
+ */
+async function openHistoryLink(href: string): Promise<void> {
+  try {
+    await window.api.openExternalLink(href)
+  } catch {
+    // The bridge is the only way out; nothing else can open it.
   }
 }
 
@@ -783,26 +1027,25 @@ watch(
 watch(() => viewState.mineId, setAudioScene, { immediate: true })
 
 /*
- * The shell collapsed to its bare rail silences the ambience and the voices
- * and leaves the music playing (#174). Read off the composition rather than
- * off `expanded`, for the reason that flag could not carry the mine-only
- * composition either (see lib/shell/composition.ts).
+ * The watch that told the audio the shell had collapsed to its bare rail (#174)
+ * stood here until #635. There is no rail to collapse to (PO ruling
+ * 2026-09-27); a hidden window still silences everything, through the window's
+ * own visibility.
  */
-watch(composition, (shape) => setAudioCollapsed(shape === 'rail'), { immediate: true })
 
 /**
  * The mine's Add action (#86).
  *
  * Re-opening the panel already open on this mine is left alone rather than
  * treated as a toggle: `open()` starts a fresh panel, so a second click would
- * silently discard a prompt somebody was half-way through typing. That guard
- * moved to the panel window with the launch itself (#162) — it is the side
- * that knows whether a prompt is half typed. The panel has its own close, and
+ * silently discard a prompt somebody was half-way through typing. That guard is
+ * useMessageDock's, beside the launch itself. The panel has its own close, and
  * Escape.
  */
 function openLaunch(mineId: string): void {
   historyOpen.value = false
-  void openLaunchPanel(mineId)
+  rememberDockOpener()
+  dock.openLaunch(mineId)
 }
 
 /*
@@ -817,28 +1060,25 @@ watch(
     // The history panel follows its mine the same way (#192): a person closing
     // the mine, or the board dropping it, takes the history with it.
     historyOpen.value = false
-    // Closes whatever the panel window has open, the launch included: a launch
-    // whose mine went away has nowhere to put the dwarf it is waiting for.
-    if (messagePanel.value.surface !== 'none') void closeMessagePanel()
+    // Closes whatever the dock has open, the launch included: a launch whose
+    // mine went away has nowhere to put the dwarf it is waiting for.
+    if (dock.surface.value.surface !== 'none') closeMessagePanel()
   }
 )
 
 /*
- * WHAT WENT WITH THE PANEL, PART TWO (#162): `activate` (bringing a session's
- * own console forward, and the sentence said when it could not be), `sendText`
- * and `deliverText`, `kickDwarf`, `answerQuestion` and `decidePermission`.
+ * WHAT CAME BACK WITH THE PANEL, PART TWO (#635): `activate` (bringing a
+ * session's own console forward), `sendText`, `kickDwarf`, `answerQuestion`
+ * and `decidePermission` went to the panel's own window for #162 and are
+ * useMessageDock's now, drawn into the dock slot below.
  *
- * Every one of them was the panel acting on the dwarf it had open, so all six
- * moved to the window that now holds that panel. The verdicts come back here
- * as `dwarfDelivery`, because the marker they draw is on the sprite.
- *
- * REMOVED with them, stated rather than passing unseen: MineScene's
+ * REMOVED for #162, stated rather than passing unseen: MineScene's
  * `activatingId` prop, which dimmed a sprite while its console was being
  * raised. The click that starts that is in the other window now, so dimming a
  * sprite here would be feedback in the place nobody is looking; the panel says
  * out loud when the console could not be opened, which is the part that
- * mattered. DwarfSprite keeps its own `activating` prop and its test — nothing
- * feeds it today, and reviving it would mean publishing the activation the way
+ * mattered. DwarfSprite's own `activating` prop went with DwarfSprite (#635):
+ * nothing fed it, and reviving it would mean publishing the activation the way
  * the delivery verdicts are published.
  */
 
@@ -865,23 +1105,22 @@ let unlistenShowMine: (() => void) | undefined
  * had open is not incidental: the mine may be the one already open, in which
  * case nothing else would clear a selection made before the notification.
  *
- * The layout is asked for explicitly rather than left to the mine watch, which
- * refuses to reopen the window from the bare rail (see its own comment). That
- * refusal is right for a mine opened behind a collapsed shell and wrong here:
- * this click IS the request to look at the mine.
+ * AMENDED for #635: the layout is left to the shape watch above. It used to be
+ * asked for here because the mine watch refused to reopen the window from the
+ * bare rail; the rail is gone, and the watch now gives the column its width
+ * whatever opened the mine.
  */
-async function showMineFromNotification(mineId: string): Promise<void> {
+function showMineFromNotification(mineId: string): void {
   error.value = null
-  if (messagePanel.value.surface !== 'none') void closeMessagePanel()
+  if (dock.surface.value.surface !== 'none') closeMessagePanel()
   historyOpen.value = false
   openMine(mineId)
-  await applyLayout({ expanded: layout.value.expanded, mineOpen: true })
 }
 /* --- end of the #316 block ------------------------------------------------- */
 
 onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
-  // created the window at, which is the rail unless a past run left it open.
+  // created the window at, which is the Panel with nothing beside its page.
   settleShellFold(false)
   void load()
   // The map draws every remembered project, not only the live board (#197),
@@ -891,7 +1130,7 @@ onMounted(() => {
   // `selectArea` below still re-reads on every Mines visit to stay fresh.
   void loadProjects()
   // Adopts the window's REAL shape: which edge it is docked to decides which
-  // way the rail's arrow points, and the renderer never chose it.
+  // way the columns run, and the renderer never chose it.
   void syncLayout()
   // The button's initial "pinned" guess matches main's default; this adopts
   // the real BrowserWindow state (the user may have unpinned on a past run).
@@ -900,29 +1139,24 @@ onMounted(() => {
   // failure can be flagged on the Settings button before anyone opens it.
   void syncShortcut()
   void loadBuild()
+  // The features that ship hidden (#635): pulled once, like the build.
+  void loadFeatureFlags()
   // Adopts the stored Audio settings and the window's REAL visibility, then
   // starts the music if the settings say it should be playing (#174).
   void syncAudio()
   // Hears the window being shown or hidden, and gives the engine its tick.
   unlistenAudio = listenAudio()
   unsubscribe = window.api.onMinesUpdated(update)
-  // Listening BEFORE the pull, deliberately: the panel window can change what
-  // it is showing at any moment, and a state set between the two would
-  // otherwise be the one change the halo never heard.
-  unlistenMessagePanel = listenMessagePanel()
-  void syncMessagePanel()
-  unlistenDwarfDelivery = listenDwarfDelivery()
   /* --- System notifications (#316) — one block, appended ------------------- */
   // Adopts the stored switch, and listens for a click on a notification main
   // raised. Subscribed rather than pulled, like the message panel above: a
   // click can land at any moment and there is no state to poll for.
   void syncNotifications()
-  unlistenShowMine = window.api.onShowMine((mineId) => void showMineFromNotification(mineId))
+  unlistenShowMine = window.api.onShowMine((mineId) => showMineFromNotification(mineId))
   /* --- end of the #316 block ---------------------------------------------- */
   /* --- Typography preferences (#370) — one block, appended ----------------- */
-  // Adopts the stored faces, and listens because the OTHER window can change
-  // them: Settings is here, but the panel window is a second page painting the
-  // messaging face, and either may be the one that heard the change first.
+  // Adopts the stored faces, and listens to main's broadcast of them — which
+  // since #635 only ever comes from this window's own Settings, applied twice.
   void syncTypography()
   unlistenTypography = listenTypography()
   /* --- end of the #370 block ----------------------------------------------- */
@@ -940,8 +1174,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
-  unlistenMessagePanel?.()
-  unlistenDwarfDelivery?.()
   unlistenAudio?.()
   /* --- System notifications (#316) — one block, appended ------------------- */
   unlistenShowMine?.()
@@ -967,205 +1199,318 @@ onBeforeUnmount(() => {
     :reduced-motion="reduced ? 'always' : 'never'"
     :transition="reduced ? REDUCED_MOTION_TRANSITION : undefined"
   >
+    <!--
+      The dock (#635, screens/shell.md, Layout): the dock's window slot and the
+      shell plate side by side, packed against the screen edge the Panel docks
+      to — `row` puts the plate against a right edge and `row-reverse` against a
+      left one, so the slot always stands on the plate's outer side. The window
+      is exactly as wide as the two, and main sizes it (panelBounds.ts).
+
+      The closed rail that stood on the plate's outer side is gone (PO ruling
+      2026-09-27): closing the Panel hides its window, as the app mark does.
+    -->
     <div
-      ref="shellEl"
-      class="shell"
-      :class="[`edge-${layout.edge}`, `is-${composition}`]"
-      :style="{ '--interior-column-aspect': interiorColumnAspect }"
-      @pointerdown.capture="raisePanel"
+      class="panel-dock"
+      :class="`edge-${layout.edge}`"
+      :data-dock="layout.edge"
+      @pointerdown.capture="(raisePanel(), notePress($event))"
+      @keydown.capture="forgetPress"
     >
       <!--
-      The rail and the collapse arrow are one control in one component, because
-      they are one surface in the design: the same #f6b644, with the arrow
-      turned round.
-    -->
-      <EdgeRail
-        ref="railEl"
-        :edge="layout.edge"
-        :composition="composition"
-        @toggle="toggleSecondary"
-      />
-
-      <!--
-      The three columns of the book hand their motion to the ground they stand
-      on (#388): `hold` is the shell's own fold, and each column is only
-      RETAINED here until it ends — unmounting one before main has shrunk the
-      window would repack the row inside a rectangle that has not changed yet.
-      The area switch inside the page and the history dock below still animate
-      themselves: both already move within bounds nothing is resizing.
-    -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <div v-if="visibleLayout.expanded" ref="secondaryEl" class="shell-secondary">
-          <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
+        The dock's window slot, first in the DOM because the design's tab order
+        starts there (screens/shell.md, Left to right: the window, then the nav,
+        the page and the open mine). It holds one thing at a time and takes no
+        width while it holds nothing: the chat, the Add panel or the mine's
+        history (#635), never two of them. Drawn only once main has given the
+        window the slot's width (`visibleLayout`), as the mine column is, and
+        retained while it leaves so the shrink waits for it. What it holds is
+        replaced in place (`dockReplaceMotion`): the old content goes at once
+        and the new one fades in, so two panels never share a 440px slot.
+      -->
+      <PanelTransition :motion="dockMotion" :engine="props.engine" @leave="trackPanelLeave">
+        <div v-if="dockItem && visibleLayout.dockOpen" class="dock-window dm-window">
+          <PanelTransition :motion="dockReplaceMotion" :engine="props.engine" mode="out-in">
+            <AddPanel
+              v-if="dockItem.kind === 'launch' && currentMine"
+              :key="dockItem.key"
+              :mine-name="currentMine.name"
+              :chips="dock.launch.chips.value"
+              :phase="dock.launch.phase.value"
+              :enabled="dock.launch.enabled.value"
+              :command="dock.launch.state.value.command"
+              :prompt="dock.launch.state.value.prompt"
+              :refusal="dock.launch.refusal.value"
+              :error="dock.launch.state.value.error"
+              :model-picker="dock.launch.modelPicker.value"
+              :effort-picker="dock.launch.effortPicker.value"
+              :permissions-visible="dock.launch.permissionsVisible.value"
+              :jev="dock.launch.jev.value"
+              :model="dock.launch.state.value.model"
+              :effort="dock.launch.state.value.effort"
+              :permission-mode="dock.launch.state.value.permissionMode"
+              :failure="dock.launch.state.value.failure"
+              @choose="dock.launch.choose"
+              @command="dock.launch.setCommand"
+              @commit="dock.launch.commit"
+              @prompt="dock.launch.setPrompt"
+              @model="dock.launch.setModel"
+              @effort="dock.launch.setEffort"
+              @permission-mode="dock.launch.setPermissionMode"
+              @toggle-jev="dock.launch.toggleJevEnabled"
+              @toggle-jev-auto="dock.launch.toggleJevAutoAccept"
+              @dismiss-jev="dock.launch.dismissJevDecision"
+              @submit="dock.launch.submit"
+              @retry="dock.launch.retry"
+              @pick-manually="dock.launch.pickManually"
+              @close="closeDockToOpener"
+            />
             <!--
-          The map container from the design: 21px padding on every side, a 2px
-          #fae2b6 border and elevation 5, with the collected-materials totals
-          overlaid in its upper-right corner (VaultChip, inside MapView).
-        -->
-            <PanelFrame v-if="viewState.area === 'map'" variant="map">
-              <div v-if="loading" class="loading" role="status">
-                <span class="spinner" aria-hidden="true"></span>
-                <p>Scanning the hills for active agents...</p>
-              </div>
-              <MapView
-                v-else
-                :mines="state.mines"
-                :projects="projects"
-                :tokens-observed="state.tokensObserved"
-                :materials="state.materials"
-                @open="enterMine"
-              />
-            </PanelFrame>
-
-            <PanelFrame v-else-if="viewState.area === 'mines'">
-              <MinesPanel
-                :projects="projects"
-                :mines="state.mines"
-                :search="browseFilters.search"
-                :tier="browseFilters.tier"
-                :direction="browseFilters.direction"
-                :loading="browseLoading"
-                :error="browseError"
-                :exhausted="browseExhausted"
-                :adding="addingProject"
-                :add-error="addProjectError"
-                :removing="removingMine"
-                :remove-error="removeMineError"
-                :worktree-question="worktreeQuestion"
-                @search="setProjectSearch"
-                @tier="setProjectTier"
-                @toggle-direction="toggleProjectOrder"
-                @load-more="loadMoreProjects"
-                @add="addProject"
-                @open="openFromBrowse"
-                @remove="removeFromBrowse"
-                @open-main-project="openMainProject"
-                @dismiss-worktree="dismissWorktreeQuestion"
-              />
-            </PanelFrame>
-
-            <!--
-          Settings, rebuilt to the design's own screen (#138): the heavy 4px
-          frame is PanelFrame's 'settings' variant, and SettingsPanel draws
-          everything specific to the screen — its title/divider, the
-          shortcut/position/Data-Base sections, and the Application section
-          #142 had nowhere else to put pin/hide/version.
-        -->
-            <PanelFrame v-else-if="viewState.area === 'settings'" variant="settings">
-              <SettingsPanel
-                :shortcut-state="shortcutState"
-                :shortcut-error="shortcutError"
-                :shortcut-recording="shortcutRecording"
-                :shortcut-applying="shortcutApplying"
-                :edge="layout.edge"
-                :edge-applying="layoutApplying"
-                :pinned="pinned"
-                :pin-tooltip="pinTooltip"
-                :version-text="versionText"
-                :version-hint="versionHint"
-                :resetting="metricsResetting"
-                :reset-error="metricsResetError"
-                :audio-settings="audioSettings"
-                :notifications-enabled="notificationsEnabled"
-                :typography="typography"
-                :typography-applying="typographyApplying"
-                :jev-settings="jevSettings"
-                :jev-saving="jevSaving"
-                :jev-providers="jevProviders"
-                :jev-catalogs="jevCatalogs"
-                :open-code-settings="openCodeSettings"
-                :open-code-applying="openCodeApplying"
-                @start-recording="startShortcutRecording"
-                @stop-recording="stopShortcutRecording"
-                @record="recordShortcut"
-                @reset-shortcut="resetShortcut"
-                @close="showMap"
-                @select-edge="setEdge"
-                @toggle-pin="togglePinned"
-                @hide-panel="hidePanel"
-                @reset-confirm="resetMetrics"
-                @audio-change="setAudioSettings"
-                @notifications-change="setNotificationsEnabled"
-                @typography-change="setTypography"
-                @jev-save="saveJevApiKey"
-                @jev-clear="clearJevApiKey"
-                @jev-preferences-change="setJevPreferences"
-                @opencode-plugin-change="setOpenCodePluginEnabled"
-                @opencode-password-save="saveOpenCodeServerPassword"
-                @opencode-password-clear="clearOpenCodeServerPassword"
-              />
-            </PanelFrame>
-
-            <!--
-            The Lab, the Market and the Laboral Union (#335): one overlay for the
-            three areas the design ships as unavailable, keyed so switching
-            between them re-enters the transition rather than swapping the
-            painting under a still frame. `v-else-if` rather than `v-else`,
-            because an area with no screen and no unavailable painting should
-            draw nothing instead of borrowing another hall's sentence.
-          -->
-            <PanelFrame v-else-if="unavailableArea" :key="viewState.area" variant="settings">
-              <UnavailablePanel :feature="unavailableArea" />
-            </PanelFrame>
+              Keyed by dwarf, so opening the chat on another one is a fresh
+              panel. The half-written message is the dock's, per dwarf
+              (decision log, Drafts per dwarf), so a switch keeps it.
+            -->
+            <DwarfMessagePanel
+              v-else-if="dockItem.kind === 'message' && dock.selectedDwarf.value"
+              :key="dockItem.key"
+              :dwarf="dock.selectedDwarf.value"
+              :route-gone="dock.selectedRouteGone.value"
+              :feed="dock.drawnFeed.value"
+              :paging-note="dock.pagingNote.value ?? undefined"
+              :draft="dock.drafts.value[dock.selectedDwarf.value.id]"
+              :send-state="dock.messageStateFor(dock.selectedDwarf.value.id)"
+              :echoes="dock.sentEchoes[dock.selectedDwarf.value.id]"
+              :echo-attachments="dock.sentEchoAttachments[dock.selectedDwarf.value.id]"
+              :kick-state="dock.kickingState.byDwarfId[dock.selectedDwarf.value.id]"
+              :answer-state="dock.questionState.byDwarfId[dock.selectedDwarf.value.id]"
+              focus-on-open
+              @draft="dock.setDraft(dock.selectedDwarf.value.id, $event)"
+              @send="dock.sendText(dock.selectedDwarf.value, $event)"
+              @retry="dock.retryMessage(dock.selectedDwarf.value, $event)"
+              @copy="dock.copyMessage"
+              @kick="dock.kickDwarf(dock.selectedDwarf.value)"
+              @answer="dock.answerQuestion(dock.selectedDwarf.value, $event)"
+              @answer-text="dock.answerQuestionInWords(dock.selectedDwarf.value, $event)"
+              @decide="dock.decidePermission(dock.selectedDwarf.value, $event)"
+              @open-console="dock.activate(dock.selectedDwarf.value)"
+              @open-path="dock.openPath"
+              @open-link="dock.openLink"
+              @page-back="dock.pageBack"
+              @history="openHistory"
+              @close="closeDockToOpener"
+            />
+            <HistoryPanel
+              v-else-if="dockItem.kind === 'history' && currentMine"
+              :key="dockItem.key"
+              :mine="currentMine"
+              :history="mineHistory"
+              :path-refusal="historyPathRefusal"
+              :failed="dwarfDelivery.failed"
+              @close="closeHistory"
+              @open-path="openHistoryPath"
+              @open-link="openHistoryLink"
+            />
           </PanelTransition>
-
-          <p v-if="error" class="notice" role="alert">{{ error }}</p>
         </div>
       </PanelTransition>
 
-      <!--
-        The app mark hides the WINDOW (#156), which is the same hidePanel the
+      <div
+        ref="shellEl"
+        class="shell m-mat"
+        :class="`edge-${layout.edge}`"
+        :data-dock="layout.edge"
+        :style="{ '--mine-column-width': mineColumnWidth, '--shell-h': shellHeight }"
+      >
+        <!--
+        The nav, at the screen edge (#635), and first of the columns in the DOM (PANEL-QUESTIONS 2,
+        design lead ruling 2026-09-27): tab order is the DOM order, and it is the nav, then the
+        page, then the open mine on both docks (accessibility.md, Keyboard). CSS `order` below
+        keeps it the last column of the row, which `row` puts against a right edge and
+        `row-reverse` against a left one, so nothing moves on screen for it.
+        Its app mark hides the WINDOW (#156), which is the same hidePanel the
         global shortcut and Settings' own hide control already ask for. The
         layout is deliberately untouched: the panel that comes back is the one
         that went away, mine and page and all.
-      -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <ShellNav
-          v-if="visibleLayout.expanded || visibleLayout.mineOpen"
-          ref="navEl"
-          :area="viewState.area"
-          :broken="shortcutBroken"
-          :music-playing="musicPlaying"
-          @select="selectArea"
-          @hide="hidePanel"
-          @toggle-music="toggleMusic"
-        />
-      </PanelTransition>
 
-      <!--
+        The mode lever is left out until a mode beyond the Panel exists: Veta
+        and Valle are later slices, and the docs say nothing of a lever whose
+        destination is not built yet, so the nav's own "no dead buttons" rule
+        is the fallback until that is ruled on.
+
+        AMENDED for #635: the nav and the page are always there while the
+        window shows ("the page and the nav are always there"), so neither is
+        mounted or retained by the fold any more; only the mine column is.
+      -->
+        <PanelNav
+          ref="navEl"
+          :page="page"
+          :guild="featureFlags.guildAreasEnabled"
+          :badge="needsYou"
+          :music="musicPlaying"
+          :warn="shortcutBroken"
+          :lever="false"
+          @nav="selectArea"
+          @mark="hidePanel"
+          @music="toggleMusicAndSay"
+        />
+
+        <!--
+      The page. The area switch inside it animates itself: it moves within
+      bounds nothing is resizing.
+    -->
+        <div ref="secondaryEl" class="shell-secondary">
+          <PanelTransition :engine="props.engine" @leave="trackPanelLeave">
+            <!--
+          The Map page (#635) in the page column, where the Mines page stands: the redesign
+          replaced the 21px map frame, so the painting is no longer letterboxed inside it.
+          Until the first board arrives it claims no empty valley (`loading`).
+        -->
+            <MapPage
+              v-if="page === 'map'"
+              class="shell-page"
+              :mines="state.mines"
+              :projects="projects"
+              :materials="state.materials"
+              :open-id="viewState.mineId"
+              :variant="mapVariant"
+              :adding="addingProject"
+              :loading="loading"
+              @open="enterMine"
+              @refuse="refuseMine"
+              @add="addMine"
+            />
+
+            <MinesList
+              v-else-if="page === 'mines'"
+              class="shell-page"
+              :cards="mineCards"
+              :open-id="viewState.mineId"
+              :search="browseFilters.search"
+              :tier="browseFilters.tier"
+              :sort="browseFilters.sort"
+              :loading="browseLoading"
+              :error="browseError"
+              :adding="addingProject"
+              :add-error="addProjectError"
+              :removing="removingMine"
+              :remove-error="removeMineError"
+              :worktree-question="worktreeQuestion"
+              :reveal-id="revealMine"
+              :engine="props.engine"
+              @search="setProjectSearch"
+              @tier="setProjectTier"
+              @sort="sortProjects"
+              @add="addMine"
+              @open="openFromBrowse"
+              @refuse="refuseMine"
+              @remove="removeFromBrowse"
+              @open-main-project="adoptMainProject"
+              @dismiss-worktree="dismissWorktreeQuestion"
+            />
+
+            <!--
+          Settings (#138, #635): the redesigned page, standing on the shell's plate
+          like every other page — its header, the seven section tabs and the
+          chosen section's rows.
+        -->
+            <SettingsPanel
+              v-else-if="page === 'settings'"
+              class="shell-page"
+              :shortcut-state="shortcutState"
+              :shortcut-error="shortcutError"
+              :shortcut-recording="shortcutRecording"
+              :shortcut-applying="shortcutApplying"
+              :edge="layout.edge"
+              :edge-applying="layoutApplying"
+              :pinned="pinned"
+              :pin-tooltip="pinTooltip"
+              :version-text="versionText"
+              :version-hint="versionHint"
+              :resetting="metricsResetting"
+              :reset-error="metricsResetError"
+              :audio-settings="audioSettings"
+              :notifications-enabled="notificationsEnabled"
+              :typography="typography"
+              :typography-applying="typographyApplying"
+              :jev-settings="jevSettings"
+              :jev-saving="jevSaving"
+              :jev-providers="jevProviders"
+              :jev-catalogs="jevCatalogs"
+              :open-code-settings="openCodeSettings"
+              :open-code-applying="openCodeApplying"
+              @start-recording="startShortcutRecording"
+              @stop-recording="stopShortcutRecording"
+              @record="recordShortcut"
+              @reset-shortcut="resetShortcut"
+              @close="showMap"
+              @select-edge="setEdge"
+              @toggle-pin="togglePinned"
+              @hide-panel="hidePanel"
+              @reset-confirm="resetMetrics"
+              @audio-change="setAudioSettings"
+              @notifications-change="setNotificationsEnabled"
+              @typography-change="setTypography"
+              @jev-save="saveJevApiKey"
+              @jev-clear="clearJevApiKey"
+              @jev-preferences-change="setJevPreferences"
+              @opencode-plugin-change="setOpenCodePluginEnabled"
+              @opencode-password-save="saveOpenCodeServerPassword"
+              @opencode-password-clear="clearOpenCodeServerPassword"
+            />
+
+            <!--
+            The Lab, the Market and the Laboral Union (#335, #635): the guild
+            page, reached only once the guild flag reveals them (`page` never
+            names one otherwise), keyed so switching between them re-enters the
+            transition rather than swapping the painting under a still page.
+            `v-else-if` rather than `v-else`, because an area with no screen
+            and no guild page should draw nothing instead of borrowing another
+            hall's sentence. It stands on the plate itself, with no frame of
+            its own, as the design draws it.
+          -->
+            <GuildPage
+              v-else-if="unavailableArea"
+              :key="page"
+              class="shell-page"
+              :area="unavailableArea"
+            />
+          </PanelTransition>
+
+          <p v-if="error" class="notice" role="alert">{{ error }}</p>
+          <!--
+            Toasts stand in the page column, centred 56px from its bottom, whatever raised them
+            (PANEL-QUESTIONS 10, PO ruling 2026-09-27): never over the painting, the dwarfs or the
+            MessagePanel's composer. The column is the containing block.
+          -->
+          <ToastHost />
+        </div>
+
+        <!--
         One mine beside AT MOST one secondary panel: the concurrent model the
         design's exports prove, and no more than that — the source warns in as
         many words against assuming arbitrary multi-panel stacking. The column
         follows the view's own open mine, as it always has; what main's
-        `mineOpen` decides is whether this whole block is drawn, so the app mark
-        can collapse the shell without the view forgetting its mine (#153).
+        `mineOpen` decides is whether this whole block is drawn, because it is
+        width the window has to be given first (#153). The column hands its
+        motion to the ground it stands on (#388): `hold` is the shell's own
+        fold, and the column is only RETAINED here until it ends — unmounting it
+        before main has shrunk the window would repack the row inside a
+        rectangle that has not changed yet.
       -->
-      <PanelTransition
-        :hold="holdColumn"
-        :hold-enter="enterColumn"
-        :engine="props.engine"
-        @leave="trackPanelLeave"
-      >
-        <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
-          <PanelFrame>
+        <PanelTransition
+          :hold="holdColumn"
+          :hold-enter="enterColumn"
+          :engine="props.engine"
+          @leave="trackPanelLeave"
+        >
+          <div v-if="visibleLayout.mineOpen && currentMine" class="shell-mine">
             <!--
-            Keyed by the mine, so switching from one to another is a fresh
-            scene rather than the same one handed different dwarfs (#153). The
-            walk board tells an arrival from the opening crew by which snapshot
-            it first saw them, and a reused board would parade a whole new
-            crew across the interior every time the user changed mine.
+            The redesigned mine column (#635), on the plate itself as the design
+            draws it. Keyed by the mine, so switching from one to another is a
+            fresh column rather than the same one handed different dwarfs (#153):
+            a dwarf already there when a column opens is drawn settled in its
+            state, and only a later arrival fades in.
           -->
-            <MineScene
+            <MineColumn
               :key="currentMine.id"
               :mine="currentMine"
               :arrived="state.arrived"
@@ -1173,230 +1518,209 @@ onBeforeUnmount(() => {
               :kick-states="dwarfDelivery.kick"
               :selected-id="openDwarfId"
               :ambience-muted="ambienceMuted"
-              @back="leaveMine"
+              @close="leaveMine"
               @select="selectDwarf"
               @add="openLaunch(currentMine.id)"
               @history="openHistory"
               @toggle-ambience-mute="toggleAmbienceMute"
               @crew-sound="playCrew"
             />
-          </PanelFrame>
-        </div>
-      </PanelTransition>
-
-      <!--
-      The mine's History panel, and it is what is LEFT of the dock (#162).
-
-      The MessagePanel and the Add Panel used to share this slot; they are a
-      window of their own now, beside the shell, which is how the design draws
-      all three. This one stayed because #162 asked for those two — the same
-      mock does put the history panel out here as well, so moving it is the
-      obvious follow-up rather than something this slot is right about.
-
-      Opening it still closes the panel window and being selected still closes
-      it, even though the two no longer overlap: one conversation surface at a
-      time is a rule about attention, not about geometry.
-    -->
-      <PanelTransition axis="vertical" :engine="props.engine" @leave="trackPanelLeave">
-        <!--
-        Keyed by mine, so opening it on another mine is a fresh panel and a fresh
-        default tab rather than a selection carried over from another folder.
-      -->
-        <div
-          v-if="historyOpen && currentMine"
-          :key="`history:${currentMine.id}`"
-          class="message-dock"
-        >
-          <MineHistoryPanel
-            :key="currentMine.id"
-            :mine="currentMine"
-            :history="mineHistory"
-            :path-refusal="historyPathRefusal"
-            @close="closeHistory"
-            @open-path="openHistoryPath"
-          />
-        </div>
-      </PanelTransition>
+          </div>
+        </PanelTransition>
+      </div>
     </div>
   </MotionConfig>
 </template>
 
 <style scoped>
 /*
- * The shell is the whole window: a docked strip whose columns run from its free
- * edge to the screen edge it hangs on. A left-docked panel is the same DOM in
- * the other direction, which is what `row-reverse` buys — one order to reason
- * about, mirrored once.
+ * The dock (#635, screens/shell.md, Layout and Parts): the dock's window slot
+ * and the shell plate in one row, packed against the screen edge the Panel
+ * docks to. A left-docked Panel is the same DOM in the other direction, which
+ * is what `row-reverse` buys — one order to reason about, mirrored once — and
+ * `flex-end` is the right of a `row` and the left of a `row-reverse`, the
+ * docked side each time.
  *
- * Its ground is also the surface the whole panel's motion is drawn on (#388):
- * `clip-path` is set on this element, from useShellFold, and folds it toward
- * the docked edge so main only ever resizes the window into pixels that are
- * already transparent. Nothing here declares it — a clip left in the
- * stylesheet would be a second opinion about how wide the shell is — but every
- * rule below is inside it, the shadow and the radius included.
+ * The window is exactly as wide as what the row shows (PO ruling 2026-09-27);
+ * main reserves every number below and nothing else (panelBounds.ts, which
+ * pins these custom properties to its own constants). Packed against the
+ * docked edge, a frame in which the window and the row briefly disagree leaves
+ * its slack on the FREE side, which is the band main is adding or taking and
+ * is transparent either way (#488). What still does not fit on a screen
+ * narrower than the dock runs off the far side, away from the docked edge
+ * (decision log, Narrow screen).
  */
-.shell {
-  position: relative;
+.panel-dock {
+  --shell-edge: 2px;
+  --dock-inset: 12px;
+  --dock-gap: 12px;
+  --dock-width: 440px;
+  --dock-free-room: 6px;
   display: flex;
+  justify-content: flex-end;
   height: 100vh;
   overflow: hidden;
   color: var(--color-cream);
   font-size: var(--text-meta);
+}
+.panel-dock.edge-left {
+  flex-direction: row-reverse;
+}
+/*
+ * The dock's window slot (`.dm-window`): as tall as the shell, as wide as what
+ * it holds, and never shrunk. The dock's 12px gap is measured from the plate's
+ * box, which already stands 2px off the slot on its own margin, so the slot
+ * takes the rest; on its outer side it keeps the room its content's raised
+ * material draws beyond its box (`.m-mat` edge, `.m-raised` shadow), which main
+ * reserves as DOCK_FREE_ROOM.
+ */
+.dock-window {
+  display: flex;
+  flex: none;
+  width: var(--dock-width);
+  height: calc(100vh - 2 * var(--dock-inset));
+  min-height: 0;
+  margin: var(--dock-inset) calc(var(--dock-gap) - var(--shell-edge)) var(--dock-inset)
+    var(--dock-free-room);
+}
+.panel-dock.edge-left .dock-window {
+  margin-right: var(--dock-free-room);
+  margin-left: calc(var(--dock-gap) - var(--shell-edge));
+}
+/* The history fills the slot (`.dm-hist`: width 440px, height 100%). */
+.dock-window > .dm-hist {
+  height: 100%;
+}
+/*
+ * The redesigned Panel's plate (#635, screens/shell.md, Layout and Parts): one
+ * rock plate with a brass-lo edge, 6px padding and 6px gaps, inside the dock's
+ * 12px inset from the top and the bottom of the work area, held 2px off the
+ * screen edge so that edge shows. The window still spans the work area; the
+ * inset is drawn here, so no platform's window geometry changes for it.
+ *
+ * The 2px on the FREE side is not in the design's margin: the plate's material
+ * draws its edge 2px outside its box on every side (`.m-mat`), and main
+ * reserves that room in the window so the free edge is painted rather than cut
+ * off by it (SHELL_EDGE_MARGIN in main/shell/panelBounds.ts). With the dock
+ * slot open that room is part of the dock's 12px gap.
+ *
+ * Its ground is also the surface the mine column's motion is drawn on (#388):
+ * `clip-path` is set on this element, from useShellFold, and folds it toward
+ * the docked edge so main only ever resizes the window into pixels that are
+ * already transparent. Nothing here declares it — a clip left in the
+ * stylesheet would be a second opinion about how wide the shell is — but every
+ * rule below is inside it.
+ *
+ * The padding is load-bearing rather than decoration: main reserves it in the
+ * window, and the mine column's width is derived from the height it leaves.
+ *
+ * It is as wide as its columns (`flex: 0 1 auto`) rather than as the window,
+ * so the dock slot beside it never reads to the fold as the plate growing, and
+ * on a screen narrower than the dock its page column is the part that gives
+ * way (the nav and the mine column never shrink).
+ */
+.shell {
+  --shell-pad: 6px;
+  --shell-gap: 6px;
+  --page-width: 440px;
+  --mat-fill: var(--rock);
+  --mat-hi: var(--rock-hi);
+  --mat-lo: var(--rock-lo);
+  --mat-edge: var(--brass-lo);
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  /* May shrink below its columns on a screen narrower than the dock, so the page gives way. */
+  min-width: 0;
+  justify-content: flex-end;
+  height: calc(100vh - 2 * var(--dock-inset));
+  margin: var(--dock-inset) var(--shell-edge);
+  gap: var(--shell-gap);
+  padding: var(--shell-pad);
+  overflow: hidden;
 }
 .shell.edge-left {
   --panel-motion-x: -12px;
   flex-direction: row-reverse;
 }
 /*
- * The closed window is the design's 20px rail wherever the platform will make
- * one that narrow, and its own floor where it will not — Windows will not, and
- * since #465 it is the only one that will not (`minWindowWidth` in
- * main/platform/windowMetrics.ts, #153). The rail itself is 20px either way,
- * held against the DOCKED side so both edges look the same: `flex-end` is the
- * right of a `row` and the left of a `row-reverse`, which is exactly the docked
- * side each time.
+ * Where each column stands, which is no longer where it is in the DOM (PANEL-QUESTIONS 2, design
+ * lead ruling 2026-09-27). The nav comes first of the columns in the DOM so Tab walks the nav, then
+ * the page, then the open mine on both docks (accessibility.md, Keyboard); `order` keeps it at the
+ * screen edge, so a `row` still runs page, mine, nav from the free edge and `row-reverse`
+ * mirrors it.
  */
-.shell.is-rail {
-  justify-content: flex-end;
+.shell > .shell-secondary {
+  order: 1;
+}
+.shell > .shell-mine {
+  order: 2;
+}
+.shell > .dm-nav {
+  order: 3;
 }
 /*
- * Both of the book's pages are drawn on the SAME shell (#156): the amber ground,
- * the 8px padding, the radius and the shadow belong to any composition that has
- * something in it, not only to the one with a secondary panel.
- *
- * The padding is load-bearing rather than decoration. main reserves it in the
- * window (SHELL_FRAME_WIDTH in main/shell/panelBounds.ts) and the mine column's
- * width is derived from the height it leaves, so a composition that skipped it
- * left the window 8px wider than the columns it drew — the void the acceptance
- * run photographed — and grew the painting into the difference.
+ * The page column (#635): 440px, and on a screen narrower than the dock it is
+ * the part that gives way (decision log, Narrow screen). The column shrinks and
+ * clips, and the page inside keeps its 440px anchored against the mine column
+ * — the docked side — so it is cut at its far side, exactly as the prototype's
+ * `minmax(0, 440px)` column does. The nav and the mine column never shrink.
  */
-/*
- * And both of them pack against the DOCKED edge, which is the whole of #488 and
- * of #472 before it, whose own class for the held frames this replaces.
- *
- * `.shell` is `overflow: hidden` and `.shell-mine` is `flex: none` standing at
- * the docked end of the row, so a row that disagrees with the box around it
- * overflows at whichever end the packing leaves loose — and the two disagree
- * every time the panel opens or closes, in both directions. main's `setBounds`
- * is synchronous inside the IPC handler, so the native window is already its
- * new width when the promise resolves, while the renderer's own box catches up
- * only when the browser delivers `resize`. Packed from the free edge those
- * frames are painted with the mine clipped and then snapped back: the blink.
- * Packed against the docked edge they are painted with the FREE side loose,
- * which is the band main is adding or taking and is transparent either way —
- * #388's rule, kept by the row instead of by a class that watches for it.
- *
- * At rest this moves nothing: the row exactly fills the box, so there is no
- * slack for either packing to place. `.shell.is-rail` has said the same thing
- * for the same reason since #153, and `flex-end` is the right of a `row` and
- * the left of a `row-reverse` — the docked side on both edges.
- *
- * The rail's carry is unaffected: `railStand` and `foldedRailOffset` measure
- * the rail against the shell's box with `getBoundingClientRect`, so they read
- * where the row actually put it rather than assuming which rule put it there.
- */
-.shell.is-mine,
-.shell.is-pages {
-  justify-content: flex-end;
-  gap: var(--space-nav-gap);
-  padding: var(--space-nav-gap);
-  border-radius: var(--radius-default);
-  background: var(--color-rail);
-  box-shadow: var(--elevation-5);
-}
-/*
- * Where the mine's History panel sits — all that is left of this dock (#162).
- *
- * It used to hold three panels and the honest reconciliation of the design's
- * 990px with a window that could not grow for it: the mock draws the panel
- * BESIDE the shell, this app was one docked window, and only its widest
- * composition had 990 design pixels to give. That reconciliation is gone with
- * the compromise it belonged to — the MessagePanel and the Add Panel have a
- * window of their own now (see main/shell/panelBounds.ts) and take the
- * design's width beside the shell, not inside it.
- *
- * The history panel is still `min(990px, 100%)` of this strip, which is the
- * same compromise for the one surface #162 did not move. Held against the FREE
- * edge — the side away from the screen edge the window is docked to — which is
- * the relation the mock draws: panel on one side, mine on the other.
- * `pointer-events` is handed back only to the panel itself, so the strip beside
- * it never swallows a click meant for the mine underneath.
- */
-.message-dock {
-  position: absolute;
-  z-index: 60;
-  right: var(--space-nav-gap);
-  bottom: var(--space-nav-gap);
-  left: var(--space-nav-gap);
-  display: flex;
-  justify-content: flex-start;
-  pointer-events: none;
-}
-.shell.edge-left .message-dock {
-  justify-content: flex-end;
-}
-.message-dock > * {
-  pointer-events: auto;
-}
 .shell-secondary {
   position: relative;
   display: flex;
-  flex: 1;
+  flex: 0 1 var(--page-width);
   flex-direction: column;
+  /*
+   * A width of its own as well as the basis (#635, live check): the plate is sized to its
+   * columns, and a flex basis is not counted when a container is sized to its content. The
+   * page's own content is absolute, so without this the plate drew the column 0px wide.
+   */
+  width: var(--page-width);
   min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 .shell-secondary > * {
   flex: 1;
   min-height: 0;
 }
-.shell-secondary > .panel-frame {
+.shell-secondary > .shell-page {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--page-width);
+}
+.shell.edge-left .shell-secondary > .shell-page {
+  right: auto;
+  left: 0;
 }
 /*
- * The mine's own column, outboard of the navigation stack (see the exports).
+ * The mine's own column, between the page and the nav (#635): the nav anchors
+ * to the screen edge and the mine opens inward beside it, so opening or closing
+ * a mine never moves the nav (screens/shell.md, W1).
  *
- * Its width is DERIVED, not declared (#153): the painting is drawn at the full
- * height of the shell's content area with its aspect preserved and nothing
- * cropped, so `aspect-ratio` on a full-height column is the whole rule — the
- * browser reads the height the flex row already gave it and answers with the
- * width. The design's 245px is what that returns at the mock's own 768-tall
- * composition; reserving 245 on a 1392-tall display is what made the interior
- * read tiny. main reserves the same number in the window; see mineColumnWidth
- * in main/shell/panelBounds.ts and interiorColumnWidth in lib/scene/sceneSizing.
+ * Its width is DERIVED, not declared (#153, #635): the painting drawn whole at
+ * the column's height less its chrome, plus 16px, never under 300px — the
+ * `--mine-column-width` the script binds. main reserves the same number in the
+ * window; see mineColumnWidth in main/shell/panelBounds.ts and
+ * interiorColumnWidth in lib/scene/sceneSizing. The mine column inside
+ * declares the same width from the same constants and `--shell-h`.
  */
 .shell-mine {
   position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: auto;
+  width: var(--mine-column-width);
   height: 100%;
-  aspect-ratio: var(--interior-column-aspect);
   min-width: 0;
 }
-.shell-mine > .panel-frame {
+.shell-mine > .dm-minecol {
   flex: 1;
   min-height: 0;
-}
-.loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-settings);
-  color: var(--color-tooltip-text);
-}
-.loading p {
-  margin: 0;
-}
-.spinner {
-  width: 25px;
-  height: 25px;
-  border: 3px solid var(--color-control);
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
 }
 .notice {
   position: absolute;
@@ -1409,12 +1733,7 @@ onBeforeUnmount(() => {
   padding: 9px var(--space-settings);
   border-left: 3px solid var(--danger-line);
   border-radius: var(--radius-default);
-  color: var(--danger-ink);
+  color: var(--danger-hi);
   background: var(--danger-bg);
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>

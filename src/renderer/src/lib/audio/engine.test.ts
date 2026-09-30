@@ -10,7 +10,14 @@ const TRACKS = ['t1.ogg', 't2.ogg', 't3.ogg'] as const
 // AMENDED for #330: the `working` bed is retired, so there is one room tone.
 const BEDS = { silence: 'silence.mp3' } as const
 const VOICES = { foreman: 'foreman.mp3', worker: 'worker.mp3', worker2: 'worker2.mp3' } as const
-const SFX = { click: 'click.mp3', panel: 'panel.mp3' } as const
+// AMENDED for #635: the three attention cues are interface kinds too.
+const SFX = {
+  click: 'click.mp3',
+  panel: 'panel.mp3',
+  question: 'question.mp3',
+  permission: 'permission.mp3',
+  finished: 'finished.mp3'
+} as const
 /**
  * The crew's own recordings (#330), one list per cue exactly as the real
  * inventory is: two footstep variants, and one recording for each rank's own
@@ -603,6 +610,33 @@ describe('createAudioEngine — the crew (#330)', () => {
     expect(crewClips()[0]!.volume).toBeCloseTo(0.5 * 0.05)
   })
 
+  it('loops the footsteps for as long as the dwarf walks (#637)', () => {
+    // The walk is one short seamless loop now, not a recording longer than any
+    // crossing: reaching its end is the loop wrapping, never the walk ending.
+    engine.playCrew(cue({ dwarfId: 'd1', cue: 'walk', gain: 0.05 }))
+    const steps = crewClips()[0]!
+    expect(steps.loop).toBe(true)
+
+    steps.end()
+    steps.end()
+    expect(steps.stopped).toBe(false)
+    expect(steps.playing).toBe(true)
+    expect(crewClips()).toEqual([steps])
+
+    // Only the dwarf stopping stops it, over the release as before.
+    engine.playCrew(cue({ dwarfId: 'd1', cue: 'walk', ending: true }))
+    expect(steps.ramp).toEqual({ to: 0, ms: CREW_RELEASE_MS })
+    time.now += CREW_RELEASE_MS
+    engine.tick()
+    expect(steps.stopped).toBe(true)
+  })
+
+  it('plays a strike and a grind once each, never looped (#637)', () => {
+    engine.playCrew(cue({ dwarfId: 'd1' }))
+    engine.playCrew(cue({ role: 'worker2', dwarfId: 'd2', cue: 'shift' }))
+    for (const clip of crewClips()) expect(clip.loop, clip.src).toBe(false)
+  })
+
   it('gives a dwarf the same footsteps every time it walks', () => {
     // It walks in on one pair of boots and it leaves in the same pair.
     const walked: string[] = []
@@ -924,11 +958,29 @@ describe('createAudioEngine — interface sounds (#323)', () => {
     expect(player.clips).toHaveLength(0)
   })
 
+  // AMENDED for #635 (PANEL-QUESTIONS Q22): this played 'panel', and the panel
+  // cue is now the one interface sound a hide lets finish — it is the sound OF
+  // the hide (see the case below). The claim is unchanged for every other kind.
   it('cuts an interface sound mid-play when the app is hidden', () => {
-    engine.playSfx('panel')
+    engine.playSfx('click')
     const clip = player.live()[0]!
     engine.setGates({ hidden: true, collapsed: false })
     expect(clip.stopped).toBe(true)
+  })
+
+  it('lets the panel cue that announces a hide play out across it (#635)', () => {
+    // The close cue starts on the push that says the window went away, so the
+    // gate shuts in the same breath; cutting it there would make it inaudible.
+    engine.playSfx('question')
+    engine.playSfx('panel')
+    const [question, panel] = player.live()
+    engine.setGates({ hidden: true, collapsed: false })
+    expect(panel!.stopped).toBe(false)
+    expect(panel!.playing).toBe(true)
+    expect(question!.stopped).toBe(true)
+    // Surviving is not starting: hidden still opens no new panel cue.
+    engine.playSfx('panel')
+    expect(player.clips).toHaveLength(2)
   })
 
   it('says nothing when the Effects slider is all the way down', () => {
@@ -1004,5 +1056,93 @@ describe('createAudioEngine — dispose', () => {
     engine.playVoice('foreman')
     engine.tick()
     expect(player.clips).toHaveLength(0)
+  })
+})
+
+/*
+ * The attention cues (#635) — APPENDED. sound.md: once, never looped, one of a
+ * kind at a time, heard from every mine and in Veta, silenced by `hidden`, and
+ * gated ONLY by Notification sounds — never by a mine's mute or its focus.
+ */
+describe('createAudioEngine — attention cues (#635)', () => {
+  let player: FakeAudioPlayer
+  let engine: AudioEngine
+
+  beforeEach(() => {
+    player = createFakeAudioPlayer()
+    const time = clock()
+    engine = createAudioEngine({
+      player,
+      tracks: TRACKS,
+      beds: BEDS,
+      voices: VOICES,
+      sfx: SFX,
+      crew: CREW,
+      random: inOrderRandom(),
+      now: () => time.now
+    })
+  })
+
+  it.each(['question', 'permission', 'finished'] as const)(
+    'plays %s its own recording once, never looped',
+    (kind) => {
+      engine.playSfx(kind)
+      const clips = player.live()
+      expect(clips.map((clip) => clip.src)).toEqual([SFX[kind]])
+      expect(clips[0]!.loop).toBe(false)
+      expect(clips[0]!.volume).toBeCloseTo(0.525)
+    }
+  )
+
+  it('plays with no mine focused and with the mine muted, because the cues are global', () => {
+    engine.setScene({ mineId: null })
+    engine.setAmbienceMuted(true)
+    engine.playSfx('question')
+    expect(player.live().map((clip) => clip.src)).toEqual(['question.mp3'])
+  })
+
+  it('plays through a collapsed shell', () => {
+    engine.setGates({ hidden: false, collapsed: true })
+    engine.playSfx('permission')
+    expect(player.live().map((clip) => clip.src)).toEqual(['permission.mp3'])
+  })
+
+  it('opens nothing with Notification sounds off', () => {
+    engine.setSettings({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: false })
+    engine.playSfx('question')
+    engine.playSfx('permission')
+    engine.playSfx('finished')
+    expect(player.clips).toHaveLength(0)
+  })
+
+  it('cuts a cue still sounding when Notification sounds is switched off', () => {
+    engine.playSfx('finished')
+    const clip = player.live()[0]!
+    engine.setSettings({ ...DEFAULT_AUDIO_PREFERENCES, notificationSounds: false })
+    expect(clip.stopped).toBe(true)
+  })
+
+  it('cuts the previous cue of its own kind and no other', () => {
+    engine.playSfx('question')
+    const first = player.live()[0]!
+    engine.playSfx('permission')
+    engine.playSfx('click')
+    expect(first.stopped).toBe(false)
+    engine.playSfx('question')
+    expect(first.stopped).toBe(true)
+    expect(player.live().map((clip) => clip.src)).toEqual([
+      'permission.mp3',
+      'click.mp3',
+      'question.mp3'
+    ])
+  })
+
+  it('opens nothing while the app is hidden, and cuts a cue when it hides', () => {
+    engine.playSfx('question')
+    const clip = player.live()[0]!
+    engine.setGates({ hidden: true, collapsed: false })
+    expect(clip.stopped).toBe(true)
+    engine.playSfx('permission')
+    expect(player.live()).toHaveLength(0)
   })
 })

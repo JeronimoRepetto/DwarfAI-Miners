@@ -69,10 +69,11 @@ around work that is actually happening.
 
 ## What the panel shows
 
-The panel docks against one screen edge as a thin rail; the arrow on the rail slides it open. Along
-its outer edge sits the app mark — pressing it takes the window away, exactly as the global
-shortcut does — and under that a column of **six areas**, plus a note button at the bottom for the
-music:
+The panel docks against one screen edge, and the window is exactly as wide as what it shows: the
+navigation column against the edge, the page beside it, the open mine's column between them, and
+the mine's history docked on the outer side while it is open. Along the screen edge sits the app
+mark — pressing it takes the window away, exactly as the global shortcut and the tray do — and
+under that a column of **six areas**, plus a note button at the bottom for the music:
 
 | Area              | What it is                                                                                                  |
 | ----------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -653,19 +654,18 @@ Three independent channels, all off one engine:
   a foreman hears the quiet one — a foreman is not a worker. The round **mute** at the interior's
   top-left corner silences the ambience alone, also for this run.
 - **Effects.** One recording per dwarf rank, played when you click a dwarf, plus the shell's own
-  interface sounds — a click on the six navigation buttons and a sound when the side panel opens
-  and closes. One channel, one volume: a rank with no recording is simply silent rather than
+  interface sounds — a click on the six navigation buttons. One channel, one volume: a rank with no recording is simply silent rather than
   borrowing another rank's voice, and the same is true of an interface action with no sound of its
   own.
 
-All of it stops while the window is away — hidden, minimised, or sent to the tray — and the music
-alone survives the shell being collapsed to its rail. Nothing a media element refuses ever reaches
+All of it stops while the window is away — hidden, minimised, or sent to the tray. Nothing a media element refuses ever reaches
 the rest of the app: a machine with no audio pipeline at all shows the same map, mines and crew it
 always did.
 
-The three volumes and the startup switch live in [Settings](#settings). Audio assets are the
-maintainer's own and are covered by [`ARTWORK-LICENSE.md`](../ARTWORK-LICENSE.md), not by the code's
-MIT license.
+The three volumes and the startup switch live in [Settings](#settings). The music and the voices
+are the maintainer's own and are covered by [`ARTWORK-LICENSE.md`](../ARTWORK-LICENSE.md), not by the
+code's GPLv3 license; the sound effects are CC0, with their sources in
+[`AUDIO-CREDITS.md`](../AUDIO-CREDITS.md).
 
 ## Notifications
 
@@ -680,7 +680,7 @@ out of the panel, and nothing else:
 Two rules decide whether one is sent, and both are about what you can already see:
 
 - **Never for the mine on screen.** That means the panel visible _and_ that mine's interior open. The
-  map, the browse, or a mine held open behind the collapsed rail all count as looking at no mine, so
+  map and the browse count as looking at no mine, so
   every mine can still reach you.
 - **Never twice for the same thing.** A question that stays open for twenty minutes notifies once,
   not once per poll. When the fact goes away — you answered at the terminal — the notification is
@@ -716,10 +716,11 @@ bold, lists and code — a face that cannot draw bold cannot carry one. That is 
 that gave conversation text its own typeface in the first place.
 
 Choosing one family in both makes the whole app that family. Both apply the moment you press them,
-in the shell and in the message panel's own window alike, and both survive a restart.
+everywhere in the app, the message panel included, and both survive a restart.
 
 Tiny5, Pixelify Sans and Roboto are shipped inside the app — nothing is fetched from a font service,
-and the panel renders identically with no network. All three are under the SIL Open Font License.
+and the panel renders identically with no network. They are under the SIL Open Font License, and
+[`FONT-CREDITS.md`](../FONT-CREDITS.md) credits every bundled typeface and its authors.
 Arial is your operating system's own copy, with a sans-serif fallback on a machine that has none, so
 it may look slightly different from one platform to the next.
 
@@ -917,6 +918,7 @@ above for an installed app.
 | `SENDTEXT_RELAY_MODEL`            | `haiku`                     | Model the one-shot `claude -p` relay runs. The relay only forwards a string, so the cheapest wins.                                                                                                                                                                |
 | `SENDTEXT_TIMEOUT_S`              | `60`                        | Base seconds for a relay delivery's timeout; the actual budget adds 5ms per character in the message (#439).                                                                                                                                                      |
 | `HOOKS_PORT`                      | `47821`                     | Loopback port for instant updates (see above). Nothing binds it until you opt in.                                                                                                                                                                                 |
+| `GUILD_AREAS_ENABLED`             | `false`                     | Shows the nav's Guild group and the Lab, Market and Laboral Union pages, hidden while built. `true`/`1` or `false`/`0` (a string or a number in the file); anything else stops startup.                                                                           |
 | `CLAUDE_CLI_PATH`                 | _(detect)_                  | Explicit path to the `claude` binary. Blank detects it in the known install locations, then PATH.                                                                                                                                                                 |
 | `CODEX_CLI_PATH`                  | _(detect)_                  | Explicit path to the `codex` binary. Blank detects it in the known install locations, then PATH.                                                                                                                                                                  |
 | `ANTIGRAVITY_CLI_PATH`            | _(detect)_                  | Explicit path to the `agy` binary. Blank detects it in the known install locations, then PATH.                                                                                                                                                                    |
@@ -958,7 +960,6 @@ app reads on every launch. Each is on for `1` or `true` and off for anything els
 | `DWARFAI_PERF`         | What each poll cost, in wall-clock milliseconds, per stage.                                                                                   |
 | `TIER_DEBUG`           | One line per file the tier walk skipped and why, plus a tally per project.                                                                    |
 | `CODEX_DEBUG`          | Which candidate Codex rollouts the liveness gate refused, and on which rule.                                                                  |
-| `SHELL_DEBUG`          | What main does to its two windows — the one place a silent failure was undiagnosable.                                                         |
 | `JEV_DEBUG`            | Each Jev routing call: the request it sent, the answer or the fallback reason, and — once Jev answered — the local decision, plus elapsed ms. |
 | `DARWIN_CONSOLE_INPUT` | Overrides the macOS console-input path — the Terminal.app tab write, and the keystrokes beside it. On by default (#367).                      |
 | `LINUX_CONSOLE_INPUT`  | Overrides the Linux console-input path — the tmux pane write, and nothing else. On by default, and unmeasured (#471).                         |

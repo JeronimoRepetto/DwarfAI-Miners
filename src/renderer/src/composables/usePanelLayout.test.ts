@@ -6,8 +6,17 @@ import { panelLeaveBoundMs } from '../lib/shell/panelMotion'
 /** A leave the frozen document timeline will never report as finished (#266). */
 const stalledLeave = (): Promise<void> => new Promise<void>(() => undefined)
 
-const CLOSED = { edge: 'right' as const, expanded: false, mineOpen: false }
-const OPEN = { edge: 'right' as const, expanded: true, mineOpen: false }
+/*
+ * AMENDED for #635, once here rather than at each use. `expanded` left the layout with the
+ * closed rail (PO ruling 2026-09-27), and `dockOpen` — the dock's window slot beside the shell —
+ * took its place as the second column the window grows and shrinks for. `CLOSED` is the Panel
+ * with nothing docked beside it (was: the rail), `OPEN` the Panel with its dock slot open (was:
+ * the page drawn); every case below keeps its subject, the queue and the leave bounds, over the
+ * dimension that replaced the old one. The rail toggle helper went with the rail: its cases now
+ * call `apply` with the request the toggle used to build.
+ */
+const CLOSED = { edge: 'right' as const, mineOpen: false, dockOpen: false }
+const OPEN = { edge: 'right' as const, mineOpen: false, dockOpen: true }
 
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
@@ -20,7 +29,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
 }
 
 describe('usePanelLayout', () => {
-  it('starts closed on the design’s default edge, before main has been asked', () => {
+  it('starts as the Panel with nothing docked, on the design’s default edge, before main has been asked', () => {
     stubApi()
     expect(usePanelLayout().layout.value).toEqual(CLOSED)
   })
@@ -29,7 +38,7 @@ describe('usePanelLayout', () => {
     stubApi({ getPanelLayout: vi.fn().mockResolvedValue({ ...OPEN, edge: 'left' }) })
     const { layout, sync } = usePanelLayout()
     await sync()
-    expect(layout.value).toEqual({ edge: 'left', expanded: true, mineOpen: false })
+    expect(layout.value).toEqual({ edge: 'left', mineOpen: false, dockOpen: true })
   })
 
   it('keeps the last known layout when the bridge cannot be reached', async () => {
@@ -45,8 +54,8 @@ describe('usePanelLayout', () => {
     const setPanelLayout = vi.fn().mockResolvedValue({ ...OPEN, mineOpen: true })
     stubApi({ setPanelLayout })
     const { layout, apply } = usePanelLayout()
-    await apply({ expanded: true, mineOpen: false })
-    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false })
+    await apply({ mineOpen: false, dockOpen: true })
+    expect(setPanelLayout).toHaveBeenCalledWith({ mineOpen: false, dockOpen: true })
     expect(layout.value.mineOpen).toBe(true)
   })
 
@@ -57,28 +66,28 @@ describe('usePanelLayout', () => {
       setPanelLayout: vi.fn().mockRejectedValue(new Error('handler crashed'))
     })
     const { layout, apply } = usePanelLayout()
-    await apply({ expanded: true, mineOpen: false })
+    await apply({ mineOpen: false, dockOpen: true })
     expect(getPanelLayout).toHaveBeenCalledOnce()
     expect(layout.value).toEqual(OPEN)
   })
 
-  it('carries the mine column through the toggle helper', async () => {
-    const setPanelLayout = vi.fn().mockResolvedValue(OPEN)
-    stubApi({ setPanelLayout })
-    const { toggle } = usePanelLayout()
-    await toggle(true)
-    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: true })
-  })
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "carries the mine column through
+   * the toggle helper". The helper was the rail's arrow and went with it; a request carries the
+   * mine column because every request names both columns now, which "asks main to move to the
+   * requested edge…" below asserts.
+   */
 
-  it('asks main to move to the requested edge, keeping expanded and mineOpen (#138)', async () => {
+  // AMENDED for #635 (was: "…keeping expanded and mineOpen"): the two columns a request names.
+  it('asks main to move to the requested edge, keeping mineOpen and dockOpen (#138)', async () => {
     const setPanelLayout = vi
       .fn()
-      .mockResolvedValue({ edge: 'left', expanded: true, mineOpen: false })
+      .mockResolvedValue({ edge: 'left', mineOpen: false, dockOpen: true })
     stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN), setPanelLayout })
     const { sync, setEdge } = usePanelLayout()
     await sync()
     await setEdge('left')
-    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: true, mineOpen: false, edge: 'left' })
+    expect(setPanelLayout).toHaveBeenCalledWith({ mineOpen: false, dockOpen: true, edge: 'left' })
   })
 
   it('renders the edge main actually applied, never the one the position control asked for', async () => {
@@ -86,26 +95,27 @@ describe('usePanelLayout', () => {
     // could not honor the move must reach the renderer as a fact.
     const setPanelLayout = vi
       .fn()
-      .mockResolvedValue({ edge: 'right', expanded: true, mineOpen: false })
+      .mockResolvedValue({ edge: 'right', mineOpen: false, dockOpen: true })
     stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN), setPanelLayout })
     const { layout, setEdge } = usePanelLayout()
     await setEdge('left')
     expect(layout.value.edge).toBe('right')
   })
 
-  it('collapses from whatever it is currently showing', async () => {
+  // AMENDED for #635 (was: the rail toggle collapsing the page): the dock slot closing.
+  it('closes the dock from whatever it is currently showing', async () => {
     const setPanelLayout = vi.fn().mockResolvedValue(CLOSED)
     stubApi({ getPanelLayout: vi.fn().mockResolvedValue(OPEN), setPanelLayout })
-    const { sync, toggle } = usePanelLayout()
+    const { sync, apply } = usePanelLayout()
     await sync()
-    await toggle(false)
-    expect(setPanelLayout).toHaveBeenCalledWith({ expanded: false, mineOpen: false })
+    await apply({ mineOpen: false, dockOpen: false })
+    expect(setPanelLayout).toHaveBeenCalledWith({ mineOpen: false, dockOpen: false })
   })
 
   it('queues a second request behind one still in flight rather than racing it', async () => {
     // Two resizes can land out of order and leave the shell drawn against a
     // rectangle the window no longer has. Dropping the second was worse: a
-    // resize is triggered by opening a mine as well as by pressing the rail,
+    // resize is triggered by opening a mine as well as by opening the dock,
     // so the two genuinely overlap and a dropped one is never corrected.
     let release: (value: unknown) => void = () => undefined
     const setPanelLayout = vi
@@ -118,8 +128,8 @@ describe('usePanelLayout', () => {
       .mockResolvedValue(CLOSED)
     stubApi({ setPanelLayout })
     const { layout, apply } = usePanelLayout()
-    const first = apply({ expanded: true, mineOpen: false })
-    const second = apply({ expanded: false, mineOpen: false })
+    const first = apply({ mineOpen: false, dockOpen: true })
+    const second = apply({ mineOpen: false, dockOpen: false })
     // One microtask is all the queue needs to start the first request; the
     // second is still waiting behind it.
     await Promise.resolve()
@@ -145,7 +155,7 @@ describe('usePanelLayout', () => {
     })
     const panel = usePanelLayout(waitForLeave)
     await panel.sync()
-    const closing = panel.toggle(false)
+    const closing = panel.apply({ mineOpen: false, dockOpen: false })
     await Promise.resolve()
     expect(panel.layout.value).toEqual(OPEN)
     expect(panel.visibleLayout.value).toEqual(CLOSED)
@@ -167,13 +177,13 @@ describe('usePanelLayout', () => {
       })
       const panel = usePanelLayout(stalledLeave)
       await panel.sync()
-      const closing = panel.toggle(false)
+      const closing = panel.apply({ mineOpen: false, dockOpen: false })
       await Promise.resolve()
       expect(api.setPanelLayout).not.toHaveBeenCalled()
       await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
       expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({
-        expanded: false,
-        mineOpen: false
+        mineOpen: false,
+        dockOpen: false
       })
       await closing
       expect(panel.layout.value).toEqual(CLOSED)
@@ -192,10 +202,10 @@ describe('usePanelLayout', () => {
     })
     const panel = usePanelLayout(() => Promise.reject(new Error('leave torn down')))
     await panel.sync()
-    await panel.toggle(false)
+    await panel.apply({ mineOpen: false, dockOpen: false })
     expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({
-      expanded: false,
-      mineOpen: false
+      mineOpen: false,
+      dockOpen: false
     })
     expect(panel.visibleLayout.value).toEqual(CLOSED)
   })
@@ -211,7 +221,7 @@ describe('usePanelLayout', () => {
       )
     })
     const panel = usePanelLayout()
-    const opening = panel.toggle(false)
+    const opening = panel.apply({ mineOpen: false, dockOpen: true })
     await Promise.resolve()
     expect(panel.visibleLayout.value).toEqual(CLOSED)
     answer(OPEN)
@@ -232,15 +242,15 @@ describe('usePanelLayout', () => {
         })
     )
     await panel.sync()
-    const changing = panel.apply({ expanded: false, mineOpen: true })
+    const changing = panel.apply({ mineOpen: true, dockOpen: false })
     await Promise.resolve()
     await Promise.resolve()
-    expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ expanded: true, mineOpen: true })
+    expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ mineOpen: true, dockOpen: true })
     expect(panel.layout.value).toEqual({ ...OPEN, mineOpen: true })
     expect(panel.visibleLayout.value).toEqual({ ...CLOSED, mineOpen: true })
     finish()
     await changing
-    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
   })
 
   it('finishes a column swap on the bound when the outgoing leave never finishes (#266)', async () => {
@@ -252,15 +262,15 @@ describe('usePanelLayout', () => {
       })
       const panel = usePanelLayout(stalledLeave)
       await panel.sync()
-      const changing = panel.apply({ expanded: false, mineOpen: true })
+      const changing = panel.apply({ mineOpen: true, dockOpen: false })
       await Promise.resolve()
       await Promise.resolve()
       // The union is reserved and neither column is presented: exactly the
       // intermediate #266 got stuck in, and it may only last the bound.
-      expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ expanded: true, mineOpen: true })
+      expect(api.setPanelLayout).toHaveBeenCalledExactlyOnceWith({ mineOpen: true, dockOpen: true })
       expect(panel.visibleLayout.value).toEqual({ ...CLOSED, mineOpen: true })
       await vi.advanceTimersByTimeAsync(panelLeaveBoundMs())
-      expect(api.setPanelLayout).toHaveBeenLastCalledWith({ expanded: false, mineOpen: true })
+      expect(api.setPanelLayout).toHaveBeenLastCalledWith({ mineOpen: true, dockOpen: false })
       await changing
       expect(panel.layout.value).toEqual({ ...CLOSED, mineOpen: true })
       expect(panel.visibleLayout.value).toEqual(panel.layout.value)
@@ -269,18 +279,13 @@ describe('usePanelLayout', () => {
     }
   })
 
-  it('interprets rapid double toggles as open then closed rather than two stale opens', async () => {
-    const api = stubApi({
-      setPanelLayout: vi.fn(async (request) => ({ edge: 'right', ...request }))
-    })
-    const panel = usePanelLayout()
-    await Promise.all([panel.toggle(false), panel.toggle(false)])
-    expect(api.setPanelLayout.mock.calls.map(([request]) => request.expanded)).toEqual([
-      true,
-      false
-    ])
-    expect(panel.visibleLayout.value).toEqual(CLOSED)
-  })
+  /*
+   * REMOVED for #635, stated here rather than passing unseen: "interprets rapid double toggles
+   * as open then closed rather than two stale opens". It held the rail toggle's one rule — read
+   * the state it flips when dequeued, not when pressed — and the toggle went with the rail. Every
+   * request left names the state it wants, and "queues a second request behind one still in
+   * flight" above holds that the last one asked for is what the window ends on.
+   */
 
   it('restores presentation to native readback after a rejected shrink', async () => {
     stubApi({
@@ -289,7 +294,7 @@ describe('usePanelLayout', () => {
     })
     const panel = usePanelLayout()
     await panel.sync()
-    await panel.toggle(false)
+    await panel.apply({ mineOpen: false, dockOpen: false })
     expect(panel.layout.value).toEqual(OPEN)
     expect(panel.visibleLayout.value).toEqual(OPEN)
   })

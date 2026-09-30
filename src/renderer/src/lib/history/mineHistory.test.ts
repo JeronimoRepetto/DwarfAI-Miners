@@ -2,11 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { MINE_HISTORY_MESSAGE_LIMIT, type FeedMessage, type MineHistorySpeaker } from '../../types'
 import {
   HISTORY_EMPTY_NOTE,
+  HISTORY_MARK,
   HISTORY_READING_NOTE,
   HISTORY_TRUNCATED_NOTE,
+  HISTORY_READ_ONLY_NOTE,
   HISTORY_UNREADABLE_NOTE,
-  formatHistoryTimestamp,
+  historyClock,
+  historyLabel,
+  historyMarks,
   historyNote,
+  historyTabLast,
+  historyTabs,
+  historyTitle,
   latestMessages,
   orderSpeakers,
   selectedSpeakerId,
@@ -104,28 +111,12 @@ describe('selectedSpeakerId', () => {
   })
 })
 
-describe('formatHistoryTimestamp', () => {
-  /*
-   * `Month DD, YYYY HH:MM` is the design's format; local time, zero padding
-   * and the full English month name are the defaults #192 settled. Built from
-   * local-time components so the expectation holds on any host's zone.
-   */
-  it('spells the design format with a zero-padded day, hour and minute', () => {
-    expect(formatHistoryTimestamp(new Date(2026, 8, 4, 9, 5).getTime())).toBe(
-      'September 04, 2026 09:05'
-    )
-  })
-
-  it('uses the full English month name and a 24-hour clock', () => {
-    expect(formatHistoryTimestamp(new Date(2025, 11, 25, 23, 59).getTime())).toBe(
-      'December 25, 2025 23:59'
-    )
-  })
-
-  it('prints nothing for a time that is not one', () => {
-    expect(formatHistoryTimestamp(Number.NaN)).toBe('')
-  })
-})
+/*
+ * REMOVED for #635, stated rather than passing unseen: `formatHistoryTimestamp` and its three
+ * tests (the `Month DD, YYYY HH:MM` spelling, the full English month on a 24-hour clock, nothing
+ * for a time that is not one). The redesigned history prints no footer timestamp; each tab says
+ * "last · HH:MM" and each bubble its own time, which `historyClock` below spells and pins.
+ */
 
 describe('speakerRows', () => {
   it("draws the dwarf's own words as agent rows under its own face", () => {
@@ -199,7 +190,9 @@ describe('historyNote', () => {
     expect(historyNote({ readable: false, speakers: [] })).toBe(HISTORY_UNREADABLE_NOTE)
   })
 
+  // AMENDED for #635: the copy is the design's "Nobody has worked here yet." (screens/mine.md).
   it('says nobody has spoken yet, in one line, for a readable mine with no speakers', () => {
+    expect(HISTORY_EMPTY_NOTE).toBe('Nobody has worked here yet.')
     expect(historyNote({ readable: true, speakers: [] })).toBe(HISTORY_EMPTY_NOTE)
     expect(HISTORY_EMPTY_NOTE.split('\n')).toHaveLength(1)
   })
@@ -233,5 +226,145 @@ describe('speakerHistoryNotice', () => {
   it('admits the tab does not reach the start when the read stopped short of it', () => {
     expect(speakerHistoryNotice(speaker({ reachedStart: false }))).toBe(HISTORY_TRUNCATED_NOTE)
     expect(HISTORY_TRUNCATED_NOTE.split('\n')).toHaveLength(1)
+  })
+})
+
+describe('historyClock', () => {
+  // Local time, zero-padded, 24-hour: built from local components so it holds in any zone.
+  it('spells a time as HH:MM, local and zero-padded', () => {
+    expect(historyClock(new Date(2026, 8, 4, 9, 5).getTime())).toBe('09:05')
+    expect(historyClock(new Date(2025, 11, 25, 23, 59).getTime())).toBe('23:59')
+  })
+
+  it('prints nothing for a time that is not one', () => {
+    expect(historyClock(Number.NaN)).toBe('')
+  })
+})
+
+describe('the history copy', () => {
+  it('titles the panel "History · <mine>" and names it "Mine history, <mine>"', () => {
+    expect(historyTitle('DwarfAI-Miners')).toBe('History · DwarfAI-Miners')
+    expect(historyLabel('DwarfAI-Miners')).toBe('Mine history, DwarfAI-Miners')
+  })
+
+  // The cap it states is the one the wire is held to, not a second copy of the number.
+  it('states the read-only cap from the limit the wire keeps', () => {
+    expect(HISTORY_READ_ONLY_NOTE).toBe(
+      'Read-only · up to the last ' + MINE_HISTORY_MESSAGE_LIMIT + ' messages'
+    )
+  })
+
+  it('tells each tab its last message time, or "no messages"', () => {
+    const at = new Date(2026, 8, 4, 9, 8).getTime()
+    expect(historyTabLast(speaker({ lastMessageAt: at }))).toBe('last · 09:08')
+    expect(historyTabLast(speaker({ messages: [] }))).toBe('no messages')
+  })
+})
+
+describe('historyTabs', () => {
+  /*
+   * One tab per dwarf (components.md, Mine history), in the order the mine's roster draws its
+   * crew, so a dwarf is in the same place in both; a dwarf that has left the mine follows, newest
+   * first, as the tabs were ordered before #635.
+   */
+  it('puts the crew first in roster order, then former dwarfs newest first', () => {
+    const tabs = historyTabs(
+      [
+        speaker({ id: 'gone-old', lastMessageAt: 1 }),
+        speaker({ id: 'd56', lastMessageAt: 9 }),
+        speaker({ id: 'gone-new', lastMessageAt: 5 }),
+        speaker({ id: 'd53', lastMessageAt: 2 })
+      ],
+      ['d53', 'd54', 'd56']
+    )
+    expect(tabs.map((t) => t.id)).toEqual(['d53', 'd56', 'gone-new', 'gone-old'])
+  })
+})
+
+describe('historyMarks', () => {
+  /*
+   * Delivered and reacted are different facts (AGENTS.md, reaction.ts). A prompt in the
+   * transcript was handed to the session, so it is at least ✓; it is ✓✓ only when the session
+   * was seen acting after it — a later turn of its own, spoken or a step. Never a mark on the
+   * dwarf's own words, and nothing is claimed for a prompt the transcript does not hold.
+   */
+  it('marks a prompt the session answered ✓✓ and one still unanswered ✓', () => {
+    const rows = speakerRows(
+      speaker({
+        messages: [
+          { role: 'user', text: 'Refuse the guess.', timestamp: 't1' },
+          {
+            role: 'assistant',
+            text: 'Read ledger.ts',
+            timestamp: 't2',
+            activity: { kind: 'read', target: 'ledger.ts' }
+          },
+          { role: 'assistant', text: 'Done.', timestamp: 't3' },
+          { role: 'user', text: 'Open a PR.', timestamp: 't4' }
+        ]
+      })
+    )
+    expect(historyMarks(rows)).toEqual(['reacted', undefined, undefined, 'delivered'])
+  })
+
+  it('does not count a prompt another agent issued as the session acting', () => {
+    const rows = speakerRows(
+      speaker({
+        messages: [
+          { role: 'user', text: 'Go.', timestamp: 't1' },
+          { role: 'user', text: 'Map it.', timestamp: 't2', issuer: { role: 'foreman', name: 'f' } }
+        ]
+      })
+    )
+    expect(historyMarks(rows)[0]).toBe('delivered')
+  })
+})
+
+describe('speakerRows, each with its time', () => {
+  it('carries each message’s own time as HH:MM', () => {
+    const timestamp = new Date(2026, 8, 4, 9, 2).toISOString()
+    const rows = speakerRows(speaker({ messages: [{ role: 'user', text: 'x', timestamp }] }))
+    expect(rows[0]!.time).toBe('09:02')
+  })
+})
+
+/*
+ * PANEL-QUESTIONS 16 (design lead ruling 2026-09-27): a history tab's time is the last timed entry
+ * of the dwarf's conversation, a failed message included, and the history draws that message with
+ * "✕ not delivered", from the app's own record of the send — no transcript holds it.
+ */
+describe('failed sends in the history', () => {
+  const at = (h: number, m: number) => new Date(2026, 8, 4, h, m).getTime()
+  const talker = speaker({
+    lastMessageAt: at(9, 10),
+    messages: [
+      { role: 'user', text: 'Regenerate.', timestamp: new Date(at(9, 10)).toISOString() },
+      { role: 'assistant', text: 'Done.', timestamp: new Date(at(9, 10)).toISOString() }
+    ]
+  })
+  const failed = [{ text: 'Also check the sort.', sentAt: at(9, 13) }]
+
+  it("counts a failed message in the tab's last time", () => {
+    expect(historyTabLast(talker, failed)).toBe('last · 09:13')
+    expect(historyTabLast(talker, [])).toBe('last · 09:10')
+  })
+
+  it('puts a failed message among the rows at its send time, a prompt of its own', () => {
+    const rows = speakerRows(talker, failed)
+    expect(rows.map((r) => [r.from, r.text, r.failed === true])).toEqual([
+      ['user', 'Regenerate.', false],
+      ['agent', 'Done.', false],
+      ['user', 'Also check the sort.', true]
+    ])
+    expect(rows[2]!.time).toBe('09:13')
+  })
+
+  it('marks it failed, never delivered: it reached nothing', () => {
+    expect(historyMarks(speakerRows(talker, failed))).toEqual(['reacted', undefined, 'failed'])
+    expect(HISTORY_MARK.failed).toEqual({
+      mark: 'failed',
+      glyph: '✕ not delivered',
+      title: 'Not delivered'
+    })
   })
 })

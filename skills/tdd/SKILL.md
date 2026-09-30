@@ -3,7 +3,7 @@ name: tdd
 description: >
   The test-first workflow this repo holds agents to, and the house idioms for writing a test that belongs here.
   Trigger: before implementing any behaviour change, fixing any bug, or making a failing test pass.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'
@@ -43,15 +43,13 @@ fail does fail. Two designs that looked fine were caught this way. Undo the brea
 Copy these rather than inventing a style — verified against the suite:
 
 - **Hand-written fakes, not `vi.mock`.** The named ones are `fakeFs.ts`, `fakeHookFs.ts` and
-  `memorySqlite.ts`; `CONTRIBUTING.md` gives their paths. `vi.mock` appears in only 2 test files
-  (5 occurrences) in the whole suite, so reaching for it means you are probably going against the
-  grain.
+  `memorySqlite.ts`; `CONTRIBUTING.md` gives their paths. `vi.mock` is close to absent from the
+  suite, so reaching for it means you are going against the grain.
 - **Injected clocks.** Where a module takes a `now`, pass a mutable `{ now }` object and advance it
-  by hand (`clock.now += 601_000`). Where the module owns its own timers, use `vi.useFakeTimers` —
-  10 test files do.
+  by hand (`clock.now += 601_000`). Where the module owns its own timers, use `vi.useFakeTimers`.
 - **Vitest globals are off.** Import `describe` / `it` / `expect` explicitly.
 - **jsdom is opt-in per file** via a `// @vitest-environment jsdom` docblock; the default
-  environment is `node`. 14 files opt in.
+  environment is `node`.
 - **Pass the OS in explicitly.** Take a `Platform` parameter so macOS and Linux assertions run on a
   Windows host — see [`platform-ports`](../platform-ports/SKILL.md).
 - **No network, ever.** The one honest exception to "no real disk" is the adapter tests that exist

@@ -8,9 +8,9 @@ import {
  * The one database this app writes: its file, its schema version, and the
  * migrations between versions (#93).
  *
- * It has three tenants — the projects list (src/main/projects/), the material
- * vault (src/main/ledger/) and the launch register (src/main/sessionLaunch/) —
- * and it is a subject of its own precisely because none of them owns it. Before
+ * It has four tenants — the projects list (src/main/projects/), the material
+ * vault (src/main/ledger/), the launch register (src/main/sessionLaunch/) and
+ * the dwarf names (src/main/dwarfNames/, #635) — and it is a subject of its own precisely because none of them owns it. Before
  * this module the schema lived inside the projects store, which was honest
  * while projects were the only rows in the file; a second tenant made it the
  * wrong home for the version stamp they all depend on.
@@ -291,6 +291,32 @@ const ADD_ROUTED_BY_JEV = `ALTER TABLE launched_sessions ADD COLUMN routed_by_je
 const ADDITIVE_MISSTAMP = 6
 
 /**
+ * The names a person gave dwarfs on this machine (#635, decision log "Dwarf names") — the fourth
+ * tenant, see dwarfNames/dwarfNameStore.ts.
+ *
+ * Keyed on the DWARF id, unlike `launched_sessions`, which keys on the session: the name belongs
+ * to the dwarf the person renamed, and a worker's id is its session's plus its own agent id, so a
+ * session id would give every worker of one session the same name. The ids are the ones the
+ * providers already build (`claude:<session>`, `codex:<thread>`, ...), which is also what the mine
+ * history names its speakers by, so a name follows the dwarf into history.
+ *
+ * `provider` is the observer that drew the dwarf when it was named — bookkeeping for a person
+ * reading the file, never part of the key. `set_at` is when, epoch ms. Rows stay until the
+ * person resets the name; nothing prunes them.
+ *
+ * A new table and nothing else, so APP_COMPAT_FLOOR does not move: a build that knows only the
+ * floor never selects from it.
+ */
+const CREATE_DWARF_NAMES = `
+CREATE TABLE dwarf_names (
+  dwarf_id TEXT PRIMARY KEY NOT NULL,
+  provider TEXT NOT NULL,
+  custom_name TEXT NOT NULL,
+  set_at INTEGER NOT NULL
+);
+`
+
+/**
  * Every table this build expects, checked and created by presence — never by
  * `IF NOT EXISTS`, so a name already occupied by something this code did not
  * create (see the rollback test in appDatabase.test.ts) still fails loudly
@@ -301,7 +327,8 @@ const EXPECTED_TABLES: readonly { name: string; create: string }[] = [
   { name: 'materials', create: CREATE_MATERIALS },
   { name: 'session_marks', create: CREATE_SESSION_MARKS },
   { name: 'ledger_meta', create: CREATE_LEDGER_META },
-  { name: 'launched_sessions', create: CREATE_LAUNCHED_SESSIONS }
+  { name: 'launched_sessions', create: CREATE_LAUNCHED_SESSIONS },
+  { name: 'dwarf_names', create: CREATE_DWARF_NAMES }
 ]
 
 /**

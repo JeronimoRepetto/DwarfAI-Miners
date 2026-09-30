@@ -8,20 +8,40 @@
  */
 import type { DwarfRole, Material, MineTier } from '../types'
 import type { MapTimeVariant } from './map/mapTime'
-import type { ShellArea, UnavailableArea } from './shell/shellNav'
+import type { UnavailableArea } from './shell/shellNav'
 
-import foremanEndSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-end-sleep-v2-Sheet.png'
-import foremanIdleSheet from '../assets/art/dwarf-foreman/idle/dwarf-foreman-long-idle-v2-Sheet.png'
-import foremanSleepingSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-sleeping-v2-Sheet.png'
-import foremanStartSleepSheet from '../assets/art/dwarf-foreman/wait/dwarf-foreman-strart-sleep-v2-Sheet.png'
-import workerIdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker-idle-v2-Sheet.png'
-import worker2IdleSheet from '../assets/art/dwarf-worker/idle/dwarf-worker2-idle-v2-Sheet.png'
-import workerStartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-start-working.png'
-import workerWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-working.png'
-import workerEndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker-end-working.png'
-import worker2StartWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-start-working-v2.png'
-import worker2WorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-working-v2.png'
-import worker2EndWorkingSheet from '../assets/art/dwarf-worker/working/dwarf-worker2-end-working-v2.png'
+import foremanEndSleepSheet from '../assets/art/sprites/dwarf-foreman-end-sleep-v3-Sheet.png'
+import foremanIdleSheet from '../assets/art/sprites/dwarf-foreman-long-idle-v3-Sheet.png'
+import foremanSleepingSheet from '../assets/art/sprites/dwarf-foreman-sleeping-v3-Sheet.png'
+import foremanStartSleepSheet from '../assets/art/sprites/dwarf-foreman-start-sleep-v3-Sheet.png'
+import workerIdleSheet from '../assets/art/sprites/dwarf-worker-idle-v3-Sheet.png'
+import worker2IdleSheet from '../assets/art/sprites/dwarf-worker2-idle-v3-Sheet.png'
+import workerStartWorkingSheet from '../assets/art/sprites/dwarf-worker-start-working-v3-Sheet.png'
+import workerWorkingSheet from '../assets/art/sprites/dwarf-worker-working-v3-Sheet.png'
+import workerEndWorkingSheet from '../assets/art/sprites/dwarf-worker-end-working-v3-Sheet.png'
+import worker2StartWorkingSheet from '../assets/art/sprites/dwarf-worker2-start-working-v3-Sheet.png'
+import worker2WorkingSheet from '../assets/art/sprites/dwarf-worker2-working-v3-Sheet.png'
+import worker2EndWorkingSheet from '../assets/art/sprites/dwarf-worker2-end-working-v3-Sheet.png'
+import baseIdleSheet from '../assets/art/sprites/dwarf-base-idle-v3-Sheet.png'
+
+/*
+ * Each strip's Aseprite sidecar, read as text and parsed once by lib/sprite/dwarfSheets.ts. As raw
+ * text rather than a JSON module so the bytes stay exactly the export's and no typed copy of the
+ * exporter's fields enters the app; spriteSidecar.ts reads only what the sheet needs.
+ */
+import foremanEndSleepTiming from '../assets/art/sprites/dwarf-foreman-end-sleep-v3-Sheet.json?raw'
+import foremanIdleTiming from '../assets/art/sprites/dwarf-foreman-long-idle-v3-Sheet.json?raw'
+import foremanSleepingTiming from '../assets/art/sprites/dwarf-foreman-sleeping-v3-Sheet.json?raw'
+import foremanStartSleepTiming from '../assets/art/sprites/dwarf-foreman-start-sleep-v3-Sheet.json?raw'
+import workerIdleTiming from '../assets/art/sprites/dwarf-worker-idle-v3-Sheet.json?raw'
+import worker2IdleTiming from '../assets/art/sprites/dwarf-worker2-idle-v3-Sheet.json?raw'
+import workerStartWorkingTiming from '../assets/art/sprites/dwarf-worker-start-working-v3-Sheet.json?raw'
+import workerWorkingTiming from '../assets/art/sprites/dwarf-worker-working-v3-Sheet.json?raw'
+import workerEndWorkingTiming from '../assets/art/sprites/dwarf-worker-end-working-v3-Sheet.json?raw'
+import worker2StartWorkingTiming from '../assets/art/sprites/dwarf-worker2-start-working-v3-Sheet.json?raw'
+import worker2WorkingTiming from '../assets/art/sprites/dwarf-worker2-working-v3-Sheet.json?raw'
+import worker2EndWorkingTiming from '../assets/art/sprites/dwarf-worker2-end-working-v3-Sheet.json?raw'
+import baseIdleTiming from '../assets/art/sprites/dwarf-base-idle-v3-Sheet.json?raw'
 
 import foremanFace from '../assets/art/dwarf-foreman/dwarf-foreman-face.jpg'
 import workerFace from '../assets/art/dwarf-worker/dwarf-worker-face.jpg'
@@ -63,12 +83,6 @@ import laboralUnionArt from '../assets/art/laboral-union/laboral-union.png'
  * byte the designer's file while idle and selected take their colour from the
  * design tokens.
  */
-import iconLab from '../../../../docs/assets/icons/lab.svg?url'
-import iconMap from '../../../../docs/assets/icons/map.svg?url'
-import iconMarket from '../../../../docs/assets/icons/market.svg?url'
-import iconLaboralUnion from '../../../../docs/assets/icons/laboral-union.svg?url'
-import iconMine from '../../../../docs/assets/icons/mine.svg?url'
-import iconSettings from '../../../../docs/assets/icons/settings.svg?url'
 import iconClose from '../../../../docs/assets/icons/close.svg?url'
 import iconHistory from '../../../../docs/assets/icons/history.svg?url'
 import iconAdd from '../../../../docs/assets/icons/add.svg?url'
@@ -77,10 +91,8 @@ import iconImportantDialog from '../../../../docs/assets/icons/important-dialog.
 import iconFilter from '../../../../docs/assets/icons/filter.svg?url'
 import iconSleep from '../../../../docs/assets/icons/sleep.svg?url'
 import iconAttach from '../../../../docs/assets/icons/attach.svg?url'
-import iconInfo from '../../../../docs/assets/icons/info.svg?url'
 import iconBoost from '../../../../docs/assets/icons/boost.svg?url'
 import iconKick from '../../../../docs/assets/icons/klck.svg?url'
-import iconDelete from '../../../../docs/assets/icons/delete.svg?url'
 import iconMusicOn from '../../../../docs/assets/icons/music_on.svg?url'
 import iconMusicOff from '../../../../docs/assets/icons/music_off.svg?url'
 
@@ -99,21 +111,17 @@ export type DwarfSheetSrc = { idle: string } & Partial<Record<DwarfSheetName, st
 /**
  * The hand-drawn dwarfs, one horizontal strip per animation (issues #74, #87).
  *
- * The filename `strart-sleep` is the ASSET's own typo, reproduced here exactly.
- * Renaming a committed file to tidy a spelling is a separate change from
- * teaching the panel to play it, and doing both at once makes neither
- * reviewable.
+ * Every strip is the design repository's v3 export (`art/v3/export/`, cut from
+ * its Aseprite tag by that repository's `tools/export-sprites.js`), copied into
+ * `assets/art/sprites/` byte for byte under its export name, with the JSON
+ * sidecar that carries each frame's own duration beside it (#635). The v2
+ * sheets they replace had the same frames, order and cells; only the master
+ * palette's merges changed pixels (art bible, "What the sources say"). The v2
+ * file's `strart-sleep` typo went with it: the export is named `start-sleep`.
  *
- * A worker now has its working sequence too (#74's first delivery beyond
- * idle): picked up once, swings on a loop, set down once on the way out.
- * Waiting and walking art still arrives later and drops in here the same
- * way — no branch anywhere else moves.
- *
- * The worker2's sheets (#157's idle, #211's working triad) live in the WORKER's
- * directory because that is where the maintainer drew and delivered them; the
- * path is the artist's filing, not a claim that the two ranks share art. They
- * do not — every sheet below is one rank's own file, which is exactly what the
- * fallback rule depends on.
+ * Waiting and walking art still arrives later and drops in here the same way —
+ * no branch anywhere else moves. Every sheet below is one rank's own file,
+ * which is exactly what the fallback rule depends on.
  */
 export const DWARF_SHEET_SRC = {
   worker: {
@@ -142,6 +150,42 @@ export const DWARF_SHEET_SRC = {
   // rank keeps the exact set of sheets it has, so reaching for one a rank has
   // not been drawn is a type error rather than an undefined at runtime.
 } satisfies Record<DwarfRole, DwarfSheetSrc>
+
+/**
+ * The base dwarf, with no rank clothing: one idle strip. No rank plays it; the
+ * sprite atom draws it (components.md, Sprite, `base/idle`), so it ships beside
+ * the ranks rather than inside `DWARF_SHEET_SRC`, whose keys are the ranks.
+ */
+export const BASE_SHEET_SRC = { idle: baseIdleSheet } as const
+
+/**
+ * Every strip's sidecar text, keyed exactly as its strip is above (#635): each frame's own
+ * duration and the export's tag. A strip listed above with no entry here would play at the
+ * `--frame-ms` fallback; none does today.
+ */
+export const DWARF_SHEET_SIDECAR = {
+  worker: {
+    idle: workerIdleTiming,
+    'start-working': workerStartWorkingTiming,
+    working: workerWorkingTiming,
+    'end-working': workerEndWorkingTiming
+  },
+  worker2: {
+    idle: worker2IdleTiming,
+    'start-working': worker2StartWorkingTiming,
+    working: worker2WorkingTiming,
+    'end-working': worker2EndWorkingTiming
+  },
+  foreman: {
+    idle: foremanIdleTiming,
+    'start-sleep': foremanStartSleepTiming,
+    sleeping: foremanSleepingTiming,
+    'end-sleep': foremanEndSleepTiming
+  }
+} satisfies Record<DwarfRole, DwarfSheetSrc>
+
+/** The base dwarf's sidecar text, beside its strip. */
+export const BASE_SHEET_SIDECAR = { idle: baseIdleTiming } as const
 
 /** Mine entrance on the map, one painting per tier. */
 export const MOUND_SRC: Record<MineTier, string> = {
@@ -218,7 +262,7 @@ export const NUGGET_SRC: Record<NuggetMaterial, string> = {
  *
  * Here for the same reason `INTERIOR_ART_SIZE` is: the map is drawn `contain`,
  * nothing cropped, into a resizable panel whose own frame carries this exact
- * ratio (#153, #197 — see `.map-frame` in MapView.vue), so this is what
+ * ratio (#153, #197 — see `.dm-mappage__art` in MapPage.vue), so this is what
  * decides where a spawn point authored on the painting actually lands in the
  * box (see mapProjection.ts).
  *
@@ -245,23 +289,6 @@ export const MAP_BG_SRC: Record<MapTimeVariant, string> = {
   day: mapDay,
   sunset: mapSunset,
   night: mapNight
-}
-
-/**
- * The shell navigation icons, keyed by the area each one selects.
- *
- * Every file is the design's own SVG at the path the source names; nothing here
- * is a substitute or a hand-drawn stand-in. Explicit imports for the same reason
- * the paintings use them: a renamed icon fails the build rather than rendering
- * as an empty 19px square nobody notices.
- */
-export const SHELL_ICON_SRC: Record<ShellArea, string> = {
-  settings: iconSettings,
-  map: iconMap,
-  mines: iconMine,
-  lab: iconLab,
-  market: iconMarket,
-  'laboral-union': iconLaboralUnion
 }
 
 /** The design's own close glyph, used by the panel's round close control. */
@@ -311,19 +338,6 @@ export const ATTACH_ICON_SRC = iconAttach
 
 export const SORT_ICON_SRC = iconFilter
 export const ADD_ICON_SRC = iconAdd
-/**
- * Removing a mine (#169), and the one glyph here the design source never
- * places.
- *
- * `delete.svg` was delivered with the icon set and used by no screen in the
- * documentation — the only destructive act the source draws is Settings'
- * metrics wipe, and that one is a worded button. So this is the designer's own
- * bin, wired up where the design has a gap rather than a shape invented to fill
- * it (see the amendment recorded in `screens/browse.md`). Masked like the
- * others, so the committed file keeps its bytes and the colour comes from the
- * tokens; its own fill is already the accent amber.
- */
-export const DELETE_ICON_SRC = iconDelete
 export const DIALOG_ICON_SRC = iconDialog
 export const SLEEP_ICON_SRC = iconSleep
 
@@ -341,13 +355,6 @@ export const SLEEP_ICON_SRC = iconSleep
  */
 export const MUSIC_ON_ICON_SRC = iconMusicOn
 export const MUSIC_OFF_ICON_SRC = iconMusicOff
-
-/**
- * The map's material-info trigger (#506): a circle with a lowercase "i",
- * drawn through the same mask as the shell icons so the committed SVG keeps
- * its black fill while the control takes its colour from the tokens.
- */
-export const INFO_ICON_SRC = iconInfo
 
 /**
  * The question-put-to-the-user glyph (#153), and the one icon in this file that
@@ -430,10 +437,9 @@ let preloaded = false
  * animation does not draw against an empty box. Safe to call from every
  * DwarfSprite instance; only the first call does any work.
  *
- * Cheaper than it was, and by more than the count suggests: eight files
- * (five before #74's working strips) instead of nine, and each of them a
- * handful of kilobytes of pixel art rather than a ~195 KB painted pose (see
- * docs/animation-loops.md).
+ * Cheap: twelve rank strips, each a handful of kilobytes of pixel art rather
+ * than a ~195 KB painted pose (see docs/animation-loops.md). The base dwarf's
+ * strip is not among them — no dwarf in the scene plays it.
  */
 export function preloadDwarfArt(): void {
   if (preloaded || typeof Image === 'undefined') return

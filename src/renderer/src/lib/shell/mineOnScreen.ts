@@ -7,8 +7,8 @@ import type { OpenMineId } from '../../types'
  * is a named rule rather than a `&&` inside a component:
  *
  * - `mineId` is the shell's own navigation — the mine it is HOLDING open, which
- *   it goes on holding while collapsed to the bare rail, where nothing at all
- *   is drawn.
+ *   it holds a moment before main has given its column width, and held behind
+ *   the closed rail until #635 removed the rail.
  * - `mineOpen` is main's report that the mine column was given width. It says a
  *   column is drawn; it cannot say which mine is in it, because it does not
  *   move when the person walks from one mine straight into another.

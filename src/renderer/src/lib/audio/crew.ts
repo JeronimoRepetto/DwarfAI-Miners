@@ -12,7 +12,7 @@
  * decides what a crowd of them is allowed to do. The engine holds the clips.
  */
 import type { DwarfRole } from '../../types'
-import type { CrewSoundSignal } from '../sprite/crewSound'
+import type { CrewCue, CrewSoundSignal } from '../sprite/crewSound'
 
 /**
  * How many crew clips may sound at once.
@@ -37,6 +37,21 @@ export const CREW_POLYPHONY = 3
  * walking, long enough that the stop is a stop and not an edit.
  */
 export const CREW_RELEASE_MS = 300
+
+/**
+ * The cues whose recording loops until the dwarf stops (#637).
+ *
+ * The walk alone. Its recording is a short seamless loop, so reaching the end
+ * is the loop wrapping and never the walk ending: only the sprite's `ending`
+ * stops it. A strike and a grind are each ONE movement recorded whole, and
+ * wrapping either would be a second pick nobody swung.
+ *
+ * The media element does the wrapping, which the room tone must never let it
+ * do — that seam is crossfaded because the bed is not silent at its ends. The
+ * walk's recording starts and ends in silence, so a wrap lands between two
+ * footfalls and there is nothing at the join to hear.
+ */
+export const CREW_LOOPED_CUES: ReadonlySet<CrewCue> = new Set<CrewCue>(['walk'])
 
 /**
  * One cue with everything the engine needs to place it: which mine it came

@@ -1,4 +1,4 @@
-import type { InterfaceFont } from '../../types'
+import type { TypeFace } from '../../types'
 
 /**
  * Turning a stored font identifier into something the page can be painted with
@@ -17,26 +17,15 @@ import type { InterfaceFont } from '../../types'
  */
 
 /**
- * The custom property the whole interface is drawn through, and the one the
- * crew's own words are.
- *
- * Repointing these two is the entire mechanism: every component already reads
- * them, so a preference applies by changing what they resolve to on the
- * document root rather than by touching a single component.
- */
-export const INTERFACE_FONT_PROPERTY = '--font-pixel'
-export const MESSAGING_FONT_PROPERTY = '--font-conversation'
-
-/**
- * The `var()` reference for one face, to be assigned to either role.
+ * The `var()` reference for one face, to be assigned to any role.
  *
  * A reference rather than the stack itself, so the stack stays declared once in
  * the stylesheet. `design-tokens.css` declares `--font-family-<identifier>` for
- * every member of INTERFACE_FONTS, and a test there holds it to that — a
+ * every member of TYPE_FACES, and a test there holds it to that — a
  * missing token would resolve to nothing, and `font-family:` with nothing in it
  * is a declaration the browser drops silently.
  */
-export function fontFamilyReference(font: InterfaceFont): string {
+export function fontFamilyReference(font: TypeFace): string {
   return `var(--font-family-${font})`
 }
 
@@ -49,13 +38,14 @@ export function fontFamilyReference(font: InterfaceFont): string {
  * the font, not by ours. Kept beside the reference above rather than in
  * `presentation.ts` because it is about this subject and nothing else reads it.
  */
-const FONT_FAMILY_LABELS: Record<InterfaceFont, string> = {
+const FONT_FAMILY_LABELS: Record<TypeFace, string> = {
+  'jacquard-12': 'Jacquard 12',
   tiny5: 'Tiny5',
   'pixelify-sans': 'Pixelify Sans',
   roboto: 'Roboto',
   arial: 'Arial'
 }
 
-export function fontFamilyLabel(font: InterfaceFont): string {
+export function fontFamilyLabel(font: TypeFace): string {
   return FONT_FAMILY_LABELS[font]
 }

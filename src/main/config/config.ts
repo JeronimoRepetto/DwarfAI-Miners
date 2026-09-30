@@ -189,6 +189,14 @@ export interface AppConfig {
    * until the user enables "Instant updates" in the tray.
    */
   hooksPort: number
+  /**
+   * Whether the guild areas are shown: the nav's Guild group and the Lab,
+   * Market and Laboral Union pages (#635). They are designed in full and ship
+   * hidden, so this is off by default and deliberately not a Settings row —
+   * turning it on is one line of configuration, reachable from an installed
+   * app through the userData file like every other setting here.
+   */
+  guildAreasEnabled: boolean
   /** Everything that belongs to one backend rather than to the panel (#78). */
   providers: ProviderConfigs
 }
@@ -208,6 +216,7 @@ export function defaultConfig(): AppConfig {
     sendTextRelayModel: 'haiku',
     sendTextTimeoutS: 60,
     hooksPort: 47821,
+    guildAreasEnabled: false,
     providers: {
       claude: {
         cliPath: '',
@@ -323,6 +332,22 @@ function readPort(env: ConfigEnv, key: string, fallback: number): number {
   return port
 }
 
+/**
+ * A product switch: `true`/`1` or `false`/`0`, trimmed and case-insensitive,
+ * with blank counting as unset. Anything else is a startup error naming the key
+ * rather than a silent "off" (#635): unlike `readFlag`'s development switches,
+ * a feature flag left off by a typo would look exactly like the flag not
+ * working, which is the bug a bad value exists to surface.
+ */
+function readBoolean(env: ConfigEnv, key: string, fallback: boolean): boolean {
+  const raw = env[key]
+  if (raw === undefined || raw.trim() === '') return fallback
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true') return true
+  if (normalized === '0' || normalized === 'false') return false
+  throw new Error(`[config] ${key} must be true, false, 1 or 0, got "${raw}"`)
+}
+
 /** A trimmed free-form string (a path, a model name); blank counts as unset. */
 function readTrimmed(env: ConfigEnv, key: string, fallback: string): string {
   const raw = env[key]
@@ -432,6 +457,7 @@ export function loadConfig(env: ConfigEnv = process.env): AppConfig {
     sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
     sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS),
     hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort),
+    guildAreasEnabled: readBoolean(env, 'GUILD_AREAS_ENABLED', defaults.guildAreasEnabled),
     // One line per backend, and one reader to read it: the whole point of #78's
     // second place. A third provider adds an entry here and its own reader,
     // and nothing above this line has to know it exists.
@@ -647,8 +673,8 @@ export function loadSimulationConfig(env: ConfigEnv = process.env): SimulationCo
  * `false`) forces the path OFF; `=1` (or `true`) forces it ON; unset — the
  * common case now — leaves DARWIN_CONSOLE_INPUT_ENABLED to decide, which is
  * `true`. Mirrors perf.ts's DWARFAI_PERF, tierService.ts's TIER_DEBUG,
- * codexProvider.ts's CODEX_DEBUG and window.ts's SHELL_DEBUG for its accepted
- * spellings, but unlike those two-state flags this one is tri-state: it must
+ * and codexProvider.ts's CODEX_DEBUG for its accepted spellings, but unlike
+ * those two-state flags this one is tri-state: it must
  * distinguish "not set" from "set to false" so the shipped default can still
  * win when nobody has opted out.
  */

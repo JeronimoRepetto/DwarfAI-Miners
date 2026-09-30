@@ -3,7 +3,7 @@ name: skill-creator
 description: >
   How to add, change or retire a skill in this repository, and how to decide whether one is warranted at all.
   Trigger: when adding a skill, editing skill frontmatter, or noticing a lesson that keeps being re-explained by hand.
-license: MIT
+license: GPL-3.0-or-later
 metadata:
   author: JeronimoRepetto
   version: '1.0'
@@ -67,8 +67,8 @@ opened never sees the rule. So: if the failure mode is _"clobbered a file withou
 must be a skill. If the failure mode is _"read the file and still misunderstood it"_, a path rule
 is the lighter and better fit.
 
-Worked example — the two coordinate spaces (the map's `mapProjection.ts` pins its crop to the
-centre, the cave's `sceneGeometry.ts` to the bottom) stay a path rule, because you cannot add a
+Worked example — the coordinate-space rule (`.claude/rules/coordinates.md`: map and cave points in
+painting percent, both paintings fitted `contain`) stays a path rule, because you cannot add a
 point to either without opening the file first. The test-preservation rule is a skill, because its entire failure mode is a `Write` to
 a file the agent never read.
 
