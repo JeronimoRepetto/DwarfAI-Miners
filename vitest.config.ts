@@ -16,7 +16,9 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     // Golden UI tests need the private design repository and a real browser: they run only
     // through `pnpm test:golden` (vitest.golden.config.ts), never here or on CI (#634).
-    exclude: [...configDefaults.exclude, '**/*.golden.test.*'],
+    // OS-lane tests need a real OS facility of one platform: they run only through
+    // `pnpm test:os` (vitest.os.config.ts), so `pnpm test` stays runnable on any machine (17 §1.8).
+    exclude: [...configDefaults.exclude, '**/*.golden.test.*', '**/*.os.test.*'],
     // Node by default (main-process tests); component tests opt into jsdom
     // with a `@vitest-environment jsdom` docblock.
     environment: 'node'

@@ -28,9 +28,11 @@
     "src/host/**/*.ts",
     "src/ui-main/**/*.ts",
     "src/legacy-bridge/**/*.ts",
+    "spikes/**/*.ts",
     "electron.vite.config.ts",
     "electron.vite.jevMcpServer.config.ts",
     "vitest.config.ts",
-    "vitest.golden.config.ts"
+    "vitest.golden.config.ts",
+    "vitest.os.config.ts"
   ]
 }
