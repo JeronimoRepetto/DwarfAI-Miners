@@ -1,0 +1,105 @@
+{
+  "src/preload/index.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 2
+    }
+  },
+  "src/renderer/src/components/launch/AddPanel.test.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/message/DwarfMessagePanel.vue": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    },
+    "no-restricted-syntax": {
+      "count": 5
+    }
+  },
+  "src/renderer/src/components/panel/SettingsPanel.test.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/panel/SettingsPanel.vue": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/panel/ShortcutSettings.test.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/panel/ShortcutSettings.vue": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/composables/useToggleShortcut.test.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/composables/useToggleShortcut.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/golden/api.test.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/golden/api.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/golden/renders.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 2
+    }
+  },
+  "src/renderer/src/lib/delivery/effort.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/lib/launch/addPanelCopy.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/lib/launch/launchState.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/lib/message/echo.test.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/lib/message/echo.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 2
+    }
+  },
+  "src/renderer/src/lib/message/markdown.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/lib/message/rename.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/types.ts": {
+    "arch/legacy-only-through-bridge": {
+      "count": 4
+    }
+  }
+}

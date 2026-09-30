@@ -1,0 +1,1 @@
+{ "rule": "arch/legacy-only-through-bridge", "tool": "eslint" }
