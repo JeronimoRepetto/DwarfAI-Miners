@@ -70,6 +70,20 @@ node skills/skill-sync/assets/sync.mjs --dry-run   # print, change nothing
 node skills/skill-sync/assets/sync.mjs --scope root
 ```
 
+### Where to run it during the rebuild
+
+On the owner's machine the rebuild manual is installed over the root `AGENTS.md` and marked
+skip-worktree. That copy has no `BEGIN`/`END` markers, so `sync.mjs` refuses it, and the manual
+says never to stage that file or run `sync.mjs` without `--check` (§0.1, §0.3). CI still runs
+`--check` against the tracked file (the "Skills in sync with AGENTS.md" step), so a change under
+`skills/` has to ship with the regenerated tracked file.
+
+The flow that works: make the change in a fresh worktree, where `AGENTS.md` is the tracked file
+and the manual has not been copied over; run `sync.mjs` there; commit `AGENTS.md` together with
+`skills/`. This is an exception the owner grants for a branch, not a default. Without that
+authorization, leave `AGENTS.md` alone and report the change as not synced, naming CI as the place
+it will be checked.
+
 The generator has its own suite — `node skills/skill-sync/assets/sync.test.mjs`, deliberately
 outside vitest's include (`src/**` and `scripts/**` only; the file's own header says why). Run it
 after changing `sync.mjs`; `pnpm test` will not.

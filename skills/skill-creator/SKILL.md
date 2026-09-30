@@ -18,7 +18,8 @@ allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 
 A skill teaches an agent one thing this project learned the expensive way. The library is small on
 purpose: a skill nobody invokes teaches readers to skim the whole library, so the bar for adding
-one is that something went wrong without it.
+one is that something went wrong without it. A skill is created when a rebuild process needs it,
+never kept speculatively for a process that does not exist yet.
 
 Read [`skills/README.md`](../README.md) for the spec — layout, the full frontmatter contract, and
 why the auto-invoke table is generated. This file is the procedure.
@@ -41,7 +42,7 @@ All four must hold:
 ## When it is not
 
 - **One invariant with a comment at its definition and a test pinning it.** That is already in the
-  two places an agent will hit it. Index it under "Domain invariants" in
+  two places an agent will hit it. Index it under "Domain invariants" in the tracked
   [`AGENTS.md`](../../AGENTS.md) and stop. This is why there is no `vault-materials` skill: the
   no-cross-material-summing rule is stated at `MATERIAL_TOKENS_PER_UNIT` in
   `src/shared/contracts.ts` and enforced by three named tests.
@@ -97,7 +98,9 @@ grepped. Most skills need neither directory.
 2. `cp skills/skill-creator/assets/SKILL-TEMPLATE.md skills/{name}/SKILL.md` and fill it in.
 3. Write `auto_invoke` as the action the agent is **about to take** — `changing a test file` fires,
    `testing` does not. One phrase per moment; a list is fine.
-4. Regenerate, do not hand-edit, the tables in `AGENTS.md`:
+4. Regenerate, do not hand-edit, the tables in `AGENTS.md`. During the rebuild this runs in a
+   fresh worktree that holds the tracked `AGENTS.md` (the live rebuild manual has no markers); see
+   [`skill-sync`](../skill-sync/SKILL.md) for the flow and its authorization:
 
    ```bash
    node skills/skill-sync/assets/sync.mjs
@@ -108,21 +111,19 @@ grepped. Most skills need neither directory.
 
 ## Verify first
 
-The most valuable thing the last pass over this repository produced was a correction. Three claims
-in the brief for this harness were wrong when checked against the code, including one that had
-already been copied from an inaccurate source comment into a rule file, where it was being read as
-fact. Restating an unverified claim is how that spreads.
+Claims in this library are checked against the code: an inaccurate source comment was once copied
+into a rule file and read there as fact. Restating an unverified claim is how that spreads.
 
 So: open the file, run the search, count the occurrences. Prefer "three call sites (four
 occurrences)" to "about three". If you cannot verify a claim, either leave it out or mark it as
 unverified and say why — the README's support matrix and the "Verified versus assumed" convention
-in [`AGENTS.md`](../../AGENTS.md) are the house style for that, and they are worth matching.
+in the tracked [`AGENTS.md`](../../AGENTS.md) are the house style for that, and they are worth matching.
 
 ## Getting it wrong
 
 The two failure modes actually seen here:
 
 - **A library that grows faster than it is invoked.** Every thin skill costs attention from the
-  ones that matter. Retiring a skill is a normal act: delete the directory and re-run `sync.mjs`.
+  ones that matter. Retiring a skill is a normal act: delete the directory, fix every link that pointed at it, and re-run `sync.mjs`.
 - **A second home for an idea.** If a rule now lives in a skill, it must stop living anywhere else,
   or the two copies will disagree and the older one will be believed. Search before you write.
