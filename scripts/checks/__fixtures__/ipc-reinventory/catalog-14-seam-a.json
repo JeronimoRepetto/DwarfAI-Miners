@@ -1,0 +1,393 @@
+{
+  "source": "Hand-written from 14-ipc-contract.md §2.1 and §2.2 (frozen, with its approved amendments): seam A ids and statuses only, reviewed against the §7 counts (KEEP 35, CHANGE 16, NEW 33, RETIRE 13). Data for scripts/checks/ipc-reinventory.test.mjs, not a copy of the contract.",
+  "rows": [
+    {
+      "id": "A-01",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-02",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-03",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-04",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-05",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-06",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-07",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-08",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-09",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-10",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-11",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-12",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-13",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-14",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-15",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-16",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-17",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-18",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-19",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-20",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-21",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-22",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-23",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-24",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-25",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-26",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-27",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-28",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-29",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-30",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-31",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-32",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-33",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-34",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-35",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-36",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-37",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-38",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-39",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-40",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-41",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-42",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-43",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-44",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-45",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-46",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-47",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-48",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-49",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-50",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-51",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-52",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-53",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-54",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-55",
+      "status": "CHANGE"
+    },
+    {
+      "id": "A-56",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-57",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-P1",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-P2",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-P3",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-P4",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-P5",
+      "status": "RETIRE"
+    },
+    {
+      "id": "A-P6",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-X1",
+      "status": "KEEP"
+    },
+    {
+      "id": "A-N01",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N02",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N03",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N04",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N05",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N06",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N07",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N08",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N09",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N10",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N11",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N12",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N13",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N14",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N15",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N16",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N17",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N18",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N19",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N20",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N21",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N22",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N23",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N24",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N25",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N26",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N27",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N28",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N29",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N30",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N31",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N32",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N33",
+      "status": "NEW"
+    }
+  ]
+}
