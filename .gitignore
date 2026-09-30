@@ -31,6 +31,9 @@ docs/dwarfai-miners-design/*
 # `pnpm golden:design`. Never committed, never a link.
 /.design/
 
+# Raw fixture recordings (`<case>.raw.*`): only their scrubbed output is committed (fixtures/README.md).
+fixtures/**/*.raw.*
+
 # ODD feature documents: the orchestrator's working notes, kept local and mirrored to Engram
 odd/
 
