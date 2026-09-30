@@ -14,9 +14,17 @@ env:
   # Electron zip. Paired with the actions/cache step below, this avoids
   # re-downloading Electron (~100+ MB) on every run.
   ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  # Determinism of the test lanes (17 §5.3): a fixed time zone and locale, and
+  # a fixed property-test seed, so a test that depends on the runner's clock
+  # zone, language or a random seed fails the same way everywhere.
+  TZ: UTC
+  LANG: C.UTF-8
+  FC_SEED: '20260930'
 
 jobs:
   checks:
+    # The display name is kept as it was: the "Protect main" ruleset requires this exact status check, so a
+    # rename would leave every pull request waiting on a check that no longer reports.
     name: Privacy guard, typecheck, lint, format, skills-sync, test, build (${{ matrix.os }})
     # All three OSes, because the suite is only platform-independent when a
     # host other than Windows runs it. This job was Windows-only until #470,
@@ -25,15 +33,37 @@ jobs:
     # `join` against a Windows-shaped fixture. A leg per OS is what keeps that
     # class from coming back; fail-fast is off so one red leg still shows the
     # other two. The `release` job below covers the same three for packaging.
+    #
+    # The steps are the required merge checks of the testing strategy
+    # (architecture package 17 §5.2), in the stage order of its §5.1:
+    #   1. static: privacy guard, typecheck, lint (ESLint + dependency-cruiser),
+    #      format check, skills in sync;
+    #   2. architecture: lint canaries, the ESLint print-config test and the
+    #      arch-exception ratchet, contract sync;
+    #   3. tests: `pnpm test` (L1-L7), shuffled with a printed seed;
+    #   4. gates: test-loss census against the merge base, `pnpm trace:check`,
+    #      the quarantine expiry rule and cross-OS parity;
+    #   5. OS lane: `pnpm test:os` (L8) and its empty-lane guard;
+    #   6. build.
+    # Contract sync and the gates run on the Linux leg only; the rest on all
+    # three. Any failing step fails the job and blocks the merge: no step
+    # continues on error and L1-L7 have no retries (17 §5.4). E2E, perf and
+    # the golden image tests are not merge checks and never run here.
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
+      # The census compares the tree with the merge base, so the Linux leg,
+      # which runs it, needs the whole history; the other legs stay shallow.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ matrix.os == 'ubuntu-latest' && '0' || '1' }}
+
+      # ---- Stage 1: static ----
 
       # Recurrence guard for the pre-publication privacy audit (issue #32,
       # docs/privacy-audit.md). Test paths, fixtures and shipped defaults used
@@ -109,7 +139,7 @@ jobs:
       # the pinned Node.js runtime in the same step, so a separate
       # actions/setup-node step is not needed.
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
           version: 11
           runtime: node@24
@@ -124,7 +154,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ELECTRON_CACHE }}
           key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
@@ -135,7 +165,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Lint
+      # `pnpm lint` runs ESLint, then dependency-cruiser (`pnpm depcruise`),
+      # so the four-command local gate stays the whole gate (17 §0).
+      - name: Lint (ESLint and dependency-cruiser)
         run: pnpm lint
 
       - name: Format check
@@ -149,8 +181,97 @@ jobs:
       - name: Skills in sync with AGENTS.md
         run: node skills/skill-sync/assets/sync.mjs --check
 
-      - name: Test
-        run: pnpm test
+      # ---- Stage 2: architecture ----
+
+      # Every lint rule R1-R19 has a canary tree that must trip exactly that
+      # rule; a rule that can no longer fire fails here (ADR-004 item 3).
+      - name: Lint canaries
+        run: pnpm test:canaries
+
+      - name: ESLint print-config test and arch-exception ratchet
+        run: pnpm vitest run scripts/checks/eslint-print-config.test.mjs scripts/checks/arch-exception-ratchet.test.mjs
+
+      # Compares the verbatim contract copies of the architecture package with
+      # their owners. The package lives only on the owner's machine
+      # (new-architecture/ is git-ignored and never pushed), so here the
+      # script prints "architecture package not present: contract sync
+      # skipped" and exits 0; the owner runs it before pushing (17 §5.2, OQ-83).
+      - name: Contract sync
+        if: runner.os == 'Linux'
+        run: node scripts/checks/contract-sync.mjs
+
+      # ---- Stage 3: tests ----
+
+      # Shuffled so no test can depend on another's order (17 §5.3). The seed
+      # is this run's id, printed first, so a failure reproduces locally with
+      # the command the step prints.
+      - name: Test (L1-L7)
+        shell: bash
+        env:
+          SEED: ${{ github.run_id }}
+        run: |
+          echo "Vitest shuffle seed: $SEED (reproduce with: pnpm test --sequence.shuffle --sequence.seed=$SEED)"
+          pnpm test --sequence.shuffle --sequence.seed="$SEED"
+
+      # ---- Stage 4: gates (Linux leg) ----
+
+      # A pull request is compared with the merge base of its target branch; a
+      # push with the commit it moved the branch from; a tag, or a push whose
+      # previous commit is unknown, with the first parent of HEAD.
+      - name: Resolve the merge base
+        id: merge-base
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base=$(git merge-base "origin/$BASE_REF" HEAD)
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base=$(git merge-base "$BEFORE" HEAD)
+          else
+            base=$(git rev-parse HEAD~1)
+          fi
+          echo "Merge base: $base"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      # A file that lost test statements passes only with its new row in
+      # docs/test-removals.md (17 §2.6).
+      - name: Test-loss census against the merge base
+        if: runner.os == 'Linux'
+        run: node scripts/checks/census-gate.mjs --base ${{ steps.merge-base.outputs.base }}
+
+      # Its catalog (typo) check needs the architecture package, so here it is
+      # skipped with a notice; the closed-AC and ratchet checks run (17 §3.2).
+      - name: Trace check
+        if: runner.os == 'Linux'
+        run: pnpm trace:check
+
+      - name: Quarantine expiry
+        if: runner.os == 'Linux'
+        run: node scripts/checks/quarantine.mjs
+
+      # Compares the golden run's visible-text and control report of the three
+      # OS legs (BR-24). The golden lane runs only on the maintainer's machine,
+      # so without its reports this step prints a skip notice.
+      - name: Cross-OS parity
+        if: runner.os == 'Linux'
+        run: node scripts/checks/cross-os-parity.mjs
+
+      # ---- Stage 5: OS lane ----
+
+      # Real OS facilities, per platform, on every pull request and push
+      # (17 §1.8, §1.13). The guard fails the leg when its lane executed zero
+      # tests, so a mistyped platform guard cannot pass silently (HO-38).
+      - name: OS lane
+        run: pnpm test:os
+
+      - name: OS-lane empty guard
+        run: node scripts/checks/os-lane-guard.mjs
+
+      # ---- Stage 6: build ----
 
       - name: Build
         run: pnpm build
@@ -184,10 +305,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
           version: 11
           runtime: node@24
@@ -202,7 +323,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ELECTRON_CACHE }}
           key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
@@ -229,7 +350,7 @@ jobs:
       # whatever the notes-leg has already written. `release-mac` below keeps
       # this the same single leg by passing `generate_release_notes: false`.
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: false
           generate_release_notes: ${{ matrix.os == 'ubuntu-latest' }}
@@ -272,10 +393,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
           version: 11
           runtime: node@24
@@ -290,7 +411,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Electron download
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ELECTRON_CACHE }}
           key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
@@ -322,7 +443,7 @@ jobs:
       # `generate_release_notes: false` keeps note generation on the single
       # ubuntu-latest leg above, per the comment on that step.
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: false
           generate_release_notes: false
