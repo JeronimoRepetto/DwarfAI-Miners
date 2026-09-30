@@ -27,17 +27,18 @@
 //
 // Refusals are values (the boot turns them into FM-008). A migration that throws, or a
 // foreign_key_check row, propagates as an error after the rollback; the connection is closed.
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
-import { HostInvariantError } from '../../../kernel/domain/errors'
+import { HostInvariantError, SqliteInfrastructureError } from '../../../kernel/domain/errors'
 import type { Result } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../../kernel/ports/diagnosticsLog'
 import type { SqliteDatabase, SqliteRow } from '../../../kernel/ports/sqliteDatabase'
 import { VacuumIntoBackup } from '../backup'
 import { NodeSqliteDatabase, toInfrastructureError } from '../NodeSqliteDatabase'
+import { isUnreadableDatabaseError, quarantineUnreadableDb } from '../quarantine'
 import { SqliteTransactionRunner } from '../SqliteTransactionRunner'
 import { knownMigrations } from './index'
 import { migrationChecksum, type BackupStep, type Migration } from './types'
@@ -45,7 +46,11 @@ import { migrationChecksum, type BackupStep, type Migration } from './types'
 export type BuildKind = 'release' | 'dev' | 'test'
 
 export type HostDbRefusal =
-  'NOT_A_DWARFAI_DB' | 'SCHEMA_TAMPERED' | 'DEV_BUILD_ON_RELEASE_DATA' | 'BACKUP_FAILED'
+  | 'NOT_A_DWARFAI_DB'
+  | 'SCHEMA_TAMPERED'
+  | 'DEV_BUILD_ON_RELEASE_DATA'
+  | 'BACKUP_FAILED'
+  | 'QUARANTINE_FAILED'
 
 export interface OpenHostDbOptions {
   buildKind: BuildKind
@@ -88,6 +93,28 @@ function isNonEmpty(db: Queryable): boolean {
   return scalar(db, 'SELECT count(*) FROM sqlite_schema') !== 0
 }
 
+/** SQLite reported the file unreadable (`SQLITE_CORRUPT` / `SQLITE_NOTADB`) while opening it. */
+class UnreadableDatabase extends Error {
+  constructor(override readonly cause: SqliteInfrastructureError) {
+    super(cause.message, { cause })
+    this.name = 'UnreadableDatabase'
+  }
+}
+
+/**
+ * Run a read of the opening sequence (the probe, the writer's open, steps 1–2). An unreadable
+ * database there leads to the quarantine; the same error anywhere later is the current command's
+ * infrastructure failure (16 §2.1), never a reason to rename the file.
+ */
+function readable<T>(read: () => T): T {
+  try {
+    return read()
+  } catch (error) {
+    if (isUnreadableDatabaseError(error)) throw new UnreadableDatabase(error)
+    throw error
+  }
+}
+
 /** The build's list must be versions 1…n in order, each checksum computed from its own SQL. */
 function assertLinear(migrations: readonly Migration[]): void {
   migrations.forEach((migration, index) => {
@@ -116,10 +143,34 @@ function isForeign(db: Queryable): boolean {
   return applicationId !== 0 || isNonEmpty(db)
 }
 
+/** The first 16 bytes of every SQLite database file (sqlite.org/fileformat.html §1.3). */
+const SQLITE_HEADER = Buffer.from('SQLite format 3\u0000', 'latin1')
+
+/**
+ * A non-empty file that does not start with the SQLite header is not a database. Checked before
+ * any SQLite connection: with a `-wal` beside the file SQLite opens the WAL before it reads the
+ * header, and would rewrite the `-shm` of a file about to be quarantined (09 §8.3).
+ */
+function assertSqliteHeader(path: string): void {
+  const header = Buffer.alloc(SQLITE_HEADER.length)
+  const fd = openSync(path, 'r')
+  let read: number
+  try {
+    read = readSync(fd, header, 0, header.length, 0)
+  } finally {
+    closeSync(fd)
+  }
+  if (read < header.length || !header.equals(SQLITE_HEADER)) {
+    throw new SqliteInfrastructureError('SQLITE_NOTADB', 26, 'file is not a database')
+  }
+}
+
 /**
  * Step 1 before the writer opens. With no `-wal` beside it the main file is complete and is read
  * `immutable` (no lock, no side file); with one, a plain read-only connection also reads the WAL.
- * Neither writes the main file.
+ * Neither writes the main file. The probe also reads the step-2 history, so a file that cannot be
+ * read (SQLITE_CORRUPT, SQLITE_NOTADB) is found before the writer opens, and the writer never
+ * checkpoints into a file about to be quarantined.
  */
 function probeIsForeign(path: string): boolean {
   let size: number
@@ -130,6 +181,7 @@ function probeIsForeign(path: string): boolean {
     throw error
   }
   if (size === 0) return false
+  assertSqliteHeader(path)
   const location = existsSync(`${path}-wal`) ? path : `${pathToFileURL(path).href}?immutable=1`
   let probe: DatabaseSync
   try {
@@ -138,7 +190,10 @@ function probeIsForeign(path: string): boolean {
     throw toInfrastructureError(error)
   }
   try {
-    return isForeign({ all: (sql) => probe.prepare(sql).all() as SqliteRow[] })
+    const reader: Queryable = { all: (sql) => probe.prepare(sql).all() as SqliteRow[] }
+    if (isForeign(reader)) return true
+    readApplied(reader)
+    return false
   } catch (error) {
     throw toInfrastructureError(error)
   } finally {
@@ -257,9 +312,9 @@ function runSteps(
   options: OpenHostDbOptions
 ): OpenResult {
   // The file may have appeared or changed since the probe.
-  if (isForeign(db)) return { ok: false, error: 'NOT_A_DWARFAI_DB' }
+  if (readable(() => isForeign(db))) return { ok: false, error: 'NOT_A_DWARFAI_DB' }
 
-  const applied = readApplied(db)
+  const applied = readable(() => readApplied(db))
   if (isTampered(applied, migrations)) return { ok: false, error: 'SCHEMA_TAMPERED' }
 
   const from = applied.at(-1)?.version ?? 0
@@ -291,20 +346,21 @@ function runSteps(
   }
 }
 
-/**
- * Open the Host database at `path`, migrating it forward when the build knows newer versions.
- * On success the caller owns `db`; on a refusal or an error the connection is already closed.
- */
-export function openHostDb(path: string, options: OpenHostDbOptions): OpenResult {
-  const migrations = options.migrations ?? knownMigrations
-  assertLinear(migrations)
-  if (probeIsForeign(path)) return { ok: false, error: 'NOT_A_DWARFAI_DB' }
+/** Steps 1–7 on the file at `path` as it is now. */
+function openFile(
+  path: string,
+  migrations: readonly Migration[],
+  options: OpenHostDbOptions
+): OpenResult {
+  if (readable(() => probeIsForeign(path))) return { ok: false, error: 'NOT_A_DWARFAI_DB' }
   // A database not created yet has every known migration pending (steps 1–5 pass or do nothing
   // on a new file), so the step-6 refusal is decided before the writer would create the file.
   if (migrations.length > 0 && !existsSync(path) && isDevBuildOnReleaseData(path, options)) {
     return { ok: false, error: 'DEV_BUILD_ON_RELEASE_DATA' }
   }
-  const db = options.openWriter?.(path) ?? NodeSqliteDatabase.open(path, { log: options.log })
+  const db = readable(
+    () => options.openWriter?.(path) ?? NodeSqliteDatabase.open(path, { log: options.log })
+  )
   let result: OpenResult
   try {
     result = runSteps(db, path, migrations, options)
@@ -314,4 +370,31 @@ export function openHostDb(path: string, options: OpenHostDbOptions): OpenResult
   }
   if (!result.ok) db.close()
   return result
+}
+
+/**
+ * Open the Host database at `path`, migrating it forward when the build knows newer versions.
+ * A file SQLite cannot read as a database is quarantined and a fresh one created (09 §8.3).
+ * On success the caller owns `db`; on a refusal or an error the connection is already closed.
+ */
+export function openHostDb(path: string, options: OpenHostDbOptions): OpenResult {
+  const migrations = options.migrations ?? knownMigrations
+  assertLinear(migrations)
+  try {
+    return openFile(path, migrations, options)
+  } catch (error) {
+    if (!(error instanceof UnreadableDatabase)) throw error
+    // The quarantine renames files in the database's directory: never a dev build's write in the
+    // release data directory (ADR-005 item 6).
+    if (isDevBuildOnReleaseData(path, options)) {
+      return { ok: false, error: 'DEV_BUILD_ON_RELEASE_DATA' }
+    }
+    const moved = quarantineUnreadableDb(path, error.cause, options)
+    if (!moved.ok) return moved
+  }
+  try {
+    return openFile(path, migrations, options)
+  } catch (error) {
+    throw error instanceof UnreadableDatabase ? error.cause : error
+  }
 }
