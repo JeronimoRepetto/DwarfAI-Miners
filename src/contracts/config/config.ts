@@ -154,6 +154,12 @@ export interface ProviderConfigs extends Record<CatalogProviderId, ProviderConfi
   codex: CodexConfig
   antigravity: AntigravityConfig
   opencode: OpenCodeConfig
+  /**
+   * The simulated provider (15 §4.12 `SimulatedDriver`, development builds only) has no CLI to point at,
+   * so its block is the shared sub-shape alone and no variable overrides it; its world is configured by
+   * `loadSimulationConfig` below. It still has a block because every catalog id does.
+   */
+  simulated: ProviderConfig
 }
 
 export interface AppConfig {
@@ -230,6 +236,9 @@ export function defaultConfig(): AppConfig {
     cliPath: '',
     storeRoot: '~/.local/share/opencode'
   }
+  const simulated: ProviderConfig = {
+    cliPath: ''
+  }
   return {
     pollIntervalMs: 2000,
     livenessWindowS: 90,
@@ -239,7 +248,7 @@ export function defaultConfig(): AppConfig {
     sendTextTimeoutS: 60,
     hooksPort: 47821,
     guildAreasEnabled: false,
-    providers: { claude, codex, antigravity, opencode }
+    providers: { claude, codex, antigravity, opencode, simulated }
   }
 }
 
@@ -438,7 +447,8 @@ export function loadConfig(env: ConfigEnv): AppConfig {
       claude: readClaudeConfig(env, defaults.providers.claude),
       codex: readCodexConfig(env, defaults.providers.codex),
       antigravity: readAntigravityConfig(env, defaults.providers.antigravity),
-      opencode: readOpenCodeConfig(env, defaults.providers.opencode)
+      opencode: readOpenCodeConfig(env, defaults.providers.opencode),
+      simulated: defaults.providers.simulated
     }
   }
 }
