@@ -17,11 +17,24 @@ export interface OsProcessReader {
 /** A query's stdout on a zero exit, or why it gave none (timed out, exited non-zero, not started). */
 export type QueryOutcome = { ok: true; stdout: string } | { ok: false; cause: string }
 
-/** Runs one OS query as an argv array, never through a shell, bounded in time. */
+/**
+ * The bound on one per-process start-time query. The package names none; 5 000 ms is the bound the
+ * legacy probe ran with in production (`processProbe.ts` `runProbeCommand`).
+ */
+export const START_TIME_QUERY_TIMEOUT_MS = 5_000
+
+/**
+ * The bound on one boot-id query, wherever it runs (probe or `currentBootIdentity`): one
+ * derivation, one bound — 16 §2.6 "Boot identity read, per OS query: 2 000 ms → that field
+ * 'unknown'" (AMENDMENT-3; ADR-015 item 4). Frozen: never raised here.
+ */
+export const BOOT_ID_QUERY_TIMEOUT_MS = 2_000
+
+/** Runs one OS query as an argv array, never through a shell, killed at `timeoutMs`. */
 export type QueryRunner = (
   file: string,
   args: readonly string[],
-  env?: Record<string, string>
+  options: { timeoutMs: number; env?: Record<string, string> }
 ) => Promise<QueryOutcome>
 
 export const UNPARSEABLE = { ok: false, cause: 'gave an unparseable answer' } as const

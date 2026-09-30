@@ -24,6 +24,7 @@ import type { OsProcessReader, QueryRunner, ReadOutcome } from './probe/types'
 import { createWin32Reader } from './probe/win32'
 
 export type { OsProcessReader, QueryOutcome, QueryRunner, ReadOutcome } from './probe/types'
+export { BOOT_ID_QUERY_TIMEOUT_MS, START_TIME_QUERY_TIMEOUT_MS } from './probe/types'
 
 /** Node's `spawn` as the adapter calls it; injected by tests to see the exact options. */
 export type NodeSpawn = (
@@ -31,15 +32,6 @@ export type NodeSpawn = (
   args: readonly string[],
   options: SpawnOptions
 ) => ChildProcess
-
-/**
- * The bound on each OS query of a probe. The package names no probe timeout (16 §2.6 lists the
- * boot-identity read of `currentBootIdentity`, 2 000 ms, which stays that method's, ISSUE-019).
- * 5 000 ms is the bound the legacy probe ran with in production (`processProbe.ts`
- * `runProbeCommand`); 2 000 ms left no room for a cold PowerShell start on a CI runner. A query
- * that outlives it reads as no answer, so the probe says `'unknown'` — never the same process.
- */
-export const PROBE_QUERY_TIMEOUT_MS = 5_000
 
 /**
  * Environment names the OS or its runtime puts into a child whatever the spec says; the contract
@@ -90,7 +82,8 @@ export class NodeProcessControl implements ProcessProbeAndSpawn {
   private readonly spawnProcess: NodeSpawn
   /**
    * The boot id never changes while this process lives. Its read starts when the adapter is built
-   * (ADR-015 item 4 source), so no probe pays for it; a failed read is retried once per probe.
+   * (ADR-015 item 4 source, bounded by BOOT_ID_QUERY_TIMEOUT_MS), so no probe pays for it: a probe
+   * that finds it in flight awaits that same read; a failed read is retried once per later probe.
    */
   private bootRead: Promise<ReadOutcome<string>>
 
@@ -217,8 +210,8 @@ function notStarted(error: unknown): SpawnedProcess {
  * of a zero exit, or why there is none: "timed out after <ms> ms", "exited with code <n>",
  * "could not start (<errno>)".
  */
-export function createQueryRunner(timeoutMs: number): QueryRunner {
-  return (file, args, env) =>
+export function createQueryRunner(): QueryRunner {
+  return (file, args, { timeoutMs, env }) =>
     new Promise((resolve) => {
       execFile(
         file,
@@ -243,7 +236,7 @@ export function createQueryRunner(timeoutMs: number): QueryRunner {
 }
 
 function readerForThisOs(): OsProcessReader {
-  const runQuery = createQueryRunner(PROBE_QUERY_TIMEOUT_MS)
+  const runQuery = createQueryRunner()
   if (process.platform === 'win32') return createWin32Reader({ runQuery })
   if (process.platform === 'darwin') return createDarwinReader({ runQuery })
   return createLinuxReader()

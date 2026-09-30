@@ -7,10 +7,12 @@ import { runProcessControlContract } from '../../kernel/testing/processControl.c
 import {
   NodeProcessControl,
   OS_ADDED_ENV,
-  PROBE_QUERY_TIMEOUT_MS,
+  BOOT_ID_QUERY_TIMEOUT_MS,
+  START_TIME_QUERY_TIMEOUT_MS,
   createQueryRunner,
   type NodeSpawn,
-  type OsProcessReader
+  type OsProcessReader,
+  type QueryRunner
 } from './NodeProcessControl'
 import { createDarwinReader, parseDarwinLstart } from './probe/darwin'
 import { createLinuxReader, parseLinuxStartTime } from './probe/linux'
@@ -30,7 +32,20 @@ const readerOf = (startTimeMs: number | null, bootId: string | null = BOOT): OsP
   startTimeMs: () => Promise.resolve(outcome(startTimeMs)),
   bootId: () => Promise.resolve(outcome(bootId))
 })
-const TIMED_OUT = { ok: false, cause: `timed out after ${PROBE_QUERY_TIMEOUT_MS} ms` } as const
+const timedOut = (ms: number) => ({ ok: false, cause: `timed out after ${ms} ms` }) as const
+
+/**
+ * A query runner that answers after `latencyMs` of simulated time: past the bound the caller passes
+ * it reports a timeout, as the real runner does, so no real time passes in the test.
+ */
+const answeringAfter =
+  (latencyMs: number, stdout: (file: string, args: readonly string[]) => string): QueryRunner =>
+  (file, args, options) =>
+    Promise.resolve(
+      latencyMs > options.timeoutMs
+        ? timedOut(options.timeoutMs)
+        : { ok: true, stdout: stdout(file, args) }
+    )
 
 const errno = (code: string): Error => Object.assign(new Error(code), { code })
 
@@ -174,6 +189,29 @@ describe('NodeProcessControl', () => {
       expect(reads).toBe(3)
     })
 
+    it('[ADR-015] a probe that finds the construction-time boot id read in flight awaits that same read', async () => {
+      let reads = 0
+      let answer: (read: { ok: true; value: string }) => void = () => {}
+      const reader: OsProcessReader = {
+        startTimeMs: () => Promise.resolve(outcome(1_000)),
+        bootId: () => {
+          reads += 1
+          return new Promise((resolve) => {
+            answer = resolve
+          })
+        }
+      }
+      const control = new NodeProcessControl({ reader, signalZero: () => {} })
+
+      const first = control.probe(5)
+      const second = control.probe(6)
+      answer({ ok: true, value: BOOT })
+
+      expect(await first).toEqual({ pid: 5, processStartTimeMs: 1_000, bootId: BOOT })
+      expect(await second).toEqual({ pid: 6, processStartTimeMs: 1_000, bootId: BOOT })
+      expect(reads).toBe(1)
+    })
+
     it('[INV-51] an unreadable spawned identity names the read that failed and why', async () => {
       const spawnEcho: NodeSpawn = () =>
         nodeSpawn(process.execPath, [SLEEPER, 'echo'], {
@@ -194,7 +232,7 @@ describe('NodeProcessControl', () => {
         spawnProcess: spawnEcho,
         signalZero: () => {},
         reader: {
-          startTimeMs: () => Promise.resolve(TIMED_OUT),
+          startTimeMs: () => Promise.resolve(timedOut(START_TIME_QUERY_TIMEOUT_MS)),
           bootId: () => Promise.resolve(outcome(BOOT))
         }
       })
@@ -203,7 +241,7 @@ describe('NodeProcessControl', () => {
         signalZero: () => {},
         reader: {
           startTimeMs: () => Promise.resolve(outcome(1_000)),
-          bootId: () => Promise.resolve(TIMED_OUT)
+          bootId: () => Promise.resolve(timedOut(BOOT_ID_QUERY_TIMEOUT_MS))
         }
       })
 
@@ -212,10 +250,10 @@ describe('NodeProcessControl', () => {
       await Promise.allSettled([first.exited, second.exited])
 
       await expect(first.identity).rejects.toThrow(
-        `could not be read: unknown (start-time read timed out after ${PROBE_QUERY_TIMEOUT_MS} ms)`
+        'could not be read: unknown (start-time read timed out after 5000 ms)'
       )
       await expect(second.identity).rejects.toThrow(
-        `could not be read: unknown (boot-id read timed out after ${PROBE_QUERY_TIMEOUT_MS} ms)`
+        'could not be read: unknown (boot-id read timed out after 2000 ms)'
       )
     })
   })
@@ -249,11 +287,11 @@ describe('NodeProcessControl', () => {
       const queries: Array<{
         file: string
         args: readonly string[]
-        env?: Record<string, string>
+        options: { timeoutMs: number; env?: Record<string, string> }
       }> = []
       const reader = createDarwinReader({
-        runQuery: (file, args, env) => {
-          queries.push({ file, args, ...(env === undefined ? {} : { env }) })
+        runQuery: (file, args, options) => {
+          queries.push({ file, args, options })
           return Promise.resolve({
             ok: true as const,
             stdout: file === 'ps' ? 'Sat Aug 29 11:07:36 2026\n' : `${BOOT}\n`
@@ -269,8 +307,12 @@ describe('NodeProcessControl', () => {
       )
       expect(await reader.bootId()).toEqual(outcome(BOOT))
       expect(queries).toEqual([
-        { file: 'ps', args: ['-p', '42', '-o', 'lstart='], env: { LC_ALL: 'C' } },
-        { file: 'sysctl', args: ['-n', 'kern.bootsessionuuid'] }
+        {
+          file: 'ps',
+          args: ['-p', '42', '-o', 'lstart='],
+          options: { timeoutMs: 5_000, env: { LC_ALL: 'C' } }
+        },
+        { file: 'sysctl', args: ['-n', 'kern.bootsessionuuid'], options: { timeoutMs: 2_000 } }
       ])
     })
 
@@ -301,7 +343,7 @@ describe('NodeProcessControl', () => {
     })
 
     it('[INV-51] a failed, empty or implausible OS answer reads as no start time and no boot id', async () => {
-      const failing = { runQuery: () => Promise.resolve(TIMED_OUT) }
+      const failing = { runQuery: () => Promise.resolve(timedOut(700)) }
       const garbage = {
         runQuery: () => Promise.resolve({ ok: true as const, stdout: 'not a number\n' })
       }
@@ -313,8 +355,8 @@ describe('NodeProcessControl', () => {
       expect(filetimeToEpochMs('')).toBeNull()
       expect(filetimeToEpochMs('1')).toBeNull() // lands in 1601: implausible
       for (const reader of [createDarwinReader(failing), createWin32Reader(failing)]) {
-        expect(await reader.startTimeMs(10)).toEqual(TIMED_OUT)
-        expect(await reader.bootId()).toEqual(TIMED_OUT)
+        expect(await reader.startTimeMs(10)).toEqual(timedOut(700))
+        expect(await reader.bootId()).toEqual(timedOut(700))
       }
       for (const reader of [createDarwinReader(garbage), createWin32Reader(garbage)]) {
         expect(await reader.startTimeMs(10)).toEqual(unparseable)
@@ -327,21 +369,48 @@ describe('NodeProcessControl', () => {
     })
 
     it('[INV-51] an OS query that outlives its bound reports a timeout; one that fails reports how', async () => {
-      const run = createQueryRunner(300)
-      const node = (script: string) => run(process.execPath, ['-e', script])
+      const run = createQueryRunner()
+      const node = (script: string) => run(process.execPath, ['-e', script], { timeoutMs: 300 })
 
-      expect(PROBE_QUERY_TIMEOUT_MS).toBe(5_000)
       expect(await node('process.stdout.write("42")')).toEqual({ ok: true, stdout: '42' })
       expect(await node('setTimeout(() => {}, 5000)')).toEqual({
         ok: false,
         cause: 'timed out after 300 ms'
       })
       expect(await node('process.exit(3)')).toEqual({ ok: false, cause: 'exited with code 3' })
-      expect(await run(`${SLEEPER}.does-not-exist`, [])).toEqual({
+      expect(await run(`${SLEEPER}.does-not-exist`, [], { timeoutMs: 300 })).toEqual({
         ok: false,
         cause: 'could not start (ENOENT)'
       })
     }, 10_000)
+
+    it('[ADR-015] the boot-id query is bounded at 2 000 ms (16 §2.6) and the start-time query at 5 000 ms', async () => {
+      const stdout = (_file: string, args: readonly string[]) =>
+        (args.at(-1) ?? '').includes('Win32_OperatingSystem') ||
+        args.includes('kern.bootsessionuuid')
+          ? args.includes('kern.bootsessionuuid')
+            ? BOOT
+            : '134343379155000000'
+          : args.includes('lstart=')
+            ? 'Sat Aug 29 11:07:36 2026'
+            : '134352733836959841'
+
+      expect(BOOT_ID_QUERY_TIMEOUT_MS).toBe(2_000)
+      expect(START_TIME_QUERY_TIMEOUT_MS).toBe(5_000)
+      for (const make of [createWin32Reader, createDarwinReader]) {
+        const slow = make({ runQuery: answeringAfter(2_100, stdout) })
+        const quick = make({ runQuery: answeringAfter(1_900, stdout) })
+
+        expect(await slow.bootId()).toEqual(timedOut(2_000))
+        expect((await slow.startTimeMs(42)).ok).toBe(true)
+        expect((await quick.bootId()).ok).toBe(true)
+      }
+      const control = new NodeProcessControl({
+        reader: createWin32Reader({ runQuery: answeringAfter(2_100, stdout) }),
+        signalZero: () => {}
+      })
+      expect(await control.probe(42)).toBe('unknown')
+    })
 
     it('[INV-59] the OS-added environment names only what the OS or its runtime puts into a child itself', () => {
       expect(OS_ADDED_ENV).toEqual({

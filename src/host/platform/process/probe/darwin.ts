@@ -1,7 +1,13 @@
 // macOS start-time and boot-id reader (ADR-014 item 1, ADR-015 items 1 and 4). Kept from the
 // legacy `parseDarwinProcessStart` rule (candidate adapted, ISSUE-018), plus a C locale so `ps`
 // prints English month names whatever the person's locale.
-import { parsed, type OsProcessReader, type QueryRunner } from './types'
+import {
+  BOOT_ID_QUERY_TIMEOUT_MS,
+  START_TIME_QUERY_TIMEOUT_MS,
+  parsed,
+  type OsProcessReader,
+  type QueryRunner
+} from './types'
 
 const MONTHS: Readonly<Record<string, number>> = {
   Jan: 0,
@@ -45,11 +51,16 @@ export function parseDarwinLstart(text: string): number | null {
 export function createDarwinReader(deps: { runQuery: QueryRunner }): OsProcessReader {
   return {
     async startTimeMs(pid) {
-      const out = await deps.runQuery('ps', ['-p', String(pid), '-o', 'lstart='], { LC_ALL: 'C' })
+      const out = await deps.runQuery('ps', ['-p', String(pid), '-o', 'lstart='], {
+        timeoutMs: START_TIME_QUERY_TIMEOUT_MS,
+        env: { LC_ALL: 'C' }
+      })
       return parsed(out, parseDarwinLstart)
     },
     async bootId() {
-      const out = await deps.runQuery('sysctl', ['-n', 'kern.bootsessionuuid'])
+      const out = await deps.runQuery('sysctl', ['-n', 'kern.bootsessionuuid'], {
+        timeoutMs: BOOT_ID_QUERY_TIMEOUT_MS
+      })
       return parsed(out, (stdout) => {
         const id = stdout.trim()
         return /^[0-9A-Fa-f-]{8,}$/.test(id) ? id : null
