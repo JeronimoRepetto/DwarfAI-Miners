@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
@@ -69,6 +70,7 @@ describe('migration 0001-initial: schema v1 (09 §4)', () => {
       releaseDataDir: join(dir, 'release-data'),
       appVersion: '0.0.0-test',
       clock,
+      log: new RecordingDiagnosticsLog(),
       migrations: migrationsFor({ clock, ids: new SequenceIdGenerator() }),
       ...overrides
     }
