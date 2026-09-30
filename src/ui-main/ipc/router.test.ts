@@ -4,6 +4,7 @@ import { CHANNELS, PRELOAD_HELPERS, type ChannelKey } from '@dwarfai/contracts'
 import type { ChannelRoute } from './channelRoute'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './router'
 import { ROUTES } from './routes'
+import type { IpcSenderEvent, SenderPolicy } from './senderCheck'
 
 /**
  * The router (ADR-001 item 3; 21 §1 item 1): it registers the `ipcMain` listeners from the channel registry and
@@ -12,13 +13,19 @@ import { ROUTES } from './routes'
 describe('router (ADR-001 item 3)', () => {
   /** Records every listener the router registers, by wire name. */
   class RecordingIpcMain implements IpcMainRegistrar {
-    readonly handled = new Map<string, (payload: unknown) => Promise<unknown>>()
-    readonly listened = new Map<string, (payload: unknown) => void>()
-    handle(channel: string, listener: (payload: unknown) => Promise<unknown>): void {
+    readonly handled = new Map<
+      string,
+      (event: IpcSenderEvent, payload: unknown) => Promise<unknown>
+    >()
+    readonly listened = new Map<string, (event: IpcSenderEvent, payload: unknown) => void>()
+    handle(
+      channel: string,
+      listener: (event: IpcSenderEvent, payload: unknown) => Promise<unknown>
+    ): void {
       if (this.handled.has(channel)) throw new Error(`second handler for ${channel}`)
       this.handled.set(channel, listener)
     }
-    on(channel: string, listener: (payload: unknown) => void): void {
+    on(channel: string, listener: (event: IpcSenderEvent, payload: unknown) => void): void {
       if (this.listened.has(channel)) throw new Error(`second listener for ${channel}`)
       this.listened.set(channel, listener)
     }
@@ -37,12 +44,20 @@ describe('router (ADR-001 item 3)', () => {
   }
 
   const keys = Object.keys(CHANNELS) as ChannelKey[]
+  // The Panel window showing the app entry: a sender the seam A gate accepts (ADR-019 item 8, ISSUE-044).
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const senders: SenderPolicy = { appEntry: APP_ENTRY, isModeWindow: (id) => id === 1 }
+  const panel: IpcSenderEvent = { sender: { id: 1 }, senderFrame: { url: APP_ENTRY } }
   const without = (channel: ChannelKey): ChannelRoute[] =>
     ROUTES.filter((r) => r.channel !== channel)
 
   it('[ADR-001] a call with no route for its channel is refused with a typed error and never reaches a handler', async () => {
     const legacy = recordingTarget()
-    const router = createRouter({ routes: without('dwarf:kick'), legacy: legacy.target })
+    const router = createRouter({
+      routes: without('dwarf:kick'),
+      legacy: legacy.target,
+      senders
+    })
     const ipc = new RecordingIpcMain()
     router.register(ipc)
 
@@ -50,10 +65,10 @@ describe('router (ADR-001 item 3)', () => {
       ok: false,
       error: { code: 'METHOD_NOT_FOUND', message: 'no route for dwarf:kick', retryable: false }
     }
-    expect(await router.dispatch('dwarf:kick', { dwarfId: 'd-1' })).toEqual(refusal)
+    expect(await router.dispatch('dwarf:kick', panel, { dwarfId: 'd-1' })).toEqual(refusal)
     // TC-043-04, TC-043-05: the renderer's call reaches the registered listener and gets the same refusal (a NEW row
     // listed in unrouted.ts has no route, so it is refused exactly like this).
-    expect(await ipc.handled.get('dwarf:kick')?.({ dwarfId: 'd-1' })).toEqual(refusal)
+    expect(await ipc.handled.get('dwarf:kick')?.(panel, { dwarfId: 'd-1' })).toEqual(refusal)
     // A qualified call with no route for its qualifier and no unqualified route is refused too.
     const qualifiedOnly = createRouter({
       routes: [
@@ -67,10 +82,11 @@ describe('router (ADR-001 item 3)', () => {
           qualifier: { origin: 'legacy-launch' }
         }
       ],
-      legacy: legacy.target
+      legacy: legacy.target,
+      senders
     })
     expect(
-      await qualifiedOnly.dispatch('agent:launch', {}, { origin: 'legacy-ask-channel' })
+      await qualifiedOnly.dispatch('agent:launch', panel, {}, { origin: 'legacy-ask-channel' })
     ).toEqual({
       ok: false,
       error: { code: 'METHOD_NOT_FOUND', message: 'no route for agent:launch', retryable: false }
@@ -80,7 +96,7 @@ describe('router (ADR-001 item 3)', () => {
 
   it('[ADR-001] the router registers one ipcMain listener per invoke and send row under today’s wire name and none for a push or the A-X1 preload helper', () => {
     const ipc = new RecordingIpcMain()
-    createRouter({ routes: ROUTES, legacy: recordingTarget().target }).register(ipc)
+    createRouter({ routes: ROUTES, legacy: recordingTarget().target, senders }).register(ipc)
 
     const helpers: readonly string[] = PRELOAD_HELPERS
     const wire = (key: ChannelKey): string =>
@@ -102,11 +118,12 @@ describe('router (ADR-001 item 3)', () => {
   it('[ADR-001] a legacy row is served by LegacyRuntimeRoute under today’s wire name with the renderer payload unchanged', async () => {
     const legacy = recordingTarget({ opened: true })
     const ipc = new RecordingIpcMain()
-    createRouter({ routes: ROUTES, legacy: legacy.target }).register(ipc)
-    const link = { url: 'https://example.org' }
+    createRouter({ routes: ROUTES, legacy: legacy.target, senders }).register(ipc)
+    // A-21's today request is the link itself (a string, 14 §2.1); the gate lets a valid one through untouched.
+    const link = 'https://example.org'
 
-    expect(await ipc.handled.get('shell:openExternalLink')?.(link)).toEqual({ opened: true })
-    ipc.listened.get('panel:openMine')?.('mine-1')
+    expect(await ipc.handled.get('shell:openExternalLink')?.(panel, link)).toEqual({ opened: true })
+    ipc.listened.get('panel:openMine')?.(panel, 'mine-1')
     await Promise.resolve()
 
     expect(legacy.served).toEqual([
@@ -124,13 +141,14 @@ describe('router (ADR-001 item 3)', () => {
       parity: 'passed',
       shape: 'target'
     }
-    expect(() => createRouter({ routes: [...without('mines:get'), host], legacy })).toThrow(
-      'no host target'
-    )
+    expect(() =>
+      createRouter({ routes: [...without('mines:get'), host], legacy, senders })
+    ).toThrow('no host target')
     expect(() =>
       createRouter({
         routes: [...without('mines:get'), { ...host, owner: 'ui-local' }],
-        legacy
+        legacy,
+        senders
       })
     ).toThrow('no ui-local target')
     const adapted: ChannelRoute = {
@@ -138,14 +156,15 @@ describe('router (ADR-001 item 3)', () => {
       owner: 'legacy',
       shapeAdapter: 'BoardFacadeShape'
     }
-    expect(() => createRouter({ routes: [...without('mines:get'), adapted], legacy })).toThrow(
-      'no shape adapter BoardFacadeShape'
-    )
+    expect(() =>
+      createRouter({ routes: [...without('mines:get'), adapted], legacy, senders })
+    ).toThrow('no shape adapter BoardFacadeShape')
     expect(() =>
       createRouter({
         routes: [...without('mines:get'), adapted],
         legacy,
-        shapeAdapters: { BoardFacadeShape: recordingTarget().target }
+        shapeAdapters: { BoardFacadeShape: recordingTarget().target },
+        senders
       })
     ).not.toThrow()
   })

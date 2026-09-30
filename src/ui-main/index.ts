@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { app, clipboard, dialog, globalShortcut, ipcMain, nativeImage, shell } from 'electron'
 import {
   composeLegacyRuntime,
@@ -7,8 +9,15 @@ import {
 import { createRouter, type IpcMainRegistrar } from './ipc/router'
 import { ROUTES } from './ipc/routes'
 import { ElectronSingleInstanceLock } from './window/adapters/ElectronSingleInstanceLock'
+import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { wireSecondLaunch } from './window/application/secondLaunch'
 import type { SingleInstanceLock } from './window/ports/singleInstanceLock'
+
+/** A window Electron created, as the mode-window registry needs it. */
+export interface CreatedWindow {
+  readonly webContentsId: number
+  onClosed(h: () => void): void
+}
 
 /** The Electron `app` events and exits the root needs, as plain calls (bound in the Electron wiring below). */
 export interface UiMainLifecycle {
@@ -18,6 +27,8 @@ export interface UiMainLifecycle {
   onBeforeQuit(h: () => void): void
   onWillQuit(h: () => void): void
   onWindowAllClosed(h: () => void): void
+  /** Electron created a window (`browser-window-created`). */
+  onWindowCreated(h: (window: CreatedWindow) => void): void
 }
 
 export interface UiMainDeps {
@@ -26,6 +37,8 @@ export interface UiMainDeps {
   legacyRuntime: Pick<LegacyRuntimeRoute, 'compose' | 'serve' | 'beforeQuit' | 'willQuit'>
   /** Electron's `ipcMain`, where the router registers the seam A listeners (ADR-001 item 3). */
   ipc: IpcMainRegistrar
+  /** The app's own entry, the only page whose calls the seam A gate accepts (ADR-019 item 8). */
+  appEntry: string
 }
 
 /**
@@ -45,14 +58,28 @@ export async function startUiMain({
   lock,
   lifecycle,
   legacyRuntime,
-  ipc
+  ipc,
+  appEntry
 }: UiMainDeps): Promise<void> {
   if (!lock.acquire()) {
     lifecycle.quit()
     return
   }
-  // Every seam A call goes through the router table from the first renderer load (21 §1 item 1).
-  createRouter({ routes: ROUTES, legacy: legacyRuntime }).register(ipc)
+  // The mode windows (ADR-019 item 8): until the window factory registers the windows it builds (ISSUE-046), every
+  // window of this process is created by today's composition, and since #635 that is the one Panel shell window.
+  // Registered before anything is composed, so the window is known before its page is loaded.
+  const modeWindows = createModeWindowRegistry()
+  lifecycle.onWindowCreated(({ webContentsId, onClosed }) => {
+    modeWindows.register(webContentsId)
+    onClosed(() => modeWindows.drop(webContentsId))
+  })
+  // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
+  // that checks its sender and its payload (ADR-019 items 7, 8).
+  createRouter({
+    routes: ROUTES,
+    legacy: legacyRuntime,
+    senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
+  }).register(ipc)
   const secondLaunch = wireSecondLaunch(lock)
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
   lifecycle.onWillQuit(() => legacyRuntime.willQuit())
@@ -82,19 +109,37 @@ function electronLifecycle(): UiMainLifecycle {
     },
     onWindowAllClosed: (h) => {
       app.on('window-all-closed', () => h())
+    },
+    onWindowCreated: (h) => {
+      app.on('browser-window-created', (_event, window) => {
+        h({
+          webContentsId: window.webContents.id,
+          onClosed: (closed) => window.once('closed', closed)
+        })
+      })
     }
   }
 }
 
-/** Electron's `ipcMain` behind `IpcMainRegistrar`: the renderer's one payload argument, the event dropped. */
+/** Electron's `ipcMain` behind `IpcMainRegistrar`: the event (for the sender check) and the one payload argument. */
 function electronIpcMain(): IpcMainRegistrar {
   return {
     handle: (channel, listener) =>
-      ipcMain.handle(channel, (_event, payload: unknown) => listener(payload)),
+      ipcMain.handle(channel, (event, payload: unknown) => listener(event, payload)),
     on: (channel, listener) => {
-      ipcMain.on(channel, (_event, payload: unknown) => listener(payload))
+      ipcMain.on(channel, (event, payload: unknown) => listener(event, payload))
     }
   }
+}
+
+/**
+ * The page today's composition loads into the Panel window (legacy `shell/window.ts` `applyPanelPageLoad`): the dev
+ * server when `ELECTRON_RENDERER_URL` names one, the built `renderer/index.html` beside this bundle otherwise.
+ */
+function appEntryUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const devServerUrl = env.ELECTRON_RENDERER_URL
+  if (devServerUrl) return devServerUrl
+  return pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
 }
 
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
@@ -107,6 +152,7 @@ if (process.type === 'browser') {
     legacyRuntime: createLegacyRuntimeRoute(
       composeLegacyRuntime({ app, dialog, nativeImage, shell, clipboard, globalShortcut })
     ),
-    ipc: electronIpcMain()
+    ipc: electronIpcMain(),
+    appEntry: appEntryUrl()
   })
 }

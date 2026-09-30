@@ -1,7 +1,8 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
-import { startUiMain, type UiMainDeps, type UiMainLifecycle } from './index'
+import { startUiMain, type CreatedWindow, type UiMainDeps, type UiMainLifecycle } from './index'
 import type { IpcMainRegistrar } from './ipc/router'
+import type { IpcSenderEvent } from './ipc/senderCheck'
 import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 
@@ -42,6 +43,22 @@ describe('ui-main composition root (05 §2.3)', () => {
       this.calls.push('onWindowAllClosed')
       this.handlers.set('window-all-closed', h)
     }
+    private windowCreated: (window: CreatedWindow) => void = () => {}
+    onWindowCreated(h: (window: CreatedWindow) => void): void {
+      this.calls.push('onWindowCreated')
+      this.windowCreated = h
+    }
+    /** Electron created a window whose `webContents` has `id`; the answer closes it. */
+    createWindow(id: number): { close(): void } {
+      let closed: () => void = () => {}
+      this.windowCreated({
+        webContentsId: id,
+        onClosed: (h) => {
+          closed = h
+        }
+      })
+      return { close: () => closed() }
+    }
     becomeReady(): void {
       this.ready()
     }
@@ -49,12 +66,18 @@ describe('ui-main composition root (05 §2.3)', () => {
 
   /** Records the listeners the router registers on `ipcMain`, by wire name. */
   class RecordingIpcMain implements IpcMainRegistrar {
-    readonly handled = new Map<string, (payload: unknown) => Promise<unknown>>()
-    readonly listened = new Map<string, (payload: unknown) => void>()
-    handle(channel: string, listener: (payload: unknown) => Promise<unknown>): void {
+    readonly handled = new Map<
+      string,
+      (event: IpcSenderEvent, payload: unknown) => Promise<unknown>
+    >()
+    readonly listened = new Map<string, (event: IpcSenderEvent, payload: unknown) => void>()
+    handle(
+      channel: string,
+      listener: (event: IpcSenderEvent, payload: unknown) => Promise<unknown>
+    ): void {
       this.handled.set(channel, listener)
     }
-    on(channel: string, listener: (payload: unknown) => void): void {
+    on(channel: string, listener: (event: IpcSenderEvent, payload: unknown) => void): void {
       this.listened.set(channel, listener)
     }
   }
@@ -84,12 +107,25 @@ describe('ui-main composition root (05 §2.3)', () => {
     return { legacyRuntime, counts, panel, served }
   }
 
+  const APP_ENTRY = 'file:///opt/DwarfAI/out/renderer/index.html'
+  const appEntry = APP_ENTRY
+  const eventFrom = (id: number, url = APP_ENTRY): IpcSenderEvent => ({
+    sender: { id },
+    senderFrame: { url }
+  })
+
   it('[ADR-001] when the single-instance lock is not acquired the root quits before composing the legacy runtime or any window', async () => {
     const lock = new FakeSingleInstanceLock(false)
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime, counts, panel } = countingLegacyRuntime()
 
-    await startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
+    await startUiMain({
+      lock,
+      lifecycle,
+      legacyRuntime,
+      ipc: new RecordingIpcMain(),
+      appEntry
+    })
     lifecycle.becomeReady()
     await Promise.resolve()
 
@@ -105,7 +141,13 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime, counts, panel } = countingLegacyRuntime()
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
+    const started = startUiMain({
+      lock,
+      lifecycle,
+      legacyRuntime,
+      ipc: new RecordingIpcMain(),
+      appEntry
+    })
     lock.launchAgain() // the lock is taken but the window does not exist yet (UC-033)
     expect(counts.composed).toBe(0)
 
@@ -124,7 +166,13 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime, counts } = countingLegacyRuntime()
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
+    const started = startUiMain({
+      lock,
+      lifecycle,
+      legacyRuntime,
+      ipc: new RecordingIpcMain(),
+      appEntry
+    })
     lifecycle.becomeReady()
     await started
     lifecycle.handlers.get('window-all-closed')?.()
@@ -141,7 +189,13 @@ describe('ui-main composition root (05 §2.3)', () => {
     const lifecycle = new RecordingLifecycle()
     const { legacyRuntime } = countingLegacyRuntime('fails')
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc: new RecordingIpcMain() })
+    const started = startUiMain({
+      lock,
+      lifecycle,
+      legacyRuntime,
+      ipc: new RecordingIpcMain(),
+      appEntry
+    })
     lifecycle.becomeReady()
     await started
 
@@ -154,14 +208,45 @@ describe('ui-main composition root (05 §2.3)', () => {
     const { legacyRuntime, counts, served } = countingLegacyRuntime()
     const ipc = new RecordingIpcMain()
 
-    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc })
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc, appEntry })
     expect(counts.composed).toBe(0)
     expect(ipc.handled.has('app:build')).toBe(true)
     expect(ipc.listened.has('panel:openMine')).toBe(true)
 
     lifecycle.becomeReady()
+    lifecycle.createWindow(1) // today's Panel window, created by the composition
     await started
-    expect(await ipc.handled.get('app:build')?.(undefined)).toEqual({ version: '0.0.0-test' })
+    expect(await ipc.handled.get('app:build')?.(eventFrom(1), undefined)).toEqual({
+      version: '0.0.0-test'
+    })
+    expect(served).toEqual([['app:build', undefined]])
+  })
+
+  it('[ADR-019] the root registers each window it creates as a mode window: its app entry is served, a window it never created or one that closed is ignored', async () => {
+    const lock = new FakeSingleInstanceLock(true)
+    const lifecycle = new RecordingLifecycle()
+    const { legacyRuntime, served } = countingLegacyRuntime()
+    const ipc = new RecordingIpcMain()
+    const rejected = {
+      ok: false,
+      error: { code: 'SENDER_REJECTED', message: expect.any(String), retryable: false }
+    }
+
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc, appEntry })
+    // Registered before anything is composed, so the first window the composition creates is known at once.
+    expect(lifecycle.calls.indexOf('onWindowCreated')).toBeLessThan(
+      lifecycle.calls.indexOf('whenReady')
+    )
+    lifecycle.becomeReady()
+    const panel = lifecycle.createWindow(4)
+    await started
+    const build = ipc.handled.get('app:build')
+
+    expect(await build?.(eventFrom(4), undefined)).toEqual({ version: '0.0.0-test' })
+    expect(await build?.(eventFrom(5), undefined)).toEqual(rejected)
+    expect(await build?.(eventFrom(4, 'https://attacker.example/'), undefined)).toEqual(rejected)
+    panel.close()
+    expect(await build?.(eventFrom(4), undefined)).toEqual(rejected)
     expect(served).toEqual([['app:build', undefined]])
   })
 
@@ -173,7 +258,8 @@ describe('ui-main composition root (05 §2.3)', () => {
       lock: new FakeSingleInstanceLock(false),
       lifecycle: new RecordingLifecycle(),
       legacyRuntime,
-      ipc
+      ipc,
+      appEntry
     })
 
     expect([...ipc.handled.keys(), ...ipc.listened.keys()]).toEqual([])
