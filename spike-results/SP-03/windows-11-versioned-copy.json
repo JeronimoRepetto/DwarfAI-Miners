@@ -1,0 +1,40 @@
+[
+  {
+    "layout": "electron-dist-win32",
+    "files": 73,
+    "bytes": 383650089,
+    "manifestMs": 228,
+    "copyMs": 100,
+    "verifyMs": 194,
+    "renameMs": 0,
+    "reuseMs": 193,
+    "reused": true,
+    "signatureBefore": "authenticode:NotSigned",
+    "signatureAfter": "authenticode:NotSigned",
+    "hostStarted": true,
+    "hostExecPathInsideCopy": true,
+    "hostElectron": "44.0.0",
+    "appAsarName": null,
+    "startMs": 2285,
+    "note": null
+  },
+  {
+    "layout": "app-win-unpacked",
+    "files": 81,
+    "bytes": 718752939,
+    "manifestMs": 379,
+    "copyMs": 1491,
+    "verifyMs": 465,
+    "renameMs": 1,
+    "reuseMs": 364,
+    "reused": true,
+    "signatureBefore": "authenticode:NotSigned",
+    "signatureAfter": "authenticode:NotSigned",
+    "hostStarted": true,
+    "hostExecPathInsideCopy": true,
+    "hostElectron": "44.0.0",
+    "appAsarName": "dwarfai-miners",
+    "startMs": 63,
+    "note": null
+  }
+]
