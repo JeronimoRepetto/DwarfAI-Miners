@@ -278,4 +278,46 @@ describe('pre-migration backup (09 §6.2 step 5, §8.3; ADR-005 item 6)', () => 
       errCode: expect.any(String)
     })
   })
+
+  it('[ADR-005, FM-099] a failing migration is rolled back, logged db.migration failed, and its pre-migration backup remains', () => {
+    const atV1 = open({ migrations: [T1] })
+    atV1.db.run('INSERT INTO t1 (id, label) VALUES (?, ?)', [1, 'kept'])
+    closeAll()
+    clock.advance(1_000)
+    const failing = defineMigration({
+      version: 2,
+      name: '0002-failing',
+      sql: 'INSERT INTO t1 (id, label) VALUES (1, 1);',
+      up: (db) => db.run('INSERT INTO t1 (id, label) VALUES (?, ?)', [1, 'duplicate'])
+    })
+
+    expect(() => openHostDb(path, options({ migrations: [T1, failing] }))).toThrow(
+      expect.objectContaining({ code: 'SQLITE_CONSTRAINT' })
+    )
+
+    expect(backups()).toEqual(['dwarfai.db.bak-v1-20250615T150641000Z'])
+    expect(contents(path)).toEqual({
+      tables: ['schema_migrations', 't1'],
+      versions: [1],
+      rows: [{ id: 1, label: 'kept' }]
+    })
+    expect(log.byEvent('db.migration')).toEqual([
+      {
+        level: 'info',
+        event: 'db.migration',
+        subsystem: 'host',
+        outcome: 'ok',
+        msg: 'v0→v1',
+        durationMs: 0
+      },
+      {
+        level: 'error',
+        event: 'db.migration',
+        subsystem: 'host',
+        outcome: 'failed',
+        msg: 'v1→v2',
+        errCode: 'SQLITE_CONSTRAINT'
+      }
+    ])
+  })
 })

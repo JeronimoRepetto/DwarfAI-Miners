@@ -2,7 +2,7 @@
 // opens `dwarfai.db`, and it only moves forward. Versions live in `schema_migrations`, never in
 // the SQLite header's version pragma (the retired #575 floor, ADR-005 item 2).
 //
-// `openHostDb` follows the steps of 09 §6.2 in order:
+// `openHostDb` follows the steps of 09 §6.2 (step 6 decided before step 5, see there):
 //   1. identity: a file that is not a DwarfAI Host database (the legacy projects-v1.db included)
 //      is refused `NOT_A_DWARFAI_DB` without being written — it is probed read-only before the
 //      writer, whose WAL pragma would rewrite its header (NFR-PERS-15, FM-102);
@@ -23,7 +23,11 @@
 //   7. `foreign_keys = OFF` outside any transaction, one `BEGIN IMMEDIATE` for every pending
 //      migration and its `schema_migrations` row, `PRAGMA foreign_key_check` before `COMMIT`,
 //      then `foreign_keys = ON`, verified. A failure rolls everything back: the file stays at its
-//      previous version with its data intact (FM-099).
+//      previous version with its data intact (FM-099). Logged `db.migration` either way.
+//
+// A file SQLite reports unreadable (`SQLITE_CORRUPT` / `SQLITE_NOTADB`) during the probe, the
+// writer's open or steps 1–2 is quarantined (`../quarantine.ts`, 09 §8.3, FM-103) and the steps
+// run again on a fresh file; the same error later is the command's failure, never a quarantine.
 //
 // Refusals are values (the boot turns them into FM-008). A migration that throws, or a
 // foreign_key_check row, propagates as an error after the rollback; the connection is closed.
@@ -302,6 +306,37 @@ function applyPending(
   }
 }
 
+/** Step 7 with its `db.migration` record (19 §9.5; FM-099); a failure is logged, then rethrown. */
+function migrateLogged(
+  db: SqliteDatabase,
+  pending: readonly Migration[],
+  options: OpenHostDbOptions,
+  msg: string
+): void {
+  const started = options.clock.now()
+  try {
+    applyPending(db, pending, options)
+  } catch (error) {
+    options.log.record({
+      level: 'error',
+      event: 'db.migration',
+      subsystem: 'host',
+      outcome: 'failed',
+      msg,
+      ...(error instanceof SqliteInfrastructureError ? { errCode: error.code } : {})
+    })
+    throw error
+  }
+  options.log.record({
+    level: 'info',
+    event: 'db.migration',
+    subsystem: 'host',
+    outcome: 'ok',
+    msg,
+    durationMs: options.clock.now() - started
+  })
+}
+
 // --------------------------------------------------------------------------------------------
 
 /** Steps 1 (again, on the writer) to 7 over the open writer. */
@@ -338,7 +373,7 @@ function runSteps(
       const written = backup.beforeMigrating({ db, path, fromVersion: from })
       if (!written.ok) return written
     }
-    applyPending(db, pending, options)
+    migrateLogged(db, pending, options, `v${from}→v${highestKnown}`)
   }
   return {
     ok: true,
