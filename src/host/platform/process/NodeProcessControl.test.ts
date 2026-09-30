@@ -16,7 +16,8 @@ import {
 } from './NodeProcessControl'
 import { createDarwinReader, parseDarwinLstart } from './probe/darwin'
 import { createLinuxReader, parseLinuxStartTime } from './probe/linux'
-import { createWin32Reader, filetimeToEpochMs } from './probe/win32'
+import { WIN32_BOOT_ID_KEY, createWin32Reader, filetimeToEpochMs } from './probe/win32'
+import { windowsPowerShell, windowsSystemTool } from './probe/types'
 
 const SLEEPER = fileURLToPath(
   new URL('../../../../fixtures/bin/sleeper/sleeper.mjs', import.meta.url)
@@ -316,30 +317,47 @@ describe('NodeProcessControl', () => {
       ])
     })
 
-    it('[ADR-014] the Windows reader converts FILETIMEs and rounds the boot instant to the second', async () => {
-      const queries: Array<readonly string[]> = []
+    // ISSUE-019 changed the expected boot-id source: the registry BootId counter replaces the CIM
+    // LastBootUpTime instant, which exceeded the frozen 2 000 ms bound on a cold CI runner (S-015-2).
+    it('[ADR-014] the Windows reader converts FILETIMEs and reads the boot id from the registry BootId counter with reg.exe from System32', async () => {
+      const queries: Array<{ file: string; args: readonly string[]; dropEnv?: readonly string[] }> =
+        []
       const reader = createWin32Reader({
-        runQuery: (_file, args) => {
-          queries.push(args)
-          const script = args.at(-1) ?? ''
+        runQuery: (file, args, options) => {
+          queries.push({
+            file,
+            args,
+            ...(options.dropEnv === undefined ? {} : { dropEnv: options.dropEnv })
+          })
           return Promise.resolve({
             ok: true as const,
-            stdout: script.includes('Win32_OperatingSystem')
-              ? '134343379155000000\r\n'
+            stdout: file.endsWith('reg.exe')
+              ? `\r\n${WIN32_BOOT_ID_KEY}\r\n    BootId    REG_DWORD    0xd5\r\n\r\n`
               : '134352733836959841\r\n'
           })
-        }
+        },
+        env: { SystemRoot: 'C:\\Windows' }
       })
 
       expect(filetimeToEpochMs('134352733836959841')).toBe(1_790_799_783_695)
       expect(await reader.startTimeMs(4242)).toEqual(outcome(1_790_799_783_695))
-      expect(await reader.bootId()).toEqual(outcome('1789864316000'))
-      expect(queries[0]).toEqual([
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        '(Get-Process -Id 4242).StartTime.ToFileTime()'
-      ])
+      expect(await reader.bootId()).toEqual(outcome('213'))
+      // ISSUE-019: PowerShell by its full path under SystemRoot (was the bare name, found on PATH),
+      // without an inherited PSModulePath.
+      expect(queries[0]).toEqual({
+        file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        args: [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '(Get-Process -Id 4242).StartTime.ToFileTime()'
+        ],
+        dropEnv: ['PSModulePath']
+      })
+      expect(queries[1]).toEqual({
+        file: 'C:\\Windows\\System32\\reg.exe',
+        args: ['query', WIN32_BOOT_ID_KEY, '/v', 'BootId']
+      })
     })
 
     it('[INV-51] a failed, empty or implausible OS answer reads as no start time and no boot id', async () => {
@@ -384,13 +402,49 @@ describe('NodeProcessControl', () => {
       })
     }, 10_000)
 
+    it('[C-17] a query child never inherits a dropped variable such as PSModulePath, whatever its case in the parent, and keeps the rest', async () => {
+      const before = {
+        PSModulePath: process.env['PSModulePath'],
+        KEEP: process.env['DWARFAI_KEEP']
+      }
+      process.env['PSModulePath'] = 'C:\\pwsh7\\Modules'
+      process.env['DWARFAI_KEEP'] = 'kept'
+      try {
+        const out = await createQueryRunner()(
+          process.execPath,
+          ['-e', 'process.stdout.write(JSON.stringify(Object.keys(process.env)))'],
+          { timeoutMs: 5_000, dropEnv: ['psmodulepath'] }
+        )
+
+        expect(out.ok).toBe(true)
+        const names = JSON.parse(out.ok ? out.stdout : '[]') as string[]
+        expect(names.filter((name) => name.toUpperCase() === 'PSMODULEPATH')).toEqual([])
+        expect(names).toContain('DWARFAI_KEEP')
+      } finally {
+        if (before.PSModulePath === undefined) delete process.env['PSModulePath']
+        else process.env['PSModulePath'] = before.PSModulePath
+        if (before.KEEP === undefined) delete process.env['DWARFAI_KEEP']
+        else process.env['DWARFAI_KEEP'] = before.KEEP
+      }
+    }, 10_000)
+
+    it('[C-17] Windows system tools are named by their full path under SystemRoot, never by a bare name; C:\\Windows only when SystemRoot is missing', () => {
+      expect(windowsSystemTool('reg.exe', { SystemRoot: 'D:\\WinDir\\' })).toBe(
+        'D:\\WinDir\\System32\\reg.exe'
+      )
+      expect(windowsPowerShell({ SystemRoot: 'D:\\WinDir' })).toBe(
+        'D:\\WinDir\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+      )
+      expect(windowsSystemTool('taskkill.exe', {})).toBe('C:\\Windows\\System32\\taskkill.exe')
+    })
+
     it('[ADR-015] the boot-id query is bounded at 2 000 ms (16 §2.6) and the start-time query at 5 000 ms', async () => {
-      const stdout = (_file: string, args: readonly string[]) =>
-        (args.at(-1) ?? '').includes('Win32_OperatingSystem') ||
-        args.includes('kern.bootsessionuuid')
+      // ISSUE-019: the Windows boot id is the registry BootId counter (was CIM LastBootUpTime).
+      const stdout = (file: string, args: readonly string[]) =>
+        file.endsWith('reg.exe') || args.includes('kern.bootsessionuuid')
           ? args.includes('kern.bootsessionuuid')
             ? BOOT
-            : '134343379155000000'
+            : '    BootId    REG_DWORD    0xd5\r\n'
           : args.includes('lstart=')
             ? 'Sat Aug 29 11:07:36 2026'
             : '134352733836959841'
