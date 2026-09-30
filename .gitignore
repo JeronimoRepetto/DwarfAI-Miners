@@ -44,3 +44,7 @@ odd/
 
 #OLD AGENT.md NO DELETE
 Deprecated_AGENTS.md
+# Release-lane outputs (testing strategy 17 §1.9, §1.11): Playwright's per-case output
+# (traces of failed E2E cases) and the perf records, which CI uploads as run artifacts.
+/test-results/
+/perf-results/

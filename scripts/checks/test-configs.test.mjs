@@ -26,7 +26,8 @@ const OS_TEST_SAMPLES = [
 ]
 const DEFAULT_TEST_SAMPLES = [
   'src/contracts/ipc/registry.test.ts',
-  'scripts/checks/quarantine.test.mjs'
+  'scripts/checks/quarantine.test.mjs',
+  'perf/_harness/runPerf.test.mjs'
 ]
 /** Test-shaped data of another test (17 §2.2 `__fixtures__/`), never a test of either lane. */
 const FIXTURE_SAMPLES = [
@@ -71,6 +72,15 @@ describe('test lane configs (17 §1.8)', () => {
   it('[ADR-004] the OS-lane config writes the JSON report that the empty-lane guard reads', () => {
     expect(osConfig.test.reporters ?? []).toContain('json')
     expect(osConfig.test.outputFile?.json).toBe(OS_LANE_REPORT)
+  })
+
+  it('[ADR-004] tsconfig.node.json type-checks the E2E harness and the Playwright config', () => {
+    const tsconfig = JSON.parse(readFileSync(path.join(repoRoot, 'tsconfig.node.json'), 'utf8'))
+    const typeChecked = (file) => tsconfig.include.some((glob) => path.matchesGlob(file, glob))
+    for (const file of ['e2e/_harness/launchApp.ts', 'e2e/_harness/harness.e2e.ts']) {
+      expect(typeChecked(file), `tsconfig.node.json includes ${file}`).toBe(true)
+    }
+    expect(typeChecked('playwright.config.ts'), 'tsconfig.node.json includes the config').toBe(true)
   })
 
   it('[ADR-004] neither config configures a retry, so L1-L7 run with zero retries', () => {
