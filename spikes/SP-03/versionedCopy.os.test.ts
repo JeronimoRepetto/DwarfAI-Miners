@@ -11,9 +11,11 @@ import {
   readdirSync,
   readlinkSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -91,6 +93,12 @@ interface Measurement {
   readonly hostElectron: string | null
   readonly appAsarName: string | null
   readonly startMs: number
+  /** How "runs from the copy" was decided: the paths the Host reported and the harness compared. */
+  readonly diagnostics: {
+    readonly hostExecPath: string | null
+    readonly copiedPath: string
+    readonly workDirIsLink: boolean
+  }
   readonly note: string | null
 }
 
@@ -238,23 +246,87 @@ function executableOf(dir: string): string {
   return path.join(dir, candidates[0] as string)
 }
 
+/**
+ * The environment for a Windows PowerShell 5.1 child: the parent's, without `PSModulePath`. A parent started from
+ * PowerShell 7 (`pwsh`, the GitHub Actions default shell on Windows) passes its own module path down, and 5.1 then
+ * fails to autoload its own modules (`CouldNotAutoloadMatchingModule`, observed on windows-latest). Without the
+ * variable, 5.1 builds its default module path.
+ */
+export function windowsPowerShellEnv(
+  env: NodeJS.ProcessEnv,
+  extra: Readonly<Record<string, string>> = {}
+): NodeJS.ProcessEnv {
+  const kept = Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PSMODULEPATH')
+  return { ...Object.fromEntries(kept), ...extra }
+}
+
+/**
+ * Whether the executable a Host reports runs from inside the copy. Both sides are resolved to their real paths
+ * first: on macOS the temp directory `/var/folders/…` is a symlink to `/private/var/folders/…`, and the kernel
+ * reports `process.execPath` resolved.
+ */
+export function runsFromCopy(execPath: string, copied: string): boolean {
+  const real = (file: string): string => {
+    try {
+      return realpathSync.native(file)
+    } catch {
+      return path.resolve(file)
+    }
+  }
+  const exe = real(execPath).toLowerCase()
+  const root = real(copied).toLowerCase()
+  return exe === root || exe.startsWith(root.endsWith(path.sep) ? root : root + path.sep)
+}
+
+/** Paths under the harness temp dir, written relative to it for the report (privacy guard). */
+function reportPath(file: string, base: string): string {
+  const real = (value: string): string => {
+    try {
+      return realpathSync.native(value)
+    } catch {
+      return value
+    }
+  }
+  for (const root of [base, real(base)]) {
+    if (file.toLowerCase().startsWith(root.toLowerCase())) return `<work>${file.slice(root.length)}`
+  }
+  return '<outside the work dir>'
+}
+
 /** The bundle's signature state, as the OS reports it; compared before and after the copy. */
 function signatureState(dir: string): string {
   if (process.platform === 'win32') {
-    const out = execFileSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        '[Console]::Out.Write((Get-AuthenticodeSignature -LiteralPath $env:SP03_TARGET).Status.ToString())'
-      ],
-      {
-        encoding: 'utf8',
-        env: { ...process.env, SP03_TARGET: executableOf(dir) },
-        windowsHide: true
-      }
+    const powershell = path.join(
+      process.env['SystemRoot'] ?? 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe'
     )
+    let out: string
+    try {
+      out = execFileSync(
+        powershell,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '[Console]::Out.Write((Get-AuthenticodeSignature -LiteralPath $env:SP03_TARGET).Status.ToString())'
+        ],
+        {
+          encoding: 'utf8',
+          env: windowsPowerShellEnv(process.env, { SP03_TARGET: executableOf(dir) }),
+          windowsHide: true
+        }
+      )
+    } catch (error) {
+      // A named result instead of aborting the measurement; the case then fails on it with this reason.
+      const text = error instanceof Error ? error.message : String(error)
+      // The first line names the command; the PowerShell error follows it.
+      const line =
+        text.split(/\r?\n/).find((part) => /Get-|could not|not recognized/i.test(part)) ?? text
+      return `authenticode:unreadable(${line.slice(0, 160)})`
+    }
     return `authenticode:${out.trim()}`
   }
   if (process.platform === 'darwin') {
@@ -396,12 +468,7 @@ describe('SP-03: the Host versioned copy per packaged layout (ADR-002 D5, ADR-02
       const reuseMs = performance.now() - started
       const signatureAfter = signatureState(copied)
       const host = startHost(executableOf(copied), probeScript)
-      const insideCopy =
-        host.probe !== null &&
-        path
-          .resolve(host.probe.execPath)
-          .toLowerCase()
-          .startsWith(path.resolve(copied).toLowerCase())
+      const insideCopy = host.probe !== null && runsFromCopy(host.probe.execPath, copied)
       measurements.push({
         layout: layout.label,
         files: copy.files,
@@ -419,6 +486,11 @@ describe('SP-03: the Host versioned copy per packaged layout (ADR-002 D5, ADR-02
         hostElectron: host.probe?.electron ?? null,
         appAsarName: host.probe?.appAsarName ?? null,
         startMs: Math.round(host.ms),
+        diagnostics: {
+          hostExecPath: host.probe ? reportPath(host.probe.execPath, workDir) : null,
+          copiedPath: reportPath(copied, workDir),
+          workDirIsLink: realpathSync.native(workDir) !== workDir
+        },
         note: null
       })
       expect(copy.reused, `${layout.label}: the first start copies`).toBe(false)
@@ -432,6 +504,9 @@ describe('SP-03: the Host versioned copy per packaged layout (ADR-002 D5, ADR-02
         `${layout.label}: the copied Host starts under ELECTRON_RUN_AS_NODE`
       ).toBe(true)
       expect(insideCopy, `${layout.label}: the Host runs from the copy, not the source`).toBe(true)
+      expect(signatureBefore, `${layout.label}: the signature state is readable`).not.toMatch(
+        /unreadable/
+      )
       expect(signatureAfter, `${layout.label}: the signature state is kept`).toBe(signatureBefore)
     }
   }, 600000)
@@ -455,6 +530,28 @@ describe('SP-03: the Host versioned copy per packaged layout (ADR-002 D5, ADR-02
         expect(Number.isFinite(measurement[key]), `${measurement.layout}: ${key}`).toBe(true)
       }
     }
+  })
+
+  it('[SP-03] Windows PowerShell 5.1 is started without an inherited PSModulePath', () => {
+    const env = windowsPowerShellEnv(
+      { PATH: 'x', PSModulePath: 'C:/pwsh/7/Modules', psmodulepath: 'y' },
+      { SP03_TARGET: 't' }
+    )
+    expect(Object.keys(env).map((key) => key.toUpperCase())).not.toContain('PSMODULEPATH')
+    expect(env['PATH']).toBe('x')
+    expect(env['SP03_TARGET']).toBe('t')
+  })
+
+  it('[SP-03] the Host counts as running from the copy when the copy is reached through a directory link', () => {
+    // The macOS case (/var → /private/var) reproduced with a directory link: the Host reports the resolved path.
+    const real = path.join(workDir, 'link-case', 'real', 'host')
+    mkdirSync(real, { recursive: true })
+    writeFileSync(path.join(real, 'electron'), '')
+    const link = path.join(workDir, 'link-case', 'link')
+    symlinkSync(path.join(workDir, 'link-case', 'real'), link, 'junction')
+    const copiedThroughLink = path.join(link, 'host')
+    expect(runsFromCopy(path.join(real, 'electron'), copiedThroughLink)).toBe(true)
+    expect(runsFromCopy(path.join(workDir, 'elsewhere', 'electron'), copiedThroughLink)).toBe(false)
   })
 
   it('[SP-03, ADR-002] a copy that fails its manifest check is removed and never renamed into place', () => {
