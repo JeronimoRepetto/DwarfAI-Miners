@@ -15,6 +15,8 @@ import { useDwarfPaging } from './composables/useDwarfPaging'
 import { useDwarfQuestion } from './composables/useDwarfQuestion'
 import { useMines } from './composables/useMines'
 import { useView } from './composables/useView'
+import { useToasts } from './composables/useToasts'
+import { TOAST_MS } from './lib/overlay/toast'
 import {
   BEYOND_REACH_NOTE,
   CONVERSATION_START_NOTE,
@@ -225,6 +227,38 @@ function toastTexts(wrapper: VueWrapper): string[] {
   return wrapper.findAll('.dm-toast').map((toast) => toast.text())
 }
 
+/**
+ * The toasts a press raised, and only those. The queue is the window's one singleton, so another
+ * toast (an earlier test's included) can be up when the press starts and can leave while it runs:
+ * counting the queue would read that leaving as the press's doing. Each toast is drawn keyed by its
+ * own id, so a toast the press raised is a card that was not on the page before it.
+ */
+async function toastsRaisedBy(wrapper: VueWrapper, press: () => Promise<void>): Promise<string[]> {
+  const cards = () => wrapper.findAll('.dm-toast')
+  const before = new Set(cards().map((toast) => toast.element))
+  await press()
+  return cards()
+    .filter((toast) => !before.has(toast.element))
+    .map((toast) => toast.text())
+}
+
+const LEAVING_TOAST = 'Raised by something else'
+
+/**
+ * A toast raised by something else, as an earlier test's can still be up in the window's one
+ * queue, one millisecond from leaving: the returned function lets that millisecond pass, so the
+ * toast leaves mid-press while any toast the press raised keeps nearly all of its 2.6s. The toast
+ * clock is faked from here on; afterEach puts the real one back.
+ */
+async function raiseLeavingToast(wrapper: VueWrapper): Promise<() => void> {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  useToasts().showToast(LEAVING_TOAST)
+  vi.advanceTimersByTime(TOAST_MS - 1)
+  await flushPromises()
+  expect(toastTexts(wrapper)).toContain(LEAVING_TOAST)
+  return () => vi.advanceTimersByTime(1)
+}
+
 const OBSERVED_DWARF = {
   id: 'claude:s1',
   provider: 'claude',
@@ -278,6 +312,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const wrapper of mounted.splice(0)) wrapper.unmount()
+  vi.useRealTimers()
 })
 
 describe('the docked message panel', () => {
@@ -575,13 +610,18 @@ describe('opening an activity line’s path', () => {
 
   it('says nothing when the file opened successfully', async () => {
     const { wrapper } = await openOn([WITH_EDIT_ACTIVITY], WITH_EDIT_ACTIVITY.id, EDIT_FEED)
+    const leaving = await raiseLeavingToast(wrapper)
 
-    const before = toastTexts(wrapper).length
-    await openLine(wrapper)
-    await flushPromises()
+    const raised = await toastsRaisedBy(wrapper, async () => {
+      await openLine(wrapper)
+      await flushPromises()
+      leaving()
+      await flushPromises()
+    })
 
     // No toast of its own: the queue is the window's, so what counts is what this press added.
-    expect(toastTexts(wrapper)).toHaveLength(before)
+    expect(raised).toEqual([])
+    expect(toastTexts(wrapper)).not.toContain(LEAVING_TOAST)
   })
 })
 
@@ -1850,11 +1890,16 @@ describe('the sent message, drawn at once (#309)', () => {
     await flushPromises()
     // The toast queue is the window's one singleton, so an earlier test's toast can still be up:
     // what is asserted is that this press added none.
-    const before = toastTexts(wrapper)
-    await wrapper.findAll('.dm-bubble__actions .dm-btn')[1]!.trigger('click')
-    await flushPromises()
+    const leaving = await raiseLeavingToast(wrapper)
+    const raised = await toastsRaisedBy(wrapper, async () => {
+      await wrapper.findAll('.dm-bubble__actions .dm-btn')[1]!.trigger('click')
+      await flushPromises()
+      leaving()
+      await flushPromises()
+    })
 
-    expect(toastTexts(wrapper)).toEqual(before)
+    expect(raised).toEqual([])
+    expect(toastTexts(wrapper)).not.toContain(LEAVING_TOAST)
   })
 
   it('shows the words once, not twice, when the transcript catches up', async () => {
@@ -2000,12 +2045,17 @@ describe('opening a link inside a bubble', () => {
       openExternalLink: vi.fn().mockResolvedValue({ opened: true })
     })
 
-    const before = toastTexts(wrapper).length
-    await wrapper.find('.dm-bubble__text .markdown-link').trigger('click')
-    await flushPromises()
+    const leaving = await raiseLeavingToast(wrapper)
+    const raised = await toastsRaisedBy(wrapper, async () => {
+      await wrapper.find('.dm-bubble__text .markdown-link').trigger('click')
+      await flushPromises()
+      leaving()
+      await flushPromises()
+    })
 
     // No toast of its own: the queue is the window's, so what counts is what this press added.
-    expect(toastTexts(wrapper)).toHaveLength(before)
+    expect(raised).toEqual([])
+    expect(toastTexts(wrapper)).not.toContain(LEAVING_TOAST)
   })
 })
 
