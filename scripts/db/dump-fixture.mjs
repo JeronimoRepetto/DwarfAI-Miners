@@ -2,10 +2,10 @@
 /**
  * dump-fixture (17 §1.5 "From every previous version", §1.4 "Redaction (scrub rules)"; 09 §6.5
  * "Fixture ladder"; ADR-005 item 6; 21 §5.1): writes `fixtures/db/<release>.sql`, the DB fixture
- * ladder rung of one internal release. It migrates an empty temp file with the Host's own runner up
- * to the release's final schema version, runs the release's representative rows (the seeds of
- * `src/host/platform/sqlite/testing/fixtureSeeds.ts`) and dumps the database as SQL text: a
- * `-- schema-version` header, the schema, the rows as INSERTs in foreign-key order, scrubbed.
+ * ladder rung of one internal release. It migrates an empty in-memory database with the Host's own
+ * runner up to the release's final schema version, runs the release's representative rows (the
+ * seeds of `src/host/platform/sqlite/testing/fixtureSeeds.ts`) and dumps the database as SQL text:
+ * a `-- schema-version` header, the schema, the rows as INSERTs in foreign-key order, scrubbed.
  *
  * The migration, seed and dump code is TypeScript loaded through Vite's module runner (the same
  * transform the tests and the build use), exactly as `dump-schema.mjs` does, so the rung is what
