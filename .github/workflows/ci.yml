@@ -274,7 +274,15 @@ jobs:
       # Real OS facilities, per platform, on every pull request and push
       # (17 §1.8, §1.13). The guard fails the leg when its lane executed zero
       # tests, so a mistyped platform guard cannot pass silently (HO-38).
+      # The Linux runner has no display, so its leg runs under Xvfb, as the E2E
+      # lane does: an OS-lane test that opens an Electron window then runs on
+      # all three OSes instead of skipping its Linux leg.
+      - name: OS lane (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum pnpm test:os
+
       - name: OS lane
+        if: runner.os != 'Linux'
         run: pnpm test:os
 
       - name: OS-lane empty guard
