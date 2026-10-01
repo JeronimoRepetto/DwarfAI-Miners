@@ -110,15 +110,27 @@ async function alwaysOnTopReadsBack(): Promise<void> {
       platformFlags()
     )
     const line = await instance.firstLine(START_TIMEOUT_MS)
-    const result = JSON.parse(line ?? 'null') as Record<string, boolean> | null
-    expect(result, `printed: ${line}`).not.toBeNull()
+    // AMENDED: a run that prints no observation (nothing within the wait, or the app's own `error …` line) now fails
+    // with the app's exit state, its stdout and its stderr tail, as the preload OS test does. Before, an empty run
+    // failed as "printed: null" and an `error …` line as a bare JSON SyntaxError, so a one-off OS-lane failure under
+    // load left no evidence of which step failed.
+    if (line === null || !line.startsWith('{')) {
+      expect.fail(
+        `the test app printed no observation (waited up to ${START_TIMEOUT_MS} ms)\n${instance.describe()}`
+      )
+    }
+    // AMENDED: parsed only once the line is known to be the app's JSON observation (see above).
+    const result = JSON.parse(line) as Record<string, boolean> | null
+    // AMENDED: the message also carries the app's state and output.
+    expect(result, `printed: ${line}\n${instance.describe()}`).not.toBeNull()
     // The answer is the window's own read-back, whatever it is on this OS.
     expect(result?.pinned).toBe(result?.pinnedReadBack)
     expect(result?.unpinned).toBe(false)
     expect(result?.unpinnedReadBack).toBe(false)
     // A pin that never reached the window reads back false from the real window.
     expect(result?.refused).toBe(false)
-    expect(await instance.exited).toBe(0)
+    // AMENDED: the message carries the app's exit state and stderr tail when it does not exit cleanly.
+    expect(await instance.exited, `the test app exits on its own\n${instance.describe()}`).toBe(0)
   } finally {
     await instance?.stop()
     rmSync(root, { recursive: true, force: true })
