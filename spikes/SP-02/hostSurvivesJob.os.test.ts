@@ -235,7 +235,7 @@ setTimeout(() => process.exit(0), 120000).unref()
  */
 const UI = String.raw`
 import { spawn, execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { renameSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 const [mode, launcherExe, hostScript, pipe, outFile] = process.argv.slice(2)
 const hostCmd = '"' + process.execPath + '" "' + hostScript + '" "' + pipe + '"'
@@ -285,7 +285,11 @@ while (!(await ping())) {
   await new Promise((resolve) => setTimeout(resolve, 100))
 }
 const uiInJob = execFileSync(launcherExe, ['injob', String(process.pid)], { encoding: 'utf8' }).trim() === 'true'
-writeFileSync(outFile, JSON.stringify({ mode, ...report, uiInJob, uiPid: process.pid }))
+// AMENDED: was a direct writeFileSync(outFile, …). The test polls existsSync(outFile) and parses it, and the file
+// exists, still empty, from the moment it is created until the bytes land, so a loaded run parsed "" ("Unexpected
+// end of JSON input"). The report is written beside it and renamed into place: outFile appears only complete.
+writeFileSync(outFile + '.partial', JSON.stringify({ mode, ...report, uiInJob, uiPid: process.pid }))
+renameSync(outFile + '.partial', outFile)
 setInterval(() => {}, 1000)
 `
 
@@ -308,6 +312,21 @@ function isAlive(pid: number): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Ends `pid` at cleanup. A process that already exited is the end state cleanup wants, so ESRCH (no such process)
+ * answers `gone`; every other error still throws. Asking `isAlive` first cannot replace this: the process can exit
+ * between the check and the kill (the Host does, right after it answers `quit`).
+ */
+function endIfAlive(pid: number): 'ended' | 'gone' {
+  try {
+    process.kill(pid)
+    return 'ended'
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return 'gone'
+    throw error
   }
 }
 
@@ -392,9 +411,12 @@ async function runChain(jobKind: JobKind, mode: StartMode): Promise<Measurement>
   } finally {
     if (hostPid && isAlive(hostPid)) {
       await ask(pipe, 'quit')
-      if (isAlive(hostPid)) process.kill(hostPid)
+      // AMENDED: was `if (isAlive(hostPid)) process.kill(hostPid)`. The Host exits from `quit` between the check and
+      // the kill, which threw `kill ESRCH` and failed a passing run (PR #1126 Windows OS lane); gone is the end state.
+      endIfAlive(hostPid)
     }
-    if (uiPid && isAlive(uiPid)) process.kill(uiPid)
+    // AMENDED: was `if (uiPid && isAlive(uiPid)) process.kill(uiPid)`, the same check-then-kill race (see above).
+    if (uiPid) endIfAlive(uiPid)
     if (holder.exitCode === null) holder.kill()
   }
 }
@@ -441,12 +463,58 @@ async function runRealShimChain(shimSource: string): Promise<Measurement> {
   } finally {
     if (report && isAlive(report.hostPid)) {
       await ask(pipe, 'quit')
-      if (isAlive(report.hostPid)) process.kill(report.hostPid)
+      // AMENDED: was `if (isAlive(report.hostPid)) process.kill(report.hostPid)`, the check-then-kill race of runChain.
+      endIfAlive(report.hostPid)
     }
-    if (report && isAlive(report.uiPid)) process.kill(report.uiPid)
+    // AMENDED: was `if (report && isAlive(report.uiPid)) process.kill(report.uiPid)`, the same race.
+    if (report) endIfAlive(report.uiPid)
     if (shim.exitCode === null) shim.kill()
   }
 }
+
+/** Starts a real Node child that idles until it is ended (or exits on its own after `lifetimeMs`). */
+function startIdleChild(lifetimeMs: number): ChildProcessWithoutNullStreams {
+  return spawn(process.execPath, ['-e', `setTimeout(() => {}, ${lifetimeMs})`], {
+    windowsHide: true
+  })
+}
+
+const exitOf = (child: ChildProcessWithoutNullStreams): Promise<void> =>
+  new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) resolve()
+    else child.once('exit', () => resolve())
+  })
+
+// The harness's own cleanup, on real processes of this OS (no faked OS): it must not fail a run whose process
+// already ended, which is what happens when the Host exits from `quit` between a liveness check and the kill.
+describe('SP-02 harness cleanup', () => {
+  it('[SP-02] ending a process that has already exited reports it gone instead of throwing ESRCH', async () => {
+    const child = startIdleChild(0)
+    await exitOf(child)
+    const pid = child.pid ?? 0
+    expect(pid).toBeGreaterThan(0)
+    let outcome: string
+    try {
+      outcome = endIfAlive(pid)
+    } catch (error) {
+      outcome = `threw ${(error as NodeJS.ErrnoException).code ?? String(error)}`
+    }
+    expect(outcome).toBe('gone')
+  })
+
+  it('[SP-02] ending a process that still runs ends it', async () => {
+    const child = startIdleChild(60_000)
+    try {
+      const pid = child.pid ?? 0
+      expect(pid).toBeGreaterThan(0)
+      expect(endIfAlive(pid)).toBe('ended')
+      await exitOf(child)
+      expect(isAlive(pid)).toBe(false)
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill()
+    }
+  })
+})
 
 describe.runIf(process.platform === 'win32')(
   'SP-02: the Host survives the UI job (ADR-002 D6)',
