@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createAppDatabase, APP_DB_FILENAME } from '../../src/main/appDatabase/appDatabase.ts'
@@ -77,5 +78,34 @@ export async function seedLegacyFixtureSession(
     dispose: () => {
       if (exitedAt === null) child.kill()
     }
+  }
+}
+
+/**
+ * A `PATH` on which today's runtime finds its process probe but not its kill, so its identity-checked end of a launch
+ * is refused (`processEnd.ts`: a kill that could not run answers false, `LaunchedSessionRegistry.end` → `'refused'`)
+ * while nothing is ever signalled. An identity mismatch is not a refusal: today's runtime drops such a row at start and
+ * answers `'already-ended'` at end (`launchedSessions.ts` `restore`, `end`).
+ *
+ * - Windows: the probe is `powershell.exe` (its own folder), the kill `taskkill` (`System32`, left out).
+ * - Linux and macOS: the probe is `cat` (Linux) or `ps` (macOS), linked into a folder of their own; `kill` is left out.
+ *
+ * The Node that runs the stubs comes along. Answers the folders and a cleanup for the one this makes on POSIX.
+ */
+export function pathWithoutKill(): { path: string; dispose(): void } {
+  const node = path.dirname(process.execPath)
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot ?? String.raw`C:\Windows`
+    const powershell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
+    return { path: [powershell, node].join(path.delimiter), dispose: () => {} }
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), 'dwarfai-e2e-nokill-'))
+  const tool = process.platform === 'linux' ? 'cat' : 'ps'
+  const found = ['/bin', '/usr/bin'].map((folder) => path.join(folder, tool)).find(existsSync)
+  if (found === undefined) throw new Error(`no ${tool} to probe with`)
+  symlinkSync(found, path.join(dir, tool))
+  return {
+    path: [dir, node].join(path.delimiter),
+    dispose: () => rmSync(dir, { recursive: true, force: true })
   }
 }
