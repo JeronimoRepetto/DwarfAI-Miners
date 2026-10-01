@@ -17,6 +17,8 @@ import { createUpgradeDrain } from '../../transport/lifecycle/drain'
 import { HostStateHolder } from '../../transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from '../../transport/methods/hostUpgradeRequest'
 import type { ChannelRole } from '../../transport/roles'
+import { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
+import { fixedSnapshotMeta } from '../../transport/testing/fixedSnapshotMeta'
 import { runBoot } from '../boot'
 import { createBootSteps } from '../bootSteps'
 import { emptyDrainGate } from '../emptyDrainGate'
@@ -109,7 +111,12 @@ async function readyHost(journal: string[]) {
         process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux',
       root: copyRoot,
       realpath: (target) => realpathSync.native(target)
-    })
+    }),
+    // AMENDED for ISSUE-026 (was: no `ids`, `sections`, `snapshotMeta`): the Host dispatcher also
+    // serves `session.snapshot`, which these upgrade cases never call.
+    ids: new SequenceIdGenerator(),
+    sections: new SectionRegistry(),
+    snapshotMeta: fixedSnapshotMeta(() => state.current().state)
   })
   const outcome = await runBoot(
     (paths) =>

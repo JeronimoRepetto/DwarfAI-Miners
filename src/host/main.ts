@@ -27,7 +27,10 @@
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
 // ISSUE-039); its checkpoint is the clean exit's (the clean-shutdown marker), and a newer file
-// adds `db-read-only` to `hello.ok.capabilities`. Bound later, each by its issue: the modules and
+// adds `db-read-only` to `hello.ok.capabilities`. `session.snapshot` (ISSUE-026) serves the sections of the
+// SectionRegistry, advertised as `section:<name>`: at cut 0 the `meta` section only, over the
+// boot-state SnapshotMetaSource bound here (`resetEpoch` from `app_meta`, `minesEverKnown` false
+// until the mines module reads its table, later: ISSUE-082). Bound later, each by its issue: the modules and
 // their bridges (16 §8.2 step 4).
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -58,11 +61,13 @@ import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
+import { SNAPSHOT_TAIL, type SnapshotMetaSource } from './transport/snapshot/metaSection'
+import { SectionRegistry } from './transport/snapshot/sectionRegistry'
 import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
-import { createHostDatabase, HOST_DB_FILE } from './wiring/hostDatabase'
+import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
@@ -135,6 +140,25 @@ async function main(): Promise<void> {
         ? Promise.reject(new HostInvariantError('closeCleanly before the lifecycle was composed'))
         : cleanExit.closeCleanly(reason)
   }
+  // Opened by boot step 2 (createHostDatabase below). `session.snapshot` is served only once the
+  // Host is past `starting` and `migrating` (HOST_NOT_READY before), so after step 2 opened it.
+  let database: HostDatabase | undefined
+  // The module sections join this registry here, each with its module (16 §8.2 step 4).
+  const sections = new SectionRegistry()
+  const snapshotMeta: SnapshotMetaSource = {
+    hostVersion: () => __DWARFAI_APP_VERSION__,
+    state: () => hostState.current().state,
+    snapshotTail: () => SNAPSHOT_TAIL,
+    // app_meta.reset_epoch (ISSUE-039).
+    resetEpoch: () => {
+      if (database === undefined) {
+        throw new HostInvariantError('resetEpoch is read after boot step 2 opened the database')
+      }
+      return database.resetEpoch()
+    },
+    // Cut 0: the `mines` table has no row yet, so false is the true value (later: ISSUE-082 reads it).
+    minesEverKnown: () => false
+  }
   const dispatcher = createHostDispatcher({
     log,
     clock,
@@ -153,7 +177,10 @@ async function main(): Promise<void> {
       lifecycle,
       log
     }),
-    upgradeTarget: createUpgradeTargetRule(hostCopyRootFacts())
+    upgradeTarget: createUpgradeTargetRule(hostCopyRootFacts()),
+    ids,
+    sections,
+    snapshotMeta
   })
   const runQuery = createQueryRunner()
   const processControl = new NodeProcessControl({
@@ -171,7 +198,7 @@ async function main(): Promise<void> {
   await runBoot(
     (dataDir) => {
       // Opened by boot step 2; the epoch it keeps is this boot's (mintBootEpoch, one owner).
-      const database = createHostDatabase({
+      const opened = createHostDatabase({
         path: join(dataDir.userDataDir, HOST_DB_FILE),
         epoch,
         clock,
@@ -193,6 +220,7 @@ async function main(): Promise<void> {
           })
         })
       })
+      database = opened
       // run/host.identity: written after the bind, deleted at the clean exit (ADR-002 D3, D7).
       const identityFile = new HostIdentityFile({
         runDir: join(dataDir.userDataDir, 'run'),
@@ -220,12 +248,13 @@ async function main(): Promise<void> {
         frames: [...LIFECYCLE_FRAMES, ...TRANSPORT_FRAMES],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
-        conditions: () => database.capabilities(),
+        sections: () => sections.names(),
+        conditions: () => opened.capabilities(),
         identityFile
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       cleanExit = composeHostLifecycle({
-        checkpoint: database.checkpoint,
+        checkpoint: opened.checkpoint,
         connections,
         endpoint,
         identityFile,
@@ -243,7 +272,7 @@ async function main(): Promise<void> {
         processControl,
         log,
         endpoint,
-        database
+        database: opened
       })
     },
     {

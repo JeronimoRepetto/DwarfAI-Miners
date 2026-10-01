@@ -81,6 +81,13 @@ export class ConnectionRegistry implements FramePublisher {
     return this.delivery.subscribe(connection, params, epoch)
   }
 
+  /** The seq a snapshot built now for the attached connection `clientId` reflects (14 §4.2). */
+  currentSeq(clientId: string): number {
+    const connection = this.connections().find((attached) => attached.clientId === clientId)
+    if (connection === undefined) throw new Error('a seq read for a connection not attached')
+    return this.delivery.currentSeq(connection)
+  }
+
   /** Sends one `resync-required` with `reason` to `connection` alone. */
   resync(connection: AttachedConnection, reason: ResyncReason): void {
     this.delivery.resync(connection, reason)

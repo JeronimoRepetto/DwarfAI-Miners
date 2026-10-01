@@ -121,6 +121,11 @@ export interface UiEndpointDeps {
    * host/platform/endpoint/win-pipe. Never used for a Unix socket.
    */
   ownerOnlyPipe: ListenOwnerOnlyPipe
+  /**
+   * The snapshot sections this Host serves, advertised as `section:<name>` (14 §4.4): the
+   * SectionRegistry's names, read at each hello so a section registered later is listed.
+   */
+  sections?: () => Iterable<string>
   /** Conditions advertised bare beside them: `db-read-only` (HostDatabase, ADR-005 item 5). */
   conditions?: () => Iterable<string>
   /** `run/host.identity` (HostIdentityFile), written right after the bind (ADR-002 D3). */
@@ -201,6 +206,7 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
               collectCapabilities({
                 methods: deps.dispatcher.methods(),
                 frames: deps.frames,
+                sections: deps.sections?.() ?? [],
                 conditions: deps.conditions?.() ?? []
               }),
             scheduler: deps.scheduler,

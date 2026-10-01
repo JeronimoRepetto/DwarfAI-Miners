@@ -15,15 +15,22 @@ import {
   type StopAllOutcome
 } from '../wire'
 import { requestIdSchema } from './requestId'
+import {
+  snapshotPageSchema,
+  snapshotParamsSchema,
+  type SnapshotPage,
+  type SnapshotParams
+} from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M05 and B-M06 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05 and B-M06 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'ping':                            { params: {}; result: { at: Instant } }
   'events.subscribe':                { params: SubscribeParams; result: SubscribeResult }
+  'session.snapshot':                { params: SnapshotParams; result: SnapshotPage }
   'host.shutdown':                   { params: HostShutdownParams; result: HostShutdownResult }
   'host.upgrade.request':            { params: { targetVersion: string; targetDir: string; requestId: string }; result: { state: 'upgrade-pending' } }
 }
@@ -75,6 +82,12 @@ export const HOST_METHOD_SCHEMAS = {
       z.object({ status: z.literal('live'), fromSeq: z.number().int().positive() }).strict(),
       z.object({ status: z.literal('resync-required') }).strict()
     ])
+  },
+  // B-M04 (14 §3.7, §4): the Host's own rules (a continuation, the advertised sections, the role
+  // filter) are host/transport/methods/sessionSnapshot.ts's, not the wire's.
+  'session.snapshot': {
+    params: snapshotParamsSchema,
+    result: snapshotPageSchema
   },
   // The whole generation-stable shape (14 §1.3): which modes the Host serves is the Host's rule
   // (host/transport/methods/hostShutdown.ts), not the wire's.

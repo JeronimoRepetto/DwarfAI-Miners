@@ -185,6 +185,16 @@ export class FrameDelivery<C extends DeliveryConnection = DeliveryConnection> {
     }
   }
 
+  /**
+   * The seq of the last frame numbered for `connection`'s target: the `seq` a snapshot built now
+   * reflects (14 §4.2). Every frame the target numbers later has a greater seq.
+   */
+  currentSeq(connection: C): number {
+    const delivery = this.deliveries.get(connection)
+    if (delivery === undefined) throw new Error('a seq read for a connection not attached')
+    return delivery.stream.seq
+  }
+
   /** Sends one `resync-required` to `connection` alone (`backpressure`, after its queue drained). */
   resync(connection: C, reason: ResyncReason): void {
     const delivery = this.deliveries.get(connection)

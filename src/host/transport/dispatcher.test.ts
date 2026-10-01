@@ -7,7 +7,7 @@ import { FakeClock } from '../kernel/fakes/FakeClock'
 import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog'
 import { requestIdSchema } from '@dwarfai/contracts'
 import { MUTATING_METHODS } from './dedupe/mutatingMethods'
-import { Dispatcher } from './dispatcher'
+import { CallError, Dispatcher } from './dispatcher'
 import { FRAME_ROLES, METHOD_ROLES, type ChannelRole } from './roles'
 import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
@@ -128,5 +128,36 @@ describe('Dispatcher afterAnswer on a method that does not mutate (14 §3.4)', (
     await dispatcher.dispatch({ id: '2', method: 'test.throws', params: {} }, ui, write)
 
     expect(journal).toEqual(['handler', 'res:1', 'follow', 'res:2'])
+  })
+})
+
+describe('Dispatcher call errors from a handler (14 §3.3)', () => {
+  it('[ADR-003] a handler that throws a CallError answers that call error, logged by its code only, never INTERNAL', async () => {
+    const log = new RecordingDiagnosticsLog()
+    const clock = new FakeClock()
+    const dispatcher = new Dispatcher({
+      log,
+      clock,
+      scheduler: new FakeScheduler(clock),
+      state: () => 'ready'
+    })
+    dispatcher.register('test.expired', z.object({}).strict(), ['ui'], () => {
+      throw new CallError('SNAPSHOT_EXPIRED')
+    })
+
+    const res = await dispatcher.dispatch(
+      { id: '1', method: 'test.expired', params: {} },
+      { role: 'ui', clientId: 'c' }
+    )
+
+    expect(res).toEqual({
+      type: 'res',
+      id: '1',
+      ok: false,
+      error: { code: 'SNAPSHOT_EXPIRED', message: 'the snapshot expired', retryable: false }
+    })
+    expect(log.byEvent('channel.req')).toEqual([
+      expect.objectContaining({ outcome: 'failed', errCode: 'SNAPSHOT_EXPIRED' })
+    ])
   })
 })

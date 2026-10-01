@@ -10,7 +10,9 @@
 //    carry no UUIDv7 `requestId` (14 §1.6);
 // 5. a mutating method's repeat — the same `requestId` in flight or settled less than 10 min ago —
 //    gets the first call's answer from the RequestTable, with no second effect (ADR-003 item 6);
-// 6. the handler's result, or INTERNAL when it throws (details in the log only, ADR-026). A
+// 6. the handler's result; the call error it throws as a CallError (14 §3.3: `session.snapshot`'s
+//    SNAPSHOT_EXPIRED, or FORBIDDEN for a part of the method outside the role, logged as in 2);
+//    or INTERNAL when it throws anything else (details in the log only, ADR-026). A
 //    mutating handler also receives the `requestId`, so a module can key it durably. Any handler
 //    may defer an effect until its answer has been handed to the writer (`afterAnswer`, 14 §1.7,
 //    §3.4).
@@ -82,6 +84,17 @@ interface MethodShape {
 type MethodEntry =
   | (MethodShape & { mutating: false; handler: MethodHandler<unknown> })
   | (MethodShape & { mutating: true; handler: MutatingHandler<unknown> })
+
+/**
+ * Thrown by a handler to answer with a call error of 14 §3.3 instead of a result (for example
+ * `session.snapshot`'s SNAPSHOT_EXPIRED): never INTERNAL, and logged by its code only.
+ */
+export class CallError extends Error {
+  constructor(readonly code: IpcErrorCode) {
+    super(`the call was refused: ${code}`)
+    this.name = 'CallError'
+  }
+}
 
 /** A settled answer without its correlation id: replayed verbatim to a repeat (14 §1.6). */
 type Answer =
@@ -208,7 +221,7 @@ export class Dispatcher {
       settle({ type: 'res', id: request.id, ok: false, error: callError(code) })
 
     if (entry === undefined) return refuse('METHOD_NOT_FOUND')
-    if (!entry.roles.includes(context.role)) {
+    const forbidden = (): void =>
       this.record({
         level: 'error',
         event: 'channel.forbidden',
@@ -216,6 +229,8 @@ export class Dispatcher {
         role: context.role,
         connId: context.clientId
       })
+    if (!entry.roles.includes(context.role)) {
+      forbidden()
       return refuse('FORBIDDEN')
     }
     const state = this.deps.state()
@@ -227,13 +242,17 @@ export class Dispatcher {
     const params: unknown = parsed.data
 
     const requestId = requestIdOf(params)
-    const answerWith = (answer: Answer): ResponseFrame =>
-      answer.ok
-        ? settle({ type: 'res', id: request.id, ok: true, result: answer.result }, requestId)
-        : settle(
-            { type: 'res', id: request.id, ok: false, error: answer.error },
-            { ...requestId, errCode: answer.errCode }
-          )
+    const answerWith = (answer: Answer): ResponseFrame => {
+      if (answer.ok) {
+        return settle({ type: 'res', id: request.id, ok: true, result: answer.result }, requestId)
+      }
+      // A handler's own FORBIDDEN (a part of the method outside the role scope) is the same defect.
+      if (answer.error.code === 'FORBIDDEN') forbidden()
+      return settle(
+        { type: 'res', id: request.id, ok: false, error: answer.error },
+        { ...requestId, errCode: answer.errCode }
+      )
+    }
 
     if (!entry.mutating) {
       const deferred: Array<() => void> = []
@@ -291,6 +310,9 @@ async function runHandler(handler: () => unknown): Promise<Answer> {
     const result: unknown = await handler()
     return { ok: true, result: result === undefined ? {} : result }
   } catch (error) {
+    if (error instanceof CallError) {
+      return { ok: false, error: callError(error.code), errCode: error.code }
+    }
     return { ok: false, error: callError('INTERNAL'), errCode: errorCode(error) }
   }
 }

@@ -16,6 +16,8 @@ import { createFakeOwnerOnlyPipe } from '../transport/endpoint/fakes/FakeOwnerOn
 import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecurity'
 import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostState'
 import { FrameClient } from '../transport/testing/frameClient'
+import { fixedSnapshotMeta } from '../transport/testing/fixedSnapshotMeta'
+import { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { createUiEndpoint } from './bootSteps'
 import { createHostDispatcher } from './hostDispatcher'
 import { emptyOwnerStopAll } from './emptyOwnerStopAll'
@@ -321,6 +323,44 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     expect(await helloCapabilities()).toContain('db-read-only')
   })
 
+  it('[ADR-003] hello.ok of the bound endpoint advertises section:<name> for every registered snapshot section, read at each hello', async () => {
+    const input = factsForThisOs(caseRoot())
+    let sections: string[] = ['meta']
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps(),
+      sections: () => sections
+    })
+    cleanups.push(() => endpoint.close())
+    expect(await endpoint.bind()).toBe('bound')
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+    const helloCapabilities = async (): Promise<string[] | undefined> => {
+      const socket = connect(named.value.path)
+      cleanups.push(() => void socket.destroy())
+      const client = new FrameClient(socket)
+      client.send({
+        type: 'hello',
+        endpointGeneration: 1,
+        protocolVersion: PROTOCOL_VERSION,
+        role: 'ui',
+        token: readToken(input.hostDataDir),
+        client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
+      })
+      await client.until(() => client.frames.length > 0)
+      return (client.frames[0] as { capabilities?: string[] }).capabilities
+    }
+
+    expect(await helloCapabilities()).toEqual(expect.arrayContaining(['section:meta']))
+    // A module registered its section after the bind: the next hello advertises it.
+    sections = ['meta', 'mines']
+    expect(await helloCapabilities()).toEqual(
+      expect.arrayContaining(['section:meta', 'section:mines'])
+    )
+  })
+
   it('[ADR-003] the Host dispatcher main composes serves ping: a ui hello then ping answers the Host time over the bound endpoint', async () => {
     const input = factsForThisOs(caseRoot())
     const log = new RecordingDiagnosticsLog()
@@ -332,6 +372,9 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     // AMENDED for ISSUE-032: and the upgrade drain with its targetDir rule, never called here either.
     const lifecycle = { closeCleanly: () => Promise.resolve() }
     const dispatcherScheduler = new FakeScheduler(deps.clock)
+    // AMENDED for ISSUE-026 (was: no `ids`, `sections`, `snapshotMeta`): the Host dispatcher also
+    // serves `session.snapshot`, which mints snapshot ids, reads the registered sections and
+    // registers the `meta` section over the boot-state source.
     const dispatcher = createHostDispatcher({
       log,
       clock: deps.clock,
@@ -354,7 +397,10 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
         realpath: () => {
           throw new Error('no copy root in this case')
         }
-      })
+      }),
+      ids: new SequenceIdGenerator(),
+      sections: new SectionRegistry(),
+      snapshotMeta: fixedSnapshotMeta()
     })
     const endpoint = createUiEndpoint({
       facts: () => Promise.resolve({ ok: true, value: input }),
