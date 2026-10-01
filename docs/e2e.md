@@ -34,7 +34,20 @@ pnpm test:e2e
   own app (and, once a Host exists, its `hostDataDir` and profile-keyed endpoint, ADR-002 D2);
 - temp `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, so the app never reads the developer's provider data;
 - `stubs`: a directory of stub CLIs prepended to `PATH` (the stub kit lands with ISSUE-313);
-- `teardown()` quits the app, waits for its process to exit and removes the profile.
+- `launchApp` returns once the first window has loaded its page, so no case quits a half-started app;
+- `teardown()` quits the app, waits for its process to exit and removes the profile, within a quit budget
+  (`quitTimeoutMs`, default 15 s). An app still running at the end of it is killed with its whole process tree
+  (`taskkill /T` on Windows, the app's process group on macOS and Linux), and the teardown fails with "did not exit
+  within … of app.quit()". A quit that never finishes is a visible failure in seconds, not a test timeout followed by a
+  worker teardown timeout that leaves the app running.
+- before that kill, the failure records the app's state: what the main process still answers (its windows and web
+  contents, or no answer within 3 s) and, on macOS, a `sample` of every thread written as `quit-sample.txt` next to the
+  case's trace. Windows still alive mean the quit was turned down; all destroyed mean it stalled after closing them; no
+  answer means the main thread is blocked.
+- the launched app's uncaught exceptions are recorded in the profile instead of opening Electron's modal "A JavaScript
+  error occurred in the main process" box (which blocks the main thread until clicked), and the teardown fails with
+  "uncaught exception in the main process: <stack>". The harness installs this through Playwright's main-process
+  `evaluate`; production code is unchanged.
 
 Assertions go through the UI, Playwright's main-process `evaluate`, or the profile's `dwarfai.db` opened read-only after
 the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in production code.

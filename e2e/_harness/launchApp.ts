@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execFile, execFileSync, type ChildProcess } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,7 +19,11 @@ import { resolveEntry, type AppEntry } from './resolveEntry.ts'
  * - `stubs`, when given, is prepended to `PATH`, so detection and spawn resolve the stub CLIs
  *   first (the stub kit is later: ISSUE-313); temp `CLAUDE_CONFIG_DIR` and `CODEX_HOME` keep the
  *   app away from the developer's provider data.
- * - `teardown()` quits the app, waits for its process to exit and removes the temp profile. The
+ * - `launchApp` returns once the first window has loaded its page, so no case quits a half-started app.
+ * - `teardown()` quits the app, waits for its process to exit and removes the temp profile, all
+ *   within a quit budget (`quitTimeoutMs`, default 15 s). An app still running at the end of it is
+ *   killed with its process tree and the teardown fails with that, so a quit that never finishes
+ *   is a visible failure, never a test plus worker timeout that leaves the app running. The
  *   Stop-everything teardown for a case that leaves a Host running comes later: ISSUE-056.
  *
  * No production code knows about this harness (R14): everything goes through the command line,
@@ -42,6 +47,8 @@ export interface LaunchOptions {
   readonly env?: Readonly<Record<string, string>>
   /** Where `teardown()` saves the Playwright trace (a case's output folder keeps it on failure). */
   readonly tracePath?: string
+  /** How long `teardown()` lets the app quit on its own before it kills the app's process tree. */
+  readonly quitTimeoutMs?: number
 }
 
 export interface LaunchedApp {
@@ -92,14 +99,188 @@ function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string
   return { ...env, ...options.env }
 }
 
+/** A started app quits in well under a second on every OS; this is the bound, not the expectation. */
+const DEFAULT_QUIT_TIMEOUT_MS = 15_000
+
+/** How long a killed process tree, and the Playwright close behind it, get to be gone. */
+const KILL_TIMEOUT_MS = 10_000
+
+function hasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null
+}
+
+/** Whether the child exits within `ms`. */
+function waitForExit(child: ChildProcess, ms: number): Promise<boolean> {
+  if (hasExited(child)) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const onExit = (): void => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      child.off('exit', onExit)
+      resolve(hasExited(child))
+    }, ms)
+    child.once('exit', onExit)
+  })
+}
+
+/** Waits for `promise` for at most `ms`; the teardown never waits unbounded on Playwright. */
+async function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([promise, new Promise<void>((resolve) => (timer = setTimeout(resolve, ms)))])
+  clearTimeout(timer)
+}
+
+/**
+ * Kills the launched app and every process it started, by the identity of the app's own process:
+ * the child this runner spawned and has not seen exit, so its pid still names it (Node holds its
+ * handle on Windows and has not reaped it on POSIX). Never a pid read from a listing.
+ *
+ * The whole tree, not the child alone: on Windows the process Playwright spawns is not the app's
+ * browser process but its parent, so killing only the child leaves the app running, orphaned
+ * (observed with Electron 44: the browser process, parent of the GPU and renderer helpers, is a
+ * child of the spawned one).
+ */
+export function killProcessTree(child: ChildProcess): void {
+  const pid = child.pid
+  if (pid === undefined || hasExited(child)) return
+  try {
+    if (process.platform === 'win32') {
+      // `/T` walks the tree down from the app's pid; `shell` stays off.
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: KILL_TIMEOUT_MS
+      })
+    } else {
+      // Playwright starts the app as the leader of its own process group (`detached` on POSIX),
+      // so the negative pid ends the app and its helpers, and nothing else.
+      process.kill(-pid, 'SIGKILL')
+    }
+  } catch {
+    // The tree may have exited meanwhile; the caller checks the exit, so a failed kill is seen.
+    child.kill('SIGKILL')
+  }
+}
+
+/** How long the main process gets to answer the diagnosis of a quit that ran out of budget. */
+const DIAGNOSIS_ANSWER_MS = 3_000
+
+/** How long macOS `sample` records the stuck app's threads, in seconds. */
+const SAMPLE_SECONDS = 3
+
+/**
+ * What the app still is when its quit ran out of budget, for the failure message:
+ *
+ * - the main process's own answer (its windows and web contents): windows that are not destroyed
+ *   mean the quit was turned down or never ran; all destroyed means it stalled after closing them;
+ *   no answer means the main thread is blocked or its Node environment is already gone;
+ * - on macOS, a `sample` of every thread's native stack, written next to the case's trace, which
+ *   shows where a blocked main thread sits.
+ */
+async function diagnoseStuckQuit(
+  app: ElectronApplication,
+  child: ChildProcess,
+  tracePath: string | undefined
+): Promise<string> {
+  let timer: NodeJS.Timeout | undefined
+  const answer = await Promise.race([
+    app
+      .evaluate(({ app: electronApp, BrowserWindow, webContents }) =>
+        JSON.stringify({
+          ready: electronApp.isReady(),
+          windows: BrowserWindow.getAllWindows().map((window) => ({
+            destroyed: window.isDestroyed(),
+            visible: !window.isDestroyed() && window.isVisible()
+          })),
+          webContents: webContents.getAllWebContents().length
+        })
+      )
+      .then(
+        (state) => `the main process answered: ${state}`,
+        (error: unknown) => `the main process could not answer: ${String(error)}`
+      ),
+    new Promise<string>((resolve) => {
+      timer = setTimeout(
+        () => resolve(`the main process did not answer within ${DIAGNOSIS_ANSWER_MS} ms`),
+        DIAGNOSIS_ANSWER_MS
+      )
+    })
+  ])
+  clearTimeout(timer)
+  if (process.platform !== 'darwin' || tracePath === undefined || child.pid === undefined) {
+    return answer
+  }
+  const samplePath = path.join(path.dirname(tracePath), 'quit-sample.txt')
+  const sampled = await new Promise<string>((resolve) => {
+    // `sample` ships with macOS; shell stays off.
+    execFile(
+      'sample',
+      [String(child.pid), String(SAMPLE_SECONDS), '-file', samplePath],
+      { timeout: KILL_TIMEOUT_MS },
+      (error) => resolve(error ? `sample failed: ${error.message}` : `thread sample: ${samplePath}`)
+    )
+  })
+  return `${answer}; ${sampled}`
+}
+
+/** Where, inside the profile, the main process's uncaught exceptions are written. */
+const MAIN_ERRORS_FILE = 'main-errors.log'
+
+/**
+ * Takes Electron's own `uncaughtException` handling out of the launched app and records every
+ * uncaught exception in `file` instead.
+ *
+ * Electron's default handler opens a modal "A JavaScript error occurred in the main process" box,
+ * which blocks the main thread until someone clicks it: an app quit on macOS hung exactly there,
+ * `-[NSAlert runModal]` called from a microtask (the thread sample of PR #1122). A test-launched
+ * app must never open a modal, and the exception is the defect, so the teardown fails with its
+ * stack instead. Installed through Playwright's main-process `evaluate`, never production code.
+ */
+async function captureMainProcessErrors(app: ElectronApplication, file: string): Promise<void> {
+  await app.evaluate((_electron, errorsFile) => {
+    const fs = process.getBuiltinModule('node:fs')
+    process.removeAllListeners('uncaughtException')
+    process.on('uncaughtException', (error: unknown, origin: string) => {
+      const stack = error instanceof Error ? (error.stack ?? String(error)) : String(error)
+      fs.appendFileSync(
+        errorsFile,
+        `[${origin}] ${stack}
+`
+      )
+    })
+    // Lets a harness self-test tell that the capture is in place.
+    ;(globalThis as { __dwarfaiE2eMainErrors?: string }).__dwarfaiE2eMainErrors = errorsFile
+  }, file)
+}
+
+/** The uncaught exceptions the main process recorded, or `undefined` when there were none. */
+function readMainErrors(file: string): string | undefined {
+  if (!existsSync(file)) return undefined
+  const recorded = readFileSync(file, 'utf8').trim()
+  return recorded === '' ? undefined : recorded
+}
+
 export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedApp> {
   const { main } = JSON.parse(readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')) as {
     main: string
   }
   const mainFile = resolveEntry(options.entry, APP_DIR, { main })
   const profile = createProfile()
-  const removeProfile = (): void =>
-    rmSync(profile.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  const removeProfile = async (): Promise<void> => {
+    const deadline = Date.now() + KILL_TIMEOUT_MS
+    for (;;) {
+      try {
+        rmSync(profile.root, { recursive: true, force: true })
+        return
+      } catch (error) {
+        // Windows frees a killed tree's open files a moment after the app exits (EPERM, EBUSY).
+        if (Date.now() >= deadline) throw error
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+    }
+  }
 
   let app: ElectronApplication
   try {
@@ -115,9 +296,11 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
       env: appEnv(profile, options)
     })
   } catch (error) {
-    removeProfile()
+    await removeProfile()
     throw error
   }
+  const mainErrorsFile = path.join(profile.root, MAIN_ERRORS_FILE)
+  await captureMainProcessErrors(app, mainErrorsFile)
   if (options.tracePath !== undefined) {
     await app.context().tracing.start({ screenshots: true, snapshots: true })
   }
@@ -127,23 +310,70 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     if (tornDown) return
     tornDown = true
     const child = app.process()
-    const exited =
-      child.exitCode !== null || child.signalCode !== null
-        ? Promise.resolve()
-        : new Promise<void>((resolve) => child.once('exit', () => resolve()))
-    try {
+    const quitTimeoutMs = options.quitTimeoutMs ?? DEFAULT_QUIT_TIMEOUT_MS
+    let quitError: unknown
+    // The harness sends `app.quit()` itself instead of Playwright's `close()`, which drops its
+    // connection to the main process at once and then waits, unbounded, for the exit. Keeping the
+    // connection lets a quit that runs out of budget be asked what state the app is in.
+    const quit = (async () => {
       if (options.tracePath !== undefined) {
         await app.context().tracing.stop({ path: options.tracePath })
       }
-      await app.close()
-      await exited
-    } finally {
-      removeProfile()
+      await app.evaluate(({ app: electronApp }) => {
+        electronApp.quit()
+      })
+    })().catch((error: unknown) => {
+      // An app that exits while answering ends the call with a closed connection: not a failure.
+      if (!hasExited(child)) quitError = error
+    })
+    let failure: unknown
+    try {
+      if (!(await waitForExit(child, quitTimeoutMs))) {
+        const diagnosis = await diagnoseStuckQuit(app, child, options.tracePath)
+        killProcessTree(child)
+        if (!(await waitForExit(child, KILL_TIMEOUT_MS))) {
+          throw new Error(`the app (pid ${child.pid}) survived a kill of its process tree`)
+        }
+        await settleWithin(quit, KILL_TIMEOUT_MS)
+        await settleWithin(app.close(), KILL_TIMEOUT_MS)
+        // Killed, so nothing is left behind, but a quit that never finishes is a defect: the case
+        // fails with it instead of hanging until the test and worker timeouts.
+        throw new Error(
+          `the app (pid ${child.pid}) did not exit within ${quitTimeoutMs} ms of app.quit(); ` +
+            `its process tree was killed. ${diagnosis}`,
+          { cause: quitError }
+        )
+      }
+      await settleWithin(quit, KILL_TIMEOUT_MS)
+      // Releases Playwright's side of the exited app; it no longer waits on anything.
+      await settleWithin(app.close(), KILL_TIMEOUT_MS)
+      if (quitError !== undefined) throw quitError
+    } catch (error) {
+      failure = error
     }
+    const mainErrors = readMainErrors(mainErrorsFile)
+    if (mainErrors !== undefined) {
+      failure = new Error(
+        `uncaught exception in the main process: ${mainErrors}` +
+          (failure === undefined ? '' : `; then: ${(failure as Error).message}`),
+        { cause: failure }
+      )
+    }
+    try {
+      await removeProfile()
+    } catch (error) {
+      failure ??= error
+    }
+    if (failure !== undefined) throw failure
   }
 
   try {
-    return { app, window: await app.firstWindow(), profile, teardown }
+    const window = await app.firstWindow()
+    // The first window is created before its page loads (the legacy entry loads it last, after
+    // every IPC handler is registered). A case starts from a started app, so it never quits one
+    // whose page is still loading, which is not a state a person quits from.
+    await window.waitForLoadState('load')
+    return { app, window, profile, teardown }
   } catch (error) {
     await teardown()
     throw error

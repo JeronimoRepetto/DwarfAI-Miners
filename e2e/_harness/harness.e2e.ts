@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
-import { launchApp, type LaunchedApp } from './launchApp.ts'
+import { killProcessTree, launchApp, type LaunchedApp } from './launchApp.ts'
 
 /**
  * L9 smoke of the E2E harness itself (testing strategy `17` §1.9).
@@ -115,5 +115,108 @@ test.describe('E2E harness (17 §1.9)', () => {
 
     expect(pids.filter(isAlive), 'app processes still running').toEqual([])
     expect(existsSync(profile.root), 'the temp profile is removed').toBe(false)
+  })
+})
+
+test.describe('E2E harness: a bounded teardown (17 §1.9)', () => {
+  let launched: LaunchedApp | undefined
+
+  test.afterEach(async () => {
+    await launched?.teardown()
+    launched = undefined
+  })
+
+  test('[ADR-002] launchApp returns once the first window has finished loading, so a case never quits a half-loaded app', async () => {
+    launched = await launchApp({ tracePath: test.info().outputPath('trace.zip') })
+
+    const loading = await launched.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map((window) => window.webContents.isLoading())
+    )
+    expect(loading.length, 'the app has its window').toBeGreaterThan(0)
+    expect(loading, 'no window is still loading its page').not.toContain(true)
+  })
+
+  test('[ADR-002] an app that refuses to quit is killed with its process tree within the quit budget, and teardown says so', async () => {
+    const current = await launchApp({
+      quitTimeoutMs: 2_000,
+      tracePath: test.info().outputPath('trace.zip')
+    })
+    const { app, profile } = current
+    // Held before teardown: Playwright refuses `app.process()` once the app is closed.
+    const child = app.process()
+    const pids = await app.evaluate(({ app: electronApp }) =>
+      electronApp.getAppMetrics().map((metric) => metric.pid)
+    )
+    // The app turns every quit down, as a wedged quit would look from outside.
+    await app.evaluate(({ app: electronApp }) => {
+      electronApp.on('before-quit', (event) => event.preventDefault())
+    })
+
+    let guard: NodeJS.Timeout | undefined
+    try {
+      const outcome = await Promise.race([
+        current.teardown().then(
+          () => 'teardown resolved',
+          (error: unknown) => (error as Error).message
+        ),
+        new Promise<string>((resolve) => {
+          guard = setTimeout(() => resolve('teardown still running after 15 s'), 15_000)
+        })
+      ])
+
+      expect(outcome).toMatch(/did not exit within 2000 ms of app\.quit\(\)/)
+      // The failure carries what the main process still answered before the kill: here, a
+      // responsive main whose window survived the quit, the signature of a quit turned down.
+      expect(outcome).toMatch(/the main process answered: .*"destroyed":false/)
+      await expect
+        .poll(() => pids.filter(isAlive), {
+          message: 'app processes still running',
+          timeout: 10_000
+        })
+        .toEqual([])
+      expect(existsSync(profile.root), 'the temp profile is removed').toBe(false)
+    } finally {
+      clearTimeout(guard)
+      // Whatever teardown did, nothing of this app outlives the case.
+      killProcessTree(child)
+    }
+  })
+})
+
+test.describe('E2E harness: main-process errors (17 §1.9)', () => {
+  test('[ADR-002] an uncaught exception in the main process fails the teardown with its stack and never opens a modal error box', async () => {
+    const current = await launchApp({ tracePath: test.info().outputPath('trace.zip') })
+    const child = current.app.process()
+    // The canary throws at quit only where the harness captures main-process errors, so a run
+    // without the capture can never open Electron's modal "A JavaScript error occurred" box.
+    await current.app.evaluate(({ app: electronApp }) => {
+      electronApp.once('before-quit', () => {
+        const captured = (globalThis as { __dwarfaiE2eMainErrors?: string }).__dwarfaiE2eMainErrors
+        if (captured === undefined) return
+        process.nextTick(() => {
+          throw new Error('canary: thrown in the main process at quit')
+        })
+      })
+    })
+
+    let guard: NodeJS.Timeout | undefined
+    try {
+      const outcome = await Promise.race([
+        current.teardown().then(
+          () => 'teardown resolved',
+          (error: unknown) => (error as Error).message
+        ),
+        new Promise<string>((resolve) => {
+          guard = setTimeout(() => resolve('teardown still running after 40 s'), 40_000)
+        })
+      ])
+
+      expect(outcome).toMatch(/uncaught exception in the main process/)
+      expect(outcome).toContain('canary: thrown in the main process at quit')
+      expect(existsSync(current.profile.root), 'the temp profile is removed').toBe(false)
+    } finally {
+      clearTimeout(guard)
+      killProcessTree(child)
+    }
   })
 })
