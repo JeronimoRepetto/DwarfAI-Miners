@@ -36,7 +36,7 @@ describe('content security policy (ADR-019 item 4; 18 C-03)', () => {
     const { session, respond } = fakeSession()
     applyContentSecurityPolicy(session, contentSecurityPolicy())
     expect(
-      respond({ 'content-type': ['text/html'], 'Content-Security-Policy': ['default-src *'] })
+      respond({ 'content-type': ['text/html'], 'content-security-policy': ['default-src *'] })
     ).toEqual({
       'content-type': ['text/html'],
       'Content-Security-Policy': [CONTENT_SECURITY_POLICY]
