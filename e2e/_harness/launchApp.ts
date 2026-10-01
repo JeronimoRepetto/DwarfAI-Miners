@@ -1,5 +1,5 @@
 import { execFile, execFileSync, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -225,6 +225,43 @@ async function diagnoseStuckQuit(
   return `${answer}; ${sampled}`
 }
 
+/** Where, inside the profile, the main process's uncaught exceptions are written. */
+const MAIN_ERRORS_FILE = 'main-errors.log'
+
+/**
+ * Takes Electron's own `uncaughtException` handling out of the launched app and records every
+ * uncaught exception in `file` instead.
+ *
+ * Electron's default handler opens a modal "A JavaScript error occurred in the main process" box,
+ * which blocks the main thread until someone clicks it: an app quit on macOS hung exactly there,
+ * `-[NSAlert runModal]` called from a microtask (the thread sample of PR #1122). A test-launched
+ * app must never open a modal, and the exception is the defect, so the teardown fails with its
+ * stack instead. Installed through Playwright's main-process `evaluate`, never production code.
+ */
+async function captureMainProcessErrors(app: ElectronApplication, file: string): Promise<void> {
+  await app.evaluate((_electron, errorsFile) => {
+    const fs = process.getBuiltinModule('node:fs')
+    process.removeAllListeners('uncaughtException')
+    process.on('uncaughtException', (error: unknown, origin: string) => {
+      const stack = error instanceof Error ? (error.stack ?? String(error)) : String(error)
+      fs.appendFileSync(
+        errorsFile,
+        `[${origin}] ${stack}
+`
+      )
+    })
+    // Lets a harness self-test tell that the capture is in place.
+    ;(globalThis as { __dwarfaiE2eMainErrors?: string }).__dwarfaiE2eMainErrors = errorsFile
+  }, file)
+}
+
+/** The uncaught exceptions the main process recorded, or `undefined` when there were none. */
+function readMainErrors(file: string): string | undefined {
+  if (!existsSync(file)) return undefined
+  const recorded = readFileSync(file, 'utf8').trim()
+  return recorded === '' ? undefined : recorded
+}
+
 export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedApp> {
   const { main } = JSON.parse(readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')) as {
     main: string
@@ -262,6 +299,8 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     await removeProfile()
     throw error
   }
+  const mainErrorsFile = path.join(profile.root, MAIN_ERRORS_FILE)
+  await captureMainProcessErrors(app, mainErrorsFile)
   if (options.tracePath !== undefined) {
     await app.context().tracing.start({ screenshots: true, snapshots: true })
   }
@@ -311,6 +350,14 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
       if (quitError !== undefined) throw quitError
     } catch (error) {
       failure = error
+    }
+    const mainErrors = readMainErrors(mainErrorsFile)
+    if (mainErrors !== undefined) {
+      failure = new Error(
+        `uncaught exception in the main process: ${mainErrors}` +
+          (failure === undefined ? '' : `; then: ${(failure as Error).message}`),
+        { cause: failure }
+      )
     }
     try {
       await removeProfile()

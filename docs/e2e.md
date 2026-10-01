@@ -44,6 +44,10 @@ pnpm test:e2e
   contents, or no answer within 3 s) and, on macOS, a `sample` of every thread written as `quit-sample.txt` next to the
   case's trace. Windows still alive mean the quit was turned down; all destroyed mean it stalled after closing them; no
   answer means the main thread is blocked.
+- the launched app's uncaught exceptions are recorded in the profile instead of opening Electron's modal "A JavaScript
+  error occurred in the main process" box (which blocks the main thread until clicked), and the teardown fails with
+  "uncaught exception in the main process: <stack>". The harness installs this through Playwright's main-process
+  `evaluate`; production code is unchanged.
 
 Assertions go through the UI, Playwright's main-process `evaluate`, or the profile's `dwarfai.db` opened read-only after
 the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in production code.

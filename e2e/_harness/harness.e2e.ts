@@ -182,3 +182,41 @@ test.describe('E2E harness: a bounded teardown (17 §1.9)', () => {
     }
   })
 })
+
+test.describe('E2E harness: main-process errors (17 §1.9)', () => {
+  test('[ADR-002] an uncaught exception in the main process fails the teardown with its stack and never opens a modal error box', async () => {
+    const current = await launchApp({ tracePath: test.info().outputPath('trace.zip') })
+    const child = current.app.process()
+    // The canary throws at quit only where the harness captures main-process errors, so a run
+    // without the capture can never open Electron's modal "A JavaScript error occurred" box.
+    await current.app.evaluate(({ app: electronApp }) => {
+      electronApp.once('before-quit', () => {
+        const captured = (globalThis as { __dwarfaiE2eMainErrors?: string }).__dwarfaiE2eMainErrors
+        if (captured === undefined) return
+        process.nextTick(() => {
+          throw new Error('canary: thrown in the main process at quit')
+        })
+      })
+    })
+
+    let guard: NodeJS.Timeout | undefined
+    try {
+      const outcome = await Promise.race([
+        current.teardown().then(
+          () => 'teardown resolved',
+          (error: unknown) => (error as Error).message
+        ),
+        new Promise<string>((resolve) => {
+          guard = setTimeout(() => resolve('teardown still running after 40 s'), 40_000)
+        })
+      ])
+
+      expect(outcome).toMatch(/uncaught exception in the main process/)
+      expect(outcome).toContain('canary: thrown in the main process at quit')
+      expect(existsSync(current.profile.root), 'the temp profile is removed').toBe(false)
+    } finally {
+      clearTimeout(guard)
+      killProcessTree(child)
+    }
+  })
+})
