@@ -9,9 +9,10 @@
 // - Open: `request` writes one `req` frame and returns its correlation id; each `res` and each `evt` (strict
 //   envelope schemas) goes to its handler; `host.closing` (B-F05) is remembered, and `closed` settles with its reason
 //   once the connection closed, or with null when it closed without one (a crash, a lost connection, `close()`).
-// - Liveness (ADR-003 item 9, when `liveness` is on): a `ping` (B-M02) after LIVENESS_PING_MS without a frame sent,
-//   only when the Host advertised it (14 §1.3); LIVENESS_SILENCE_MS without a frame received closes the connection,
-//   which then counts as lost (HostClient moves to `reconnecting`, ADR-002 D9).
+// - Liveness (ADR-003 item 9, when `liveness` is on and the Host advertised `ping`, 14 §1.3): a `ping` (B-M02) after
+//   LIVENESS_PING_MS without a frame sent; LIVENESS_SILENCE_MS without a frame received closes the connection, which
+//   then counts as lost (HostClient moves to `reconnecting`, ADR-002 D9). A Host that cannot be pinged is never
+//   held to the silence bound.
 // - Nothing here logs: a frame's content is never logged (14 §1.10); the caller logs names and codes.
 import type { Duplex } from 'node:stream'
 import {
@@ -229,7 +230,7 @@ export class HostChannel {
 
   private armSilence(): void {
     this.cancelSilence()
-    if (!this.deps.liveness) return
+    if (!this.deps.liveness || !isAdvertised(this.helloOk.capabilities, 'ping')) return
     this.cancelSilence = this.deps.after(LIVENESS_SILENCE_MS, () => this.socket.destroy())
   }
 }

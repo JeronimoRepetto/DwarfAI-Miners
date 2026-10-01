@@ -80,6 +80,11 @@ interface HeldSnapshot {
 }
 
 export interface FakeHostOptions {
+  /**
+   * The Host's side of liveness (ADR-003 item 9): a connection that sends no frame for `ms` is a detached client and is
+   * closed without a frame, on the given (fake) timer.
+   */
+  dropSilentAfter?: { ms: number; after: (ms: number, run: () => void) => () => void }
   capabilities?: readonly string[]
   epoch?: string
   hostVersion?: string
@@ -130,8 +135,10 @@ export class FakeHost {
   private nextClient = 0
   private nextSnapshot = 0
   private boots = 1
+  private readonly dropSilentAfter: FakeHostOptions['dropSilentAfter']
 
   constructor(options: FakeHostOptions = {}) {
+    this.dropSilentAfter = options.dropSilentAfter
     this.epoch = options.epoch ?? 'epoch-1'
     this.capabilities = [...(options.capabilities ?? FAKE_HOST_CAPABILITIES)]
     this.hostVersion = options.hostVersion ?? '0.0.0-fake'
@@ -152,6 +159,13 @@ export class FakeHost {
     }
     this.connections.add(connection)
     const decoder = new FrameDecoder()
+    let cancelSilence: () => void = () => {}
+    const heard = (): void => {
+      cancelSilence()
+      const silence = this.dropSilentAfter
+      if (silence !== undefined) cancelSilence = silence.after(silence.ms, () => server.destroy())
+    }
+    heard()
     server.on('data', (chunk: Uint8Array) => {
       decoder.push(chunk)
       for (let next = decoder.next(); next !== null; next = decoder.next()) {
@@ -159,6 +173,7 @@ export class FakeHost {
           server.destroy()
           return
         }
+        heard()
         this.onFrame(connection, next.message)
       }
     })
@@ -167,6 +182,7 @@ export class FakeHost {
     // An in-memory pair does not carry a close across (Node 24): each end closing closes the other, as a socket's
     // peer sees the connection end.
     server.once('close', () => {
+      cancelSilence()
       this.connections.delete(connection)
       client.destroy()
     })

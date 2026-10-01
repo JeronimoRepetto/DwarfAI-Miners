@@ -11,7 +11,9 @@
 // - After `hello.ok`: each `res` settles the call with its correlation id; a call still waiting when
 //   the connection closes settles HOST_UNAVAILABLE. A `host.closing` evt records its reason, which
 //   `closed` reports once the connection has closed; a close without one reports null.
-// - The link sends no liveness ping: it sends exactly the handshake's methods, as ISSUE-032 left it.
+// - Liveness (ADR-003 item 9): like every connection of the channel, the link pings after 5 s without
+//   sending a frame, so a drain that outlasts the Host's 15 s silence limit is not read as a lost
+//   connection, and 15 s without a frame from the Host closes it (ISSUE-051).
 // - Generation 1 is the only generation in v1 (ADR-002 D8 item 4 is dormant): there is no previous
 //   generation to speak, so attaching with 'previous' is refused INCOMPATIBLE_GENERATION without a
 //   connection.
@@ -54,7 +56,7 @@ export function createHostLinkOpener(
         protocolVersion: deps.protocolVersion,
         client: deps.client,
         after,
-        liveness: false
+        liveness: true
       },
       'ui'
     )

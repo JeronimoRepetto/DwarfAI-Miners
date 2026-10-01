@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { duplexPair, type Duplex } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import { encodeFrame, FrameDecoder, PROTOCOL_VERSION, type HelloOk } from '@dwarfai/contracts'
+import { FAKE_HOST_CAPABILITIES, FakeHost } from '../host-client/testing/FakeHost'
+import { ManualTimers } from '../host-client/testing/ManualTimers'
 import { createHostLinkOpener } from './hostLink'
 
 // L6 (17 §1.6): the UI side of the handshake's `ui` connection over real frames, against a scripted
@@ -160,5 +162,87 @@ describe('the handshake link (ADR-003 item 12; ADR-002 D8)', () => {
 
     expect(attach).toEqual({ kind: 'refused', code: 'INCOMPATIBLE_GENERATION' })
     expect(connects).toBe(0)
+  })
+})
+
+// ADDED for ISSUE-051: the link runs on the one seam-B connection (host-client/channel.ts) and keeps the liveness of
+// ADR-003 item 9, so a drain that outlasts the Host's 15 s silence limit is not read as a lost connection.
+describe('the handshake link keeps the connection alive (ADR-003 item 9)', () => {
+  it("[ADR-003] the upgrade link pings while a drain outlasts the Host's 15 s silence limit, so it closes with the drain's host.closing, not as lost", async () => {
+    const timers = new ManualTimers()
+    const host = new FakeHost({
+      capabilities: FAKE_HOST_CAPABILITIES,
+      dropSilentAfter: { ms: 15_000, after: timers.after }
+    })
+    host.handle('host.upgrade.request', () => ({ state: 'upgrade-pending' }))
+    const dir = mkdtempSync(join(tmpdir(), 'dwarfai-051-link-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    writeFileSync(join(dir, 'ui.token'), host.token)
+    const settle = async (): Promise<void> => {
+      for (let round = 0; round < 20; round += 1) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+
+    const attach = await createHostLinkOpener({
+      connect: host.connect,
+      tokenFile: join(dir, 'ui.token'),
+      protocolVersion: PROTOCOL_VERSION,
+      client: { appVersion: '0.21.0', buildId: 'def5678', pid: 4242 },
+      after: timers.after
+    })('current')
+    if (attach.kind !== 'attached') throw new Error(`not attached: ${attach.kind}`)
+    const link = attach.link
+    let closedWith: string | null | undefined
+    void link.closed.then((reason) => (closedWith = reason))
+    expect(
+      await link.call('host.upgrade.request', {
+        targetVersion: '0.21.0',
+        targetDir: 'x',
+        requestId: '01890a5d-ac96-774b-bcce-b302099a8057'
+      })
+    ).toEqual({ ok: true, result: { state: 'upgrade-pending' } })
+
+    // The drain takes 40 s; the Host would drop a client silent for 15 s.
+    for (let second = 0; second < 40; second += 1) {
+      timers.advance(1_000)
+      await settle()
+    }
+    expect(closedWith, 'the link is still open during the drain').toBeUndefined()
+    host.closeCleanly('upgrade')
+    await settle()
+
+    expect(closedWith).toBe('upgrade')
+    expect(host.methods('ui').filter((method) => method === 'ping').length).toBeGreaterThan(0)
+  })
+  it('[ADR-003] a Host that does not advertise ping gets no ping, and its silence never closes the link', async () => {
+    const timers = new ManualTimers()
+    const host = new FakeHost({
+      capabilities: FAKE_HOST_CAPABILITIES.filter((name) => name !== 'ping')
+    })
+    const dir = mkdtempSync(join(tmpdir(), 'dwarfai-051-link-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    writeFileSync(join(dir, 'ui.token'), host.token)
+
+    const attach = await createHostLinkOpener({
+      connect: host.connect,
+      tokenFile: join(dir, 'ui.token'),
+      protocolVersion: PROTOCOL_VERSION,
+      client: { appVersion: '0.21.0', buildId: 'def5678', pid: 4242 },
+      after: timers.after
+    })('current')
+    if (attach.kind !== 'attached') throw new Error(`not attached: ${attach.kind}`)
+    let closedWith: string | null | undefined
+    void attach.link.closed.then((reason) => (closedWith = reason))
+    for (let second = 0; second < 40; second += 1) {
+      timers.advance(1_000)
+      for (let round = 0; round < 20; round += 1) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+
+    expect(closedWith).toBeUndefined()
+    expect(host.methods()).toEqual([])
+    attach.link.close()
   })
 })

@@ -246,7 +246,11 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
         // The old Host was asked for the upgrade only, drained and exited on its own.
         expect(await exitsWithin(running.pid, 10_000), 'the drained Host exited').toBe(true)
         const oldReport = reportsIn(world.hostDataDir).find((report) => report.pid === running.pid)
-        expect(oldReport?.requests).toEqual(['host.upgrade.request'])
+        // AMENDED for ISSUE-051: the link keeps ADR-003 item 9's liveness, so a `ping` may join the methods it
+        // sends while it waits; the check is on the handshake's own methods, which are unchanged.
+        expect(oldReport?.requests.filter((method) => method !== 'ping')).toEqual([
+          'host.upgrade.request'
+        ])
         // The new Host runs from the newer build's versioned copy.
         const started = reportsIn(world.hostDataDir).filter((report) => report.pid !== running.pid)
         expect(started).toHaveLength(1)
@@ -327,7 +331,11 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
         const newerReport = reportsIn(world.hostDataDir).find(
           (report) => report.pid === running.pid
         )
-        expect(newerReport?.requests).toEqual(['host.shutdown'])
+        // AMENDED for ISSUE-051: the link keeps ADR-003 item 9's liveness, so a `ping` may join the methods it
+        // sends while it waits; the check is on the handshake's own methods, which are unchanged.
+        expect(newerReport?.requests.filter((method) => method !== 'ping')).toEqual([
+          'host.shutdown'
+        ])
         // The older UI's own Host runs from the older build's versioned copy.
         const started = reportsIn(world.hostDataDir).filter((report) => report.pid !== running.pid)
         expect(started).toHaveLength(1)
