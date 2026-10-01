@@ -24,6 +24,7 @@ import { SILENCE_MS } from './liveness'
 import { registerPing } from './methods/ping'
 import { FaultyDuplex } from './testing/FaultyDuplex'
 import { FrameClient } from './testing/frameClient'
+import { HelloThrottle } from './auth/throttle'
 
 const cleanups: Array<() => void> = []
 
@@ -64,7 +65,8 @@ async function boot() {
       clock,
       log,
       dispatcher,
-      connections
+      connections,
+      throttle: new HelloThrottle(clock)
     })
     return { faults, client: new FrameClient(faults.client) }
   }

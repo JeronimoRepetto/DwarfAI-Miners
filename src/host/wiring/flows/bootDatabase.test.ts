@@ -27,6 +27,7 @@ import { runBoot, type BootOutcome, type HostStateReport } from '../boot'
 import { createBootSteps, mintBootEpoch } from '../bootSteps'
 import { BOOT_FAILED_EXIT_CODE } from '../exitCodes'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from '../hostDatabase'
+import { HelloThrottle } from '../../transport/auth/throttle'
 
 // L2 flow (17 §1.2): boot step 2 of 16 §8.2 over a real database file in a temp directory, with a
 // FakeClock, a FakeProcessControl boot identity and the other ports faked. A Host killed or
@@ -328,7 +329,8 @@ describe('boot step 2: open the database and keep the Host epoch (09 §8.4, 16 �
       clock: m.clock,
       log,
       dispatcher,
-      connections
+      connections,
+      throttle: new HelloThrottle(m.clock)
     })
     const client = new FrameClient(pair.client)
     cleanups.push(() => void pair.client.destroy())

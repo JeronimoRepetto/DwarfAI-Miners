@@ -32,6 +32,7 @@ import { HostStateHolder } from './lifecycle/hostState'
 import { METHOD_ROLES } from './roles'
 import { FrameClient } from './testing/frameClient'
 import { inProcessDuplex } from './testing/inProcessDuplex'
+import { HelloThrottle } from './auth/throttle'
 
 const cleanups: Array<() => void> = []
 
@@ -100,7 +101,8 @@ async function boot(dir = runDir()) {
       clock,
       log,
       dispatcher,
-      connections
+      connections,
+      throttle: new HelloThrottle(clock)
     })
     return new FrameClient(pair.client)
   }

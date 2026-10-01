@@ -13,6 +13,9 @@
 //   `hello.ok` is written the connection is attached to the ConnectionRegistry, which sends it
 //   the Host frames of its role as `evt` frames numbered by this connection's `seq`, and which
 //   the clean exit uses to end it after `host.closing` (ADR-003 item 12).
+// - Throttle (ADR-003 item 5; 14 §1.5): every hello refusal counts as one failure; the fifth within
+//   60 s logs `channel.rate-limited` once, with the count, and for 10 s each new connection gets
+//   one `error {code:'RATE_LIMITED'}` frame and the close, before reading anything.
 // - In either state a frame over the cap closes the connection without a frame (14 §1.5), and a
 //   body that is not UTF-8 JSON is a PROTOCOL_ERROR, never a crash (16 §2.1).
 // - closed: every later byte is ignored and nothing more is written.
@@ -29,6 +32,7 @@ import {
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
 import type { Scheduler } from '../kernel/ports/scheduler'
+import type { HelloThrottle } from './auth/throttle'
 import type { AttachedConnection, ConnectionRegistry } from './connectionRegistry'
 import type { Dispatcher } from './dispatcher'
 import { answerHello, type HelloDeps } from './hello'
@@ -45,6 +49,8 @@ export interface ConnectionDeps extends HelloDeps {
   dispatcher: Dispatcher
   /** Where the connection is attached once authenticated, so Host frames reach it. */
   connections: ConnectionRegistry
+  /** The endpoint's failed-hello throttle, shared by every connection of the endpoint. */
+  throttle: HelloThrottle
 }
 
 type ConnectionState =
@@ -62,6 +68,10 @@ const SUBSYSTEM = 'transport'
 
 /** Takes a freshly accepted connection; from here on the connection belongs to the transport. */
 export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
+  if (!deps.throttle.admits()) {
+    refuseThrottled(stream)
+    return
+  }
   let state: ConnectionState = { kind: 'awaiting-hello' }
   /** The `seq` of the last `evt` frame written: per connection, from 1 after hello.ok (14 §3.2). */
   let seq = 0
@@ -126,6 +136,9 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
 
   const refuseHello = (code: ProtocolErrorCode): void => {
     record({ level: 'warn', event: 'channel.hello.refused', causeClass: code, ...who() })
+    const verdict = deps.throttle.recordFailure()
+    if (verdict.engaged)
+      record({ level: 'warn', event: 'channel.rate-limited', count: verdict.count })
     close(code)
   }
 
@@ -199,6 +212,13 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
   })
   stream.on('error', () => close())
   stream.once('close', () => close())
+}
+
+/** A connection that arrived during a throttle refusal: one RATE_LIMITED frame, then the close. */
+function refuseThrottled(stream: Duplex): void {
+  const frame: ErrorFrame = { type: 'error', code: 'RATE_LIMITED' }
+  stream.on('error', () => {})
+  stream.end(encodeFrame(frame), () => stream.destroy())
 }
 
 function isHello(message: unknown): boolean {

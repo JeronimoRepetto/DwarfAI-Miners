@@ -14,8 +14,8 @@
 //
 // The boot reports its lifecycle into the transport's HostStateHolder, which `hello.ok` and
 // HOST_NOT_READY read and which sends `host.state` to the `ui` connections through the
-// ConnectionRegistry. The seam-B Dispatcher starts empty: each method joins it with the issue
-// that serves it.
+// ConnectionRegistry. The seam-B Dispatcher comes from wiring/hostDispatcher.ts, which registers
+// the transport's own `ping` and where each method joins with the issue that serves it.
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
 // ISSUE-039); its checkpoint is the clean exit's (the clean-shutdown marker), and a newer file
@@ -42,9 +42,9 @@ import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
-import { Dispatcher } from './transport/dispatcher'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { errorCode, runBoot } from './wiring/boot'
+import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
 import { createHostDatabase, HOST_DB_FILE } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
   const ids = new UuidV7Generator({ clock })
   const connections = new ConnectionRegistry()
   const hostState = new HostStateHolder(connections)
-  const dispatcher = new Dispatcher({
+  const dispatcher = createHostDispatcher({
     log,
     clock,
     scheduler,
