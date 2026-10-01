@@ -17,15 +17,16 @@
 // ConnectionRegistry. The seam-B Dispatcher starts empty: each method joins it with the issue
 // that serves it.
 //
-// Bound later, each by its issue: the database and the clean-shutdown marker (ISSUE-039), the
-// modules and their bridges (16 §8.2 step 4).
+// Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
+// ISSUE-039); its checkpoint is the clean exit's (the clean-shutdown marker), and a newer file
+// adds `db-read-only` to `hello.ok.capabilities`. Bound later, each by its issue: the modules and
+// their bridges (16 §8.2 step 4).
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv, type HostDiagnostics } from './modules/diagnostics'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
-import type { ShutdownCheckpoint } from './kernel/ports/shutdownCheckpoint'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
 import {
   createNativeOwnerOnlyPipe,
@@ -34,15 +35,18 @@ import {
 import { NodeFs } from './platform/fs/NodeFs'
 import { UuidV7Generator } from './platform/ids/UuidV7Generator'
 import { EnvAppPaths } from './platform/paths/EnvAppPaths'
+import { buildKindOf, thisProcessReleaseHostDataDir } from './platform/paths/releaseDataDir'
 import { NodeProcessControl, createQueryRunner } from './platform/process/NodeProcessControl'
 import { nodeOsSessionSignals } from './platform/process/osSessionSignals'
 import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
+import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { Dispatcher } from './transport/dispatcher'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { errorCode, runBoot } from './wiring/boot'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
+import { createHostDatabase, HOST_DB_FILE } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
@@ -59,16 +63,6 @@ declare const __DWARFAI_BUILD_ID__: string
 const NO_LOG_FOLDER: HostDiagnostics = {
   record: () => {},
   flush: () => Promise.resolve()
-}
-
-/**
- * The checkpoint before a clean exit, until the database is opened at boot: there is nothing to
- * flush and nowhere to write the marker yet. ISSUE-039 binds the `app_meta` writer in its place
- * (lead decision 2026-09-30).
- */
-const NO_DATABASE_YET: ShutdownCheckpoint = {
-  flush: () => {},
-  markClean: () => {}
 }
 
 async function main(): Promise<void> {
@@ -132,6 +126,20 @@ async function main(): Promise<void> {
 
   await runBoot(
     (dataDir) => {
+      // Opened by boot step 2; the epoch it keeps is this boot's (mintBootEpoch, one owner).
+      const database = createHostDatabase({
+        path: join(dataDir.userDataDir, HOST_DB_FILE),
+        epoch,
+        clock,
+        log,
+        processControl,
+        open: {
+          buildKind: buildKindOf(dataDir),
+          releaseDataDir: thisProcessReleaseHostDataDir(),
+          appVersion: __DWARFAI_APP_VERSION__,
+          migrations: migrationsFor({ clock, ids })
+        }
+      })
       const endpoint = createUiEndpoint({
         facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
         log,
@@ -150,11 +158,12 @@ async function main(): Promise<void> {
         connections,
         frames: LIFECYCLE_FRAMES,
         // Loaded on the first Windows bind only; a Unix socket never needs it.
-        ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) })
+        ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
+        conditions: () => database.capabilities()
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       composeHostLifecycle({
-        checkpoint: NO_DATABASE_YET,
+        checkpoint: database.checkpoint,
         connections,
         endpoint,
         scheduler,
@@ -170,7 +179,8 @@ async function main(): Promise<void> {
         fs,
         processControl,
         log,
-        endpoint
+        endpoint,
+        database
       })
     },
     {

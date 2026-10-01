@@ -11,8 +11,9 @@
 //   3. the future: a highest applied version above the build's opens `query_only` with the
 //      capability `db-read-only`, and nothing is written (ADR-005 item 5, FM-100);
 //   4. pending: the known versions above the highest applied; none → done;
-//   5. backup: a non-empty database is copied `VACUUM INTO` first (`../backup.ts`, FM-099); when
-//      no complete backup could be written nothing is migrated, `BACKUP_FAILED` (FM-105);
+//   5. backup: `onMigrating` is told first (the boot reports `migrating`, 07 S12.05); then a
+//      non-empty database is copied `VACUUM INTO` (`../backup.ts`, FM-099); when no complete
+//      backup could be written nothing is migrated, `BACKUP_FAILED` (FM-105);
 //   6. dev guard: a dev or test build whose database lies in the release data directory refuses
 //      to migrate it, `DEV_BUILD_ON_RELEASE_DATA` (ADR-005 item 6, FM-107). It is checked before
 //      step 5 writes anything: a backup there would be a write into the release data directory,
@@ -75,6 +76,11 @@ export interface OpenHostDbOptions {
   openWriter?: (path: string) => SqliteDatabase
   /** Step 5; the `VACUUM INTO` backup (`../backup.ts`) over `clock` and `log` by default. */
   backup?: BackupStep
+  /**
+   * Told once, before step 5, when a migration will run: the boot reports `migrating` (07
+   * S12.05). Never called when nothing is pending, for a newer file or for a refused open.
+   */
+  onMigrating?: () => void
 }
 
 export type OpenedHostDb =
@@ -368,6 +374,7 @@ function runSteps(
     if (isDevBuildOnReleaseData(path, options)) {
       return { ok: false, error: 'DEV_BUILD_ON_RELEASE_DATA' }
     }
+    options.onMigrating?.()
     if (isNonEmpty(db)) {
       const backup = options.backup ?? new VacuumIntoBackup(options)
       const written = backup.beforeMigrating({ db, path, fromVersion: from })

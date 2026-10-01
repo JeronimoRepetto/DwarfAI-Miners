@@ -25,6 +25,7 @@ import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecur
 import type { HostIdentity } from '../transport/hello'
 import { createHelloProbe } from '../transport/helloProbe'
 import { errorCode, type BootStep, type BootStepName, type HostStateReport } from './boot'
+import type { HostDatabase } from './hostDatabase'
 import { decideBind } from './singleInstance'
 
 export interface BootPorts {
@@ -37,6 +38,8 @@ export interface BootPorts {
   log: DiagnosticsLog
   /** The UI endpoint step 1 binds (createUiEndpoint in production). */
   endpoint: UiEndpoint
+  /** The Host database step 2 opens (createHostDatabase, hostDatabase.ts). */
+  database: Pick<HostDatabase, 'open'>
 }
 
 /** The Host's UI endpoint as the boot sees it. */
@@ -62,8 +65,15 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
           ? { kind: 'done' }
           : { kind: 'refused', refusal: 'ALREADY_RUNNING' }
     },
-    // 2. Open the DB and migrate, reporting `migrating` (ADR-005).
-    placeholder('open-db-and-migrate', 'ISSUE-039'),
+    // 2. Open the DB and migrate, reporting `migrating` (ADR-005); then keep the Host epoch and
+    //    its boot identity (09 §8.4). A refused open fails the boot (FM-008).
+    {
+      name: 'open-db-and-migrate',
+      run: async (context) => {
+        await ports.database.open(context)
+        return { kind: 'done' }
+      }
+    },
     // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023).
     placeholder('resume-reset-saga', 'ISSUE-212'),
     // 4. Construct the modules, wire bridges and event routes (05 §4); the first module wired is
@@ -109,6 +119,8 @@ export interface UiEndpointDeps {
    * host/platform/endpoint/win-pipe. Never used for a Unix socket.
    */
   ownerOnlyPipe: ListenOwnerOnlyPipe
+  /** Conditions advertised bare beside them: `db-read-only` (HostDatabase, ADR-005 item 5). */
+  conditions?: () => Iterable<string>
 }
 
 /**
@@ -173,7 +185,11 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             epoch: deps.epoch,
             state: deps.state,
             capabilities: () =>
-              collectCapabilities({ methods: deps.dispatcher.methods(), frames: deps.frames }),
+              collectCapabilities({
+                methods: deps.dispatcher.methods(),
+                frames: deps.frames,
+                conditions: deps.conditions?.() ?? []
+              }),
             scheduler: deps.scheduler,
             clock: deps.clock,
             log: deps.log,
