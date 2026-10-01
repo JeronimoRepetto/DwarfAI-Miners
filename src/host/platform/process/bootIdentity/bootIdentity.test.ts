@@ -48,7 +48,11 @@ describe('boot identity sources (ADR-015 item 4, AMENDMENT-3)', () => {
     expect(parseDarwinBoottime('nothing')).toBeNull()
     expect(await sources.bootTimeMs()).toEqual({ ok: true, value: 1_790_000_000_456 })
     expect(queries).toEqual([
-      { file: 'sysctl', args: ['-n', 'kern.boottime'], timeoutMs: BOOT_ID_QUERY_TIMEOUT_MS }
+      {
+        file: '/usr/sbin/sysctl',
+        args: ['-n', 'kern.boottime'],
+        timeoutMs: BOOT_ID_QUERY_TIMEOUT_MS
+      }
     ])
     expect((await sources.logonSessionId()).ok).toBe(false)
   })

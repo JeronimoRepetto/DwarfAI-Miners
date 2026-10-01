@@ -97,3 +97,12 @@ export function windowsSystemTool(
   const root = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? 'C:\\Windows'
   return `${root.replace(/[\\/]+$/, '')}\\System32\\${name}`
 }
+
+/**
+ * macOS's own `ps` and `sysctl`, by path for the reason `windowsSystemTool` gives: never looked up on
+ * PATH, which the person's environment decides. A PATH without /usr/sbin left the Host unable to read
+ * its own identity, and an earlier entry could answer for the system tool. Both live on the sealed
+ * system volume at these paths.
+ */
+export const DARWIN_PS = '/bin/ps'
+export const DARWIN_SYSCTL = '/usr/sbin/sysctl'

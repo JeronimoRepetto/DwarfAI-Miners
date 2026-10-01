@@ -25,6 +25,7 @@ import { createLinuxReader, parseLinuxStartTime } from './probe/linux'
 import { WIN32_BOOT_ID_KEY, createWin32Reader, filetimeToEpochMs } from './probe/win32'
 import { windowsPowerShell, windowsSystemTool } from './probe/types'
 import { createDarwinBootSources } from './bootIdentity/darwin'
+import { createSnapshotReader } from './kill/snapshot'
 import { createWin32BootSources } from './bootIdentity/win32'
 import {
   FAILING_READER,
@@ -380,7 +381,7 @@ describe('NodeProcessControl', () => {
           queries.push({ file, args, options })
           return Promise.resolve({
             ok: true as const,
-            stdout: file === 'ps' ? 'Sat Aug 29 11:07:36 2026\n' : `${BOOT}\n`
+            stdout: file === '/bin/ps' ? 'Sat Aug 29 11:07:36 2026\n' : `${BOOT}\n`
           })
         }
       })
@@ -394,12 +395,35 @@ describe('NodeProcessControl', () => {
       expect(await reader.bootId()).toEqual(outcome(BOOT))
       expect(queries).toEqual([
         {
-          file: 'ps',
+          file: '/bin/ps',
           args: ['-p', '42', '-o', 'lstart='],
           options: { timeoutMs: 5_000, env: { LC_ALL: 'C' } }
         },
-        { file: 'sysctl', args: ['-n', 'kern.bootsessionuuid'], options: { timeoutMs: 2_000 } }
+        {
+          file: '/usr/sbin/sysctl',
+          args: ['-n', 'kern.bootsessionuuid'],
+          options: { timeoutMs: 2_000 }
+        }
       ])
+    })
+
+    // The Windows readers already run their System32 tools by full path. On macOS a bare `ps` or
+    // `sysctl` was resolved through the Host's PATH, which the person's environment decides: without
+    // /usr/sbin on it the Host could not read its own identity and wrote no `run/host.identity` (CI run
+    // 36940954328, macOS), and an earlier PATH entry could answer for a system tool.
+    it('[ADR-014] on macOS the probe, the boot sources and the listing run /bin/ps and /usr/sbin/sysctl by full path, never through PATH', async () => {
+      const files: string[] = []
+      const runQuery = (file: string) => {
+        files.push(file)
+        return Promise.resolve({ ok: true as const, stdout: '' })
+      }
+      const reader = createDarwinReader({ runQuery })
+      await reader.startTimeMs(42)
+      await reader.bootId()
+      await createDarwinBootSources({ runQuery }).bootTimeMs()
+      await createSnapshotReader('darwin', { runQuery })()
+
+      expect(files).toEqual(['/bin/ps', '/usr/sbin/sysctl', '/usr/sbin/sysctl', '/bin/ps'])
     })
 
     // ISSUE-019 changed the expected boot-id source: the registry BootId counter replaces the CIM
