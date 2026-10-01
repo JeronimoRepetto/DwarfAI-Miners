@@ -17,7 +17,7 @@ import {
   type BootStepName,
   type HostStateReport
 } from '../boot'
-import { createBootSteps } from '../bootSteps'
+import { createBootSteps, type UiEndpoint } from '../bootSteps'
 import { BOOT_FAILED_EXIT_CODE, EXIT_CODES } from '../exitCodes'
 
 // L2 flow (17 §1.2): the Host boot of 16 §8.2 / ADR-015 item 3 with every port faked. The step
@@ -42,7 +42,11 @@ interface Harness {
 }
 
 function harness(
-  overrides: { privilege?: PrivilegeReport; paths?: BootDeps['paths'] } = {}
+  overrides: {
+    privilege?: PrivilegeReport
+    paths?: BootDeps['paths']
+    endpoint?: Awaited<ReturnType<UiEndpoint['bind']>>
+  } = {}
 ): Harness {
   const log = new RecordingDiagnosticsLog()
   const clock = new FakeClock(1_790_000_000_000)
@@ -66,7 +70,12 @@ function harness(
       ids: new SequenceIdGenerator(),
       fs: new FakeFs(),
       processControl: new FakeProcessControl(),
-      log
+      log,
+      // The UI endpoint as the bind step sees it; the real server is server.test.ts's (L6).
+      endpoint: {
+        bind: () => Promise.resolve(overrides.endpoint ?? 'bound'),
+        close: () => Promise.resolve()
+      }
     })
   return { deps, log, clock, scheduler, states, exits, realSteps }
 }
@@ -108,9 +117,10 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     ])
     expect(h.realSteps(new FakeAppPaths()).map((step) => step.name)).toEqual(BOOT_STEP_NAMES)
     expect(loggedSteps(h.log)).toEqual(BOOT_STEP_NAMES)
-    // Every step is still a placeholder: each says it was skipped and which issue owns it.
+    // The endpoint step is built (ISSUE-022); every later step is still a placeholder that says
+    // it was skipped and which issue owns it.
     expect(h.log.byEvent('host.boot.step').map((entry) => entry.outcome)).toEqual(
-      BOOT_STEP_NAMES.map(() => 'skipped')
+      BOOT_STEP_NAMES.map((name) => (name === 'bind-endpoint' ? 'ok' : 'skipped'))
     )
     expect(h.states).toEqual([
       { state: 'starting', jobStatus: 'none' },
@@ -274,6 +284,19 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     expect(h.log.byEvent('host.already-running')).toEqual([
       expect.objectContaining({ level: 'info', subsystem: 'host' })
     ])
+    expect(loggedSteps(h.log)).toEqual([])
+    expect(h.states).toEqual([])
+  })
+
+  it('[S12.02, FM-009] the real bind step turns an endpoint held by a running Host into ALREADY_RUNNING before any later step', async () => {
+    const h = harness({ endpoint: 'already-running' })
+
+    expect(await runBoot(h.realSteps, h.deps)).toEqual({
+      kind: 'refused',
+      refusal: 'ALREADY_RUNNING'
+    })
+
+    expect(h.exits).toEqual([EXIT_CODES.ALREADY_RUNNING])
     expect(loggedSteps(h.log)).toEqual([])
     expect(h.states).toEqual([])
   })

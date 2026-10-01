@@ -1,5 +1,6 @@
 // Seam B frames: hello, snapshot, subscribe, commands, events (05 §2.1 `host-protocol/`).
 export * from './adr-003'
+export * from './endpoint'
 export * from './envelope'
 export * from './errors'
 export * from './capabilities'
