@@ -55,10 +55,14 @@ test.describe('cut 0: the dropped-file path under the sandbox (ISSUE-045)', () =
   let dir = ''
 
   test.afterEach(async () => {
-    await launched?.teardown({ stopEverything: true })
-    launched = undefined
-    if (dir !== '') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-    dir = ''
+    try {
+      await launched?.teardown({ stopEverything: true })
+    } finally {
+      // A failed teardown still fails the case, and the dropped file's folder still goes (the run's leftover check).
+      launched = undefined
+      if (dir !== '') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      dir = ''
+    }
   })
 
   test('[S-019-1, FM-045] under sandbox true a dropped file yields its absolute path and the window raises no preload-error', async () => {

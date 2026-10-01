@@ -626,9 +626,13 @@ export const TRAY_ITEMS = {
  * The per-user folders of the app pointed into the profile (HOME, USERPROFILE, APPDATA, the XDG config and state
  * homes), for a case whose app must read none of the developer's own sessions, settings or provider data. Pass it as
  * `env`, alone or spread with others.
+ *
+ * On macOS HOME is the profile's short data root under /tmp, as `appEnv` already sets it: the Host's socket lives under
+ * HOME (`endpoint.ts`, `~/Library/Application Support/<app>/run/host-<key>.sock`), and under the per-user temp folder
+ * (`/var/folders/…/T/`) that path is longer than `sun_path`'s 104 bytes, so the Host refuses to bind (FM-037).
  */
 export function homeIn(profile: IsolatedProfile): Record<string, string> {
-  const home = path.join(profile.root, 'home')
+  const home = process.platform === 'darwin' ? profile.dataRoot : path.join(profile.root, 'home')
   mkdirSync(path.join(home, 'AppData', 'Roaming'), { recursive: true })
   return {
     HOME: home,
