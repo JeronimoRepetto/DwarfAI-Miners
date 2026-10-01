@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import type { ScreenRect } from '../platform/screenArea'
 import { DESIGN_SCREEN_HEIGHT, uiScale } from './panelBounds'
 /*
  * AMENDED for #635: this file crossed the main -> renderer boundary once, to pin the message
@@ -19,6 +20,10 @@ import {
   fitShellWindow,
   formatShellFit,
   refitOnDisplayChange,
+  // ADDED for the destroyed-window crash at quit — the display listeners' lifetime.
+  refitWhileOpen,
+  type DisplayChangeEvent,
+  type DisplayChangeSource,
   formatShellTrace,
   panelLayout,
   raisePanelWindow,
@@ -525,6 +530,113 @@ describe('refitOnDisplayChange', () => {
     const refit = refitOnDisplayChange({ fitShell: () => steps.push('shell') })
     refit()
     expect(steps).toEqual(['shell'])
+  })
+})
+
+/**
+ * The display listeners live exactly as long as the window they refit.
+ *
+ * CI on macOS caught the main process throwing `TypeError: Object has been destroyed` at quit: a
+ * display event landed after the shell window was destroyed, and the refit it triggered asked the
+ * dead window for its bounds. In a packaged app that is Electron's modal "A JavaScript error
+ * occurred in the main process" box, and a quit that never finishes.
+ */
+describe('refitWhileOpen', () => {
+  const DISPLAY_EVENTS: DisplayChangeEvent[] = [
+    'display-metrics-changed',
+    'display-added',
+    'display-removed'
+  ]
+
+  /** `screen`'s display events, with one listener of somebody else's already on each. */
+  function fakeScreen() {
+    const listeners = new Map<DisplayChangeEvent, Array<() => void>>(
+      DISPLAY_EVENTS.map((event) => [event, [() => undefined]])
+    )
+    const source: DisplayChangeSource = {
+      on: (event, listener) => {
+        listeners.get(event)?.push(listener)
+      },
+      removeListener: (event, listener) => {
+        const list = listeners.get(event) ?? []
+        const at = list.indexOf(listener)
+        if (at !== -1) list.splice(at, 1)
+      }
+    }
+    return {
+      source,
+      emit: (event: DisplayChangeEvent) => {
+        for (const listener of [...(listeners.get(event) ?? [])]) listener()
+      },
+      count: (event: DisplayChangeEvent) => listeners.get(event)?.length ?? 0
+    }
+  }
+
+  /** A BrowserWindow that, once destroyed, throws on `getBounds` the way Electron's does. */
+  function fakeClosingWindow() {
+    let destroyed = false
+    let onClosed: (() => void) | null = null
+    let boundsReadsAfterDestroy = 0
+    return {
+      target: {
+        once: (_event: 'closed', listener: () => void) => {
+          onClosed = listener
+        }
+      },
+      getBounds: (): ScreenRect => {
+        if (destroyed) {
+          boundsReadsAfterDestroy += 1
+          throw new TypeError('Object has been destroyed')
+        }
+        return PANEL_BOUNDS
+      },
+      close: () => {
+        destroyed = true
+        onClosed?.()
+      },
+      boundsReadsAfterDestroy: () => boundsReadsAfterDestroy
+    }
+  }
+
+  it('refits on every display event while the window is open, and never after it closed', () => {
+    const screen = fakeScreen()
+    const window = fakeClosingWindow()
+    let fits = 0
+    refitWhileOpen(window.target, screen.source, {
+      fitShell: () => {
+        window.getBounds()
+        fits += 1
+      },
+      closed: () => undefined
+    })
+
+    for (const event of DISPLAY_EVENTS) screen.emit(event)
+    expect(fits).toBe(3)
+
+    window.close()
+    expect(() => {
+      for (const event of DISPLAY_EVENTS) screen.emit(event)
+    }).not.toThrow()
+    expect(window.boundsReadsAfterDestroy()).toBe(0)
+    expect(fits).toBe(3)
+  })
+
+  it('removes its display listeners and reports the close once the window is closed', () => {
+    const screen = fakeScreen()
+    const window = fakeClosingWindow()
+    const before = DISPLAY_EVENTS.map((event) => screen.count(event))
+    let closed = 0
+    refitWhileOpen(window.target, screen.source, {
+      fitShell: () => undefined,
+      closed: () => {
+        closed += 1
+      }
+    })
+    expect(DISPLAY_EVENTS.map((event) => screen.count(event))).toEqual(before.map((n) => n + 1))
+
+    window.close()
+    expect(DISPLAY_EVENTS.map((event) => screen.count(event))).toEqual(before)
+    expect(closed).toBe(1)
   })
 })
 

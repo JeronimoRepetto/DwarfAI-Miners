@@ -431,6 +431,48 @@ export function refitOnDisplayChange(steps: { fitShell: () => void }): () => voi
   }
 }
 
+/** The display events that leave the shell sized for a display that is no longer there. */
+export type DisplayChangeEvent = 'display-metrics-changed' | 'display-added' | 'display-removed'
+
+/** The slice of Electron's `screen` the refit listens on; a test drives it with a fake. */
+export interface DisplayChangeSource {
+  on(event: DisplayChangeEvent, listener: () => void): unknown
+  removeListener(event: DisplayChangeEvent, listener: () => void): unknown
+}
+
+/** The slice of BrowserWindow that says when it is gone. */
+export interface ClosedSource {
+  once(event: 'closed', listener: () => void): unknown
+}
+
+const DISPLAY_CHANGE_EVENTS: readonly DisplayChangeEvent[] = [
+  'display-metrics-changed',
+  'display-added',
+  'display-removed'
+]
+
+/**
+ * Refit the shell on display changes for exactly as long as its window lives.
+ *
+ * `screen` outlives every window, so a listener left on it after the window closed fires into a
+ * destroyed BrowserWindow: CI on macOS caught a display event at quit asking the dead window for
+ * its bounds, which threw `Object has been destroyed` in the main process — Electron's modal error
+ * box in a packaged app, and a quit that hangs. On `closed` the listeners come off, and `closed`
+ * tells the caller to drop its reference, so nothing reached later finds the dead window.
+ */
+export function refitWhileOpen(
+  window: ClosedSource,
+  displays: DisplayChangeSource,
+  steps: { fitShell: () => void; closed: () => void }
+): void {
+  const refit = refitOnDisplayChange({ fitShell: steps.fitShell })
+  for (const event of DISPLAY_CHANGE_EVENTS) displays.on(event, refit)
+  window.once('closed', () => {
+    for (const event of DISPLAY_CHANGE_EVENTS) displays.removeListener(event, refit)
+    steps.closed()
+  })
+}
+
 /**
  * Fit the shell window to the current layout on the display it is on, and hold what it can
  * hold (#635). The one path every resize of the shell takes — a layout change, a show, a
@@ -531,12 +573,16 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
   /*
    * Refit the shell when the displays change under it (#635 window fit, see
    * refitOnDisplayChange). Registered here because this runs once, with the
-   * one window it refits.
+   * one window it refits — and only while it lives (see refitWhileOpen): once it
+   * is closed the listeners come off and `mainWindow` goes back to null, so every
+   * reader of it treats the destroyed window as no window at all.
    */
-  const refitDisplays = refitOnDisplayChange({ fitShell })
-  screen.on('display-metrics-changed', refitDisplays)
-  screen.on('display-added', refitDisplays)
-  screen.on('display-removed', refitDisplays)
+  refitWhileOpen(mainWindow, screen, {
+    fitShell,
+    closed: () => {
+      mainWindow = null
+    }
+  })
 
   // The page is NOT loaded here (#570) — see loadPanelPage below for why.
   return mainWindow
