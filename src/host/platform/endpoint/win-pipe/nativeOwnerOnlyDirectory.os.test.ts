@@ -8,14 +8,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createNativeOwnerOnlyDirectory, type OwnerOnlyDirectory } from './nativeOwnerOnlyDirectory'
 import {
-  currentWindowsToken,
   grantRead,
-  readWindowsAcls,
+  createWindowsAclReader,
   SYSTEM_SID,
-  type AclView
+  type AclView,
+  type WindowsAclReader
 } from './testing/windowsAcl'
 
 const PREBUILDS = fileURLToPath(new URL('../../../../../prebuilds', import.meta.url))
@@ -42,12 +42,16 @@ describe.runIf(process.platform === 'win32')(
   'the native owner-only data directory (ISSUE-041 amendment; SP-05 run\\ row)',
   () => {
     let protect: OwnerOnlyDirectory
+    let reader: WindowsAclReader
     let user: string
+    const readWindowsAcls = (paths: readonly string[]): Promise<AclView[]> => reader.read(paths)
 
     beforeAll(async () => {
       protect = createNativeOwnerOnlyDirectory({ prebuildsDir: PREBUILDS })
-      user = (await currentWindowsToken()).user
-    }, 60_000)
+      reader = await createWindowsAclReader()
+      user = reader.user
+    }, 180_000)
+    afterAll(() => reader?.dispose())
 
     it('[ADR-017] protectDirectory gives a directory the protected DACL of the user and SYSTEM, which a file created later inherits', async () => {
       const dir = freshDir()

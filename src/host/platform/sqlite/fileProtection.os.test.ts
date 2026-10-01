@@ -18,8 +18,7 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from '../../wiring/hostDatabase'
 import {
   ADMINISTRATORS_SID,
-  currentWindowsToken,
-  readWindowsAcls,
+  createWindowsAclReader,
   SYSTEM_SID
 } from '../endpoint/win-pipe/testing/windowsAcl'
 import { fileURLToPath } from 'node:url'
@@ -217,7 +216,9 @@ describe.runIf(process.platform === 'win32')('Windows ACL of the Host data (09 Â
     first.close()
     m.clock.advance(1_000)
     const second = await m.boot([NEXT])
-    const token = await currentWindowsToken()
+    const reader = await createWindowsAclReader()
+    cleanups.push(() => reader.dispose())
+    const token = { user: reader.user, elevated: reader.elevated }
     // An elevated administrator's new objects are owned by Administrators, by Windows default
     // ("Default owner for objects created by members of the Administrators group").
     const owners = token.elevated ? [token.user, ADMINISTRATORS_SID] : [token.user]
@@ -225,7 +226,7 @@ describe.runIf(process.platform === 'win32')('Windows ACL of the Host data (09 Â
     expect(backup).toBeDefined()
     const paths = [m.dataDir, m.db, `${m.db}-wal`, `${m.db}-shm`, join(m.dataDir, String(backup))]
 
-    const acls = await readWindowsAcls(paths)
+    const acls = await reader.read(paths)
 
     expect(acls).toHaveLength(paths.length)
     // The data directory inherits nothing from %APPDATA%: its own two entries only.
@@ -238,5 +239,5 @@ describe.runIf(process.platform === 'win32')('Windows ACL of the Host data (09 Â
       )
     }
     second.close()
-  }, 60_000)
+  }, 180_000)
 })
