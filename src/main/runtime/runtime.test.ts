@@ -12358,11 +12358,22 @@ describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
     }
   }
 
+  /**
+   * The host seams every runtime below takes. `...PROVIDER_REGISTRY` keeps the
+   * real Codex row, and without these it opens the real
+   * `<home>/.codex/state_5.sqlite` and `logs_2.sqlite` through `NodeSqlite`
+   * against the real `homedir()`: a live Codex thread on the machine running
+   * the suite then becomes a mine ahead of `ses_1`, and `getMines()[0]` is no
+   * longer the stub's session. Same seams the rest of this file uses.
+   */
+  const hermeticHost = { home: 'C:\\Users\\test', sqlite: { openReadOnly: async () => null } }
+
   it("reaches OpenCodeProvider's own context seam from a pushed ask", async () => {
     const runtime = new AgentRuntime({
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      ...hermeticHost,
       platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
@@ -12392,6 +12403,7 @@ describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      ...hermeticHost,
       platformAdapters: worktreePlatformAdapters(),
       now: () => clock,
       onMinesUpdated: vi.fn()
@@ -12429,6 +12441,7 @@ describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      ...hermeticHost,
       platformAdapters: worktreePlatformAdapters(),
       now: () => clock,
       onMinesUpdated: vi.fn()
@@ -12453,6 +12466,7 @@ describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      ...hermeticHost,
       platformAdapters: worktreePlatformAdapters(),
       now: () => clock,
       onMinesUpdated: vi.fn()
@@ -12478,6 +12492,7 @@ describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => ['ses_1']) },
+      ...hermeticHost,
       platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn()
     })
@@ -12520,6 +12535,7 @@ describe('AgentRuntime OpenCode permission pushes (#588 T4)', () => {
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub(() => sessions) },
+      ...hermeticHost,
       platformAdapters: worktreePlatformAdapters(),
       now: () => clock,
       onMinesUpdated: vi.fn()
@@ -12951,6 +12967,10 @@ describe('AgentRuntime.answerDwarfPermission over OpenCode’s own server (#588 
       fs: new FakeFs(),
       config: defaultConfig(),
       providerRegistry: { ...PROVIDER_REGISTRY, opencode: openCodeStub() },
+      // The same host seams as #588 T4's suite above, for the same reason: the
+      // real Codex row must not read this machine's own Codex registry.
+      home: 'C:\\Users\\test',
+      sqlite: { openReadOnly: async () => null },
       platformAdapters: worktreePlatformAdapters(),
       onMinesUpdated: vi.fn(),
       answerOpenCodePermission: answer
