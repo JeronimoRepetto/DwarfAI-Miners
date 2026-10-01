@@ -1,6 +1,15 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, clipboard, dialog, globalShortcut, ipcMain, nativeImage, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  nativeImage,
+  shell
+} from 'electron'
 import {
   composeLegacyRuntime,
   createLegacyRuntimeRoute,
@@ -12,6 +21,15 @@ import { ElectronSingleInstanceLock } from './window/adapters/ElectronSingleInst
 import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { wireSecondLaunch } from './window/application/secondLaunch'
 import type { SingleInstanceLock } from './window/ports/singleInstanceLock'
+import { createUiPreferenceRows } from './ipc/handlers/uiPreferenceRows'
+import { JsonUiPreferenceStore } from './window/adapters/JsonUiPreferenceStore'
+import { createUiPreferences, type ModeWindowSender } from './window/application/uiPreferences'
+import type { UiPreferenceStore } from './window/ports/uiPreferenceStore'
+
+/** A window's contents, as the UI preference pushes need them (A-P6). */
+export interface WindowContents extends ModeWindowSender {
+  readonly webContentsId: number
+}
 
 /** A window Electron created, as the mode-window registry needs it. */
 export interface CreatedWindow {
@@ -39,6 +57,12 @@ export interface UiMainDeps {
   ipc: IpcMainRegistrar
   /** The app's own entry, the only page whose calls the seam A gate accepts (ADR-019 item 8). */
   appEntry: string
+  /**
+   * The persisted UI preference stores (ISSUE-048, ADR-024 item 1) and every window's contents, for the A-P6 push to
+   * the mode windows. Its rows are a `ui-local` route target; they stay `legacy` in the table, so today's runtime
+   * keeps writing today's files, until the cut-0 switch (ISSUE-056) routes them here.
+   */
+  uiPreferences?: { store: UiPreferenceStore; windows(): readonly WindowContents[] }
 }
 
 /**
@@ -59,7 +83,8 @@ export async function startUiMain({
   lifecycle,
   legacyRuntime,
   ipc,
-  appEntry
+  appEntry,
+  uiPreferences
 }: UiMainDeps): Promise<void> {
   if (!lock.acquire()) {
     lifecycle.quit()
@@ -75,9 +100,18 @@ export async function startUiMain({
   })
   // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
   // that checks its sender and its payload (ADR-019 items 7, 8).
+  const uiLocal =
+    uiPreferences &&
+    createUiPreferenceRows(
+      createUiPreferences({
+        store: uiPreferences.store,
+        modeWindows: () => uiPreferences.windows().filter((w) => modeWindows.has(w.webContentsId))
+      })
+    )
   createRouter({
     routes: ROUTES,
     legacy: legacyRuntime,
+    ...(uiLocal ? { uiLocal } : {}),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
   }).register(ipc)
   const secondLaunch = wireSecondLaunch(lock)
@@ -153,6 +187,16 @@ if (process.type === 'browser') {
       composeLegacyRuntime({ app, dialog, nativeImage, shell, clipboard, globalShortcut })
     ),
     ipc: electronIpcMain(),
-    appEntry: appEntryUrl()
+    appEntry: appEntryUrl(),
+    uiPreferences: {
+      // The UI preference files of userData (ADR-024 item 1). Its log records (19 §9.6) join the UI log segments
+      // when those are bound (ISSUE-055); until the cut-0 switch no row reaches this store, so none is written.
+      store: new JsonUiPreferenceStore({ dir: app.getPath('userData'), log: () => {} }),
+      windows: () =>
+        BrowserWindow.getAllWindows().map((window) => ({
+          webContentsId: window.webContents.id,
+          send: (push, payload) => window.webContents.send(push, payload)
+        }))
+    }
   })
 }
