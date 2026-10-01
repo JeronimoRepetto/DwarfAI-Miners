@@ -14,6 +14,8 @@ import type { ResponseFrame } from '../../transport/dispatcher'
 import { createUpgradeDrain } from '../../transport/lifecycle/drain'
 import { HostStateHolder } from '../../transport/lifecycle/hostState'
 import { createUpgradeTargetRule } from '../../transport/methods/hostUpgradeRequest'
+import { SectionRegistry } from '../../transport/snapshot/sectionRegistry'
+import { fixedSnapshotMeta } from '../../transport/testing/fixedSnapshotMeta'
 import type { ChannelRole } from '../../transport/roles'
 import { runBoot } from '../boot'
 import { createBootSteps } from '../bootSteps'
@@ -84,6 +86,9 @@ async function readyHost(stopAll: RecordingStopAll, journal: string[]) {
   })
   // AMENDED for ISSUE-025 (was: no `connections`, no `epoch`): the Host dispatcher also serves
   // `events.subscribe`, which reads the calling connection's frame delivery and the boot epoch.
+  // AMENDED for ISSUE-026 (was: no `ids`, `sections`, `snapshotMeta`): the Host dispatcher also
+  // serves `session.snapshot`, which mints snapshot ids, reads the registered sections and
+  // registers the `meta` section over the boot-state source.
   const dispatcher = createHostDispatcher({
     log,
     clock,
@@ -102,7 +107,10 @@ async function readyHost(stopAll: RecordingStopAll, journal: string[]) {
       realpath: () => {
         throw new Error('no copy root in this case')
       }
-    })
+    }),
+    ids: new SequenceIdGenerator(),
+    sections: new SectionRegistry(),
+    snapshotMeta: fixedSnapshotMeta(() => state.current().state)
   })
   const outcome = await runBoot(
     (paths) =>

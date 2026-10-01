@@ -33,6 +33,8 @@ import { ConnectionRegistry, type AttachedConnection } from '../connectionRegist
 import { createUpgradeDrain } from '../lifecycle/drain'
 import { HostStateHolder } from '../lifecycle/hostState'
 import { createUpgradeTargetRule } from '../methods/hostUpgradeRequest'
+import { SectionRegistry } from '../snapshot/sectionRegistry'
+import { fixedSnapshotMeta } from '../testing/fixedSnapshotMeta'
 import { FaultyDuplex } from '../testing/FaultyDuplex'
 import { FrameClient } from '../testing/frameClient'
 import { inProcessDuplex, type DuplexPair } from '../testing/inProcessDuplex'
@@ -95,6 +97,9 @@ async function host() {
   // `host.state {ready}` is the ui target's first frame: seq 1 (events.subscribe needs `ready`).
   state.report({ state: 'ready', jobStatus: 'none' })
   const lifecycle = { closeCleanly: () => Promise.resolve() }
+  // AMENDED for ISSUE-026 (was: no `ids`, `sections`, `snapshotMeta`): the Host dispatcher also
+  // serves `session.snapshot`, which mints snapshot ids, reads the registered sections and
+  // registers the `meta` section over the boot-state source.
   const dispatcher = createHostDispatcher({
     log,
     clock,
@@ -119,7 +124,10 @@ async function host() {
       realpath: () => {
         throw new Error('no copy root in this case')
       }
-    })
+    }),
+    ids: new SequenceIdGenerator(),
+    sections: new SectionRegistry(),
+    snapshotMeta: fixedSnapshotMeta(() => state.current().state)
   })
   const ids = new SequenceIdGenerator()
   const throttle = new HelloThrottle(clock)
