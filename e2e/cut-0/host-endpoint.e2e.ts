@@ -43,8 +43,20 @@ function logLines(userDataDir: string): string[] {
     .flatMap((entry) => readFileSync(path.join(entry.parentPath, entry.name), 'utf8').split('\n'))
 }
 
-/** The endpoint the profile's Host binds, by the ADR-002 D2 rule (contracts/host-protocol/endpoint.ts). */
-function profileEndpoint(hostDataDir: string, env: Record<string, string>): string {
+/** What the running app names its Host endpoint from: its `hostDataDir`, home folder and XDG_RUNTIME_DIR. */
+interface AppEndpointFacts {
+  hostDataDir: string
+  home: string
+  xdgRuntimeDir: string | undefined
+}
+
+/**
+ * The endpoint the profile's Host binds, by the ADR-002 D2 rule (contracts/host-protocol/endpoint.ts), from the facts
+ * the app itself holds. They are read from the app, never rebuilt from the profile's paths: Chromium resolves
+ * `--user-data-dir` to its real path, so on macOS a profile under `/var/folders/…` is `/private/var/folders/…` to the
+ * app, and the endpoint's profile key is made from the app's spelling.
+ */
+function profileEndpoint({ hostDataDir, home, xdgRuntimeDir }: AppEndpointFacts): string {
   if (WINDOWS) {
     const out = execFileSync(
       path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe'),
@@ -58,18 +70,24 @@ function profileEndpoint(hostDataDir: string, env: Record<string, string>): stri
   }
   // On POSIX the socket file shows which case rule the volume took (macOS case probe): either name of the rule.
   const platform = DARWIN ? 'darwin' : 'linux'
+  const tried: string[] = []
   for (const caseInsensitiveVolume of [false, true]) {
     const named = endpointFor({
       platform,
       hostDataDir,
-      home: env.HOME,
-      xdgRuntimeDir: process.env.XDG_RUNTIME_DIR,
+      home,
+      ...(xdgRuntimeDir === undefined ? {} : { xdgRuntimeDir }),
       caseInsensitiveVolume,
       sha256
     })
-    if (named.ok && existsSync(named.value.path)) return named.value.path
+    if (!named.ok) {
+      tried.push(named.error.kind)
+      continue
+    }
+    if (existsSync(named.value.path)) return named.value.path
+    tried.push(named.value.path)
   }
-  throw new Error('no socket of the profile was found')
+  throw new Error(`no socket of the profile was found (tried ${tried.join(', ')})`)
 }
 
 /** One `ui` connection: hello with the profile's token, then each request answered in order. */
@@ -186,7 +204,19 @@ test.describe('cut 0: the Host endpoint of the test profile (TC-051-05)', () => 
     // The endpoint the ADR-002 D2 rule names for this profile is the one that Host answers on, with this profile's
     // uiToken.
     const token = readFileSync(path.join(hostDataDir, 'run', 'ui.token'), 'utf8').trim()
-    const ui = await uiConnection(profileEndpoint(hostDataDir, env), token)
+    const facts = await launched.app.evaluate(({ app }) => ({
+      userData: app.getPath('userData'),
+      home: process.getBuiltinModule('node:os').homedir(),
+      xdgRuntimeDir: process.env.XDG_RUNTIME_DIR
+    }))
+    const ui = await uiConnection(
+      profileEndpoint({
+        hostDataDir: path.join(facts.userData, 'host'),
+        home: facts.home,
+        xdgRuntimeDir: facts.xdgRuntimeDir
+      }),
+      token
+    )
     expect(ui.helloOk).toMatchObject({ type: 'hello.ok', epoch: identity.epoch })
 
     // Stop everything and quit: the Host ends with no owned session, closes with host.closing and exits; the UI
