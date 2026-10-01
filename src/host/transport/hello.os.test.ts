@@ -25,7 +25,8 @@ import { collectCapabilities } from './capabilities'
 import { acceptConnection, HELLO_TIMEOUT_MS } from './connection'
 import { Dispatcher } from './dispatcher'
 import { bindEndpoint } from './endpoint/server'
-import { HostStateHolder } from './hostState'
+import { ConnectionRegistry } from './connectionRegistry'
+import { HostStateHolder } from './lifecycle/hostState'
 import { FrameClient } from './testing/frameClient'
 
 const WINDOWS = process.platform === 'win32'
@@ -68,7 +69,8 @@ async function realHost() {
   const clock = new FakeClock(1_000)
   const scheduler = new FakeScheduler(clock)
   const log = new RecordingDiagnosticsLog()
-  const state = new HostStateHolder()
+  const connections = new ConnectionRegistry()
+  const state = new HostStateHolder(connections)
   state.report({ state: 'ready', jobStatus: WINDOWS ? 'none' : 'n/a' })
   const dispatcher = new Dispatcher({ log, clock, state: () => state.current().state })
   const token = new UiToken()
@@ -88,7 +90,8 @@ async function realHost() {
         scheduler,
         clock,
         log,
-        dispatcher
+        dispatcher,
+        connections
       })
   })
   if (outcome.kind !== 'bound') throw new Error(`expected a bind, got ${outcome.kind}`)

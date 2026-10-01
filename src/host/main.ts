@@ -5,33 +5,41 @@
 // electron.vite.host.config.ts, and never imports `electron` (R7) or the UI trees (R10).
 //
 // It arms no parent-death watchdog and no idle timer: the Host never exits on its own (ADR-002 D1,
-// D7; OQ-63). It exits only through the boot's `exit`, for a refusal (ALREADY_RUNNING,
-// ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot. What keeps the process running after `ready` is
-// the UI endpoint the bind step listens on (createUiEndpoint, ISSUE-022).
+// D7; OQ-63; AMENDMENT-5). It exits through the boot's `exit`, for a refusal (ALREADY_RUNNING,
+// ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot, and otherwise only through the clean exit
+// (composeHostLifecycle: checkpoint, `host.closing`, endpoint closed, exit 0), which the OS session
+// end starts today and Stop everything and quit (ISSUE-029) and the upgrade drain (ISSUE-032)
+// start later. What keeps the process running after `ready` is the UI endpoint the bind step
+// listens on (createUiEndpoint, ISSUE-022).
 //
 // The boot reports its lifecycle into the transport's HostStateHolder, which `hello.ok` and
-// HOST_NOT_READY read (ISSUE-023); the `host.state` frame on top of it is ISSUE-028's. The seam-B
-// Dispatcher starts empty: each method joins it with the issue that serves it.
+// HOST_NOT_READY read and which sends `host.state` to the `ui` connections through the
+// ConnectionRegistry. The seam-B Dispatcher starts empty: each method joins it with the issue
+// that serves it.
 //
-// Bound later, each by its issue: the database (ISSUE-039), the modules and their bridges (16 §8.2
-// step 4).
+// Bound later, each by its issue: the database and the clean-shutdown marker (ISSUE-039), the
+// modules and their bridges (16 §8.2 step 4).
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv, type HostDiagnostics } from './modules/diagnostics'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
+import type { ShutdownCheckpoint } from './kernel/ports/shutdownCheckpoint'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
 import { NodeFs } from './platform/fs/NodeFs'
 import { UuidV7Generator } from './platform/ids/UuidV7Generator'
 import { EnvAppPaths } from './platform/paths/EnvAppPaths'
 import { NodeProcessControl, createQueryRunner } from './platform/process/NodeProcessControl'
+import { nodeOsSessionSignals } from './platform/process/osSessionSignals'
 import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
+import { ConnectionRegistry } from './transport/connectionRegistry'
 import { Dispatcher } from './transport/dispatcher'
-import { HostStateHolder } from './transport/hostState'
+import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { errorCode, runBoot } from './wiring/boot'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
+import { composeHostLifecycle } from './wiring/hostLifecycle'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -47,6 +55,16 @@ declare const __DWARFAI_BUILD_ID__: string
 const NO_LOG_FOLDER: HostDiagnostics = {
   record: () => {},
   flush: () => Promise.resolve()
+}
+
+/**
+ * The checkpoint before a clean exit, until the database is opened at boot: there is nothing to
+ * flush and nowhere to write the marker yet. ISSUE-039 binds the `app_meta` writer in its place
+ * (lead decision 2026-09-30).
+ */
+const NO_DATABASE_YET: ShutdownCheckpoint = {
+  flush: () => {},
+  markClean: () => {}
 }
 
 async function main(): Promise<void> {
@@ -86,7 +104,8 @@ async function main(): Promise<void> {
       })
   })
   const ids = new UuidV7Generator({ clock })
-  const hostState = new HostStateHolder()
+  const connections = new ConnectionRegistry()
+  const hostState = new HostStateHolder(connections)
   const dispatcher = new Dispatcher({ log, clock, state: () => hostState.current().state })
   const epoch = mintBootEpoch(ids)
   const runQuery = createQueryRunner()
@@ -96,9 +115,43 @@ async function main(): Promise<void> {
     runCommand: runQuery
   })
 
+  const exit = (code: number): void => {
+    // The last records reach the segment first; then the Host ends, whatever handles it holds.
+    process.exitCode = code
+    void log.flush().finally(() => process.exit(code))
+  }
+
   await runBoot(
-    (dataDir) =>
-      createBootSteps({
+    (dataDir) => {
+      const endpoint = createUiEndpoint({
+        facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
+        log,
+        scheduler,
+        clock,
+        ids,
+        identity: {
+          hostVersion: __DWARFAI_APP_VERSION__,
+          buildId: __DWARFAI_BUILD_ID__,
+          protocolVersion: PROTOCOL_VERSION
+        },
+        pid: process.pid,
+        epoch,
+        state: () => hostState.current(),
+        dispatcher,
+        connections,
+        frames: LIFECYCLE_FRAMES
+      })
+      // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
+      composeHostLifecycle({
+        checkpoint: NO_DATABASE_YET,
+        connections,
+        endpoint,
+        scheduler,
+        log,
+        sessionEnd: nodeOsSessionSignals(log),
+        exit
+      })
+      return createBootSteps({
         paths: dataDir,
         clock,
         scheduler,
@@ -106,23 +159,9 @@ async function main(): Promise<void> {
         fs,
         processControl,
         log,
-        endpoint: createUiEndpoint({
-          facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
-          log,
-          scheduler,
-          clock,
-          ids,
-          identity: {
-            hostVersion: __DWARFAI_APP_VERSION__,
-            buildId: __DWARFAI_BUILD_ID__,
-            protocolVersion: PROTOCOL_VERSION
-          },
-          pid: process.pid,
-          epoch,
-          state: () => hostState.current(),
-          dispatcher
-        })
-      }),
+        endpoint
+      })
+    },
     {
       log,
       clock,
@@ -130,11 +169,7 @@ async function main(): Promise<void> {
       privilege: createPrivilegeCheck({ runQuery }),
       paths,
       runtime: hostRuntime(),
-      exit: (code) => {
-        // The last records reach the segment first; then the Host ends, whatever handles it holds.
-        process.exitCode = code
-        void log.flush().finally(() => process.exit(code))
-      }
+      exit
     }
   )
 }

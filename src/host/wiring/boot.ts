@@ -40,13 +40,17 @@ export const BOOT_STEP_NAMES = [
 
 export type BootStepName = (typeof BOOT_STEP_NAMES)[number]
 
-/** The 12A states the boot passes through, and the job status, as `hello.ok` carries them. */
+/**
+ * The Host's lifecycle state and job status, as `hello.ok` and `host.state` carry them. The boot
+ * reports `starting`, `migrating` and `ready` only; `upgrade-pending` is the upgrade handshake's
+ * (S12.13, later: ISSUE-032).
+ */
 export interface HostStateReport {
-  state: Extract<HelloOk['state'], 'starting' | 'migrating' | 'ready'>
+  state: HelloOk['state']
   jobStatus: HelloOk['jobStatus']
 }
 
-/** Where the boot reports each lifecycle change (implemented by transport, later: ISSUE-028). */
+/** Where the boot reports each lifecycle change (transport/lifecycle/hostState.ts). */
 export interface HostStateSink {
   report(report: HostStateReport): void
 }
