@@ -36,6 +36,8 @@ import type { CopyPlatform } from './copySource'
 import type { LauncherClock } from './ports'
 
 export { copySourceOf, type CopyPlatform } from './copySource'
+// The per-OS copy root (ADR-002 D5): one rule, shared with the Host through contracts (ISSUE-032).
+export { versionedCopyRoot } from '@dwarfai/contracts'
 
 /** The file operations that change the copy root; the Node ones in production, faulty ones in tests. */
 export interface CopyOps {
@@ -164,37 +166,6 @@ export async function ensureVersionedCopy(
     durationMs: request.clock.now() - startedAt
   })
   return { ok: true, reused: false, copyDir, contentDir: contentIn(copyDir) }
-}
-
-/**
- * The per-OS copy root of ADR-002 D5 / ADR-027 item 2: `%LOCALAPPDATA%\DwarfAI\host` on Windows,
- * `~/Library/Application Support/DwarfAI/host` on macOS, `$XDG_DATA_HOME/dwarfai/host` on Linux,
- * where an unset, empty or relative XDG_DATA_HOME means `~/.local/share` (XDG Base Directory).
- */
-export function versionedCopyRoot(input: {
-  platform: CopyPlatform
-  env: Readonly<Record<string, string | undefined>>
-  homeDir: string
-}): { ok: true; value: string } | { ok: false; errCode: string } {
-  const unknown = { ok: false as const, errCode: 'COPY_ROOT_UNKNOWN' }
-  if (input.platform === 'win32') {
-    const local = input.env['LOCALAPPDATA']
-    if (local === undefined || !path.win32.isAbsolute(local)) return unknown
-    return { ok: true, value: path.win32.join(local, 'DwarfAI', 'host') }
-  }
-  if (!path.posix.isAbsolute(input.homeDir)) return unknown
-  if (input.platform === 'darwin') {
-    return {
-      ok: true,
-      value: path.posix.join(input.homeDir, 'Library', 'Application Support', 'DwarfAI', 'host')
-    }
-  }
-  const xdg = input.env['XDG_DATA_HOME']
-  const dataHome =
-    xdg !== undefined && path.posix.isAbsolute(xdg)
-      ? xdg
-      : path.posix.join(input.homeDir, '.local', 'share')
-  return { ok: true, value: path.posix.join(dataHome, 'dwarfai', 'host') }
 }
 
 /** A version usable as one folder name under the root, and never mistaken for a leftover. */

@@ -17,6 +17,8 @@
 // - A socket path must fit `sockaddr_un.sun_path` with its terminating NUL (104 bytes on macOS,
 //   108 on Linux); a longer one fails fast with a typed error (FM-037).
 
+import { isAbsolutePath, normaliseAbsolutePath } from './osPath'
+
 export type EndpointPlatform = 'win32' | 'darwin' | 'linux'
 
 /** Lower-case hex SHA-256 of the UTF-8 text, supplied by the calling process. */
@@ -69,7 +71,7 @@ export function canonicalHostDataDir(
   path: string,
   options: { platform: EndpointPlatform; caseInsensitive: boolean }
 ): string {
-  const normalised = normalisePath(path, options.platform)
+  const normalised = normaliseAbsolutePath(path, options.platform)
   return options.caseInsensitive ? normalised.toLowerCase() : normalised
 }
 
@@ -92,8 +94,8 @@ export function checkSocketPathLength(
 
 export function endpointFor(input: EndpointInput): EndpointResult<HostEndpoint> {
   const { platform, sha256 } = input
-  if (!isAbsolute(input.hostDataDir, platform)) return invalid()
-  const dataDir = normalisePath(input.hostDataDir, platform)
+  if (!isAbsolutePath(input.hostDataDir, platform)) return invalid()
+  const dataDir = normaliseAbsolutePath(input.hostDataDir, platform)
   const caseInsensitive =
     platform === 'win32' || (platform === 'darwin' && input.caseInsensitiveVolume === true)
   const key = profileKey(canonicalHostDataDir(dataDir, { platform, caseInsensitive }), sha256)
@@ -111,17 +113,20 @@ export function endpointFor(input: EndpointInput): EndpointResult<HostEndpoint> 
 
   let dir: string
   if (platform === 'darwin') {
-    if (input.home === undefined || !isAbsolute(input.home, platform)) {
+    if (input.home === undefined || !isAbsolutePath(input.home, platform)) {
       return { ok: false, error: { kind: 'home-missing' } }
     }
     const app = parentName(dataDir)
     if (app === '') return invalid()
-    dir = under(normalisePath(input.home, platform), `Library/Application Support/${app}/run`)
+    dir = under(
+      normaliseAbsolutePath(input.home, platform),
+      `Library/Application Support/${app}/run`
+    )
   } else {
     const xdg = input.xdgRuntimeDir
     dir =
-      xdg !== undefined && isAbsolute(xdg, platform)
-        ? under(normalisePath(xdg, platform), 'dwarfai')
+      xdg !== undefined && isAbsolutePath(xdg, platform)
+        ? under(normaliseAbsolutePath(xdg, platform), 'dwarfai')
         : under(dataDir, 'run')
   }
   const path = `${dir}/host-${key}.sock`
@@ -132,39 +137,6 @@ export function endpointFor(input: EndpointInput): EndpointResult<HostEndpoint> 
 
 function invalid(): EndpointResult<never> {
   return { ok: false, error: { kind: 'host-data-dir-invalid' } }
-}
-
-function isAbsolute(path: string, platform: EndpointPlatform): boolean {
-  if (platform === 'win32') return /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(path)
-  return path.startsWith('/')
-}
-
-/**
- * Separators, `.` and `..` resolved, no trailing separator except a bare root (`/`, `C:\`).
- * Called only on an absolute path.
- */
-function normalisePath(path: string, platform: EndpointPlatform): string {
-  const sep = platform === 'win32' ? '\\' : '/'
-  const unified = platform === 'win32' ? path.replace(/\//g, '\\') : path
-  let root: string
-  let rest: string
-  if (platform === 'win32' && unified.startsWith('\\\\')) {
-    root = '\\\\'
-    rest = unified.slice(2)
-  } else if (platform === 'win32' && /^[A-Za-z]:/.test(unified)) {
-    root = `${unified.slice(0, 2)}\\`
-    rest = unified.slice(2)
-  } else {
-    root = sep
-    rest = unified
-  }
-  const segments: string[] = []
-  for (const segment of rest.split(sep)) {
-    if (segment === '' || segment === '.') continue
-    if (segment === '..') segments.pop()
-    else segments.push(segment)
-  }
-  return root + segments.join(sep)
 }
 
 /** `relative` inside the normalised POSIX folder `base` (which ends in `/` only when it is `/`). */
