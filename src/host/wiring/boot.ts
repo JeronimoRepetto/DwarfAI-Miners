@@ -43,7 +43,7 @@ export type BootStepName = (typeof BOOT_STEP_NAMES)[number]
 /**
  * The Host's lifecycle state and job status, as `hello.ok` and `host.state` carry them. The boot
  * reports `starting`, `migrating` and `ready` only; `upgrade-pending` is the upgrade handshake's
- * (S12.13, later: ISSUE-032).
+ * (S12.13, transport/lifecycle/drain.ts).
  */
 export interface HostStateReport {
   state: HelloOk['state']

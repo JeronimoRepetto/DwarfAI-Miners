@@ -17,7 +17,7 @@ import {
 import { requestIdSchema } from './requestId'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03 and B-M05 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M05 and B-M06 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -25,6 +25,7 @@ export interface HostMethods {
   'ping':                            { params: {}; result: { at: Instant } }
   'events.subscribe':                { params: SubscribeParams; result: SubscribeResult }
   'host.shutdown':                   { params: HostShutdownParams; result: HostShutdownResult }
+  'host.upgrade.request':            { params: { targetVersion: string; targetDir: string; requestId: string }; result: { state: 'upgrade-pending' } }
 }
 // end verbatim: 14 §3.4
 
@@ -89,6 +90,14 @@ export const HOST_METHOD_SCHEMAS = {
       z.object({ mode: z.literal('stop-all'), outcome: stopAllOutcomeSchema }).strict(),
       z.object({ mode: z.literal('upgrade-drain'), accepted: z.literal(true) }).strict()
     ])
+  },
+  'host.upgrade.request': {
+    // The 14 §1.10 targetDir rule needs the file system: it is the Host's
+    // (host/transport/methods/hostUpgradeRequest.ts), not the wire's.
+    params: z
+      .object({ targetVersion: z.string(), targetDir: z.string(), requestId: requestIdSchema })
+      .strict(),
+    result: z.object({ state: z.literal('upgrade-pending') }).strict()
   }
 } as const satisfies Partial<{
   [M in keyof HostMethods]: {

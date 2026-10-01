@@ -1,7 +1,7 @@
 // The Host's lifecycle state (07 machine 12A; ADR-002 D6, D8): the one holder of the state and the
 // job status that `hello.ok` (ADR-003 item 5), HOST_NOT_READY (14 §3.3) and `SnapshotMeta.state`
 // read, and the HostStateSink the boot reports into (S12.04–S12.06). The upgrade handshake reports
-// `upgrade-pending` into it (S12.13, later: ISSUE-032).
+// `upgrade-pending` into it (S12.13, lifecycle/drain.ts).
 //
 // Every change — of the state or of the job status — is published as `host.state` (B-F04), which
 // reaches the `ui` connections only (14 §2.4; the `notifier` never receives it, 14 I-18). A report

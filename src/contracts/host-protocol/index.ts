@@ -8,6 +8,7 @@ export * from './frameCodec'
 export * from './protocolVersion'
 export * from './requestId'
 export * from './runFiles'
+export * from './versionedCopyRoot'
 export * from './params'
 export {
   HOST_METHOD_SCHEMAS,

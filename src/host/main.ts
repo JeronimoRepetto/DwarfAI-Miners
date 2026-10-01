@@ -8,9 +8,10 @@
 // D7; OQ-63; AMENDMENT-5). It exits through the boot's `exit`, for a refusal (ALREADY_RUNNING,
 // ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot, and otherwise only through the clean exit
 // (composeHostLifecycle: checkpoint, `host.closing`, endpoint closed, exit 0), which the OS session
-// end and Stop everything and quit (`host.shutdown {stop-all}`, ISSUE-029) start, and the upgrade
-// drain starts later (ISSUE-032). What keeps the process running after `ready` is the UI endpoint the bind step
-// listens on (createUiEndpoint, ISSUE-022).
+// end, Stop everything and quit (`host.shutdown {stop-all}`, ISSUE-029) and the upgrade drain
+// (`host.upgrade.request` or `host.shutdown {upgrade-drain}`, ISSUE-032) start. What keeps the
+// process running after `ready` is the UI endpoint the bind step listens on (createUiEndpoint,
+// ISSUE-022).
 //
 // The boot reports its lifecycle into the transport's HostStateHolder, which `hello.ok` and
 // HOST_NOT_READY read and which sends `host.state` to the `ui` connections through the
@@ -19,6 +20,10 @@
 // with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
 // owned session: bound to the empty-owner implementation, since the Host owns no session yet,
 // until the launching module serves it (later: ISSUE-175).
+// The upgrade drain asks the DrainGate what is still open: bound to the empty implementation of
+// cut 0, so it drains at once, until the launching (EPIC-10) and asking (EPIC-08) modules report
+// their blockers; a `host.upgrade.request` target must be a direct child of the ADR-002 D5
+// versioned-copy root, named by the same rule the UI's launcher uses (14 §1.10).
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
 // ISSUE-039); its checkpoint is the clean exit's (the clean-shutdown marker), and a newer file
@@ -40,6 +45,7 @@ import { NodeFs } from './platform/fs/NodeFs'
 import { UuidV7Generator } from './platform/ids/UuidV7Generator'
 import { EnvAppPaths } from './platform/paths/EnvAppPaths'
 import { buildKindOf, thisProcessReleaseHostDataDir } from './platform/paths/releaseDataDir'
+import { hostCopyRootFacts } from './platform/paths/versionedCopyRoot'
 import { NodeProcessControl, createQueryRunner } from './platform/process/NodeProcessControl'
 import { nodeOsSessionSignals } from './platform/process/osSessionSignals'
 import { createPrivilegeCheck } from './platform/process/privilege'
@@ -48,7 +54,9 @@ import { createHostFileProtection } from './platform/sqlite/fileProtection'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
+import { createUpgradeDrain } from './transport/lifecycle/drain'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
+import { createUpgradeTargetRule } from './transport/methods/hostUpgradeRequest'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
 import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
@@ -56,6 +64,7 @@ import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
 import { createHostDatabase, HOST_DB_FILE } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
+import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import { HostInvariantError } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
@@ -135,7 +144,16 @@ async function main(): Promise<void> {
     stopAll: emptyOwnerStopAll,
     lifecycle,
     connections,
-    epoch
+    epoch,
+    // Cut 0: nothing is open or in flight, so the drain goes at once (later: EPIC-08, EPIC-10).
+    drain: createUpgradeDrain({
+      gate: emptyDrainGate,
+      state: hostState,
+      scheduler,
+      lifecycle,
+      log
+    }),
+    upgradeTarget: createUpgradeTargetRule(hostCopyRootFacts())
   })
   const runQuery = createQueryRunner()
   const processControl = new NodeProcessControl({
