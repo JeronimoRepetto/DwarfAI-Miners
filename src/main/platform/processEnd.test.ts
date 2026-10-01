@@ -32,12 +32,28 @@ describe('buildEndProcessTreeCommand', () => {
   it('signals the process group on Linux and macOS, not the one pid', () => {
     expect(buildEndProcessTreeCommand('linux', 4242)).toEqual({
       command: 'kill',
-      args: ['-TERM', '-4242']
+      args: ['-TERM', '--', '-4242']
     })
     expect(buildEndProcessTreeCommand('darwin', 77)).toEqual({
       command: 'kill',
-      args: ['-TERM', '-77']
+      args: ['-TERM', '--', '-77']
     })
+  })
+
+  /*
+   * The negative pid comes after `--`, on both POSIX platforms. procps-ng's
+   * `kill` (Linux) hands its arguments to getopt, which reads `-4242` as the
+   * option characters `4`, `2`, `4`, `2`: its special case then signals the
+   * group named by the FIRST DIGIT ALONE (`'0' - '4'`, group 4) and, because
+   * it inverts `kill(2)`'s answer there, exits 0 when nothing was signalled
+   * (procps-ng 4.0.4 `src/kill.c`; observed with 3.3.17, which signalled the
+   * caller's own group instead). A launched session then stays running while
+   * its end is reported done. `--` ends the options: procps parses the rest
+   * as pids, and BSD `kill` (macOS `shell_cmds` `kill.c`) skips it the same way.
+   */
+  it('[ADR-014] ends the options before the negative pid, so procps kill reads the group as a pid', () => {
+    expect(buildEndProcessTreeCommand('linux', 4242)?.args).toEqual(['-TERM', '--', '-4242'])
+    expect(buildEndProcessTreeCommand('darwin', 77)?.args).toEqual(['-TERM', '--', '-77'])
   })
 
   /*
@@ -120,7 +136,7 @@ describe('buildTerminateProcessCommand / buildKillProcessCommand', () => {
   it('leaves the launched tier on the process group', () => {
     expect(buildEndProcessTreeCommand('linux', 4242)).toEqual({
       command: 'kill',
-      args: ['-TERM', '-4242']
+      args: ['-TERM', '--', '-4242']
     })
   })
 })
