@@ -8,8 +8,11 @@ import { defineConfig } from '@playwright/test'
  * runs it as a release lane on Windows, macOS and Linux (Xvfb), never as a merge check (HO-38).
  */
 export default defineConfig({
-  testDir: 'e2e',
-  testMatch: '**/*.e2e.ts',
+  // The E2E cases, plus the spike harnesses 17 §4 keeps as E2E cases (S-019-1: drag-and-drop under the sandbox).
+  testDir: '.',
+  testMatch: ['e2e/**/*.e2e.ts', 'spikes/**/*.e2e.ts'],
+  // `__fixtures__/` holds test-shaped data of other tests (the trace extractor's sample repo, 17 §2.2).
+  testIgnore: ['**/node_modules/**', '**/__fixtures__/**'],
   // One app at a time per OS job: cases share the machine's display, focus and tray.
   workers: 1,
   fullyParallel: false,

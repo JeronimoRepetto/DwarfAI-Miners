@@ -1,0 +1,28 @@
+{
+  "platform": "win32",
+  "electron": "44.0.0",
+  "foundPreload": {
+    "file": "out/preload/index.mjs",
+    "sandbox": true,
+    "preloadError": "Cannot use import statement outside a module",
+    "bridgeExposed": false
+  },
+  "foundPreloadAsCommonJs": {
+    "file": "out/preload/index.mjs transpiled to CommonJS",
+    "sandbox": true,
+    "preloadError": null,
+    "bridgeExposed": true
+  },
+  "spikeFacade": {
+    "file": "spikes/S-019-1/preload.ts (compiled to CommonJS)",
+    "sandbox": true,
+    "contextIsolation": true,
+    "nodeIntegration": false,
+    "preloadError": null,
+    "sandboxed": true,
+    "fullNodeRequire": false,
+    "ping": "pong:s0191",
+    "syntheticPath": "",
+    "droppedPathReachedRenderer": true
+  }
+}
