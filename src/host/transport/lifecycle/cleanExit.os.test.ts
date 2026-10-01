@@ -28,6 +28,7 @@ import { FrameClient } from '../testing/frameClient'
 import { createCleanExit } from './cleanExit'
 import { HostStateHolder } from './hostState'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
+import { HelloThrottle } from '../auth/throttle'
 
 const WINDOWS = process.platform === 'win32'
 
@@ -92,7 +93,8 @@ async function bind(endpoint: HostEndpoint, connections: ConnectionRegistry, run
           scheduler: new FakeScheduler(clock),
           state: () => state.current().state
         }),
-        connections
+        connections,
+        throttle: new HelloThrottle(clock)
       })
   })
   if (outcome.kind !== 'bound') throw new Error(`expected a bind, got ${outcome.kind}`)

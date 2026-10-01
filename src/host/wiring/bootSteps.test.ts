@@ -17,6 +17,7 @@ import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecur
 import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostState'
 import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
+import { createHostDispatcher } from './hostDispatcher'
 import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 // L6 (17 §1.6): the bind step's composition — the platform facts, the one ADR-002 D2 rule and the
@@ -310,4 +311,81 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     conditions = ['db-read-only']
     expect(await helloCapabilities()).toContain('db-read-only')
   })
+
+  it('[ADR-003] the Host dispatcher main composes serves ping: a ui hello then ping answers the Host time over the bound endpoint', async () => {
+    const input = factsForThisOs(caseRoot())
+    const log = new RecordingDiagnosticsLog()
+    const deps = channelDeps(log)
+    const dispatcher = createHostDispatcher({
+      log,
+      clock: deps.clock,
+      scheduler: new FakeScheduler(deps.clock),
+      state: () => deps.state().state
+    })
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log,
+      scheduler: scheduler(),
+      ...deps,
+      dispatcher
+    })
+    cleanups.push(() => endpoint.close())
+    expect(await endpoint.bind()).toBe('bound')
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+
+    const socket = connect(named.value.path)
+    cleanups.push(() => void socket.destroy())
+    const client = new FrameClient(socket)
+    client.send(helloFrame('ui', readToken(input.hostDataDir)))
+    await client.until(() => client.frames.length > 0)
+    client.send({ type: 'req', id: 'p1', method: 'ping', params: {} })
+    await client.until(() => client.frames.length > 1)
+
+    expect(client.frames[1]).toEqual({ type: 'res', id: 'p1', ok: true, result: { at: 1_000 } })
+  })
+
+  it('[ADR-003, FM-027, C-11] the bound endpoint shares one throttle: after five failed hellos the next connection gets RATE_LIMITED, even with the right token', async () => {
+    const input = factsForThisOs(caseRoot())
+    const log = new RecordingDiagnosticsLog()
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log,
+      scheduler: scheduler(),
+      ...channelDeps(log)
+    })
+    cleanups.push(() => endpoint.close())
+    expect(await endpoint.bind()).toBe('bound')
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+
+    const open = (): FrameClient => {
+      const socket = connect(named.value.path)
+      cleanups.push(() => void socket.destroy())
+      return new FrameClient(socket)
+    }
+    for (let i = 0; i < 5; i += 1) {
+      const intruder = open()
+      intruder.send(helloFrame('ui', '0'.repeat(64)))
+      await intruder.until(() => intruder.closed)
+      expect(intruder.frames).toEqual([{ type: 'error', code: 'AUTH_FAILED' }])
+    }
+    const refused = open()
+    refused.send(helloFrame('ui', readToken(input.hostDataDir)))
+    await refused.until(() => refused.frames.length > 0)
+    expect(refused.frames).toEqual([{ type: 'error', code: 'RATE_LIMITED' }])
+    await refused.until(() => refused.closed)
+    expect(log.byEvent('channel.rate-limited')).toMatchObject([{ count: 5 }])
+  })
 })
+
+function helloFrame(role: string, token: string) {
+  return {
+    type: 'hello',
+    endpointGeneration: 1,
+    protocolVersion: PROTOCOL_VERSION,
+    role,
+    token,
+    client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
+  }
+}

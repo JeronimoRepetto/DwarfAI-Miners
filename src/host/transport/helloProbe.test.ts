@@ -17,6 +17,7 @@ import { Dispatcher } from './dispatcher'
 import { createHelloProbe, PROBE_HELLO_TIMEOUT_MS } from './helloProbe'
 import { HostStateHolder } from './lifecycle/hostState'
 import { inProcessDuplex } from './testing/inProcessDuplex'
+import { HelloThrottle } from './auth/throttle'
 
 const cleanups: Array<() => void> = []
 
@@ -56,7 +57,8 @@ async function runningHost(dir: string, scheduler: FakeScheduler, clock: FakeClo
       scheduler: new FakeScheduler(clock),
       state: () => state.current().state
     }),
-    connections
+    connections,
+    throttle: new HelloThrottle(clock)
   })
   return { connection: pair.client, log }
 }

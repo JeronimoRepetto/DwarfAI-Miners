@@ -29,6 +29,7 @@ import { inProcessDuplex } from '../testing/inProcessDuplex'
 import { CLEAN_EXIT_REASONS, createCleanExit } from './cleanExit'
 import { HostStateHolder } from './hostState'
 import { closeOnOsSessionEnd } from './osSessionEnd'
+import { HelloThrottle } from '../auth/throttle'
 
 const cleanups: Array<() => void> = []
 
@@ -94,7 +95,8 @@ async function host() {
       clock,
       log,
       dispatcher,
-      connections
+      connections,
+      throttle: new HelloThrottle(clock)
     })
     const client = new FrameClient(pair.client)
     client.send({

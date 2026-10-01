@@ -15,6 +15,7 @@ import type { IdGenerator } from '../kernel/ports/idGenerator'
 import type { ProcessControl } from '../kernel/ports/processControl'
 import type { Scheduler } from '../kernel/ports/scheduler'
 import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
+import { HelloThrottle } from '../transport/auth/throttle'
 import { UI_TOKEN_FILE, UiToken } from '../transport/auth/uiToken'
 import { collectCapabilities } from '../transport/capabilities'
 import { acceptConnection } from '../transport/connection'
@@ -163,6 +164,8 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
       // Linux with XDG_RUNTIME_DIR is not the socket's folder.
       const runDir = join(facts.value.hostDataDir, 'run')
       const token = new UiToken()
+      // ADR-003 item 5: one failed-hello throttle for every connection of this endpoint.
+      const throttle = new HelloThrottle(deps.clock)
       const outcome = await bindEndpoint(endpoint.value, {
         log: deps.log,
         scheduler: deps.scheduler,
@@ -194,7 +197,8 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             clock: deps.clock,
             log: deps.log,
             dispatcher: deps.dispatcher,
-            connections: deps.connections
+            connections: deps.connections,
+            throttle
           }),
         ownerOnlyPipe: deps.ownerOnlyPipe
       })

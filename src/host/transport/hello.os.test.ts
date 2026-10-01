@@ -30,6 +30,7 @@ import { bindEndpoint } from './endpoint/server'
 import { ConnectionRegistry } from './connectionRegistry'
 import { HostStateHolder } from './lifecycle/hostState'
 import { FrameClient } from './testing/frameClient'
+import { HelloThrottle } from './auth/throttle'
 
 const WINDOWS = process.platform === 'win32'
 
@@ -103,7 +104,8 @@ async function realHost() {
         clock,
         log,
         dispatcher,
-        connections
+        connections,
+        throttle: new HelloThrottle(clock)
       })
   })
   if (outcome.kind !== 'bound') throw new Error(`expected a bind, got ${outcome.kind}`)
