@@ -36,7 +36,12 @@ describe('electron.vite.config (app build)', () => {
     // `rollupOptions.input` at all, which is what the earlier `pnpm build`
     // in this task's own verification confirmed still produces
     // `out/main/index.js`.
-    expect(mainConfig.main?.build?.rollupOptions?.input).toBeUndefined()
+    // AMENDED for ISSUE-056 (was: `toBeUndefined()`, electron-vite's own convention resolving `src/main/index.ts`):
+    // from cut 0 the app's entry is the UI-main composition root, one explicit entry still (21 §2 cut 0; the case
+    // that pins it is src/ui-main/appEntry.test.ts). `jevMcpServer` is still not a second key of this map.
+    expect(mainConfig.main?.build?.rollupOptions?.input).toEqual({
+      index: resolve(__dirname, '../../..', 'src/ui-main/index.ts')
+    })
   })
 
   it('externalizes every main dependency normally — nothing force-bundled here any more', () => {

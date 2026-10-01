@@ -13,7 +13,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  *
  *   electron-vite build --config electron.vite.host.config.ts
  *
- * Its own config, like `electron.vite.uiMain.config.ts` and for the same
+ * Its own config, like `electron.vite.jevMcpServer.config.ts` and for the same
  * reason: a second `input` in the app's own `main` build would share one Rollup
  * graph between two entries and split hashed chunks into `out/main` (see
  * electron.vite.config.ts's own top comment). Its own folder, `out/host`, and

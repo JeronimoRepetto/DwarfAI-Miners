@@ -5,13 +5,12 @@ import path from 'node:path'
  * Which Electron main file an E2E case launches (testing strategy `17` §1.9; ISSUE-312 review
  * R8B-02, lead decision 2026-09-30).
  *
- * - `'current'` (the default) is the build's Electron main entry: `package.json` `main`, today the
- *   legacy `out/main/index.js`.
- * - `'ui-main'` is the output of the UI-main composition root's build target (`src/ui-main/index.ts`,
- *   later: ISSUE-042 adds the target), which exists in the build before the cut-0 switch makes it
- *   the app's entry. Its output file is `out/ui-main/index.js` (`docs/e2e.md`).
+ * - `'current'` (the default) is the build's Electron main entry: `package.json` `main`, since the
+ *   cut-0 switch (ISSUE-056) the UI-main composition root's output `out/ui-main/index.js`.
+ * - `'ui-main'` is that output by its path (`src/ui-main/index.ts`, built by the app build;
+ *   `docs/e2e.md`).
  *
- * After the switch `main` names that same output, so both values start the same entry. A missing
+ * Since the switch `main` names that same output, so both values start the same entry. A missing
  * output is refused with a clear message; there is never a silent fallback to another entry.
  */
 export type AppEntry = 'current' | 'ui-main'

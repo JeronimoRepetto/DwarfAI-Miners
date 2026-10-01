@@ -63,16 +63,16 @@ makes the build read this variable. The harness never changes what a build conta
 
 `launchApp({ entry })` (`e2e/_harness/resolveEntry.ts`):
 
-| `entry`               | Main file                                        |
-| --------------------- | ------------------------------------------------ |
-| `'current'` (default) | `package.json` `main`, today `out/main/index.js` |
-| `'ui-main'`           | `out/ui-main/index.js`                           |
+| `entry`               | Main file                                           |
+| --------------------- | --------------------------------------------------- |
+| `'current'` (default) | `package.json` `main`, since cut 0 the ui-main file |
+| `'ui-main'`           | `out/ui-main/index.js`                              |
 
-`out/ui-main/index.js` is the output file of the UI-main composition root's build target (`src/ui-main/index.ts`, added
-by ISSUE-042), which exists before the cut-0 switch (ISSUE-056) makes it `main`. A build without it is refused with a
-clear message; the harness never falls back to the current entry. The current entry starts from the app folder, as the
-packaged app does, so Electron reads `package.json` and `app.getAppPath()` is the app folder; before the switch the
-ui-main target starts from its file. After the switch both values start the same entry.
+`out/ui-main/index.js` is the output file of the UI-main composition root (`src/ui-main/index.ts`), which the app build
+(`electron.vite.config.ts`, `main` target) writes. The cut-0 switch (ISSUE-056) made it `package.json` `main`, so both
+values start the same entry; the legacy entry `src/main/index.ts` is no longer built. A build without the file is
+refused with a clear message; the harness never falls back to another entry. The current entry starts from the app
+folder, as the packaged app does, so Electron reads `package.json` and `app.getAppPath()` is the app folder.
 
 ## Running the perf lane locally
 

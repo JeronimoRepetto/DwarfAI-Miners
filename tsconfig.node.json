@@ -34,7 +34,6 @@
     "playwright.config.ts",
     "electron.vite.config.ts",
     "electron.vite.jevMcpServer.config.ts",
-    "electron.vite.uiMain.config.ts",
     "electron.vite.host.config.ts",
     "vitest.config.ts",
     "vitest.golden.config.ts",
