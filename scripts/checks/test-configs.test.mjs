@@ -9,9 +9,9 @@ import { OS_LANE_REPORT } from './os-lane-guard.mjs'
 /**
  * L7 check of the lane split (testing strategy `17` §1.8, §5.4; ADR-004).
  *
- * `*.os.test.{ts,mjs}` files under `src/`, `spikes/` and `scripts/` run only in the OS lane
- * (`pnpm test:os`, `vitest.os.config.ts`), never in the default `pnpm test`, which must also run
- * on a machine that cannot run them. The kept spike harnesses under `spikes/` type-check with the
+ * `*.os.test.{ts,mjs}` files under `src/`, `spikes/`, `scripts/` and `fixtures/` run only in the
+ * OS lane (`pnpm test:os`, `vitest.os.config.ts`), never in the default `pnpm test`, which must
+ * also run on a machine that cannot run them. The kept spike harnesses under `spikes/` type-check with the
  * rest (`tsconfig.node.json`).
  */
 
@@ -22,12 +22,14 @@ const OS_TEST_SAMPLES = [
   'src/host/platform/process/tree-kill.os.test.ts',
   'spikes/sp-05/pipe-acl.os.test.ts',
   'spikes/sp-02/host-survival.os.test.mjs',
-  'scripts/packaged/fuses.os.test.mjs'
+  'scripts/packaged/fuses.os.test.mjs',
+  'fixtures/bin/_kit/stubCli.os.test.mjs'
 ]
 const DEFAULT_TEST_SAMPLES = [
   'src/contracts/ipc/registry.test.ts',
   'scripts/checks/quarantine.test.mjs',
-  'perf/_harness/runPerf.test.mjs'
+  'perf/_harness/runPerf.test.mjs',
+  'fixtures/bin/_kit/stubCli.test.mjs'
 ]
 /** Test-shaped data of another test (17 §2.2 `__fixtures__/`), never a test of either lane. */
 const FIXTURE_SAMPLES = [

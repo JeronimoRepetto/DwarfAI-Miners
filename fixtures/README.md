@@ -63,6 +63,11 @@ provider data.
 `%ComSpec% /d /s /c "<quoted command line>"` still with `shell: false` runs it. On POSIX the lookup finds the
 executable `<name>`, started directly. `node <name>.mjs` works on every OS.
 
+**How the kit is tested.** The engine's behaviour runs in process through `playStub` in `bin/_kit/stubCli.test.mjs`
+(`pnpm test`), so no case waits on a child process. What only a real process shows (each stub program's wiring, the
+network guard, a hung stub staying alive, starting through the shim or the wrapper) runs in the OS lane,
+`bin/_kit/stubCli.os.test.mjs` (`pnpm test:os`, `17` §1.8).
+
 **Extending a stub.** A driver issue (for example ISSUE-150's `StubClaudeCli` protocol replay) extends
 `bin/<name>/<name>.mjs` and the engine with its protocol steps and adds its scenarios to `bin/_kit/scripts/`; it
 never adds a second stub for the same provider. Protocol fixtures stay in `<provider>/<driver>/<version>/`.
