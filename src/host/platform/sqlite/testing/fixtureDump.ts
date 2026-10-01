@@ -20,7 +20,6 @@
 // addresses and secret shapes are replaced with fixed markers. Line breaks inside a value are
 // written as `char(10)` / `char(13)` so the file keeps one statement per line and a checkout's
 // line-end conversion can never change the data.
-import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
@@ -30,6 +29,7 @@ import type { SqliteDatabase, SqliteRow } from '../../../kernel/ports/sqliteData
 import { migrationsFor } from '../migrations/index'
 import { openHostDb } from '../migrations/runner'
 import { SqliteTransactionRunner } from '../SqliteTransactionRunner'
+import { MemoryWritableSqlite } from './MemoryWritableSqlite'
 
 type Queryable = Pick<SqliteDatabase, 'all'>
 
@@ -234,8 +234,13 @@ export function renderFixtureDump(db: Queryable, release: string, options: DumpO
 }
 
 /**
- * Migrate an empty temp file to `seed.version` with the registered migrations, at the fixed
- * fixture instant and ids, run the seed's rows and render the rung text.
+ * Migrate an empty in-memory database to `seed.version` with the registered migrations, at the
+ * fixed fixture instant and ids, run the seed's rows and render the rung text.
+ *
+ * The runner opens it through `openWriter`, so a dump touches no file: no temp directory, no WAL
+ * or checkpoint flush and no wait on a file another process holds, which made the dump take
+ * seconds on a slow CI disk. The rung text does not depend on where the database lived: the
+ * ladder test checks every committed rung against this function.
  */
 export function dumpSeededFixture(seed: FixtureSeed, options: DumpOptions): string {
   const clock = new FakeClock(FIXTURE_EPOCH)
@@ -245,27 +250,26 @@ export function dumpSeededFixture(seed: FixtureSeed, options: DumpOptions): stri
       `the seed of ${seed.release} is for schema version ${seed.version}; this build knows 1…${migrations.length}`
     )
   }
-  const dir = mkdtempSync(join(tmpdir(), 'dwarfai-dump-fixture-'))
+  // A path the runner only reasons about (it is never created): no file there, so nothing to
+  // probe or quarantine, and outside the release data directory.
+  const dir = join(tmpdir(), 'dwarfai-dump-fixture-in-memory')
+  const opened = openHostDb(join(dir, 'dwarfai.db'), {
+    buildKind: 'test',
+    releaseDataDir: join(dir, 'release-data'),
+    appVersion: seed.release,
+    clock,
+    log: new RecordingDiagnosticsLog(),
+    migrations: migrations.slice(0, seed.version),
+    openWriter: () => new MemoryWritableSqlite()
+  })
+  if (!opened.ok) throw new Error(`the runner refused an empty database: ${opened.error}`)
+  const { db } = opened.value
   try {
-    const opened = openHostDb(join(dir, 'dwarfai.db'), {
-      buildKind: 'test',
-      releaseDataDir: join(dir, 'release-data'),
-      appVersion: seed.release,
-      clock,
-      log: new RecordingDiagnosticsLog(),
-      migrations: migrations.slice(0, seed.version)
+    new SqliteTransactionRunner(db).inTransaction(() => {
+      for (const statement of seed.statements) db.run(statement)
     })
-    if (!opened.ok) throw new Error(`the runner refused an empty file: ${opened.error}`)
-    const { db } = opened.value
-    try {
-      new SqliteTransactionRunner(db).inTransaction(() => {
-        for (const statement of seed.statements) db.run(statement)
-      })
-      return renderFixtureDump(db, seed.release, options)
-    } finally {
-      db.close()
-    }
+    return renderFixtureDump(db, seed.release, options)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    db.close()
   }
 }

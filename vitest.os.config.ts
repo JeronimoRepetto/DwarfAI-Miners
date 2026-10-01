@@ -7,7 +7,8 @@ import { configDefaults, defineConfig } from 'vitest/config'
 // the others as skipped. CI runs it on Windows, macOS and Linux on every pull request and push
 // (17 §1.13), then `scripts/checks/os-lane-guard.mjs` reads the JSON report written below and
 // fails the job when zero tests executed (HO-38). The spike harnesses 17 §4 keeps as regression
-// tests live under `spikes/`, the packaged OS checks under `scripts/`.
+// tests live under `spikes/`, the packaged OS checks under `scripts/`, the stub-CLI kit's
+// real-process cases under `fixtures/bin/_kit/`.
 export default defineConfig({
   resolve: {
     // The one contracts barrel (ADR-004 P13), same alias as vitest.config.ts and both tsconfigs.
@@ -16,7 +17,7 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['{src,spikes,scripts}/**/*.os.test.{ts,mjs}'],
+    include: ['{src,spikes,scripts,fixtures}/**/*.os.test.{ts,mjs}'],
     // `__fixtures__/` holds test-shaped data of other tests (the trace extractor's sample repo, 17
     // §2.2), never an OS-lane test.
     exclude: [...configDefaults.exclude, '**/__fixtures__/**'],

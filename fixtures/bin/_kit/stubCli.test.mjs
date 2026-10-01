@@ -1,5 +1,5 @@
 // layer: L7
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdtempSync,
@@ -14,14 +14,18 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { playStub } from './stubCli.mjs'
 
 /**
  * The stub-CLI kit (`Stub<Provider>Cli`, testing strategy `17` §1.9, §1.10, §2.2).
  *
- * The subject is a set of executables, so each case runs them as child processes in a per-test
- * `mkdtemp` directory: the Node program directly, and, for resolution, through the platform's own
- * `PATH` lookup and the form a `shell: false` spawn can start (the `.cmd` shim through
- * `%ComSpec% /d /s /c` on Windows, SP-04; the executable wrapper on POSIX).
+ * The engine's behaviour (replay, script override, refusals, scripted exit, staying alive) runs in
+ * this process through `playStub`, each case in its own `mkdtemp` directory, so no case waits
+ * on a child process: starting `node` on a loaded CI runner took seconds and ran these cases past
+ * Vitest's 5000 ms. What only a real process can show (each stub program's own wiring, the network
+ * guard at run time, a hung stub staying alive, starting through the `.cmd` shim or the POSIX
+ * wrapper) is the OS lane's, `stubCli.os.test.mjs` (`17` §1.8). Resolution on `PATH` and the
+ * kit's static properties stay here.
  */
 
 const KIT = path.dirname(fileURLToPath(import.meta.url))
@@ -37,36 +41,9 @@ const STUBS = {
 }
 const STUB_ENV = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'XDG_DATA_HOME']
 
-/** A module preloaded into the stub that fails, and says so on stderr, on any network call. */
-const NETWORK_GUARD = `
-import net from 'node:net'
-import dns from 'node:dns'
-import http from 'node:http'
-import https from 'node:https'
-import { syncBuiltinESMExports } from 'node:module'
-const deny = (what) => () => {
-  process.stderr.write('NETWORK-CALL ' + what + '\\n')
-  throw new Error('network call: ' + what)
-}
-net.connect = deny('net.connect')
-net.createConnection = deny('net.createConnection')
-net.Socket.prototype.connect = deny('net.Socket.connect')
-dns.lookup = deny('dns.lookup')
-http.request = deny('http.request')
-http.get = deny('http.get')
-https.request = deny('https.request')
-https.get = deny('https.get')
-globalThis.fetch = deny('fetch')
-syncBuiltinESMExports()
-`
-const NETWORK_GUARD_IMPORT = `--import=data:text/javascript,${encodeURIComponent(NETWORK_GUARD)}`
-
 let tempDirs = []
-let children = []
 
 afterEach(() => {
-  for (const child of children) if (child.exitCode === null) child.kill()
-  children = []
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
   tempDirs = []
 })
@@ -108,14 +85,9 @@ function readJsonl(file) {
     .map((line) => JSON.parse(line))
 }
 
-/** Runs a stub's Node program to its end. */
-function runStub(name, args, env, nodeArgs = []) {
-  return spawnSync(process.execPath, [...nodeArgs, stubProgram(name), ...args], {
-    env,
-    cwd: tempDir(),
-    encoding: 'utf8',
-    timeout: 30_000
-  })
+/** Runs `name`'s engine in this process with its own settings, as its Node program would. */
+function playAs(name, argv, env) {
+  return playStub({ name, ...STUBS[name], argv, env })
 }
 
 /** Writes `script` into a temp file and returns its path. */
@@ -152,38 +124,13 @@ function platformLookup(name, env) {
   return run.stdout.split('\n')[0].trim() || null
 }
 
-/** Starts a resolved stub file with `shell: false`, the way the Host's launcher can. */
-function runResolved(file, args, env) {
-  if (IS_WINDOWS) {
-    // Node refuses a .cmd without a shell (EINVAL, SP-04); %ComSpec% /d /s /c runs it. With /s,
-    // cmd drops the outer quotes of the command line, so the quoted file keeps its own.
-    const commandLine = [file, ...args].map((part) => `"${part}"`).join(' ')
-    return spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${commandLine}"`], {
-      env,
-      encoding: 'utf8',
-      windowsVerbatimArguments: true,
-      timeout: 30_000
-    })
-  }
-  return spawnSync(file, args, { env, encoding: 'utf8', timeout: 30_000 })
-}
-
-/** Whether `check()` becomes true within `ms`, polling every 50 ms. */
-async function eventually(check, ms) {
-  const deadline = Date.now() + ms
-  while (!check()) {
-    if (Date.now() > deadline) return false
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-  return true
-}
-
 describe('stub CLI kit (17 §1.9)', () => {
   it('[ADR-008] the claude stub answers --version with its scripted version and runs no network call', () => {
-    const run = runStub('claude', ['--version'], baseEnv(), [NETWORK_GUARD_IMPORT])
+    const run = playAs('claude', ['--version'], baseEnv())
 
-    expect(run.stderr).not.toContain('NETWORK-CALL')
-    expect(run.status, run.stderr).toBe(0)
+    // The network guard around a real run is the OS lane's (stubCli.os.test.mjs).
+    expect(run.stderr).toBe('')
+    expect(run.exitCode, run.stderr).toBe(0)
     expect(run.stdout).toBe(`${readScript(STUBS.claude.defaultScript).version}\n`)
 
     // No kit source can reach the network: no network module, no fetch, no socket.
@@ -200,9 +147,9 @@ describe('stub CLI kit (17 §1.9)', () => {
 
   it('[ADR-008] a replay script writes its transcript records into the directory CLAUDE_CONFIG_DIR names', () => {
     const home = tempDir()
-    const run = runStub('claude', [], baseEnv({ CLAUDE_CONFIG_DIR: home }))
+    const run = playAs('claude', [], baseEnv({ CLAUDE_CONFIG_DIR: home }))
 
-    expect(run.status, run.stderr).toBe(0)
+    expect(run.exitCode, run.stderr).toBe(0)
     const script = readScript(STUBS.claude.defaultScript)
     for (const { file, records } of script.replay) {
       expect(readJsonl(path.join(home, ...file.split('/')))).toEqual(records)
@@ -215,13 +162,13 @@ describe('stub CLI kit (17 §1.9)', () => {
     const script = readScript('claude-permission-request')
     const own = writeScript({ ...script, ignoreStdin: false })
 
-    const run = runStub(
+    const run = playAs(
       'claude',
       [],
       baseEnv({ CLAUDE_CONFIG_DIR: home, DWARFAI_STUB_CLAUDE_SCRIPT: own })
     )
 
-    expect(run.status, run.stderr).toBe(0)
+    expect(run.exitCode, run.stderr).toBe(0)
     for (const { file, records } of script.replay) {
       expect(readJsonl(path.join(home, ...file.split('/')))).toEqual(records)
     }
@@ -231,15 +178,15 @@ describe('stub CLI kit (17 §1.9)', () => {
 
   it('[ADR-008] the codex and opencode stubs replay their default sessions into CODEX_HOME and the OpenCode data dir', () => {
     const codexHome = tempDir()
-    const codex = runStub('codex', [], baseEnv({ CODEX_HOME: codexHome }))
-    expect(codex.status, codex.stderr).toBe(0)
+    const codex = playAs('codex', [], baseEnv({ CODEX_HOME: codexHome }))
+    expect(codex.exitCode, codex.stderr).toBe(0)
     for (const { file, records } of readScript(STUBS.codex.defaultScript).replay) {
       expect(readJsonl(path.join(codexHome, ...file.split('/')))).toEqual(records)
     }
 
     const dataHome = tempDir()
-    const opencode = runStub('opencode', [], baseEnv({ XDG_DATA_HOME: dataHome }))
-    expect(opencode.status, opencode.stderr).toBe(0)
+    const opencode = playAs('opencode', [], baseEnv({ XDG_DATA_HOME: dataHome }))
+    expect(opencode.exitCode, opencode.stderr).toBe(0)
     const dbFile = path.join(dataHome, 'opencode', 'opencode.db')
     expect(existsSync(dbFile), 'opencode.db was written').toBe(true)
     const db = new DatabaseSync(dbFile, { readOnly: true })
@@ -256,9 +203,9 @@ describe('stub CLI kit (17 §1.9)', () => {
 
   it('[ADR-008] a stub whose provider directory variable is unset writes nothing and fails', () => {
     const home = tempDir()
-    const run = runStub('claude', [], baseEnv({ HOME: home, USERPROFILE: home }))
+    const run = playAs('claude', [], baseEnv({ HOME: home, USERPROFILE: home }))
 
-    expect(run.status).not.toBe(0)
+    expect(run.exitCode).not.toBe(0)
     expect(run.stderr).toContain('CLAUDE_CONFIG_DIR')
     expect(readdirSync(home)).toEqual([])
   })
@@ -276,13 +223,13 @@ describe('stub CLI kit (17 §1.9)', () => {
       ignoreStdin: false
     })
 
-    const run = runStub(
+    const run = playAs(
       'claude',
       [],
       baseEnv({ CLAUDE_CONFIG_DIR: home, DWARFAI_STUB_CLAUDE_SCRIPT: script })
     )
 
-    expect(run.status).not.toBe(0)
+    expect(run.exitCode).not.toBe(0)
     expect(run.stderr).toContain('../outside.jsonl')
     expect(readdirSync(parent)).toEqual([])
   })
@@ -300,49 +247,36 @@ describe('stub CLI kit (17 §1.9)', () => {
       ignoreStdin: false
     })
 
-    const run = runStub(
+    const run = playAs(
       'claude',
       [],
       baseEnv({ CLAUDE_CONFIG_DIR: home, DWARFAI_STUB_CLAUDE_SCRIPT: script })
     )
 
-    expect(run.status, run.stderr).toBe(7)
+    expect(run.exitCode, run.stderr).toBe(7)
     expect(readJsonl(path.join(home, 'steps.jsonl'))).toEqual([{ step: 1 }, { step: 2 }])
   })
 
-  it('[CH-05] a stub scripted to ignore stdin keeps running until killed', async () => {
+  it('[CH-05] a stub scripted to ignore stdin keeps running until killed', () => {
     const home = tempDir()
-    const ready = path.join(home, 'ready.jsonl')
     const script = writeScript({
       version: '0.0.0-test',
       replay: [{ file: 'ready.jsonl', records: [{ ready: true }] }],
       exitCode: 0,
       ignoreStdin: true
     })
-    const child = spawn(process.execPath, [stubProgram('claude')], {
-      env: baseEnv({ CLAUDE_CONFIG_DIR: home, DWARFAI_STUB_CLAUDE_SCRIPT: script }),
-      cwd: tempDir(),
-      stdio: ['pipe', 'ignore', 'ignore']
-    })
-    children.push(child)
-    const exited = new Promise((resolve) =>
-      child.once('exit', (code, signal) => resolve({ code, signal }))
+
+    const run = playAs(
+      'claude',
+      [],
+      baseEnv({ CLAUDE_CONFIG_DIR: home, DWARFAI_STUB_CLAUDE_SCRIPT: script })
     )
 
-    const replayed = await eventually(
-      () => existsSync(ready) && readFileSync(ready, 'utf8') !== '',
-      15_000
-    )
-    expect(replayed, 'the stub replayed its records').toBe(true)
-    child.stdin.write('{"type":"user","message":"are you there?"}\n')
-    child.stdin.end()
-    await new Promise((resolve) => setTimeout(resolve, 1_000))
-
-    expect(child.exitCode, 'the stub is still running').toBeNull()
-    expect(child.signalCode).toBeNull()
-    child.kill()
-    expect(await exited).toEqual({ code: null, signal: 'SIGTERM' })
-  }, 30_000)
+    // The engine replays, then tells its program to stay alive instead of exiting; that the real
+    // process then runs until killed, whatever arrives on stdin, is the OS lane's.
+    expect(readJsonl(path.join(home, 'ready.jsonl'))).toEqual([{ ready: true }])
+    expect(run.stayAlive, 'the stub stays alive after its replay').toBe(true)
+  })
 
   it('[ADR-008] every stub on Windows resolves through its .cmd shim and on POSIX through its executable wrapper', () => {
     const env = envWithPath([
@@ -356,22 +290,7 @@ describe('stub CLI kit (17 §1.9)', () => {
 
       expect(resolved, `${name} resolves on PATH`).not.toBeNull()
       expect(realpathSync(resolved)).toBe(expected)
-
-      const version = `${readScript(STUBS[name].defaultScript).version}\n`
-      const run = runResolved(resolved, ['--version'], env)
-      expect(run.status, run.stderr).toBe(0)
-      expect(run.stdout).toBe(version)
-
-      if (IS_WINDOWS) {
-        // cmd.exe's own lookup of the bare name reaches the same shim.
-        const bare = spawnSync(
-          process.env.ComSpec ?? 'cmd.exe',
-          ['/d', '/s', '/c', `"${name} --version"`],
-          { env, cwd: tempDir(), encoding: 'utf8', windowsVerbatimArguments: true, timeout: 30_000 }
-        )
-        expect(bare.status, bare.stderr).toBe(0)
-        expect(bare.stdout).toBe(version)
-      }
+      // Starting the resolved file, and cmd.exe's own lookup of the bare name, are the OS lane's.
     }
   })
 

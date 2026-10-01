@@ -462,15 +462,19 @@ function notStarted(error: unknown): SpawnedProcess {
  * One bounded OS query per call: argv array, no shell, killed at `timeoutMs`. Resolves the stdout
  * of a zero exit, or why there is none: "timed out after <ms> ms", "exited with code <n>",
  * "could not start (<errno>)".
+ *
+ * The bound is a task on `scheduler` (Node timers by default), never execFile's own timer, so a
+ * test drives it on a FakeScheduler instead of racing a real process against real time.
  */
-export function createQueryRunner(): QueryRunner {
+export function createQueryRunner(options: { scheduler?: Scheduler } = {}): QueryRunner {
+  const scheduler = options.scheduler ?? NODE_SCHEDULER
   return (file, args, { timeoutMs, env, dropEnv }) =>
     new Promise((resolve) => {
-      execFile(
+      let timedOut = false
+      const child = execFile(
         file,
         [...args],
         {
-          timeout: timeoutMs,
           windowsHide: true,
           shell: false,
           encoding: 'utf8',
@@ -479,14 +483,19 @@ export function createQueryRunner(): QueryRunner {
             : { env: childEnvironment(env ?? {}, dropEnv ?? []) })
         },
         (error, stdout) => {
+          bound.cancel()
           if (error === null) resolve({ ok: true, stdout })
-          else if (error.killed === true)
-            resolve({ ok: false, cause: `timed out after ${timeoutMs} ms` })
+          else if (timedOut) resolve({ ok: false, cause: `timed out after ${timeoutMs} ms` })
           else if (typeof error.code === 'number')
             resolve({ ok: false, cause: `exited with code ${error.code}` })
           else resolve({ ok: false, cause: `could not start (${error.code ?? error.message})` })
         }
       )
+      // execFile reports even a failed start asynchronously, so the bound is set before any answer.
+      const bound = scheduler.after(timeoutMs, () => {
+        timedOut = true
+        child.kill()
+      })
     })
 }
 

@@ -123,21 +123,21 @@ function writeStep(target, file, records) {
 }
 
 /**
- * Runs one stub: `name` (the real binary's name), `homeEnv` (the variable naming its provider
- * directory) and `defaultScript` (a script name in `_kit/scripts/`). Sets `process.exitCode`, or
- * keeps the process alive when the script ignores stdin.
+ * One run of a stub, without touching the process it runs in: reads the script, answers
+ * `--version` or writes the replay under the provider directory, and returns what the program
+ * prints, its exit code and whether it stays alive afterwards (`ignoreStdin`, CH-05). Tests run
+ * the engine in process through it; `runStubCli` applies it to the real process.
+ *
+ * @returns {{ exitCode: number, stdout: string, stderr: string, stayAlive: boolean }}
  */
-export function runStubCli({
-  name,
-  homeEnv,
-  defaultScript,
-  argv = process.argv.slice(2),
-  env = process.env
-}) {
-  const fail = (message) => {
-    process.stderr.write(`${name} stub: ${message}\n`)
-    process.exitCode = USAGE_EXIT
-  }
+export function playStub({ name, homeEnv, defaultScript, argv, env }) {
+  const done = (exitCode, output = {}) => ({
+    exitCode,
+    stdout: output.stdout ?? '',
+    stderr: output.stderr ?? '',
+    stayAlive: output.stayAlive ?? false
+  })
+  const fail = (message) => done(USAGE_EXIT, { stderr: `${name} stub: ${message}\n` })
 
   let script
   const scriptFile = env[scriptEnvVar(name)] || path.join(SCRIPTS_DIR, `${defaultScript}.json`)
@@ -147,11 +147,7 @@ export function runStubCli({
     return fail(`cannot use the script ${path.basename(scriptFile)}: ${error.message}`)
   }
 
-  if (argv[0] === '--version') {
-    process.stdout.write(`${script.version}\n`)
-    process.exitCode = 0
-    return
-  }
+  if (argv[0] === '--version') return done(0, { stdout: `${script.version}\n` })
 
   // Resolve every target before the first write, so a refused script writes nothing.
   const writes = script.replay.some((step) => 'file' in step)
@@ -169,17 +165,31 @@ export function runStubCli({
   }
 
   for (const step of steps) {
-    if ('exit' in step) {
-      process.exitCode = step.exit
-      return
-    }
+    if ('exit' in step) return done(step.exit)
     writeStep(step.target, step.file, step.records)
   }
+  return done(script.exitCode, { stayAlive: script.ignoreStdin })
+}
 
-  if (script.ignoreStdin) {
+/**
+ * Runs one stub: `name` (the real binary's name), `homeEnv` (the variable naming its provider
+ * directory) and `defaultScript` (a script name in `_kit/scripts/`). Sets `process.exitCode`, or
+ * keeps the process alive when the script ignores stdin.
+ */
+export function runStubCli({
+  name,
+  homeEnv,
+  defaultScript,
+  argv = process.argv.slice(2),
+  env = process.env
+}) {
+  const run = playStub({ name, homeEnv, defaultScript, argv, env })
+  if (run.stdout !== '') process.stdout.write(run.stdout)
+  if (run.stderr !== '') process.stderr.write(run.stderr)
+  if (run.stayAlive) {
     // A hung provider (CH-05): nothing reads stdin and the timer keeps the process alive.
     setInterval(() => {}, 2 ** 30)
     return
   }
-  process.exitCode = script.exitCode
+  process.exitCode = run.exitCode
 }
