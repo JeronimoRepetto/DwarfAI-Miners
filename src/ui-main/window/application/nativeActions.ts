@@ -17,12 +17,14 @@ export type ExternalLinkResult = z.infer<(typeof CHANNELS)['shell:openExternalLi
 export const EXTERNAL_LINK_REFUSED_REASON = 'That link could not be opened.'
 
 /**
- * The members of 16 §4.14 `NativeActions` that cut 0 serves, with their frozen signatures. `chooseFolder` and
+ * The members of 16 §4.14 `NativeActions` that cut 0 serves, with their frozen signatures. Owner-approved amendment
+ * (2026-10-01, ISSUE-050): `copyText` answers a promise (was `CopyTextResult`), so a clipboard write that fails after
+ * the call answers `copied: false`. `chooseFolder` and
  * `openPath` join with A-30 and A-20 (ISSUE-091); `raiseConsole` with the console raise.
  */
 export interface ServedNativeActions {
   chooseAttachments(): Promise<string[]>
-  copyText(t: string): CopyTextResult
+  copyText(t: string): Promise<CopyTextResult>
   openExternal(url: string): Promise<ExternalLinkResult>
 }
 
@@ -42,12 +44,13 @@ export function createNativeActions(deps: NativeActionsDeps): ServedNativeAction
     chooseAttachments: () => files.pickMany(parentWindow()),
 
     // Copy copies the message as written, never trimmed; there is nothing to copy in an empty one. The gate already
-    // bounded its length to the largest message any route carries (14 §2.1 A-22). A clipboard that throws answers
-    // "not copied" rather than rejecting across the bridge: the renderer claims a copy only on `copied: true`.
-    copyText(t) {
+    // bounded its length to the largest message any route carries (14 §2.1 A-22). A write that fails, at once or after
+    // the call, answers "not copied" rather than rejecting across the bridge: the renderer claims a copy only on
+    // `copied: true`.
+    async copyText(t) {
       if (t === '') return { copied: false }
       try {
-        clipboard.write(t)
+        await clipboard.write(t)
       } catch {
         return { copied: false }
       }

@@ -179,6 +179,14 @@ describe('native rows (14 §2.1 A-21, A-22, A-24, A-28, A-29, A-X1)', () => {
     expect(clipboard.written).toEqual([])
   })
 
+  it('[ADR-033] A-22 answers not copied when the clipboard write fails after the call', async () => {
+    const { call, clipboard } = subject()
+    clipboard.failLater = new Error('clipboard refused the write')
+    expect(inShape('shell:copyText', await call('shell:copyText', 'Also check'))).toEqual({
+      copied: false
+    })
+  })
+
   it('[ADR-001] a ui-local row these handlers do not serve is refused with a typed error, never guessed', async () => {
     const answer = await subject().rows.serve('panel:hide', undefined)
     expect(answer).toEqual({

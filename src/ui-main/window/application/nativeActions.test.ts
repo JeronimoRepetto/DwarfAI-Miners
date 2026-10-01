@@ -36,26 +36,35 @@ describe('native actions (05 §3.14; 14 §2.1 A-21, A-22, A-24)', () => {
     expect(await actions.chooseAttachments()).toEqual([])
   })
 
-  it('[ADR-033] copyText writes the text exactly as written and answers copied', () => {
+  it('[ADR-033] copyText writes the text exactly as written and answers copied', async () => {
     const { clipboard, actions } = subject()
     const text = '  Also check\nthat it sorts. '
 
-    expect(actions.copyText(text)).toEqual({ copied: true })
+    expect(await actions.copyText(text)).toEqual({ copied: true })
     expect(clipboard.written).toEqual([text])
   })
 
-  it('[ADR-033] copyText of nothing writes nothing and answers not copied', () => {
+  it('[ADR-033] copyText of nothing writes nothing and answers not copied', async () => {
     const { clipboard, actions } = subject()
 
-    expect(actions.copyText('')).toEqual({ copied: false })
+    expect(await actions.copyText('')).toEqual({ copied: false })
     expect(clipboard.written).toEqual([])
   })
 
-  it('[ADR-033] a clipboard that throws answers not copied rather than rejecting across the bridge', () => {
+  it('[ADR-033] a clipboard that throws answers not copied rather than rejecting across the bridge', async () => {
     const { clipboard, actions } = subject()
     clipboard.failWith = new Error('no clipboard owner')
 
-    expect(actions.copyText('hi')).toEqual({ copied: false })
+    expect(await actions.copyText('hi')).toEqual({ copied: false })
+  })
+
+  it('[ADR-033] a clipboard write that fails after the call answers not copied', async () => {
+    // Owner-approved amendment (2026-10-01, ISSUE-050): the platform clipboard is asynchronous, so a write can fail
+    // after it was handed over; the copy then answers not copied, never a copy that did not happen.
+    const { clipboard, actions } = subject()
+    clipboard.failLater = new Error('clipboard refused the write')
+
+    expect(await actions.copyText('hi')).toEqual({ copied: false })
   })
 
   it('[ADR-019] a link the opener refuses answers the legacy failure shape', async () => {

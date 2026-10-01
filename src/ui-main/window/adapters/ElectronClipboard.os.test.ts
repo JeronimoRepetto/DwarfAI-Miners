@@ -50,8 +50,8 @@ import { ElectronClipboard } from './clipboard.mjs'
 import { createNativeActions } from './actions.mjs'
 
 app.setPath('userData', process.env.DWARFAI_OS_TEST_USER_DATA)
-// Electron's clipboard is asynchronous (Electron 44: \`readText\` and \`writeText\` answer promises). The port's
-// \`write\` hands the text over and returns, so the read polls until the OS clipboard holds it, or gives up.
+// Electron's clipboard is asynchronous (Electron 44: \`readText\` and \`writeText\` answer promises); \`copyText\`
+// settles with the write, and the read still polls briefly in case the OS publishes the text a moment later.
 async function readUntil(expected) {
   const deadline = Date.now() + ${READ_BACK_MS}
   let read = await clipboard.readText()
@@ -86,7 +86,7 @@ app.whenReady().then(async () => {
     parentWindow: () => ({ windowId: 0 })
   })
   const text = process.env.DWARFAI_OS_TEST_TEXT
-  const answer = actions.copyText(text)
+  const answer = await actions.copyText(text)
   const read = await readUntil(text)
   if (before.length > 0) await clipboard.write(before)
   else clipboard.clear()

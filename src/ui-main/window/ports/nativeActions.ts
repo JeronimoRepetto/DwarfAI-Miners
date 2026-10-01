@@ -1,7 +1,8 @@
 // FilePicker, ClipboardPort, ExternalOpener: driven ports of the window module, main half (05 §3.14; frozen copy
 // 16 §4.14). Native and user-initiated; a cancelled picker answers `[]` (16 §4.14 table). Adapters
 // `ElectronFilePicker`, `ElectronClipboard`, `ElectronExternalOpener`; doubles `Fake*` each (16 §4.14 table).
-// verbatim: 16 §4.14 — the added lines are the prettier-ignore directives that keep each one byte-identical.
+// verbatim: 16 §4.14 — the added lines are the prettier-ignore directives that keep each one byte-identical, and the
+// amendment header above `ClipboardPort`.
 //
 // `FolderPicker` (16 §4.14) is not declared here: its one caller, A-30's folder picker, is built with
 // `mines.declare` (ISSUE-091), which declares it beside its adapter.
@@ -17,7 +18,9 @@ export interface WindowRef {
 
 // prettier-ignore
 export interface FilePicker { pickMany(parent: WindowRef): Promise<string[]> }
+// Owner-approved amendment (2026-10-01, ISSUE-050): `write` answers a promise (was `void`). Electron 44's clipboard is
+// asynchronous, so a write that fails after the call must be seen, and `copyText` then answers `copied: false`.
 // prettier-ignore
-export interface ClipboardPort { write(text: string): void }
+export interface ClipboardPort { write(text: string): Promise<void> }
 // prettier-ignore
 export interface ExternalOpener { openPath(p: string): Promise<string | null>; openExternal(url: string): Promise<void> }
