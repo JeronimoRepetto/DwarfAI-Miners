@@ -203,6 +203,7 @@ describe('requestId de-duplication (ADR-003 item 6, 14 §1.6)', () => {
     const dispatcher = new Dispatcher({
       log: new RecordingDiagnosticsLog(),
       clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
       state: () => 'ready'
     })
     for (const method of Object.keys(METHOD_ROLES)) {

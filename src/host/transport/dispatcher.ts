@@ -52,7 +52,7 @@ export interface DispatcherDeps {
   log: DiagnosticsLog
   clock: Clock
   /** Sweeps settled requestIds at the end of their 10-min window (the clock check is authoritative). */
-  scheduler?: Scheduler
+  scheduler: Scheduler
   /** The Host's lifecycle state right now (HostStateHolder). */
   state: () => HostStateReport['state']
 }
@@ -102,7 +102,7 @@ export class Dispatcher {
   constructor(private readonly deps: DispatcherDeps) {
     this.requests = new RequestTable<Answer>({
       clock: deps.clock,
-      ...(deps.scheduler === undefined ? {} : { scheduler: deps.scheduler })
+      scheduler: deps.scheduler
     })
   }
 

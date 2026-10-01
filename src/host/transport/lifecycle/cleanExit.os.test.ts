@@ -25,6 +25,7 @@ import { bindEndpoint, type BoundEndpoint } from '../endpoint/server'
 import { FrameClient } from '../testing/frameClient'
 import { createCleanExit } from './cleanExit'
 import { HostStateHolder } from './hostState'
+import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 
 const WINDOWS = process.platform === 'win32'
 
@@ -78,7 +79,12 @@ async function bind(endpoint: HostEndpoint, connections: ConnectionRegistry, run
         scheduler: scheduler(),
         clock,
         log,
-        dispatcher: new Dispatcher({ log, clock, state: () => state.current().state }),
+        dispatcher: new Dispatcher({
+          log,
+          clock,
+          scheduler: new FakeScheduler(clock),
+          state: () => state.current().state
+        }),
         connections
       })
   })

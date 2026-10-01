@@ -60,7 +60,12 @@ async function boot(dir = runDir()) {
   const connections = new ConnectionRegistry()
   const state = new HostStateHolder(connections)
   state.report({ state: 'ready', jobStatus: 'none' })
-  const dispatcher = new Dispatcher({ log, clock, state: () => state.current().state })
+  const dispatcher = new Dispatcher({
+    log,
+    clock,
+    scheduler: new FakeScheduler(clock),
+    state: () => state.current().state
+  })
   // Faked modules: one protocol method, one ui method with strict params, one ui-only mutation.
   dispatcher.register('ping', z.object({}).strict(), METHOD_ROLES['ping'] ?? [], () => ({
     at: clock.now()

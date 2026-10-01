@@ -9,6 +9,7 @@ import { requestIdSchema } from '@dwarfai/contracts'
 import { MUTATING_METHODS } from './dedupe/mutatingMethods'
 import { Dispatcher } from './dispatcher'
 import { FRAME_ROLES, METHOD_ROLES, type ChannelRole } from './roles'
+import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 const ROLES: readonly ChannelRole[] = ['ui', 'notifier', 'viewer']
 const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
@@ -19,6 +20,7 @@ describe('Dispatcher role scopes (ADR-003 item 12)', () => {
     const dispatcher = new Dispatcher({
       log: new RecordingDiagnosticsLog(),
       clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
       state: () => 'ready'
     })
     // AMENDED for ISSUE-027 (was: every method registered with `register` and params `{}`): the
