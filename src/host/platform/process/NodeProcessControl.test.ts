@@ -2,6 +2,8 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import type { SpawnedProcess } from '../../kernel/ports/processControl'
 import {
@@ -470,11 +472,18 @@ describe('NodeProcessControl', () => {
     })
 
     it('[INV-51] an OS query that outlives its bound reports a timeout; one that fails reports how', async () => {
-      const run = createQueryRunner()
+      // The bound runs on a FakeScheduler: a slow child start under load can never reach it, and it
+      // ends the hanging child only when the test advances the clock past it.
+      const clock = new FakeClock(T0)
+      const scheduler = new FakeScheduler(clock)
+      const run = createQueryRunner({ scheduler })
       const node = (script: string) => run(process.execPath, ['-e', script], { timeoutMs: 300 })
 
       expect(await node('process.stdout.write("42")')).toEqual({ ok: true, stdout: '42' })
-      expect(await node('setTimeout(() => {}, 5000)')).toEqual({
+      const hanging = node('setInterval(() => {}, 2 ** 30)')
+      expect(scheduler.nextDueAt()).toBe(T0 + 300)
+      clock.advance(300)
+      expect(await hanging).toEqual({
         ok: false,
         cause: 'timed out after 300 ms'
       })
@@ -485,6 +494,18 @@ describe('NodeProcessControl', () => {
       })
     }, 10_000)
 
+    it('[INV-51] a query bound is a task on the injected scheduler, never a real timer: an answer that comes after the bound in real time but before it on the scheduler is taken', async () => {
+      // The child answers 600 ms of real time after it starts; the 300 ms bound is due only when
+      // the test advances the scheduler's clock, which it never does here.
+      const run = createQueryRunner({ scheduler: new FakeScheduler(new FakeClock(T0)) })
+
+      expect(
+        await run(process.execPath, ['-e', 'setTimeout(() => process.stdout.write("late"), 600)'], {
+          timeoutMs: 300
+        })
+      ).toEqual({ ok: true, stdout: 'late' })
+    }, 10_000)
+
     it('[C-17] a query child never inherits a dropped variable such as PSModulePath, whatever its case in the parent, and keeps the rest', async () => {
       const before = {
         PSModulePath: process.env['PSModulePath'],
@@ -493,7 +514,8 @@ describe('NodeProcessControl', () => {
       process.env['PSModulePath'] = 'C:\\pwsh7\\Modules'
       process.env['DWARFAI_KEEP'] = 'kept'
       try {
-        const out = await createQueryRunner()(
+        // A bound on a FakeScheduler that never advances: the child's start time is not raced.
+        const out = await createQueryRunner({ scheduler: new FakeScheduler(new FakeClock(T0)) })(
           process.execPath,
           ['-e', 'process.stdout.write(JSON.stringify(Object.keys(process.env)))'],
           { timeoutMs: 5_000, dropEnv: ['psmodulepath'] }

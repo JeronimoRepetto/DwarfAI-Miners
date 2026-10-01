@@ -10,7 +10,7 @@ import {
   type ProcessIdentity
 } from '../../kernel/domain/processIdentity'
 import type { SpawnedProcess } from '../../kernel/ports/processControl'
-import { NodeProcessControl } from './NodeProcessControl'
+import { NodeProcessControl, createQueryRunner } from './NodeProcessControl'
 
 const SLEEPER = fileURLToPath(
   new URL('../../../../fixtures/bin/sleeper/sleeper.mjs', import.meta.url)
@@ -101,6 +101,19 @@ function probeCases(): void {
     expect(await child.exited).toEqual({ code: 0, signal: null })
 
     expect(await control.probe(identity.pid)).toBe('absent')
+  }, 20_000)
+
+  it('[INV-51] the default query runner ends a query that outlives its bound on real Node timers', async () => {
+    // The L3 tests drive the bound on a FakeScheduler; this one proves the default wiring. The
+    // child would answer after 10 s, so only a bound that really fires at 300 ms can end it first:
+    // load can delay the child, never make it answer sooner.
+    const out = await createQueryRunner()(
+      process.execPath,
+      ['-e', 'setTimeout(() => process.stdout.write("unbounded"), 10_000)'],
+      { timeoutMs: 300 }
+    )
+
+    expect(out).toEqual({ ok: false, cause: 'timed out after 300 ms' })
   }, 20_000)
 }
 
