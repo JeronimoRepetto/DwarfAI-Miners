@@ -1,5 +1,5 @@
 import { execFile, execFileSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -65,6 +65,10 @@ export interface LaunchOptions {
    * CLIs on every machine (`scripts/strangler/seamAReplay.ts`).
    */
   readonly pathOnly?: boolean
+  /** Preloads `trayProbe.cjs`, so the case can choose a tray item and see the icon shown and removed. */
+  readonly trayProbe?: boolean
+  /** Writes a case's fixture data into the fresh profile before the app starts. */
+  readonly beforeLaunch?: (profile: IsolatedProfile) => Promise<void>
   /** Extra environment for the app, applied last; a function gets the profile, to point a variable into it. */
   readonly env?:
     | Readonly<Record<string, string>>
@@ -126,6 +130,12 @@ const MAIN_ERROR_GUARD = path.join(
   'mainErrorGuard.cjs'
 )
 
+/** The preload that records the app's tray menus and icon (`trayProbe.cjs`). */
+const TRAY_PROBE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'trayProbe.cjs')
+
+/** Where, inside the profile, the tray probe notes the icon shown and removed. */
+const TRAY_LOG_FILE = 'tray.log'
+
 /**
  * The app's environment: the runner's, minus Electron start-up switches, with the stub directory
  * first on `PATH` (whatever its spelling on Windows) and the provider homes in the profile.
@@ -148,6 +158,7 @@ function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string
   env.CODEX_HOME = profile.codexHome
   env[dataRootVariable()] = profile.dataRoot
   env.DWARFAI_E2E_MAIN_ERRORS = path.join(profile.root, MAIN_ERRORS_FILE)
+  if (options.trayProbe === true) env.DWARFAI_E2E_TRAY_LOG = path.join(profile.root, TRAY_LOG_FILE)
   const extra = typeof options.env === 'function' ? options.env(profile) : options.env
   return { ...env, ...extra }
 }
@@ -339,6 +350,8 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
 
   let app: ElectronApplication
   try {
+    // A case's fixture data goes into the profile before the app reads it.
+    await options.beforeLaunch?.(profile)
     app = await _electron.launch({
       // The current entry starts from the app folder, as the packaged app does, so Electron reads
       // `package.json` (name, `main`) and `app.getAppPath()` is the app folder. Before the cut-0
@@ -346,6 +359,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
       args: [
         '-r',
         MAIN_ERROR_GUARD,
+        ...(options.trayProbe === true ? ['-r', TRAY_PROBE] : []),
         options.entry === 'ui-main' ? mainFile : appDir,
         `--user-data-dir=${profile.userDataDir}`
       ],
@@ -447,6 +461,8 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     try {
       if (window === undefined)
         throw new Error('the app has no window to run Stop everything and quit from')
+      // Stop everything and quit asks the Host: it is offered once the UI attached to it (S10.18 guard).
+      await waitForHostAttached(isolated)
       await stopEverythingFromWindow(window)
       if (!(await waitForExit(child, budgetMs))) {
         const diagnosis = await diagnoseStuckQuit(launchedApp, child, options.tracePath)
@@ -549,4 +565,87 @@ export async function stopEverythingFromWindow(window: Page): Promise<void> {
     ;(window as unknown as { api: { requestStopEverything(): void } }).api.requestStopEverything()
   })
   await window.getByRole('button', { name: CONFIRM_BUTTON }).click({ timeout: 30_000 })
+}
+
+/** What the tray probe saw: each icon shown and removed, in order (readable after the app exited). */
+export function trayEvents(profile: IsolatedProfile): string[] {
+  const file = path.join(profile.root, TRAY_LOG_FILE)
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8')
+    .split(/\r?\n/)
+    .filter((line) => line !== '')
+}
+
+/**
+ * Chooses the item of the app's tray menu whose label contains `labelPart`, as a person's click on it does: the
+ * item's own `click` of the last tray menu the app built (`trayProbe.cjs`). Throws when no such item is shown.
+ */
+export async function chooseTrayItem(app: ElectronApplication, labelPart: string): Promise<void> {
+  await app.evaluate((_electron, part) => {
+    type Entry = { label?: string; click?: () => void }
+    const probe = (globalThis as { __dwarfaiE2eTray?: { menus: Entry[][] } }).__dwarfaiE2eTray
+    if (probe === undefined) throw new Error('the app was not launched with the tray probe')
+    const menu = [...probe.menus]
+      .reverse()
+      .find((template) => template.some((entry) => entry.label?.includes(part) === true))
+    const item = menu?.find((entry) => entry.label?.includes(part) === true)
+    if (item?.click === undefined) throw new Error(`the tray menu shows no item labelled ${part}`)
+    item.click()
+  }, labelPart)
+}
+
+/** The tray menu's labels, as design's copy markers name them (`window/application/trayMenu.ts`). */
+export const TRAY_ITEMS = {
+  open: 'open item label',
+  quit: 'quit item label',
+  stopEverything: 'stops every session the app launched and quits'
+} as const
+
+/**
+ * The per-user folders of the app pointed into the profile (HOME, USERPROFILE, APPDATA, the XDG config and state
+ * homes), for a case whose app must read none of the developer's own sessions, settings or provider data. Pass it as
+ * `env`, alone or spread with others.
+ */
+export function homeIn(profile: IsolatedProfile): Record<string, string> {
+  const home = path.join(profile.root, 'home')
+  mkdirSync(path.join(home, 'AppData', 'Roaming'), { recursive: true })
+  return {
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: path.join(home, 'AppData', 'Roaming'),
+    XDG_CONFIG_HOME: path.join(home, '.config'),
+    XDG_STATE_HOME: path.join(home, '.local', 'state')
+  }
+}
+
+/** Waits until the profile's Host runs and the UI attached to it (19 §9.1 `host.connection` connected). */
+export async function waitForHostAttached(
+  profile: IsolatedProfile,
+  timeoutMs = 90_000
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const pid = profileHostPid(profile.userDataDir)
+    const logs = path.join(profile.userDataDir, 'logs')
+    const attached =
+      existsSync(logs) &&
+      readdirSync(logs)
+        .filter((name) => name.startsWith('ui-'))
+        .some((name) =>
+          readFileSync(path.join(logs, name), 'utf8')
+            .split(/\r?\n/)
+            .some((line) => line.includes('"host.connection"') && line.includes('"connected"'))
+        )
+    if (pid !== null && isProcessAlive(pid) && attached) return pid
+    if (Date.now() >= deadline)
+      throw new Error(`the profile's Host did not start within ${timeoutMs} ms`)
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+}
+
+/** Whether any window of the app is on screen. */
+export async function anyWindowVisible(app: ElectronApplication): Promise<boolean> {
+  return app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isVisible())
+  )
 }
