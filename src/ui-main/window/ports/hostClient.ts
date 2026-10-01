@@ -3,7 +3,7 @@
 // double the in-process `FakeHost` (16 §4.14 table). Type-only (`16` §4.14; R2).
 //
 // The types the port names that no other document defines are fixed here, each from the sentence that names it:
-// - `HostConnection`: ADR-002 D9's state type, copied verbatim below (16 §4.14.1 "Name").
+// - `HostConnection`: ADR-002 D9's state type, copied verbatim in ./hostConnection.ts (16 §4.14.1 "Name").
 // - `HostAvailability`: "available | unavailable{spawn-failed | crash-loop | incompatible | generation-restart |
 //   elevated-refused | in-job | unresponsive}" (the `ensureHost` comment of 05 §3.14).
 // - `Presence`: what the UI reports, "Presence {onScreenMineIds, anyWindowVisible, seq}" (05 §3.14), which is 14 §3.4
@@ -23,17 +23,7 @@ import type {
   SnapshotParams
 } from '@dwarfai/contracts'
 
-// verbatim: ADR-002 D9 (the `HostConnection` type, byte-for-byte; `prettier-ignore` keeps its alignment, except the
-// spacing before the last line's trailing comment, which falls outside the ignored node: one space, set by prettier)
-// prettier-ignore
-type HostConnection =
-  | { state: 'connecting' }                          // spawn/readiness, ≤ 15 s (+30 s while migrating)
-  | { state: 'connected'; hostVersion: string; compat: boolean }
-  | { state: 'reconnecting'; since: number }         // lost after being connected
-  | { state: 'unavailable'; reason: 'spawn-failed' | 'crash-loop' | 'incompatible' | 'elevated-refused' | 'in-job'
-      | 'unresponsive'     // a hung Host whose endpoint stays bound (AR-13-02, AMENDMENT-2; `14` is canonical)
-      | 'generation-restart'; restart?: { resumable: number; waiting: number } } // D8 item 4 (AMENDMENT-11, OQ-79)
-// end verbatim: ADR-002 D9
+import type { HostConnection } from './hostConnection'
 
 export type { HostConnection }
 

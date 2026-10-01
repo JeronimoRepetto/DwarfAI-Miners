@@ -3,3 +3,5 @@ dist/
 out/
 pnpm-lock.yaml
 .design/
+# A byte-for-byte copy of ADR-002 D9 whose trailing comment no prettier-ignore reaches (AGENTS §9; ISSUE-051).
+src/ui-main/window/ports/hostConnection.ts
