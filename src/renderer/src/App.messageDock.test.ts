@@ -73,6 +73,12 @@ const CLOSED = { surface: 'none' as const, mineId: '', dwarfId: '' }
  * `reportDwarfDelivery`, none of which exists any more). The shell's own members join the panel's
  * because it is the shell that is mounted now.
  */
+/** How the router answers a row with no route yet (ui-main/ipc/router.ts): a typed refusal, never a guess. */
+const HOST_CONNECTION_UNROUTED = {
+  ok: false,
+  error: { code: 'METHOD_NOT_FOUND', message: 'no route', retryable: false }
+}
+
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
@@ -142,6 +148,10 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockResolvedValue({ pluginEnabled: false, passwordConfigured: false }),
     setLaunchView: vi.fn(),
+    // AMENDED for ISSUE-316 (was: absent): the Host connection rows, refused as an unrouted row is today.
+    getHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
+    onHostConnection: vi.fn().mockReturnValue(() => undefined),
+    retryHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })
@@ -2634,5 +2644,118 @@ describe('the rebuilt Add panel, as a person drives it (#635)', () => {
     expect(wrapper.find('.dm-msg').exists()).toBe(false)
     expect(document.activeElement).toBe(dwarf.element)
     expect(focus).toHaveBeenLastCalledWith({ focusVisible: false })
+  })
+})
+
+/*
+ * ISSUE-316: the Host connection in the shell (ADR-002 D9; 07 §12B; 13 FM-146). The rows are scripted here as the
+ * cut-0 switch will route them: A-N03 answers connected, and the test pushes A-N04.
+ */
+describe('the Host connection in the shell', () => {
+  const connected = { state: 'connected', hostVersion: '1.0.0', compat: false, capabilities: [] }
+
+  function hostRows(): {
+    overrides: Record<string, unknown>
+    push: (view: unknown) => Promise<void>
+  } {
+    let listener: ((view: unknown) => void) | null = null
+    return {
+      overrides: {
+        getHostConnection: vi.fn().mockResolvedValue(connected),
+        onHostConnection: vi.fn((next: (view: unknown) => void) => {
+          listener = next
+          return () => undefined
+        }),
+        retryHostConnection: vi.fn().mockResolvedValue({ state: 'connecting' })
+      },
+      async push(view) {
+        expect(listener, 'the shell follows onHostConnection').toBeTypeOf('function')
+        listener!(view)
+        await flushPromises()
+      }
+    }
+  }
+
+  it('[ADR-002, S12.B06] shows the crash-loop message over the Panel and its Retry asks main once', async () => {
+    const rows = hostRows()
+    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', rows.overrides)
+    expect(wrapper.find('.dm-host-state').exists()).toBe(false)
+
+    // No toast says anything about the Host, whatever an earlier test left in the window's queue.
+    const raised = await toastsRaisedBy(wrapper, () =>
+      rows.push({ state: 'unavailable', reason: 'crash-loop' })
+    )
+    expect(raised).toEqual([])
+    const message = wrapper.get('.dm-host-state')
+    expect(message.attributes('role')).toBe('alert')
+    expect(message.text()).toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+    await message.get('button').trigger('click')
+    await flushPromises()
+    expect(api.retryHostConnection).toHaveBeenCalledOnce()
+    // The dwarf of the last snapshot stays.
+    expect(wrapper.find('.dm-msg').exists()).toBe(true)
+
+    await rows.push(connected)
+    expect(wrapper.find('.dm-host-state').exists()).toBe(false)
+  })
+
+  it('[FM-146, ADR-002] while reconnecting the composer keeps its draft and sends nothing', async () => {
+    const rows = hostRows()
+    const { wrapper, api } = await openOn(
+      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }],
+      'claude:s1',
+      rows.overrides
+    )
+    // A draft typed while connected; then the connection drops.
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+    await rows.push({ state: 'reconnecting', since: 1_000 })
+
+    const box = wrapper.find('.dm-composer textarea')
+    expect(box.attributes('disabled')).toBeDefined()
+    await box.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(api.sendDwarfText).not.toHaveBeenCalled()
+    expect((box.element as HTMLTextAreaElement).value).toBe('dig deeper')
+
+    // Back on line, the same draft goes out.
+    await rows.push(connected)
+    await wrapper.find('.dm-composer textarea').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(api.sendDwarfText).toHaveBeenCalledOnce()
+  })
+
+  it('[ADR-002] the incompatible message offers only Stop everything and quit, which sends A-N34 and never an upgrade request', async () => {
+    const rows = hostRows()
+    // UI main as A-N34 runs it: the tray's flow, which pushes A-N25 to the window (ui-main/ipc/handlers/stopEverything).
+    let askConfirmation: ((payload: { confirmationId: string }) => void) | undefined
+    const requestStopEverything = vi.fn(() =>
+      askConfirmation?.({ confirmationId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e' })
+    )
+    const confirmHostRestart = vi.fn().mockResolvedValue(connected)
+    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
+      ...rows.overrides,
+      requestStopEverything,
+      confirmHostRestart,
+      onStopEverythingRequested: vi.fn((listener: typeof askConfirmation) => {
+        askConfirmation = listener
+        return () => undefined
+      })
+    })
+
+    await rows.push({ state: 'unavailable', reason: 'incompatible' })
+    const buttons = wrapper.get('.dm-host-state').findAll('button')
+    expect(buttons.map((button) => button.text())).toEqual([
+      '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
+    ])
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    await buttons[0]!.trigger('click')
+    await flushPromises()
+
+    expect(requestStopEverything).toHaveBeenCalledOnce()
+    expect(confirmHostRestart).not.toHaveBeenCalled()
+    expect(api.retryHostConnection).not.toHaveBeenCalled()
+    // The confirmation that follows is ISSUE-317's, the same one the tray item shows.
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
   })
 })

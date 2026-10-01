@@ -7,6 +7,8 @@
 //   cut-0 switch (ISSUE-056) composes `LegacyEndFirstAdapter` (ISSUE-054) as the use case's relay, so this row ends
 //   the legacy-launched sessions first without another handler.
 // - A-N27 `cancelStopEverything` (`ui-local`): one-way, closes the confirmation, sends nothing.
+// - A-N34 `requestStopEverything` (`ui-local`; amendment owner-approved 2026-10-01, ISSUE-316): one-way, a window asks
+//   for the tray item's flow; the use case opens no second confirmation while one is open or being opened.
 // - A-N25 `onStopEverythingRequested` is a push: UI main sends it (the use case), no handler serves it.
 //
 // The rows are listed in `contracts/ipc/unrouted.ts` until the cut-0 switch routes them. A call of any other channel
@@ -19,14 +21,24 @@ import type { RouteTarget } from '../router'
 export const STOP_EVERYTHING_CONFIRM = 'tray:stopEverything:confirm' satisfies ChannelKey
 /** A-N27 (`ui-local`). */
 export const STOP_EVERYTHING_CANCEL = 'tray:stopEverything:cancel' satisfies ChannelKey
+/** A-N34 (`ui-local`). */
+export const STOP_EVERYTHING_REQUEST = 'tray:stopEverything:request' satisfies ChannelKey
 /** The rows this target serves. */
-export const STOP_EVERYTHING_ROWS = [STOP_EVERYTHING_CONFIRM, STOP_EVERYTHING_CANCEL] as const
+export const STOP_EVERYTHING_ROWS = [
+  STOP_EVERYTHING_CONFIRM,
+  STOP_EVERYTHING_CANCEL,
+  STOP_EVERYTHING_REQUEST
+] as const
 
 export function createStopEverythingRows(
-  stop: Pick<StopEverything, 'confirm' | 'cancel'>
+  stop: Pick<StopEverything, 'confirm' | 'cancel' | 'requestFromWindow'>
 ): RouteTarget {
   return {
     serve(channel, payload) {
+      if (channel === STOP_EVERYTHING_REQUEST) {
+        void stop.requestFromWindow()
+        return Promise.resolve(undefined)
+      }
       if (channel === STOP_EVERYTHING_CONFIRM) {
         return stop.confirm(payload as { confirmationId: string; requestId: string })
       }

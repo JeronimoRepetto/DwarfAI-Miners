@@ -19,7 +19,9 @@
 //    (S10.21; ADR-014 item 9: no per-dwarf toast).
 //
 // A new request while a confirmation is open replaces it (the older one is cancelled); a Confirm or Cancel that names
-// no open confirmation reaches nothing (A-N26 answers INVALID_PARAMS).
+// no open confirmation reaches nothing (A-N26 answers INVALID_PARAMS). A window's request (A-N34
+// `requestStopEverything`, amendment owner-approved 2026-10-01, ISSUE-316) runs the same flow but opens no second
+// confirmation while one is open or being opened.
 import type {
   ChannelKey,
   DwarfWire,
@@ -73,6 +75,8 @@ export interface PendingConfirmation {
 export interface StopEverything {
   /** S10.18: asks for the confirmation; settles once it was pushed, or nothing could be asked. */
   request(): Promise<void>
+  /** A-N34: `request` from a window; nothing while a confirmation is open or being opened. */
+  requestFromWindow(): Promise<void>
   /** A-N26 (S10.20, S10.21). */
   confirm(p: { confirmationId: string; requestId: string }): Promise<IpcResult<StopAllOutcome>>
   /** A-N27 (S10.19). */
@@ -128,6 +132,8 @@ function outcomeOf(result: HostResult['host.shutdown']): StopAllOutcome {
 export function createStopEverything(deps: StopEverythingDeps): StopEverything {
   const { host, windows, newConfirmationId, relay = relayAtOnce } = deps
   let open: Open | null = null
+  /** A window's request in flight (A-N34), until its confirmation was pushed or nothing could be asked. */
+  let asking: Promise<void> | null = null
 
   function close(confirmation: Open): void {
     if (open === confirmation) open = null
@@ -175,7 +181,15 @@ export function createStopEverything(deps: StopEverythingDeps): StopEverything {
     }
   }
 
-  return {
+  const stopEverything: StopEverything = {
+    requestFromWindow() {
+      if (open !== null) return Promise.resolve()
+      asking ??= stopEverything.request().finally(() => {
+        asking = null
+      })
+      return asking
+    },
+
     request() {
       return new Promise<void>((asked) => {
         host
@@ -215,4 +229,5 @@ export function createStopEverything(deps: StopEverythingDeps): StopEverything {
         : { confirmationId: open.confirmationId, ownedCount: open.ownedCount }
     }
   }
+  return stopEverything
 }

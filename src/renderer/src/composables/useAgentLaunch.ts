@@ -57,6 +57,7 @@ import {
 } from '../lib/launch/modelTuning'
 import { launchRefusal, providerChips, type ProviderChip } from '../lib/launch/providerChips'
 import { DEFAULT_JEV_SETTINGS, HELDABLE_PROVIDERS } from '../types'
+import { useHostConnection } from './useHostConnection'
 import type {
   AgentModelCatalog,
   AgentProviderOption,
@@ -352,6 +353,8 @@ export function useAgentLaunch(): AgentLaunch {
    * on, which leaves the routing idle and the screen otherwise silent.
    */
   async function submit(): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves. The prompt stays.
+    if (useHostConnection().readOnly.value) return
     if (!canSubmit(state.value) || mineId.value === null) return
     // An ask in flight is this panel's one launch in flight, held by the model
     // and not only by the view's Enter guard: a second submit here would find

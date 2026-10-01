@@ -76,6 +76,7 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'tray:stopEverything:requested': 'A-N25',
   'tray:stopEverything:confirm': 'A-N26',
   'tray:stopEverything:cancel': 'A-N27',
+  'tray:stopEverything:request': 'A-N34',
   'host:connection:get': 'A-N03',
   'host:connection:changed': 'A-N04',
   'host:connection:retry': 'A-N05',

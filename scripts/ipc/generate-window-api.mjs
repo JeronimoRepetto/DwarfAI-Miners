@@ -105,6 +105,7 @@ const MEMBERS = {
   'tray:stopEverything:requested': 'onStopEverythingRequested', // A-N25
   'tray:stopEverything:confirm': 'confirmStopEverything', // A-N26
   'tray:stopEverything:cancel': 'cancelStopEverything', // A-N27
+  'tray:stopEverything:request': 'requestStopEverything', // A-N34 (amendment 2026-10-01, ISSUE-316)
   'host:connection:get': 'getHostConnection', // A-N03
   'host:connection:changed': 'onHostConnection', // A-N04
   'host:connection:retry': 'retryHostConnection', // A-N05

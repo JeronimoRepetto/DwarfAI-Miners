@@ -14,6 +14,7 @@ import {
   type DwarfKickState
 } from '../types'
 import { RESULT_VISIBLE_MS } from './useDwarfMessaging'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * Delivery state for Kick, mirroring useDwarfMessaging: fire-and-observe, so
@@ -82,6 +83,8 @@ export function useDwarfKicking() {
    * kick twice.
    */
   async function kick(dwarfId: string): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (state.byDwarfId[dwarfId]?.phase === 'kicking') return
     clearTimeout(clearTimers.get(dwarfId))
     clearTimers.delete(dwarfId)

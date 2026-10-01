@@ -181,6 +181,8 @@ export function goldenApi(sample: GoldenSample): Api {
     onStopEverythingRequested: unsubscribe,
     confirmStopEverything: refuse('confirmStopEverything'),
     cancelStopEverything: none,
+    // A-N34: a golden has no Host, so asking for Stop everything goes nowhere.
+    requestStopEverything: none,
     // A-N03…A-N05, A-N33: a golden renders a fixed sample, never a Host connection, so these are not answered.
     getHostConnection: refuse('getHostConnection'),
     onHostConnection: unsubscribe,

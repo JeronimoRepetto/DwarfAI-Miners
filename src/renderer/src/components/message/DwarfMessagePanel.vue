@@ -85,6 +85,7 @@ import {
   type DwarfSendState
 } from '../../types'
 import { useHoverTip } from '../../composables/useHoverTip'
+import { useHostConnection } from '../../composables/useHostConnection'
 import ActionButton from '../controls/ActionButton.vue'
 import FieldHint from '../controls/FieldHint.vue'
 import InputField from '../controls/InputField.vue'
@@ -290,8 +291,10 @@ function action(id: 'kick' | 'boost' | 'chat') {
 
 // Off the capability model rather than off `textDelivery` directly: a leaving
 // dwarf still carries the channel it had, and the model is what knows the
-// session behind it has ended (#192).
-const canReceive = computed(() => action('chat')?.enabled === true)
+// session behind it has ended (#192). While the Host is not connected the composer holds its draft and sends
+// nothing (ADR-002 D9; 13 FM-146): the Host connection's read-only state is the one source (ISSUE-316).
+const { readOnly: hostReadOnly } = useHostConnection()
+const canReceive = computed(() => action('chat')?.enabled === true && !hostReadOnly.value)
 /*
  * A session that can no longer take text: it ended, or its route went away (decision log, Copy
  * alone on a closed session). One fact for the composer and the failed bubbles alike, so the

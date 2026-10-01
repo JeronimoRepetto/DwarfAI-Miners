@@ -289,6 +289,8 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'tray:stopEverything:confirm'>>
   /** A-N27 · `tray:stopEverything:cancel` · send · NEW · target shape */
   cancelStopEverything: (request: TargetRequest<'tray:stopEverything:cancel'>) => void
+  /** A-N34 · `tray:stopEverything:request` · send · NEW · target shape */
+  requestStopEverything: () => void
   /** A-N03 · `host:connection:get` · invoke · NEW · target shape */
   getHostConnection: () => Promise<TargetResult<'host:connection:get'>>
   /** A-N04 · `host:connection:changed` · push · NEW · target shape */
@@ -530,6 +532,7 @@ const api: DwarfAiMinersApi = {
     invokeOrReject(() => ipcRenderer.invoke('tray:stopEverything:confirm', request)),
   cancelStopEverything: (request) =>
     sendOrDrop(() => ipcRenderer.send('tray:stopEverything:cancel', request)),
+  requestStopEverything: () => sendOrDrop(() => ipcRenderer.send('tray:stopEverything:request')),
   getHostConnection: () => invokeOrReject(() => ipcRenderer.invoke('host:connection:get')),
   onHostConnection: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
