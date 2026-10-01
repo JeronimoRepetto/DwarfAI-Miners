@@ -8,14 +8,17 @@
 // D7; OQ-63; AMENDMENT-5). It exits through the boot's `exit`, for a refusal (ALREADY_RUNNING,
 // ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot, and otherwise only through the clean exit
 // (composeHostLifecycle: checkpoint, `host.closing`, endpoint closed, exit 0), which the OS session
-// end starts today and Stop everything and quit (ISSUE-029) and the upgrade drain (ISSUE-032)
-// start later. What keeps the process running after `ready` is the UI endpoint the bind step
+// end and Stop everything and quit (`host.shutdown {stop-all}`, ISSUE-029) start, and the upgrade
+// drain starts later (ISSUE-032). What keeps the process running after `ready` is the UI endpoint the bind step
 // listens on (createUiEndpoint, ISSUE-022).
 //
 // The boot reports its lifecycle into the transport's HostStateHolder, which `hello.ok` and
 // HOST_NOT_READY read and which sends `host.state` to the `ui` connections through the
 // ConnectionRegistry. The seam-B Dispatcher comes from wiring/hostDispatcher.ts, which registers
-// the transport's own `ping` and where each method joins with the issue that serves it.
+// the transport's own `ping` and `host.shutdown` and where each method joins with the issue that
+// serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every owned session: bound to
+// the empty-owner implementation, since the Host owns no session yet, until the launching module
+// serves it (later: ISSUE-175).
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
 // ISSUE-039); its checkpoint is the clean exit's (the clean-shutdown marker), and a newer file
@@ -48,6 +51,9 @@ import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
 import { createHostDatabase, HOST_DB_FILE } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
+import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
+import { HostInvariantError } from './kernel'
+import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -104,11 +110,24 @@ async function main(): Promise<void> {
   const ids = new UuidV7Generator({ clock })
   const connections = new ConnectionRegistry()
   const hostState = new HostStateHolder(connections)
+  // The dispatcher serves `host.shutdown`, which ends in the clean exit, which closes the endpoint
+  // that serves the dispatcher. This forward reference breaks that cycle: the boot callback sets
+  // it before the bind step listens, so no request can reach it unset.
+  let cleanExit: CleanExit | undefined
+  const lifecycle: CleanExit = {
+    closeCleanly: (reason) =>
+      cleanExit === undefined
+        ? Promise.reject(new HostInvariantError('closeCleanly before the lifecycle was composed'))
+        : cleanExit.closeCleanly(reason)
+  }
   const dispatcher = createHostDispatcher({
     log,
     clock,
     scheduler,
-    state: () => hostState.current().state
+    state: () => hostState.current().state,
+    // Cut 0: no owned session exists yet (later: ISSUE-175 binds launching.stopAll).
+    stopAll: emptyOwnerStopAll,
+    lifecycle
   })
   const epoch = mintBootEpoch(ids)
   const runQuery = createQueryRunner()
@@ -162,7 +181,7 @@ async function main(): Promise<void> {
         conditions: () => database.capabilities()
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
-      composeHostLifecycle({
+      cleanExit = composeHostLifecycle({
         checkpoint: database.checkpoint,
         connections,
         endpoint,
