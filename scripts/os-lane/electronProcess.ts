@@ -13,11 +13,16 @@ import { createRequire } from 'node:module'
 const electronBinary = createRequire(import.meta.url)('electron') as unknown as string
 
 const POLL_MS = 50
+/** How much of stderr `describe()` keeps, and how many stdout lines it shows. */
+const STDERR_TAIL_CHARS = 4_000
+const STDOUT_TAIL_LINES = 20
 
 export class ElectronProcess {
   readonly lines: string[] = []
   readonly exited: Promise<number | null>
   private buffer = ''
+  private stderrTail = ''
+  private closed = false
 
   private constructor(private readonly child: ChildProcessWithoutNullStreams) {
     child.stdout.setEncoding('utf8')
@@ -27,8 +32,15 @@ export class ElectronProcess {
       this.buffer = parts.pop() ?? ''
       this.lines.push(...parts.map((line) => line.trim()).filter((line) => line !== ''))
     })
-    child.stderr.resume()
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_TAIL_CHARS)
+    })
     this.exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)))
+    // 'close' comes after the output streams ended, so nothing printed is still on its way.
+    child.once('close', () => {
+      this.closed = true
+    })
   }
 
   /**
@@ -52,11 +64,29 @@ export class ElectronProcess {
     return this.child.exitCode === null && this.child.signalCode === null
   }
 
-  /** The first line the process printed, or null when it printed none within `timeoutMs`. */
+  /**
+   * The first line the process printed, or null when it printed none within `timeoutMs` or ended without
+   * printing one.
+   */
   async firstLine(timeoutMs: number): Promise<string | null> {
     const deadline = Date.now() + timeoutMs
-    while (this.lines.length === 0 && Date.now() <= deadline) await sleep(POLL_MS)
+    while (this.lines.length === 0 && !this.closed && Date.now() <= deadline) await sleep(POLL_MS)
     return this.lines[0] ?? null
+  }
+
+  /** The process's state and the tail of what it printed, for an assertion message that explains a failure. */
+  describe(): string {
+    const state = this.running
+      ? 'still running'
+      : `exited with code ${String(this.child.exitCode)}, signal ${String(this.child.signalCode)}`
+    const stdout = [...this.lines, this.buffer.trim()].filter((line) => line !== '')
+    return [
+      `Electron ${state}`,
+      'stdout (tail):',
+      stdout.slice(-STDOUT_TAIL_LINES).join('\n') || '(nothing)',
+      'stderr (tail):',
+      this.stderrTail.trim() || '(nothing)'
+    ].join('\n')
   }
 
   /** How many printed lines equal `line`, once at least `count` did or `timeoutMs` passed. */

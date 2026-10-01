@@ -132,9 +132,13 @@ function writeApp(appDir: string): void {
   )
 }
 
-/** Linux runners have no display and no setuid sandbox helper; the renderer's sandboxed preload needs neither. */
+/**
+ * Linux runners have no setuid sandbox helper, so Chromium's OS sandbox is off there; the window's `sandbox: true`
+ * still gives the preload the sandboxed renderer's environment (only `electron` is requirable), which is what this
+ * test needs. The window itself needs a display (see `linuxSession`), so no headless Ozone flag.
+ */
 function platformFlags(): string[] {
-  return process.platform === 'linux' ? ['--no-sandbox', '--ozone-platform=headless'] : []
+  return process.platform === 'linux' ? ['--no-sandbox'] : []
 }
 
 async function uncloneablePayloadsNeverThrow(): Promise<void> {
@@ -153,8 +157,12 @@ async function uncloneablePayloadsNeverThrow(): Promise<void> {
       platformFlags()
     )
     const line = await electron.firstLine(START_TIMEOUT_MS)
-    expect(line, 'the test app printed its observation').toMatch(/^\{/)
-    const { facts, received } = JSON.parse(line ?? 'null') as {
+    if (line === null || !line.startsWith('{')) {
+      expect.fail(
+        `the test app printed no observation (waited up to ${START_TIMEOUT_MS} ms)\n${electron.describe()}`
+      )
+    }
+    const { facts, received } = JSON.parse(line) as {
       facts: Record<string, unknown>
       received: unknown[]
     }
@@ -172,7 +180,8 @@ async function uncloneablePayloadsNeverThrow(): Promise<void> {
       ['send', { control: true }],
       ['invoke', 'control']
     ])
-    expect(await electron.exited, 'the test app exits on its own').toBe(0)
+    const exitCode = await electron.exited
+    expect(exitCode, `the test app exits on its own\n${electron.describe()}`).toBe(0)
   } finally {
     await electron?.stop()
     // Chromium's helper processes can hold the profile for a moment after the app exits (EPERM, EBUSY on Windows).
@@ -191,6 +200,18 @@ describe.runIf(process.platform === 'darwin')('preload never throws on macOS', (
   it(TITLE, uncloneablePayloadsNeverThrow, TEST_TIMEOUT_MS)
 })
 
-describe.runIf(process.platform === 'linux')('preload never throws on Linux', () => {
-  it(TITLE, uncloneablePayloadsNeverThrow, TEST_TIMEOUT_MS)
-})
+/**
+ * Known gap: a `BrowserWindow` needs a display on Linux (Electron, "Testing on Headless CI Systems": "Electron
+ * requires a display driver to function"). The OS lane's Linux job has no X11 or Wayland session and does not run
+ * under Xvfb; there, with `--ozone-platform=headless`, the window's page never reported (CI, PR #1101). So the Linux
+ * leg runs only where a session is present, as the global-shortcut OS test does (ISSUE-049); in CI the sandboxed
+ * preload on Linux is exercised by the E2E job under Xvfb (S-019-1). Windows and macOS always run it.
+ */
+const linuxSession = process.env.DISPLAY !== undefined || process.env.WAYLAND_DISPLAY !== undefined
+
+describe.runIf(process.platform === 'linux' && linuxSession)(
+  'preload never throws on Linux',
+  () => {
+    it(TITLE, uncloneablePayloadsNeverThrow, TEST_TIMEOUT_MS)
+  }
+)
