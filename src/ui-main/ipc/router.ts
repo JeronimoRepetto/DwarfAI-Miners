@@ -2,8 +2,9 @@
 // `ipcMain` listeners from the channel registry and dispatches each call by the route table: `legacy` → today's
 // runtime through `LegacyRuntimeRoute` (the only door to legacy code, lint R16), or through the route's named shape
 // adapter for a `legacy` + `target` route (21 §3.1); `ui-local` → the window module; `host` → the HostClient. A call
-// whose (channel, qualifier) has no route is refused with a typed error, never guessed. Payload validation and the
-// sender check join the listeners in ISSUE-044.
+// whose (channel, qualifier) has no route is refused with a typed error, never guessed. Every call goes through the
+// seam A gate first (`validate.ts`, ADR-019 items 7, 8): an unknown sender or an invalid payload never reaches a
+// handler; it is answered with the row's typed refusal, and a one-way call is dropped and counted.
 import {
   CHANNELS,
   PRELOAD_HELPERS,
@@ -13,11 +14,16 @@ import {
 } from '@dwarfai/contracts'
 import type { ChannelRoute, RouteQualifier } from './channelRoute'
 import { resolveRoute } from './routeResolver'
+import type { IpcSenderEvent, SenderPolicy } from './senderCheck'
+import { createValidateCall, type GateErrorCode, type Refusal } from './validate'
 
-/** The part of Electron's `ipcMain` the router uses, with the renderer's one payload argument. */
+/** The part of Electron's `ipcMain` the router uses: the event (for the sender check) and the one payload argument. */
 export interface IpcMainRegistrar {
-  handle(channel: string, listener: (payload: unknown) => Promise<unknown>): void
-  on(channel: string, listener: (payload: unknown) => void): void
+  handle(
+    channel: string,
+    listener: (event: IpcSenderEvent, payload: unknown) => Promise<unknown>
+  ): void
+  on(channel: string, listener: (event: IpcSenderEvent, payload: unknown) => void): void
 }
 
 /** An owner that serves a routed call: by today's wire name for a `today` route, by the registry key otherwise. */
@@ -35,6 +41,8 @@ export interface RouterDeps {
   host?: RouteTarget
   /** The 21 §3.1 shape adapters by name; each is needed once a route names it. */
   shapeAdapters?: Readonly<Record<string, RouteTarget>>
+  /** Who may call: the app entry and the mode-window registry (ADR-019 item 8). */
+  senders: SenderPolicy
 }
 
 /** The router's answer to a call with no route: a seam A call error (14 §1.5, §3.3). */
@@ -46,7 +54,15 @@ export interface RouteRefusal {
 export interface Router {
   /** Registers one listener per `invoke` and `send` row of the registry; none for a push or a preload helper. */
   register(ipc: IpcMainRegistrar): void
-  dispatch(channel: ChannelKey, payload: unknown, qualifier?: RouteQualifier): Promise<unknown>
+  /** One renderer call: the gate first (sender, then payload), then the route. */
+  dispatch(
+    channel: ChannelKey,
+    event: IpcSenderEvent,
+    payload: unknown,
+    qualifier?: RouteQualifier
+  ): Promise<unknown>
+  /** How many calls of `channel` the gate refused with `code` since the router started. */
+  refusalCount(channel: ChannelKey, code: GateErrorCode): number
 }
 
 const KEYS = Object.keys(CHANNELS) as ChannelKey[]
@@ -75,7 +91,10 @@ function refusal(channel: ChannelKey): RouteRefusal {
 }
 
 export function createRouter(deps: RouterDeps): Router {
-  const { routes, legacy, uiLocal, host, shapeAdapters = {} } = deps
+  const { routes, legacy, uiLocal, host, shapeAdapters = {}, senders } = deps
+  const validateCall = createValidateCall(senders)
+  const refusals = new Map<string, number>()
+  const refusalKey = (channel: ChannelKey, code: GateErrorCode): string => `${channel} ${code}`
 
   /** The target that serves a route; a route whose target is not bound stops the router from starting. */
   function targetOf(route: ChannelRoute): RouteTarget {
@@ -91,26 +110,55 @@ export function createRouter(deps: RouterDeps): Router {
   }
   const targets = new Map(routes.map((route) => [route, targetOf(route)]))
 
+  /** Serves `channel` by `route` with `payload`; a call with no route (or no bound target) is refused. */
+  function serve(channel: ChannelKey, route: ChannelRoute | undefined, payload: unknown) {
+    const target = route && targets.get(route)
+    if (route === undefined || target === undefined) return Promise.resolve(refusal(channel))
+    return target.serve(route.shape === 'today' ? todayWireOf(channel) : channel, payload)
+  }
+
+  /** The answer to a refused call; nothing the renderer sent reaches a handler. */
+  async function answer(refused: Refusal): Promise<unknown> {
+    switch (refused.kind) {
+      case 'error':
+        return { ok: false, error: refused.error }
+      case 'answer':
+        return structuredClone(refused.value)
+      case 'drop':
+        return undefined
+      case 'unchanged':
+        // A read-only row, called by main itself with no payload.
+        return serve(refused.reader, resolveRoute(routes, refused.reader), undefined)
+    }
+  }
+
   async function dispatch(
     channel: ChannelKey,
+    event: IpcSenderEvent,
     payload: unknown,
     qualifier: RouteQualifier = {}
   ): Promise<unknown> {
     const route = resolveRoute(routes, channel, qualifier)
-    const target = route && targets.get(route)
-    if (route === undefined || target === undefined) return refusal(channel)
-    return target.serve(route.shape === 'today' ? todayWireOf(channel) : channel, payload)
+    const verdict = validateCall(channel, event, payload, route?.shape)
+    if (!verdict.ok) {
+      const key = refusalKey(channel, verdict.code)
+      refusals.set(key, (refusals.get(key) ?? 0) + 1)
+      return answer(verdict.refusal)
+    }
+    return serve(channel, route, verdict.payload)
   }
 
   return {
     dispatch,
+    refusalCount: (channel, code) => refusals.get(refusalKey(channel, code)) ?? 0,
     register(ipc) {
       for (const channel of KEYS) {
         const { kind } = CHANNELS[channel]
         if (helpers.includes(channel) || kind === 'push') continue
         const wire = wireOf(routes, channel)
-        if (kind === 'invoke') ipc.handle(wire, (payload) => dispatch(channel, payload))
-        else ipc.on(wire, (payload) => void dispatch(channel, payload))
+        if (kind === 'invoke') {
+          ipc.handle(wire, (event, payload) => dispatch(channel, event, payload))
+        } else ipc.on(wire, (event, payload) => void dispatch(channel, event, payload))
       }
     }
   }
