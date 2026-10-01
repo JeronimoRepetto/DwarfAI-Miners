@@ -109,6 +109,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
     getTypographyPreferences: vi.fn().mockResolvedValue({ ...DEFAULT_TYPOGRAPHY_PREFERENCES }),
     setTypographyPreferences: vi.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
     onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
+    onStopEverythingRequested: vi.fn().mockReturnValue(() => undefined),
     // The shell's own surfaces, answered as main answers them on a fresh install.
     getMineHistory: vi.fn().mockResolvedValue({ readable: true, speakers: [] }),
     getAlwaysOnTop: vi.fn().mockResolvedValue(true),

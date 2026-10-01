@@ -16,6 +16,7 @@ import MapPage from './components/map/MapPage.vue'
 import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
+import StopEverythingConfirmation from './components/stopEverything/StopEverythingConfirmation.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
@@ -37,6 +38,7 @@ import { columnMine, launchMineOpens, openableMineIds } from './lib/browse/colum
 import { mineCardView, mineRefusalToast } from './lib/browse/mineCard'
 import { removedToast, sortToast, type MineSort } from './lib/browse/minesList'
 import { useResetMetrics } from './composables/useResetMetrics'
+import { useStopEverything, type StopEverythingDwarf } from './composables/useStopEverything'
 import { useToggleShortcut } from './composables/useToggleShortcut'
 import { takeLaunchMine, useView } from './composables/useView'
 import { useNotificationSettings } from './composables/useNotificationSettings'
@@ -1185,6 +1187,22 @@ onBeforeUnmount(() => {
   // the surface that asked for it.
   disposeAudio()
 })
+
+/* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */
+// The confirmation UI main asks for with A-N25, over the current window. App
+// owns the composable and therefore the IPC (ADR-033 item 2). Its count is
+// the Host read model's owned dwarfs only (OQ-78). The renderer has no Host
+// read model of dwarfs yet: in cut 0 the snapshot has no `dwarfs` section
+// (ISSUE-026), so it holds none and the count is 0. Later: ISSUE-092 hands in
+// the board read model here.
+const NO_HOST_DWARFS: readonly StopEverythingDwarf[] = []
+const {
+  view: stopEverythingView,
+  confirm: confirmStopEverything,
+  cancel: cancelStopEverything,
+  dismiss: dismissStopEverything
+} = useStopEverything({ readModel: { dwarfs: () => NO_HOST_DWARFS } })
+/* --- end of the ISSUE-317 block ------------------------------------------- */
 </script>
 
 <template>
@@ -1529,6 +1547,16 @@ onBeforeUnmount(() => {
         </PanelTransition>
       </div>
     </div>
+    <!--
+      Stop everything and quit (ISSUE-317): the confirmation over the whole
+      window, drawn into <body> by the dialog itself, so nothing here clips it.
+    -->
+    <StopEverythingConfirmation
+      :view="stopEverythingView"
+      @confirm="confirmStopEverything"
+      @cancel="cancelStopEverything"
+      @dismiss="dismissStopEverything"
+    />
   </MotionConfig>
 </template>
 

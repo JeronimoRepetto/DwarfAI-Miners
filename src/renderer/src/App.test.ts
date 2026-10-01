@@ -291,6 +291,7 @@ function stubApi(overrides: Record<string, unknown> = {}) {
       .fn()
       .mockImplementation((preferences: unknown) => Promise.resolve(preferences)),
     onTypographyPreferences: vi.fn().mockReturnValue(() => undefined),
+    onStopEverythingRequested: vi.fn().mockReturnValue(() => undefined),
     /*
      * AMENDED for #509 (was: absent). The shell adopts the stored Jev
      * verdict on mount, so all three members have to exist even in tests
@@ -4027,5 +4028,44 @@ describe('App message dock (#635)', () => {
     await wrapper.find('button.dm-dwarf').trigger('click')
     await flushPromises()
     expect(setMessagePanel).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * APPENDED (ISSUE-317): Stop everything and quit over the window. UI main pushes A-N25; App shows the confirmation with
+ * the Host-owned count, which in cut 0 is 0 because the snapshot has no `dwarfs` section (accepted difference OQ-78):
+ * the legacy board's dwarfs are never added to it.
+ */
+describe('App Stop everything and quit (ISSUE-317)', () => {
+  const CONFIRMATION = '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e'
+
+  it('[US-RES-002.AC08, S10.18] the A-N25 push shows the confirmation over the window with the Host-owned count', async () => {
+    let push: ((payload: { confirmationId: string }) => void) | undefined
+    const cancelStopEverything = vi.fn()
+    await mountOpenApp({
+      getMines: vi.fn().mockResolvedValue({
+        mines: [defaultMine({ dwarfs: [defaultDwarf()] })],
+        tokensObserved: 0
+      }),
+      onStopEverythingRequested: vi.fn((listener: typeof push) => {
+        push = listener
+        return () => undefined
+      }),
+      cancelStopEverything
+    })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    push?.({ confirmationId: CONFIRMATION })
+    await flushPromises()
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    // The legacy board has running dwarfs; none of them is in the Host-owned count.
+    expect(dialog?.textContent).toContain('0 sessions DwarfAI started will end')
+
+    document.body.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click()
+    await flushPromises()
+    expect(cancelStopEverything).toHaveBeenCalledWith({ confirmationId: CONFIRMATION })
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 })
