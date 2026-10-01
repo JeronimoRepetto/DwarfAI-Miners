@@ -29,6 +29,13 @@ import { providerLiteralPattern } from './src/contracts/catalog/providerLiteral.
 //    one more in a suppressed file, fails the lint, and a suppression that no longer occurs fails
 //    it too, so the list only shrinks. scripts/checks/arch-exception-ratchet.test.mjs caps its
 //    total and keeps it to src/renderer and src/preload.
+// 5. ADR-019 item 1 "no `new BrowserWindow(` outside the factory" (ISSUE-046) is not in 05 §5.3's
+//    table, and 05 §5.1 gives it no number of its own. It is tagged R19, the rule 05 §5.1 already
+//    gives to ADR-019 (principle column "— (ADR-019)"), so it stays traceable (rule-principles) and
+//    has its canary (lint-canaries/R19-browser-window). It is the `browserWindow` selector in every
+//    syntax object of the new trees, the adapters included, except the factory file itself. The
+//    legacy trees carry no boundary object, so the legacy window (src/main/shell/window.ts) keeps
+//    its own until ISSUE-058 deletes it.
 
 // ---- import groups (no-restricted-imports) ----
 const IMP = {
@@ -122,6 +129,11 @@ function syntaxSelectors(providerIds) {
       selector: "Property[key.name='shell'][value.value=true]",
       message: 'R17 (P7): shell: true is forbidden.'
     },
+    browserWindow: {
+      selector:
+        "NewExpression[callee.name='BrowserWindow'], NewExpression[callee.property.name='BrowserWindow']",
+      message: 'R19 (ADR-019 D1): build every BrowserWindow through secureWindowOptions.'
+    },
     osBranch: {
       selector:
         "MemberExpression[object.name='process'][property.name='platform'], CallExpression[callee.object.name='os'][callee.property.name='platform']",
@@ -178,6 +190,7 @@ const RENDERER_VIEWS = [
   'src/renderer/src/lib/**/*.{ts,vue}',
   'src/renderer/src/components/**/*.{ts,vue}'
 ]
+const WINDOW_FACTORY = 'src/ui-main/window/adapters/secureWindowOptions.ts' // the one `new BrowserWindow(` (ADR-019 item 1)
 const HOST_LAUNCHER = ['src/ui-main/hostLauncher/**'] // not an adapter: may branch on the OS (R18), never on a provider id (R12)
 const GOLDEN = 'src/renderer/src/golden/**'
 const TESTS = '**/*.test.ts'
@@ -190,7 +203,7 @@ const TESTS = '**/*.test.ts'
  */
 export function createBoundaryConfigs(providerIds) {
   const S = syntaxSelectors(providerIds)
-  const COMMON = [S.providerIdCompare, S.providerIdCase, S.shellTrue, S.osBranch]
+  const COMMON = [S.providerIdCompare, S.providerIdCase, S.shellTrue, S.osBranch, S.browserWindow]
   return [
     // imports: one object per disjoint file set
     {
@@ -253,9 +266,15 @@ export function createBoundaryConfigs(providerIds) {
     {
       files: HOST_LAUNCHER,
       ignores: [TESTS],
-      rules: syntax(S.providerIdCompare, S.providerIdCase, S.shellTrue) // R18 exempt only
+      rules: syntax(S.providerIdCompare, S.providerIdCase, S.shellTrue, S.browserWindow) // R18 exempt only
     },
-    { files: ADAPTERS, ignores: [TESTS], rules: syntax(S.shellTrue) }, // adapters may name providers and OSes
+    // adapters may name providers and OSes; only the factory builds a BrowserWindow
+    {
+      files: ADAPTERS,
+      ignores: [TESTS, WINDOW_FACTORY],
+      rules: syntax(S.shellTrue, S.browserWindow)
+    },
+    { files: [WINDOW_FACTORY], rules: syntax(S.shellTrue) },
 
     { files: ['src/renderer/src/**/*.vue'], ignores: [GOLDEN], rules: { 'vue/no-v-html': 'error' } }
   ]
