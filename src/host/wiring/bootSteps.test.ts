@@ -102,7 +102,12 @@ function channelDeps(log = new RecordingDiagnosticsLog()) {
     frames: LIFECYCLE_FRAMES,
     // ADDED for the ISSUE-022 Windows half: a Windows endpoint is created only through the
     // owner-only pipe helper; its double here (the native helper is the OS lane's).
-    ownerOnlyPipe: createFakeOwnerOnlyPipe().listen
+    ownerOnlyPipe: createFakeOwnerOnlyPipe().listen,
+    // AMENDED for ISSUE-031: run/host.identity, written after the bind (ADR-002 D3).
+    identityFile: {
+      publish: () => Promise.resolve('written' as const),
+      remove: () => Promise.resolve()
+    }
   }
 }
 
@@ -389,3 +394,41 @@ function helloFrame(role: string, token: string) {
     client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
   }
 }
+
+// ADDED for ISSUE-031: run/host.identity is written right after the bind, before ui.token, so no
+// hello can be answered before it exists (ADR-002 D3).
+describe('the bind step writes run/host.identity (ADR-002 D3)', () => {
+  it('[ADR-002] the bind step writes host.identity once the endpoint is bound and before ui.token', async () => {
+    const input = factsForThisOs(caseRoot())
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+    const seen: string[] = []
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps(),
+      identityFile: {
+        publish: async () => {
+          const reachable = await new Promise<boolean>((resolve) => {
+            const socket = connect(named.value.path)
+            socket.once('connect', () => {
+              socket.destroy()
+              resolve(true)
+            })
+            socket.once('error', () => resolve(false))
+          })
+          seen.push(`publish: bound ${reachable}, token ${readToken(input.hostDataDir) !== ''}`)
+          return 'written'
+        },
+        remove: () => Promise.resolve()
+      }
+    })
+    cleanups.push(() => endpoint.close())
+
+    expect(await endpoint.bind()).toBe('bound')
+
+    expect(seen).toEqual(['publish: bound true, token false'])
+    expect(readToken(input.hostDataDir)).not.toBe('')
+  })
+})

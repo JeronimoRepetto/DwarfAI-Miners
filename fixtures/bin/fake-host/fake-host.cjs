@@ -16,8 +16,8 @@
 //   `hello.ok` for a hello with that token (state `ready`, or `migrating` for `migratingMs` first),
 //   AUTH_FAILED otherwise; `silent` answers nothing;
 // - writes `<dataDir>/fake-host-<pid>.json` with what the test checks: pid, epoch, whether
-//   ELECTRON_RUN_AS_NODE and DWARFAI_HOST_DATA_DIR arrived, its working folder, and the names (never
-//   the values) of its environment;
+//   ELECTRON_RUN_AS_NODE and DWARFAI_HOST_DATA_DIR arrived, its working folder, the names (never
+//   the values) of its environment, and the executable it runs on (ISSUE-031: the versioned copy);
 // - exits on its own after `maxLifeMs` (default 120 s) so a forgotten stub never outlives a run.
 // Exit codes match src/host/wiring/exitCodes.ts. Any load or run error exits 70 with a line on
 // stderr; it never shows anything on screen.
@@ -128,7 +128,8 @@ function main() {
       runAsNode: process.env.ELECTRON_RUN_AS_NODE === '1',
       dataDirArrived: process.env.DWARFAI_HOST_DATA_DIR === dataDir,
       cwd: process.cwd(),
-      envNames: Object.keys(process.env).sort()
+      envNames: Object.keys(process.env).sort(),
+      execPath: process.execPath
     }
     fs.writeFileSync(path.join(dataDir, `fake-host-${process.pid}.json`), JSON.stringify(report))
   }

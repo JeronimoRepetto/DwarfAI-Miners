@@ -37,10 +37,12 @@ import { build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PROTOCOL_VERSION, type HostEndpoint } from '@dwarfai/contracts'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
+import { buildManifest, serializeManifest } from './hostManifest'
 import { createHelloProber } from './helloProber'
 import { createNodeHostLauncher } from './index'
 import { createPosixSpawner } from './posix'
 import { buildHostSpawn } from './spawnHost'
+import { copySourceOf } from './versionedCopy'
 import { createWindowsSpawner } from './windows'
 
 const WINDOWS = process.platform === 'win32'
@@ -50,6 +52,16 @@ const FAKE_HOST = path.join(REPO_ROOT, 'fixtures', 'bin', 'fake-host', 'fake-hos
 /** The Electron binary of the installed `electron` package (its main export is the path). */
 const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string
 const CLIENT = { appVersion: '0.0.0', buildId: 'os-test' }
+// ADDED for ISSUE-031: the launcher starts the Host from its versioned copy (ADR-002 D5), made from
+// the installed Electron runtime against this manifest, into each world's own copy root.
+const MANIFEST_TEXT = serializeManifest(
+  await buildManifest(
+    copySourceOf(
+      ELECTRON,
+      process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux'
+    )
+  )
+)
 const CASE_TIMEOUT_MS = 120_000
 
 interface FakeHostReport {
@@ -66,6 +78,9 @@ interface World {
   root: string
   hostDataDir: string
   endpoint: HostEndpoint
+  /** ADDED for ISSUE-031: this world's copy root and build manifest. */
+  copyRoot: string
+  hostManifest: string
 }
 
 const worlds: World[] = []
@@ -96,7 +111,9 @@ function newWorld(mode: 'ready' | 'migrating' = 'ready'): World {
       maxLifeMs: CASE_TIMEOUT_MS
     })
   )
-  const world = { root, hostDataDir, endpoint }
+  const hostManifest = path.join(root, 'host-manifest.json')
+  writeFileSync(hostManifest, MANIFEST_TEXT)
+  const world = { root, hostDataDir, endpoint, copyRoot: path.join(root, 'copies'), hostManifest }
   worlds.push(world)
   return world
 }
@@ -106,6 +123,8 @@ function launcherFor(world: World, log = new RecordingUiLog()) {
     hostDataDir: world.hostDataDir,
     execPath: ELECTRON,
     hostEntry: FAKE_HOST,
+    hostManifest: world.hostManifest,
+    copyRoot: world.copyRoot,
     log,
     client: CLIENT,
     endpoint: world.endpoint
@@ -356,6 +375,8 @@ function uiConfig(world: World, reportFile: string): string {
       hostDataDir: world.hostDataDir,
       execPath: ELECTRON,
       hostEntry: FAKE_HOST,
+      hostManifest: world.hostManifest,
+      copyRoot: world.copyRoot,
       client: CLIENT,
       endpoint: world.endpoint,
       reportFile

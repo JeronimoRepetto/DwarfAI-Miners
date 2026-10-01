@@ -4,8 +4,11 @@
 // 1. Connect to the endpoint and send `hello`. A Host past its boot → `attached`. A Host that
 //    holds the endpoint but is still starting or migrating (or refuses a hello it is not ready
 //    for) is waited for with the readiness rule, never spawned again.
-// 2. Otherwise take the spawn gate, spawn the Host detached (spawnHost.ts; posix.ts, windows.ts),
-//    wait for readiness (readiness.ts) and release the gate — on `hello.ok` or on failure.
+// 2. Otherwise take the spawn gate, make or reuse the versioned copy and collect the old ones
+//    (ADR-002 D5, ADR-027 item 2: versionedCopy.ts, versionedCopyGc.ts), spawn the Host detached
+//    from that copy (spawnHost.ts; posix.ts, windows.ts), wait for readiness (readiness.ts) and
+//    release the gate — on `hello.ok` or on failure. A copy that cannot be made is `spawn-failed`
+//    with its code (FM-129), and nothing is spawned.
 // 3. The loser of the gate polls the endpoint every 250 ms and attaches when a Host answers; once
 //    the gate is released or stale it takes it and spawns. Once something holds the endpoint
 //    without being ready, the readiness budget (15 s, +30 s while `migrating`) bounds the wait.
@@ -21,7 +24,14 @@
 // duration, never a pid or a path.
 import type { UiLog, UiLogEntry } from '../diagnostics/uiLogger'
 import { HOST_EXIT_CODES } from './hostExitCodes'
-import type { HelloAnswer, HelloProber, HostSpawner, LauncherClock, Sleep } from './ports'
+import type {
+  HelloAnswer,
+  HelloProber,
+  HostCopyPreparer,
+  HostSpawner,
+  LauncherClock,
+  Sleep
+} from './ports'
 import {
   LOSER_POLL_MS,
   isReadyState,
@@ -29,7 +39,7 @@ import {
   waitForReadiness,
   type ReadinessOutcome
 } from './readiness'
-import { buildHostSpawn, type HostSpawnInput } from './spawnHost'
+import { buildHostSpawn, hostSpawnInputFromCopy, type HostSpawnInput } from './spawnHost'
 
 export type EnsureHostResult =
   'attached' | 'spawned' | { unavailable: 'spawn-failed' | 'elevated-refused' | 'in-job' }
@@ -38,6 +48,9 @@ export interface HostLauncherDeps {
   probe: HelloProber
   gate: { take(): Promise<'taken' | 'held'>; release(): Promise<void> }
   spawner: HostSpawner
+  /** The versioned copy the Host starts from (ADR-002 D5). */
+  prepareCopy: HostCopyPreparer
+  /** The Host as the running app holds it; started from its copy, never from here. */
   host: HostSpawnInput
   clock: LauncherClock
   sleep: Sleep
@@ -81,19 +94,24 @@ export function createHostLauncher(deps: HostLauncherDeps): HostLauncher {
   /** Step 2, with the gate held. */
   const spawnAndWait = async (): Promise<EnsureHostResult> => {
     const startedAt = deps.clock.now()
-    const launch = await deps.spawner(buildHostSpawn(deps.host))
+    // The Host never runs from the install folder: its copy is made or reused first (ADR-002 D5).
+    const copy = await deps.prepareCopy()
+    if (!copy.ok) return fail('spawn-failed', copy.errCode)
+    const host = hostSpawnInputFromCopy(deps.host, copy)
+    if (!host.ok) return fail('spawn-failed', host.errCode)
+    const launch = await deps.spawner(buildHostSpawn(host.value))
     if (launch.kind === 'failed') return fail('spawn-failed', launch.errCode)
     if (launch.kind === 'in-job') return fail('in-job', launch.errCode)
-    const { host } = launch
+    const launched = launch.host
     const watch = { alreadyRunning: false }
-    void host.exited.then((code) => {
+    void launched.exited.then((code) => {
       if (code === HOST_EXIT_CODES.ALREADY_RUNNING) watch.alreadyRunning = true
     })
     let ready: ReadinessOutcome
     try {
-      ready = await waitForReadiness({ ...deps, exited: host.exited })
+      ready = await waitForReadiness({ ...deps, exited: launched.exited })
     } finally {
-      host.release()
+      launched.release()
     }
     const durationMs = deps.clock.now() - startedAt
     if (ready.kind === 'host-exited') {
@@ -107,7 +125,7 @@ export function createHostLauncher(deps: HostLauncherDeps): HostLauncher {
     record({
       level: inJob ? 'warn' : 'info',
       outcome: inJob ? 'degraded' : 'ok',
-      causeClass: inJob ? 'in-job' : host.how,
+      causeClass: inJob ? 'in-job' : launched.how,
       durationMs
     })
     return 'spawned'

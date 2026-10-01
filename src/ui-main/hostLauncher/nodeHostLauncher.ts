@@ -3,9 +3,13 @@
 // ADR-002 D2 rule, probes it with `hello` over `node:net`, holds the spawn gate in
 // `<hostDataDir>/run/spawn.gate`, and starts the Host with the per-OS spawner (windows.ts on
 // Windows, posix.ts elsewhere). An endpoint that cannot be named (no SID, a socket path over the
-// `sun_path` limit) is `spawn-failed` before anything is spawned.
+// `sun_path` limit) is `spawn-failed` before anything is spawned. The Host starts from its versioned
+// copy under the per-OS root of ADR-002 D5 (versionedCopy.ts), made from the directory holding the
+// app executable and checked against the build's `host-manifest.json`; the old copies are collected
+// right after (versionedCopyGc.ts).
 import { execFile } from 'node:child_process'
 import { connect } from 'node:net'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION, type HostEndpoint } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
@@ -13,10 +17,18 @@ import { resolveUiEndpoint } from './endpointFacts'
 import { NodeGateFiles } from './gateFiles'
 import { createHelloProber } from './helloProber'
 import { createHostLauncher, type HostLauncher } from './launcher'
-import type { HostSpawner, ProcessStart } from './ports'
+import type { HostCopyPreparer, HostSpawner, ProcessStart } from './ports'
 import { createPosixSpawner } from './posix'
 import { createIdentityProbe, createProcessStartReader, type QueryRunner } from './processStart'
 import { SpawnGate } from './spawnGate'
+import {
+  copySourceOf,
+  ensureVersionedCopy,
+  nodeCopyOps,
+  versionedCopyRoot,
+  type CopyPlatform
+} from './versionedCopy'
+import { collectVersionedCopies } from './versionedCopyGc'
 import { createWindowsSpawner } from './windows'
 
 /** The Host's run folder and the files the launcher reads or writes there. */
@@ -32,8 +44,14 @@ export const CONNECT_TIMEOUT_MS = 1_000
 export interface NodeHostLauncherOptions {
   /** `<userData>/host` (ADR-002 D2). */
   hostDataDir: string
-  /** The app executable (later: ISSUE-031 swaps in the versioned copy's). */
+  /** The app executable; the Host runs the copy of it in its versioned copy (ADR-002 D5). */
   execPath: string
+  /**
+   * This build's `host-manifest.json` (ADR-002 D5), describing the directory the copy is made from:
+   * written by scripts/build/write-host-manifest.mjs for development and test builds, by the
+   * packaging job for packaged ones (later: ISSUE-270).
+   */
+  hostManifest: string
   /** The Host entry script (`out/host/main.js`). */
   hostEntry: string
   log: UiLog
@@ -43,6 +61,8 @@ export interface NodeHostLauncherOptions {
   uiEnv?: Readonly<Record<string, string | undefined>>
   /** The endpoint to use instead of the ADR-002 D2 rule (OS-lane tests bind a private one). */
   endpoint?: HostEndpoint
+  /** The copy root to use instead of the ADR-002 D5 one (OS-lane tests use a temporary folder). */
+  copyRoot?: string
 }
 
 export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLauncher {
@@ -62,6 +82,7 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
     platform === 'win32'
       ? createWindowsSpawner({ env: uiEnv })
       : createPosixSpawner({ stdioFile: join(runDir, HOST_STDIO_FILE) })
+  const prepareCopy = createCopyPreparer(options, platform, uiEnv)
   const resolveEndpoint = async () =>
     options.endpoint === undefined
       ? resolveUiEndpoint({ platform, hostDataDir: options.hostDataDir, env: uiEnv, runQuery })
@@ -96,6 +117,7 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
           self
         }),
         spawner,
+        prepareCopy,
         host: {
           execPath: options.execPath,
           hostEntry: options.hostEntry,
@@ -108,6 +130,42 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
       })
       return launcher.ensureHostRunning()
     }
+  }
+}
+
+/** Makes or reuses `host/<version>/`, then collects the old copies (ADR-002 D5; ADR-027 item 2). */
+function createCopyPreparer(
+  options: NodeHostLauncherOptions,
+  platform: CopyPlatform,
+  uiEnv: Readonly<Record<string, string | undefined>>
+): HostCopyPreparer {
+  return async () => {
+    const root =
+      options.copyRoot === undefined
+        ? versionedCopyRoot({ platform, env: uiEnv, homeDir: homedir() })
+        : { ok: true as const, value: options.copyRoot }
+    if (!root.ok) return root
+    const sourceDir = copySourceOf(options.execPath, platform)
+    const copy = await ensureVersionedCopy({
+      version: options.client.appVersion,
+      sourceDir,
+      manifestPath: options.hostManifest,
+      root: root.value,
+      platform,
+      pid: process.pid,
+      ops: nodeCopyOps,
+      log: options.log,
+      clock: { now: Date.now }
+    })
+    if (!copy.ok) return copy
+    await collectVersionedCopies({
+      root: root.value,
+      inUse: options.client.appVersion,
+      pid: process.pid,
+      ops: nodeCopyOps,
+      log: options.log
+    })
+    return { ok: true, sourceDir, contentDir: copy.contentDir }
   }
 }
 

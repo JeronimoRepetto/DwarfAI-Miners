@@ -8,7 +8,8 @@
 //    tray process leaves with the Host instead of reconnecting (FM-006: a crash sends none); a
 //    `viewer` gets no frame and sees its connection close;
 // 3. every connection ended, the frames written first, bounded by CLOSING_FLUSH_BOUND_MS;
-// 4. the endpoint closed: it stops listening and removes the POSIX socket file (ADR-002 D7);
+// 4. the endpoint closed: it stops listening and removes the POSIX socket file (ADR-002 D7); then
+//    `run/host.identity` deleted (ADR-002 D3; runFiles/hostIdentityFile.ts);
 // 5. `host.exit` logged with the reason as its class (19 §9.1), then exit 0 (S12.17, `exited`).
 //
 // The first call is the exit: a later call, whatever its reason, joins it. A reason outside
@@ -40,6 +41,8 @@ export interface CleanExitDeps {
   connections: ConnectionRegistry
   /** The UI endpoint: closing it stops listening and removes the POSIX socket file. */
   endpoint: { close(): Promise<void> }
+  /** `run/host.identity` (ADR-002 D3): deleted once the endpoint is closed. */
+  identityFile?: { remove(): Promise<void> }
   scheduler: Scheduler
   log: DiagnosticsLog
   /** Ends the process with `code`. */
@@ -59,6 +62,7 @@ export function createCleanExit(deps: CleanExitDeps): CleanExit {
     deps.connections.publish('host.closing', { reason, clean: true })
     await deps.connections.endAll(deps.scheduler, CLOSING_FLUSH_BOUND_MS)
     await deps.endpoint.close()
+    await deps.identityFile?.remove()
     deps.log.record({ level: 'info', event: 'host.exit', subsystem: 'host', causeClass: reason })
     deps.exit(0)
   }

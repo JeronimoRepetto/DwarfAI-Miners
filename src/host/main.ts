@@ -45,6 +45,8 @@ import { createHostFileProtection } from './platform/sqlite/fileProtection'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
+import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
+import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
 import { errorCode, runBoot } from './wiring/boot'
 import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
@@ -151,6 +153,14 @@ async function main(): Promise<void> {
           })
         })
       })
+      // run/host.identity: written after the bind, deleted at the clean exit (ADR-002 D3, D7).
+      const identityFile = new HostIdentityFile({
+        runDir: join(dataDir.userDataDir, 'run'),
+        writer: new NodeRunFileWriter(),
+        processes: processControl,
+        pid: process.pid,
+        epoch
+      })
       const endpoint = createUiEndpoint({
         facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
         log,
@@ -170,13 +180,15 @@ async function main(): Promise<void> {
         frames: LIFECYCLE_FRAMES,
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
-        conditions: () => database.capabilities()
+        conditions: () => database.capabilities(),
+        identityFile
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       composeHostLifecycle({
         checkpoint: database.checkpoint,
         connections,
         endpoint,
+        identityFile,
         scheduler,
         log,
         sessionEnd: nodeOsSessionSignals(log),

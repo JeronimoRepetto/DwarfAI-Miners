@@ -12,10 +12,11 @@
 // - The working folder is `hostDataDir`, which the Host owns, never the UI's working folder.
 // - The environment is always passed whole and explicitly: on Windows the Host is created by a
 //   launcher step or by WMI, which does not inherit the UI's environment (windows.ts).
+import path from 'node:path'
 import type { HostSpawnRequest } from './ports'
 
 export interface HostSpawnInput {
-  /** The app executable (later: ISSUE-031 swaps in the versioned copy's). */
+  /** The app executable (hostSpawnInputFromCopy swaps in the versioned copy's, ISSUE-031). */
   execPath: string
   /** The Host entry script (`out/host/main.js`). */
   hostEntry: string
@@ -55,3 +56,34 @@ export function buildHostSpawn(input: HostSpawnInput): HostSpawnRequest {
     cwd: input.hostDataDir
   }
 }
+
+/**
+ * The Host as it starts from its versioned copy (ADR-002 D5; SP-03): the executable, and the entry
+ * when it is packaged inside the app directory (`resources/app.asar/out/host/main.js`), are taken
+ * at the same relative place inside the copy. An entry outside the copied directory (a development
+ * build's `out/host/main.js`) stays where it is and is run by the copied executable. An executable
+ * outside the copied directory is refused: the Host never runs from the install folder (ADR-027
+ * item 1).
+ */
+export function hostSpawnInputFromCopy(
+  input: HostSpawnInput,
+  copy: { sourceDir: string; contentDir: string }
+): { ok: true; value: HostSpawnInput } | { ok: false; errCode: string } {
+  const execPath = relocate(input.execPath, copy)
+  if (execPath === null) return { ok: false, errCode: 'EXEC_OUTSIDE_COPY' }
+  return {
+    ok: true,
+    value: { ...input, execPath, hostEntry: relocate(input.hostEntry, copy) ?? input.hostEntry }
+  }
+}
+
+/** `file`'s place inside the copy, or null when it is not inside the copied directory. */
+function relocate(file: string, copy: { sourceDir: string; contentDir: string }): string | null {
+  const paths = WINDOWS_PATH.test(copy.sourceDir) ? path.win32 : path.posix
+  const relative = paths.relative(copy.sourceDir, file)
+  if (relative === '' || relative.startsWith('..') || paths.isAbsolute(relative)) return null
+  return paths.join(copy.contentDir, relative)
+}
+
+/** A drive-letter or UNC path: the copy's paths follow the platform that wrote them. */
+const WINDOWS_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/

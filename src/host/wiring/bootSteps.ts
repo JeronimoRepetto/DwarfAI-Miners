@@ -25,6 +25,7 @@ import { bindEndpoint, EndpointBindError, type BoundEndpoint } from '../transpor
 import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecurity'
 import type { HostIdentity } from '../transport/hello'
 import { createHelloProbe } from '../transport/helloProbe'
+import { deferUntilPublished } from '../transport/runFiles/hostIdentityFile'
 import { errorCode, type BootStep, type BootStepName, type HostStateReport } from './boot'
 import type { HostDatabase } from './hostDatabase'
 import { decideBind } from './singleInstance'
@@ -122,6 +123,8 @@ export interface UiEndpointDeps {
   ownerOnlyPipe: ListenOwnerOnlyPipe
   /** Conditions advertised bare beside them: `db-read-only` (HostDatabase, ADR-005 item 5). */
   conditions?: () => Iterable<string>
+  /** `run/host.identity` (HostIdentityFile), written right after the bind (ADR-002 D3). */
+  identityFile: { publish(): Promise<unknown>; remove(): Promise<void> }
 }
 
 /**
@@ -151,6 +154,8 @@ const ENDPOINT_ERROR_CODES: Readonly<Record<EndpointError['kind'], string>> = {
  * the endpoint in use never touches the running Host's token: it reads that token for the
  * ADR-002 D3 hello probe instead, and exits ALREADY_RUNNING when the running Host answers.
  * Until the token is written no hello can authenticate (nobody can hold the new token yet).
+ * Right after the bind, before the token, the Host writes `run/host.identity` (ADR-002 D3), and
+ * every connection accepted meanwhile is held unread until both files exist.
  */
 export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
   let bound: BoundEndpoint | null = null
@@ -166,6 +171,11 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
       const token = new UiToken()
       // ADR-003 item 5: one failed-hello throttle for every connection of this endpoint.
       const throttle = new HelloThrottle(deps.clock)
+      // ADR-002 D3: connections accepted after the bind wait until host.identity and the token exist.
+      let runFiles: { resolve(): void; reject(error: unknown): void } | undefined
+      const runFilesWritten = new Promise<void>(
+        (resolve, reject) => (runFiles = { resolve, reject })
+      )
       const outcome = await bindEndpoint(endpoint.value, {
         log: deps.log,
         scheduler: deps.scheduler,
@@ -180,7 +190,7 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             pid: deps.pid
           }
         }),
-        accept: (connection) =>
+        accept: deferUntilPublished(runFilesWritten, (connection) =>
           acceptConnection(connection, {
             token,
             ids: deps.ids,
@@ -199,17 +209,24 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             dispatcher: deps.dispatcher,
             connections: deps.connections,
             throttle
-          }),
+          })
+        ),
         ownerOnlyPipe: deps.ownerOnlyPipe
       })
       if (outcome.kind === 'already-running') return 'already-running'
+      let code = 'ENDPOINT_IDENTITY_UNWRITABLE'
       try {
+        await deps.identityFile.publish()
+        code = 'ENDPOINT_TOKEN_UNWRITABLE'
         await token.issue(runDir)
       } catch (error) {
         // No UI could ever attach: the bind step fails and the endpoint is released.
+        runFiles?.reject(error)
+        await deps.identityFile.remove().catch(() => undefined)
         await outcome.endpoint.close()
-        throw new EndpointBindError('ENDPOINT_TOKEN_UNWRITABLE', errorCode(error))
+        throw new EndpointBindError(code, errorCode(error))
       }
+      runFiles?.resolve()
       bound = outcome.endpoint
       return 'bound'
     },
