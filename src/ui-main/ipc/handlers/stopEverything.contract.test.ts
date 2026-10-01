@@ -16,7 +16,8 @@ import type { IpcSenderEvent, SenderPolicy } from '../senderCheck'
 import {
   createStopEverythingRows,
   STOP_EVERYTHING_CANCEL,
-  STOP_EVERYTHING_CONFIRM
+  STOP_EVERYTHING_CONFIRM,
+  STOP_EVERYTHING_REQUEST
 } from './stopEverything'
 
 /**
@@ -91,7 +92,9 @@ async function world() {
   const rowKeys: ChannelKey[] = [
     STOP_EVERYTHING_REQUESTED,
     STOP_EVERYTHING_CONFIRM,
-    STOP_EVERYTHING_CANCEL
+    STOP_EVERYTHING_CANCEL,
+    // AMENDED for ISSUE-316 (was: absent): A-N34, routed ui-local as ISSUE-056 will route it.
+    STOP_EVERYTHING_REQUEST
   ]
   const router = createRouter({
     routes: rowKeys.map(routeOf),
@@ -197,5 +200,68 @@ describe('Stop everything and quit over seam A (14 §2.2 A-N25…A-N27, §6.3)',
 
     expect(stop.pending()).toBeNull()
     expect(host.received.slice(sentBefore)).toEqual([])
+  })
+})
+
+/*
+ * A-N34 `requestStopEverything` (amendment owner-approved 2026-10-01, ISSUE-316; ADR-002 D8 item 5): the renderer's
+ * entry to the tray item's Stop everything and quit. UI main runs exactly the tray's flow (mints the confirmation id,
+ * pushes A-N25), only for a trusted panel window, and never opens a second confirmation while one is open.
+ */
+describe('A-N34 requestStopEverything over seam A', () => {
+  it('[ADR-002] A-N34 from the panel opens exactly the tray flow: one A-N25 with a fresh confirmation', async () => {
+    const { host, stop, router, pushes } = await world()
+
+    expect(await router.dispatch(STOP_EVERYTHING_REQUEST, FROM_PANEL, undefined)).toBeUndefined()
+    await settle()
+
+    expect(pushes).toEqual([[STOP_EVERYTHING_REQUESTED, { confirmationId: CONFIRMATION }]])
+    expect(stop.pending()).toEqual({ confirmationId: CONFIRMATION, ownedCount: 0 })
+    // Asking is not stopping: nothing reaches the Host until the person confirms (A-N26).
+    expect(host.methods()).not.toContain('host.shutdown')
+  })
+
+  it('[ADR-002] A-N34 while a confirmation is open, or being opened, opens no second one', async () => {
+    const { stop, router, pushes } = await world()
+
+    // Two presses before the first confirmation is up, then one more once it is.
+    await router.dispatch(STOP_EVERYTHING_REQUEST, FROM_PANEL, undefined)
+    await router.dispatch(STOP_EVERYTHING_REQUEST, FROM_PANEL, undefined)
+    await settle()
+    await router.dispatch(STOP_EVERYTHING_REQUEST, FROM_PANEL, undefined)
+    await settle()
+
+    expect(pushes.map(([channel]) => channel)).toEqual([STOP_EVERYTHING_REQUESTED])
+    expect(stop.pending()?.confirmationId).toBe(CONFIRMATION)
+  })
+
+  it('[ADR-019] A-N34 from an untrusted sender is rejected and opens nothing', async () => {
+    const { stop, router, pushes } = await world()
+    const strangers: IpcSenderEvent[] = [
+      { sender: { id: PANEL_ID + 1 }, senderFrame: { url: APP_ENTRY } },
+      { sender: { id: PANEL_ID }, senderFrame: { url: 'https://example.invalid/' } }
+    ]
+
+    for (const stranger of strangers) {
+      expect(await router.dispatch(STOP_EVERYTHING_REQUEST, stranger, undefined)).toBeUndefined()
+    }
+    await settle()
+
+    expect(pushes).toEqual([])
+    expect(stop.pending()).toBeNull()
+    expect(router.refusalCount(STOP_EVERYTHING_REQUEST, 'SENDER_REJECTED')).toBe(strangers.length)
+  })
+
+  it('[ADR-019] A-N34 with a payload is dropped and opens nothing', async () => {
+    const { stop, router, pushes } = await world()
+
+    expect(
+      await router.dispatch(STOP_EVERYTHING_REQUEST, FROM_PANEL, { now: true })
+    ).toBeUndefined()
+    await settle()
+
+    expect(pushes).toEqual([])
+    expect(stop.pending()).toBeNull()
+    expect(router.refusalCount(STOP_EVERYTHING_REQUEST, 'INVALID_PARAMS')).toBe(1)
   })
 })
