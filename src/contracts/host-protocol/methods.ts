@@ -6,19 +6,36 @@
 // every frame); the type test in methods.test.ts keeps every schema equal to its interface entry. The mapping is
 // Partial only because a test may merge a method of its own into HostMethods.
 import { z } from 'zod'
-import { instantSchema, stopAllOutcomeSchema, type Instant, type StopAllOutcome } from '../wire'
+import {
+  hostEpochSchema,
+  instantSchema,
+  stopAllOutcomeSchema,
+  type HostEpoch,
+  type Instant,
+  type StopAllOutcome
+} from '../wire'
 import { requestIdSchema } from './requestId'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02 and B-M05 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03 and B-M05 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'ping':                            { params: {}; result: { at: Instant } }
+  'events.subscribe':                { params: SubscribeParams; result: SubscribeResult }
   'host.shutdown':                   { params: HostShutdownParams; result: HostShutdownResult }
 }
 // end verbatim: 14 §3.4
+
+// As 14 §3.4 writes them (names, fields and comments; layout by prettier): protocol, B-M03
+export interface SubscribeParams {
+  resume?: { epoch: HostEpoch; lastSeq: number }
+} // mirrors Hello.resume
+export type SubscribeResult =
+  | { status: 'replaying'; fromSeq: number; toSeq: number } // missed frames follow, then live frames
+  | { status: 'live'; fromSeq: number } // fresh subscription: no resume, snapshot next
+  | { status: 'resync-required' } // a resync-required frame also follows; snapshot next
 
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): protocol, B-M05
 export interface HostShutdownParams {
@@ -35,6 +52,28 @@ export const HOST_METHOD_SCHEMAS = {
   ping: {
     params: z.object({}).strict(),
     result: z.object({ at: instantSchema }).strict()
+  },
+  'events.subscribe': {
+    params: z
+      .object({
+        resume: z
+          .object({ epoch: hostEpochSchema, lastSeq: z.number().int().nonnegative() })
+          .strict()
+          .optional()
+      })
+      .strict(),
+    // A replay with nothing missed has toSeq = fromSeq - 1 (framePublisher.ts).
+    result: z.discriminatedUnion('status', [
+      z
+        .object({
+          status: z.literal('replaying'),
+          fromSeq: z.number().int().positive(),
+          toSeq: z.number().int().nonnegative()
+        })
+        .strict(),
+      z.object({ status: z.literal('live'), fromSeq: z.number().int().positive() }).strict(),
+      z.object({ status: z.literal('resync-required') }).strict()
+    ])
   },
   // The whole generation-stable shape (14 §1.3): which modes the Host serves is the Host's rule
   // (host/transport/methods/hostShutdown.ts), not the wire's.

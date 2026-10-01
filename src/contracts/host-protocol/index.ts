@@ -13,6 +13,8 @@ export {
   HOST_METHOD_SCHEMAS,
   type HostMethods,
   type HostShutdownParams,
-  type HostShutdownResult
+  type HostShutdownResult,
+  type SubscribeParams,
+  type SubscribeResult
 } from './methods'
 export { HOST_FRAME_SCHEMAS, type HostFrames } from './frames'
