@@ -1,5 +1,6 @@
 import type { BrowserWindowConstructorOptions } from 'electron'
 import type { ModeWindowRegistry } from '../application/modeWindowRegistry'
+import type { PanelWindowSurface } from '../application/panelWindow'
 import type {
   DisplayKey,
   PanelWindow,
@@ -8,6 +9,7 @@ import type {
   VetaWindow,
   WindowFactory
 } from '../ports/windowFactory'
+import { applyAlwaysOnTop, applyZoomFactor, raisePanelWindow } from './panelSurface'
 import {
   createSecureWindow,
   secureWindowOptions,
@@ -66,18 +68,33 @@ export interface ManagedWebContents {
     listener: (event: unknown, details: { reason: string }) => void
   ): unknown
   on(event: 'unresponsive' | 'responsive', listener: () => void): unknown
+  /** The page finished loading: Electron reset its zoom (ISSUE-047). */
+  on(event: 'did-finish-load', listener: () => void): unknown
+  setZoomFactor(factor: number): void
+  getZoomFactor(): number
+  getZoomMode(): 'default' | 'isolated' | 'manual' | 'disabled'
+  setZoomMode(mode: 'default' | 'isolated' | 'manual' | 'disabled'): void
 }
 
-/** The part of Electron's `BrowserWindow` the adapter drives. */
+/** The part of Electron's `BrowserWindow` the adapter drives, and what the Panel surface reads back (ISSUE-047). */
 export interface ManagedBrowserWindow {
   readonly webContents: ManagedWebContents
   setBounds(bounds: Rect): void
+  getBounds(): Rect
   showInactive(): void
+  show(): void
   hide(): void
   focus(): void
+  moveTop(): void
+  restore(): void
+  setAlwaysOnTop(flag: boolean): void
+  isAlwaysOnTop(): boolean
+  isVisible(): boolean
+  isMinimized(): boolean
   close(): void
   isDestroyed(): boolean
   once(event: 'closed', listener: () => void): unknown
+  on(event: 'minimize' | 'restore', listener: () => void): unknown
 }
 
 export interface PanelWindowOptionsInput {
@@ -137,7 +154,7 @@ export interface ElectronWindowsDeps {
   appEntry: string
   /** The mode-window registry the seam A sender check reads (ADR-019 item 8; ISSUE-044). */
   registry: Pick<ModeWindowRegistry, 'register' | 'drop'>
-  /** Where the Panel opens and whether it is pinned (the Panel window rows bind it, later: ISSUE-047). */
+  /** Where the Panel opens and whether it is pinned (`PanelWindowUseCases.panelStart`, ISSUE-047). */
   panelStart(): { alwaysOnTop: boolean; bounds: Rect }
   timers: RendererTimers
   /** Shows the "renderer crashed" message parented to `window` (`showRendererCrashedMessage` in production). */
@@ -146,6 +163,9 @@ export interface ElectronWindowsDeps {
 
 export class ElectronWindows implements WindowFactory {
   private panelWindow: { window: ManagedBrowserWindow; mode: PanelWindow } | null = null
+  /** The zoom the Panel's page was last given, given back after every load (#153); `null` before the first fit. */
+  private panelZoom: number | null = null
+  private readonly panelMinimizeHandlers: Array<() => void> = []
 
   constructor(private readonly deps: ElectronWindowsDeps) {}
 
@@ -165,8 +185,43 @@ export class ElectronWindows implements WindowFactory {
       })
     )
     const mode = this.manage(window)
+    // Electron resets a page's zoom on every navigation, a crash reload included: the Panel's page gets back the zoom
+    // it was last given as soon as it has loaded, before anyone sees it at 1x (#153).
+    window.webContents.on('did-finish-load', () => {
+      if (this.panelZoom !== null) applyZoomFactor(window.webContents, this.panelZoom)
+    })
+    const minimizeChanged = (): void => {
+      for (const h of this.panelMinimizeHandlers) h()
+    }
+    window.on('minimize', minimizeChanged)
+    window.on('restore', minimizeChanged)
     this.panelWindow = { window, mode }
     return mode
+  }
+
+  /**
+   * The Panel window's read-backs for the Panel window use case (`PanelWindowSurface`, ISSUE-047): each member acts on
+   * the Panel window `panel()` built, building it if there is none. Asking for the surface builds nothing.
+   */
+  panelSurface(): PanelWindowSurface {
+    const window = (): ManagedBrowserWindow => {
+      this.panel()
+      return this.panelWindow!.window
+    }
+    return {
+      applyZoom: (factor) => {
+        this.panelZoom = factor
+        return applyZoomFactor(window().webContents, factor)
+      },
+      bounds: () => window().getBounds(),
+      setAlwaysOnTop: (on) => applyAlwaysOnTop(window(), on),
+      isAlwaysOnTop: () => window().isAlwaysOnTop(),
+      raise: () => raisePanelWindow(window()),
+      isMinimized: () => window().isMinimized(),
+      onMinimizedChanged: (h) => {
+        this.panelMinimizeHandlers.push(h)
+      }
+    }
   }
 
   veta(_displayKey: DisplayKey): VetaWindow {
