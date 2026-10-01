@@ -38,11 +38,16 @@ const VALLEY: Readonly<Record<string, string>> = {
   DWARFAI_SIMULATE_STEP_MS: '600000'
 }
 
-/** Ends the profile's running Host (CH-02) and waits until UI main started the next one, unless `last`. */
+/**
+ * Kills the profile's running Host (CH-02) and waits until UI main started the next one, unless `last`. SIGKILL, so the
+ * Host dies as in a crash on every OS: on Linux and macOS a SIGTERM is an OS session end, which the Host answers with
+ * its clean exit (`osSessionSignals.ts`, `host.closing {clean: true}`), and UI main rightly starts nothing after it. On
+ * Windows both signals terminate the process.
+ */
 async function killHost(profile: IsolatedProfile, last: boolean): Promise<void> {
   const pid = profileHostPid(profile.userDataDir)
   if (pid === null) throw new Error('no Host runs for the profile')
-  process.kill(pid)
+  process.kill(pid, 'SIGKILL')
   await expect.poll(() => isProcessAlive(pid), { timeout: 15_000 }).toBe(false)
   if (last) return
   await expect
