@@ -15,6 +15,7 @@ import {
 } from './index'
 import type { ChannelRoute } from './ipc/channelRoute'
 import type { IpcMainRegistrar } from './ipc/router'
+import type { UiLogEntry } from './diagnostics/uiLogger'
 import { ROUTES } from './ipc/routes'
 import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
 import type { IpcSenderEvent } from './ipc/senderCheck'
@@ -107,12 +108,13 @@ class RecordingIpcMain implements IpcMainRegistrar {
 }
 
 /** Today's runtime as the root reaches it: no window of its own in cut 0, one live legacy launch. */
-function legacyWithoutWindow(endVerdict: 'ended' | 'refused' = 'ended') {
+function legacyWithoutWindow(endVerdict: 'ended' | 'refused' = 'ended', composeFails = false) {
   const events: string[] = []
   const counts = { composed: 0 }
   const legacyRuntime: UiMainDeps['legacyRuntime'] = {
     async compose() {
       counts.composed += 1
+      if (composeFails) throw new Error(String.raw`today’s runtime could not start at C:\Users\j\x`)
       return null
     },
     async serve(channel) {
@@ -205,12 +207,27 @@ async function connectedClient(host: FakeHost): Promise<HostClientService> {
 
 /** UI main started on the cut-0 table with every owner of a cut-0 row composed. */
 async function cut0App(
-  options: { endVerdict?: 'ended' | 'refused'; routes?: readonly ChannelRoute[] } = {}
+  options: {
+    endVerdict?: 'ended' | 'refused'
+    routes?: readonly ChannelRoute[]
+    composeFails?: boolean
+  } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
   const ipc = new RecordingIpcMain()
   const lock = new FakeSingleInstanceLock(true)
-  const legacy = legacyWithoutWindow(options.endVerdict)
+  const legacy = legacyWithoutWindow(options.endVerdict, options.composeFails === true)
+  // The UI log, in the lifecycle's own order: a record made before an exit shows before it.
+  const log: UiLogEntry[] = []
+  const uiLog = {
+    record: (entry: UiLogEntry) => {
+      log.push(entry)
+      lifecycle.calls.push(`log ${entry.event}`)
+    },
+    flush: async () => {
+      lifecycle.calls.push('log flushed')
+    }
+  }
   const host = new FakeHost({ capabilities: [...FAKE_HOST_CAPABILITIES, 'section:dwarfs'] })
   host.board = [
     {
@@ -243,6 +260,7 @@ async function cut0App(
     appEntry: APP_ENTRY,
     routes: options.routes ?? ROUTES,
     panelWindow: panel.factory,
+    uiLog,
     host: { client },
     appWindows: appWindows.list,
     tray: { controller: tray, newConfirmationId: () => CONFIRMATION },
@@ -257,7 +275,20 @@ async function cut0App(
   lifecycle.becomeReady()
   await started
   await settle()
-  return { lifecycle, ipc, lock, legacy, host, client, appWindows, factory, panel, tray, shortcuts }
+  return {
+    lifecycle,
+    ipc,
+    lock,
+    legacy,
+    host,
+    client,
+    appWindows,
+    factory,
+    panel,
+    tray,
+    shortcuts,
+    log
+  }
 }
 
 describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
@@ -382,5 +413,24 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     expect(factory.built).toEqual([])
     expect(tray.createCalls).toEqual([])
     expect(shortcuts.registerCalls).toEqual([])
+  })
+
+  it('[ADR-026] a start that fails records ui.start failed with its step and error class, never its message, before it exits with code 1', async () => {
+    const { log, lifecycle } = await cut0App({ composeFails: true })
+
+    expect(log.filter((entry) => entry.event === 'ui.start')).toEqual([
+      {
+        level: 'error',
+        event: 'ui.start',
+        subsystem: 'ui-main',
+        outcome: 'failed',
+        causeClass: 'legacy-compose',
+        errCode: 'Error'
+      }
+    ])
+    // Written out before the process ends, so the failure leaves a trace.
+    const calls = lifecycle.calls
+    expect(calls.indexOf('log ui.start')).toBeLessThan(calls.indexOf('log flushed'))
+    expect(calls.indexOf('log flushed')).toBeLessThan(calls.indexOf('exit 1'))
   })
 })

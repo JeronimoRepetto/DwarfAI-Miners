@@ -63,7 +63,12 @@ import type { UiPreferenceStore } from './window/ports/uiPreferenceStore'
 import { NodeLogFiles } from './diagnostics/adapters/NodeLogFiles'
 import type { UiClock } from './diagnostics/ports/clock'
 import { createRendererDiagnostics } from './diagnostics/rendererDiagnostics'
-import { createUiLogger, logLevelFromEnv, type UiLog } from './diagnostics/uiLogger'
+import {
+  createUiLogger,
+  logLevelFromEnv,
+  type UiLog,
+  type UiLogEntry
+} from './diagnostics/uiLogger'
 import { composeRouteTargets, type RouteTargetPart } from './ipc/composeRouteTargets'
 import {
   createRendererDiagnosticHandler,
@@ -260,6 +265,32 @@ export function windowFamilyOwner(routes: readonly ChannelRoute[]): 'legacy' | '
   throw new Error(`the route table splits the window family: ${[...owners].join(', ')}`)
 }
 
+/** The steps of the start once Electron is ready, as `ui.start` names the one that failed. */
+export type UiStartStep = 'ready' | 'panel-load' | 'shortcut' | 'tray' | 'legacy-compose'
+
+/** What `errCode` may hold (19 §9.6; the UI writer's own shape): a code or a class name, never a sentence. */
+const ERROR_CODE = /^[A-Za-z0-9_.:-]{1,64}$/
+
+/**
+ * The record of a start that failed (new 19 §9.1 event `ui.start`, outcome `failed`): the step and the error's code or
+ * class name. Nothing the error says goes in: its message can hold a path or a person's words (ADR-026 item 4).
+ */
+export function uiStartFailed(step: UiStartStep, error: unknown): UiLogEntry {
+  const code = (error as { code?: unknown } | null)?.code
+  const name = error instanceof Error ? error.name : undefined
+  const errCode = [code, name].find(
+    (value): value is string => typeof value === 'string' && ERROR_CODE.test(value)
+  )
+  return {
+    level: 'error',
+    event: 'ui.start',
+    subsystem: 'ui-main',
+    outcome: 'failed',
+    causeClass: step,
+    errCode: errCode ?? 'unknown'
+  }
+}
+
 /** A window Electron created, as the mode-window registry needs it. */
 export interface CreatedWindow {
   readonly webContentsId: number
@@ -307,8 +338,11 @@ export interface UiMainDeps {
    * serves them `legacy` (a rollback build) leaves today's runtime writing today's files.
    */
   uiPreferences?: { store: UiPreferenceStore; windows(): readonly WindowContents[] }
-  /** The UI logger (ADR-026; 05 §3.14): A-N30 renderer diagnostics join the `ui-local` target with it. */
-  uiLog?: UiLog
+  /**
+   * The UI logger (ADR-026; 05 §3.14): A-N30 renderer diagnostics join the `ui-local` target with it, and a failed start
+   * is recorded in it (`ui.start`) and written out before the process exits.
+   */
+  uiLog?: UiLog & { flush?(): Promise<void> }
   /**
    * The rebuilt Panel window (ISSUE-047), composed over the mode-window registry. Its rows join the `ui-local` target;
    * from the cut-0 switch (ISSUE-056) the root loads it at start and today's runtime composes no window of its own. In
@@ -458,14 +492,19 @@ export async function startUiMain({
   // The app lives in the tray with every window hidden: closing the last window never quits it
   // (only Stop everything and quit does; before cut 0, today's tray Quit), as today.
   lifecycle.onWindowAllClosed(() => {})
+  /** The step of the start running now, recorded when the start fails (`ui.start`). */
+  let step: UiStartStep = 'ready'
   try {
     await lifecycle.whenReady()
     if (rebuilt && panel !== undefined) {
       // A second launch shows the rebuilt Panel from now on; it is built hidden with its page loading, as today's
       // start built today's (`LegacyRuntimeRoute` serves the legacy rows once today's runtime is composed).
       secondLaunch.attach(panel)
+      step = 'panel-load'
       panel.load()
+      step = 'shortcut'
       toggle?.start()
+      step = 'tray'
       if (stop !== undefined && tray !== undefined && host !== undefined) {
         trayProcess = startTrayProcess({
           tray: tray.controller,
@@ -486,15 +525,21 @@ export async function startUiMain({
           offerFromWindow: () => panel.show()
         })
       }
+      step = 'legacy-compose'
       await legacyRuntime.compose()
     } else {
+      step = 'legacy-compose'
       const legacyPanel = await legacyRuntime.compose()
       if (legacyPanel === null) throw new Error('today’s runtime composed no Panel window')
       // Today's Panel window answers a second launch (before cut 0, or a rollback build).
       secondLaunch.attach(legacyPanel)
     }
-  } catch {
-    // Today's composition reports its own failure before it rethrows (LegacyRuntimeRoute).
+  } catch (error) {
+    // The start cannot go on. The UI log says which step failed and the error's class or code, never its message
+    // (ADR-026 items 3-4), and is written out before the process ends; today's composition also reports its own
+    // failure before it rethrows (LegacyRuntimeRoute).
+    uiLog?.record(uiStartFailed(step, error))
+    await uiLog?.flush?.().catch(() => {})
     lifecycle.exit(1)
   }
   return { reopen }
