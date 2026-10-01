@@ -12,9 +12,10 @@ import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog
 import { SequenceIdGenerator } from '../kernel/fakes/SequenceIdGenerator'
 import { UI_TOKEN_FILE, UiToken } from './auth/uiToken'
 import { acceptConnection } from './connection'
+import { ConnectionRegistry } from './connectionRegistry'
 import { Dispatcher } from './dispatcher'
 import { createHelloProbe, PROBE_HELLO_TIMEOUT_MS } from './helloProbe'
-import { HostStateHolder } from './hostState'
+import { HostStateHolder } from './lifecycle/hostState'
 import { inProcessDuplex } from './testing/inProcessDuplex'
 
 const cleanups: Array<() => void> = []
@@ -36,7 +37,8 @@ async function runningHost(dir: string, scheduler: FakeScheduler, clock: FakeClo
   const token = new UiToken()
   await token.issue(dir)
   const log = new RecordingDiagnosticsLog()
-  const state = new HostStateHolder()
+  const connections = new ConnectionRegistry()
+  const state = new HostStateHolder(connections)
   const pair = inProcessDuplex()
   acceptConnection(pair.host, {
     token,
@@ -48,7 +50,8 @@ async function runningHost(dir: string, scheduler: FakeScheduler, clock: FakeClo
     scheduler,
     clock,
     log,
-    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state })
+    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state }),
+    connections
   })
   return { connection: pair.client, log }
 }

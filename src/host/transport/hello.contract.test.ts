@@ -26,7 +26,8 @@ import { UI_TOKEN_FILE, UiToken } from './auth/uiToken'
 import { collectCapabilities } from './capabilities'
 import { acceptConnection, HELLO_TIMEOUT_MS } from './connection'
 import { Dispatcher } from './dispatcher'
-import { HostStateHolder } from './hostState'
+import { ConnectionRegistry } from './connectionRegistry'
+import { HostStateHolder } from './lifecycle/hostState'
 import { METHOD_ROLES } from './roles'
 import { FrameClient } from './testing/frameClient'
 import { inProcessDuplex } from './testing/inProcessDuplex'
@@ -54,7 +55,8 @@ async function boot(dir = runDir()) {
   const clock = new FakeClock(1_000)
   const scheduler = new FakeScheduler(clock)
   const log = new RecordingDiagnosticsLog()
-  const state = new HostStateHolder()
+  const connections = new ConnectionRegistry()
+  const state = new HostStateHolder(connections)
   state.report({ state: 'ready', jobStatus: 'none' })
   const dispatcher = new Dispatcher({ log, clock, state: () => state.current().state })
   // Faked modules: one protocol method, one ui method with strict params, one ui-only mutation.
@@ -88,7 +90,8 @@ async function boot(dir = runDir()) {
       scheduler,
       clock,
       log,
-      dispatcher
+      dispatcher,
+      connections
     })
     return new FrameClient(pair.client)
   }

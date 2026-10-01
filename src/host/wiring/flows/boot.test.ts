@@ -117,10 +117,13 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     ])
     expect(h.realSteps(new FakeAppPaths()).map((step) => step.name)).toEqual(BOOT_STEP_NAMES)
     expect(loggedSteps(h.log)).toEqual(BOOT_STEP_NAMES)
-    // The endpoint step is built (ISSUE-022); every later step is still a placeholder that says
-    // it was skipped and which issue owns it.
+    // The endpoint step is built (ISSUE-022) and so is the last one, which hello answers through
+    // the lifecycle state holder (ISSUE-028); every other step is still a placeholder that says it
+    // was skipped and which issue owns it.
     expect(h.log.byEvent('host.boot.step').map((entry) => entry.outcome)).toEqual(
-      BOOT_STEP_NAMES.map((name) => (name === 'bind-endpoint' ? 'ok' : 'skipped'))
+      BOOT_STEP_NAMES.map((name) =>
+        name === 'bind-endpoint' || name === 'answer-ready' ? 'ok' : 'skipped'
+      )
     )
     expect(h.states).toEqual([
       { state: 'starting', jobStatus: 'none' },

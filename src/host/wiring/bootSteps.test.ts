@@ -10,8 +10,9 @@ import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog
 import { SequenceIdGenerator } from '../kernel/fakes/SequenceIdGenerator'
 import { NodeScheduler } from '../platform/clock/NodeScheduler'
 import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
+import { ConnectionRegistry } from '../transport/connectionRegistry'
 import { Dispatcher } from '../transport/dispatcher'
-import { HostStateHolder } from '../transport/hostState'
+import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostState'
 import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
 
@@ -77,7 +78,8 @@ function readToken(hostDataDir: string): string {
 /** The auth layer's inputs for one Host boot (ISSUE-023). */
 function channelDeps(log = new RecordingDiagnosticsLog()) {
   const clock = new FakeClock(1_000)
-  const state = new HostStateHolder()
+  const connections = new ConnectionRegistry()
+  const state = new HostStateHolder(connections)
   return {
     clock,
     ids: new SequenceIdGenerator(),
@@ -85,7 +87,9 @@ function channelDeps(log = new RecordingDiagnosticsLog()) {
     pid: 4242,
     epoch: 'epoch-0001',
     state: () => state.current(),
-    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state })
+    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state }),
+    connections,
+    frames: LIFECYCLE_FRAMES
   }
 }
 
@@ -199,5 +203,37 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     expect(client.frames).toEqual([
       expect.objectContaining({ type: 'hello.ok', epoch: 'epoch-0001', endpointGeneration: 1 })
     ])
+  })
+
+  it('[ADR-027, ADR-002] hello.ok of the bound endpoint advertises the lifecycle frames frame:host.state and frame:host.closing', async () => {
+    const input = factsForThisOs(caseRoot())
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps()
+    })
+    cleanups.push(() => endpoint.close())
+    expect(await endpoint.bind()).toBe('bound')
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+
+    const socket = connect(named.value.path)
+    cleanups.push(() => void socket.destroy())
+    const client = new FrameClient(socket)
+    client.send({
+      type: 'hello',
+      endpointGeneration: 1,
+      protocolVersion: PROTOCOL_VERSION,
+      role: 'notifier',
+      token: readToken(input.hostDataDir),
+      client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
+    })
+    await client.until(() => client.frames.length > 0)
+
+    const helloOk = client.frames[0] as { capabilities?: string[] }
+    expect(helloOk.capabilities).toEqual(
+      expect.arrayContaining(['frame:host.closing', 'frame:host.state'])
+    )
   })
 })

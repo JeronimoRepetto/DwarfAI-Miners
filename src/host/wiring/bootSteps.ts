@@ -6,7 +6,7 @@
 // `ports` are the platform adapters and kernel ports the composition root built; the steps that
 // replace the placeholders use them.
 import { join } from 'node:path'
-import { endpointFor, type EndpointError } from '@dwarfai/contracts'
+import { endpointFor, type EndpointError, type HostFrameName } from '@dwarfai/contracts'
 import type { AppPaths } from '../kernel/ports/appPaths'
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
@@ -18,6 +18,7 @@ import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
 import { UI_TOKEN_FILE, UiToken } from '../transport/auth/uiToken'
 import { collectCapabilities } from '../transport/capabilities'
 import { acceptConnection } from '../transport/connection'
+import type { ConnectionRegistry } from '../transport/connectionRegistry'
 import type { Dispatcher } from '../transport/dispatcher'
 import { bindEndpoint, EndpointBindError, type BoundEndpoint } from '../transport/endpoint/server'
 import type { HostIdentity } from '../transport/hello'
@@ -73,8 +74,11 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     placeholder('start-endpoints', 'ISSUE-209'),
     // 7. observation.catchUp(), then start().
     placeholder('start-observation', 'ISSUE-095'),
-    // 8. hello answers `ready` (the state holder of transport).
-    placeholder('answer-ready', 'ISSUE-028')
+    // 8. hello answers `ready`: the boot reports `ready` into the lifecycle state holder
+    //    (transport/lifecycle/hostState.ts) once this last step is done (S12.06), which answers
+    //    every later `hello.ok` with it and sends `host.state` to the `ui` connections. Nothing is
+    //    left to run here.
+    { name: 'answer-ready', run: () => Promise.resolve({ kind: 'done' }) }
   ]
 }
 
@@ -95,6 +99,10 @@ export interface UiEndpointDeps {
   state: () => HostStateReport
   /** The seam-B method registry every authenticated request goes through. */
   dispatcher: Dispatcher
+  /** Where each authenticated connection is attached, so the Host frames of its role reach it. */
+  connections: ConnectionRegistry
+  /** The frames this Host publishes, advertised in `hello.ok.capabilities` (14 §1.3). */
+  frames: readonly HostFrameName[]
 }
 
 /**
@@ -117,7 +125,7 @@ const ENDPOINT_ERROR_CODES: Readonly<Record<EndpointError['kind'], string>> = {
  * The production UI endpoint: the platform's facts, the one ADR-002 D2 rule shared with the UI,
  * and the transport's server with the ADR-002 D3 decision. Once bound it stays bound, and its
  * listener is what keeps the Host's event loop alive after `ready` (ADR-002 D1, D7: the Host
- * never exits on its own). It is closed by the clean-exit path (later: ISSUE-028).
+ * never exits on its own). It is closed only by the clean exit (transport/lifecycle/cleanExit.ts).
  *
  * Every accepted connection goes to the auth layer (ADR-003 items 3–6, 12). This boot's uiToken
  * is written to `<hostDataDir>/run/ui.token` only once the bind succeeded, so a Host that finds
@@ -158,11 +166,13 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             identity: deps.identity,
             epoch: deps.epoch,
             state: deps.state,
-            capabilities: () => collectCapabilities({ methods: deps.dispatcher.methods() }),
+            capabilities: () =>
+              collectCapabilities({ methods: deps.dispatcher.methods(), frames: deps.frames }),
             scheduler: deps.scheduler,
             clock: deps.clock,
             log: deps.log,
-            dispatcher: deps.dispatcher
+            dispatcher: deps.dispatcher,
+            connections: deps.connections
           })
       })
       if (outcome.kind === 'already-running') return 'already-running'

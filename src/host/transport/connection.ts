@@ -7,7 +7,10 @@
 //   then the close. A 5 s timer on the injected Scheduler sends HELLO_TIMEOUT. Frames over 1 MiB.
 // - authenticated: frames up to 8 MiB; each `req` is answered by the dispatcher. A second `hello`
 //   gets PROTOCOL_ERROR and the close (item 5); any other frame that is not a valid `req`
-//   envelope is the same protocol error, since it cannot be answered by correlation id.
+//   envelope is the same protocol error, since it cannot be answered by correlation id. Once
+//   `hello.ok` is written the connection is attached to the ConnectionRegistry, which sends it
+//   the Host frames of its role as `evt` frames numbered by this connection's `seq`, and which
+//   the clean exit uses to end it after `host.closing` (ADR-003 item 12).
 // - In either state a frame over the cap closes the connection without a frame (14 §1.5), and a
 //   body that is not UTF-8 JSON is a PROTOCOL_ERROR, never a crash (16 §2.1).
 // - closed: every later byte is ignored and nothing more is written.
@@ -24,6 +27,7 @@ import {
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
 import type { Scheduler } from '../kernel/ports/scheduler'
+import type { AttachedConnection, ConnectionRegistry } from './connectionRegistry'
 import type { Dispatcher } from './dispatcher'
 import { answerHello, type HelloDeps } from './hello'
 import type { ChannelRole } from './roles'
@@ -36,11 +40,13 @@ export interface ConnectionDeps extends HelloDeps {
   clock: Clock
   log: DiagnosticsLog
   dispatcher: Dispatcher
+  /** Where the connection is attached once authenticated, so Host frames reach it. */
+  connections: ConnectionRegistry
 }
 
 type ConnectionState =
   | { kind: 'awaiting-hello' }
-  | { kind: 'authenticated'; role: ChannelRole; clientId: string }
+  | { kind: 'authenticated'; role: ChannelRole; clientId: string; attached: AttachedConnection }
   | { kind: 'closed' }
 
 const SUBSYSTEM = 'transport'
@@ -48,6 +54,8 @@ const SUBSYSTEM = 'transport'
 /** Takes a freshly accepted connection; from here on the connection belongs to the transport. */
 export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
   let state: ConnectionState = { kind: 'awaiting-hello' }
+  /** The `seq` of the last `evt` frame written: per connection, from 1 after hello.ok (14 §3.2). */
+  let seq = 0
   const decoder = new FrameDecoder()
   const record = (entry: Omit<DiagnosticEntry, 'subsystem'>): void =>
     deps.log.record({ ...entry, subsystem: SUBSYSTEM })
@@ -71,6 +79,7 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
         ...(error === undefined ? {} : { outcome: 'failed' as const, causeClass: error })
       })
     }
+    if (state.kind === 'authenticated') deps.connections.detach(state.attached)
     state = { kind: 'closed' }
     helloTimer.cancel()
     if (error === undefined || stream.destroyed) {
@@ -79,6 +88,25 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
     }
     const frame: ErrorFrame = { type: 'error', code: error }
     stream.end(encodeFrame(frame), () => stream.destroy())
+  }
+
+  /**
+   * Ends the connection without an error frame, once every frame written so far has been handed
+   * to the peer (the clean exit's: `host.closing` is written first, ADR-003 item 12).
+   */
+  const end = (): Promise<void> => {
+    if (state.kind === 'closed') return Promise.resolve()
+    if (state.kind === 'authenticated') {
+      record({ level: 'info', event: 'channel.detach', ...who() })
+      deps.connections.detach(state.attached)
+    }
+    state = { kind: 'closed' }
+    helloTimer.cancel()
+    if (stream.destroyed) return Promise.resolve()
+    return new Promise((resolve) => {
+      stream.once('close', () => resolve())
+      stream.end(() => stream.destroy())
+    })
   }
 
   const refuseHello = (code: ProtocolErrorCode): void => {
@@ -98,9 +126,24 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
         return
       }
       helloTimer.cancel()
-      state = { kind: 'authenticated', role: answer.role, clientId: answer.helloOk.clientId }
+      const attached: AttachedConnection = {
+        role: answer.role,
+        clientId: answer.helloOk.clientId,
+        send: (name, data) => {
+          seq += 1
+          write({ type: 'evt', seq, epoch: deps.epoch, name, data })
+        },
+        end: () => end()
+      }
+      state = {
+        kind: 'authenticated',
+        role: answer.role,
+        clientId: answer.helloOk.clientId,
+        attached
+      }
       decoder.helloOk()
       write(answer.helloOk)
+      deps.connections.attach(attached)
       record({ level: 'info', event: 'channel.attach', ...who() })
       return
     }
