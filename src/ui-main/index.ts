@@ -18,6 +18,12 @@ import {
   createLegacyRuntimeRoute,
   type LegacyRuntimeRoute
 } from '../legacy-bridge/LegacyRuntimeRoute'
+import {
+  createLegacyEndFirstAdapter,
+  type EndFirstTimers,
+  type LegacyLaunchedSessions
+} from '../legacy-bridge/LegacyEndFirstAdapter'
+import type { StopAllRelay } from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
 import { ROUTES } from './ipc/routes'
 import { ElectronSingleInstanceLock } from './window/adapters/ElectronSingleInstanceLock'
@@ -120,6 +126,28 @@ export function composeUiLocal({
     })
   }
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
+}
+
+/** Real timers for the legacy end bound. */
+const realTimers: EndFirstTimers = {
+  after: (ms, run) => {
+    const timer = setTimeout(run, ms)
+    return () => clearTimeout(timer)
+  }
+}
+
+/**
+ * The A-N26 relay of Stop everything and quit through cut 4 (21 §3; ADR-002 D7): `LegacyEndFirstAdapter` ends every
+ * session today's runtime launched, reached through `LegacyRuntimeRoute`, before `host.shutdown {mode:'stop-all'}` is
+ * relayed, and relays nothing when one cannot be ended. The cut-0 switch (ISSUE-056) composes it as the `relay` of the
+ * Stop everything use case, so it is the only path of A-N26 to the Host; it goes with the adapter at the end of cut 4.
+ */
+export function composeStopAllRelay(
+  legacy: LegacyLaunchedSessions,
+  timers: EndFirstTimers = realTimers
+): StopAllRelay {
+  const adapter = createLegacyEndFirstAdapter({ legacy, timers })
+  return (requestId, shutdown) => adapter.beforeStopAll(requestId, shutdown)
 }
 
 /** A window Electron created, as the mode-window registry needs it. */

@@ -1,7 +1,18 @@
 // layer: L6
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, STEP_ORDER, UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
+import {
+  CHANNELS,
+  STEP_ORDER,
+  UNROUTED,
+  type ChannelKey,
+  type HostResult,
+  type SnapshotPage,
+  type StepId
+} from '@dwarfai/contracts'
+import { composeStopAllRelay } from '../index'
+import { createStopEverything } from '../window/application/stopEverything'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
+import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
 import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './routes'
 
 /**
@@ -276,5 +287,60 @@ describe('pre-cut table', () => {
     expect(
       reasons({ ...routedBase, adapters: [{ name: 'Late', cuts: ['v1'], shapeAdapter: false }] })
     ).toEqual(['adapter-after-cut-5 Late'])
+  })
+
+  it('[ADR-001] LegacyEndFirstAdapter is listed for cuts 0 to 4 and composed on A-N26', async () => {
+    // TC-054-03 (21 §3, 14 §5): listed from cut 0 to the end of cut 4 (4b), absent from cut 5 on.
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')).toEqual({
+      name: 'LegacyEndFirstAdapter',
+      cuts: ['cut-0', 'cut-1', 'cut-2', 'cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'],
+      shapeAdapter: false
+    })
+    // A-N26 is a `host` row the cut-0 switch routes (ISSUE-056); its one handler relays through the root's relay.
+    expect(CHANNELS[STOP_EVERYTHING_CONFIRM].placement).toBe('host')
+    expect(UNROUTED[STOP_EVERYTHING_CONFIRM]).toBe('cut-0')
+
+    // The root's A-N26 relay, over a legacy runtime holding one live launch and a Host recording what it is sent.
+    const events: string[] = []
+    const relay = composeStopAllRelay({
+      liveLaunches: async () => [{ launchId: 'launch:1', dwarfId: 'codex:s-a' }],
+      endLaunch: async (launchId) => {
+        events.push(`legacy end ${launchId}`)
+        return 'ended'
+      }
+    })
+    const connection = {
+      snapshot: async (): Promise<SnapshotPage> => ({
+        snapshotId: 'snap-1',
+        seq: 1,
+        epoch: 'epoch-1' as SnapshotPage['epoch'],
+        chunks: []
+      }),
+      call: async (method: string, params: unknown): Promise<HostResult['host.shutdown']> => {
+        events.push(`${method} ${JSON.stringify(params)}`)
+        return { mode: 'stop-all', outcome: { ended: [], failed: [] } }
+      }
+    }
+    const stop = createStopEverything({
+      host: {
+        withUiConnection: (use) => use(connection as unknown as Parameters<typeof use>[0])
+      },
+      windows: { anyOpen: () => true, open: () => {}, push: () => {} },
+      newConfirmationId: () => 'c-1',
+      relay
+    })
+    await stop.request()
+    const rows = createStopEverythingRows(stop)
+
+    const answer = await rows.serve(STOP_EVERYTHING_CONFIRM, {
+      confirmationId: 'c-1',
+      requestId: 'r-1'
+    })
+
+    expect(events).toEqual([
+      'legacy end launch:1',
+      'host.shutdown {"mode":"stop-all","requestId":"r-1"}'
+    ])
+    expect(answer).toEqual({ ok: true, value: { ended: ['codex:s-a'], failed: [] } })
   })
 })
