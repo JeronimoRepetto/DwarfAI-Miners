@@ -57,7 +57,7 @@ test.describe('cut 0: the dropped-file path under the sandbox (ISSUE-045)', () =
   test.afterEach(async () => {
     await launched?.teardown({ stopEverything: true })
     launched = undefined
-    if (dir !== '') rmSync(dir, { recursive: true, force: true })
+    if (dir !== '') rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
     dir = ''
   })
 

@@ -333,13 +333,34 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
   }
   const mainFile = resolveEntry(options.entry, appDir, { main })
   const profile = createProfile()
+  /**
+   * Removes the profile, and first ends every process still naming its folders: on Windows the browser process can
+   * outlive the process Playwright spawned and write its profile files after that one exited, and a Host that was
+   * starting when the app quit writes its run files late. Checked again a moment later, so nothing comes back.
+   */
   const removeProfile = async (): Promise<void> => {
     const deadline = Date.now() + KILL_TIMEOUT_MS
     for (;;) {
       try {
+        for (const pid of [
+          ...processesNaming(profile.root),
+          ...processesNaming(profile.dataRoot)
+        ]) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            // Gone meanwhile.
+          }
+        }
         rmSync(profile.root, { recursive: true, force: true })
         rmSync(profile.dataRoot, { recursive: true, force: true })
-        return
+        await new Promise((resolve) => setTimeout(resolve, 1_000))
+        const left =
+          existsSync(profile.root) ||
+          existsSync(profile.dataRoot) ||
+          processesNaming(profile.root).length > 0
+        if (!left) return
+        if (Date.now() >= deadline) throw new Error(`the profile ${profile.root} keeps coming back`)
       } catch (error) {
         // Windows frees a killed tree's open files a moment after the app exits (EPERM, EBUSY).
         if (Date.now() >= deadline) throw error
@@ -648,4 +669,37 @@ export async function anyWindowVisible(app: ElectronApplication): Promise<boolea
   return app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isVisible())
   )
+}
+
+/**
+ * The pids of the processes whose command line or executable names `folder` (this runner and the query excluded): a
+ * profile's own app processes and its Host, which runs from the versioned copy under the profile's data root. A test
+ * profile's folder names only processes of its case, never a person's.
+ */
+export function processesNaming(folder: string): number[] {
+  const needle = folder.toLowerCase()
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot ?? String.raw`C:\Windows`
+    const quoted = needle.replaceAll("'", "''")
+    const script =
+      'Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ' +
+      `((($_.CommandLine) -and $_.CommandLine.ToLower().Contains('${quoted}')) -or ` +
+      `(($_.ExecutablePath) -and $_.ExecutablePath.ToLower().Contains('${quoted}'))) } | ` +
+      'ForEach-Object { $_.ProcessId }'
+    const out = execFileSync(
+      path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', windowsHide: true, timeout: 30_000 }
+    )
+    return out
+      .split(/\r?\n/)
+      .map((line) => Number(line.trim()))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+  }
+  const out = execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 30_000 })
+  return out
+    .split('\n')
+    .filter((line) => line.toLowerCase().includes(needle))
+    .map((line) => Number(line.trim().split(/\s+/)[0]))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
 }
