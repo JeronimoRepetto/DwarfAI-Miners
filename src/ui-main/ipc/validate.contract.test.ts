@@ -110,7 +110,8 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'launch-view:get': undefined,
   'launch-view:set': { area: 'mines', mineId: null },
   'dwarf:setName': { dwarfId: LEGACY_DWARF, name: 'Gimli' },
-  'dwarf:resetName': LEGACY_DWARF
+  'dwarf:resetName': LEGACY_DWARF,
+  'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */
@@ -272,6 +273,8 @@ const helpers: readonly string[] = PRELOAD_HELPERS
 const ROWS = (Object.keys(CHANNELS) as ChannelKey[]).filter(
   (key) => CHANNELS[key].kind !== 'push' && !helpers.includes(key)
 )
+/** The rows today's table routes; a NEW row listed in `unrouted.ts` has no route there and reaches no handler. */
+const TODAY_ROUTED = ROWS.filter((key) => ROUTES.some((route) => route.channel === key))
 const TODAY_WIRE: Partial<Record<ChannelKey, string>> = {
   'presence:visibleMines': 'panel:openMine'
 }
@@ -447,7 +450,7 @@ describe('registry fuzz', () => {
   })
 
   it('[ADR-019] an invalid one-way payload is dropped and counted, and no handler runs', async () => {
-    const sends = ROWS.filter((key) => CHANNELS[key].kind === 'send')
+    const sends = TODAY_ROUTED.filter((key) => CHANNELS[key].kind === 'send')
     expect(sends.length).toBeGreaterThan(0)
     const { router, ipc, served, wire } = todayRouter()
     for (const key of sends) {
@@ -464,7 +467,7 @@ describe('registry fuzz', () => {
 
   it('[ADR-019] a valid payload reaches the routed handler unchanged', async () => {
     const today = todayRouter()
-    for (const key of ROWS) {
+    for (const key of TODAY_ROUTED) {
       today.served.length = 0
       const payload = validToday(key)
       const answer = await call(today.ipc, today.wire(key), FROM_PANEL, payload)

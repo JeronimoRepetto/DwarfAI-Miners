@@ -65,6 +65,22 @@ const TODAY_ROWS: TodayRow[] = JSON.parse(
 const I21 = '§8 I-21'
 const STATUS = { KEEP: 'kept', CHANGE: 'changed', RETIRE: 'retired' } as const
 
+/**
+ * The NEW rows of 14 §2.2 declared so far, as 14 writes them; each is declared by the issue that builds its handler
+ * (22 §5) and added here in the same change.
+ */
+const NEW_ROWS = [
+  {
+    id: 'A-N30',
+    wire: 'diag:renderer:report',
+    member: 'reportRendererDiagnostic',
+    kind: 'send',
+    placement: 'ui-local',
+    sensitive: false
+  }
+] as const
+const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
+
 const registry: Record<string, ChannelSpec<z.ZodTypeAny, z.ZodTypeAny>> = CHANNELS
 const keyOf = (row: TodayRow): string => row.wire ?? row.member ?? row.id
 
@@ -224,7 +240,8 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'launch-view:set': { area: 'mines', mineId: null },
   pathForDroppedFile: new File(['x'], 'dropped.txt'),
   'dwarf:setName': { dwarfId: LEGACY_DWARF, name: 'Gimli' },
-  'dwarf:resetName': LEGACY_DWARF
+  'dwarf:resetName': LEGACY_DWARF,
+  'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -364,9 +381,22 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
       expect(entry.sensitive === true, `${row.id} sensitive`).toBe(row.sensitive)
       if (row.todayWire) expect(ROW_IDS[row.todayWire], `${row.todayWire}`).toBe(row.id)
     }
-    // Besides the 64 rows, the registry holds only the two legacy rows of 14 §8 I-21 (AMENDMENT-12).
-    const others = Object.keys(registry).filter((k) => !TODAY_ROWS.some((row) => keyOf(row) === k))
+    // Besides the 64 rows, the registry holds only the two legacy rows of 14 §8 I-21 (AMENDMENT-12) and the NEW
+    // rows of 14 §2.2 declared so far.
+    const others = Object.keys(registry).filter(
+      (k) => !TODAY_ROWS.some((row) => keyOf(row) === k) && !NEW_WIRES.includes(k)
+    )
     expect(others.sort()).toEqual(['dwarf:resetName', 'dwarf:setName'])
+    for (const row of NEW_ROWS) {
+      expect(ROW_IDS[row.wire], `${row.id} row id`).toBe(row.id)
+      expect(registry[row.wire], row.id).toMatchObject({
+        name: row.wire,
+        kind: row.kind,
+        status: 'new',
+        placement: row.placement
+      })
+      expect(registry[row.wire]?.sensitive === true, `${row.id} sensitive`).toBe(row.sensitive)
+    }
     for (const key of others) {
       expect(ROW_IDS[key]).toBe(I21)
       expect(registry[key]).toMatchObject({
@@ -395,7 +425,10 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     for (const row of table) {
       const key = row.wire ?? row.member ?? ''
       if (row.status === 'NEW' || row.status === 'UNLISTED') {
-        expect(key in registry, `${key} is ${row.status}, not declared here`).toBe(false)
+        // A NEW row is declared only by the issue that builds its handler (NEW_ROWS); an UNLISTED one never is.
+        const declared = row.status === 'NEW' && NEW_WIRES.includes(key)
+        expect(key in registry, `${key} is ${row.status}, declared: ${declared}`).toBe(declared)
+        if (declared) expect(ROW_IDS[key], `${key} row id`).toBe(row.id)
         continue
       }
       expect(ROW_IDS[key], `${key} row id`).toBe(row.id)
@@ -404,12 +437,15 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
       const entry = registry[entries[0] ?? '']
       expect(entry?.status, `${key} status`).toBe(STATUS[row.status as keyof typeof STATUS])
     }
-    // No entry lacks a 14 row: each is a 14 §2.1 row or a §8 I-21 legacy row, and each was found.
+    // No entry lacks a 14 row: each is a 14 §2.1 row or a §8 I-21 legacy row, and each was found, or a NEW row of
+    // the re-inventory's NEW list.
     const foundIds = new Set(found.map((row) => row.id))
+    const newIds = new Set(table.filter((row) => row.status === 'NEW').map((row) => row.id))
     for (const key of Object.keys(registry)) {
       const id = ROW_IDS[key]
       expect(id, `${key} has a 14 row`).toBeDefined()
-      expect(foundIds.has(id ?? null), `${key} (${id}) is in the re-inventory`).toBe(true)
+      const listed = NEW_WIRES.includes(key) ? newIds : foundIds
+      expect(listed.has(id ?? null), `${key} (${id}) is in the re-inventory`).toBe(true)
     }
   })
 
@@ -450,7 +486,7 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
   })
 
   it('[ADR-019] every object schema of every entry is strict', () => {
-    expect(Object.keys(registry)).toHaveLength(66)
+    expect(Object.keys(registry)).toHaveLength(66 + NEW_ROWS.length)
     const offenders = [
       ...Object.entries(registry).flatMap(([key, entry]) => [
         ...nonStrictObjects(entry.request, `${key}.request`),

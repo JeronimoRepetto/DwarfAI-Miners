@@ -54,3 +54,21 @@ export const openCodeSettingsViewSchema = z
     secretBackend: secretBackendSchema
   })
   .strict()
+
+// A-N30 `reportRendererDiagnostic` (14 §3.8; AMENDMENT-2, AR-13-03): allowlisted, no free text (14 §1.10).
+export interface RendererDiagnostic {
+  event: 'renderer.error' | 'renderer.unhandled-rejection' | 'renderer.store-error' // allowlist; any other value is dropped by main
+  errCode?: string // /^[A-Za-z0-9_.-]{1,64}$/: an error class or code name (e.g. 'TypeError'), never a message
+  count?: number // integer 1..10 000: repeats the renderer folded since its last report
+}
+
+/** 14 §3.8 `RendererDiagnostic.errCode`: an error class or code name, never a message. */
+export const RENDERER_ERR_CODE = /^[A-Za-z0-9_.-]{1,64}$/
+
+export const rendererDiagnosticSchema = z
+  .object({
+    event: z.enum(['renderer.error', 'renderer.unhandled-rejection', 'renderer.store-error']),
+    errCode: z.string().regex(RENDERER_ERR_CODE).optional(),
+    count: z.number().int().min(1).max(10_000).optional()
+  })
+  .strict()
