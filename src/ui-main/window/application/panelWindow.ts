@@ -26,6 +26,8 @@ export const PANEL_VISIBILITY_PUSH = 'panel:visible:changed'
  * What the use case reads back from the Panel window the factory built, beyond the frozen `ModeWindow` members
  * (16 §4.14): each answer is what the OS or the page actually did, never what was asked (ADR-024 item 9; 13 FM-051,
  * FM-052). Bound by `ElectronWindows.panelSurface()`; every member acts on the Panel window `windows.panel()` built.
+ * Owner-approved additive amendment to 16 §4.14 (2026-10-01, ISSUE-047): these read-backs join the window module's
+ * ports; no channel, shape or existing member changes.
  */
 export interface PanelWindowSurface {
   /** Zooms the page to `factor` and answers the zoom it has (#153). */
@@ -57,7 +59,8 @@ export interface PanelWindowDeps {
 /**
  * The Panel window rows' use cases (14 §2.1 A-01…A-05, A-08, A-09, A-P1): the frozen `PanelWindowController` and the
  * three reads its rows answer that the port does not declare (A-02 raise, A-03 the pin, A-05 visibility), plus where a
- * new Panel window opens (`ElectronWindowsDeps.panelStart`).
+ * new Panel window opens (`ElectronWindowsDeps.panelStart`). Owner-approved additive amendment to 16 §4.14
+ * (2026-10-01, ISSUE-047): `PanelWindowController` gains `raise`, `alwaysOnTop` and `visible`.
  */
 export interface PanelWindowUseCases extends PanelWindowController {
   /** A-02: a click on the Panel raises and focuses it; a hidden Panel stays hidden (US-SHELL-002.AC05). */

@@ -20,7 +20,13 @@ import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceL
 import { JsonUiPreferenceStore, type UiPreferenceFs } from './window/adapters/JsonUiPreferenceStore'
 import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { defaultsOf } from './window/domain/uiPreferenceValues'
-import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
+import {
+  createInMemoryUiPreferenceStorage,
+  InMemoryUiPreferenceStore
+} from './window/ports/fakes/InMemoryUiPreferenceStore'
+import { createPanelWindow } from './window/application/panelWindow'
+import { FakeScreenAreaProvider } from './window/ports/fakes/FakeScreenAreaProvider'
+import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
 
 /**
  * The Electron composition root (05 §2.3, 16 §8.4): the single-instance lock is the first thing it
@@ -279,6 +285,71 @@ describe('ui-main composition root (05 §2.3)', () => {
     })
 
     expect([...ipc.handled.keys(), ...ipc.listened.keys()]).toEqual([])
+  })
+
+  it('[ADR-001] the Panel window rows join the ui-local target but stay legacy until the cut-0 switch: no second Panel window, no preference write', async () => {
+    const lock = new FakeSingleInstanceLock(true)
+    const lifecycle = new RecordingLifecycle()
+    const { legacyRuntime, served } = countingLegacyRuntime()
+    const ipc = new RecordingIpcMain()
+    const storage = createInMemoryUiPreferenceStorage()
+    const windows = new FakeWindowFactory()
+    const displayHandlers: Array<() => void> = []
+    let composed: ReturnType<typeof createPanelWindow> | undefined
+    const panelWindow: UiMainDeps['panelWindow'] = () =>
+      (composed = createPanelWindow({
+        windows,
+        surface: {
+          applyZoom: (factor) => factor,
+          bounds: () => windows.panel().bounds ?? { x: 0, y: 0, width: 0, height: 0 },
+          setAlwaysOnTop: (on) => on,
+          isAlwaysOnTop: () => false,
+          raise: () => undefined,
+          isMinimized: () => false,
+          onMinimizedChanged: () => undefined
+        },
+        screen: new FakeScreenAreaProvider([
+          {
+            displayKey: 'primary',
+            bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+            workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+            primary: true
+          }
+        ]),
+        store: new InMemoryUiPreferenceStore(storage),
+        floor: 32,
+        onDisplaysChanged: (h) => displayHandlers.push(h)
+      }))
+
+    const started = startUiMain({ lock, lifecycle, legacyRuntime, ipc, appEntry, panelWindow })
+    lifecycle.becomeReady()
+    lifecycle.createWindow(1) // today's Panel window, created by the composition
+    await started
+
+    // The rows are `legacy` in the route table (21 §1 item 4): today's runtime serves them, the rebuilt Panel nothing.
+    await ipc.handled.get('panel:setAlwaysOnTop')?.(eventFrom(1), false)
+    await ipc.handled.get('panel:layout:set')?.(eventFrom(1), { mineOpen: true, dockOpen: false })
+    ipc.listened.get('panel:hide')?.(eventFrom(1), undefined)
+    for (const h of displayHandlers) h()
+    expect(served.map(([channel]) => channel)).toEqual([
+      'panel:setAlwaysOnTop',
+      'panel:layout:set',
+      'panel:hide'
+    ])
+    expect(windows.built, 'no second Panel window').toEqual([])
+    expect(storage.stored, 'no preference write').toEqual({})
+
+    // The part is composed and joins the one ui-local target, ready for the cut-0 switch (ISSUE-056).
+    expect(composed).toBeDefined()
+    const uiLocal = composeUiLocal({
+      panelWindow: composed,
+      modeWindows: createModeWindowRegistry()
+    })
+    expect(await uiLocal?.serve('panel:layout:get', undefined, eventFrom(1))).toEqual({
+      edge: 'right',
+      mineOpen: false,
+      dockOpen: false
+    })
   })
 
   describe('the ui-local route target (ADR-001 item 3; 21 §1 item 1)', () => {
