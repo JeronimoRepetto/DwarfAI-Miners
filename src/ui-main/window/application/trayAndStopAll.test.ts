@@ -17,6 +17,7 @@ import type { TrayMenuModel } from '../ports/trayController'
 import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
+  type StopAllRelay,
   type StopEverythingWindows
 } from './stopEverything'
 import { startTrayProcess } from './trayMenu'
@@ -93,7 +94,7 @@ const BOARD: SnapshotChunk[] = [
 ]
 const shutdownAnswer = (outcome: StopAllOutcome) => () => ({ mode: 'stop-all', outcome })
 
-async function world(options: { noSystemTray?: boolean } = {}) {
+async function world(options: { noSystemTray?: boolean; relay?: StopAllRelay } = {}) {
   const host = new FakeHost({ capabilities: [...FAKE_HOST_CAPABILITIES, 'section:dwarfs'] })
   host.board = BOARD
   const client = createHostClient({
@@ -117,7 +118,8 @@ async function world(options: { noSystemTray?: boolean } = {}) {
   const stop = createStopEverything({
     host: client,
     windows,
-    newConfirmationId: () => confirmationIds.shift() ?? 'no-more-ids'
+    newConfirmationId: () => confirmationIds.shift() ?? 'no-more-ids',
+    ...(options.relay === undefined ? {} : { relay: options.relay })
   })
   let exits = 0
   const process = startTrayProcess({
@@ -345,6 +347,33 @@ describe('the tray process (05 §3.14 TrayController; ADR-018 item 5; ADR-002 D7
       [STOP_EVERYTHING_REQUESTED, { confirmationId: CONFIRMATION_1 }]
     ])
     expect(host.liveConnections('ui')).toBe(1) // the short-lived one closed; the new window holds its own
+    expect(stop.pending()).toBeNull()
+  })
+
+  it('[S10.21] a relay that answers an error sends nothing, keeps the Host, the windows and the icon and opens a window to show it', async () => {
+    // ISSUE-054 (owner ruling, 2026-10-01): a legacy-launched session that could not be ended fails the relay with an
+    // INTERNAL error; A-N26 answers it as its error branch and UI main makes sure a window shows the danger message.
+    const failure = {
+      error: { code: 'INTERNAL', message: 'a legacy end failed', retryable: false }
+    }
+    const { tray, windows, host, stop, exits } = await world({
+      relay: () => Promise.reject(failure)
+    })
+    tray.choose('stop-everything')
+    await settle()
+    windows.closeAll() // the person closed the window that showed the confirmation
+    await settle()
+
+    const answer = await stop.confirm({ confirmationId: CONFIRMATION_1, requestId: R1 })
+    await settle()
+
+    expect(answer).toEqual({ ok: false, error: failure.error })
+    expect(host.methods()).not.toContain('host.shutdown')
+    expect(exits()).toBe(0)
+    expect(tray.iconShown).toBe(true)
+    expect(host.liveConnections('notifier')).toBe(1)
+    expect(windows.anyOpen()).toBe(true)
+    expect(windows.opened).toBe(2)
     expect(stop.pending()).toBeNull()
   })
 })

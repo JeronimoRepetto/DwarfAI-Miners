@@ -10,7 +10,8 @@
 // 2. `cancel` (A-N27) ends the confirmation: nothing is sent, the short-lived connection closes (S10.19).
 // 3. `confirm` (A-N26) relays `host.shutdown {mode:'stop-all', requestId}` on that same `ui` connection and answers
 //    the `StopAllOutcome` (S10.20). The relay is a seam: through cut 4 `LegacyEndFirstAdapter` (ISSUE-054) wraps it to
-//    end the legacy-launched sessions first.
+//    end the legacy-launched sessions first; when one cannot be ended it relays nothing and fails with an `INTERNAL`
+//    error, which A-N26 answers as its error branch, with a window open to show it.
 // 4. The process never exits on the outcome: it exits only when the Host closes with the clean-shutdown marker
 //    (`host.closing {reason:'stop-all'}`, handled by the tray process, trayMenu.ts). With `failed ≠ []` the Host keeps
 //    running (INV-121) and so does this process: windows, the `notifier` connection and the icon stay, a window
@@ -36,7 +37,8 @@ export const STOP_EVERYTHING_REQUESTED = 'tray:stopEverything:requested' satisfi
 /**
  * How A-N26 reaches the Host: `shutdown(requestId)` sends `host.shutdown {mode:'stop-all', requestId}` on the
  * confirmation's `ui` connection and answers its outcome. The default relays at once; `LegacyEndFirstAdapter`
- * (ISSUE-054) ends the legacy-launched sessions first and relays only when every one of them ended.
+ * (ISSUE-054) ends the legacy-launched sessions first and relays only when every one of them ended. A relay that
+ * rejects with `{ error: IpcError }` is answered as that error (14 §3.3); any other rejection as `INTERNAL`.
  */
 export type StopAllRelay = (
   requestId: string,
@@ -164,6 +166,9 @@ export function createStopEverything(deps: StopEverythingDeps): StopEverything {
       if (outcome.failed.length > 0 && !windows.anyOpen()) windows.open()
       settle({ ok: true, value: outcome })
     } catch (error) {
+      // Nothing was stopped (through cut 4, for example a legacy-launched session `LegacyEndFirstAdapter` could not
+      // end): the Host keeps running and so does this process; the error is shown in a window (S10.21).
+      if (!windows.anyOpen()) windows.open()
       settle({ ok: false, error: ipcErrorOf(error) })
     } finally {
       close(confirmation)

@@ -1,6 +1,7 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { FakePanelWindowController } from '../ui-main/window/ports/fakes/FakePanelWindowController'
+import type { LegacyLaunchedSessions } from './LegacyEndFirstAdapter'
 import {
   createLegacyRuntimeRoute,
   type LegacyHandler,
@@ -14,13 +15,19 @@ import {
  */
 describe('LegacyRuntimeRoute (21 §3)', () => {
   /** A stand-in for today's composition that counts how many times it was composed. */
-  function countingComposer(handlers: Record<string, LegacyHandler>) {
+  function countingComposer(
+    handlers: Record<string, LegacyHandler>,
+    launches: LegacyLaunchedSessions = {
+      liveLaunches: async () => [],
+      endLaunch: async () => 'already-ended'
+    }
+  ) {
     const counts = { composed: 0, beforeQuit: 0, willQuit: 0 }
     const panelWindow = new FakePanelWindowController({ visible: false })
     const composer: LegacyRuntimeComposer = {
       async compose() {
         counts.composed += 1
-        return { handlers: new Map(Object.entries(handlers)), panelWindow }
+        return { handlers: new Map(Object.entries(handlers)), panelWindow, launches }
       },
       beforeQuit() {
         counts.beforeQuit += 1
@@ -96,5 +103,28 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     route.willQuit()
 
     expect(counts).toEqual({ composed: 1, beforeQuit: 2, willQuit: 2 })
+  })
+
+  it('[ADR-001] LegacyRuntimeRoute reaches today’s launched register for LegacyEndFirstAdapter, composing the runtime once first', async () => {
+    const ended: string[] = []
+    const { composer, counts } = countingComposer(
+      {},
+      {
+        liveLaunches: async () => [{ launchId: 'launch:1' }],
+        endLaunch: async (launchId) => {
+          ended.push(launchId)
+          return 'ended'
+        }
+      }
+    )
+    const route = createLegacyRuntimeRoute(composer)
+
+    const live = await route.liveLaunches()
+    const verdict = await route.endLaunch('launch:1')
+
+    expect(counts.composed).toBe(1)
+    expect(live).toEqual([{ launchId: 'launch:1' }])
+    expect(verdict).toBe('ended')
+    expect(ended).toEqual(['launch:1'])
   })
 })

@@ -1,7 +1,19 @@
 // layer: L6
 import { describe, expect, it } from 'vitest'
-import { CHANNELS, STEP_ORDER, UNROUTED, type ChannelKey, type StepId } from '@dwarfai/contracts'
+import {
+  CHANNELS,
+  STEP_ORDER,
+  UNROUTED,
+  type ChannelKey,
+  type DwarfId,
+  type HostResult,
+  type SnapshotPage,
+  type StepId
+} from '@dwarfai/contracts'
+import { composeStopAllRelay } from '../index'
+import { createStopEverything } from '../window/application/stopEverything'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
+import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
 import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './routes'
 
 /**
@@ -276,5 +288,76 @@ describe('pre-cut table', () => {
     expect(
       reasons({ ...routedBase, adapters: [{ name: 'Late', cuts: ['v1'], shapeAdapter: false }] })
     ).toEqual(['adapter-after-cut-5 Late'])
+  })
+
+  it('[ADR-001] LegacyEndFirstAdapter is listed for cuts 0 to 4 and composed on A-N26', async () => {
+    // TC-054-03 (21 §3, 14 §5): listed from cut 0 to the end of cut 4 (4b), absent from cut 5 on.
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')).toEqual({
+      name: 'LegacyEndFirstAdapter',
+      cuts: ['cut-0', 'cut-1', 'cut-2', 'cut-3a', 'cut-3b', 'cut-3d', 'cut-3e', 'cut-4a', 'cut-4b'],
+      shapeAdapter: false
+    })
+    // A-N26 is a `host` row the cut-0 switch routes (ISSUE-056); its one handler relays through the root's relay.
+    expect(CHANNELS[STOP_EVERYTHING_CONFIRM].placement).toBe('host')
+    expect(UNROUTED[STOP_EVERYTHING_CONFIRM]).toBe('cut-0')
+
+    // The root's A-N26 relay, over a legacy runtime holding one live launch whose end reports `verdict`, and a Host
+    // recording what it is sent; A-N26 is served by its one handler over the Stop everything use case.
+    const HOST_DWARF = '01890a5d-ac96-774b-bcce-b302099ad101' as DwarfId
+    async function confirmThroughRoot(verdict: 'ended' | 'refused') {
+      const events: string[] = []
+      const relay = composeStopAllRelay({
+        liveLaunches: async () => [{ launchId: 'launch:1' }],
+        endLaunch: async (launchId) => {
+          events.push(`legacy end ${launchId}`)
+          return verdict
+        }
+      })
+      const connection = {
+        snapshot: async (): Promise<SnapshotPage> => ({
+          snapshotId: 'snap-1',
+          seq: 1,
+          epoch: 'epoch-1' as SnapshotPage['epoch'],
+          chunks: []
+        }),
+        call: async (method: string, params: unknown): Promise<HostResult['host.shutdown']> => {
+          events.push(`${method} ${JSON.stringify(params)}`)
+          return { mode: 'stop-all', outcome: { ended: [HOST_DWARF], failed: [] } }
+        }
+      }
+      const stop = createStopEverything({
+        host: {
+          withUiConnection: (use) => use(connection as unknown as Parameters<typeof use>[0])
+        },
+        windows: { anyOpen: () => true, open: () => {}, push: () => {} },
+        newConfirmationId: () => 'c-1',
+        relay
+      })
+      await stop.request()
+      const answer = await createStopEverythingRows(stop).serve(STOP_EVERYTHING_CONFIRM, {
+        confirmationId: 'c-1',
+        requestId: 'r-1'
+      })
+      return { events, answer }
+    }
+    const response = CHANNELS[STOP_EVERYTHING_CONFIRM].response
+
+    // Every legacy launch ended: relayed after it, and the Host's outcome answered unchanged.
+    const ended = await confirmThroughRoot('ended')
+    expect(ended.events).toEqual([
+      'legacy end launch:1',
+      'host.shutdown {"mode":"stop-all","requestId":"r-1"}'
+    ])
+    expect(ended.answer).toEqual({ ok: true, value: { ended: [HOST_DWARF], failed: [] } })
+    expect(response.safeParse(ended.answer).success).toBe(true)
+
+    // TC-054-02: a legacy launch that could not be ended: nothing relayed, A-N26 answers INTERNAL (eB).
+    const refused = await confirmThroughRoot('refused')
+    expect(refused.events).toEqual(['legacy end launch:1'])
+    expect(refused.answer).toMatchObject({
+      ok: false,
+      error: { code: 'INTERNAL', retryable: false }
+    })
+    expect(response.safeParse(refused.answer).success).toBe(true)
   })
 })

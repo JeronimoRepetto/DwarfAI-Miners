@@ -3,6 +3,7 @@ import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PanelWindowController } from '../ui-main/window/ports/panelWindowController'
+import { LegacyLaunchRegister, type LegacyLaunchedSessions } from './LegacyEndFirstAdapter'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   AgentLaunchRequest,
@@ -174,6 +175,8 @@ export interface LegacyRuntimeComposition {
   readonly handlers: ReadonlyMap<string, LegacyHandler>
   /** Today's Panel window behind the window module's port, until ISSUE-047 rebuilds it. */
   readonly panelWindow: PanelWindowController
+  /** Today's launched register, for `LegacyEndFirstAdapter` (21 §3, cuts 0–4). */
+  readonly launches: LegacyLaunchedSessions
 }
 
 /**
@@ -191,9 +194,10 @@ export interface LegacyRuntimeComposer {
 /**
  * The one door from the new Electron root to today's runtime (21 §3 `LegacyRuntimeRoute`, cuts
  * 0–5; ADR-001 item 3; lint R16). It composes the legacy runtime once and serves a `legacy` row
- * with today's handler, unchanged.
+ * with today's handler, unchanged. Through cut 4 it is also the way `LegacyEndFirstAdapter`
+ * reaches today's launched register (ISSUE-054), composing the runtime first when needed.
  */
-export interface LegacyRuntimeRoute {
+export interface LegacyRuntimeRoute extends LegacyLaunchedSessions {
   /** Composes the legacy runtime (once) and answers its Panel window. */
   compose(): Promise<PanelWindowController>
   /** Serves a `legacy` row by today's wire name with today's handler result. */
@@ -222,6 +226,12 @@ export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): Legac
     },
     willQuit() {
       composer.willQuit()
+    },
+    async liveLaunches() {
+      return (await composition()).launches.liveLaunches()
+    },
+    async endLaunch(launchId) {
+      return (await composition()).launches.endLaunch(launchId)
     }
   }
 }
@@ -692,8 +702,19 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
         : {})
     })
 
+    // Today's launched register (#217, #231), built with exactly the arguments the runtime's own default uses, so
+    // that LegacyEndFirstAdapter can end what it launched before Stop everything relays (21 §3, ISSUE-054).
+    const launches = new LegacyLaunchRegister({
+      endProcessTree: (pid) => platformAdapters.processEnd.endProcessTree(pid),
+      processStartTimeMs: (pid) => platformAdapters.processProbe.processStartTimeMs(pid),
+      ...(launchedSessionStore == null ? {} : { store: launchedSessionStore }),
+      log: (message) => console.log(message),
+      now: Date.now
+    })
+
     runtime = new AgentRuntime({
       config,
+      launchedSessions: launches,
       ledger,
       projects,
       projectsRefusal,
@@ -1310,7 +1331,7 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       }
     }
 
-    return { handlers, panelWindow }
+    return { handlers, panelWindow, launches }
   }
 
   return {
