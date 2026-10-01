@@ -14,9 +14,17 @@
 //   (`writableLength`, `writableNeedDrain`) as in a full socket buffer, and the Host end drains when
 //   they are delivered.
 //
-// Otherwise Host → client bytes pass through unchanged, in the chunks they were written in.
+// Otherwise Host → client bytes pass through unchanged, in the chunks they were written in. Both
+// ends have the same high water on every OS (FAULTY_DUPLEX_HIGH_WATER).
 import { Duplex } from 'node:stream'
 import type { DuplexPair } from './inProcessDuplex'
+
+/**
+ * The high water of both ends, fixed: Node's default is 16 KiB on Windows and 64 KiB elsewhere, so
+ * an end left at the default would ask to drain at another point on each OS, and a test of what
+ * waits behind a full socket would pass on one and fail on the other.
+ */
+export const FAULTY_DUPLEX_HIGH_WATER = 16 * 1024
 
 export class FaultyDuplex implements DuplexPair {
   /** The end the Host's transport takes. */
@@ -127,6 +135,7 @@ export class FaultyDuplex implements DuplexPair {
   ): Duplex {
     return new Duplex({
       allowHalfOpen: false,
+      highWaterMark: FAULTY_DUPLEX_HIGH_WATER,
       read() {},
       write(chunk: Buffer, _encoding, callback) {
         onWrite(Uint8Array.from(chunk), () => callback())

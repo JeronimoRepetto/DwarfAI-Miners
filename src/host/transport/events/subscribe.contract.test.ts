@@ -347,9 +347,11 @@ describe('events.subscribe and resync-required (ADR-003 items 6–8; 14 §1.7–
     const ui = await h.attach('ui', faults)
     await subscribe(ui, 's1')
 
-    // A full socket buffer: the next frames wait in the outbound queue, within one Host tick.
+    // A full socket buffer, held so by the stalled reader at the fault's fixed high water (the
+    // same on every OS): the next frames wait in the outbound queue, within one Host tick.
     faults.stallReads()
-    h.publish('dwarf.arrived', { n: 1, blob: 'x'.repeat(32 * 1024) })
+    h.publish('dwarf.arrived', { n: 1, blob: 'x'.repeat(faults.host.writableHighWaterMark) })
+    expect(faults.host.writableNeedDrain).toBe(true)
     h.publish('dwarf.changed', { dwarf: { id: DWARF_A }, n: 2 })
     h.publish('dwarf.changed', { dwarf: { id: DWARF_B }, n: 3 })
     h.publish('dwarf.changed', { dwarf: { id: DWARF_A }, n: 4 })
