@@ -1,8 +1,7 @@
 // The Host's end of life, composed (ADR-002 D7; 07 S12.10, S12.17): the clean exit, and the OS
 // session end mapped onto it. Nothing here arms a timer: the Host never exits on its own (OQ-63;
 // AMENDMENT-5 withdrew the quiescence exit and `when-idle`). The other ends call the returned
-// `closeCleanly`: Stop everything and quit (later: ISSUE-029) and the upgrade drain (later:
-// ISSUE-032).
+// `closeCleanly`: Stop everything and quit (ISSUE-029) and the upgrade drain (ISSUE-032).
 import {
   createCleanExit,
   type CleanExit,

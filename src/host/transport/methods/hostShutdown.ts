@@ -10,7 +10,13 @@
 //   empty the Host keeps running (S12.21; INV-121): it never exits while an owned session it
 //   failed to end is alive (ADR-002 D7 step 3).
 // - `when-idle`: retired by AMENDMENT-5 (OQ-63), never honoured → INVALID_PARAMS, state unchanged.
-// - `upgrade-drain`: INVALID_PARAMS until the drain-and-resume is served (later: ISSUE-032).
+// - `upgrade-drain` (AMENDMENT-2, SC-AR-03; ADR-002 D8 item 4): the generation-stable confirmed
+//   drain-and-resume, sent only after the person confirmed a generation-bump restart. It is the
+//   same drain as `host.upgrade.request` (lifecycle/drain.ts): the Host enters `upgrade-pending`
+//   (`host.state` before the `res`) and answers `{ mode: 'upgrade-drain', accepted: true }` at
+//   acceptance (14 §1.7); the drain starts once that answer was written, waits for whatever the
+//   DrainGate reports open and ends no session (no StopAllPort call), then closes cleanly with
+//   reason `upgrade`.
 //
 // The refused modes are the Host's rule, not the wire's: the contract schema keeps the whole
 // generation-stable params shape (14 §1.3), and the schema served here narrows it, so the
@@ -24,16 +30,19 @@ import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { StopAllPort } from '../../kernel/ports/stopAll'
 import type { Dispatcher } from '../dispatcher'
 import type { CleanExit } from '../lifecycle/cleanExit'
+import type { UpgradeDrain } from '../lifecycle/drain'
 import { METHOD_ROLES } from '../roles'
 
 export interface HostShutdownDeps {
   stopAll: StopAllPort
   lifecycle: CleanExit
   log: DiagnosticsLog
+  /** The upgrade drain `upgrade-drain` starts (lifecycle/drain.ts). */
+  drain: UpgradeDrain
 }
 
-/** The modes this Host serves: `stop-all` only (`upgrade-drain`: later: ISSUE-032). */
-const SERVED_MODES: ReadonlySet<string> = new Set(['stop-all'])
+/** The modes this Host serves: every mode but the retired `when-idle`. */
+const SERVED_MODES: ReadonlySet<string> = new Set(['stop-all', 'upgrade-drain'])
 
 const paramsSchema = HOST_METHOD_SCHEMAS['host.shutdown'].params.refine((params) =>
   SERVED_MODES.has(params.mode)
@@ -45,7 +54,12 @@ export function registerHostShutdown(dispatcher: Dispatcher, deps: HostShutdownD
     'host.shutdown',
     paramsSchema,
     METHOD_ROLES['host.shutdown'] ?? [],
-    async (_params, context): Promise<HostShutdownResult> => {
+    async (params, context): Promise<HostShutdownResult> => {
+      if (params.mode === 'upgrade-drain') {
+        deps.drain.enter(context.requestId)
+        context.afterAnswer(() => deps.drain.start())
+        return { mode: 'upgrade-drain', accepted: true }
+      }
       const outcome = await deps.stopAll.stopAll(context.requestId)
       const complete = outcome.failed.length === 0
       deps.log.record({

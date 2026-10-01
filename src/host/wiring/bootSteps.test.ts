@@ -19,6 +19,9 @@ import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
 import { createHostDispatcher } from './hostDispatcher'
 import { emptyOwnerStopAll } from './emptyOwnerStopAll'
+import { emptyDrainGate } from './emptyDrainGate'
+import { createUpgradeDrain } from '../transport/lifecycle/drain'
+import { createUpgradeTargetRule } from '../transport/methods/hostUpgradeRequest'
 import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 // L6 (17 §1.6): the bind step's composition — the platform facts, the one ADR-002 D2 rule and the
@@ -326,15 +329,32 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     // and the clean exit for host.shutdown, which this ping case never calls.
     // AMENDED for ISSUE-025 (was: no `connections`, no `epoch`): the Host dispatcher also serves
     // `events.subscribe`, which reads the calling connection's frame delivery and the boot epoch.
+    // AMENDED for ISSUE-032: and the upgrade drain with its targetDir rule, never called here either.
+    const lifecycle = { closeCleanly: () => Promise.resolve() }
+    const dispatcherScheduler = new FakeScheduler(deps.clock)
     const dispatcher = createHostDispatcher({
       log,
       clock: deps.clock,
-      scheduler: new FakeScheduler(deps.clock),
+      scheduler: dispatcherScheduler,
       state: () => deps.state().state,
       stopAll: emptyOwnerStopAll,
-      lifecycle: { closeCleanly: () => Promise.resolve() },
+      lifecycle,
       connections: deps.connections,
-      epoch: deps.epoch
+      epoch: deps.epoch,
+      drain: createUpgradeDrain({
+        gate: emptyDrainGate,
+        state: { report: () => {}, current: () => deps.state() },
+        scheduler: dispatcherScheduler,
+        lifecycle,
+        log
+      }),
+      upgradeTarget: createUpgradeTargetRule({
+        platform: 'linux',
+        root: null,
+        realpath: () => {
+          throw new Error('no copy root in this case')
+        }
+      })
     })
     const endpoint = createUiEndpoint({
       facts: () => Promise.resolve({ ok: true, value: input }),

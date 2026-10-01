@@ -14,6 +14,7 @@ import {
   type DwarfId
 } from '@dwarfai/contracts'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { FakeDrainGate } from '../../kernel/fakes/FakeDrainGate'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingShutdownCheckpoint } from '../../kernel/fakes/RecordingShutdownCheckpoint'
@@ -25,6 +26,7 @@ import { acceptConnection } from '../connection'
 import { ConnectionRegistry } from '../connectionRegistry'
 import { Dispatcher } from '../dispatcher'
 import { createCleanExit } from '../lifecycle/cleanExit'
+import { createUpgradeDrain } from '../lifecycle/drain'
 import { HostStateHolder } from '../lifecycle/hostState'
 import { FrameClient } from '../testing/frameClient'
 import { inProcessDuplex } from '../testing/inProcessDuplex'
@@ -83,7 +85,16 @@ async function host(stopAll = new RecordingStopAll()) {
       journal.push(`exit:${code}`)
     }
   })
-  registerHostShutdown(dispatcher, { stopAll, lifecycle, log })
+  // AMENDED for ISSUE-032 (was: stopAll, lifecycle and log only): `upgrade-drain` is served by the
+  // upgrade drain, here over a DrainGate that holds it, so no case below ever exits through it.
+  const drain = createUpgradeDrain({
+    gate: new FakeDrainGate([{ kind: 'in-flight' }]),
+    state,
+    scheduler,
+    lifecycle,
+    log
+  })
+  registerHostShutdown(dispatcher, { stopAll, lifecycle, log, drain })
 
   /** Connects with `role` and returns the client once hello.ok arrived. */
   const attach = async (role: 'ui' | 'notifier'): Promise<FrameClient> => {
@@ -208,13 +219,17 @@ describe('host.shutdown (14 B-M05; ADR-002 D7; ADR-003 item 12)', () => {
     expect(h.state.current()).toEqual({ state: 'ready', jobStatus: 'n/a' })
   })
 
-  it('[ADR-002] mode upgrade-drain gets INVALID_PARAMS until the drain is served, and the Host keeps running', async () => {
+  // AMENDED for ISSUE-032 (was: "mode upgrade-drain gets INVALID_PARAMS until the drain is served,
+  // and the Host keeps running"): ISSUE-032 serves the drain (AMENDMENT-2), so the old expectation
+  // no longer holds. What stays true is that an upgrade drain is never a stop-all; the drain itself
+  // is proven in hostUpgradeRequest.contract.test.ts.
+  it('[ADR-002] mode upgrade-drain is served as the drain, never as a stop-all, and the Host keeps running while it is held', async () => {
     const h = await host()
     const ui = await h.attach('ui')
 
     const res = await h.shutdown(ui, { mode: 'upgrade-drain', requestId: REQUEST_ID })
 
-    expect(res).toMatchObject({ ok: false, error: { code: 'INVALID_PARAMS' } })
+    expect(res).toMatchObject({ ok: true, result: { mode: 'upgrade-drain', accepted: true } })
     expect(h.stopAll.calls).toEqual([])
     expect(h.exits).toEqual([])
     expect(ui.closed).toBe(false)

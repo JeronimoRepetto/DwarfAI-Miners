@@ -20,6 +20,7 @@ import {
   type HostFrameName
 } from '@dwarfai/contracts'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { FakeDrainGate } from '../../kernel/fakes/FakeDrainGate'
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
@@ -29,7 +30,9 @@ import { HelloThrottle } from '../auth/throttle'
 import { UI_TOKEN_FILE, UiToken } from '../auth/uiToken'
 import { acceptConnection } from '../connection'
 import { ConnectionRegistry, type AttachedConnection } from '../connectionRegistry'
+import { createUpgradeDrain } from '../lifecycle/drain'
 import { HostStateHolder } from '../lifecycle/hostState'
+import { createUpgradeTargetRule } from '../methods/hostUpgradeRequest'
 import { FaultyDuplex } from '../testing/FaultyDuplex'
 import { FrameClient } from '../testing/frameClient'
 import { inProcessDuplex, type DuplexPair } from '../testing/inProcessDuplex'
@@ -91,15 +94,32 @@ async function host() {
   const state = new HostStateHolder(connections)
   // `host.state {ready}` is the ui target's first frame: seq 1 (events.subscribe needs `ready`).
   state.report({ state: 'ready', jobStatus: 'none' })
+  const lifecycle = { closeCleanly: () => Promise.resolve() }
   const dispatcher = createHostDispatcher({
     log,
     clock,
     scheduler: new FakeScheduler(clock),
     state: () => state.current().state,
     stopAll: new RecordingStopAll(),
-    lifecycle: { closeCleanly: () => Promise.resolve() },
+    lifecycle,
     connections,
-    epoch: EPOCH
+    epoch: EPOCH,
+    // AMENDED for ISSUE-032 (was: no drain, no upgradeTarget): the production dispatcher also
+    // serves the upgrade handshake, which no subscribe case calls (the drain gate holds it).
+    drain: createUpgradeDrain({
+      gate: new FakeDrainGate([{ kind: 'in-flight' }]),
+      state,
+      scheduler,
+      lifecycle,
+      log
+    }),
+    upgradeTarget: createUpgradeTargetRule({
+      platform: 'linux',
+      root: null,
+      realpath: () => {
+        throw new Error('no copy root in this case')
+      }
+    })
   })
   const ids = new SequenceIdGenerator()
   const throttle = new HelloThrottle(clock)

@@ -11,11 +11,14 @@ import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { ConnectionRegistry, type AttachedConnection } from '../../transport/connectionRegistry'
 import type { ResponseFrame } from '../../transport/dispatcher'
+import { createUpgradeDrain } from '../../transport/lifecycle/drain'
 import { HostStateHolder } from '../../transport/lifecycle/hostState'
+import { createUpgradeTargetRule } from '../../transport/methods/hostUpgradeRequest'
 import type { ChannelRole } from '../../transport/roles'
 import { runBoot } from '../boot'
 import { createBootSteps } from '../bootSteps'
 import { createHostDispatcher } from '../hostDispatcher'
+import { emptyDrainGate } from '../emptyDrainGate'
 import { composeHostLifecycle } from '../hostLifecycle'
 
 // L2 flow (17 §1.2): Stop everything and quit on a booted Host, through the production Dispatcher
@@ -89,7 +92,17 @@ async function readyHost(stopAll: RecordingStopAll, journal: string[]) {
     stopAll,
     lifecycle,
     connections,
-    epoch: 'epoch-0029'
+    epoch: 'epoch-0029',
+    // AMENDED for ISSUE-032 (was: stopAll and lifecycle only): main also binds the upgrade drain
+    // and the targetDir rule, which these stop-all cases never reach.
+    drain: createUpgradeDrain({ gate: emptyDrainGate, state, scheduler, lifecycle, log }),
+    upgradeTarget: createUpgradeTargetRule({
+      platform: 'linux',
+      root: null,
+      realpath: () => {
+        throw new Error('no copy root in this case')
+      }
+    })
   })
   const outcome = await runBoot(
     (paths) =>
