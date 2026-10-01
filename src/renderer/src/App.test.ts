@@ -1772,7 +1772,17 @@ describe('App selecting a dwarf (#162)', () => {
     updatedAt: 0
   }
 
-  beforeEach(() => useView().clear())
+  /*
+   * The delivery verdicts are useDwarfMessaging's module-scope store, keyed by dwarf id, and a
+   * delivered one stays for the whole reaction window (a minute of real time). Another block that
+   * sends to the same 'claude:s1' leaves its ✓ on this dwarf's sprite, so the marker cases below
+   * would start with a mark they never drew unless the store starts empty, as it does in the other
+   * blocks that send ('App message dock (#635)', 'App mine history').
+   */
+  beforeEach(() => {
+    useView().clear()
+    useDwarfMessaging().clearAll()
+  })
 
   async function openMineWith(dwarfs: unknown[], overrides: Record<string, unknown> = {}) {
     const { wrapper, api } = await mountOpenApp({
