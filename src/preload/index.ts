@@ -3,7 +3,8 @@
 // Source: the channel registry (src/contracts/ipc) and the route table's shapes (src/ui-main/ipc/routes.ts).
 //
 // Each member speaks on its row's wire with the types of the shape its route uses in this release; it coerces for
-// ergonomics and never throws (a value it cannot coerce is passed on for main to refuse, 14 §1.4). Built as one
+// ergonomics and never throws (a value it cannot coerce is passed on for main to refuse; a payload structured clone
+// cannot copy is dropped by a send and rejected by an invoke, 14 §1.4). Built as one
 // CommonJS script whose only runtime import is `electron`, so it loads in a sandboxed renderer (S-019-1).
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { z } from 'zod'
@@ -79,6 +80,24 @@ function stringPairsOf(value: unknown): Record<string, string> {
   for (const [key, entry] of Object.entries(value))
     if (typeof entry === 'string') pairs[key] = entry
   return pairs
+}
+
+/** A one-way message that cannot cross (structured clone refuses it) is dropped, never thrown (14 §1.4). */
+function sendOrDrop(send: () => void): void {
+  try {
+    send()
+  } catch {
+    // Dropped: main never receives it, as it would drop a one-way payload it refuses.
+  }
+}
+
+/** A request always answers with a promise: one that cannot cross rejects, never throws (14 §1.4). */
+function invokeOrReject<T>(invoke: () => Promise<T>): Promise<T> {
+  try {
+    return invoke()
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+  }
 }
 
 /** API surface exposed to the renderer as `window.api`. */
@@ -262,122 +281,163 @@ export interface DwarfAiMinersApi {
 }
 
 const api: DwarfAiMinersApi = {
-  hidePanel: () => ipcRenderer.send('panel:hide'),
-  raisePanel: () => ipcRenderer.send('panel:raise'),
-  getAlwaysOnTop: () => ipcRenderer.invoke('panel:getAlwaysOnTop'),
-  setAlwaysOnTop: (request) => ipcRenderer.invoke('panel:setAlwaysOnTop', request === true),
-  getPanelVisible: () => ipcRenderer.invoke('panel:visible:get'),
-  getAudioPreferences: () => ipcRenderer.invoke('audio:preferences:get'),
-  setAudioPreferences: (request) => ipcRenderer.invoke('audio:preferences:set', request),
-  getPanelLayout: () => ipcRenderer.invoke('panel:layout:get'),
+  hidePanel: () => sendOrDrop(() => ipcRenderer.send('panel:hide')),
+  raisePanel: () => sendOrDrop(() => ipcRenderer.send('panel:raise')),
+  getAlwaysOnTop: () => invokeOrReject(() => ipcRenderer.invoke('panel:getAlwaysOnTop')),
+  setAlwaysOnTop: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('panel:setAlwaysOnTop', request === true)),
+  getPanelVisible: () => invokeOrReject(() => ipcRenderer.invoke('panel:visible:get')),
+  getAudioPreferences: () => invokeOrReject(() => ipcRenderer.invoke('audio:preferences:get')),
+  setAudioPreferences: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('audio:preferences:set', request)),
+  getPanelLayout: () => invokeOrReject(() => ipcRenderer.invoke('panel:layout:get')),
   setPanelLayout: (request) =>
-    ipcRenderer.invoke('panel:layout:set', {
-      mineOpen: request?.mineOpen === true,
-      dockOpen: request?.dockOpen === true,
-      ...(request?.edge === 'left' || request?.edge === 'right' ? { edge: request.edge } : {})
-    }),
-  getToggleShortcut: () => ipcRenderer.invoke('shortcut:get'),
-  setToggleShortcut: (request) => ipcRenderer.invoke('shortcut:set', textOf(request)),
-  getMines: () => ipcRenderer.invoke('mines:get'),
-  activateDwarf: (request) => ipcRenderer.invoke('dwarf:activate', request),
-  getDwarfFeed: (request) => ipcRenderer.invoke('dwarf:feed', textOf(request)),
-  getDwarfFeedPage: (request) =>
-    ipcRenderer.invoke('dwarf:feed:page', {
-      dwarfId: textOf(request?.dwarfId),
-      before: { timestamp: textOf(request?.before?.timestamp), text: textOf(request?.before?.text) }
-    }),
-  setWatchedDwarf: (request) =>
-    ipcRenderer.send('panel:watchDwarfFeed', typeof request === 'string' ? request : null),
-  refreshDwarfTelemetry: (request) => ipcRenderer.send('dwarf:refreshTelemetry', textOf(request)),
-  setDwarfTuning: (request) =>
-    ipcRenderer.invoke('dwarf:setTuning', {
-      dwarfId: textOf(request?.dwarfId),
-      change: tuningChangeOf(request?.change)
-    }),
-  getMineHistory: (request) => ipcRenderer.invoke('mine:history', textOf(request)),
-  openMinePath: (request) =>
-    ipcRenderer.invoke('mine:openPath', {
-      mineId: textOf(request?.mineId),
-      target: textOf(request?.target),
-      ...(typeof request?.dwarfId === 'string' ? { dwarfId: request.dwarfId } : {})
-    }),
-  openExternalLink: (request) => ipcRenderer.invoke('shell:openExternalLink', textOf(request)),
-  copyText: (request) => ipcRenderer.invoke('shell:copyText', textOf(request)),
-  sendDwarfText: (request) => ipcRenderer.invoke('dwarf:sendText', request),
-  chooseDwarfAttachments: () => ipcRenderer.invoke('dwarf:attachments:choose'),
-  describeDwarfAttachments: (request) =>
-    ipcRenderer.invoke(
-      'dwarf:attachments:describe',
-      (Array.isArray(request) ? request : []).map((path: unknown) => textOf(path))
+    invokeOrReject(() =>
+      ipcRenderer.invoke('panel:layout:set', {
+        mineOpen: request?.mineOpen === true,
+        dockOpen: request?.dockOpen === true,
+        ...(request?.edge === 'left' || request?.edge === 'right' ? { edge: request.edge } : {})
+      })
     ),
-  kickDwarf: (request) => ipcRenderer.invoke('dwarf:kick', request),
-  retireDwarf: (request) => ipcRenderer.send('dwarf:retire', textOf(request)),
-  getAppBuild: () => ipcRenderer.invoke('app:build'),
-  getFeatureFlags: () => ipcRenderer.invoke('app:features'),
-  declareMine: () => ipcRenderer.invoke('mine:declare'),
-  declareMainProject: () => ipcRenderer.invoke('mine:declare-main'),
-  undeclareMine: (request) => ipcRenderer.invoke('mine:undeclare', textOf(request)),
-  resetMetrics: () => ipcRenderer.invoke('metrics:reset'),
-  queryProjects: (request) => ipcRenderer.invoke('projects:query', request),
+  getToggleShortcut: () => invokeOrReject(() => ipcRenderer.invoke('shortcut:get')),
+  setToggleShortcut: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('shortcut:set', textOf(request))),
+  getMines: () => invokeOrReject(() => ipcRenderer.invoke('mines:get')),
+  activateDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:activate', request)),
+  getDwarfFeed: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:feed', textOf(request))),
+  getDwarfFeedPage: (request) =>
+    invokeOrReject(() =>
+      ipcRenderer.invoke('dwarf:feed:page', {
+        dwarfId: textOf(request?.dwarfId),
+        before: {
+          timestamp: textOf(request?.before?.timestamp),
+          text: textOf(request?.before?.text)
+        }
+      })
+    ),
+  setWatchedDwarf: (request) =>
+    sendOrDrop(() =>
+      ipcRenderer.send('panel:watchDwarfFeed', typeof request === 'string' ? request : null)
+    ),
+  refreshDwarfTelemetry: (request) =>
+    sendOrDrop(() => ipcRenderer.send('dwarf:refreshTelemetry', textOf(request))),
+  setDwarfTuning: (request) =>
+    invokeOrReject(() =>
+      ipcRenderer.invoke('dwarf:setTuning', {
+        dwarfId: textOf(request?.dwarfId),
+        change: tuningChangeOf(request?.change)
+      })
+    ),
+  getMineHistory: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('mine:history', textOf(request))),
+  openMinePath: (request) =>
+    invokeOrReject(() =>
+      ipcRenderer.invoke('mine:openPath', {
+        mineId: textOf(request?.mineId),
+        target: textOf(request?.target),
+        ...(typeof request?.dwarfId === 'string' ? { dwarfId: request.dwarfId } : {})
+      })
+    ),
+  openExternalLink: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('shell:openExternalLink', textOf(request))),
+  copyText: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('shell:copyText', textOf(request))),
+  sendDwarfText: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:sendText', request)),
+  chooseDwarfAttachments: () =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:attachments:choose')),
+  describeDwarfAttachments: (request) =>
+    invokeOrReject(() =>
+      ipcRenderer.invoke(
+        'dwarf:attachments:describe',
+        (Array.isArray(request) ? request : []).map((path: unknown) => textOf(path))
+      )
+    ),
+  kickDwarf: (request) => invokeOrReject(() => ipcRenderer.invoke('dwarf:kick', request)),
+  retireDwarf: (request) => sendOrDrop(() => ipcRenderer.send('dwarf:retire', textOf(request))),
+  getAppBuild: () => invokeOrReject(() => ipcRenderer.invoke('app:build')),
+  getFeatureFlags: () => invokeOrReject(() => ipcRenderer.invoke('app:features')),
+  declareMine: () => invokeOrReject(() => ipcRenderer.invoke('mine:declare')),
+  declareMainProject: () => invokeOrReject(() => ipcRenderer.invoke('mine:declare-main')),
+  undeclareMine: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('mine:undeclare', textOf(request))),
+  resetMetrics: () => invokeOrReject(() => ipcRenderer.invoke('metrics:reset')),
+  queryProjects: (request) => invokeOrReject(() => ipcRenderer.invoke('projects:query', request)),
   launchAgent: (request) =>
-    ipcRenderer.invoke('agent:launch', {
-      mineId: textOf(request?.mineId),
-      provider: providerOf(request?.provider),
-      prompt: textOf(request?.prompt),
-      ...(typeof request?.model === 'string' ? { model: request.model } : {}),
-      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
-      ...(typeof request?.permissionMode === 'string'
-        ? { permissionMode: request.permissionMode }
-        : {}),
-      ...(request?.routedByJev === true ? { routedByJev: true } : {})
-    }),
-  listAgentProviders: () => ipcRenderer.invoke('agent:providers'),
-  listAgentModels: () => ipcRenderer.invoke('agent:models'),
+    invokeOrReject(() =>
+      ipcRenderer.invoke('agent:launch', {
+        mineId: textOf(request?.mineId),
+        provider: providerOf(request?.provider),
+        prompt: textOf(request?.prompt),
+        ...(typeof request?.model === 'string' ? { model: request.model } : {}),
+        ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
+        ...(typeof request?.permissionMode === 'string'
+          ? { permissionMode: request.permissionMode }
+          : {}),
+        ...(request?.routedByJev === true ? { routedByJev: true } : {})
+      })
+    ),
+  listAgentProviders: () => invokeOrReject(() => ipcRenderer.invoke('agent:providers')),
+  listAgentModels: () => invokeOrReject(() => ipcRenderer.invoke('agent:models')),
   launchHeldSession: (request) =>
-    ipcRenderer.invoke('agent:launchHeld', {
-      mineId: textOf(request?.mineId),
-      provider: providerOf(request?.provider),
-      prompt: textOf(request?.prompt),
-      ...(typeof request?.model === 'string' ? { model: request.model } : {}),
-      ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
-      ...(typeof request?.permissionMode === 'string'
-        ? { permissionMode: request.permissionMode }
-        : {}),
-      ...(request?.routedByJev === true ? { routedByJev: true } : {})
-    }),
+    invokeOrReject(() =>
+      ipcRenderer.invoke('agent:launchHeld', {
+        mineId: textOf(request?.mineId),
+        provider: providerOf(request?.provider),
+        prompt: textOf(request?.prompt),
+        ...(typeof request?.model === 'string' ? { model: request.model } : {}),
+        ...(typeof request?.effort === 'string' ? { effort: request.effort } : {}),
+        ...(typeof request?.permissionMode === 'string'
+          ? { permissionMode: request.permissionMode }
+          : {}),
+        ...(request?.routedByJev === true ? { routedByJev: true } : {})
+      })
+    ),
   launchHostedProcess: (request) =>
-    ipcRenderer.invoke('agent:launchHosted', {
-      mineId: textOf(request?.mineId),
-      command: textOf(request?.command),
-      prompt: textOf(request?.prompt)
-    }),
+    invokeOrReject(() =>
+      ipcRenderer.invoke('agent:launchHosted', {
+        mineId: textOf(request?.mineId),
+        command: textOf(request?.command),
+        prompt: textOf(request?.prompt)
+      })
+    ),
   answerDwarfQuestion: (request) =>
-    ipcRenderer.invoke('agent:answerQuestion', questionAnswerOf(request)),
+    invokeOrReject(() => ipcRenderer.invoke('agent:answerQuestion', questionAnswerOf(request))),
   answerDwarfPermission: (request) =>
-    ipcRenderer.invoke('agent:answerPermission', {
-      dwarfId: textOf(request?.dwarfId),
-      toolUseId: textOf(request?.toolUseId),
-      decision: textOf(request?.decision)
-    }),
-  getNotificationsEnabled: () => ipcRenderer.invoke('notifications:enabled:get'),
+    invokeOrReject(() =>
+      ipcRenderer.invoke('agent:answerPermission', {
+        dwarfId: textOf(request?.dwarfId),
+        toolUseId: textOf(request?.toolUseId),
+        decision: textOf(request?.decision)
+      })
+    ),
+  getNotificationsEnabled: () =>
+    invokeOrReject(() => ipcRenderer.invoke('notifications:enabled:get')),
   setNotificationsEnabled: (request) =>
-    ipcRenderer.invoke('notifications:enabled:set', request === true),
+    invokeOrReject(() => ipcRenderer.invoke('notifications:enabled:set', request === true)),
   setOpenMine: (request) =>
-    ipcRenderer.send('panel:openMine', typeof request === 'string' ? request : null),
-  getTypographyPreferences: () => ipcRenderer.invoke('typography:preferences:get'),
-  setTypographyPreferences: (request) => ipcRenderer.invoke('typography:preferences:set', request),
-  getJevSettings: () => ipcRenderer.invoke('jev:settings:get'),
-  setJevApiKey: (request) => ipcRenderer.invoke('jev:apiKey:set', request),
-  clearJevApiKey: () => ipcRenderer.invoke('jev:apiKey:clear'),
-  routeJevLaunch: (request) => ipcRenderer.invoke('jev:route', request),
-  setJevPreferences: (request) => ipcRenderer.invoke('jev:preferences:set', request),
-  getOpenCodeSettings: () => ipcRenderer.invoke('opencode:settings:get'),
+    sendOrDrop(() =>
+      ipcRenderer.send('panel:openMine', typeof request === 'string' ? request : null)
+    ),
+  getTypographyPreferences: () =>
+    invokeOrReject(() => ipcRenderer.invoke('typography:preferences:get')),
+  setTypographyPreferences: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('typography:preferences:set', request)),
+  getJevSettings: () => invokeOrReject(() => ipcRenderer.invoke('jev:settings:get')),
+  setJevApiKey: (request) => invokeOrReject(() => ipcRenderer.invoke('jev:apiKey:set', request)),
+  clearJevApiKey: () => invokeOrReject(() => ipcRenderer.invoke('jev:apiKey:clear')),
+  routeJevLaunch: (request) => invokeOrReject(() => ipcRenderer.invoke('jev:route', request)),
+  setJevPreferences: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('jev:preferences:set', request)),
+  getOpenCodeSettings: () => invokeOrReject(() => ipcRenderer.invoke('opencode:settings:get')),
   setOpenCodePluginEnabled: (request) =>
-    ipcRenderer.invoke('opencode:plugin:set', request === true),
-  setOpenCodeServerPassword: (request) => ipcRenderer.invoke('opencode:password:set', request),
-  clearOpenCodeServerPassword: () => ipcRenderer.invoke('opencode:password:clear'),
-  getLaunchView: () => ipcRenderer.invoke('launch-view:get'),
-  setLaunchView: (request) => ipcRenderer.send('launch-view:set', request),
+    invokeOrReject(() => ipcRenderer.invoke('opencode:plugin:set', request === true)),
+  setOpenCodeServerPassword: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('opencode:password:set', request)),
+  clearOpenCodeServerPassword: () =>
+    invokeOrReject(() => ipcRenderer.invoke('opencode:password:clear')),
+  getLaunchView: () => invokeOrReject(() => ipcRenderer.invoke('launch-view:get')),
+  setLaunchView: (request) => sendOrDrop(() => ipcRenderer.send('launch-view:set', request)),
   onPanelVisibility: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
       listener(payload === true)
@@ -428,12 +488,16 @@ const api: DwarfAiMinersApi = {
     }
   },
   setDwarfName: (request) =>
-    ipcRenderer.invoke('dwarf:setName', {
-      dwarfId: textOf(request?.dwarfId),
-      ...(typeof request?.name === 'string' ? { name: request.name } : {})
-    }),
-  resetDwarfName: (request) => ipcRenderer.invoke('dwarf:resetName', textOf(request)),
-  reportRendererDiagnostic: (request) => ipcRenderer.send('diag:renderer:report', request)
+    invokeOrReject(() =>
+      ipcRenderer.invoke('dwarf:setName', {
+        dwarfId: textOf(request?.dwarfId),
+        ...(typeof request?.name === 'string' ? { name: request.name } : {})
+      })
+    ),
+  resetDwarfName: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('dwarf:resetName', textOf(request))),
+  reportRendererDiagnostic: (request) =>
+    sendOrDrop(() => ipcRenderer.send('diag:renderer:report', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

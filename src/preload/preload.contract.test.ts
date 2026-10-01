@@ -38,8 +38,17 @@ vi.mock('electron', () => ({
     }
   },
   ipcRenderer: {
-    invoke: (channel: string, ...args: unknown[]) => invoke(channel, ...args),
-    send: (channel: string, ...args: unknown[]) => send(channel, ...args),
+    // Electron runs structured clone on the payload: a value it cannot copy throws in `send` (observed on Electron
+    // 44, `preload.os.test.ts`). Electron 44's `invoke` rejects instead; its documented signature does not exclude
+    // a synchronous throw, so the fake throws there too, the case the preload must still turn into a rejection.
+    invoke: (channel: string, ...args: unknown[]) => {
+      structuredClone(args)
+      return invoke(channel, ...args)
+    },
+    send: (channel: string, ...args: unknown[]) => {
+      structuredClone(args)
+      send(channel, ...args)
+    },
     on: (channel: string, listener: (...args: unknown[]) => void) => on(channel, listener),
     removeListener: (channel: string, listener: (...args: unknown[]) => void) =>
       removeListener(channel, listener)
@@ -236,6 +245,49 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
     // Passed on, not dropped: a value the preload cannot coerce still reaches main, which refuses it.
     await api.sendDwarfText?.('not a request')
     expect(invoke).toHaveBeenLastCalledWith('dwarf:sendText', 'not a request')
+  })
+
+  it('[ADR-019] a member given a value structured clone cannot copy never throws: a send is dropped and an invoke rejects with an Error', async () => {
+    const uncloneable = (): string => 'not cloneable'
+    const thrown: string[] = []
+    const settled: string[] = []
+    for (const key of KEYS) {
+      const kind = kindOf(key)
+      if (kind !== 'send' && kind !== 'invoke') continue
+      const member = memberOf(key) ?? ''
+      const call = api[member]
+      if (typeof call !== 'function') continue
+      let answer: unknown
+      try {
+        answer = call(uncloneable)
+      } catch (error) {
+        thrown.push(`${member}: ${String(error)}`)
+        continue
+      }
+      if (kind === 'send') {
+        if (answer !== undefined) settled.push(`${member}: a send answered ${String(answer)}`)
+        continue
+      }
+      if (!(answer instanceof Promise)) {
+        settled.push(`${member}: an invoke answered ${typeof answer}, not a promise`)
+        continue
+      }
+      // A member whose coercion copies only cloneable fields still crosses and resolves (the fake answers undefined).
+      await answer.then(
+        () => undefined,
+        (error: unknown) => {
+          if (!(error instanceof Error)) settled.push(`${member}: rejected with ${typeof error}`)
+        }
+      )
+    }
+    expect(thrown).toEqual([])
+    expect(settled).toEqual([])
+    // Dropped and rejected, not passed on: main never receives a payload that cannot cross.
+    vi.clearAllMocks()
+    await expect(api.sendDwarfText?.(uncloneable)).rejects.toBeInstanceOf(Error)
+    api.reportRendererDiagnostic?.(uncloneable)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("[ADR-033] a member whose route shape is today exposes today's result type", () => {

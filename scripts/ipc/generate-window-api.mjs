@@ -7,7 +7,8 @@
  *   speaking on the wire and with the types of the shape its route uses in this release (`shape` in
  *   `src/ui-main/ipc/routes.ts`): today's wire and today's types (`TODAY_SHAPES`) while the route is `today`, the
  *   registry key and the target types once it is `target`. The preload coerces for ergonomics and never throws: a
- *   value it cannot coerce is passed on for main to refuse (14 §1.4).
+ *   value it cannot coerce is passed on for main to refuse, and a payload structured clone cannot copy is dropped by
+ *   a send and rejected by an invoke (`IPC_GUARDS`; 14 §1.4).
  * - `src/contracts/ipc/testing/fakeWindowApi.ts`: `createFakeWindowApi(overrides)` with every member, for renderer
  *   tests; reading a member the registry does not have fails the test (17 §1.6).
  *
@@ -330,11 +331,40 @@ function memberCode(row) {
       }`
     }
     default: {
-      const call = row.kind === 'send' ? 'send' : 'invoke'
-      if (row.noPayload) return `() => ipcRenderer.${call}(${wire})`
-      return `(request) => ipcRenderer.${call}(${wire}, ${row.coercion?.arg ?? 'request'})`
+      const guard = row.kind === 'send' ? 'sendOrDrop' : 'invokeOrReject'
+      const args = row.noPayload ? wire : `${wire}, ${row.coercion?.arg ?? 'request'}`
+      const call = `${guard}(() => ipcRenderer.${row.kind === 'send' ? 'send' : 'invoke'}(${args}))`
+      return row.noPayload ? `() => ${call}` : `(request) => ${call}`
     }
   }
+}
+
+/**
+ * The two guards every send and invoke member calls through. Electron structured-clones the payload, and one it
+ * cannot copy (a function, a symbol, a DOM node) fails inside the preload: `send` throws (observed on Electron 44,
+ * `src/preload/preload.os.test.ts`). The preload never throws (14 §1.4), so a send is dropped, as main drops a one-way
+ * payload it refuses (14 §1.5: `undefined` for a one-way send), and an invoke always answers with a promise, which
+ * rejects with Electron's Error: a row's refusal shape is main's (14 §1.5), and main never received this call. Each
+ * member still names its own `ipcRenderer` call (the re-inventory scanner reads it), and its coercion runs inside the
+ * guard.
+ */
+const IPC_GUARDS = {
+  send: `/** A one-way message that cannot cross (structured clone refuses it) is dropped, never thrown (14 §1.4). */
+function sendOrDrop(send: () => void): void {
+  try {
+    send()
+  } catch {
+    // Dropped: main never receives it, as it would drop a one-way payload it refuses.
+  }
+}`,
+  invoke: `/** A request always answers with a promise: one that cannot cross rejects, never throws (14 §1.4). */
+function invokeOrReject<T>(invoke: () => Promise<T>): Promise<T> {
+  try {
+    return invoke()
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+  }
+}`
 }
 
 const docOf = (row) =>
@@ -362,6 +392,9 @@ function renderPreload(rows, providers) {
   const shapes = new Set(rows.map((row) => row.shape))
   const usesWebUtils = rows.some((row) => row.kind === 'helper')
   const usesPush = rows.some((row) => row.kind === 'push')
+  const guards = Object.keys(IPC_GUARDS)
+    .filter((kind) => rows.some((row) => row.kind === kind))
+    .map((kind) => IPC_GUARDS[kind])
   const electron = ['contextBridge', 'ipcRenderer', ...(usesWebUtils ? ['webUtils'] : [])]
   // A target alias is declared only when a member uses it: a send row has no result type (TS6196 otherwise).
   const memberText = rows.map((row) => `${memberType(row)} ${memberCode(row)}`).join(' ')
@@ -388,7 +421,8 @@ function renderPreload(rows, providers) {
   return `${HEADER('The preload: `window.api`, one member per registry row (14 §2.1; ADR-033 item 6; ADR-019 item 1).')}
 //
 // Each member speaks on its row's wire with the types of the shape its route uses in this release; it coerces for
-// ergonomics and never throws (a value it cannot coerce is passed on for main to refuse, 14 §1.4). Built as one
+// ergonomics and never throws (a value it cannot coerce is passed on for main to refuse; a payload structured clone
+// cannot copy is dropped by a send and rejected by an invoke, 14 §1.4). Built as one
 // CommonJS script whose only runtime import is \`electron\`, so it loads in a sandboxed renderer (S-019-1).
 import { ${electron.join(', ')}${usesPush ? ', type IpcRendererEvent' : ''} } from 'electron'
 import type { z } from 'zod'
@@ -396,7 +430,7 @@ import type { CHANNELS, ChannelKey } from '@dwarfai/contracts'
 ${shapes.has('today') ? "import type { TODAY } from '../contracts/ipc/todayShapes'\n" : ''}
 ${types.join('\n')}
 
-${helperFunctions(rows, providers).join('\n\n')}
+${[...helperFunctions(rows, providers), ...guards].join('\n\n')}
 
 /** API surface exposed to the renderer as \`window.api\`. */
 export interface DwarfAiMinersApi {
