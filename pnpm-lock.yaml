@@ -81,6 +81,9 @@ importers:
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1(@noble/hashes@2.4.0)
+      node-api-headers:
+        specifier: 1.9.0
+        version: 1.9.0
       png2icons:
         specifier: 2.0.1
         version: 2.0.1
@@ -2490,6 +2493,9 @@ packages:
   node-abi@4.34.0:
     resolution: {integrity: sha512-4Oy5Q6/Ftna9sXyrkdnKypfvm9uWRpxUPvlw4oA192QNMN39aq8k4l36TUUUU/ONw7ivGVi402Ud+UBPVDYh6A==}
     engines: {node: '>=22.12.0'}
+
+  node-api-headers@1.9.0:
+    resolution: {integrity: sha512-2oNILP4jXwRB4ywnYKjVk1YyJ96n2D4EOVJO6S3oYZ5PtbJrw3Yt9TpAuX3nBLMuzn74rnfGQrv13pS9vC+YiA==}
 
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
@@ -5941,6 +5947,8 @@ snapshots:
   node-abi@4.34.0:
     dependencies:
       semver: 7.8.5
+
+  node-api-headers@1.9.0: {}
 
   node-api-version@0.2.1:
     dependencies:
