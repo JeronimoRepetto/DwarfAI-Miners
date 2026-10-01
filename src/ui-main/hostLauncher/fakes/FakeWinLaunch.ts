@@ -5,7 +5,8 @@
 import type {
   BreakawayResult,
   HostProcessHandle,
-  WinLaunchBinding
+  WinLaunchBinding,
+  WmiCreateResult
 } from '../win-launch/nativeWinLaunch'
 
 export interface BreakawayCall {
@@ -14,6 +15,12 @@ export interface BreakawayCall {
   cwd: string
   environment: string
   flags: number
+}
+
+export interface WmiCreateCall {
+  commandLine: string
+  cwd: string
+  environment: readonly string[]
 }
 
 interface Watched {
@@ -30,6 +37,10 @@ export class FakeWinLaunch {
     status: 'launched',
     process
   })
+  readonly wmiCreates: WmiCreateCall[] = []
+  /** What wmiCreate settles with; default a launch of pid 4242. */
+  wmiAnswer: () => Promise<WmiCreateResult> = () =>
+    Promise.resolve({ status: 'launched', pid: 4242 })
   /** Whether open(pid) finds the process. */
   canOpen = true
   private readonly watches = new Map<HostProcessHandle, Watched>()
@@ -42,6 +53,10 @@ export class FakeWinLaunch {
       const result = this.answer(process)
       if (result.status === 'launched') this.last = result.process
       return result
+    },
+    wmiCreate: (commandLine, cwd, environment) => {
+      this.wmiCreates.push({ commandLine, cwd, environment })
+      return this.wmiAnswer()
     },
     open: (pid) => {
       this.opened.push(pid)

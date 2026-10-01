@@ -8,6 +8,8 @@
 // (libuv's own job lets a grandchild leave it silently), so a breakaway here may launch or be
 // refused; both are checked for what they must be.
 import { spawn, type ChildProcess } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -15,6 +17,7 @@ import {
   BREAKAWAY_CREATION_FLAGS,
   CREATE_SUSPENDED,
   environmentBlock,
+  environmentList,
   windowsCommandLine
 } from '../windows'
 import { loadWinLaunch, type WinLaunchBinding } from './nativeWinLaunch'
@@ -123,6 +126,67 @@ describe.runIf(WINDOWS)('the launch helper (ADR-002 D6 item 1, SP-02), built and
       end(exiting)
       end(running)
     }
+  })
+
+  // ADDED (fix: FM-009 LAUNCHER_TIMEOUT, CI run 36889737566): the WMI create (D6 item 2) runs in
+  // this process now, not in a Windows PowerShell step whose cold start outran the launch timeout.
+  it('[ADR-002, FM-012] the WMI create starts the process with exactly the given environment and working folder, and its pid is opened to watch its exit', async () => {
+    const binding = helper()
+    const dir = mkdtempSync(join(tmpdir(), 'dw-wmi-'))
+    const report = join(dir, 'report.json')
+    const script = [
+      "const { writeFileSync } = require('node:fs')",
+      'writeFileSync(process.argv[1], JSON.stringify({ probe: process.env.DWARFAI_WMI_PROBE,',
+      '  names: Object.keys(process.env).map((name) => name.toUpperCase()), cwd: process.cwd() }))',
+      'setTimeout(() => process.exit(7), 1500)'
+    ].join('\n')
+    let pid = 0
+    try {
+      const result = await binding.wmiCreate(
+        windowsCommandLine(process.execPath, ['-e', script, report]),
+        dir,
+        environmentList({ SystemRoot: SYSTEM_ROOT, DWARFAI_WMI_PROBE: 'wmi-ok' })
+      )
+      expect(result.status, JSON.stringify(result)).toBe('launched')
+      pid = result.status === 'launched' ? result.pid : 0
+      const watched = binding.open(pid)
+      if (watched === null) throw new Error('open(pid) found no process')
+      try {
+        expect(await exitOf(binding, watched, 20_000)).toBe(7)
+      } finally {
+        binding.release(watched)
+      }
+      const seen = JSON.parse(readFileSync(report, 'utf8')) as {
+        probe?: string
+        names: string[]
+        cwd: string
+      }
+      expect(seen.probe).toBe('wmi-ok')
+      expect(seen.names, 'only the given environment, not the WMI service one').not.toContain(
+        'PATH'
+      )
+      expect(seen.cwd.toLowerCase()).toBe(dir.toLowerCase())
+    } finally {
+      if (pid !== 0) {
+        try {
+          process.kill(pid)
+        } catch {
+          // already gone
+        }
+      }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    }
+  })
+
+  it('[ADR-002, FM-012] a WMI create that Win32_Process.Create refuses answers refused with its ReturnValue and starts nothing', async () => {
+    const binding = helper()
+    const missing = join(SYSTEM_ROOT, 'no-such-launcher.exe')
+    expect(
+      await binding.wmiCreate(windowsCommandLine(missing, []), SYSTEM_ROOT, [
+        `SystemRoot=${SYSTEM_ROOT}`
+      ])
+    ).toEqual({ status: 'refused', code: 'WMI_9' })
+    expect(() => binding.wmiCreate('x', SYSTEM_ROOT, [1] as never)).toThrow(TypeError)
   })
 
   it('[S12.03] release ends the watch: the exit is not reported afterwards, and the process runs on', async () => {

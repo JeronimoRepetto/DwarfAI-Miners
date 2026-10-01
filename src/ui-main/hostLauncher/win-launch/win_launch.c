@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The UI's launch helper (ADR-002 D6 item 1; spike SP-02), as a Node-API module for Windows. It
+// The UI's launch helper (ADR-002 D6 items 1 and 2; spike SP-02), as a Node-API module for Windows. It
 // is loaded only by nativeWinLaunch.ts in this folder, in UI main, and starts the DwarfAI Host
 // outside every job object the UI may be in, without a console window, from inside the UI process:
 // no PowerShell or compiler process stands between them (windows.ts).
@@ -23,6 +23,14 @@
 //     (process is null only when its handle could not be wrapped: the Host runs, unwatched)
 //     codes: CREATE_<win32 error>, STILL_IN_JOB, RESUME_<win32 error>. Throws a TypeError for bad
 //     arguments or forbidden flags.
+//   wmiCreate(commandLine, cwd, environment: string[])
+//     → Promise<{ status: 'launched', pid } | { status: 'refused', code: string }>
+//     D6 item 2, for a refused breakaway: WMI Win32_Process.Create in root\cimv2, made through COM
+//     on a worker thread (UI main never waits on it), with the caller's identity (impersonation),
+//     a hidden window (ShowWindow = SW_HIDE) and exactly the given environment entries; the WMI
+//     service creates the process outside every job of this one. SP-02 measured the create at
+//     46–67 ms. codes: WMI_<ReturnValue> (Create answered non-zero, e.g. 9: path not found),
+//     WMI_0x<HRESULT> (a COM or WMI call failed). Throws a TypeError for bad arguments.
 //   open(pid) → process | null: SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, enough to wait for
 //     a WMI-created Host and read its exit code.
 //   watch(process, ms, onExit(code)): calls onExit once, with the exit code (0 … 2^32-1) when the
@@ -33,10 +41,19 @@
 //     process itself runs on. A handle that is collected without release() is released then.
 //
 // The static C runtime (/MT) keeps the binary free of any VC++ redistributable (the build's import
-// check proves it); it imports kernel32 only.
+// check proves it); it imports kernel32, and ole32 and oleaut32 for the WMI create, only.
 #define WIN32_LEAN_AND_MEAN
 #define UNICODE
+#define COBJMACROS
 #include <windows.h>
+#include <objbase.h>
+#include <oleauto.h>
+#include <stdint.h>
+// wbemcli.h uses unnamed unions (C4201), which /W4 /WX would refuse.
+#pragma warning(push)
+#pragma warning(disable : 4201)
+#include <wbemidl.h>
+#pragma warning(pop)
 // delayimp.h uses an unnamed union (C4201), which /W4 /WX would refuse.
 #pragma warning(push)
 #pragma warning(disable : 4201)
@@ -270,6 +287,252 @@ static napi_value js_breakaway(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// ---- WMI create -------------------------------------------------------------------------------
+
+// The WMI locator's class and interface ids (wbemcli.h), defined here so that no wbemuuid static
+// library is linked.
+static const CLSID WBEM_LOCATOR_CLSID = {
+    0x4590f811, 0x1d3a, 0x11d0, {0x89, 0x1f, 0x00, 0xaa, 0x00, 0x4b, 0x2e, 0x24}};
+static const IID WBEM_LOCATOR_IID = {
+    0xdc12a687, 0x737f, 0x11cf, {0x88, 0x4d, 0x00, 0xaa, 0x00, 0x4b, 0x2e, 0x24}};
+
+typedef struct WmiCreate {
+  napi_async_work work;
+  napi_deferred deferred;
+  wchar_t *command_line;
+  wchar_t *cwd;
+  wchar_t **environment;
+  uint32_t environment_count;
+  // Results, written by the worker thread, read after it finished.
+  HRESULT failure;  // S_OK unless a WMI call failed
+  long return_value;
+  long pid;
+} WmiCreate;
+
+static void free_wmi_create(WmiCreate *job) {
+  free(job->command_line);
+  free(job->cwd);
+  if (job->environment != NULL) {
+    for (uint32_t index = 0; index < job->environment_count; index++) free(job->environment[index]);
+    free(job->environment);
+  }
+  free(job);
+}
+
+// Sets `name` on `object` to a copy of the string `text`.
+static HRESULT put_string(IWbemClassObject *object, const wchar_t *name, const wchar_t *text) {
+  VARIANT value;
+  VariantInit(&value);
+  V_VT(&value) = VT_BSTR;
+  V_BSTR(&value) = SysAllocString(text);
+  if (V_BSTR(&value) == NULL) return E_OUTOFMEMORY;
+  HRESULT hr = IWbemClassObject_Put(object, name, 0, &value, 0);
+  VariantClear(&value);
+  return hr;
+}
+
+// Reads the integer `name` of `object` (CIM uint32 and uint16 come back as VT_I4).
+static HRESULT get_long(IWbemClassObject *object, const wchar_t *name, long *out) {
+  VARIANT value;
+  VariantInit(&value);
+  HRESULT hr = IWbemClassObject_Get(object, name, 0, &value, NULL, NULL);
+  if (SUCCEEDED(hr)) {
+    if (V_VT(&value) == VT_I4) *out = V_I4(&value);
+    else hr = WBEM_E_TYPE_MISMATCH;
+  }
+  VariantClear(&value);
+  return hr;
+}
+
+// Win32_ProcessStartup with a hidden window and exactly the given environment entries.
+static HRESULT make_startup(IWbemServices *services, const WmiCreate *job,
+                            IWbemClassObject **startup) {
+  IWbemClassObject *startup_class = NULL;
+  BSTR class_name = SysAllocString(L"Win32_ProcessStartup");
+  HRESULT hr = class_name == NULL ? E_OUTOFMEMORY : S_OK;
+  if (SUCCEEDED(hr))
+    hr = IWbemServices_GetObject(services, class_name, 0, NULL, &startup_class, NULL);
+  if (SUCCEEDED(hr)) hr = IWbemClassObject_SpawnInstance(startup_class, 0, startup);
+  if (SUCCEEDED(hr)) {
+    VARIANT value;
+    VariantInit(&value);
+    V_VT(&value) = VT_I4;
+    V_I4(&value) = SW_HIDE;
+    hr = IWbemClassObject_Put(*startup, L"ShowWindow", 0, &value, 0);
+  }
+  if (SUCCEEDED(hr)) {
+    SAFEARRAY *entries = SafeArrayCreateVector(VT_BSTR, 0, job->environment_count);
+    if (entries == NULL) hr = E_OUTOFMEMORY;
+    for (LONG index = 0; SUCCEEDED(hr) && (uint32_t)index < job->environment_count; index++) {
+      BSTR entry = SysAllocString(job->environment[index]);
+      // SafeArrayPutElement stores a copy of the string.
+      hr = entry == NULL ? E_OUTOFMEMORY : SafeArrayPutElement(entries, &index, entry);
+      SysFreeString(entry);
+    }
+    if (SUCCEEDED(hr)) {
+      VARIANT value;
+      VariantInit(&value);
+      V_VT(&value) = VT_ARRAY | VT_BSTR;
+      V_ARRAY(&value) = entries;
+      hr = IWbemClassObject_Put(*startup, L"EnvironmentVariables", 0, &value, 0);
+    }
+    if (entries != NULL) SafeArrayDestroy(entries);
+  }
+  if (startup_class != NULL) IWbemClassObject_Release(startup_class);
+  SysFreeString(class_name);
+  return hr;
+}
+
+// Win32_Process.Create through the services, as the caller (impersonation): the WMI service
+// creates the process, outside every job of this one.
+static HRESULT create_process(IWbemServices *services, WmiCreate *job) {
+  IWbemClassObject *process_class = NULL, *signature = NULL, *in = NULL, *out = NULL;
+  IWbemClassObject *startup = NULL;
+  BSTR class_name = SysAllocString(L"Win32_Process");
+  BSTR method = SysAllocString(L"Create");
+  HRESULT hr = class_name == NULL || method == NULL ? E_OUTOFMEMORY : S_OK;
+  if (SUCCEEDED(hr)) hr = make_startup(services, job, &startup);
+  if (SUCCEEDED(hr))
+    hr = IWbemServices_GetObject(services, class_name, 0, NULL, &process_class, NULL);
+  if (SUCCEEDED(hr)) hr = IWbemClassObject_GetMethod(process_class, method, 0, &signature, NULL);
+  if (SUCCEEDED(hr)) hr = IWbemClassObject_SpawnInstance(signature, 0, &in);
+  if (SUCCEEDED(hr)) hr = put_string(in, L"CommandLine", job->command_line);
+  if (SUCCEEDED(hr)) hr = put_string(in, L"CurrentDirectory", job->cwd);
+  if (SUCCEEDED(hr)) {
+    // Put copies the reference (AddRef); `startup` is released below either way.
+    VARIANT value;
+    VariantInit(&value);
+    V_VT(&value) = VT_UNKNOWN;
+    V_UNKNOWN(&value) = (IUnknown *)startup;
+    hr = IWbemClassObject_Put(in, L"ProcessStartupInformation", 0, &value, 0);
+  }
+  if (SUCCEEDED(hr))
+    hr = IWbemServices_ExecMethod(services, class_name, method, 0, NULL, in, &out, NULL);
+  if (SUCCEEDED(hr)) hr = get_long(out, L"ReturnValue", &job->return_value);
+  if (SUCCEEDED(hr) && job->return_value == 0) hr = get_long(out, L"ProcessId", &job->pid);
+  if (out != NULL) IWbemClassObject_Release(out);
+  if (in != NULL) IWbemClassObject_Release(in);
+  if (signature != NULL) IWbemClassObject_Release(signature);
+  if (process_class != NULL) IWbemClassObject_Release(process_class);
+  if (startup != NULL) IWbemClassObject_Release(startup);
+  SysFreeString(method);
+  SysFreeString(class_name);
+  return hr;
+}
+
+// Worker thread: connect to root\cimv2 and create the process. No Node-API call is made here.
+static void wmi_create_execute(napi_env env, void *data) {
+  WmiCreate *job = data;
+  (void)env;
+  HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  // A thread pool thread already in another apartment can still make the calls.
+  BOOL initialized = SUCCEEDED(hr);
+  if (!initialized && hr != RPC_E_CHANGED_MODE) {
+    job->failure = hr;
+    return;
+  }
+  IWbemLocator *locator = NULL;
+  IWbemServices *services = NULL;
+  BSTR space = SysAllocString(L"ROOT\\CIMV2");
+  hr = space == NULL ? E_OUTOFMEMORY : S_OK;
+  if (SUCCEEDED(hr))
+    hr = CoCreateInstance(&WBEM_LOCATOR_CLSID, NULL, CLSCTX_INPROC_SERVER, &WBEM_LOCATOR_IID,
+                          (void **)&locator);
+  if (SUCCEEDED(hr))
+    hr = IWbemLocator_ConnectServer(locator, space, NULL, NULL, NULL, 0, NULL, NULL, &services);
+  // Win32_Process.Create needs the caller's identity: impersonation on this proxy, since the
+  // process-wide CoInitializeSecurity belongs to the host executable.
+  if (SUCCEEDED(hr))
+    hr = CoSetProxyBlanket((IUnknown *)services, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL,
+                           RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE);
+  if (SUCCEEDED(hr)) hr = create_process(services, job);
+  if (services != NULL) IWbemServices_Release(services);
+  if (locator != NULL) IWbemLocator_Release(locator);
+  SysFreeString(space);
+  if (initialized) CoUninitialize();
+  job->failure = SUCCEEDED(hr) ? S_OK : hr;
+}
+
+// JavaScript thread: settle the promise with what the worker found.
+static void wmi_create_complete(napi_env env, napi_status status, void *data) {
+  WmiCreate *job = data;
+  char code[32];
+  napi_value result;
+  if (status != napi_ok) {
+    snprintf(code, sizeof code, "WMI_STATUS_%d", (int)status);
+    result = result_object(env, "refused", code, NULL);
+  } else if (job->failure != S_OK) {
+    snprintf(code, sizeof code, "WMI_0x%08lX", (unsigned long)job->failure);
+    result = result_object(env, "refused", code, NULL);
+  } else if (job->return_value != 0) {
+    snprintf(code, sizeof code, "WMI_%ld", job->return_value);
+    result = result_object(env, "refused", code, NULL);
+  } else {
+    napi_value pid;
+    result = result_object(env, "launched", NULL, NULL);
+    napi_create_uint32(env, (uint32_t)job->pid, &pid);
+    napi_set_named_property(env, result, "pid", pid);
+  }
+  napi_resolve_deferred(env, job->deferred, result);
+  napi_delete_async_work(env, job->work);
+  free_wmi_create(job);
+}
+
+// The environment entries: an array of strings, copied; NULL (and a TypeError pending) otherwise.
+static BOOL environment_argument(napi_env env, napi_value value, WmiCreate *job) {
+  bool is_array = false;
+  uint32_t count = 0;
+  if (napi_is_array(env, value, &is_array) != napi_ok || !is_array ||
+      napi_get_array_length(env, value, &count) != napi_ok)
+    return FALSE;
+  job->environment = calloc(count == 0 ? 1 : count, sizeof(wchar_t *));
+  if (job->environment == NULL) return FALSE;
+  job->environment_count = count;
+  for (uint32_t index = 0; index < count; index++) {
+    napi_value entry;
+    if (napi_get_element(env, value, index, &entry) != napi_ok) return FALSE;
+    job->environment[index] = string_argument(env, entry);
+    if (job->environment[index] == NULL) return FALSE;
+  }
+  return TRUE;
+}
+
+static napi_value js_wmi_create(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value argv[3];
+  WmiCreate *job = calloc(1, sizeof *job);
+  if (job == NULL) {
+    napi_throw_error(env, "WMI_NOMEM", "wmiCreate: out of memory");
+    return NULL;
+  }
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 3 ||
+      (job->command_line = string_argument(env, argv[0])) == NULL ||
+      (job->cwd = string_argument(env, argv[1])) == NULL ||
+      !environment_argument(env, argv[2], job)) {
+    free_wmi_create(job);
+    napi_throw_type_error(env, NULL,
+                          "wmiCreate(commandLine: string, cwd: string, environment: string[])");
+    return NULL;
+  }
+  napi_value promise, resource;
+  napi_create_string_utf8(env, "dwarfai.winLaunch.wmiCreate", NAPI_AUTO_LENGTH, &resource);
+  if (napi_create_promise(env, &job->deferred, &promise) != napi_ok ||
+      napi_create_async_work(env, NULL, resource, wmi_create_execute, wmi_create_complete, job,
+                             &job->work) != napi_ok) {
+    free_wmi_create(job);
+    napi_throw_error(env, "WMI_START", "wmiCreate: the worker could not be created");
+    return NULL;
+  }
+  if (napi_queue_async_work(env, job->work) != napi_ok) {
+    // The promise stays pending: settle it here, then free the job.
+    napi_value result = result_object(env, "refused", "WMI_QUEUE", NULL);
+    napi_resolve_deferred(env, job->deferred, result);
+    napi_delete_async_work(env, job->work);
+    free_wmi_create(job);
+  }
+  return promise;
+}
+
 // ---- open, watch, release -----------------------------------------------------------------------
 
 static napi_value js_open(napi_env env, napi_callback_info info) {
@@ -348,6 +611,8 @@ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_value function;
   napi_create_function(env, "breakaway", NAPI_AUTO_LENGTH, js_breakaway, NULL, &function);
   napi_set_named_property(env, exports, "breakaway", function);
+  napi_create_function(env, "wmiCreate", NAPI_AUTO_LENGTH, js_wmi_create, NULL, &function);
+  napi_set_named_property(env, exports, "wmiCreate", function);
   napi_create_function(env, "open", NAPI_AUTO_LENGTH, js_open, NULL, &function);
   napi_set_named_property(env, exports, "open", function);
   napi_create_function(env, "watch", NAPI_AUTO_LENGTH, js_watch, NULL, &function);

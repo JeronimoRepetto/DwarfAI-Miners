@@ -23,12 +23,6 @@ import {
 /** The creation flag ADR-002 D6 item 3 forbids (console flash for every console descendant, L-12). */
 const DETACHED_PROCESS = 0x0000_0008
 
-/** The PowerShell script a launcher call carries after -EncodedCommand. */
-function encodedScript(args: readonly string[]): string {
-  const at = args.indexOf('-EncodedCommand')
-  return Buffer.from(args[at + 1] ?? '', 'base64').toString('utf16le')
-}
-
 const HOST_DATA_DIR = '/home/j/.config/DwarfAI-Miners/host'
 const SECRET = 'f00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeed'
 
@@ -297,15 +291,15 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     // never Node's detached spawn (libuv adds DETACHED_PROCESS for it), and starts no process of its
     // own. Only a refused breakaway starts the one step (Windows PowerShell by path, never a shell,
     // hidden), and its WMI create hides the window.
+    // AMENDED (fix: FM-009 LAUNCHER_TIMEOUT): a refused breakaway no longer starts a step either:
+    // the helper's WMI create runs in this process (its hidden window, ShowWindow = 0, is set in
+    // win_launch.c and proven in the Windows OS lane, detach.os.test.ts FM-114).
     const breakaway = new FakeWinLaunch()
-    const onWindows = new RecordingSpawnProcess()
     const windows = await createWindowsSpawner({
-      loadHelper: () => ({ ok: true, binding: breakaway.binding }),
-      spawnProcess: onWindows.spawn,
-      env: { SystemRoot: 'C:\\Windows' }
+      loadHelper: () => ({ ok: true, binding: breakaway.binding })
     })(request)
     expect(windows.kind).toBe('launched')
-    expect(onWindows.calls).toEqual([])
+    expect(breakaway.wmiCreates).toEqual([])
     const flags = breakaway.breakaways[0]?.flags ?? 0
     const required = CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
     expect(flags & required).toBe(required)
@@ -313,25 +307,12 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
 
     const refused = new FakeWinLaunch()
     refused.answer = () => ({ status: 'refused', code: 'STILL_IN_JOB' })
-    const viaWmi = new RecordingSpawnProcess()
-    viaWmi.onSpawn = (child) => child.print('launched wmi 4242')
-    expect(
-      (
-        await createWindowsSpawner({
-          loadHelper: () => ({ ok: true, binding: refused.binding }),
-          spawnProcess: viaWmi.spawn,
-          env: { SystemRoot: 'C:\\Windows' }
-        })(request)
-      ).kind
-    ).toBe('launched')
-    const [step] = viaWmi.calls
-    expect(step?.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
-    expect(step?.options).toMatchObject({ shell: false, windowsHide: true })
-    expect(step?.options.detached).not.toBe(true)
-    const script = encodedScript(step?.args ?? [])
-    expect(script).not.toMatch(/DETACHED_PROCESS|CREATE_NEW_CONSOLE/)
-    // The WMI step starts it hidden.
-    expect(script).toContain('ShowWindow = [uint16]0')
+    const viaWmi = await createWindowsSpawner({
+      loadHelper: () => ({ ok: true, binding: refused.binding })
+    })(request)
+    expect(viaWmi.kind === 'launched' && viaWmi.host.how).toBe('wmi')
+    expect(refused.wmiCreates).toHaveLength(1)
+    expect(refused.breakaways).toHaveLength(1)
 
     // POSIX: a new session (Node's detached = setsid), never a shell, stdio to a file, unref'd.
     const root = mkdtempSync(join(tmpdir(), 'dwarfai-030-posix-'))
@@ -353,7 +334,9 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     }
   })
 
-  it('[ADR-002] on Windows the Host request reaches the launcher step on stdin, never in its argv', async () => {
+  // AMENDED (fix: FM-009 LAUNCHER_TIMEOUT; was: "… reaches the launcher step on stdin, never in its
+  // argv"): no launcher step process exists any more.
+  it('[ADR-002] on Windows the Host request reaches the launch helper as call arguments, never a process argv', async () => {
     const request = buildHostSpawn({
       execPath: 'C:\\DwarfAI\\DwarfAI-Miners.exe',
       hostEntry: 'C:\\DwarfAI\\resources\\app.asar\\out\\host\\main.js',
@@ -362,27 +345,22 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     })
     // AMENDED (fix: Windows launch timeout): the request reaches the in-process breakaway as
     // arguments of a function call, and, when breakaway is refused, the WMI step on its stdin.
+    // AMENDED (fix: FM-009 LAUNCHER_TIMEOUT): the WMI create is in-process too, so no step process
+    // exists whose argv or stdin could carry the request: it reaches the WMI create as arguments,
+    // and the command line it gets holds no environment value.
     const helper = new FakeWinLaunch()
     helper.answer = () => ({ status: 'refused', code: 'CREATE_5' })
-    const recorder = new RecordingSpawnProcess()
-    recorder.onSpawn = (child) => child.print('launched wmi 4242')
     await createWindowsSpawner({
-      loadHelper: () => ({ ok: true, binding: helper.binding }),
-      spawnProcess: recorder.spawn,
-      env: {}
+      loadHelper: () => ({ ok: true, binding: helper.binding })
     })(request)
     expect(helper.breakaways[0]?.environment).toContain(`PROVIDER_API_KEY=${SECRET}`)
-    const [step] = recorder.calls
+    const [sent] = helper.wmiCreates
 
-    const argv = [step?.file, ...(step?.args ?? []), encodedScript(step?.args ?? [])].join(' ')
-    expect(argv).not.toContain(SECRET)
-    expect(argv).not.toContain('DWARFAI_HOST_DATA_DIR')
-    expect(JSON.stringify(step?.options.env ?? {})).not.toContain(SECRET)
-    expect(step?.child.stdinText).toMatch(/^\{/)
-    const sent = JSON.parse(step?.child.stdinText ?? '') as { env: string[]; commandLine: string }
-    expect(sent.env).toContain(`PROVIDER_API_KEY=${SECRET}`)
-    expect(sent.env).toContain('ELECTRON_RUN_AS_NODE=1')
-    expect(sent.commandLine).toBe(
+    expect(sent?.commandLine).not.toContain(SECRET)
+    expect(sent?.commandLine).not.toContain('DWARFAI_HOST_DATA_DIR')
+    expect(sent?.environment).toContain(`PROVIDER_API_KEY=${SECRET}`)
+    expect(sent?.environment).toContain('ELECTRON_RUN_AS_NODE=1')
+    expect(sent?.commandLine).toBe(
       '"C:\\DwarfAI\\DwarfAI-Miners.exe" "C:\\DwarfAI\\resources\\app.asar\\out\\host\\main.js"'
     )
   })

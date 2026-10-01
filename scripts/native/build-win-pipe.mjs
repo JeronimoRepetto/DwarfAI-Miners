@@ -61,7 +61,11 @@ export const LAUNCH_SOURCE = path.join(
  */
 export const NATIVE_MODULES = [
   { source: SOURCE, binary: BINARY, libs: ['advapi32.lib', 'kernel32.lib'] },
-  { source: LAUNCH_SOURCE, binary: 'dwarfai_win_launch.node', libs: ['kernel32.lib'] }
+  {
+    source: LAUNCH_SOURCE,
+    binary: 'dwarfai_win_launch.node',
+    libs: ['kernel32.lib', 'ole32.lib', 'oleaut32.lib']
+  }
 ]
 /** The Node-API version the module is written against (thread-safe functions need 4). */
 export const NAPI_VERSION = 8

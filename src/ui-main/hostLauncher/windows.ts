@@ -13,14 +13,17 @@
 //    Windows PowerShell process that compiled its C# with Add-Type, which runs csc.exe, on every
 //    spawn: a cold or busy machine could not report within the launch timeout, and the Host failed
 //    to start with LAUNCHER_TIMEOUT.)
-// 2. When breakaway is refused: WMI Win32_Process.Create with a hidden window (ShowWindow = 0),
-//    which creates the process outside the job, through one Windows PowerShell 5.1 step by path (as
-//    the Host's own probes run it, privilege.ts). WMI hands the new process exactly the environment
-//    it is given (measured for ISSUE-030: without EnvironmentVariables it gets the user's registry
-//    environment, with them only those, and the WMI service's working folder unless one is set),
-//    so the whole environment and the working folder are always passed explicitly. The step only
-//    creates the process and prints its pid; it compiles nothing. It must report within
-//    LAUNCH_REPORT_TIMEOUT_MS, or the launch fails.
+// 2. When breakaway is refused: WMI `Win32_Process.Create` with a hidden window (ShowWindow = 0),
+//    which creates the process outside the job, also from inside this process through the helper
+//    (wmiCreate, on a worker thread, so UI main never waits on it). WMI hands the new process
+//    exactly the environment it is given (measured for ISSUE-030: without EnvironmentVariables it
+//    gets the user's registry environment, with them only those, and the WMI service's working
+//    folder unless one is set), so the whole environment and the working folder are always passed
+//    explicitly. The create must report within LAUNCH_REPORT_TIMEOUT_MS, or the launch fails.
+//    (Until this fix it was a Windows PowerShell process running New-CimInstance and
+//    Invoke-CimMethod: where the UI's job forbids breakaway — every launch on the CI runner — a cold
+//    or busy machine could not start PowerShell and report within that timeout, and the Host failed
+//    to start with LAUNCHER_TIMEOUT, CI run 36889737566.)
 // 3. DETACHED_PROCESS is never used (D6 item 3); the helper refuses the flag.
 //
 // The helper then watches the Host (a WMI-created one opened by its pid) for up to HOST_WATCH_MS
@@ -28,20 +31,17 @@
 // reaches the launcher; release() ends the watch and closes the handle. The Host itself is no
 // child of the UI, so neither touches it.
 //
-// What the WMI step is told — command line, working folder, environment — goes on its stdin as
-// JSON, never in its argv (02 NFR-SEC-05). Its argv holds the fixed script only (-EncodedCommand),
-// and its own environment drops PSModulePath (a PowerShell 7 value breaks 5.1's module autoload,
-// ISSUE-315). It runs with `shell: false` and `windowsHide: true` (R17). It prints one line:
-// `launched wmi <pid>`, `in-job <code>` (WMI failed too) or `failed <code>`. The pid stays inside
-// the launcher: it is never logged (19 §9.1).
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import { createInterface } from 'node:readline'
+// No step starts a process of its own, so the Host's command line, working folder and environment
+// (02 NFR-SEC-05) travel only as arguments of in-process calls, never in any argv. The WMI pid
+// stays inside the launcher: it is never logged (19 §9.1).
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { HostSpawnRequest, HostSpawner, LaunchedHost } from './ports'
 import type {
   BreakawayResult,
   HostProcessHandle,
   LoadedWinLaunch,
-  WinLaunchBinding
+  WinLaunchBinding,
+  WmiCreateResult
 } from './win-launch/nativeWinLaunch'
 
 /** Node's `spawn`, injectable so the spawners' own tests see every option. */
@@ -70,30 +70,12 @@ export const BREAKAWAY_CREATION_FLAGS =
 export const HOST_WATCH_MS = 60_000
 
 /**
- * How long the WMI step (breakaway refused) may take to report a launch. The package names none.
- * The step no longer compiles anything: on this machine it measured about 0.4–0.6 s warm, mostly
- * Windows PowerShell's own start; 10 s leaves room for a cold start without eating the 15 s
- * readiness budget, and a step that does not report in time is a failed launch (fail-closed).
+ * How long the WMI create (breakaway refused) may take to report a launch. The package names none.
+ * SP-02 measured the create call at 46–67 ms in process; 10 s bounds a WMI service that does not
+ * answer without eating the 15 s readiness budget, and a create that does not report in time is a
+ * failed launch (fail-closed).
  */
 export const LAUNCH_REPORT_TIMEOUT_MS = 10_000
-
-/** The WMI step's script; only constants are put into it, never a request value. */
-export function launcherScript(): string {
-  return [
-    "$ErrorActionPreference = 'Stop'",
-    "$ProgressPreference = 'SilentlyContinue'",
-    'function Say([string]$line) { [Console]::Out.WriteLine($line); [Console]::Out.Flush() }',
-    'try {',
-    '  $request = [Console]::In.ReadToEnd() | ConvertFrom-Json',
-    "} catch { Say 'failed LAUNCHER_SETUP'; exit 2 }",
-    'try {',
-    '  $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0; EnvironmentVariables = [string[]]$request.env }',
-    '  $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $request.commandLine; CurrentDirectory = $request.cwd; ProcessStartupInformation = $startup }',
-    "} catch { Say 'in-job WMI_ERROR'; exit 3 }",
-    "if ($created.ReturnValue -ne 0) { Say ('in-job WMI_' + $created.ReturnValue); exit 3 }",
-    "Say ('launched wmi ' + $created.ProcessId)"
-  ].join('\n')
-}
 
 /**
  * One argument quoted for a Windows command line, read back by CommandLineToArgvW and the C
@@ -139,42 +121,17 @@ export function environmentBlock(env: Readonly<Record<string, string>>): string 
   return entries.length === 0 ? '\0\0' : `${entries.join('\0')}\0\0`
 }
 
-export type LauncherLine =
-  | { kind: 'launched'; pid: number }
-  | { kind: 'in-job'; code: string }
-  | { kind: 'failed'; code: string }
-
-const CODE = '([A-Za-z0-9_.:-]{1,64})'
-const LINES: ReadonlyArray<[RegExp, (match: RegExpExecArray) => LauncherLine]> = [
-  [/^launched wmi (\d{1,10})$/, (m) => ({ kind: 'launched', pid: Number(m[1]) })],
-  [new RegExp(`^in-job ${CODE}$`), (m) => ({ kind: 'in-job', code: m[1] as string })],
-  [new RegExp(`^failed ${CODE}$`), (m) => ({ kind: 'failed', code: m[1] as string })]
-]
-
-/** One line the WMI step printed, or null for anything else. */
-export function parseLauncherLine(line: string): LauncherLine | null {
-  const trimmed = line.trim()
-  for (const [pattern, build] of LINES) {
-    const match = pattern.exec(trimmed)
-    if (match !== null) return build(match)
-  }
-  return null
-}
-
 export interface WindowsSpawnerOptions {
   /** Loads the launch helper (win-launch/nativeWinLaunch.ts); called once, on the first spawn. */
   loadHelper: () => LoadedWinLaunch
-  spawnProcess?: SpawnProcess
-  /** The UI's environment: SystemRoot names PowerShell; the WMI step itself runs with it. */
-  env?: Readonly<Record<string, string | undefined>>
-  /** Schedules the WMI step's report timeout; default `setTimeout`. */
+  /** Schedules the WMI create's report timeout; default `setTimeout`. */
   after?: (ms: number, run: () => void) => () => void
 }
 
 type WmiOutcome = { kind: 'launched'; pid: number } | { kind: 'in-job' | 'failed'; errCode: string }
 
 export function createWindowsSpawner(options: WindowsSpawnerOptions): HostSpawner {
-  const runWmiStep = createWmiStep(options)
+  const after = options.after ?? realAfter
   let helper: LoadedWinLaunch | undefined
   return async (request) => {
     helper ??= options.loadHelper()
@@ -202,7 +159,7 @@ export function createWindowsSpawner(options: WindowsSpawnerOptions): HostSpawne
       }
     }
     if (result.status === 'failed') return { kind: 'failed', errCode: result.code }
-    const created = await runWmiStep(request)
+    const created = await createViaWmi(binding, request, after)
     if (created.kind !== 'launched') return created
     let opened: HostProcessHandle | null
     try {
@@ -247,92 +204,50 @@ function unwatchedHost(how: LaunchedHost['how']): LaunchedHost {
   return { how, exited: Promise.resolve(null), release: () => {} }
 }
 
-/** D6 item 2: the one PowerShell step, run only when breakaway was refused. */
-function createWmiStep(
-  options: WindowsSpawnerOptions
-): (request: HostSpawnRequest) => Promise<WmiOutcome> {
-  const spawnProcess = options.spawnProcess ?? spawn
-  const env = options.env ?? process.env
-  const after = options.after ?? realAfter
-  const powershell = windowsPowerShell(env)
-  const encoded = Buffer.from(launcherScript(), 'utf16le').toString('base64')
-  return (request) =>
-    new Promise<WmiOutcome>((resolve) => {
-      let child: ChildProcess
-      try {
-        child = spawnProcess(
-          powershell,
-          ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-          {
-            shell: false,
-            windowsHide: true,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: launcherEnvironment(env)
-          }
-        )
-      } catch (error) {
-        resolve({ kind: 'failed', errCode: errorCode(error, 'SPAWN_ERROR') })
-        return
-      }
-      let settled = false
-      const settle = (outcome: WmiOutcome): void => {
-        if (settled) return
-        settled = true
-        cancelTimeout()
-        resolve(outcome)
-      }
-      const cancelTimeout = after(LAUNCH_REPORT_TIMEOUT_MS, () => {
-        settle({ kind: 'failed', errCode: 'LAUNCHER_TIMEOUT' })
-        child.kill()
-      })
-      if (child.stdout !== null) {
-        createInterface({ input: child.stdout }).on('line', (text) => {
-          const line = parseLauncherLine(text)
-          if (line === null) return
-          if (line.kind === 'launched') settle({ kind: 'launched', pid: line.pid })
-          else settle({ kind: line.kind, errCode: line.code })
-        })
-      }
-      child.stderr?.resume()
-      child.on('error', (error) =>
-        settle({ kind: 'failed', errCode: errorCode(error, 'SPAWN_ERROR') })
+/** D6 item 2, run only when breakaway was refused: the helper's WMI create, bounded in time. */
+function createViaWmi(
+  binding: WinLaunchBinding,
+  request: HostSpawnRequest,
+  after: (ms: number, run: () => void) => () => void
+): Promise<WmiOutcome> {
+  return new Promise<WmiOutcome>((resolve) => {
+    let settled = false
+    const settle = (outcome: WmiOutcome): void => {
+      if (settled) return
+      settled = true
+      cancelTimeout()
+      resolve(outcome)
+    }
+    const cancelTimeout = after(LAUNCH_REPORT_TIMEOUT_MS, () =>
+      settle({ kind: 'failed', errCode: 'LAUNCHER_TIMEOUT' })
+    )
+    let created: Promise<WmiCreateResult>
+    try {
+      created = binding.wmiCreate(
+        windowsCommandLine(request.file, request.args),
+        request.cwd,
+        environmentList(request.env)
       )
-      child.on('close', (code) =>
-        settle({ kind: 'failed', errCode: `LAUNCHER_EXIT_${String(code)}` })
-      )
-      child.stdin?.on('error', () => {})
-      child.stdin?.end(JSON.stringify(stepRequest(request)))
-    })
-}
-
-/** What the WMI step reads on stdin. */
-function stepRequest(request: HostSpawnRequest): {
-  commandLine: string
-  cwd: string
-  env: string[]
-} {
-  return {
-    commandLine: windowsCommandLine(request.file, request.args),
-    cwd: request.cwd,
-    env: environmentList(request.env)
-  }
+    } catch (error) {
+      settle({ kind: 'failed', errCode: errorCode(error, 'WMI_ERROR') })
+      return
+    }
+    created.then(
+      (result) =>
+        settle(
+          result.status === 'launched'
+            ? { kind: 'launched', pid: result.pid }
+            : { kind: 'in-job', errCode: result.code }
+        ),
+      (error: unknown) => settle({ kind: 'failed', errCode: errorCode(error, 'WMI_ERROR') })
+    )
+  })
 }
 
 /** Windows PowerShell 5.1 by its full path under SystemRoot, never looked up on PATH. */
 export function windowsPowerShell(env: Readonly<Record<string, string | undefined>>): string {
   const root = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? 'C:\\Windows'
   return `${root.replace(/[\\/]+$/, '')}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-}
-
-/** The UI's environment without PSModulePath, whatever its spelling. */
-function launcherEnvironment(
-  env: Readonly<Record<string, string | undefined>>
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [name, value] of Object.entries(env)) {
-    if (value !== undefined && name.toUpperCase() !== 'PSMODULEPATH') out[name] = value
-  }
-  return out
 }
 
 function errorCode(error: unknown, fallback: string): string {
