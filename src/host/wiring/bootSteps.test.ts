@@ -15,6 +15,7 @@ import { Dispatcher } from '../transport/dispatcher'
 import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostState'
 import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
+import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 // L6 (17 §1.6): the bind step's composition — the platform facts, the one ADR-002 D2 rule and the
 // real endpoint server — on this OS's real transport. Synthetic SID only (privacy-guard).
@@ -87,7 +88,12 @@ function channelDeps(log = new RecordingDiagnosticsLog()) {
     pid: 4242,
     epoch: 'epoch-0001',
     state: () => state.current(),
-    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state }),
+    dispatcher: new Dispatcher({
+      log,
+      clock,
+      scheduler: new FakeScheduler(clock),
+      state: () => state.current().state
+    }),
     connections,
     frames: LIFECYCLE_FRAMES
   }

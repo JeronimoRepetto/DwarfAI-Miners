@@ -50,7 +50,12 @@ async function runningHost(dir: string, scheduler: FakeScheduler, clock: FakeClo
     scheduler,
     clock,
     log,
-    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state }),
+    dispatcher: new Dispatcher({
+      log,
+      clock,
+      scheduler: new FakeScheduler(clock),
+      state: () => state.current().state
+    }),
     connections
   })
   return { connection: pair.client, log }

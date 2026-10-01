@@ -106,7 +106,12 @@ async function main(): Promise<void> {
   const ids = new UuidV7Generator({ clock })
   const connections = new ConnectionRegistry()
   const hostState = new HostStateHolder(connections)
-  const dispatcher = new Dispatcher({ log, clock, state: () => hostState.current().state })
+  const dispatcher = new Dispatcher({
+    log,
+    clock,
+    scheduler,
+    state: () => hostState.current().state
+  })
   const epoch = mintBootEpoch(ids)
   const runQuery = createQueryRunner()
   const processControl = new NodeProcessControl({

@@ -51,7 +51,12 @@ async function host() {
   const log = new RecordingDiagnosticsLog()
   const connections = new ConnectionRegistry()
   const state = new HostStateHolder(connections)
-  const dispatcher = new Dispatcher({ log, clock, state: () => state.current().state })
+  const dispatcher = new Dispatcher({
+    log,
+    clock,
+    scheduler: new FakeScheduler(clock),
+    state: () => state.current().state
+  })
   const ids = new SequenceIdGenerator()
   const checkpoint = new RecordingShutdownCheckpoint(journal)
   const exits: number[] = []

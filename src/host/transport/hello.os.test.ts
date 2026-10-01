@@ -72,7 +72,12 @@ async function realHost() {
   const connections = new ConnectionRegistry()
   const state = new HostStateHolder(connections)
   state.report({ state: 'ready', jobStatus: WINDOWS ? 'none' : 'n/a' })
-  const dispatcher = new Dispatcher({ log, clock, state: () => state.current().state })
+  const dispatcher = new Dispatcher({
+    log,
+    clock,
+    scheduler: new FakeScheduler(clock),
+    state: () => state.current().state
+  })
   const token = new UiToken()
   const outcome = await bindEndpoint(endpoint, {
     log,

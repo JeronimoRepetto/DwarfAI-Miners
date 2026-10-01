@@ -5,29 +5,39 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { FakeClock } from '../kernel/fakes/FakeClock'
 import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog'
+import { requestIdSchema } from '@dwarfai/contracts'
+import { MUTATING_METHODS } from './dedupe/mutatingMethods'
 import { Dispatcher } from './dispatcher'
 import { FRAME_ROLES, METHOD_ROLES, type ChannelRole } from './roles'
+import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 const ROLES: readonly ChannelRole[] = ['ui', 'notifier', 'viewer']
+const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+const MUTATING_PARAMS = z.object({ requestId: requestIdSchema }).strict()
 
 describe('Dispatcher role scopes (ADR-003 item 12)', () => {
   it('[ADR-003, FM-035] each role reaches exactly the methods 14 §2.3 lists for it, and every other call is FORBIDDEN', async () => {
     const dispatcher = new Dispatcher({
       log: new RecordingDiagnosticsLog(),
       clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
       state: () => 'ready'
     })
+    // AMENDED for ISSUE-027 (was: every method registered with `register` and params `{}`): the
+    // 14 §1.6 mutating methods register with `registerMutating` and carry a UUIDv7 requestId.
     for (const [method, roles] of Object.entries(METHOD_ROLES)) {
-      dispatcher.register(method, z.object({}).strict(), roles, () => ({}))
+      if (MUTATING_METHODS.has(method)) {
+        dispatcher.registerMutating(method, MUTATING_PARAMS, roles, () => ({}))
+      } else {
+        dispatcher.register(method, z.object({}).strict(), roles, () => ({}))
+      }
     }
 
     const reached: Record<ChannelRole, string[]> = { ui: [], notifier: [], viewer: [] }
     for (const role of ROLES) {
       for (const method of Object.keys(METHOD_ROLES)) {
-        const res = await dispatcher.dispatch(
-          { id: '1', method, params: {} },
-          { role, clientId: 'c' }
-        )
+        const params = MUTATING_METHODS.has(method) ? { requestId: REQUEST_ID } : {}
+        const res = await dispatcher.dispatch({ id: '1', method, params }, { role, clientId: 'c' })
         if (res.ok) reached[role].push(method)
         else expect(res.error.code, `${role} ${method}`).toBe('FORBIDDEN')
       }
