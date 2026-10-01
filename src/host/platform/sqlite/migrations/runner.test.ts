@@ -426,4 +426,44 @@ describe('openHostDb (09 §6.2)', () => {
     expect(crlfCheckout.checksum).toBe(T2.checksum)
     expect(open({ migrations: [T1, crlfCheckout] })).toMatchObject({ readOnly: false, applied: [] })
   })
+
+  it('[S12.05, ADR-005] onMigrating is told once, before the backup and the first migration, only when a migration will run', () => {
+    const journal: string[] = []
+    const onMigrating = (): void => void journal.push('migrating')
+    const backup = {
+      beforeMigrating: ({ fromVersion }: { fromVersion: number }) =>
+        recorded(journal.push(`backup v${fromVersion}`))
+    }
+    const traced = (migration: typeof T1): typeof T1 => ({
+      ...migration,
+      up: (db) => {
+        journal.push(`up ${migration.name}`)
+        migration.up(db)
+      }
+    })
+
+    open({ migrations: [traced(T1)], onMigrating, backup })
+    expect(journal).toEqual(['migrating', 'up 0001-t1'])
+    closeAll()
+
+    journal.length = 0
+    open({ migrations: [T1, traced(T2), traced(T3)], onMigrating, backup })
+    expect(journal).toEqual(['migrating', 'backup v1', 'up 0002-t2', 'up 0003-t3'])
+    closeAll()
+
+    // Nothing pending, a newer file opened read-only, and a refused dev build: no migration runs.
+    journal.length = 0
+    open({ migrations: [T1, T2, T3], onMigrating, backup })
+    closeAll()
+    open({ migrations: [T1, T2], onMigrating, backup })
+    closeAll()
+    const refused = track(
+      openHostDb(
+        join(dir, 'other.db'),
+        options({ migrations: [T1], buildKind: 'dev', releaseDataDir: dir, onMigrating })
+      )
+    )
+    expect(refused).toEqual({ ok: false, error: 'DEV_BUILD_ON_RELEASE_DATA' })
+    expect(journal).toEqual([])
+  })
 })

@@ -84,7 +84,9 @@ async function readyHost() {
         fs: new FakeFs(),
         processControl: new FakeProcessControl(),
         log,
-        endpoint
+        endpoint,
+        // The database step over a real file is bootDatabase.test.ts's (ISSUE-039).
+        database: { open: () => Promise.resolve() }
       }),
     {
       log,

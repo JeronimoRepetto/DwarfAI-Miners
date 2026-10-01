@@ -75,7 +75,9 @@ function harness(
       endpoint: {
         bind: () => Promise.resolve(overrides.endpoint ?? 'bound'),
         close: () => Promise.resolve()
-      }
+      },
+      // The database as step 2 sees it; the step over a real file is bootDatabase.test.ts's.
+      database: { open: () => Promise.resolve() }
     })
   return { deps, log, clock, scheduler, states, exits, realSteps }
 }
@@ -117,13 +119,12 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     ])
     expect(h.realSteps(new FakeAppPaths()).map((step) => step.name)).toEqual(BOOT_STEP_NAMES)
     expect(loggedSteps(h.log)).toEqual(BOOT_STEP_NAMES)
-    // The endpoint step is built (ISSUE-022) and so is the last one, which hello answers through
-    // the lifecycle state holder (ISSUE-028); every other step is still a placeholder that says it
-    // was skipped and which issue owns it.
+    // The endpoint step is built (ISSUE-022), so is the database step (ISSUE-039) and so is the
+    // last one, which hello answers through the lifecycle state holder (ISSUE-028); every other
+    // step is still a placeholder that says it was skipped and which issue owns it.
+    const built: readonly string[] = ['bind-endpoint', 'open-db-and-migrate', 'answer-ready']
     expect(h.log.byEvent('host.boot.step').map((entry) => entry.outcome)).toEqual(
-      BOOT_STEP_NAMES.map((name) =>
-        name === 'bind-endpoint' || name === 'answer-ready' ? 'ok' : 'skipped'
-      )
+      BOOT_STEP_NAMES.map((name) => (built.includes(name) ? 'ok' : 'skipped'))
     )
     expect(h.states).toEqual([
       { state: 'starting', jobStatus: 'none' },

@@ -274,4 +274,40 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
       expect(asked).toEqual([named.value.path])
     }
   )
+
+  it('[ADR-005, FM-100] hello.ok of the bound endpoint advertises the conditions the Host runs in, read at each hello', async () => {
+    const input = factsForThisOs(caseRoot())
+    let conditions: string[] = []
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps(),
+      conditions: () => conditions
+    })
+    cleanups.push(() => endpoint.close())
+    expect(await endpoint.bind()).toBe('bound')
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+    const helloCapabilities = async (): Promise<string[] | undefined> => {
+      const socket = connect(named.value.path)
+      cleanups.push(() => void socket.destroy())
+      const client = new FrameClient(socket)
+      client.send({
+        type: 'hello',
+        endpointGeneration: 1,
+        protocolVersion: PROTOCOL_VERSION,
+        role: 'ui',
+        token: readToken(input.hostDataDir),
+        client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
+      })
+      await client.until(() => client.frames.length > 0)
+      return (client.frames[0] as { capabilities?: string[] }).capabilities
+    }
+
+    expect(await helloCapabilities()).not.toContain('db-read-only')
+    // Boot step 2 opened a newer file after the bind: the next hello carries it.
+    conditions = ['db-read-only']
+    expect(await helloCapabilities()).toContain('db-read-only')
+  })
 })
