@@ -36,6 +36,12 @@ import { providerLiteralPattern } from './src/contracts/catalog/providerLiteral.
 //    syntax object of the new trees, the adapters included, except the factory file itself. The
 //    legacy trees carry no boundary object, so the legacy window (src/main/shell/window.ts) keeps
 //    its own until ISSUE-058 deletes it.
+// 6. The Host's one native binary, the owner-only pipe helper of ADR-003 item 2 (ISSUE-022), is
+//    loaded only in src/host/platform/endpoint/win-pipe. 05 §5.1 has no row for it; it follows R11's
+//    containment pattern ("X only in Y", like `node:sqlite` only in host/platform/sqlite) and is
+//    tagged R11. A binary is loaded with `process.dlopen` at run time, which no import rule sees, so
+//    it is the `nativeLoad` selector in every syntax object except that folder's, and has its canary
+//    (lint-canaries/R11-native-binding).
 
 // ---- import groups (no-restricted-imports) ----
 const IMP = {
@@ -134,6 +140,10 @@ function syntaxSelectors(providerIds) {
         "NewExpression[callee.name='BrowserWindow'], NewExpression[callee.property.name='BrowserWindow']",
       message: 'R19 (ADR-019 D1): build every BrowserWindow through secureWindowOptions.'
     },
+    nativeLoad: {
+      selector: "MemberExpression[object.name='process'][property.name='dlopen']",
+      message: 'R11 (P11): a native binary is loaded only in host/platform/endpoint/win-pipe.'
+    },
     osBranch: {
       selector:
         "MemberExpression[object.name='process'][property.name='platform'], CallExpression[callee.object.name='os'][callee.property.name='platform']",
@@ -191,6 +201,7 @@ const RENDERER_VIEWS = [
   'src/renderer/src/components/**/*.{ts,vue}'
 ]
 const WINDOW_FACTORY = 'src/ui-main/window/adapters/secureWindowOptions.ts' // the one `new BrowserWindow(` (ADR-019 item 1)
+const NATIVE_LOADER = 'src/host/platform/endpoint/win-pipe/**' // the one `process.dlopen` (deviation 6)
 const HOST_LAUNCHER = ['src/ui-main/hostLauncher/**'] // not an adapter: may branch on the OS (R18), never on a provider id (R12)
 const GOLDEN = 'src/renderer/src/golden/**'
 const TESTS = '**/*.test.ts'
@@ -203,7 +214,14 @@ const TESTS = '**/*.test.ts'
  */
 export function createBoundaryConfigs(providerIds) {
   const S = syntaxSelectors(providerIds)
-  const COMMON = [S.providerIdCompare, S.providerIdCase, S.shellTrue, S.osBranch, S.browserWindow]
+  const COMMON = [
+    S.providerIdCompare,
+    S.providerIdCase,
+    S.shellTrue,
+    S.osBranch,
+    S.browserWindow,
+    S.nativeLoad
+  ]
   return [
     // imports: one object per disjoint file set
     {
@@ -266,15 +284,23 @@ export function createBoundaryConfigs(providerIds) {
     {
       files: HOST_LAUNCHER,
       ignores: [TESTS],
-      rules: syntax(S.providerIdCompare, S.providerIdCase, S.shellTrue, S.browserWindow) // R18 exempt only
+      rules: syntax(
+        S.providerIdCompare,
+        S.providerIdCase,
+        S.shellTrue,
+        S.browserWindow,
+        S.nativeLoad
+      ) // R18 exempt only
     },
-    // adapters may name providers and OSes; only the factory builds a BrowserWindow
+    // adapters may name providers and OSes; only the factory builds a BrowserWindow, and only the
+    // owner-only pipe helper's folder loads a native binary
     {
       files: ADAPTERS,
-      ignores: [TESTS, WINDOW_FACTORY],
-      rules: syntax(S.shellTrue, S.browserWindow)
+      ignores: [TESTS, WINDOW_FACTORY, NATIVE_LOADER],
+      rules: syntax(S.shellTrue, S.browserWindow, S.nativeLoad)
     },
-    { files: [WINDOW_FACTORY], rules: syntax(S.shellTrue) },
+    { files: [WINDOW_FACTORY], rules: syntax(S.shellTrue, S.nativeLoad) },
+    { files: [NATIVE_LOADER], ignores: [TESTS], rules: syntax(S.shellTrue, S.browserWindow) },
 
     { files: ['src/renderer/src/**/*.vue'], ignores: [GOLDEN], rules: { 'vue/no-v-html': 'error' } }
   ]
