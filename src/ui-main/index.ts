@@ -8,6 +8,7 @@ import {
   globalShortcut,
   ipcMain,
   nativeImage,
+  session,
   shell
 } from 'electron'
 import {
@@ -35,6 +36,8 @@ import {
   RENDERER_DIAGNOSTIC_CHANNEL
 } from './ipc/handlers/rendererDiagnostic'
 import type { ModeWindowRegistry } from './window/application/modeWindowRegistry'
+import { devHmrOriginOf } from './window/adapters/contentSecurityPolicy'
+import { installWindowHardening } from './window/adapters/windowHardening'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -230,6 +233,16 @@ function appEntryUrl(env: NodeJS.ProcessEnv = process.env): string {
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it.
 if (process.type === 'browser') {
+  // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
+  // the CSP once Electron is ready. The secure window factory builds the Panel once the Panel window rows are served
+  // (ISSUE-047) with a preload that loads sandboxed (ISSUE-045); until then the window is today's (LegacyRuntimeRoute).
+  installWindowHardening({
+    app,
+    session: () => session.defaultSession,
+    openExternal: (url) => void shell.openExternal(url),
+    appEntry: appEntryUrl(),
+    devHmrOrigin: app.isPackaged ? undefined : devHmrOriginOf(process.env.ELECTRON_RENDERER_URL)
+  })
   const uiLog = createUiLogger({
     files: new NodeLogFiles(),
     logDir: join(app.getPath('userData'), 'logs'), // ADR-026 item 1, the folder the Host writes into too

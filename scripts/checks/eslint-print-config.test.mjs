@@ -61,9 +61,11 @@ const SELECTORS = {
   insertHtml: "CallExpression[callee.property.name='insertAdjacentHTML']",
   newFunction: "NewExpression[callee.name='Function']",
   shellTrue: "Property[key.name='shell'][value.value=true]",
-  osBranch: "MemberExpression[object.name='process'][property.name='platform']"
+  osBranch: "MemberExpression[object.name='process'][property.name='platform']",
+  // ADR-019 item 1, ISSUE-046 (eslint.config.mjs deviation 5): not in 05 §5.3's table
+  browserWindow: "NewExpression[callee.name='BrowserWindow']"
 }
-const COMMON = ['providerIdCompare', 'providerIdCase', 'shellTrue', 'osBranch']
+const COMMON = ['providerIdCompare', 'providerIdCase', 'shellTrue', 'osBranch', 'browserWindow']
 const LEGACY_RULE = 'arch/legacy-only-through-bridge'
 
 async function configOf(file, engine = eslint) {
@@ -176,7 +178,12 @@ describe('flat config (05 §5.3)', () => {
         'insertHtml',
         'newFunction'
       ],
-      'src/ui-main/hostLauncher/spawnHost.ts': ['providerIdCompare', 'providerIdCase', 'shellTrue']
+      'src/ui-main/hostLauncher/spawnHost.ts': [
+        'providerIdCompare',
+        'providerIdCase',
+        'shellTrue',
+        'browserWindow'
+      ]
     }
     for (const [file, expected] of Object.entries(nonAdapters)) {
       expect(selectorNames(await configOf(file)), `${file} selectors`).toEqual(expected)
@@ -188,8 +195,23 @@ describe('flat config (05 §5.3)', () => {
       'src/contracts/catalog/ids.ts'
     ]
     for (const file of adapters) {
-      expect(selectorNames(await configOf(file)), `${file} selectors`).toEqual(['shellTrue'])
+      // AMENDED for ISSUE-046 (was: `['shellTrue']`): adapters build no BrowserWindow either (ADR-019 item 1).
+      expect(selectorNames(await configOf(file)), `${file} selectors`).toEqual([
+        'shellTrue',
+        'browserWindow'
+      ])
     }
+  })
+
+  it('[ADR-019] only the window factory file may build a BrowserWindow', async () => {
+    expect(
+      selectorNames(await configOf('src/ui-main/window/adapters/secureWindowOptions.ts')),
+      'the factory selectors'
+    ).toEqual(['shellTrue'])
+    expect(
+      selectorNames(await configOf('src/ui-main/window/adapters/ElectronWindows.ts')),
+      'a sibling adapter selectors'
+    ).toEqual(['shellTrue', 'browserWindow'])
   })
 
   it('[R13, R19] renderer views carry windowApi, innerHtml, insertHtml and newFunction; golden/** is ignored', async () => {
