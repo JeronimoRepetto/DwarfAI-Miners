@@ -7,8 +7,7 @@
 // It arms no parent-death watchdog and no idle timer: the Host never exits on its own (ADR-002 D1,
 // D7; OQ-63). It exits only through the boot's `exit`, for a refusal (ALREADY_RUNNING,
 // ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot. What keeps the process running after `ready` is
-// the UI endpoint the bind step listens on (later: ISSUE-022); until that step is built nothing
-// holds the event loop, and nothing ends it either.
+// the UI endpoint the bind step listens on (createUiEndpoint, ISSUE-022).
 //
 // Bound later, each by its issue: the HostStateSink (ISSUE-028), the database (ISSUE-039), the
 // modules and their bridges (16 §8.2 step 4).
@@ -17,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { createDiagnostics, logLevelFromEnv, type HostDiagnostics } from './modules/diagnostics'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
+import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
 import { NodeFs } from './platform/fs/NodeFs'
 import { UuidV7Generator } from './platform/ids/UuidV7Generator'
 import { EnvAppPaths } from './platform/paths/EnvAppPaths'
@@ -24,7 +24,7 @@ import { NodeProcessControl, createQueryRunner } from './platform/process/NodePr
 import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
 import { errorCode, runBoot, type HostStateSink } from './wiring/boot'
-import { createBootSteps } from './wiring/bootSteps'
+import { createBootSteps, createUiEndpoint } from './wiring/bootSteps'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
@@ -89,7 +89,20 @@ async function main(): Promise<void> {
 
   await runBoot(
     (dataDir) =>
-      createBootSteps({ paths: dataDir, clock, scheduler, ids, fs, processControl, log }),
+      createBootSteps({
+        paths: dataDir,
+        clock,
+        scheduler,
+        ids,
+        fs,
+        processControl,
+        log,
+        endpoint: createUiEndpoint({
+          facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
+          log,
+          scheduler
+        })
+      }),
     {
       log,
       clock,
