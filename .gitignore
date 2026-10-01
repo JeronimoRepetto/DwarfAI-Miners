@@ -6,6 +6,8 @@ node_modules/
 /release/
 /out/
 /coverage/
+# The Host's prebuilt native helper (`pnpm build:native`, built by CI; ships in the app).
+/prebuilds/
 docs/investigations/*
 # tsc's incremental build cache — one per tsconfig, regenerated every build.
 *.tsbuildinfo

@@ -27,6 +27,10 @@ import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import type { ShutdownCheckpoint } from './kernel/ports/shutdownCheckpoint'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
+import {
+  createNativeOwnerOnlyPipe,
+  winPipePrebuildsDir
+} from './platform/endpoint/win-pipe/nativeOwnerOnlyPipe'
 import { NodeFs } from './platform/fs/NodeFs'
 import { UuidV7Generator } from './platform/ids/UuidV7Generator'
 import { EnvAppPaths } from './platform/paths/EnvAppPaths'
@@ -139,7 +143,9 @@ async function main(): Promise<void> {
         state: () => hostState.current(),
         dispatcher,
         connections,
-        frames: LIFECYCLE_FRAMES
+        frames: LIFECYCLE_FRAMES,
+        // Loaded on the first Windows bind only; a Unix socket never needs it.
+        ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) })
       })
       // The Host's only exit besides a crash and a refused or failed boot (ADR-002 D7).
       composeHostLifecycle({
