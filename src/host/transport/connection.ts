@@ -5,7 +5,9 @@
 // - awaiting-hello: nothing is ever written before a valid hello (item 2; 18 C-11). The first
 //   frame is answered by hello.ts: `hello.ok`, or one `error` frame with its code and no detail,
 //   then the close. A 5 s timer on the injected Scheduler sends HELLO_TIMEOUT. Frames over 1 MiB.
-// - authenticated: frames up to 8 MiB; each `req` is answered by the dispatcher. A second `hello`
+// - authenticated: frames up to 8 MiB; each `req` is answered by the dispatcher. A connection
+//   that sends no whole frame for 15 s is a detached client (liveness.ts, ADR-003 item 9): it is
+//   closed without a frame and `channel.detach` is logged with reason `silent`. A second `hello`
 //   gets PROTOCOL_ERROR and the close (item 5); any other frame that is not a valid `req`
 //   envelope is the same protocol error, since it cannot be answered by correlation id. Once
 //   `hello.ok` is written the connection is attached to the ConnectionRegistry, which sends it
@@ -30,6 +32,7 @@ import type { Scheduler } from '../kernel/ports/scheduler'
 import type { AttachedConnection, ConnectionRegistry } from './connectionRegistry'
 import type { Dispatcher } from './dispatcher'
 import { answerHello, type HelloDeps } from './hello'
+import { watchSilence, type SilenceWatch } from './liveness'
 import type { ChannelRole } from './roles'
 
 /** The hello bound of ADR-003 item 5. */
@@ -46,7 +49,13 @@ export interface ConnectionDeps extends HelloDeps {
 
 type ConnectionState =
   | { kind: 'awaiting-hello' }
-  | { kind: 'authenticated'; role: ChannelRole; clientId: string; attached: AttachedConnection }
+  | {
+      kind: 'authenticated'
+      role: ChannelRole
+      clientId: string
+      attached: AttachedConnection
+      silence: SilenceWatch
+    }
   | { kind: 'closed' }
 
 const SUBSYSTEM = 'transport'
@@ -68,20 +77,24 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
     if (state.kind !== 'closed' && !stream.destroyed) stream.write(encodeFrame(frame))
   }
 
+  /**
+   * Moves to `closed`: an authenticated connection is detached, its silence watch stopped and
+   * `channel.detach` logged once, with `detail` (why the Host ended it, when it did).
+   */
+  const leave = (detail: Pick<DiagnosticEntry, 'outcome' | 'causeClass'> = {}): void => {
+    if (state.kind === 'authenticated') {
+      record({ level: 'info', event: 'channel.detach', ...who(), ...detail })
+      deps.connections.detach(state.attached)
+      state.silence.stop()
+    }
+    state = { kind: 'closed' }
+    helloTimer.cancel()
+  }
+
   /** Ends the connection. `error` is the one protocol error frame sent first, when there is one. */
   const close = (error?: ProtocolErrorCode): void => {
     if (state.kind === 'closed') return
-    if (state.kind === 'authenticated') {
-      record({
-        level: 'info',
-        event: 'channel.detach',
-        ...who(),
-        ...(error === undefined ? {} : { outcome: 'failed' as const, causeClass: error })
-      })
-    }
-    if (state.kind === 'authenticated') deps.connections.detach(state.attached)
-    state = { kind: 'closed' }
-    helloTimer.cancel()
+    leave(error === undefined ? {} : { outcome: 'failed', causeClass: error })
     if (error === undefined || stream.destroyed) {
       stream.destroy()
       return
@@ -96,17 +109,19 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
    */
   const end = (): Promise<void> => {
     if (state.kind === 'closed') return Promise.resolve()
-    if (state.kind === 'authenticated') {
-      record({ level: 'info', event: 'channel.detach', ...who() })
-      deps.connections.detach(state.attached)
-    }
-    state = { kind: 'closed' }
-    helloTimer.cancel()
+    leave()
     if (stream.destroyed) return Promise.resolve()
     return new Promise((resolve) => {
       stream.once('close', () => resolve())
       stream.end(() => stream.destroy())
     })
+  }
+
+  /** 15 s without a frame: a detached client, closed without a frame (ADR-003 item 9). */
+  const detachSilent = (): void => {
+    if (state.kind !== 'authenticated') return
+    leave({ causeClass: 'silent' })
+    stream.destroy()
   }
 
   const refuseHello = (code: ProtocolErrorCode): void => {
@@ -139,7 +154,8 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
         kind: 'authenticated',
         role: answer.role,
         clientId: answer.helloOk.clientId,
-        attached
+        attached,
+        silence: watchSilence(deps.scheduler, detachSilent)
       }
       decoder.helloOk()
       write(answer.helloOk)
@@ -148,6 +164,7 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
       return
     }
     if (state.kind !== 'authenticated') return
+    state.silence.heard()
     if (isHello(message)) {
       refuseHello('PROTOCOL_ERROR')
       return
