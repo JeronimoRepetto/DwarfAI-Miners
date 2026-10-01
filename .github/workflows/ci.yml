@@ -295,7 +295,9 @@ jobs:
       # Host refuses to start elevated (ADR-002 D6). The Windows steps that run the
       # real Host therefore run as a standard local user created here
       # (scripts/ci/run-unelevated.mjs; ISSUE-051). This probe prints that user's
-      # integrity level and fails unless it is medium or below.
+      # integrity level and fails unless it is medium or below. It is that user's
+      # first logon, whose background work outlives it, so it then waits until the
+      # runner's CPUs are quiet, and names what used them, before the lane starts.
       - name: Non-elevated test user (Windows)
         if: runner.os == 'Windows'
         run: node scripts/ci/run-unelevated.mjs --probe
@@ -425,7 +427,8 @@ jobs:
 
       # As in the checks job: the Windows leg runs the E2E cases, whose app starts
       # the real Host, as a standard local user (ADR-002 D6; ISSUE-021 L8;
-      # ISSUE-051), after a probe of its integrity level.
+      # ISSUE-051), after a probe of its integrity level that also waits for the
+      # runner to settle after that user's first logon.
       - name: Non-elevated test user (Windows)
         if: runner.os == 'Windows'
         run: node scripts/ci/run-unelevated.mjs --probe

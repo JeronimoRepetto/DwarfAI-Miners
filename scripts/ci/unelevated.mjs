@@ -116,3 +116,56 @@ export function ensureUserScript(user, passwordEnv) {
     `Write-Output 'run-unelevated: user ${user} ready (member of Users)'`
   ].join('\n')
 }
+
+/**
+ * How the probe waits, after the first logon of the freshly created user, for the runner to be quiet again: one CPU
+ * sample a second; settled once `quiet` samples in a row are below `threshold` (a quarter of the runner, less than one
+ * of its four cores busy), and never longer than `capMs`. That logon starts background work which outlives it (main
+ * run 36910936637: the probe's logon took 152 s instead of 17 to 34 s, and a plain `node` start in the OS lane that
+ * followed went past 10 s).
+ */
+export const SETTLE = Object.freeze({
+  threshold: 0.25,
+  quiet: 5,
+  intervalMs: 1_000,
+  capMs: 300_000
+})
+
+const total = (times) => times.user + times.nice + times.sys + times.idle + times.irq
+
+/** The non-idle share, from 0 to 1, of all CPU time elapsed between two `os.cpus()` readings. */
+export function cpuBusyFraction(before, after) {
+  let elapsed = 0
+  let idle = 0
+  after.forEach((cpu, index) => {
+    elapsed += total(cpu.times) - total(before[index].times)
+    idle += cpu.times.idle - before[index].times.idle
+  })
+  return elapsed <= 0 ? 0 : (elapsed - idle) / elapsed
+}
+
+/** True once the last `quiet` busy fractions in `samples` are all below `threshold`. */
+export function isSettled(samples, { threshold, quiet }) {
+  if (samples.length < quiet) return false
+  return samples.slice(-quiet).every((busy) => busy < threshold)
+}
+
+/**
+ * The `count` processes that used the most CPU seconds between two `Get-Process | Select-Object Id, ProcessName, CPU`
+ * snapshots (ConvertTo-Json answers a lone process as an object). A process absent from the first snapshot counts from
+ * zero; one whose CPU time is unreadable (null) is left out.
+ */
+export function topCpuConsumers(before, after, count) {
+  const list = (snapshot) => (Array.isArray(snapshot) ? snapshot : [snapshot])
+  const earlier = new Map(list(before).map((process) => [process.Id, process.CPU ?? 0]))
+  return list(after)
+    .filter((process) => typeof process.CPU === 'number')
+    .map((process) => ({
+      id: process.Id,
+      name: process.ProcessName,
+      seconds: process.CPU - (earlier.get(process.Id) ?? 0)
+    }))
+    .filter((process) => process.seconds > 0)
+    .sort((a, b) => b.seconds - a.seconds)
+    .slice(0, count)
+}

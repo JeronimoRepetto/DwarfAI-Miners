@@ -14,21 +14,29 @@
 // 3. writes the command and the job's environment (scripts/ci/unelevated.mjs `childEnvironment`) into a file only
 //    that user and the job can read, and starts scripts/ci/start-as-user.ps1, which logs the user on with its profile
 //    (CreateProcessWithLogonW, through .NET `ProcessStartInfo.UserName`) on the job's desktop, streams the merged
-//    output into the job log and answers the command's exit code.
+//    output into the job log and answers the command's exit code;
+// 4. with --probe, which runs first in each Windows job and so performs the user's first logon (its profile is created
+//    then), waits until the runner's CPUs are quiet again before the step ends: that logon starts background work that
+//    outlives it and slowed the lane after it 2.5 to 10 times (main run 36910936637). The processes that used the CPU
+//    meanwhile are named in the log.
 import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpus, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   childEnvironment,
+  cpuBusyFraction,
   generatePassword,
   integrityRid,
   isElevatedRid,
+  isSettled,
   parseArgs,
   ensureUserScript,
   PASSWORD_ENV,
+  SETTLE,
+  topCpuConsumers,
   windowsPowerShellEnvironment
 } from './unelevated.mjs'
 
@@ -67,6 +75,59 @@ function ensureUser(password) {
 
 function grant(folder, rights) {
   tool('icacls', [folder, '/grant', `${USER}:(OI)(CI)${rights}`, '/C', '/Q'])
+}
+
+/** The runner's processes and their CPU seconds, as Get-Process | ConvertTo-Json answers them; null when unreadable. */
+function processSnapshot() {
+  try {
+    return JSON.parse(
+      execFileSync(
+        POWERSHELL,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Get-Process | Select-Object Id, ProcessName, CPU | ConvertTo-Json -Compress'
+        ],
+        { encoding: 'utf8', env: windowsPowerShellEnvironment(process.env), windowsHide: true }
+      )
+    )
+  } catch (error) {
+    console.log(`run-unelevated: the process list was not read: ${error.message}`)
+    return null
+  }
+}
+
+/** Waits until the runner's CPUs are quiet (SETTLE), at most SETTLE.capMs; logs the samples and the busiest processes. */
+async function settle() {
+  const startedAt = Date.now()
+  const before = processSnapshot()
+  const samples = []
+  let reading = cpus()
+  while (!isSettled(samples, SETTLE) && Date.now() - startedAt < SETTLE.capMs) {
+    await new Promise((resolve) => setTimeout(resolve, SETTLE.intervalMs))
+    const next = cpus()
+    samples.push(cpuBusyFraction(reading, next))
+    reading = next
+  }
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(1)
+  const settled = isSettled(samples, SETTLE)
+  console.log(
+    `run-unelevated: runner ${settled ? 'settled' : 'still busy'} after ${seconds} s; CPU busy per second: ${samples
+      .map((busy) => Math.round(busy * 100))
+      .join(' ')}%`
+  )
+  const after = processSnapshot()
+  if (before !== null && after !== null) {
+    const top = topCpuConsumers(before, after, 8)
+      .map((process) => `${process.name} (${process.id}) ${process.seconds.toFixed(1)} s`)
+      .join(', ')
+    console.log(`run-unelevated: CPU used while waiting: ${top === '' ? 'none measurable' : top}`)
+  }
+  if (!settled)
+    console.log(
+      `::warning::the runner did not settle within ${SETTLE.capMs / 1000} s after the first logon`
+    )
 }
 
 /** Starts the command as the user; resolves with its exit code, teeing its output into `seen` when given. */
@@ -138,12 +199,18 @@ async function main() {
   }
   if (args.kind === 'probe') {
     const seen = []
+    const logonAt = Date.now()
     const code = await runAsUser(PROBE_COMMAND, password, seen)
+    console.log(
+      `run-unelevated: the first logon and the probe took ${((Date.now() - logonAt) / 1000).toFixed(1)} s`
+    )
     const rid = integrityRid(seen.join(''))
     console.log(
       `run-unelevated: integrity RID ${String(rid)} (${isElevatedRid(rid) ? 'elevated' : 'not elevated'})`
     )
-    process.exit(code !== 0 || isElevatedRid(rid) ? 1 : 0)
+    if (code !== 0 || isElevatedRid(rid)) process.exit(1)
+    await settle()
+    process.exit(0)
   }
   process.exit(await runAsUser(args.command, password))
 }

@@ -2,12 +2,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   childEnvironment,
+  cpuBusyFraction,
   ensureUserScript,
   generatePassword,
   integrityRid,
   isElevatedRid,
+  isSettled,
   parseArgs,
   PASSWORD_ENV,
+  topCpuConsumers,
   windowsPowerShellEnvironment
 } from './unelevated.mjs'
 
@@ -92,5 +95,61 @@ describe('run-unelevated (Windows CI legs)', () => {
     expect(parseArgs(['--', 'pnpm', 'test:os'])).toEqual({ kind: 'run', command: 'pnpm test:os' })
     expect(parseArgs([])).toEqual({ kind: 'usage' })
     expect(parseArgs(['--'])).toEqual({ kind: 'usage' })
+  })
+})
+
+// The first logon of the freshly created user (the probe) starts background work on the runner that outlives it and
+// slowed the OS lane's first wave 2.5 to 10 times (main run 36910936637). The probe therefore waits, after that logon,
+// until the runner's CPUs stay quiet.
+describe('run-unelevated: settling after the first logon (Windows CI legs)', () => {
+  const cpu = (busy, idle) => ({ times: { user: busy, nice: 0, sys: 0, idle, irq: 0 } })
+
+  it('[ADR-002] the busy fraction is the non-idle share of all CPU time between two readings', () => {
+    const before = [cpu(1000, 9000), cpu(2000, 8000)]
+    const after = [cpu(1900, 9100), cpu(2100, 8900)]
+    // Busy 900 + 100 of 1000 + 1000 elapsed.
+    expect(cpuBusyFraction(before, after)).toBeCloseTo(0.5, 10)
+    expect(cpuBusyFraction(before, before)).toBe(0)
+    expect(
+      cpuBusyFraction(
+        [{ times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } }],
+        [{ times: { user: 10, nice: 5, sys: 20, idle: 0, irq: 5 } }]
+      )
+    ).toBe(1)
+  })
+
+  it('[ADR-002] the runner counts as settled only once the last samples in a row are all below the threshold', () => {
+    const rule = { threshold: 0.25, quiet: 3 }
+    expect(isSettled([], rule)).toBe(false)
+    expect(isSettled([0.1, 0.1], rule)).toBe(false)
+    expect(isSettled([0.9, 0.1, 0.1, 0.1], rule)).toBe(true)
+    expect(isSettled([0.1, 0.1, 0.1, 0.9], rule)).toBe(false)
+    expect(isSettled([0.1, 0.25, 0.1], rule)).toBe(false)
+  })
+
+  it('[ADR-002] the processes that used the most CPU while waiting are named, a new process counting from zero', () => {
+    const before = [
+      { Id: 1, ProcessName: 'idle-ish', CPU: 10 },
+      { Id: 2, ProcessName: 'MsMpEng', CPU: 100 },
+      { Id: 3, ProcessName: 'gone', CPU: 50 }
+    ]
+    const after = [
+      { Id: 1, ProcessName: 'idle-ish', CPU: 10.5 },
+      { Id: 2, ProcessName: 'MsMpEng', CPU: 160 },
+      { Id: 4, ProcessName: 'svchost', CPU: 20 },
+      { Id: 5, ProcessName: 'protected', CPU: null }
+    ]
+    expect(topCpuConsumers(before, after, 2)).toEqual([
+      { id: 2, name: 'MsMpEng', seconds: 60 },
+      { id: 4, name: 'svchost', seconds: 20 }
+    ])
+    // ConvertTo-Json answers a lone process as an object, not an array.
+    expect(
+      topCpuConsumers(
+        { Id: 2, ProcessName: 'MsMpEng', CPU: 1 },
+        { Id: 2, ProcessName: 'MsMpEng', CPU: 3 },
+        5
+      )
+    ).toEqual([{ id: 2, name: 'MsMpEng', seconds: 2 }])
   })
 })
