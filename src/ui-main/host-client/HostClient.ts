@@ -186,6 +186,8 @@ class NodeHostClient implements HostClientService {
   /** The epoch of the state the handlers hold, and the seq applied last in it. */
   private applied: { epoch: string; seq: number | null } | null = null
   private run: Promise<HostAvailability> | null = null
+  /** The number of the run `run` is. */
+  private runOf = 0
   /** Bumped by every new run: a run whose number is no longer current stops at its next step. */
   private runNo = 0
   private cancelWait: () => void = () => {}
@@ -343,6 +345,7 @@ class NodeHostClient implements HostClientService {
       if (this.run === run) this.run = null
     })
     this.run = run
+    this.runOf = no
     return run
   }
 
@@ -362,9 +365,9 @@ class NodeHostClient implements HostClientService {
     return this.disposed || no !== this.runNo || this.machine.state.state !== inState
   }
 
-  /** What a run that stopped answers: the newer run's answer, else the state now. */
-  private settled(): Promise<HostAvailability> | HostAvailability {
-    if (this.run !== null && !this.disposed) return this.run
+  /** What run `no` answers once it stopped: a newer run's answer, else the state now (never its own promise). */
+  private settled(no: number): Promise<HostAvailability> | HostAvailability {
+    if (this.run !== null && this.runOf !== no && !this.disposed) return this.run
     const now = this.state()
     if (now.state === 'connected') return 'available'
     return { unavailable: now.state === 'unavailable' ? now.reason : 'spawn-failed' }
@@ -379,19 +382,19 @@ class NodeHostClient implements HostClientService {
     let delay = RECONNECT_FIRST_MS
     this.armUnresponsive()
     for (;;) {
-      if (this.stopped(no, 'connecting')) return this.settled()
+      if (this.stopped(no, 'connecting')) return this.settled(no)
       const launched = await this.deps.launcher.ensureHostRunning()
-      if (this.stopped(no, 'connecting')) return this.settled()
+      if (this.stopped(no, 'connecting')) return this.settled(no)
       if (typeof launched === 'object' && launched.unavailable !== 'spawn-failed') {
         this.dispatch({ kind: 'launch-unavailable', reason: launched.unavailable })
-        return this.settled()
+        return this.settled(no)
       }
       const attempt = await this.attachNotifier()
       if (attempt === 'open') return 'available'
-      if (this.stopped(no, 'connecting')) return this.settled()
+      if (this.stopped(no, 'connecting')) return this.settled(no)
       if (typeof launched === 'object' && !attempt.bound) {
         this.dispatch({ kind: 'launch-unavailable', reason: 'spawn-failed' })
-        return this.settled()
+        return this.settled(no)
       }
       this.dispatch({ kind: 'endpoint', bound: attempt.bound })
       await this.wait(delay)
@@ -410,19 +413,19 @@ class NodeHostClient implements HostClientService {
     for (;;) {
       await this.wait(delay)
       delay = Math.min(delay * 2, RECONNECT_MAX_MS)
-      if (this.stopped(no, 'reconnecting')) return this.settled()
+      if (this.stopped(no, 'reconnecting')) return this.settled(no)
       let attempt = await this.attachNotifier()
       for (;;) {
         if (attempt === 'open') return 'available'
-        if (this.stopped(no, 'reconnecting')) return this.settled()
+        if (this.stopped(no, 'reconnecting')) return this.settled(no)
         const actions = this.dispatch({ kind: 'endpoint', bound: attempt.bound })
         if (!actions.some((action) => action.kind === 'respawn')) break
         const launched = await this.deps.launcher.ensureHostRunning()
-        if (this.stopped(no, 'reconnecting')) return this.settled()
+        if (this.stopped(no, 'reconnecting')) return this.settled(no)
         if (typeof launched === 'object') {
           if (launched.unavailable !== 'spawn-failed') {
             this.dispatch({ kind: 'launch-unavailable', reason: launched.unavailable })
-            return this.settled()
+            return this.settled(no)
           }
           // The respawned Host died or never got ready: one more Host crash.
           attempt = { bound: false }
@@ -430,7 +433,7 @@ class NodeHostClient implements HostClientService {
         }
         attempt = await this.attachNotifier()
       }
-      if (this.stopped(no, 'reconnecting')) return this.settled()
+      if (this.stopped(no, 'reconnecting')) return this.settled(no)
     }
   }
 
@@ -445,15 +448,15 @@ class NodeHostClient implements HostClientService {
       this.logHungEnd('attached', startedAt)
       return 'available'
     }
-    if (this.stopped(no, 'retrying')) return this.settled()
+    if (this.stopped(no, 'retrying')) return this.settled(no)
     const end = await this.deps.hungHost
       .endHungHost()
       .catch((): HungHostEnd => ({ outcome: 'end-failed', errCode: 'signal-failed' }))
     this.logHungEnd(end.outcome, startedAt, end.outcome === 'end-failed' ? end.errCode : undefined)
-    if (this.stopped(no, 'retrying')) return this.settled()
+    if (this.stopped(no, 'retrying')) return this.settled(no)
     const actions = this.dispatch({ kind: 'retry-unanswered', hungEnd: end.outcome })
     if (actions.some((action) => action.kind === 'respawn')) return this.connectLoop(no)
-    return this.settled()
+    return this.settled(no)
   }
 
   private logHungEnd(
