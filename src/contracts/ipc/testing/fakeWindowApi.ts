@@ -73,7 +73,10 @@ export const WINDOW_API_MEMBERS = {
   pathForDroppedFile: 'helper',
   setDwarfName: 'invoke',
   resetDwarfName: 'invoke',
-  reportRendererDiagnostic: 'send'
+  reportRendererDiagnostic: 'send',
+  onStopEverythingRequested: 'push',
+  confirmStopEverything: 'invoke',
+  cancelStopEverything: 'send'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS

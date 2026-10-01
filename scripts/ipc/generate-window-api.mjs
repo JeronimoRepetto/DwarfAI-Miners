@@ -101,7 +101,10 @@ const MEMBERS = {
   'dwarf:setName': 'setDwarfName',
   'dwarf:resetName': 'resetDwarfName',
   // NEW rows of 14 §2.2
-  'diag:renderer:report': 'reportRendererDiagnostic' // A-N30
+  'diag:renderer:report': 'reportRendererDiagnostic', // A-N30
+  'tray:stopEverything:requested': 'onStopEverythingRequested', // A-N25
+  'tray:stopEverything:confirm': 'confirmStopEverything', // A-N26
+  'tray:stopEverything:cancel': 'cancelStopEverything' // A-N27
 }
 
 /**

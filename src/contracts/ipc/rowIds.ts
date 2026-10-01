@@ -72,5 +72,8 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'dwarf:setName': '§8 I-21',
   'dwarf:resetName': '§8 I-21',
   // NEW rows of 14 §2.2, each declared by the issue that builds its handler (22 §5)
-  'diag:renderer:report': 'A-N30'
+  'diag:renderer:report': 'A-N30',
+  'tray:stopEverything:requested': 'A-N25',
+  'tray:stopEverything:confirm': 'A-N26',
+  'tray:stopEverything:cancel': 'A-N27'
 }

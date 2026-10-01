@@ -5,3 +5,5 @@ pnpm-lock.yaml
 .design/
 # A byte-for-byte copy of ADR-002 D9 whose trailing comment no prettier-ignore reaches (AGENTS §9; ISSUE-051).
 src/ui-main/window/ports/hostConnection.ts
+# A byte-for-byte copy of the 16 §4.14 TrayController line, whose trailing comment no prettier-ignore reaches (ISSUE-053).
+src/ui-main/window/ports/trayController.ts

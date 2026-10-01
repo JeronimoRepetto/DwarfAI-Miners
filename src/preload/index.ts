@@ -27,6 +27,7 @@ type TodayRequest<K extends ChannelKey> = Accepted<z.input<TodayRow<K>['request'
 type TodayResult<K extends ChannelKey> = z.output<TodayRow<K>['response']>
 /** A row's target shape (14): its registry entry. */
 type TargetRequest<K extends ChannelKey> = Accepted<z.input<(typeof CHANNELS)[K]['request']>>
+type TargetResult<K extends ChannelKey> = z.output<(typeof CHANNELS)[K]['response']>
 
 /** An id or a text as a string, or '' which main refuses. */
 function textOf(value: unknown): string {
@@ -278,6 +279,16 @@ export interface DwarfAiMinersApi {
   ) => Promise<TodayResult<'dwarf:resetName'>>
   /** A-N30 · `diag:renderer:report` · send · NEW · target shape */
   reportRendererDiagnostic: (request: TargetRequest<'diag:renderer:report'>) => void
+  /** A-N25 · `tray:stopEverything:requested` · push · NEW · target shape */
+  onStopEverythingRequested: (
+    listener: (payload: TargetResult<'tray:stopEverything:requested'>) => void
+  ) => () => void
+  /** A-N26 · `tray:stopEverything:confirm` · invoke · NEW · target shape */
+  confirmStopEverything: (
+    request: TargetRequest<'tray:stopEverything:confirm'>
+  ) => Promise<TargetResult<'tray:stopEverything:confirm'>>
+  /** A-N27 · `tray:stopEverything:cancel` · send · NEW · target shape */
+  cancelStopEverything: (request: TargetRequest<'tray:stopEverything:cancel'>) => void
 }
 
 const api: DwarfAiMinersApi = {
@@ -497,7 +508,18 @@ const api: DwarfAiMinersApi = {
   resetDwarfName: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('dwarf:resetName', textOf(request))),
   reportRendererDiagnostic: (request) =>
-    sendOrDrop(() => ipcRenderer.send('diag:renderer:report', request))
+    sendOrDrop(() => ipcRenderer.send('diag:renderer:report', request)),
+  onStopEverythingRequested: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'tray:stopEverything:requested'>)
+    }
+    ipcRenderer.on('tray:stopEverything:requested', wrapped)
+    return () => ipcRenderer.removeListener('tray:stopEverything:requested', wrapped)
+  },
+  confirmStopEverything: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('tray:stopEverything:confirm', request)),
+  cancelStopEverything: (request) =>
+    sendOrDrop(() => ipcRenderer.send('tray:stopEverything:cancel', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

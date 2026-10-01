@@ -20,6 +20,7 @@ import { LEGACY_REFUSALS } from './validate'
 const U1 = '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b'
 const U2 = '0190a1b2-c3d4-7e5f-9a6b-7c8d9e0f1a2c'
 const LEGACY_DWARF = 'claude:3f1c9a2e-session'
+const CONFIRMATION = '6f1d2c3b-4a59-4e6d-8c7b-9a0b1c2d3e4f'
 const LEGACY_MINE = 'mine:/home/person/project'
 const TYPOGRAPHY = {
   style: 'dwarfai',
@@ -111,7 +112,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'launch-view:set': { area: 'mines', mineId: null },
   'dwarf:setName': { dwarfId: LEGACY_DWARF, name: 'Gimli' },
   'dwarf:resetName': LEGACY_DWARF,
-  'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 }
+  'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 },
+  'tray:stopEverything:confirm': { confirmationId: CONFIRMATION, requestId: U2 },
+  'tray:stopEverything:cancel': { confirmationId: CONFIRMATION }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */
@@ -416,7 +419,13 @@ describe('registry fuzz', () => {
   })
 
   it("[ADR-001, ADR-019] a row served with today's shape answers today's failure shape for an invalid payload", async () => {
-    const reshaped = ROWS.filter((key) => CHANNELS[key].status !== 'kept')
+    // A NEW invoke row has no today shape and is never served with one (21 §1 item 2a): unrouted, it is refused as a
+    // call with no route (router.test.ts), and a NEW send row is still dropped here like any one-way call.
+    const reshaped = ROWS.filter(
+      (key) =>
+        CHANNELS[key].status !== 'kept' &&
+        !(CHANNELS[key].status === 'new' && CHANNELS[key].kind === 'invoke')
+    )
     for (const key of reshaped.filter((k) => CHANNELS[k].kind === 'invoke')) {
       const refusal = LEGACY_REFUSALS[key]
       expect(refusal, `${key} has today's failure shape`).toBeDefined()

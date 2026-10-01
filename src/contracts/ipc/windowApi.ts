@@ -1,6 +1,7 @@
 // Seam A types of the changed members (14 §3.8 `contracts/ipc/window-api.ts`), with their strict() schemas.
 // The NEW members of `DwarfAiMinersApiDelta` and their types land with the issues that build their handlers.
 import { z } from 'zod'
+import { requestIdSchema } from '../host-protocol/requestId'
 import {
   consentOriginSchema,
   dwarfIdSchema,
@@ -72,3 +73,16 @@ export const rendererDiagnosticSchema = z
     count: z.number().int().min(1).max(10_000).optional()
   })
   .strict()
+
+// A-N25…A-N27 Stop everything and quit (14 §2.2, §3.8; ADR-002 D7 steps 1–3). The `confirmationId` is issued by UI
+// main for each confirmation it asks for (a UUID); A-N26 carries the renderer's `requestId` for `host.shutdown`
+// (14 §1.6: a UUIDv7, the seam-B rule of every mutating request).
+export const stopEverythingRequestedSchema = z
+  .object({ confirmationId: z.string().uuid() })
+  .strict()
+
+export const confirmStopEverythingSchema = z
+  .object({ confirmationId: z.string().uuid(), requestId: requestIdSchema })
+  .strict()
+
+export const cancelStopEverythingSchema = z.object({ confirmationId: z.string().uuid() }).strict()
