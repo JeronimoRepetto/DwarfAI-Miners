@@ -69,7 +69,7 @@ export function createNativeOwnerOnlyPipe(
   options: NativeOwnerOnlyPipeOptions
 ): ListenOwnerOnlyPipe {
   const path = join(options.prebuildsDir, `win32-${options.arch ?? process.arch}`, WIN_PIPE_BINARY)
-  const load = options.load ?? dlopen
+  const load = options.load ?? dlopenWinPipe<WinPipeBinding>
   const socketFromFd =
     options.socketFromFd ?? ((fd) => new Socket({ fd, readable: true, writable: true }))
   const closeFd = options.closeFd ?? closeSync
@@ -147,8 +147,9 @@ function loadBinding(path: string, load: (path: string) => WinPipeBinding): Load
   return { ok: true, binding }
 }
 
-function dlopen(path: string): WinPipeBinding {
-  const module = { exports: {} as WinPipeBinding }
+/** Loads the native module at `path` into this process (`process.dlopen`). */
+export function dlopenWinPipe<T>(path: string): T {
+  const module = { exports: {} as T }
   process.dlopen(module, path)
   return module.exports
 }
