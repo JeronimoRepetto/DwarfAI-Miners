@@ -489,7 +489,7 @@ export function createMainWindow(options: { alwaysOnTop: boolean }): BrowserWind
         layout.edge,
         layout
       ),
-      preloadPath: join(import.meta.dirname, '../preload/index.mjs'),
+      preloadPath: join(import.meta.dirname, '../preload/index.cjs'),
       // Windows and Linux use this for the taskbar/Alt-Tab icon; Electron
       // ignores it on macOS, where the app bundle's own icon applies instead
       // (and this app hides its Dock tile regardless — see app.dock?.hide()).

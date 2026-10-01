@@ -72,11 +72,19 @@ export default defineConfig({
       emptyOutDir: false
     }
   },
+  // The preload is one CommonJS script, `out/preload/index.cjs`, whose only runtime import is `electron`: a
+  // sandboxed renderer does not load an ES-module preload and cannot require a sibling chunk (S-019-1 Decision;
+  // ADR-019 item 1; ISSUE-045). The package is `"type": "module"`, so the format and the `.cjs` name are set here.
   preload: {
     resolve: {
       alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
     },
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        output: { format: 'cjs', entryFileNames: '[name].cjs', inlineDynamicImports: true }
+      }
+    }
   },
   renderer: {
     resolve: {

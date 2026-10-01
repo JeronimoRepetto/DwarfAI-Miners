@@ -1305,24 +1305,35 @@ describe('preload typography contract (#370)', () => {
     expect(invoke).toHaveBeenLastCalledWith('typography:preferences:get')
   })
 
-  it('rebuilds the document through the shared parser before it crosses', async () => {
+  /*
+   * AMENDED for ISSUE-045 (was: "rebuilds the document through the shared parser before it crosses"). The generated
+   * preload passes a value on and main parses it (14 §1.4, frozen: "a value it cannot coerce is passed on and
+   * refused by main"; today's parsers are main's refinements). The parser lives in the legacy tree the preload may
+   * not import (05 R16), and main already runs it on every payload (src/main/index.ts setTypographyPreferences),
+   * answering with what it stored; its rules stay tested in src/shared/contracts.test.ts.
+   */
+  it('passes the document on for main to parse, rather than parsing it in the preload', async () => {
     invoke.mockResolvedValueOnce(CUSTOM)
     await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
       ...CUSTOM,
       theme: 'neon'
     })
-    // The checked values and nothing the caller happened to attach.
-    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', CUSTOM)
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', {
+      ...CUSTOM,
+      theme: 'neon'
+    })
   })
 
   // AMENDED (#635): was "refuses Tiny5 for messaging…", on the two-face document.
-  it('refuses Tiny5 for messages at the bridge, before main ever sees it', async () => {
+  // AMENDED for ISSUE-045 (was: "refuses Tiny5 for messages at the bridge, before main ever sees it"): main refuses
+  // it (14 §1.4; see the test above), and the renderer draws what main answers it stored.
+  it('leaves Tiny5 for messages to main to refuse, and hands back what main stored', async () => {
     invoke.mockResolvedValueOnce(CUSTOM)
-    await (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)({
-      style: 'custom',
-      faces: { ...CUSTOM.faces, talk: 'tiny5' }
-    })
-    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', CUSTOM)
+    const asked = { style: 'custom', faces: { ...CUSTOM.faces, talk: 'tiny5' } }
+    await expect(
+      (api.setTypographyPreferences as unknown as (value: unknown) => Promise<unknown>)(asked)
+    ).resolves.toEqual(CUSTOM)
+    expect(invoke).toHaveBeenLastCalledWith('typography:preferences:set', asked)
   })
 
   it('hands back what main STORED, never the request', async () => {
@@ -1345,23 +1356,18 @@ describe('preload typography contract (#370)', () => {
     expect(removeListener).toHaveBeenLastCalledWith('typography:preferences:changed', wrapped)
   })
 
-  it('reads a malformed push as the defaults rather than dropping it', () => {
-    // Unlike onShowMine, there is no "no answer" state to fall back to: the
-    // page is always painted in SOME face, so an unreadable push has to resolve
-    // to the documented one rather than leave the window on a stale choice.
+  /*
+   * AMENDED for ISSUE-045 (was: "reads a malformed push as the defaults rather than dropping it"). The preload no
+   * longer imports the legacy parser (05 R16): it hands the push on as main sent it, and main only ever pushes the
+   * document its parser stored (src/main/index.ts setTypographyPreferences). The renderer still reads every push
+   * through the same parser, defaults included (useTypography), so the page is never left on a stale face.
+   */
+  it('hands a push to the listener as main sent it, never dropping it', () => {
     const listener = vi.fn()
     api.onTypographyPreferences(listener)
     const wrapped = on.mock.lastCall?.[1] as (event: unknown, payload: unknown) => void
     wrapped(null, 'roboto')
-    expect(listener).toHaveBeenCalledWith({
-      style: 'dwarfai',
-      faces: {
-        display: 'jacquard-12',
-        label: 'tiny5',
-        meta: 'pixelify-sans',
-        talk: 'pixelify-sans'
-      }
-    })
+    expect(listener).toHaveBeenCalledWith('roboto')
   })
 })
 
@@ -1381,18 +1387,24 @@ describe('preload Jev API-key contract (#509)', () => {
     expect(invoke).toHaveBeenLastCalledWith('jev:settings:get')
   })
 
-  it('parses the key through the shared parser before it crosses, trimming what it carries', async () => {
+  /*
+   * AMENDED for ISSUE-045 (was: "parses the key through the shared parser before it crosses, trimming what it
+   * carries" and "refuses locally, before the bridge, a key the shared parser would refuse anyway"). The preload
+   * never throws and main is the validator (14 §1.4, frozen; 14 §2.1 A-48: a malformed value is refused by main with
+   * the legacy failure shape, and the preload never throws). Main parses and trims every key it is given and answers
+   * a refused one with the unchanged settings (src/main/index.ts setJevApiKey).
+   */
+  it('carries the key as typed, for main to parse and trim', async () => {
     invoke.mockResolvedValueOnce({ configured: true })
     await api.setJevApiKey('  sk-typesafe-abc123  ')
-    expect(invoke).toHaveBeenLastCalledWith('jev:apiKey:set', 'sk-typesafe-abc123')
+    expect(invoke).toHaveBeenLastCalledWith('jev:apiKey:set', '  sk-typesafe-abc123  ')
   })
 
-  it('refuses locally, before the bridge, a key the shared parser would refuse anyway', async () => {
-    // `invoke` accumulates calls across this whole suite (nothing resets it),
-    // so the only reliable check here is that THIS action added none.
-    const callsBefore = invoke.mock.calls.length
-    await expect(api.setJevApiKey('   ')).rejects.toThrow()
-    expect(invoke.mock.calls.length).toBe(callsBefore)
+  it('passes a key the shared parser would refuse on to main, and never rejects', async () => {
+    const unchanged = { configured: false }
+    invoke.mockResolvedValueOnce(unchanged)
+    await expect(api.setJevApiKey('   ')).resolves.toEqual(unchanged)
+    expect(invoke).toHaveBeenLastCalledWith('jev:apiKey:set', '   ')
   })
 
   it('hands back what main STORED, including a refusal and its reason', async () => {
@@ -1417,7 +1429,13 @@ describe('preload Jev API-key contract (#509)', () => {
  * request the service would refuse anyway never reaches the bridge at all.
  */
 describe('preload Jev route contract (#509)', () => {
-  it('parses the prompt through the shared parser before it crosses, trimming what it carries', async () => {
+  /*
+   * AMENDED for ISSUE-045 (was: "parses the prompt through the shared parser before it crosses, trimming what it
+   * carries" and "refuses locally, before the bridge, a request the shared parser would refuse anyway"). The preload
+   * never throws and main is the validator (14 §1.4, frozen). Main parses every request and answers a refused one
+   * with a typed fallback (src/main/index.ts routeJevLaunch, `invalid-response`).
+   */
+  it('carries the prompt as typed, for main to parse and trim', async () => {
     const decision = {
       kind: 'decision',
       provider: 'claude',
@@ -1426,13 +1444,14 @@ describe('preload Jev route contract (#509)', () => {
     }
     invoke.mockResolvedValueOnce(decision)
     await expect(api.routeJevLaunch({ prompt: '  fix the bug  ' })).resolves.toEqual(decision)
-    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: 'fix the bug' })
+    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: '  fix the bug  ' })
   })
 
-  it('refuses locally, before the bridge, a request the shared parser would refuse anyway', async () => {
-    const callsBefore = invoke.mock.calls.length
-    await expect(api.routeJevLaunch({ prompt: '   ' })).rejects.toThrow()
-    expect(invoke.mock.calls.length).toBe(callsBefore)
+  it('passes a request the shared parser would refuse on to main, and never rejects', async () => {
+    const refused = { kind: 'fallback', reason: 'invalid-response' }
+    invoke.mockResolvedValueOnce(refused)
+    await expect(api.routeJevLaunch({ prompt: '   ' })).resolves.toEqual(refused)
+    expect(invoke).toHaveBeenLastCalledWith('jev:route', { prompt: '   ' })
   })
 
   it('hands back a fallback verdict untouched, including its reason', async () => {
@@ -1453,7 +1472,12 @@ describe('preload Jev route contract (#509)', () => {
  * malformed document is fixed up rather than refused at the bridge.
  */
 describe('preload Jev preferences contract (#509 follow-up)', () => {
-  it('parses the document through the shared parser before it crosses, trimming what it carries', async () => {
+  /*
+   * AMENDED for ISSUE-045 (was: "parses the document through the shared parser before it crosses, trimming what it
+   * carries"). Main parses every document it is given (src/main/index.ts setJevPreferences) and answers with what it
+   * stored (14 §1.4, frozen); the parser is in the legacy tree the preload may not import (05 R16).
+   */
+  it('carries the document as given, for main to parse and trim', async () => {
     const stored = {
       configured: true,
       preferences: {
@@ -1470,7 +1494,7 @@ describe('preload Jev preferences contract (#509 follow-up)', () => {
     })
     expect(invoke).toHaveBeenLastCalledWith('jev:preferences:set', {
       profile: 'premium',
-      default: { provider: 'claude', model: 'sonnet' },
+      default: { provider: 'claude', model: '  sonnet  ' },
       delegation: false
     })
   })
@@ -1521,10 +1545,14 @@ describe('preload OpenCode settings contract (#588 T6)', () => {
     expect(invoke).toHaveBeenLastCalledWith('opencode:password:set', ' pass word ')
   })
 
-  it('refuses locally, before the bridge, a password the shared parser would refuse anyway', async () => {
-    const callsBefore = invoke.mock.calls.length
-    await expect(api.setOpenCodeServerPassword('')).rejects.toThrow()
-    expect(invoke.mock.calls.length).toBe(callsBefore)
+  // AMENDED for ISSUE-045 (was: "refuses locally, before the bridge, a password the shared parser would refuse
+  // anyway"): the preload never throws and main is the validator (14 §1.4, frozen); main parses every password and
+  // answers a refused one with the settings in force (src/main/index.ts setOpenCodeServerPassword).
+  it('passes a password the shared parser would refuse on to main, and never rejects', async () => {
+    const inForce = { pluginEnabled: false, passwordConfigured: false }
+    invoke.mockResolvedValueOnce(inForce)
+    await expect(api.setOpenCodeServerPassword('')).resolves.toEqual(inForce)
+    expect(invoke).toHaveBeenLastCalledWith('opencode:password:set', '')
   })
 
   it('clears on opencode:password:clear with no payload at all', async () => {
@@ -1542,13 +1570,20 @@ describe('preload launch view contract (#635)', () => {
     expect(invoke).toHaveBeenLastCalledWith('launch-view:get')
   })
 
-  it('reports the view one-way on launch-view:set, through the shared parser', () => {
+  // AMENDED for ISSUE-045 (was: "reports the view one-way on launch-view:set, through the shared parser"): main
+  // parses whatever the preload sends before it stores it (src/main/index.ts setLaunchView), and the preload passes a
+  // value on rather than parsing it (14 §1.4, frozen; the parser is legacy code, 05 R16).
+  it('reports the view one-way on launch-view:set, leaving the parse to main', () => {
     api.setLaunchView({ area: 'settings', mineId: null })
     expect(send).toHaveBeenLastCalledWith('launch-view:set', { area: 'settings', mineId: null })
     api.setLaunchView({ area: 'vault', mineId: '', extra: 1 } as unknown as Parameters<
       typeof api.setLaunchView
     >[0])
-    expect(send).toHaveBeenLastCalledWith('launch-view:set', { area: 'map', mineId: null })
+    expect(send).toHaveBeenLastCalledWith('launch-view:set', {
+      area: 'vault',
+      mineId: '',
+      extra: 1
+    })
   })
 })
 /* --- end of the #635 launch view block --------------------------------------- */
