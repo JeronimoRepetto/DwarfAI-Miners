@@ -2727,12 +2727,20 @@ describe('the Host connection in the shell', () => {
 
   it('[ADR-002] the incompatible message offers only Stop everything and quit, which sends A-N34 and never an upgrade request', async () => {
     const rows = hostRows()
-    const requestStopEverything = vi.fn()
+    // UI main as A-N34 runs it: the tray's flow, which pushes A-N25 to the window (ui-main/ipc/handlers/stopEverything).
+    let askConfirmation: ((payload: { confirmationId: string }) => void) | undefined
+    const requestStopEverything = vi.fn(() =>
+      askConfirmation?.({ confirmationId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e' })
+    )
     const confirmHostRestart = vi.fn().mockResolvedValue(connected)
     const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
       ...rows.overrides,
       requestStopEverything,
-      confirmHostRestart
+      confirmHostRestart,
+      onStopEverythingRequested: vi.fn((listener: typeof askConfirmation) => {
+        askConfirmation = listener
+        return () => undefined
+      })
     })
 
     await rows.push({ state: 'unavailable', reason: 'incompatible' })
@@ -2740,11 +2748,14 @@ describe('the Host connection in the shell', () => {
     expect(buttons.map((button) => button.text())).toEqual([
       '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
     ])
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     await buttons[0]!.trigger('click')
     await flushPromises()
 
     expect(requestStopEverything).toHaveBeenCalledOnce()
     expect(confirmHostRestart).not.toHaveBeenCalled()
     expect(api.retryHostConnection).not.toHaveBeenCalled()
+    // The confirmation that follows is ISSUE-317's, the same one the tray item shows.
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
   })
 })
