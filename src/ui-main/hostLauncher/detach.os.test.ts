@@ -43,6 +43,7 @@ import { createNodeHostLauncher } from './index'
 import { createPosixSpawner } from './posix'
 import { buildHostSpawn } from './spawnHost'
 import { copySourceOf } from './versionedCopy'
+import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
 
 const WINDOWS = process.platform === 'win32'
@@ -63,6 +64,9 @@ const MANIFEST_TEXT = serializeManifest(
   )
 )
 const CASE_TIMEOUT_MS = 120_000
+// ADDED (fix: Windows launch timeout): the launch helper the Windows spawner loads, built by
+// `pnpm build:native` into the repository's prebuilds/.
+const PREBUILDS = path.join(REPO_ROOT, 'prebuilds')
 
 interface FakeHostReport {
   pid: number
@@ -125,6 +129,7 @@ function launcherFor(world: World, log = new RecordingUiLog()) {
     hostEntry: FAKE_HOST,
     hostManifest: world.hostManifest,
     copyRoot: world.copyRoot,
+    prebuildsDir: PREBUILDS,
     log,
     client: CLIENT,
     endpoint: world.endpoint
@@ -246,7 +251,7 @@ describe('Host launcher with real processes (ADR-002 D3, D6)', () => {
 
         // A second Host started the launcher's way against the same data folder and endpoint.
         const spawner = WINDOWS
-          ? createWindowsSpawner()
+          ? createWindowsSpawner({ loadHelper: () => loadWinLaunch({ prebuildsDir: PREBUILDS }) })
           : createPosixSpawner({ stdioFile: path.join(world.hostDataDir, 'run', 'host-stdio.log') })
         const second = await spawner(
           buildHostSpawn({
@@ -377,6 +382,7 @@ function uiConfig(world: World, reportFile: string): string {
       hostEntry: FAKE_HOST,
       hostManifest: world.hostManifest,
       copyRoot: world.copyRoot,
+      prebuildsDir: PREBUILDS,
       client: CLIENT,
       endpoint: world.endpoint,
       reportFile
@@ -449,22 +455,35 @@ static class JobTool {
     return 2;
   }
 
-  // The UI's parent: a KILL_ON_JOB_CLOSE job; "scoop-shim" is the job Scoop's shim.exe gives its program.
-  static int Holder(string kind, string cmd) {
-    uint flags = KILL_ON_JOB_CLOSE;
-    if (kind == "breakaway-ok") flags |= BREAKAWAY_OK;
-    if (kind == "scoop-shim") flags |= SILENT_BREAKAWAY_OK;
+  static IntPtr NewJob(uint flags) {
     IntPtr job = CreateJobObjectW(IntPtr.Zero, null);
     EXTENDED_LIMIT info = new EXTENDED_LIMIT();
     info.Basic.LimitFlags = flags;
     if (!SetInformationJobObject(job, 9, ref info, Marshal.SizeOf(typeof(EXTENDED_LIMIT)))) {
-      Console.WriteLine("error SetInformationJobObject " + Marshal.GetLastWin32Error()); return 1;
+      Console.WriteLine("error SetInformationJobObject " + Marshal.GetLastWin32Error()); return IntPtr.Zero;
     }
+    return job;
+  }
+
+  // The UI's parent: a KILL_ON_JOB_CLOSE job; "scoop-shim" is the job Scoop's shim.exe gives its program.
+  // ADDED (fix: Windows launch timeout): "nested" puts the UI in a job that allows breakaway, nested
+  // inside one that forbids it (SP-02 finding 2: a breakaway can then succeed and still leave the
+  // child in the outer job).
+  static int Holder(string kind, string cmd) {
+    uint flags = KILL_ON_JOB_CLOSE;
+    if (kind == "breakaway-ok" || kind == "nested") flags |= BREAKAWAY_OK;
+    if (kind == "scoop-shim") flags |= SILENT_BREAKAWAY_OK;
+    IntPtr outer = kind == "nested" ? NewJob(KILL_ON_JOB_CLOSE) : IntPtr.Zero;
+    IntPtr job = NewJob(flags);
+    if (job == IntPtr.Zero || (kind == "nested" && outer == IntPtr.Zero)) return 1;
     STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
     PROCESS_INFORMATION pi;
     if (!CreateProcessW(null, cmd, IntPtr.Zero, IntPtr.Zero, false, CREATE_SUSPENDED | CREATE_NO_WINDOW,
         IntPtr.Zero, null, ref si, out pi)) {
       Console.WriteLine("error CreateProcess " + Marshal.GetLastWin32Error()); return 1;
+    }
+    if (outer != IntPtr.Zero && !AssignProcessToJobObject(outer, pi.hProcess)) {
+      Console.WriteLine("error AssignProcessToJobObject " + Marshal.GetLastWin32Error()); return 1;
     }
     if (!AssignProcessToJobObject(job, pi.hProcess)) {
       Console.WriteLine("error AssignProcessToJobObject " + Marshal.GetLastWin32Error()); return 1;
@@ -474,6 +493,7 @@ static class JobTool {
     Console.Out.Flush();
     Console.ReadLine();
     CloseHandle(job);
+    if (outer != IntPtr.Zero) CloseHandle(outer);
     bool exited = WaitForSingleObject(pi.hProcess, 10000) == 0;
     Console.WriteLine("child-exited " + (exited ? "true" : "false"));
     Console.Out.Flush();
@@ -542,7 +562,7 @@ describe.runIf(WINDOWS)('Host survival on Windows (SP-02 regression test)', () =
     execFileSync(jobTool, ['injob', String(pid)], { encoding: 'utf8', windowsHide: true }).trim()
 
   /** holder(job kind) → UI → Host; closes the job; returns what was measured. */
-  async function runChain(jobKind: 'plain' | 'breakaway-ok' | 'scoop-shim') {
+  async function runChain(jobKind: 'plain' | 'breakaway-ok' | 'scoop-shim' | 'nested') {
     const world = newWorld()
     const reportFile = path.join(world.root, 'ui-report.json')
     const uiCmd = [process.execPath, uiScript, uiConfig(world, reportFile)]
@@ -621,6 +641,30 @@ describe.runIf(WINDOWS)('Host survival on Windows (SP-02 regression test)', () =
       }
     },
     CASE_TIMEOUT_MS * 2
+  )
+
+  // ADDED (fix: Windows launch timeout): breakaway now runs inside the UI itself, so the job check
+  // (resume the Host only when it is outside every job, else WMI) is proven where it matters: a UI in
+  // nested jobs, whose inner job allows breakaway and whose outer job does not.
+  it(
+    '[SP-02, FM-012] on Windows a UI in nested jobs, the outer one forbidding breakaway, spawns a Host outside every job that survives the jobs being closed',
+    async () => {
+      try {
+        const measured = await runChain('nested')
+        expect(measured.uiInJob, 'the UI is in the nested jobs').toBe(true)
+        expect(measured.hostInJobBeforeClose, 'the Host is outside every job').toBe(false)
+        expect(measured.uiExitedWithJob, 'closing the jobs ends the UI').toBe(true)
+        expect(measured.hostAnswersAfterClose, 'the Host answers after the jobs').toMatchObject({
+          kind: 'hello-ok',
+          state: 'ready'
+        })
+        // The outer job keeps a breakaway child, so the WMI step (D6 item 2) starts the Host.
+        expect(measured.launcher, 'nested jobs → wmi step').toBe('wmi')
+      } finally {
+        await endEveryHost()
+      }
+    },
+    CASE_TIMEOUT_MS
   )
 })
 

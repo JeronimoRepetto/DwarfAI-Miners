@@ -24,6 +24,7 @@ export {
   type UpgradeFlowState
 } from './upgradeFlow'
 export { HOST_SPAWN_GATE_STALE_MS } from './spawnGate'
+export { winLaunchPrebuildsDir } from './win-launch/nativeWinLaunch'
 export {
   LOSER_POLL_MS,
   MIGRATING_EXTENSION_MS,

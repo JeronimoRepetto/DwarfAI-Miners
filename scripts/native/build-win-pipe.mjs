@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /**
- * Builds the Host's owner-only pipe helper (ADR-003 item 2; src/host/platform/endpoint/win-pipe/
- * win_pipe.c) for one Windows architecture: `pnpm build:native [--arch x64|arm64]`.
+ * Builds the app's Windows native modules, NATIVE_MODULES, for one Windows architecture:
+ * `pnpm build:native [--arch x64|arm64]`.
  *
- * Output: `prebuilds/win32-<arch>/dwarfai_win_pipe.node`, which the app ships asar-unpacked
- * (package.json `build`) and the Host loads from there. It is built by CI on Windows and never on a
- * person's machine.
+ * - The Host's owner-only pipe helper (ADR-003 item 2; src/host/platform/endpoint/win-pipe/
+ *   win_pipe.c) → `dwarfai_win_pipe.node`, loaded by the Host.
+ * - The UI's launch helper (ADR-002 D6 item 1; src/ui-main/hostLauncher/win-launch/win_launch.c)
+ *   → `dwarfai_win_launch.node`, loaded by UI main to start the Host with job breakaway.
+ *
+ * Each tree builds from and loads its own binary (R10: the UI and the Host share no code). Output:
+ * `prebuilds/win32-<arch>/<binary>`, which the app ships asar-unpacked (package.json `build`). They
+ * are built by CI on Windows and never on a person's machine.
  *
  * - Compiler: MSVC from the newest Visual Studio found by vswhere (it ships with every Visual
  *   Studio installer at a fixed path). An arm64 binary from an x64 machine needs the "MSVC ARM64
@@ -14,7 +19,8 @@
  *   `--def` override them). The import library names node.exe; the module answers the delayed load
  *   of node.exe with the running executable, so the same binary loads in node.exe and in Electron.
  * - Static C runtime (`/MT`): the binary imports only Windows system DLLs, never a VC++
- *   redistributable (proved on the built file by nativeOwnerOnlyPipe.os.test.ts).
+ *   redistributable (proved on the built files by nativeOwnerOnlyPipe.os.test.ts and
+ *   build-win-pipe.os.test.mjs).
  * - Hardening: `/GS`, Control Flow Guard, ASLR, DEP, and CET shadow stacks on x64.
  *
  * The commands themselves are `buildSteps()`, a pure function with its own test
@@ -38,6 +44,25 @@ export const SOURCE = path.join(
   'win_pipe.c'
 )
 export const BINARY = 'dwarfai_win_pipe.node'
+export const LAUNCH_SOURCE = path.join(
+  repoRoot,
+  'src',
+  'ui-main',
+  'hostLauncher',
+  'win-launch',
+  'win_launch.c'
+)
+
+/**
+ * Every native module the app ships: its source, its binary, and the Windows import libraries it
+ * links, which are exactly the system DLLs the built binary may import (build-win-pipe.os.test.mjs).
+ *
+ * @type {ReadonlyArray<{ source: string, binary: string, libs: string[] }>}
+ */
+export const NATIVE_MODULES = [
+  { source: SOURCE, binary: BINARY, libs: ['advapi32.lib', 'kernel32.lib'] },
+  { source: LAUNCH_SOURCE, binary: 'dwarfai_win_launch.node', libs: ['kernel32.lib'] }
+]
 /** The Node-API version the module is written against (thread-safe functions need 4). */
 export const NAPI_VERSION = 8
 
@@ -50,13 +75,22 @@ const TARGETS = {
 /**
  * The commands that build the module, in order, for `cmd.exe` after vcvarsall.
  *
- * @param {{ arch: 'x64' | 'arm64', headersDir: string, defFile: string, workDir: string, outFile: string, source?: string }} options
+ * @param {{ arch: 'x64' | 'arm64', headersDir: string, defFile: string, workDir: string, outFile: string, module?: { source: string, libs: string[] } }} options
  * @returns {{ file: string, args: string[] }[]}
  */
-export function buildSteps({ arch, headersDir, defFile, workDir, outFile, source = SOURCE }) {
+export function buildSteps({
+  arch,
+  headersDir,
+  defFile,
+  workDir,
+  outFile,
+  module = NATIVE_MODULES[0]
+}) {
   const target = TARGETS[arch]
   if (target === undefined) throw new Error(`unsupported architecture: ${arch}`)
   const importLib = path.join(workDir, 'node_api.lib')
+  const source = module.source
+  const object = path.join(workDir, `${path.basename(source, '.c')}.obj`)
   return [
     {
       file: 'lib',
@@ -76,7 +110,7 @@ export function buildSteps({ arch, headersDir, defFile, workDir, outFile, source
         '/utf-8',
         `/DNAPI_VERSION=${NAPI_VERSION}`,
         `/I${headersDir}`,
-        `/Fo${path.join(workDir, 'win_pipe.obj')}`,
+        `/Fo${object}`,
         source
       ]
     },
@@ -95,11 +129,10 @@ export function buildSteps({ arch, headersDir, defFile, workDir, outFile, source
         '/GUARD:CF',
         ...(arch === 'x64' ? ['/CETCOMPAT'] : []),
         '/DELAYLOAD:node.exe',
-        path.join(workDir, 'win_pipe.obj'),
+        object,
         importLib,
         'delayimp.lib',
-        'advapi32.lib',
-        'kernel32.lib'
+        ...module.libs
       ]
     }
   ]
@@ -150,9 +183,7 @@ function parseArgs(argv) {
 
 function main() {
   if (process.platform !== 'win32') {
-    console.log(
-      'build-win-pipe: the owner-only pipe helper is Windows only; nothing to build here.'
-    )
+    console.log('build-win-pipe: the native modules are Windows only; nothing to build here.')
     return 0
   }
   const options = parseArgs(process.argv.slice(2))
@@ -184,8 +215,10 @@ function main() {
   mkdirSync(outDir, { recursive: true })
   const workDir = mkdtempSync(path.join(tmpdir(), 'dwarfai-win-pipe-'))
   try {
-    const outFile = path.join(outDir, BINARY)
-    const steps = buildSteps({ arch, headersDir, defFile, workDir, outFile })
+    const outFiles = NATIVE_MODULES.map((module) => path.join(outDir, module.binary))
+    const steps = NATIVE_MODULES.flatMap((module, index) =>
+      buildSteps({ arch, headersDir, defFile, workDir, outFile: outFiles[index], module })
+    )
     const script = [
       `call ${quote(vcvarsall)} ${vcvarsArg} >nul`,
       ...steps.map(({ file, args }) => [file, ...args.map(quote)].join(' '))
@@ -201,7 +234,9 @@ function main() {
       console.error(`build-win-pipe: the build failed (exit ${result.status})`)
       return 1
     }
-    console.log(`build-win-pipe: ${path.relative(repoRoot, outFile)}`)
+    for (const outFile of outFiles) {
+      console.log(`build-win-pipe: ${path.relative(repoRoot, outFile)}`)
+    }
     return 0
   } finally {
     rmSync(workDir, { recursive: true, force: true })

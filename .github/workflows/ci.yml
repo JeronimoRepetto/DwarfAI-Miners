@@ -271,13 +271,14 @@ jobs:
 
       # ---- Stage 5: OS lane ----
 
-      # The Host's owner-only pipe helper (ADR-003 item 2), a native module
-      # prebuilt here and never on a person's machine. The runner's Visual
+      # The Windows native modules, prebuilt here and never on a person's
+      # machine: the Host's owner-only pipe helper (ADR-003 item 2) and the UI's
+      # launch helper (ADR-002 D6 item 1, job breakaway from UI main). The runner's Visual
       # Studio has the MSVC x64 and ARM64 build tools (actions/runner-images,
       # Windows Server 2025), so arm64 is cross-compiled to prove it builds;
       # the OS lane below loads the x64 one, and the native-arm64 job runs the
       # arm64 one on an arm64 runner.
-      - name: Build the owner-only pipe helper (Windows x64 and arm64)
+      - name: Build the Windows native modules (x64 and arm64)
         if: runner.os == 'Windows'
         run: |
           pnpm build:native --arch x64
@@ -305,11 +306,12 @@ jobs:
       - name: Build
         run: pnpm build
 
-  # The owner-only pipe helper (ADR-003 item 2) as an arm64 binary on an arm64
+  # The Windows native modules (the owner-only pipe helper, ADR-003 item 2, and
+  # the UI's launch helper, ADR-002 D6 item 1) as arm64 binaries on an arm64
   # Windows runner (a standard GitHub-hosted runner, free on public
-  # repositories): built natively and run through its OS-lane tests, the
+  # repositories): built natively and run through their OS-lane tests, the
   # security test of the Host's pipe included. The checks job only
-  # cross-compiles it. Not a required merge check: the ruleset names only the
+  # cross-compiles them. Not a required merge check: the ruleset names only the
   # checks job.
   native-arm64:
     name: Owner-only pipe helper on Windows arm64
@@ -330,11 +332,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build the owner-only pipe helper (arm64)
+      - name: Build the Windows native modules (arm64)
         run: pnpm build:native --arch arm64
 
-      - name: Owner-only pipe helper OS-lane tests
-        run: pnpm vitest run --config vitest.os.config.ts src/host/platform/endpoint/win-pipe src/host/transport/endpoint/server.os.test.ts
+      - name: Native modules OS-lane tests
+        run: pnpm vitest run --config vitest.os.config.ts src/host/platform/endpoint/win-pipe src/host/transport/endpoint/server.os.test.ts src/ui-main/hostLauncher/win-launch scripts/native
 
   # Release lane L9, E2E (17 §1.9, §1.13, §5.2; 20 §2.1): the built app under
   # Playwright's `_electron`, on every push to main, nightly, on release tags
