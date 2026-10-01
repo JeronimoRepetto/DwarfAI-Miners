@@ -168,4 +168,29 @@ describe('router (ADR-001 item 3)', () => {
       })
     ).not.toThrow()
   })
+
+  it('[ADR-001] the target of a routed call is told which window sent it', async () => {
+    const seen: [string, unknown, IpcSenderEvent | undefined][] = []
+    const uiLocal: RouteTarget = {
+      async serve(channel, payload, sender) {
+        seen.push([channel, payload, sender])
+        return undefined
+      }
+    }
+    const route: ChannelRoute = {
+      channel: 'panel:hide',
+      owner: 'ui-local',
+      since: 'cut-0',
+      parity: 'n/a',
+      shape: 'target'
+    }
+    const router = createRouter({
+      routes: [...without('panel:hide'), route],
+      legacy: recordingTarget().target,
+      uiLocal,
+      senders
+    })
+    await router.dispatch('panel:hide', panel, undefined)
+    expect(seen).toEqual([['panel:hide', undefined, panel]])
+  })
 })

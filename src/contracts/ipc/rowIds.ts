@@ -70,5 +70,7 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'typography:preferences:changed': 'A-P6',
   pathForDroppedFile: 'A-X1',
   'dwarf:setName': '§8 I-21',
-  'dwarf:resetName': '§8 I-21'
+  'dwarf:resetName': '§8 I-21',
+  // NEW rows of 14 §2.2, each declared by the issue that builds its handler (22 §5)
+  'diag:renderer:report': 'A-N30'
 }

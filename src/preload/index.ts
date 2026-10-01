@@ -24,6 +24,8 @@ type TodayRow<K extends ChannelKey> = K extends keyof typeof TODAY
   : (typeof CHANNELS)[K]
 type TodayRequest<K extends ChannelKey> = Accepted<z.input<TodayRow<K>['request']>>
 type TodayResult<K extends ChannelKey> = z.output<TodayRow<K>['response']>
+/** A row's target shape (14): its registry entry. */
+type TargetRequest<K extends ChannelKey> = Accepted<z.input<(typeof CHANNELS)[K]['request']>>
 
 /** An id or a text as a string, or '' which main refuses. */
 function textOf(value: unknown): string {
@@ -255,6 +257,8 @@ export interface DwarfAiMinersApi {
   resetDwarfName: (
     request: TodayRequest<'dwarf:resetName'>
   ) => Promise<TodayResult<'dwarf:resetName'>>
+  /** A-N30 · `diag:renderer:report` · send · NEW · target shape */
+  reportRendererDiagnostic: (request: TargetRequest<'diag:renderer:report'>) => void
 }
 
 const api: DwarfAiMinersApi = {
@@ -428,7 +432,8 @@ const api: DwarfAiMinersApi = {
       dwarfId: textOf(request?.dwarfId),
       ...(typeof request?.name === 'string' ? { name: request.name } : {})
     }),
-  resetDwarfName: (request) => ipcRenderer.invoke('dwarf:resetName', textOf(request))
+  resetDwarfName: (request) => ipcRenderer.invoke('dwarf:resetName', textOf(request)),
+  reportRendererDiagnostic: (request) => ipcRenderer.send('diag:renderer:report', request)
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -174,6 +174,8 @@ export function goldenApi(sample: GoldenSample): Api {
     // The sample's remembered launch (#635, PANEL-QUESTIONS 25): a state with no steps opens where
     // the references open. A reported view is taken and changes nothing: a golden never relaunches.
     getLaunchView: () => Promise.resolve({ ...(sample.launch ?? DEFAULT_LAUNCH_VIEW) }),
-    setLaunchView: none
+    setLaunchView: none,
+    // A-N30: a golden renders a fixed sample, so a renderer diagnostic goes nowhere.
+    reportRendererDiagnostic: none
   }
 }

@@ -26,9 +26,13 @@ export interface IpcMainRegistrar {
   on(channel: string, listener: (event: IpcSenderEvent, payload: unknown) => void): void
 }
 
-/** An owner that serves a routed call: by today's wire name for a `today` route, by the registry key otherwise. */
+/**
+ * An owner that serves a routed call: by today's wire name for a `today` route, by the registry key otherwise. The
+ * sender is the call's event, already accepted by the seam A gate, for an owner that needs the window a call came
+ * from (A-N30 logs the sender window's mode, 14 §1.10); a call main makes itself has none.
+ */
 export interface RouteTarget {
-  serve(channel: string, payload: unknown): Promise<unknown>
+  serve(channel: string, payload: unknown, sender?: IpcSenderEvent): Promise<unknown>
 }
 
 export interface RouterDeps {
@@ -111,10 +115,15 @@ export function createRouter(deps: RouterDeps): Router {
   const targets = new Map(routes.map((route) => [route, targetOf(route)]))
 
   /** Serves `channel` by `route` with `payload`; a call with no route (or no bound target) is refused. */
-  function serve(channel: ChannelKey, route: ChannelRoute | undefined, payload: unknown) {
+  function serve(
+    channel: ChannelKey,
+    route: ChannelRoute | undefined,
+    payload: unknown,
+    sender?: IpcSenderEvent
+  ) {
     const target = route && targets.get(route)
     if (route === undefined || target === undefined) return Promise.resolve(refusal(channel))
-    return target.serve(route.shape === 'today' ? todayWireOf(channel) : channel, payload)
+    return target.serve(route.shape === 'today' ? todayWireOf(channel) : channel, payload, sender)
   }
 
   /** The answer to a refused call; nothing the renderer sent reaches a handler. */
@@ -145,7 +154,7 @@ export function createRouter(deps: RouterDeps): Router {
       refusals.set(key, (refusals.get(key) ?? 0) + 1)
       return answer(verdict.refusal)
     }
-    return serve(channel, route, verdict.payload)
+    return serve(channel, route, verdict.payload, event)
   }
 
   return {

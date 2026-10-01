@@ -68,7 +68,8 @@ import {
 import {
   activateDwarfRequestSchema,
   consoleOpenResultSchema,
-  openCodeSettingsViewSchema
+  openCodeSettingsViewSchema,
+  rendererDiagnosticSchema
 } from './windowApi'
 
 const none = noPayloadSchema
@@ -596,6 +597,18 @@ export const CHANNELS = {
     placement: 'host',
     status: 'retired',
     ...TODAY['dwarf:resetName']
+  },
+  // ---- NEW rows of 14 §2.2, each declared by the issue that builds its handler (22 §5) and listed in
+  // `unrouted.ts` until the step that routes it
+  // A-N30 `reportRendererDiagnostic` (AMENDMENT-2, AR-13-03): allowlisted, no free text, so not `sensitive`
+  // (14 §1.10); never forwarded to the Host
+  'diag:renderer:report': {
+    name: 'diag:renderer:report',
+    kind: 'send',
+    placement: 'ui-local',
+    status: 'new',
+    request: rendererDiagnosticSchema,
+    response: none
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

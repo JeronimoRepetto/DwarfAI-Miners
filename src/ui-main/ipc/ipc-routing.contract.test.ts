@@ -19,6 +19,27 @@ const preCut: RouteTable = {
   adapters: LEGACY_BRIDGE_ADAPTERS
 }
 
+/**
+ * The pre-cut table with every unrouted NEW row routed as its step will route it (its registry placement, target
+ * shape), so a table built for another release or with other unrouted entries checks only the change under test.
+ */
+const routedBase: RouteTable = {
+  ...preCut,
+  routes: [
+    ...ROUTES,
+    ...(Object.entries(UNROUTED) as [ChannelKey, StepId][]).map(
+      ([channel, since]): ChannelRoute => ({
+        channel,
+        owner: CHANNELS[channel].placement === 'host' ? 'host' : 'ui-local',
+        since,
+        parity: CHANNELS[channel].placement === 'host' ? 'passed' : 'n/a',
+        shape: 'target'
+      })
+    )
+  ],
+  unrouted: {}
+}
+
 /** The pre-cut table with one change: the route of `channel` replaced by `routes` (none when empty). */
 function withRoutes(table: RouteTable, channel: ChannelKey, ...routes: ChannelRoute[]): RouteTable {
   return { ...table, routes: [...table.routes.filter((r) => r.channel !== channel), ...routes] }
@@ -52,7 +73,7 @@ describe('pre-cut table', () => {
   it('[ADR-001] an unrouted entry naming the table’s release or an earlier step, or a key with both a route and an unrouted entry, is rejected', () => {
     const newRow: ChannelKey = 'panel:hide' // stands for a NEW row declared before its step
     const unroutedAt = (release: StepId, step: StepId): RouteTable => ({
-      ...withRoutes(preCut, newRow),
+      ...withRoutes(routedBase, newRow),
       release,
       unrouted: { [newRow]: step }
     })
@@ -61,7 +82,7 @@ describe('pre-cut table', () => {
     expect(reasons(unroutedAt('pre-cut-0', 'cut-1'))).toEqual([])
     expect(reasons(unroutedAt('cut-1', 'cut-1'))).toEqual([`unrouted-not-later ${newRow}`])
     expect(reasons(unroutedAt('cut-2', 'cut-1'))).toEqual([`unrouted-not-later ${newRow}`])
-    expect(reasons({ ...preCut, unrouted: { [newRow]: 'cut-1' } })).toEqual([
+    expect(reasons({ ...routedBase, unrouted: { [newRow]: 'cut-1' } })).toEqual([
       `routed-and-unrouted ${newRow}`
     ])
   })
@@ -85,7 +106,7 @@ describe('pre-cut table', () => {
     const newRow: ChannelKey = 'panel:hide' // stands for a NEW row declared before its step
     for (const release of ['cut-5', 'v1'] as const) {
       const table: RouteTable = {
-        ...withRoutes(preCut, newRow),
+        ...withRoutes(routedBase, newRow),
         release,
         adapters: [],
         unrouted: { [newRow]: 'generation-2' }
@@ -94,7 +115,7 @@ describe('pre-cut table', () => {
     }
     expect(
       reasons({
-        ...withRoutes(preCut, newRow),
+        ...withRoutes(routedBase, newRow),
         release: 'generation-2',
         adapters: [],
         unrouted: { [newRow]: 'generation-2' }
@@ -103,14 +124,14 @@ describe('pre-cut table', () => {
   })
 
   it('[ADR-001] a table with two routes for one (channel, qualifier) is rejected', () => {
-    const twice = withRoutes(preCut, 'agent:launch', legacyToday('agent:launch'), {
+    const twice = withRoutes(routedBase, 'agent:launch', legacyToday('agent:launch'), {
       ...legacyToday('agent:launch'),
       owner: 'ui-local'
     })
     expect(reasons(twice)).toEqual(['two-routes agent:launch'])
 
     const qualifiedTwice = withRoutes(
-      preCut,
+      routedBase,
       'agent:launch',
       legacyToday('agent:launch'),
       { ...legacyToday('agent:launch'), qualifier: { provider: 'codex' } },
@@ -120,26 +141,26 @@ describe('pre-cut table', () => {
 
     // One route per (channel, qualifier) pair: a qualified route beside the unqualified one is valid, and an empty
     // qualifier is the unqualified pair.
-    const qualified = withRoutes(preCut, 'agent:launch', legacyToday('agent:launch'), {
+    const qualified = withRoutes(routedBase, 'agent:launch', legacyToday('agent:launch'), {
       ...legacyToday('agent:launch'),
       qualifier: { provider: 'codex' }
     })
     expect(reasons(qualified)).toEqual([])
     expect(
       reasons(
-        withRoutes(preCut, 'agent:launch', legacyToday('agent:launch'), {
+        withRoutes(routedBase, 'agent:launch', legacyToday('agent:launch'), {
           ...legacyToday('agent:launch'),
           qualifier: {}
         })
       )
     ).toEqual(['two-routes agent:launch'])
 
-    expect(reasons(withRoutes(preCut, 'agent:launch'))).toEqual(['no-route agent:launch'])
+    expect(reasons(withRoutes(routedBase, 'agent:launch'))).toEqual(['no-route agent:launch'])
 
     // The preload exposes one shape per member in a release (21 §1 item 2a): the routes of one channel agree on it.
     expect(
       reasons({
-        ...withRoutes(preCut, 'agent:launch', legacyToday('agent:launch'), {
+        ...withRoutes(routedBase, 'agent:launch', legacyToday('agent:launch'), {
           channel: 'agent:launch',
           owner: 'host',
           since: 'cut-3a',
@@ -154,7 +175,7 @@ describe('pre-cut table', () => {
 
   it('[ADR-001] a legacy route with shape target and no listed shape adapter is rejected', () => {
     const at = (route: Partial<ChannelRoute>): RouteTable => ({
-      ...withRoutes(preCut, 'agent:providers', { ...legacyToday('agent:providers'), ...route }),
+      ...withRoutes(routedBase, 'agent:providers', { ...legacyToday('agent:providers'), ...route }),
       release: 'cut-3a',
       adapters: [{ name: 'CatalogMergeAdapter', cuts: ['cut-3a'], shapeAdapter: true }]
     })
@@ -176,12 +197,12 @@ describe('pre-cut table', () => {
       parity: 'passed',
       shape: 'today'
     }
-    expect(reasons({ ...withRoutes(preCut, 'mines:get', host), release: 'cut-1' })).toEqual([
+    expect(reasons({ ...withRoutes(routedBase, 'mines:get', host), release: 'cut-1' })).toEqual([
       'host-with-today-shape mines:get'
     ])
     expect(
       reasons({
-        ...withRoutes(preCut, 'mines:get', { ...host, shape: 'target' }),
+        ...withRoutes(routedBase, 'mines:get', { ...host, shape: 'target' }),
         release: 'cut-1'
       })
     ).toEqual([])
@@ -195,7 +216,7 @@ describe('pre-cut table', () => {
       parity: 'pending',
       shape: 'target'
     }
-    const table = withRoutes(preCut, 'mine:history', pending)
+    const table = withRoutes(routedBase, 'mine:history', pending)
     expect(reasons({ ...table, release: 'cut-1' })).toEqual([
       'host-pending-in-release mine:history'
     ])
@@ -238,7 +259,7 @@ describe('pre-cut table', () => {
 
     // A route's shape adapter must be listed as a shape adapter living in the table's release.
     const naming = (release: StepId, shapeAdapter: string): RouteTable => ({
-      ...withRoutes(preCut, 'metrics:reset', {
+      ...withRoutes(routedBase, 'metrics:reset', {
         ...legacyToday('metrics:reset'),
         shape: 'target',
         shapeAdapter
@@ -253,7 +274,7 @@ describe('pre-cut table', () => {
 
     // Absent after cut 5 (14 §6.5): no listed adapter lives past cut 5.
     expect(
-      reasons({ ...preCut, adapters: [{ name: 'Late', cuts: ['v1'], shapeAdapter: false }] })
+      reasons({ ...routedBase, adapters: [{ name: 'Late', cuts: ['v1'], shapeAdapter: false }] })
     ).toEqual(['adapter-after-cut-5 Late'])
   })
 })

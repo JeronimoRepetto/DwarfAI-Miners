@@ -98,7 +98,9 @@ const MEMBERS = {
   'typography:preferences:changed': 'onTypographyPreferences',
   pathForDroppedFile: 'pathForDroppedFile',
   'dwarf:setName': 'setDwarfName',
-  'dwarf:resetName': 'resetDwarfName'
+  'dwarf:resetName': 'resetDwarfName',
+  // NEW rows of 14 §2.2
+  'diag:renderer:report': 'reportRendererDiagnostic' // A-N30
 }
 
 /**
@@ -361,6 +363,9 @@ function renderPreload(rows, providers) {
   const usesWebUtils = rows.some((row) => row.kind === 'helper')
   const usesPush = rows.some((row) => row.kind === 'push')
   const electron = ['contextBridge', 'ipcRenderer', ...(usesWebUtils ? ['webUtils'] : [])]
+  // A target alias is declared only when a member uses it: a send row has no result type (TS6196 otherwise).
+  const memberText = rows.map((row) => `${memberType(row)} ${memberCode(row)}`).join(' ')
+  const usesType = (line) => memberText.includes(`${/^type (\w+)</.exec(line)?.[1]}<`)
   const types = [
     '/** A request as the renderer hands it over: the preload never mutates it, so an array may be readonly. */',
     'type Accepted<T> = T extends readonly (infer I)[] ? readonly Accepted<I>[] : T extends File ? T : T extends object ? { [P in keyof T]: Accepted<T[P]> } : T',
@@ -377,7 +382,7 @@ function renderPreload(rows, providers) {
           "/** A row's target shape (14): its registry entry. */",
           "type TargetRequest<K extends ChannelKey> = Accepted<z.input<(typeof CHANNELS)[K]['request']>>",
           "type TargetResult<K extends ChannelKey> = z.output<(typeof CHANNELS)[K]['response']>"
-        ]
+        ].filter((line) => !/^type Target(Request|Result)</.test(line) || usesType(line))
       : [])
   ]
   return `${HEADER('The preload: `window.api`, one member per registry row (14 §2.1; ADR-033 item 6; ADR-019 item 1).')}
