@@ -96,6 +96,30 @@ describe('StopEverythingConfirmation', () => {
     wrapper.unmount()
   })
 
+  it('[S10.21, ADR-002] an A-N26 error shows one danger message that Stop everything did not finish, naming no dwarf', async () => {
+    const wrapper = await shown({ kind: 'unfinished' })
+    const dialogs = document.body.querySelectorAll('[role="dialog"]')
+    expect(dialogs).toHaveLength(1)
+    expect(dialogs[0]!.classList.contains('dm-dialog--danger')).toBe(true)
+    // Its words are design's: a marked placeholder, the closest copy item named, and no slot for names.
+    expect(dialogs[0]!.getAttribute('aria-label')).toMatch(COPY_NEEDED)
+    const lines = [...dialogs[0]!.querySelectorAll('.dm-dialog__title, .dm-dialog__body p')]
+    expect(lines.length).toBeGreaterThan(0)
+    for (const line of lines) {
+      expect(line.textContent?.trim()).toMatch(COPY_NEEDED)
+      expect(line.textContent).toContain('Stop everything incomplete, no names')
+      expect(line.textContent).not.toContain('{names}')
+    }
+    expect(buttons().map((b) => b.textContent?.trim())).toEqual([
+      expect.stringMatching(COPY_NEEDED)
+    ])
+
+    press('Escape')
+    expect(wrapper.emitted('dismiss')).toHaveLength(1)
+    expect(wrapper.emitted('cancel')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('[ADR-002] every string of the view without approved copy is a marked placeholder', async () => {
     const confirming = await shown({ kind: 'confirming', count: 4, sending: false })
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()

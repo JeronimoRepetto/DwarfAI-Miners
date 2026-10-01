@@ -5,7 +5,9 @@
  * back to the opener) over the current window. While the confirmation is open it states how many sessions DwarfAI
  * started will end — the Host-owned count useStopEverything reads, nothing added (OQ-78) — with Cancel and Confirm;
  * once Confirm was chosen it is held until A-N26 answers. When some dwarfs could not be ended, the same dialog
- * becomes ONE danger message naming them (S10.21; ADR-014 item 9), dismissed with its one action or Esc.
+ * becomes ONE danger message naming them (S10.21; ADR-014 item 9), dismissed with its one action or Esc. When A-N26
+ * answered an error, Stop everything did not finish and DwarfAI keeps running: the same dialog becomes ONE danger
+ * message saying so, naming no dwarf (owner ruling 2026-10-01; ADR-002 D7 step 3). Only one is ever shown.
  *
  * Presentational: useStopEverything, owned by App, holds the state and the IPC (ADR-033 item 2).
  *
@@ -34,6 +36,12 @@ const COPY = {
     '⟦COPY NEEDED: Stop everything and quit could not end every session, danger message title (ADR-018 D5 copy item 9)⟧',
   incompleteBody:
     '⟦COPY NEEDED: Stop everything and quit could not end {names}, danger message naming the dwarfs (ADR-018 D5 copy item 9)⟧',
+  unfinishedTitle:
+    '⟦COPY NEEDED: Stop everything incomplete, no names: danger message title (closest: ADR-018 D5 copy item 9, which names the dwarfs)⟧',
+  unfinishedBody:
+    '⟦COPY NEEDED: Stop everything incomplete, no names: Stop everything and quit did not finish and DwarfAI keeps running (closest: ADR-018 D5 copy item 9, which names the dwarfs)⟧',
+  unfinishedDismiss:
+    '⟦COPY NEEDED: Stop everything incomplete, no names: dismiss button (closest: ADR-018 D5 copy item 9)⟧',
   dismiss:
     '⟦COPY NEEDED: Stop everything and quit could not end every session, dismiss button (ADR-018 D5 copy item 9)⟧'
 } as const
@@ -66,6 +74,13 @@ const dialog = computed<Shown | null>(() => {
       actions: [{ label: COPY.dismiss }]
     }
   }
+  if (view.kind === 'unfinished') {
+    return {
+      title: COPY.unfinishedTitle,
+      lines: [COPY.unfinishedBody],
+      actions: [{ label: COPY.unfinishedDismiss }]
+    }
+  }
   return null
 })
 
@@ -73,7 +88,7 @@ const dialog = computed<Shown | null>(() => {
 function back(): void {
   const view = props.view
   if (view.kind === 'confirming' && !view.sending) emit('cancel')
-  else if (view.kind === 'incomplete') emit('dismiss')
+  else if (view.kind === 'incomplete' || view.kind === 'unfinished') emit('dismiss')
 }
 
 function act(index: number): void {

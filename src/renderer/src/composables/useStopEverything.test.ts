@@ -137,9 +137,20 @@ describe('useStopEverything', () => {
     scope.stop()
   })
 
-  it('[S10.20] an A-N26 that rejects or answers an error closes the confirmation and claims no quit', async () => {
+  // AMENDED (owner ruling 2026-10-01): an A-N26 error used to close the view silently. A-N26 never carries legacy
+  // dwarf ids; when the legacy end-first adapter (ISSUE-054) cannot end a legacy-launched session it answers INTERNAL
+  // and DwarfAI keeps running, so the window shows one danger message saying so, with no names (ADR-002 D7 step 3).
+  it('[S10.21, ADR-002] an A-N26 that rejects or answers an error shows one danger message that Stop everything did not finish, with no names and no toast', async () => {
     for (const confirmStopEverything of [
       vi.fn(() => Promise.reject(new Error('the panel lost contact with the app'))),
+      vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          code: 'INTERNAL' as const,
+          message: 'a legacy session did not end',
+          retryable: false
+        }
+      })),
       vi.fn(async () => ({
         ok: false as const,
         error: { code: 'HOST_UNAVAILABLE' as const, message: 'no Host', retryable: true }
@@ -152,6 +163,12 @@ describe('useStopEverything', () => {
       await expect(stop.confirm()).resolves.toBeUndefined()
 
       expect(confirmStopEverything).toHaveBeenCalledTimes(1)
+      expect(api.cancelStopEverything).not.toHaveBeenCalled()
+      expect(stop.view.value).toEqual({ kind: 'unfinished' })
+      expect(useToasts().toasts.value).toEqual([])
+
+      // Shown once: dismissing it closes the view.
+      stop.dismiss()
       expect(stop.view.value).toEqual({ kind: 'closed' })
     }
   })

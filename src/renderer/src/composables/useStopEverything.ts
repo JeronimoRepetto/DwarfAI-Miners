@@ -13,8 +13,11 @@ import type { DwarfWire } from '@dwarfai/contracts'
  * Cancel sends A-N27 and changes nothing (S10.19). Confirm sends A-N26 exactly once per confirmation, with one
  * `requestId` minted for that intent (14 §1.6); a second press or a later Cancel sends nothing (S10.20). When the
  * `StopAllOutcome` names dwarfs that could not be ended, the view becomes ONE danger message naming them, shown until
- * dismissed, and no toast is raised (S10.21; ADR-014 item 9). When every owned session ended, the app exits with the
- * Host (UI main, ISSUE-053), so the view only closes.
+ * dismissed, and no toast is raised (S10.21; ADR-014 item 9). When A-N26 answers an error or cannot be reached,
+ * Stop everything did not finish and DwarfAI keeps running: the view becomes ONE danger message saying so, with no
+ * names (owner ruling 2026-10-01: A-N26 never carries legacy dwarf ids, and a legacy-launched session the legacy
+ * end-first adapter, ISSUE-054, cannot end answers INTERNAL; ADR-002 D7 step 3). When every owned session ended,
+ * the app exits with the Host (UI main, ISSUE-053), so the view only closes. Only one message is ever shown.
  *
  * Per call, like useResetMetrics: App owns the one instance, and with it the IPC (ADR-033 item 2).
  */
@@ -39,11 +42,14 @@ export type StopEverythingView =
   | { kind: 'confirming'; count: number; sending: boolean }
   /** S10.21: the one danger message, naming every dwarf that could not be ended. */
   | { kind: 'incomplete'; failed: string[] }
+  /** ADR-002 D7 step 3: the one danger message when A-N26 answered an error; no dwarf is named. */
+  | { kind: 'unfinished' }
 
 type State =
   | { kind: 'closed' }
   | { kind: 'confirming'; confirmationId: string; sending: boolean }
   | { kind: 'incomplete'; failed: readonly string[] }
+  | { kind: 'unfinished' }
 
 /** A UUIDv7 (RFC 9562): 48 bits of epoch milliseconds, version 7, variant 10, the rest random. */
 function mintRequestId(): string {
@@ -82,6 +88,7 @@ export function useStopEverything(deps: StopEverythingDeps): {
       return { kind: 'confirming', count: ownedCount(), sending: now.sending }
     }
     if (now.kind === 'incomplete') return { kind: 'incomplete', failed: [...now.failed] }
+    if (now.kind === 'unfinished') return { kind: 'unfinished' }
     return { kind: 'closed' }
   })
 
@@ -95,7 +102,8 @@ export function useStopEverything(deps: StopEverythingDeps): {
     const asked = state.value
     if (asked.kind !== 'confirming' || asked.sending) return
     state.value = { ...asked, sending: true }
-    let failed: readonly string[] = []
+    // null: an error answer, or no answer at all (the panel lost contact with UI main).
+    let failed: readonly string[] | null = null
     try {
       const result = await window.api.confirmStopEverything({
         confirmationId: asked.confirmationId,
@@ -103,15 +111,16 @@ export function useStopEverything(deps: StopEverythingDeps): {
       })
       if (result.ok) failed = result.value.failed
     } catch {
-      // The panel lost contact with UI main: nothing is known to have ended, so nothing is claimed.
+      // Nothing is known to have ended, so nothing is claimed: the unfinished message below.
     }
     // A newer confirmation took the view meanwhile: this answer is not its.
     if (state.value.kind !== 'confirming' || state.value.confirmationId !== asked.confirmationId) {
       return
     }
-    // An error answer ends this confirmation too (UI main closed it); the read model keeps showing what still runs.
-    state.value =
-      failed.length > 0 ? { kind: 'incomplete', failed: failed.map(nameOf) } : { kind: 'closed' }
+    // An error ends this confirmation too (UI main closed it) and claims no quit: DwarfAI keeps running.
+    if (failed === null) state.value = { kind: 'unfinished' }
+    else if (failed.length > 0) state.value = { kind: 'incomplete', failed: failed.map(nameOf) }
+    else state.value = { kind: 'closed' }
   }
 
   function cancel(): void {
@@ -122,7 +131,9 @@ export function useStopEverything(deps: StopEverythingDeps): {
   }
 
   function dismiss(): void {
-    if (state.value.kind === 'incomplete') state.value = { kind: 'closed' }
+    if (state.value.kind === 'incomplete' || state.value.kind === 'unfinished') {
+      state.value = { kind: 'closed' }
+    }
   }
 
   return { view, confirm, cancel, dismiss }
