@@ -1,7 +1,7 @@
 // The Host connection rows (14 §2.2 A-N03 `getHostConnection`, A-N04 `onHostConnection`, A-N05 `retryHostConnection`:
 // NEW, `ui-local`, owner `window` (HostClient); 14 §3.8 `HostConnectionView`; ADR-002 D9): a route target of the
 // router (ADR-001 item 3), so every call has passed the seam A gate first, sender and payload (ADR-019 items 7, 8).
-// The rows are listed in `contracts/ipc/unrouted.ts` until the cut-0 switch (ISSUE-056) routes them here; until then
+// The cut-0 switch (ISSUE-056) routes the rows here; in a table without their routes (before cut 0, a rollback build)
 // the router refuses them like a channel with no route.
 //
 // - A-N03 answers the view of HostClient's state now: ADR-002 D9's `HostConnection` (`retrying` shows as

@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import {
   app,
   BrowserWindow,
@@ -7,15 +8,19 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  Menu,
   nativeImage,
   powerMonitor,
   screen,
   session,
-  shell
+  shell,
+  Tray,
+  type NativeImage
 } from 'electron'
 import {
   composeLegacyRuntime,
   createLegacyRuntimeRoute,
+  type LegacyPanelSurface,
   type LegacyRuntimeRoute
 } from '../legacy-bridge/LegacyRuntimeRoute'
 import {
@@ -23,16 +28,37 @@ import {
   type EndFirstTimers,
   type LegacyLaunchedSessions
 } from '../legacy-bridge/LegacyEndFirstAdapter'
-import type { StopAllRelay } from './window/application/stopEverything'
+import {
+  createStopEverything,
+  STOP_EVERYTHING_REQUESTED,
+  type StopAllRelay,
+  type StopEverything
+} from './window/application/stopEverything'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
 import { ROUTES } from './ipc/routes'
+import type { ChannelRoute } from './ipc/channelRoute'
+import type { TrayController } from './window/ports/trayController'
+import type { PanelWindowController } from './window/ports/panelWindowController'
+import type { ToggleShortcut } from './window/application/toggleShortcut'
+import { startTrayProcess, type TrayProcess } from './window/application/trayMenu'
+import {
+  createStopEverythingRows,
+  STOP_EVERYTHING_CANCEL,
+  STOP_EVERYTHING_REQUEST
+} from './ipc/handlers/stopEverything'
+import { NATIVE_ROWS } from './ipc/handlers/nativeRows'
+import { createShortcutRows } from './ipc/handlers/shortcut'
 import { ElectronSingleInstanceLock } from './window/adapters/ElectronSingleInstanceLock'
 import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { wireSecondLaunch } from './window/application/secondLaunch'
 import type { SingleInstanceLock } from './window/ports/singleInstanceLock'
 import { createUiPreferenceRows, UI_PREFERENCE_ROWS } from './ipc/handlers/uiPreferenceRows'
 import { JsonUiPreferenceStore } from './window/adapters/JsonUiPreferenceStore'
-import { createUiPreferences, type ModeWindowSender } from './window/application/uiPreferences'
+import {
+  createUiPreferences,
+  TYPOGRAPHY_CHANGED_PUSH,
+  type ModeWindowSender
+} from './window/application/uiPreferences'
 import type { UiPreferenceStore } from './window/ports/uiPreferenceStore'
 import { NodeLogFiles } from './diagnostics/adapters/NodeLogFiles'
 import type { UiClock } from './diagnostics/ports/clock'
@@ -49,12 +75,31 @@ import { installWindowHardening } from './window/adapters/windowHardening'
 import { createPanelRows, PANEL_ROWS } from './ipc/handlers/panel'
 import {
   createHostConnectionRows,
+  HOST_CONNECTION_PUSH,
   HOST_CONNECTION_ROWS,
+  pushHostConnection,
   type HostConnectionSource
 } from './ipc/handlers/hostConnection'
-import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
+import {
+  createPanelWindow,
+  PANEL_VISIBILITY_PUSH,
+  type PanelWindowUseCases
+} from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
-import { PROTOCOL_VERSION } from '@dwarfai/contracts'
+import { DEFAULT_TOGGLE_ACCELERATOR, PROTOCOL_VERSION, type ChannelKey } from '@dwarfai/contracts'
+import { createNativeRows } from './ipc/handlers/nativeRows'
+import { createAppInfo, type AppInfo } from './window/application/appInfo'
+import { createNativeActions } from './window/application/nativeActions'
+import { createToggleShortcut } from './window/application/toggleShortcut'
+import { ElectronClipboard } from './window/adapters/ElectronClipboard'
+import { ElectronExternalOpener } from './window/adapters/ElectronExternalOpener'
+import { ElectronFilePicker } from './window/adapters/ElectronFilePicker'
+import {
+  currentShortcutPlatform,
+  ElectronGlobalShortcut
+} from './window/adapters/ElectronGlobalShortcut'
+import { ElectronTray } from './window/adapters/ElectronTray'
+import { readUserDataConfigFile } from './window/adapters/userDataConfigFile'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import {
   createNodeHostConnection,
@@ -73,14 +118,18 @@ export interface WindowContents extends ModeWindowSender {
 /**
  * The router's one `ui-local` target (ADR-001 item 3), composed from the parts whose dependencies are given, each
  * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048), A-N30 renderer diagnostics (ISSUE-055),
- * the Panel window rows (ISSUE-047) and the Host connection rows A-N03, A-N05 (ISSUE-052).
- * `undefined` when no part is present. None of these rows is routed `ui-local` before the cut-0 switch (ISSUE-056).
+ * the Panel window rows (ISSUE-047), the Host connection rows A-N03, A-N05 (ISSUE-052), the native rows (ISSUE-050),
+ * the shortcut rows (ISSUE-049) and the tray's confirmation rows A-N27, A-N34 (ISSUE-053, ISSUE-316).
+ * `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows here.
  */
 export function composeUiLocal({
   uiPreferences,
   uiLog,
   panelWindow,
   hostConnection,
+  nativeRows,
+  shortcut,
+  stopEverything,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -88,6 +137,9 @@ export function composeUiLocal({
   uiLog?: UiLog
   panelWindow?: PanelWindowUseCases
   hostConnection?: HostConnectionSource
+  nativeRows?: RouteTarget
+  shortcut?: Pick<ToggleShortcut, 'state' | 'set'>
+  stopEverything?: Pick<StopEverything, 'confirm' | 'cancel' | 'requestFromWindow'>
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -125,6 +177,30 @@ export function composeUiLocal({
       target: createHostConnectionRows(hostConnection)
     })
   }
+  if (nativeRows !== undefined) {
+    parts.push({ channels: NATIVE_ROWS, target: nativeRows })
+  }
+  if (shortcut !== undefined) {
+    const rows = createShortcutRows(shortcut)
+    parts.push({
+      channels: ['shortcut:get', 'shortcut:set'],
+      // The gate parsed A-11's payload: a string reaches the setter (14 §2.1; shortcut.ts).
+      target: {
+        serve: (channel, payload) =>
+          Promise.resolve(
+            channel === 'shortcut:set'
+              ? rows['shortcut:set'](payload as string)
+              : rows['shortcut:get']()
+          )
+      }
+    })
+  }
+  if (stopEverything !== undefined) {
+    parts.push({
+      channels: [STOP_EVERYTHING_CANCEL, STOP_EVERYTHING_REQUEST],
+      target: createStopEverythingRows(stopEverything)
+    })
+  }
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
@@ -150,6 +226,40 @@ export function composeStopAllRelay(
   return (requestId, shutdown) => adapter.beforeStopAll(requestId, shutdown)
 }
 
+/** An open window of the app, as the pushes reach it. */
+export interface AppWindow extends WindowContents {
+  close(): void
+}
+
+/** The pushes UI main sends itself: A-P1, A-P6, A-N04 and A-N25, its `ui-local` push rows in cut 0 (14 §2). */
+export const UI_MAIN_PUSHES: readonly ChannelKey[] = [
+  PANEL_VISIBILITY_PUSH,
+  TYPOGRAPHY_CHANGED_PUSH,
+  HOST_CONNECTION_PUSH,
+  STOP_EVERYTHING_REQUESTED
+]
+
+/**
+ * The rows whose today's handlers need today's window, tray or shortcut (A-01…A-05, A-08…A-11): the window family that
+ * moves as one, so today's window and the rebuilt one never serve the same app at once (21 §1 item 4).
+ */
+const WINDOW_FAMILY: readonly ChannelKey[] = [...PANEL_ROWS, 'shortcut:get', 'shortcut:set']
+
+/**
+ * Who serves the window family in a route table: today's runtime with its own window, tray and shortcut (before cut 0,
+ * or a rollback build, 21 §2.1), or the rebuilt window module (from cut 0). A table that splits the family is a
+ * composition defect and stops the start.
+ */
+export function windowFamilyOwner(routes: readonly ChannelRoute[]): 'legacy' | 'ui-local' {
+  const owners = new Set(
+    routes.filter((route) => WINDOW_FAMILY.includes(route.channel)).map((route) => route.owner)
+  )
+  if (owners.size === 1 && (owners.has('legacy') || owners.has('ui-local'))) {
+    return owners.has('legacy') ? 'legacy' : 'ui-local'
+  }
+  throw new Error(`the route table splits the window family: ${[...owners].join(', ')}`)
+}
+
 /** A window Electron created, as the mode-window registry needs it. */
 export interface CreatedWindow {
   readonly webContentsId: number
@@ -173,23 +283,37 @@ export interface UiMainLifecycle {
 export interface UiMainDeps {
   lock: SingleInstanceLock
   lifecycle: UiMainLifecycle
-  legacyRuntime: Pick<LegacyRuntimeRoute, 'compose' | 'serve' | 'beforeQuit' | 'willQuit'>
+  legacyRuntime: Pick<
+    LegacyRuntimeRoute,
+    'compose' | 'serve' | 'beforeQuit' | 'willQuit' | 'liveLaunches' | 'endLaunch'
+  >
+  /** The route table (default `ROUTES`, the release's own); a test or a rollback table is passed here. */
+  routes?: readonly ChannelRoute[]
+  /** Every open window of the app (A-N04, A-N25 pushes; the tray's Quit closes them). */
+  appWindows?: () => readonly AppWindow[]
+  /** The rebuilt tray (ISSUE-053): its icon and the id of each new confirmation. */
+  tray?: { controller: TrayController; newConfirmationId(): string }
+  /** The rebuilt global shortcut over the Panel (ISSUE-049). */
+  shortcut?: (panel: PanelWindowController) => ToggleShortcut
+  /** The links, clipboard, pickers and build info rows (ISSUE-050). */
+  nativeRows?: RouteTarget
   /** Electron's `ipcMain`, where the router registers the seam A listeners (ADR-001 item 3). */
   ipc: IpcMainRegistrar
   /** The app's own entry, the only page whose calls the seam A gate accepts (ADR-019 item 8). */
   appEntry: string
   /**
    * The persisted UI preference stores (ISSUE-048, ADR-024 item 1) and every window's contents, for the A-P6 push to
-   * the mode windows. Its rows are a `ui-local` route target; they stay `legacy` in the table, so today's runtime
-   * keeps writing today's files, until the cut-0 switch (ISSUE-056) routes them here.
+   * the mode windows. Its rows are a `ui-local` route target from the cut-0 switch (ISSUE-056); a table that
+   * serves them `legacy` (a rollback build) leaves today's runtime writing today's files.
    */
   uiPreferences?: { store: UiPreferenceStore; windows(): readonly WindowContents[] }
   /** The UI logger (ADR-026; 05 §3.14): A-N30 renderer diagnostics join the `ui-local` target with it. */
   uiLog?: UiLog
   /**
    * The rebuilt Panel window (ISSUE-047), composed over the mode-window registry. Its rows join the `ui-local` target;
-   * they stay `legacy` in the table until the cut-0 switch (ISSUE-056), so until then nothing calls it: it builds no
-   * window, writes no preference and today's runtime keeps the one Panel window (21 §1 item 4).
+   * from the cut-0 switch (ISSUE-056) the root loads it at start and today's runtime composes no window of its own. In
+   * a table that serves the window family `legacy` nothing calls it: it builds no window and writes no preference, and
+   * today's runtime keeps the one Panel window (21 §1 item 4).
    */
   panelWindow?: (modeWindows: ModeWindowRegistry) => PanelWindowUseCases
   /**
@@ -197,8 +321,8 @@ export interface UiMainDeps {
    * the remembered launch view, then starts the attach without awaiting it, before Electron is ready and the window
    * is composed, so the first paint never waits for the Host (US-RES-003.AC07); the board it keeps changes only when a
    * whole snapshot arrived (window/application/reopen.ts). Its Host connection rows A-N03, A-N05 join the `ui-local`
-   * target (ISSUE-052), but they are listed in `contracts/ipc/unrouted.ts` until the cut-0 switch (ISSUE-056) routes
-   * them and starts the A-N04 push, so until then the router refuses them and no seam A row reaches the client. An OS
+   * target (ISSUE-052), and the root pushes A-N04 once the table routes it (the cut-0 switch, ISSUE-056); without their
+   * routes the router refuses them and no seam A row reaches the client. An OS
    * resume wakes it (13 FM-109). Disposed at will-quit, so a closing app never reconnects or respawns.
    */
   host?: { client: HostClientService }
@@ -212,13 +336,21 @@ export interface UiMainStarted {
 /**
  * The Electron composition root (05 §2.3; 16 §8.4; ADR-001 item 3). The single-instance lock is
  * taken first; a process that does not get it quits before composing anything (UC-033, PO #73).
- * The holder wires the second-launch use case (S10.02), then, once Electron is ready, composes
- * today's runtime through its one door `LegacyRuntimeRoute` (21 §3) and hands that runtime's Panel
- * window to the second-launch use case. The router (ISSUE-043) registers the seam A listeners
- * right after the lock and dispatches each call by the route table (`ipc/routes.ts`); the rebuilt
- * window module (ISSUE-046, ISSUE-047) joins it as a route target in its own issues. With `host`,
- * the root reads the launch view and starts the Host attach (ISSUE-051) before Electron is ready,
- * never awaiting it.
+ * The holder registers the router's seam A listeners (ISSUE-043) right after the lock, dispatching
+ * each call by the route table (`ipc/routes.ts`), and wires the second-launch use case (S10.02).
+ * With `host`, the root reads the launch view and starts the Host attach (ISSUE-051) before
+ * Electron is ready, never awaiting it.
+ *
+ * Who owns the window depends on the table (21 §2 cut 0, ISSUE-056):
+ *
+ * - The window family served `ui-local` (cut 0 on): once Electron is ready the rebuilt Panel is
+ *   built hidden with its page loading, as today's start did; the rebuilt shortcut is claimed, the
+ *   rebuilt tray shows Open, Quit and Stop everything and quit (ADR-018 item 5; ADR-002 D7), and
+ *   A-N26 reaches the Host through `LegacyEndFirstAdapter` (21 §3); A-N04 is pushed on every Host
+ *   connection change. Today's runtime is composed through `LegacyRuntimeRoute` without its window,
+ *   tray or shortcut, and a second launch shows the rebuilt Panel.
+ * - The window family served `legacy` (before cut 0, or a rollback build, 21 §2.1): today's runtime
+ *   is composed with its own window, tray and shortcut, and a second launch shows its Panel.
  *
  * The answer settles when the start has finished: at once (undefined) for a process that quit,
  * after the composition (or the exit it caused) for the lock holder, with its reopen state.
@@ -229,6 +361,11 @@ export async function startUiMain({
   legacyRuntime,
   ipc,
   appEntry,
+  routes = ROUTES,
+  appWindows = () => [],
+  tray,
+  shortcut,
+  nativeRows,
   uiPreferences,
   uiLog,
   panelWindow,
@@ -238,46 +375,124 @@ export async function startUiMain({
     lifecycle.quit()
     return undefined
   }
-  // The mode windows (ADR-019 item 8): until the window factory registers the windows it builds (ISSUE-046), every
-  // window of this process is created by today's composition, and since #635 that is the one Panel shell window.
-  // Registered before anything is composed, so the window is known before its page is loaded.
+  // The mode windows (ADR-019 item 8): every window this process creates is registered, before anything is composed,
+  // so the window is known before its page is loaded. Since cut 0 that is the rebuilt Panel; in a rollback build,
+  // today's Panel shell window.
   const modeWindows = createModeWindowRegistry()
   lifecycle.onWindowCreated(({ webContentsId, onClosed }) => {
     modeWindows.register(webContentsId)
     onClosed(() => modeWindows.drop(webContentsId))
   })
+  const rebuilt = windowFamilyOwner(routes) === 'ui-local'
+  const panel = panelWindow?.(modeWindows)
+  if (rebuilt && panel === undefined) {
+    throw new Error(
+      'the route table serves the window family ui-local but no rebuilt Panel was composed'
+    )
+  }
+  /** The open mode windows, for the pushes UI main sends (A-N04, A-N25). */
+  const modeWindowList = (): readonly AppWindow[] =>
+    appWindows().filter((window) => modeWindows.has(window.webContentsId))
+  const routed = (channel: ChannelKey): boolean => routes.some((r) => r.channel === channel)
+
+  // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
+  const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
+  const stop =
+    rebuilt && panel !== undefined && host !== undefined && tray !== undefined
+      ? createStopEverything({
+          host: host.client,
+          // The confirmation shows in the Panel: a hidden Panel is shown first (US-RES-002.AC08; S10.18).
+          windows: {
+            anyOpen: () => panel.visible(),
+            open: () => panel.show(),
+            push: (channel, payload) => {
+              for (const window of modeWindowList()) window.send(channel, payload)
+            }
+          },
+          newConfirmationId: () => tray.newConfirmationId(),
+          relay: composeStopAllRelay(legacyRuntime)
+        })
+      : undefined
+
   // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
   // that checks its sender and its payload (ADR-019 items 7, 8).
   const uiLocal = composeUiLocal({
     uiPreferences,
     uiLog,
-    panelWindow: panelWindow?.(modeWindows),
+    ...(panel === undefined ? {} : { panelWindow: panel }),
     ...(host === undefined ? {} : { hostConnection: host.client }),
+    ...(nativeRows === undefined ? {} : { nativeRows }),
+    ...(toggle === undefined ? {} : { shortcut: toggle }),
+    ...(stop === undefined ? {} : { stopEverything: stop }),
     modeWindows
   })
   createRouter({
-    routes: ROUTES,
+    routes,
     legacy: legacyRuntime,
     ...(uiLocal ? { uiLocal } : {}),
+    // A-N26, the one `host` row of cut 0: its handler relays `host.shutdown` on the confirmation's `ui` connection.
+    ...(stop === undefined ? {} : { host: createStopEverythingRows(stop) }),
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
   }).register(ipc)
   const secondLaunch = wireSecondLaunch(lock)
   // The launch view, then the Host attach in parallel: neither waits for the other or holds the window back.
   const reopen =
     host === undefined ? null : startReopen({ store: uiPreferences?.store, host: host.client })
+  // A-N04: every Host connection change reaches the mode windows, once the table routes the push.
+  const stopConnectionPush =
+    host !== undefined && routed(HOST_CONNECTION_PUSH)
+      ? pushHostConnection(host.client, (view) => {
+          for (const window of modeWindowList()) window.send(HOST_CONNECTION_PUSH, view)
+        })
+      : undefined
+  let trayProcess: TrayProcess | null = null
   lifecycle.onResume?.(() => host?.client.wake())
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
   lifecycle.onWillQuit(() => {
+    toggle?.dispose()
+    trayProcess?.dispose()
+    stopConnectionPush?.()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
   // The app lives in the tray with every window hidden: closing the last window never quits it
-  // (only the tray's Quit does), as today.
+  // (only Stop everything and quit does; before cut 0, today's tray Quit), as today.
   lifecycle.onWindowAllClosed(() => {})
   try {
     await lifecycle.whenReady()
-    // Today's Panel window answers a second launch until the cut-0 switch (ISSUE-056) attaches the rebuilt one.
-    secondLaunch.attach(await legacyRuntime.compose())
+    if (rebuilt && panel !== undefined) {
+      // A second launch shows the rebuilt Panel from now on; it is built hidden with its page loading, as today's
+      // start built today's (`LegacyRuntimeRoute` serves the legacy rows once today's runtime is composed).
+      secondLaunch.attach(panel)
+      panel.load()
+      toggle?.start()
+      if (stop !== undefined && tray !== undefined && host !== undefined) {
+        trayProcess = startTrayProcess({
+          tray: tray.controller,
+          // Cut 0 has one mode window, the Panel: Open shows it, Quit hides it (the frozen window ports give the use
+          // case no close of its window, so it is hidden as today's close did); nothing ends (S10.13, S10.15).
+          windows: {
+            anyOpen: () => panel.visible(),
+            open: () => panel.show(),
+            closeAll: () => panel.hide()
+          },
+          // The UI-main session store is not built yet (later: ISSUE-059): there is nothing to drop.
+          sessionStore: { clear: () => {} },
+          stopEverything: stop,
+          onHostClosing: (h) => host.client.onClosing(h),
+          exit: () => lifecycle.quit(),
+          // No system tray (13 FM-050): the Panel is the only way back to the app, so it is shown; the renderer
+          // offers Stop everything and quit there (A-N34).
+          offerFromWindow: () => panel.show()
+        })
+      }
+      await legacyRuntime.compose()
+    } else {
+      const legacyPanel = await legacyRuntime.compose()
+      if (legacyPanel === null) throw new Error('today’s runtime composed no Panel window')
+      // Today's Panel window answers a second launch (before cut 0, or a rollback build).
+      secondLaunch.attach(legacyPanel)
+    }
   } catch {
     // Today's composition reports its own failure before it rethrows (LegacyRuntimeRoute).
     lifecycle.exit(1)
@@ -346,15 +561,17 @@ function resourcePath(name: string): string {
  * The rebuilt Panel window over Electron (ISSUE-047): `ElectronWindows` builds it through the secure factory with the
  * sandboxed CommonJS preload (ISSUE-045, ISSUE-046), `ElectronScreenArea` answers the displays, and the pin and the
  * docking edge are the `alwaysOnTop` and `dockSide` stores of `store` (ADR-024 item 1). Composing it builds no window,
- * reads no store and touches no display: the window is built on the first call that needs it, and Electron's `screen`
- * is read only after the app is ready.
+ * reads no store and touches no display: the window is built on the first call that needs it (from cut 0, the root's
+ * `load` once Electron is ready), and Electron's `screen` is read only after the app is ready. `composed()` answers the
+ * use cases once the root composed them, for today's runtime to reach the Panel (`LegacyPanelSurface`).
  */
-function electronPanelWindow(
-  store: UiPreferenceStore
-): (modeWindows: ModeWindowRegistry) => PanelWindowUseCases {
-  return (modeWindows) => {
+function electronPanelWindow(store: UiPreferenceStore): {
+  factory: (modeWindows: ModeWindowRegistry) => PanelWindowUseCases
+  composed(): PanelWindowUseCases | null
+} {
+  let panel: PanelWindowUseCases | null = null
+  const factory = (modeWindows: ModeWindowRegistry): PanelWindowUseCases => {
     const screenArea = new ElectronScreenArea(() => screen, currentUiPlatform())
-    let panel: PanelWindowUseCases | null = null
     const windows = new ElectronWindows({
       BrowserWindow,
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -384,9 +601,40 @@ function electronPanelWindow(
     })
     return panel
   }
+  return { factory, composed: () => panel }
 }
 
-/** The git commit (short) of this build (20 §3.1), stamped by electron.vite.uiMain.config.ts. */
+/**
+ * The native rows over Electron (ISSUE-050; 14 §2.1 A-21, A-22, A-24, A-28, A-29): the attachment picker attached to
+ * the Panel window, the system clipboard, the allowlisted external opener, and the build info and feature flags. The
+ * flags are read on the first call (`contracts/config` over the environment and the userData config file): today's
+ * runtime reads the same layers when it is composed and stops the start on a wrong value, so UI main never answers
+ * from a configuration today's runtime refused.
+ */
+function electronNativeRows(panelWindow: () => BrowserWindow | undefined): RouteTarget {
+  let info: AppInfo | null = null
+  const appInfo = (): AppInfo =>
+    (info ??= createAppInfo({
+      build: { version: app.getVersion(), packaged: app.isPackaged },
+      env: process.env,
+      readConfigFile: () => readUserDataConfigFile(app.getPath('userData'))
+    }))
+  return createNativeRows({
+    actions: createNativeActions({
+      files: new ElectronFilePicker({
+        dialog,
+        windowOf: (ref) => BrowserWindow.fromId(ref.windowId)
+      }),
+      clipboard: new ElectronClipboard(clipboard),
+      opener: new ElectronExternalOpener(shell),
+      // Cut 0 has one mode window, the Panel, where every attach control is pressed.
+      parentWindow: () => ({ windowId: panelWindow()?.id ?? -1 })
+    }),
+    appInfo: { build: () => appInfo().build(), featureFlags: () => appInfo().featureFlags() }
+  })
+}
+
+/** The git commit (short) of this build (20 §3.1), stamped by the app's electron-vite build. */
 declare const __DWARFAI_BUILD_ID__: string
 
 /**
@@ -426,12 +674,11 @@ function electronHostClient(uiLog: UiLog): HostClientService {
 
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
-// `startUiMain` from it.
+// `startUiMain` from it. From cut 0 it is the app's Electron entry (21 §2 cut 0, ISSUE-056).
 if (process.type === 'browser') {
   // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
-  // the CSP once Electron is ready. The secure window factory builds the Panel once the cut-0 switch (ISSUE-056) routes
-  // the Panel window rows to it (ISSUE-047) with a preload that loads sandboxed (ISSUE-045); until then the window is
-  // today's (LegacyRuntimeRoute).
+  // the CSP once Electron is ready. From cut 0 the secure window factory builds the Panel (ISSUE-047) with a preload
+  // that loads sandboxed (ISSUE-045); a rollback build's table gives the window back to today's runtime.
   installWindowHardening({
     app,
     session: () => session.defaultSession,
@@ -454,24 +701,71 @@ if (process.type === 'browser') {
     dir: app.getPath('userData'),
     log: (record) => uiLog.record(record)
   })
+  /** Every open window of the app: in cut 0, the rebuilt Panel (the one window UI main builds). */
+  const appWindows = (): AppWindow[] =>
+    BrowserWindow.getAllWindows()
+      .filter((window) => !window.isDestroyed())
+      .map((window) => ({
+        webContentsId: window.webContents.id,
+        send: (push, payload) => window.webContents.send(push, payload),
+        close: () => window.close()
+      }))
+  /** The window a picker is attached to: the rebuilt Panel when it is open. */
+  const panelBrowserWindow = (): BrowserWindow | undefined =>
+    BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
+  const rebuiltPanel = electronPanelWindow(uiPreferenceStore)
+  // Today's runtime, without its window, tray and shortcut once the table serves the window family `ui-local`: its
+  // pushes, pickers and notification click reach the rebuilt Panel (21 §2 cut 0; LegacyRuntimeRoute).
+  const legacyPanel: LegacyPanelSurface = {
+    send: (channel, payload) => {
+      for (const window of appWindows()) window.send(channel, payload)
+    },
+    visible: () => rebuiltPanel.composed()?.visible() ?? false,
+    show: () => rebuiltPanel.composed()?.show(),
+    showOpenDialog: (options) => {
+      const parent = panelBrowserWindow()
+      return parent === undefined
+        ? dialog.showOpenDialog(options)
+        : dialog.showOpenDialog(parent, options)
+    }
+  }
   void startUiMain({
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
     legacyRuntime: createLegacyRuntimeRoute(
-      composeLegacyRuntime({ app, dialog, nativeImage, shell, clipboard, globalShortcut })
+      composeLegacyRuntime(
+        { app, dialog, nativeImage, shell, clipboard, globalShortcut },
+        windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}
+      )
     ),
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),
-    uiPreferences: {
-      store: uiPreferenceStore,
-      windows: () =>
-        BrowserWindow.getAllWindows().map((window) => ({
-          webContentsId: window.webContents.id,
-          send: (push, payload) => window.webContents.send(push, payload)
-        }))
-    },
+    appWindows,
+    uiPreferences: { store: uiPreferenceStore, windows: appWindows },
     uiLog,
-    panelWindow: electronPanelWindow(uiPreferenceStore),
+    panelWindow: rebuiltPanel.factory,
+    nativeRows: electronNativeRows(panelBrowserWindow),
+    shortcut: (panel) =>
+      createToggleShortcut({
+        registry: new ElectronGlobalShortcut(globalShortcut),
+        preference: {
+          load: () => uiPreferenceStore.load('shortcut') ?? DEFAULT_TOGGLE_ACCELERATOR,
+          save: (accelerator) => uiPreferenceStore.save('shortcut', accelerator)
+        },
+        panel,
+        platform: currentShortcutPlatform()
+      }),
+    tray: {
+      controller: new ElectronTray(
+        {
+          createTray: (image) => new Tray(image as NativeImage),
+          buildMenu: (template) => Menu.buildFromTemplate(template),
+          iconFromPath: (path) => nativeImage.createFromPath(path)
+        },
+        resourcePath('tray-icon.png')
+      ),
+      newConfirmationId: () => randomUUID()
+    },
     host: { client: electronHostClient(uiLog) }
   })
 }

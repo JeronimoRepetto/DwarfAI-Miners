@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { CHANNELS, PRELOAD_HELPERS, type ChannelKey } from '@dwarfai/contracts'
 import type { ChannelRoute } from './channelRoute'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './router'
-import { ROUTES } from './routes'
+// AMENDED for ISSUE-056 (was: `ROUTES`, which was this table until the cut-0 switch): the suite is written against
+// today's table, every row `legacy` with today's shape, kept as `PRE_CUT_0_ROUTES`.
+import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import type { IpcSenderEvent, SenderPolicy } from './senderCheck'
 
 /**
@@ -49,7 +51,7 @@ describe('router (ADR-001 item 3)', () => {
   const senders: SenderPolicy = { appEntry: APP_ENTRY, isModeWindow: (id) => id === 1 }
   const panel: IpcSenderEvent = { sender: { id: 1 }, senderFrame: { url: APP_ENTRY } }
   const without = (channel: ChannelKey): ChannelRoute[] =>
-    ROUTES.filter((r) => r.channel !== channel)
+    PRE_CUT_0_ROUTES.filter((r) => r.channel !== channel)
 
   it('[ADR-001] a call with no route for its channel is refused with a typed error and never reaches a handler', async () => {
     const legacy = recordingTarget()
@@ -96,7 +98,9 @@ describe('router (ADR-001 item 3)', () => {
 
   it('[ADR-001] the router registers one ipcMain listener per invoke and send row under today’s wire name and none for a push or the A-X1 preload helper', () => {
     const ipc = new RecordingIpcMain()
-    createRouter({ routes: ROUTES, legacy: recordingTarget().target, senders }).register(ipc)
+    createRouter({ routes: PRE_CUT_0_ROUTES, legacy: recordingTarget().target, senders }).register(
+      ipc
+    )
 
     const helpers: readonly string[] = PRELOAD_HELPERS
     const wire = (key: ChannelKey): string =>
@@ -118,7 +122,7 @@ describe('router (ADR-001 item 3)', () => {
   it('[ADR-001] a legacy row is served by LegacyRuntimeRoute under today’s wire name with the renderer payload unchanged', async () => {
     const legacy = recordingTarget({ opened: true })
     const ipc = new RecordingIpcMain()
-    createRouter({ routes: ROUTES, legacy: legacy.target, senders }).register(ipc)
+    createRouter({ routes: PRE_CUT_0_ROUTES, legacy: legacy.target, senders }).register(ipc)
     // A-21's today request is the link itself (a string, 14 §2.1); the gate lets a valid one through untouched.
     const link = 'https://example.org'
 

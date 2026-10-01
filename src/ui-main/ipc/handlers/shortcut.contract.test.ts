@@ -7,7 +7,9 @@ import { FakeGlobalShortcutRegistry } from '../../window/ports/fakes/FakeGlobalS
 import { FakePanelWindowController } from '../../window/ports/fakes/FakePanelWindowController'
 import type { ChannelRoute } from '../channelRoute'
 import { createRouter, type RouteTarget } from '../router'
-import { ROUTES } from '../routes'
+// AMENDED for ISSUE-056 (was: `ROUTES`, which was this table until the cut-0 switch): the suite is written against
+// today's table, every row `legacy` with today's shape, kept as `PRE_CUT_0_ROUTES`.
+import { PRE_CUT_0_ROUTES } from '../testing/preCutRoutes'
 import type { IpcSenderEvent } from '../senderCheck'
 import { createShortcutRows } from './shortcut'
 
@@ -43,7 +45,7 @@ function shortcutServedUiLocal(taken: string[]) {
     }
   }
   const shortcutRows = ['shortcut:get', 'shortcut:set']
-  const routes: ChannelRoute[] = ROUTES.map((route) =>
+  const routes: ChannelRoute[] = PRE_CUT_0_ROUTES.map((route) =>
     shortcutRows.includes(route.channel)
       ? { ...route, owner: 'ui-local', since: 'cut-0', parity: 'n/a' }
       : route

@@ -15,7 +15,9 @@ import {
 import type { Rect } from '../../window/ports/windowFactory'
 import type { ChannelRoute } from '../channelRoute'
 import { createRouter, type RouteTarget } from '../router'
-import { ROUTES } from '../routes'
+// AMENDED for ISSUE-056 (was: `ROUTES`, which was this table until the cut-0 switch): the suite is written against
+// today's table, every row `legacy` with today's shape, kept as `PRE_CUT_0_ROUTES`.
+import { PRE_CUT_0_ROUTES } from '../testing/preCutRoutes'
 import type { IpcSenderEvent, SenderPolicy } from '../senderCheck'
 import { createPanelRows, PANEL_ROWS } from './panel'
 
@@ -31,7 +33,7 @@ describe('Panel window rows (14 §2.1 A-01…A-05, A-08, A-09, A-P1)', () => {
   const UI_LOCAL = new Set<ChannelKey>([...PANEL_ROWS, PANEL_VISIBILITY_PUSH])
 
   /** The pre-cut-0 table with these rows switched to `ui-local`, as ISSUE-056 switches them. */
-  const routes: ChannelRoute[] = ROUTES.map((route) =>
+  const routes: ChannelRoute[] = PRE_CUT_0_ROUTES.map((route) =>
     UI_LOCAL.has(route.channel) ? { ...route, owner: 'ui-local', since: 'cut-0' } : route
   )
   const legacy: RouteTarget = {

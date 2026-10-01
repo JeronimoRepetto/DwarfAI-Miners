@@ -386,3 +386,21 @@ describe('panel layout edge (#138)', () => {
     expect(subject().panel.layout()).toEqual({ edge: 'right', mineOpen: false, dockOpen: false })
   })
 })
+
+describe('the Panel window at the start of UI main (ISSUE-056; 21 §2 cut 0)', () => {
+  it('[ADR-001] load builds the Panel window hidden, its page loading, as today’s start did, and changes no preference', () => {
+    const { panel, windows, storage } = subject()
+    expect(windows.built).toEqual([])
+
+    panel.load()
+
+    expect(windows.built).toEqual([{ kind: 'panel' }])
+    expect(windows.panel().visible).toBe(false)
+    expect(panel.visible()).toBe(false)
+    expect(visibilityPushes(windows.panel())).toEqual([])
+    expect(storage.stored).toEqual({})
+    // A second load builds no second Panel (INV-116).
+    panel.load()
+    expect(windows.built).toEqual([{ kind: 'panel' }])
+  })
+})

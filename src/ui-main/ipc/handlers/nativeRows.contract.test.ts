@@ -9,7 +9,9 @@ import { FakeClipboard } from '../../window/ports/fakes/FakeClipboard'
 import { FakeFilePicker } from '../../window/ports/fakes/FakeFilePicker'
 import type { ChannelRoute } from '../channelRoute'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from '../router'
-import { ROUTES } from '../routes'
+// AMENDED for ISSUE-056 (was: `ROUTES`, which was this table until the cut-0 switch): the suite is written against
+// today's table, every row `legacy` with today's shape, kept as `PRE_CUT_0_ROUTES`.
+import { PRE_CUT_0_ROUTES } from '../testing/preCutRoutes'
 import type { IpcSenderEvent, SenderPolicy } from '../senderCheck'
 import { LEGACY_REFUSALS } from '../validate'
 import { createNativeRows, NATIVE_ROWS } from './nativeRows'
@@ -27,7 +29,7 @@ describe('native rows (14 §2.1 A-21, A-22, A-24, A-28, A-29, A-X1)', () => {
   const UI_LOCAL = new Set<ChannelKey>(NATIVE_ROWS)
 
   /** The pre-cut-0 table with these rows switched to `ui-local`, as ISSUE-056 switches them. */
-  const routes: ChannelRoute[] = ROUTES.map((route) =>
+  const routes: ChannelRoute[] = PRE_CUT_0_ROUTES.map((route) =>
     UI_LOCAL.has(route.channel) ? { ...route, owner: 'ui-local', since: 'cut-0' } : route
   )
   const legacy: RouteTarget = {

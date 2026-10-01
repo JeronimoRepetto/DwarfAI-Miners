@@ -3,6 +3,7 @@
 // replaced). It hides and shows the one Panel window (INV-116), docks it to the stored edge on the work area of the
 // display it is on, sizes it for the parts that are open (`domain/panelBounds.ts`), keeps it pinned as stored, and
 // tells the Panel's page whenever it starts or stops being on screen (A-P1).
+import type { ChannelKey } from '@dwarfai/contracts'
 import {
   layoutThatFits,
   panelBounds,
@@ -20,7 +21,7 @@ import type { UiPreferenceStore, UiPreferenceStoreMap } from '../ports/uiPrefere
 import type { Rect, WindowFactory } from '../ports/windowFactory'
 
 /** A-P1 `onPanelVisibility` (14 §2.1, KEEP): whether the Panel window is on screen. */
-export const PANEL_VISIBILITY_PUSH = 'panel:visible:changed'
+export const PANEL_VISIBILITY_PUSH = 'panel:visible:changed' satisfies ChannelKey
 
 /**
  * What the use case reads back from the Panel window the factory built, beyond the frozen `ModeWindow` members
@@ -71,6 +72,11 @@ export interface PanelWindowUseCases extends PanelWindowController {
   visible(): boolean
   /** Where a new Panel window opens, pinned as stored (#35) and docked to the stored edge (#138). */
   panelStart(): { alwaysOnTop: boolean; bounds: Rect }
+  /**
+   * Builds the Panel window hidden, its page loading, as today's start did (legacy `createMainWindow` then
+   * `loadPanelPage`): the cut-0 entry calls it once the router serves the rows (ISSUE-056; 21 §2 cut 0, "same app").
+   */
+  load(): void
 }
 
 /** What one fit of the Panel window came to, in the display's own pixels. */
@@ -251,6 +257,9 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
     },
     alwaysOnTop: () => (built ? surface.isAlwaysOnTop() : store.load('alwaysOnTop')),
     visible,
+    load: () => {
+      panel()
+    },
     panelStart: () => ({
       alwaysOnTop: store.load('alwaysOnTop'),
       bounds: panelBounds(currentArea(), layoutAsked().edge, layoutAsked(), floor)

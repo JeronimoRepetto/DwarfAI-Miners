@@ -8,7 +8,7 @@ import { FakeLogFiles } from './diagnostics/ports/fakes/FakeLogFiles'
 import { createUiLogger, type UiLog, type UiLogEntry } from './diagnostics/uiLogger'
 import {
   composeUiLocal,
-  startUiMain,
+  startUiMain as startUiMainOn,
   type CreatedWindow,
   type UiMainDeps,
   type UiMainLifecycle
@@ -28,6 +28,13 @@ import {
 import { createPanelWindow } from './window/application/panelWindow'
 import { FakeScreenAreaProvider } from './window/ports/fakes/FakeScreenAreaProvider'
 import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
+import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
+
+// AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases pin
+// the root with the window family served `legacy`, today's Panel window included, as before the cut-0 switch and in a
+// rollback build (21 §2.1); the cut-0 composition is pinned by index.cut0.test.ts.
+const startUiMain = (deps: Parameters<typeof startUiMainOn>[0]) =>
+  startUiMainOn({ routes: PRE_CUT_0_ROUTES, ...deps })
 
 /**
  * The Electron composition root (05 §2.3, 16 §8.4): the single-instance lock is the first thing it
@@ -143,7 +150,10 @@ describe('ui-main composition root (05 §2.3)', () => {
       },
       willQuit() {
         counts.willQuit += 1
-      }
+      },
+      // AMENDED for ISSUE-056 (was: absent): the root reaches today's launched register for the A-N26 relay.
+      liveLaunches: async () => [],
+      endLaunch: async () => 'already-ended'
     }
     return { legacyRuntime, counts, panel, served }
   }

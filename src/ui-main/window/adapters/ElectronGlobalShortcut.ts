@@ -1,4 +1,5 @@
 import type { GlobalShortcut } from 'electron'
+import type { ShortcutPlatform } from '@dwarfai/contracts'
 import type { GlobalShortcutRegistry } from '../ports/globalShortcutRegistry'
 
 /**
@@ -20,4 +21,16 @@ export class ElectronGlobalShortcut implements GlobalShortcutRegistry {
   unregister(accel: string): void {
     this.shortcuts.unregister(accel)
   }
+}
+
+/**
+ * Whose key names the shortcut's texts use (`ShortcutPlatform`): only the distinctions that change a modifier's printed
+ * name, as today's root reads them (legacy `shortcutPlatform`).
+ */
+export function currentShortcutPlatform(
+  platform: NodeJS.Platform = process.platform
+): ShortcutPlatform {
+  if (platform === 'darwin') return 'darwin'
+  if (platform === 'win32') return 'win32'
+  return 'other'
 }
