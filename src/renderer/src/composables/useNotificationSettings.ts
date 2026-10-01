@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { DEFAULT_NOTIFICATIONS_ENABLED } from '../types'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * State for Settings' notifications switch (#316).
@@ -36,6 +37,8 @@ export function useNotificationSettings() {
    * of order and leave the switch drawn at the older one.
    */
   async function set(next: boolean): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (applying.value) return
     applying.value = true
     try {

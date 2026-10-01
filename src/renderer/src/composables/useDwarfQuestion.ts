@@ -20,6 +20,7 @@ import {
   type DwarfQuestionAnswerResult
 } from '../types'
 import { useDwarfMessaging } from './useDwarfMessaging'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * The verdict of an answer the panel gave to an agent's question (#94, #125),
@@ -120,6 +121,8 @@ export function useDwarfQuestion() {
     request: DwarfQuestionAnswerRequest,
     record: string
   ): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (state.byDwarfId[dwarfId]?.phase === 'answering') return
     const toolUseId = question.toolUseId
     state.byDwarfId[dwarfId] = { phase: 'answering', toolUseId }
@@ -150,6 +153,8 @@ export function useDwarfQuestion() {
     permission: DwarfPermissionRequest,
     decision: DwarfPermissionDecision
   ): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (state.byDwarfId[dwarfId]?.phase === 'answering') return
     const toolUseId = permission.toolUseId
     // The decision travels with every phase of the verdict, because what the

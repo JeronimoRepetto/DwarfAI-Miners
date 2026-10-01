@@ -7,6 +7,7 @@ import {
   type ReactionWatch
 } from '../lib/delivery/reaction'
 import { rememberRoutes, routeWentAway } from '../lib/delivery/deliveryRoute'
+import { useHostConnection } from './useHostConnection'
 import { boundEchoes, reconcileEchoes, type MessageEcho } from '../lib/message/echo'
 import {
   defaultDwarfMessagingState,
@@ -319,6 +320,8 @@ async function deliver(
   attachments: readonly DwarfAttachment[] = [],
   again?: string
 ): Promise<boolean> {
+  // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves. No echo and no mark is minted.
+  if (useHostConnection().readOnly.value) return false
   // A message still in flight, never an answer's record: an answer on its way is no reason to
   // refuse a message, though its verdict rides on the same marker (MESSAGE-QUESTIONS 20).
   if (state.byDwarfId[dwarfId]?.phase === 'sending' && !markerIsRecord(dwarfId)) return false

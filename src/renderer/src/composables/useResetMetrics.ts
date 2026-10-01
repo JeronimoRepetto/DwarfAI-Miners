@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * State for Settings' "Reset metrics" action (#138). App owns this composable
@@ -20,6 +21,8 @@ export function useResetMetrics() {
    * the wipe reached disk.
    */
   async function reset(): Promise<boolean> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return false
     if (resetting.value) return false
     resetting.value = true
     try {

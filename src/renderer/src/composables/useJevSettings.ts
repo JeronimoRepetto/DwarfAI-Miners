@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { DEFAULT_JEV_SETTINGS, type JevPreferences, type JevSettings } from '../types'
 import type { AgentModelCatalog, AgentProviderOption } from '../types'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * State for Settings' Jev API-key control (#509).
@@ -113,6 +114,8 @@ export function useJevSettings() {
    * one.
    */
   async function save(key: string): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (saving.value) return
     saving.value = true
     try {
@@ -131,6 +134,8 @@ export function useJevSettings() {
 
   /** Ask main to forget the key. Same in-flight guard as save(). */
   async function clear(): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (saving.value) return
     saving.value = true
     try {
@@ -151,6 +156,8 @@ export function useJevSettings() {
    * be edited in the same instant.
    */
   async function setPreferences(preferences: JevPreferences): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (saving.value) return
     saving.value = true
     try {

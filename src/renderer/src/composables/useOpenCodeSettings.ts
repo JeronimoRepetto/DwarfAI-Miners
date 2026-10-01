@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { DEFAULT_OPENCODE_SETTINGS, type OpenCodeSettings } from '../types'
+import { useHostConnection } from './useHostConnection'
 
 /**
  * State for Settings' OpenCode section (#588 T6): the permission-relay
@@ -31,6 +32,8 @@ export function useOpenCodeSettings() {
   }
 
   async function run(request: () => Promise<OpenCodeSettings>): Promise<void> {
+    // Read-only while the Host is not connected (ADR-002 D9; 13 FM-146): nothing leaves.
+    if (useHostConnection().readOnly.value) return
     if (applying.value) return
     applying.value = true
     try {
