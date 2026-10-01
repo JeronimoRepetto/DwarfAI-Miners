@@ -14,6 +14,15 @@ import {
 
 export { logLevelFromEnv, type HostLogLevel }
 
+/**
+ * The Host's log as the composition root holds it: the kernel `DiagnosticsLog` every module gets,
+ * plus `flush`, which resolves once every record accepted so far is written or dropped (never
+ * rejects), so a Host that must exit can let its last records reach the segment first.
+ */
+export interface HostDiagnostics extends DiagnosticsLog {
+  flush(): Promise<void>
+}
+
 export interface DiagnosticsDeps {
   readonly fs: FileSystem
   readonly clock: Clock
@@ -31,7 +40,7 @@ export interface DiagnosticsDeps {
 }
 
 /** Throws `HostInvariantError` when `appVersion` is not a build version (a composition defect). */
-export function createDiagnostics(deps: DiagnosticsDeps): DiagnosticsLog {
+export function createDiagnostics(deps: DiagnosticsDeps): HostDiagnostics {
   return new HostDiagnosticsLog({
     fs: deps.fs,
     directory: new FsLogDirectory(deps.logDir),
