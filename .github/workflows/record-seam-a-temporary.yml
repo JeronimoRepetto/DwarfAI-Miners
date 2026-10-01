@@ -1,0 +1,120 @@
+name: Record seam-A (temporary, ISSUE-056)
+
+# TEMPORARY: removed from the ISSUE-056 branch before it merges. It records the cut-0 legacy seam-A replay on the
+# PRE-CUT build (main at 7319360, whose Electron entry is today's runtime, `out/main/index.js`) on each OS, so the
+# macOS and Linux recordings do not wait for the owner's machines (parity-cut-0.md, TC-056-02). Nothing is committed
+# here: each recording is uploaded as an artifact, then downloaded, reviewed and committed by hand.
+#
+# - The recorder and its harness come from this branch (`scripts/strangler/record-seam-a.mjs`, launched with this
+#   branch's Electron 44.0.0, the same version as the pre-cut build); the app it launches is the pre-cut checkout,
+#   built with `pnpm build` as the Windows recording's was.
+# - The world is the simulated valley with stub CLIs only, a stub-only PATH and cancelled pickers (`seamAReplay.ts`):
+#   no provider login, no network.
+# - Each OS records twice and the two files must be byte-equal, the determinism the Windows recording showed.
+# - Windows records too, and its file must equal the committed `recording.win32.json`: a cross-check that a CI
+#   recording equals the owner's.
+#
+# Runs on a pull request only when the `record-seam-a` label is added.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+env:
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  TZ: UTC
+  LANG: C.UTF-8
+  PRE_CUT: 7319360513ce992042b1e3bb3dd1733fa128e79d
+
+jobs:
+  record:
+    name: Record seam-A on the pre-cut build (${{ matrix.os }})
+    if: github.event.label.name == 'record-seam-a'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (this branch, the recorder)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout (the pre-cut build)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PRE_CUT }}
+          path: pre-cut
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-44.0.0
+
+      - name: Install dependencies (this branch)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the Electron binary
+        run: pnpm exec install-electron
+
+      - name: Install dependencies and build (the pre-cut build)
+        working-directory: pre-cut
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Check the pre-cut entry
+        shell: bash
+        run: |
+          main=$(node -e "console.log(require('./pre-cut/package.json').main)")
+          test "$main" = "./out/main/index.js"
+          test -f pre-cut/out/main/index.js
+
+      - name: Record twice (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          xvfb-run --auto-servernum node scripts/strangler/record-seam-a.mjs --app pre-cut --out recordings/first.json
+          xvfb-run --auto-servernum node scripts/strangler/record-seam-a.mjs --app pre-cut --out recordings/second.json
+
+      - name: Record twice
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          node scripts/strangler/record-seam-a.mjs --app pre-cut --out recordings/first.json
+          node scripts/strangler/record-seam-a.mjs --app pre-cut --out recordings/second.json
+
+      - name: The two recordings are byte-equal
+        shell: bash
+        run: cmp recordings/first.json recordings/second.json
+
+      - name: Name the recording for this OS
+        shell: bash
+        run: |
+          platform=$(node -p "process.platform")
+          cp recordings/first.json "recordings/recording.${platform}.json"
+
+      - name: The Windows recording equals the committed one
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cmp recordings/recording.win32.json fixtures/ipc/seam-a-replay/cut-0/recording.win32.json
+
+      - name: Upload the recording
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: seam-a-recording-${{ matrix.os }}
+          path: recordings/
+          if-no-files-found: ignore
