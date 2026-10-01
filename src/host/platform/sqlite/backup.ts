@@ -4,13 +4,15 @@
 // `VACUUM INTO` a consistent copy named `<db file>.bak-v<from>-<stamp>`, `<stamp>` being the Clock's
 // instant in a filesystem-safe, sortable UTC form (`20250615T150740000Z`). Then every backup of
 // that database file except the three newest (by stamp) is deleted; no other file is touched.
-import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs'
+// Each copy is `0600` on POSIX from its first byte (09 §9; ADR-017 item 6; 18 C-24).
+import { closeSync, existsSync, openSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { SqliteInfrastructureError } from '../../kernel/domain/errors'
 import type { Result } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
+import { DB_FILE_MODE } from './fileProtection'
 import type { BackupStep } from './migrations/types'
 
 export interface VacuumIntoBackupDeps {
@@ -97,6 +99,11 @@ export class VacuumIntoBackup implements BackupStep {
       if (existsSync(target)) {
         throw Object.assign(new Error('a backup with this name already exists'), { code: 'EEXIST' })
       }
+      // The copy is created by the Host, empty and owner-only (09 §1, §9: backups `0600`), before
+      // any byte of the database is in it; SQLite then writes into this file and keeps its mode,
+      // instead of creating one with the process umask. The mode does nothing on Windows, where
+      // the file inherits the data directory's per-user profile ACL.
+      closeSync(openSync(partial, 'wx', DB_FILE_MODE))
       input.db.exec(`VACUUM INTO ${sqlString(partial)}`)
       renameSync(partial, target)
     } catch (error) {
