@@ -1,13 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import type { BrowserWindow, dialog } from 'electron'
+import { beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { createModeWindowRegistry } from '../application/modeWindowRegistry'
 import { runWindowFactoryContract } from '../ports/windowFactory.contract'
 import {
   ElectronWindows,
   buildPanelWindowOptions,
-  type ElectronWindowsDeps
+  type CrashMessageDialog,
+  type ElectronWindowsDeps,
+  type ManagedBrowserWindow
 } from './ElectronWindows'
 import { FakeBrowserWindow } from './fakes/FakeBrowserWindow'
-import { secureWindowOptions } from './secureWindowOptions'
+import { secureWindowOptions, type BrowserWindowClass } from './secureWindowOptions'
 
 /*
  * TRANSPLANTED for ISSUE-046 from src/main/shell/window.test.ts (21 §6 row "Window and tray"; 05 §3.14 `ElectronWindows`
@@ -219,5 +222,10 @@ describe('ElectronWindows (05 §3.14; ADR-019 items 1, 8)', () => {
     expect(() => windows.veta('display-a')).toThrow(/not built/)
     expect(() => windows.valle('display-a')).toThrow(/not built/)
     expect(FakeBrowserWindow.built).toEqual([])
+  })
+
+  it('[ADR-019] the Electron BrowserWindow class and dialog fit the adapter (checked by the typecheck)', () => {
+    expectTypeOf<typeof BrowserWindow>().toMatchTypeOf<BrowserWindowClass<ManagedBrowserWindow>>()
+    expectTypeOf<typeof dialog>().toMatchTypeOf<CrashMessageDialog<BrowserWindow>>()
   })
 })
