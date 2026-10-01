@@ -5,6 +5,7 @@
 //
 // `ports` are the platform adapters and kernel ports the composition root built; the steps that
 // replace the placeholders use them.
+import { join } from 'node:path'
 import { endpointFor, type EndpointError } from '@dwarfai/contracts'
 import type { AppPaths } from '../kernel/ports/appPaths'
 import type { Clock } from '../kernel/ports/clock'
@@ -14,8 +15,14 @@ import type { IdGenerator } from '../kernel/ports/idGenerator'
 import type { ProcessControl } from '../kernel/ports/processControl'
 import type { Scheduler } from '../kernel/ports/scheduler'
 import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
+import { UI_TOKEN_FILE, UiToken } from '../transport/auth/uiToken'
+import { collectCapabilities } from '../transport/capabilities'
+import { acceptConnection } from '../transport/connection'
+import type { Dispatcher } from '../transport/dispatcher'
 import { bindEndpoint, EndpointBindError, type BoundEndpoint } from '../transport/endpoint/server'
-import type { BootStep, BootStepName } from './boot'
+import type { HostIdentity } from '../transport/hello'
+import { createHelloProbe } from '../transport/helloProbe'
+import { errorCode, type BootStep, type BootStepName, type HostStateReport } from './boot'
 import { decideBind } from './singleInstance'
 
 export interface BootPorts {
@@ -76,6 +83,26 @@ export interface UiEndpointDeps {
   facts: EndpointFacts
   log: DiagnosticsLog
   scheduler: Scheduler
+  clock: Clock
+  ids: IdGenerator
+  /** This Host build, for `hello.ok` and the probe's own `hello`. */
+  identity: HostIdentity
+  /** This Host process's pid, for the probe's `hello.client`. */
+  pid: number
+  /** This boot's epoch (mintBootEpoch). */
+  epoch: string
+  /** The lifecycle state the boot reports (HostStateHolder). */
+  state: () => HostStateReport
+  /** The seam-B method registry every authenticated request goes through. */
+  dispatcher: Dispatcher
+}
+
+/**
+ * The boot epoch (ADR-003 HelloOk.epoch; 06 `HostEpoch`): minted once per Host start, so it
+ * changes on every start and tells a hot reconnect from a Host restart (ADR-003 items 6, 8).
+ */
+export function mintBootEpoch(ids: IdGenerator): string {
+  return ids.uuidv7()
 }
 
 /** The `code` of each endpoint rule refusal, as the boot logs it (FM-037: "fails fast, logged"). */
@@ -91,6 +118,12 @@ const ENDPOINT_ERROR_CODES: Readonly<Record<EndpointError['kind'], string>> = {
  * and the transport's server with the ADR-002 D3 decision. Once bound it stays bound, and its
  * listener is what keeps the Host's event loop alive after `ready` (ADR-002 D1, D7: the Host
  * never exits on its own). It is closed by the clean-exit path (later: ISSUE-028).
+ *
+ * Every accepted connection goes to the auth layer (ADR-003 items 3–6, 12). This boot's uiToken
+ * is written to `<hostDataDir>/run/ui.token` only once the bind succeeded, so a Host that finds
+ * the endpoint in use never touches the running Host's token: it reads that token for the
+ * ADR-002 D3 hello probe instead, and exits ALREADY_RUNNING when the running Host answers.
+ * Until the token is written no hello can authenticate (nobody can hold the new token yet).
  */
 export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
   let bound: BoundEndpoint | null = null
@@ -100,16 +133,46 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
       if (!facts.ok) throw new EndpointBindError('ENDPOINT_FACTS_UNREADABLE', facts.cause)
       const endpoint = endpointFor(facts.value)
       if (!endpoint.ok) throw new EndpointBindError(ENDPOINT_ERROR_CODES[endpoint.error.kind])
+      // ADR-003 item 3 (AMENDMENT-10): the token lives in <hostDataDir>/run on every OS, which on
+      // Linux with XDG_RUNTIME_DIR is not the socket's folder.
+      const runDir = join(facts.value.hostDataDir, 'run')
+      const token = new UiToken()
       const outcome = await bindEndpoint(endpoint.value, {
         log: deps.log,
         scheduler: deps.scheduler,
         decide: decideBind,
-        // Asking a live endpoint for `hello` needs the frame codec (later: ISSUE-023). Until then
-        // a live endpoint counts as not answering: a second Host fails its boot (FM-008) instead
-        // of exiting ALREADY_RUNNING, and nothing of the running Host is touched.
-        probeExisting: () => Promise.resolve('no-hello')
+        probeExisting: createHelloProbe({
+          tokenFile: join(runDir, UI_TOKEN_FILE),
+          scheduler: deps.scheduler,
+          protocolVersion: deps.identity.protocolVersion,
+          client: {
+            appVersion: deps.identity.hostVersion,
+            buildId: deps.identity.buildId,
+            pid: deps.pid
+          }
+        }),
+        accept: (connection) =>
+          acceptConnection(connection, {
+            token,
+            ids: deps.ids,
+            identity: deps.identity,
+            epoch: deps.epoch,
+            state: deps.state,
+            capabilities: () => collectCapabilities({ methods: deps.dispatcher.methods() }),
+            scheduler: deps.scheduler,
+            clock: deps.clock,
+            log: deps.log,
+            dispatcher: deps.dispatcher
+          })
       })
       if (outcome.kind === 'already-running') return 'already-running'
+      try {
+        await token.issue(runDir)
+      } catch (error) {
+        // No UI could ever attach: the bind step fails and the endpoint is released.
+        await outcome.endpoint.close()
+        throw new EndpointBindError('ENDPOINT_TOKEN_UNWRITABLE', errorCode(error))
+      }
       bound = outcome.endpoint
       return 'bound'
     },

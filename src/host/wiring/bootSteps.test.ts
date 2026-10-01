@@ -1,13 +1,18 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { endpointFor, type EndpointInput } from '@dwarfai/contracts'
+import { endpointFor, PROTOCOL_VERSION, type EndpointInput } from '@dwarfai/contracts'
+import { FakeClock } from '../kernel/fakes/FakeClock'
 import { RecordingDiagnosticsLog } from '../kernel/fakes/RecordingDiagnosticsLog'
+import { SequenceIdGenerator } from '../kernel/fakes/SequenceIdGenerator'
 import { NodeScheduler } from '../platform/clock/NodeScheduler'
 import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
+import { Dispatcher } from '../transport/dispatcher'
+import { HostStateHolder } from '../transport/hostState'
+import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
 
 // L6 (17 §1.6): the bind step's composition — the platform facts, the one ADR-002 D2 rule and the
@@ -60,6 +65,30 @@ function scheduler(): NodeScheduler {
   return new NodeScheduler({ onTaskError: () => {} })
 }
 
+/** The token a bound Host wrote to <hostDataDir>/run/ui.token, or '' when there is none. */
+function readToken(hostDataDir: string): string {
+  try {
+    return readFileSync(join(hostDataDir, 'run', 'ui.token'), 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+/** The auth layer's inputs for one Host boot (ISSUE-023). */
+function channelDeps(log = new RecordingDiagnosticsLog()) {
+  const clock = new FakeClock(1_000)
+  const state = new HostStateHolder()
+  return {
+    clock,
+    ids: new SequenceIdGenerator(),
+    identity: { hostVersion: '0.20.0', buildId: 'abc1234', protocolVersion: PROTOCOL_VERSION },
+    pid: 4242,
+    epoch: 'epoch-0001',
+    state: () => state.current(),
+    dispatcher: new Dispatcher({ log, clock, state: () => state.current().state })
+  }
+}
+
 describe('the bind step composition (ADR-002 D2, D3)', () => {
   it('[ADR-002] the bind step binds the endpoint the one pure rule names for the hostDataDir, and a client reaches it there', async () => {
     const input = factsForThisOs(caseRoot())
@@ -67,7 +96,8 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     const endpoint = createUiEndpoint({
       facts,
       log: new RecordingDiagnosticsLog(),
-      scheduler: scheduler()
+      scheduler: scheduler(),
+      ...channelDeps()
     })
     cleanups.push(() => endpoint.close())
 
@@ -104,10 +134,70 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
       const endpoint = createUiEndpoint({
         facts: () => Promise.resolve(answer),
         log: new RecordingDiagnosticsLog(),
-        scheduler: scheduler()
+        scheduler: scheduler(),
+        ...channelDeps()
       })
 
       await expect(endpoint.bind(), code).rejects.toMatchObject({ code })
     }
+  })
+
+  it('[ADR-002, S12.02, FM-009] a second Host whose endpoint is held by a running Host that answers hello reports already-running', async () => {
+    const input = factsForThisOs(caseRoot())
+    const facts: EndpointFacts = () => Promise.resolve({ ok: true, value: input })
+    const running = createUiEndpoint({
+      facts,
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps()
+    })
+    cleanups.push(() => running.close())
+    expect(await running.bind()).toBe('bound')
+    const runningToken = readToken(input.hostDataDir)
+
+    const second = createUiEndpoint({
+      facts,
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps()
+    })
+    cleanups.push(() => second.close())
+
+    await expect(second.bind()).resolves.toBe('already-running')
+    // The second Host left the running Host's token in place.
+    expect(runningToken).toMatch(/^[0-9a-f]{64}$/)
+    expect(readToken(input.hostDataDir)).toBe(runningToken)
+  })
+
+  it('[ADR-003, FM-026] the bound endpoint answers a hello that carries the token from run/ui.token with hello.ok', async () => {
+    const input = factsForThisOs(caseRoot())
+    const endpoint = createUiEndpoint({
+      facts: () => Promise.resolve({ ok: true, value: input }),
+      log: new RecordingDiagnosticsLog(),
+      scheduler: scheduler(),
+      ...channelDeps()
+    })
+    cleanups.push(() => endpoint.close())
+    expect(await endpoint.bind()).toBe('bound')
+    const named = endpointFor(input)
+    if (!named.ok) throw new Error(named.error.kind)
+    const token = readToken(input.hostDataDir)
+
+    const socket = connect(named.value.path)
+    cleanups.push(() => void socket.destroy())
+    const client = new FrameClient(socket)
+    client.send({
+      type: 'hello',
+      endpointGeneration: 1,
+      protocolVersion: PROTOCOL_VERSION,
+      role: 'ui',
+      token,
+      client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(client.frames).toEqual([
+      expect.objectContaining({ type: 'hello.ok', epoch: 'epoch-0001', endpointGeneration: 1 })
+    ])
   })
 })
