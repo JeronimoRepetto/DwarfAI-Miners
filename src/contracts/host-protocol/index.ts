@@ -8,5 +8,10 @@ export * from './frameCodec'
 export * from './protocolVersion'
 export * from './requestId'
 export * from './params'
-export { HOST_METHOD_SCHEMAS, type HostMethods } from './methods'
+export {
+  HOST_METHOD_SCHEMAS,
+  type HostMethods,
+  type HostShutdownParams,
+  type HostShutdownResult
+} from './methods'
 export { HOST_FRAME_SCHEMAS, type HostFrames } from './frames'
