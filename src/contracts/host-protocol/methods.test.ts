@@ -10,7 +10,7 @@ import {
   type SubscribeResult
 } from './methods'
 
-// The B-M02 and B-M05 entries of 14 §3.4 and their strict() schemas (14 §1.4).
+// The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
 describe('ping params and result (14 §3.4, B-M02)', () => {
   it('[ADR-003] the ping schemas infer exactly the 14 §3.4 entry and refuse any other key', () => {
@@ -112,5 +112,36 @@ describe('events.subscribe params and result (14 §3.4, B-M03)', () => {
     expect(result.safeParse({ status: 'resync-required', reason: 'backpressure' }).success).toBe(
       false
     )
+  })
+})
+
+describe('host.upgrade.request params and result (14 §3.4, B-M06)', () => {
+  const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+
+  it('[ADR-002] the host.upgrade.request schemas infer exactly the 14 §3.4 entry and refuse any other key', () => {
+    expectTypeOf<HostMethods['host.upgrade.request']['params']>().toEqualTypeOf<{
+      targetVersion: string
+      targetDir: string
+      requestId: string
+    }>()
+    expectTypeOf<HostMethods['host.upgrade.request']['result']>().toEqualTypeOf<{
+      state: 'upgrade-pending'
+    }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['host.upgrade.request']['params']>
+    >().toEqualTypeOf<HostMethods['host.upgrade.request']['params']>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['host.upgrade.request']['result']>
+    >().toEqualTypeOf<HostMethods['host.upgrade.request']['result']>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['host.upgrade.request']
+    const valid = { targetVersion: '0.21.0', targetDir: '/data/j/dwarfai/host/0.21.0' }
+    expect(params.safeParse({ ...valid, requestId: REQUEST_ID }).success).toBe(true)
+    expect(params.safeParse(valid).success).toBe(false)
+    expect(params.safeParse({ ...valid, requestId: 'not-a-uuid' }).success).toBe(false)
+    expect(params.safeParse({ ...valid, requestId: REQUEST_ID, force: true }).success).toBe(false)
+    expect(result.safeParse({ state: 'upgrade-pending' }).success).toBe(true)
+    expect(result.safeParse({ state: 'ready' }).success).toBe(false)
+    expect(result.safeParse({ state: 'upgrade-pending', at: 1 }).success).toBe(false)
   })
 })
