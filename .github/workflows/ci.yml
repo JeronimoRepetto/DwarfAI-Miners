@@ -290,12 +290,26 @@ jobs:
       # The Linux runner has no display, so its leg runs under Xvfb, as the E2E
       # lane does: an OS-lane test that opens an Electron window then runs on
       # all three OSes instead of skipping its Linux leg.
+      # The hosted Windows runner runs every step elevated (an administrator with
+      # UAC off), while the package's test user is not (ISSUE-021 L8) and the real
+      # Host refuses to start elevated (ADR-002 D6). The Windows steps that run the
+      # real Host therefore run as a standard local user created here
+      # (scripts/ci/run-unelevated.mjs; ISSUE-051). This probe prints that user's
+      # integrity level and fails unless it is medium or below.
+      - name: Non-elevated test user (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs --probe
+
       - name: OS lane (Linux, under Xvfb)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum pnpm test:os
 
+      - name: OS lane (Windows, as the non-elevated test user)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs -- pnpm test:os
+
       - name: OS lane
-        if: runner.os != 'Linux'
+        if: runner.os == 'macOS'
         run: pnpm test:os
 
       - name: OS-lane empty guard
@@ -397,17 +411,35 @@ jobs:
       - name: Install the Electron binary
         run: pnpm exec install-electron
 
+      # The Windows native modules the built app loads from prebuilds/ (git-ignored): the
+      # Host's owner-only pipe helper (ADR-003 item 2) and the UI's launch helper (ADR-002
+      # D6 item 1). Without them the Host the app starts cannot bind its pipe (ISSUE-051).
+      - name: Build the Windows native modules (x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
       - name: Build (E2E build profile)
         env:
           DWARFAI_BUILD_PROFILE: e2e
         run: pnpm build
 
+      # As in the checks job: the Windows leg runs the E2E cases, whose app starts
+      # the real Host, as a standard local user (ADR-002 D6; ISSUE-021 L8;
+      # ISSUE-051), after a probe of its integrity level.
+      - name: Non-elevated test user (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs --probe
+
       - name: E2E (Linux, under Xvfb)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum pnpm test:e2e
 
+      - name: E2E (Windows, as the non-elevated test user)
+        if: runner.os == 'Windows'
+        run: node scripts/ci/run-unelevated.mjs -- pnpm test:e2e
+
       - name: E2E
-        if: runner.os != 'Linux'
+        if: runner.os == 'macOS'
         run: pnpm test:e2e
 
       # Traces are kept only for a failed test (playwright.config.ts).

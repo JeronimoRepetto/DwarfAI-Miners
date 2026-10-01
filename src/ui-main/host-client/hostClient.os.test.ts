@@ -1,0 +1,150 @@
+// L8 OS lane (17 §1.6, §1.8; ADR-003 items 1, 5–9, 12; TC-051-04): the attach suite of hostClient.contract.test.ts
+// over this OS's real endpoint — the owner-only named pipe on Windows, the `0600` Unix socket elsewhere — against
+// the real Host of this checkout (out/host/main.js, built here), run as the launcher runs it. The Host binds the
+// endpoint its ADR-002 D2 rule names for a temporary data folder, and the client names the same one by the same rule;
+// on POSIX the home and runtime folders are temporary too, so nothing of the owner's app is ever met. Every Host
+// started is killed in the `finally`, and the temporary folder removed.
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { PROTOCOL_VERSION, type SnapshotPage } from '@dwarfai/contracts'
+import { RecordingUiLog } from '../hostLauncher/fakes/RecordingUiLog'
+import { createNodeHostConnection } from '../hostLauncher'
+import {
+  buildRealHost,
+  REPO_ROOT,
+  startRealHost,
+  type RealHost
+} from '../hostLauncher/testing/realHost'
+import type { HostEvent } from '../window/ports/hostClient'
+import { createHostClient, HostCallError, type HostClientService } from './HostClient'
+
+const WINDOWS = process.platform === 'win32'
+const CASE_TIMEOUT_MS = 120_000
+const CUT_0_CAPABILITIES = JSON.parse(
+  readFileSync(path.join(REPO_ROOT, 'fixtures', 'ipc', 'capabilities', 'cut-0.json'), 'utf8')
+) as string[]
+
+let entry = ''
+let root = ''
+
+beforeAll(async () => {
+  entry = await buildRealHost()
+  // On POSIX directly under /tmp, so the socket path fits sun_path on macOS.
+  root = WINDOWS ? mkdtempSync(path.join(tmpdir(), 'dwarfai-051-os-')) : mkdtempSync('/tmp/dw051-')
+}, CASE_TIMEOUT_MS)
+
+afterAll(() => {
+  if (root !== '') rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+})
+
+/** Waits until `check` holds, polling every 25 ms, for at most `ms`. */
+async function until(check: () => boolean, ms = 20_000): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
+  'HostClient over the real endpoint',
+  () => {
+    it(
+      '[ADR-003] the same attach suite passes over the real named pipe or Unix socket',
+      async () => {
+        const hostDataDir = path.join(root, 'DwarfAI-test', 'host')
+        mkdirSync(hostDataDir, { recursive: true })
+        const env: Record<string, string> = WINDOWS
+          ? {}
+          : { HOME: path.join(root, 'home'), XDG_RUNTIME_DIR: path.join(root, 'xdg') }
+        for (const dir of Object.values(env)) mkdirSync(dir, { recursive: true, mode: 0o700 })
+        const hosts: RealHost[] = []
+        let client: HostClientService | undefined
+        try {
+          const launches: string[] = []
+          const log = new RecordingUiLog()
+          client = createHostClient({
+            // The launcher's part, as ADR-002 D4 has it: a Host that is gone is started again.
+            launcher: {
+              async ensureHostRunning() {
+                if (hosts.at(-1)?.alive === true) return 'attached'
+                launches.push('spawned')
+                hosts.push(await startRealHost({ entry, hostDataDir, env }))
+                return 'spawned'
+              }
+            },
+            ...createNodeHostConnection({
+              hostDataDir,
+              uiEnv: { ...process.env, ...env },
+              ...(env.HOME === undefined ? {} : { home: env.HOME })
+            }),
+            protocolVersion: PROTOCOL_VERSION,
+            client: { appVersion: '0.0.0-os051', buildId: 'os-test', pid: process.pid },
+            timers: {
+              now: () => Date.now(),
+              after: (ms, run) => {
+                const timer = setTimeout(run, ms)
+                return () => clearTimeout(timer)
+              }
+            },
+            log
+          })
+          const events: HostEvent[] = []
+          client.subscribe((event) => events.push(event))
+          const snapshots = (): SnapshotPage[] =>
+            events.flatMap((e) => (e.kind === 'snapshot' ? [e.snapshot] : []))
+
+          // hello first, events.subscribe, then the paged snapshot (TC-051-01).
+          expect(await client.ensureHost()).toBe('available')
+          await until(() => snapshots().length === 1).catch(() => {
+            const c = client as unknown as Record<string, unknown>
+            expect({
+              events,
+              state: client?.state(),
+              ui: c.ui !== null,
+              reader: c.reader !== null,
+              log: log.entries
+            }).toEqual({})
+          })
+          expect(client.state()).toMatchObject({ state: 'connected', compat: false })
+          expect([...client.capabilities()].sort()).toEqual(CUT_0_CAPABILITIES)
+          const first = snapshots()[0] as SnapshotPage
+          expect(first.next).toBeUndefined()
+          expect(first.chunks.map((c) => c.section)).toEqual(['meta'])
+
+          // A method the Host did not advertise is refused locally (TC-051-02).
+          const refused = await client
+            .call(
+              'conversation.send' as never,
+              { requestId: '01890a5d-ac96-774b-bcce-b302099a8001' } as never
+            )
+            .catch((error: unknown) => error)
+          expect((refused as HostCallError).error.code).toBe('NOT_SUPPORTED')
+
+          // A short-lived ui connection reads the snapshot and closes (OQ-47).
+          const page = await client.withUiConnection((c) => c.snapshot({}))
+          expect(page.chunks.map((c) => c.section)).toEqual(['meta'])
+
+          // The Host dies: the client reconnects, the launcher starts a new Host, and the new epoch is a fresh snapshot.
+          await (hosts[0] as RealHost).kill()
+          await until(() => client?.state().state === 'reconnecting')
+          await until(() => snapshots().length === 2, 30_000)
+          expect(client.state()).toMatchObject({ state: 'connected' })
+          expect(launches).toEqual(['spawned', 'spawned'])
+          expect(snapshots()[1]?.epoch).not.toBe(first.epoch)
+
+          // The uiToken never reaches the log.
+          const token = readFileSync(path.join(hostDataDir, 'run', 'ui.token'), 'utf8').trim()
+          expect(token.length).toBeGreaterThan(0)
+          expect(JSON.stringify(log.entries)).not.toContain(token)
+        } finally {
+          client?.dispose()
+          for (const host of hosts) await host.kill()
+        }
+      },
+      CASE_TIMEOUT_MS
+    )
+  }
+)

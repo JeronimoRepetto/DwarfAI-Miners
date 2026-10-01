@@ -1,7 +1,8 @@
 // The Host launcher's one entry point (05 §2.2): `ensureHostRunning()` through createHostLauncher
 // (the rules, over ports) or createNodeHostLauncher (the same rules over the Node adapters, for UI
 // main's composition root; wired by ISSUE-056), and the ADR-002 D8 upgrade handshake after `hello`
-// (upgradeDecision, runUpgradeFlow over createNodeUpgradePorts; ISSUE-032).
+// (upgradeDecision, runUpgradeFlow over createNodeUpgradePorts; ISSUE-032); createNodeHostConnection
+// is HostClient's connection to the same endpoint (ISSUE-051).
 export {
   createHostLauncher,
   type EnsureHostResult,
@@ -9,8 +10,10 @@ export {
   type HostLauncherDeps
 } from './launcher'
 export {
+  createNodeHostConnection,
   createNodeHostLauncher,
   createNodeUpgradePorts,
+  type NodeHostConnection,
   type NodeHostLauncherOptions,
   type NodeUpgradePorts
 } from './nodeHostLauncher'

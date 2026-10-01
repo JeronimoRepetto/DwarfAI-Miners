@@ -42,7 +42,15 @@ import { installWindowHardening } from './window/adapters/windowHardening'
 import { createPanelRows, PANEL_ROWS } from './ipc/handlers/panel'
 import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
+import { PROTOCOL_VERSION } from '@dwarfai/contracts'
+import { createHostClient, type HostClientService } from './host-client/HostClient'
+import {
+  createNodeHostConnection,
+  createNodeHostLauncher,
+  winLaunchPrebuildsDir
+} from './hostLauncher'
 import { ElectronWindows, showRendererCrashedMessage } from './window/adapters/ElectronWindows'
+import { startReopen, type Reopen } from './window/application/reopen'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -139,6 +147,20 @@ export interface UiMainDeps {
    * window, writes no preference and today's runtime keeps the one Panel window (21 §1 item 4).
    */
   panelWindow?: (modeWindows: ModeWindowRegistry) => PanelWindowUseCases
+  /**
+   * The Host attach (ISSUE-051; ADR-002 D4; ADR-003 items 7, 12): HostClient over the host launcher. The root reads
+   * the remembered launch view, then starts the attach without awaiting it, before Electron is ready and the window
+   * is composed, so the first paint never waits for the Host (US-RES-003.AC07); the board it keeps changes only when a
+   * whole snapshot arrived (window/application/reopen.ts). No seam A row reaches the client: the Host-connection rows
+   * (A-N03…A-N05) stay `legacy` in the table until the cut-0 switch (ISSUE-056) routes them to their handlers
+   * (ISSUE-052). Disposed at will-quit, so a closing app never reconnects or respawns.
+   */
+  host?: { client: HostClientService }
+}
+
+/** What a started root holds: the reopen state when the Host attach was composed. */
+export interface UiMainStarted {
+  reopen: Reopen | null
 }
 
 /**
@@ -147,12 +169,13 @@ export interface UiMainDeps {
  * The holder wires the second-launch use case (S10.02), then, once Electron is ready, composes
  * today's runtime through its one door `LegacyRuntimeRoute` (21 §3) and hands that runtime's Panel
  * window to the second-launch use case. The router (ISSUE-043) registers the seam A listeners
- * right after the lock and dispatches each call by the route table (`ipc/routes.ts`); the Host
- * client (ISSUE-051) and the rebuilt window module (ISSUE-046, ISSUE-047) join it as route
- * targets in their own issues.
+ * right after the lock and dispatches each call by the route table (`ipc/routes.ts`); the rebuilt
+ * window module (ISSUE-046, ISSUE-047) joins it as a route target in its own issues. With `host`,
+ * the root reads the launch view and starts the Host attach (ISSUE-051) before Electron is ready,
+ * never awaiting it.
  *
- * The answer settles when the start has finished: at once for a process that quit, after the
- * composition (or the exit it caused) for the lock holder.
+ * The answer settles when the start has finished: at once (undefined) for a process that quit,
+ * after the composition (or the exit it caused) for the lock holder, with its reopen state.
  */
 export async function startUiMain({
   lock,
@@ -162,11 +185,12 @@ export async function startUiMain({
   appEntry,
   uiPreferences,
   uiLog,
-  panelWindow
-}: UiMainDeps): Promise<void> {
+  panelWindow,
+  host
+}: UiMainDeps): Promise<UiMainStarted | undefined> {
   if (!lock.acquire()) {
     lifecycle.quit()
-    return
+    return undefined
   }
   // The mode windows (ADR-019 item 8): until the window factory registers the windows it builds (ISSUE-046), every
   // window of this process is created by today's composition, and since #635 that is the one Panel shell window.
@@ -191,8 +215,14 @@ export async function startUiMain({
     senders: { appEntry, isModeWindow: (id) => modeWindows.has(id) }
   }).register(ipc)
   const secondLaunch = wireSecondLaunch(lock)
+  // The launch view, then the Host attach in parallel: neither waits for the other or holds the window back.
+  const reopen =
+    host === undefined ? null : startReopen({ store: uiPreferences?.store, host: host.client })
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
-  lifecycle.onWillQuit(() => legacyRuntime.willQuit())
+  lifecycle.onWillQuit(() => {
+    host?.client.dispose()
+    legacyRuntime.willQuit()
+  })
   // The app lives in the tray with every window hidden: closing the last window never quits it
   // (only the tray's Quit does), as today.
   lifecycle.onWindowAllClosed(() => {})
@@ -204,6 +234,7 @@ export async function startUiMain({
     // Today's composition reports its own failure before it rethrows (LegacyRuntimeRoute).
     lifecycle.exit(1)
   }
+  return { reopen }
 }
 
 /** The Electron `app` behind `UiMainLifecycle`. */
@@ -304,6 +335,42 @@ function electronPanelWindow(
   }
 }
 
+/** The git commit (short) of this build (20 §3.1), stamped by electron.vite.uiMain.config.ts. */
+declare const __DWARFAI_BUILD_ID__: string
+
+/**
+ * HostClient over the Node host launcher (ISSUE-051; ADR-002 D2, D4, D5): the Host data folder is `userData` + `/host`;
+ * the Host runs `out/host/main.js` of this build from its versioned copy, checked against `out/host-manifest.json`,
+ * both beside this bundle (`out/ui-main/`); the Windows launch helper loads from the app root's `prebuilds/`.
+ */
+function electronHostClient(uiLog: UiLog): HostClientService {
+  const outDir = join(import.meta.dirname, '..')
+  const hostDataDir = join(app.getPath('userData'), 'host')
+  const client = { appVersion: app.getVersion(), buildId: __DWARFAI_BUILD_ID__ }
+  return createHostClient({
+    launcher: createNodeHostLauncher({
+      hostDataDir,
+      execPath: process.execPath,
+      hostManifest: join(outDir, 'host-manifest.json'),
+      hostEntry: join(outDir, 'host', 'main.js'),
+      prebuildsDir: winLaunchPrebuildsDir(join(outDir, '..')),
+      log: uiLog,
+      client
+    }),
+    ...createNodeHostConnection({ hostDataDir }),
+    protocolVersion: PROTOCOL_VERSION,
+    client: { ...client, pid: process.pid },
+    timers: {
+      now: () => Date.now(),
+      after: (ms, run) => {
+        const timer = setTimeout(run, ms)
+        return () => clearTimeout(timer)
+      }
+    },
+    log: uiLog
+  })
+}
+
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it.
@@ -351,6 +418,7 @@ if (process.type === 'browser') {
         }))
     },
     uiLog,
-    panelWindow: electronPanelWindow(uiPreferenceStore)
+    panelWindow: electronPanelWindow(uiPreferenceStore),
+    host: { client: electronHostClient(uiLog) }
   })
 }
