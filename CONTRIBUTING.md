@@ -49,7 +49,7 @@ except the one matching the artifact actually being packaged, before code signin
 `package.json` also declares a `homepage`, which electron-builder's `.deb` (fpm) target refuses to
 build without.
 
-### The Windows pipe helper
+### The Windows native modules
 
 On Windows the Host creates its UI pipe through one small native module,
 `src/host/platform/endpoint/win-pipe/win_pipe.c`: Node cannot give a pipe the owner-only DACL or
@@ -60,6 +60,13 @@ nothing is ever compiled on a user's machine. CI builds it; the packaged app car
 asar-unpacked. Building it locally needs Visual Studio with the MSVC C++ tools, and only the Windows
 OS lane (`pnpm test:os`) and a local Host run need it: `pnpm test` uses a double. The Host refuses
 to bind its pipe without it rather than fall back to Node's default pipe.
+
+The same command builds the UI's own native module, the launch helper
+`src/ui-main/hostLauncher/win-launch/win_launch.c`, into the same folder. UI main uses it to start
+the Host outside every job object the UI may be in (ADR-002 D6, spike SP-02): `CreateProcessW` with
+job breakaway, the `IsProcessInJob` check, and the exit watch, all in-process, so starting the Host
+never waits for PowerShell or a compiler. Only a job that forbids breakaway still goes through one
+Windows PowerShell step (WMI). Each tree loads only its own binary.
 
 ## Verification
 

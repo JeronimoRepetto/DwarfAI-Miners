@@ -6,6 +6,7 @@ import { RecordingSpawnProcess } from './fakes/FakeChildProcess'
 import { FakeCopyPreparer } from './fakes/FakeCopyPreparer'
 import { FakeHostSpawner } from './fakes/FakeHostSpawner'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
+import { FakeWinLaunch } from './fakes/FakeWinLaunch'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
 import { ScriptedHelloProber, UNREACHABLE, helloOk } from './fakes/ScriptedHelloProber'
 import { createHostLauncher, type HostLauncherDeps } from './index'
@@ -291,25 +292,43 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
       uiEnv: { SystemRoot: 'C:\\Windows', Path: 'C:\\Windows\\System32' }
     })
 
-    // Windows: one launcher step (Windows PowerShell by path), never a shell, never Node's detached
-    // spawn (libuv adds DETACHED_PROCESS for it), hidden.
+    // AMENDED (fix: Windows launch timeout; was: one PowerShell launcher step whose script carried
+    // the breakaway flags): breakaway runs in-process through the launch helper with the D6 flags,
+    // never Node's detached spawn (libuv adds DETACHED_PROCESS for it), and starts no process of its
+    // own. Only a refused breakaway starts the one step (Windows PowerShell by path, never a shell,
+    // hidden), and its WMI create hides the window.
+    const breakaway = new FakeWinLaunch()
     const onWindows = new RecordingSpawnProcess()
-    onWindows.onSpawn = (child) => child.print('launched breakaway 4242')
     const windows = await createWindowsSpawner({
+      loadHelper: () => ({ ok: true, binding: breakaway.binding }),
       spawnProcess: onWindows.spawn,
       env: { SystemRoot: 'C:\\Windows' }
     })(request)
     expect(windows.kind).toBe('launched')
-    const [step] = onWindows.calls
-    expect(step?.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
-    expect(step?.options).toMatchObject({ shell: false, windowsHide: true })
-    expect(step?.options.detached).not.toBe(true)
-    // The breakaway step's creation flags: breakaway, new group, no window; never DETACHED_PROCESS.
-    const script = encodedScript(step?.args ?? [])
-    const flags = Number(/\$creationFlags = (0x[0-9A-Fa-f]+)/.exec(script)?.[1])
+    expect(onWindows.calls).toEqual([])
+    const flags = breakaway.breakaways[0]?.flags ?? 0
     const required = CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
     expect(flags & required).toBe(required)
     expect(flags & DETACHED_PROCESS).toBe(0)
+
+    const refused = new FakeWinLaunch()
+    refused.answer = () => ({ status: 'refused', code: 'STILL_IN_JOB' })
+    const viaWmi = new RecordingSpawnProcess()
+    viaWmi.onSpawn = (child) => child.print('launched wmi 4242')
+    expect(
+      (
+        await createWindowsSpawner({
+          loadHelper: () => ({ ok: true, binding: refused.binding }),
+          spawnProcess: viaWmi.spawn,
+          env: { SystemRoot: 'C:\\Windows' }
+        })(request)
+      ).kind
+    ).toBe('launched')
+    const [step] = viaWmi.calls
+    expect(step?.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(step?.options).toMatchObject({ shell: false, windowsHide: true })
+    expect(step?.options.detached).not.toBe(true)
+    const script = encodedScript(step?.args ?? [])
     expect(script).not.toMatch(/DETACHED_PROCESS|CREATE_NEW_CONSOLE/)
     // The WMI step starts it hidden.
     expect(script).toContain('ShowWindow = [uint16]0')
@@ -341,9 +360,18 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
       hostDataDir: 'C:\\Users\\j\\AppData\\Roaming\\DwarfAI-Miners\\host',
       uiEnv: { PROVIDER_API_KEY: SECRET }
     })
+    // AMENDED (fix: Windows launch timeout): the request reaches the in-process breakaway as
+    // arguments of a function call, and, when breakaway is refused, the WMI step on its stdin.
+    const helper = new FakeWinLaunch()
+    helper.answer = () => ({ status: 'refused', code: 'CREATE_5' })
     const recorder = new RecordingSpawnProcess()
     recorder.onSpawn = (child) => child.print('launched wmi 4242')
-    await createWindowsSpawner({ spawnProcess: recorder.spawn, env: {} })(request)
+    await createWindowsSpawner({
+      loadHelper: () => ({ ok: true, binding: helper.binding }),
+      spawnProcess: recorder.spawn,
+      env: {}
+    })(request)
+    expect(helper.breakaways[0]?.environment).toContain(`PROVIDER_API_KEY=${SECRET}`)
     const [step] = recorder.calls
 
     const argv = [step?.file, ...(step?.args ?? []), encodedScript(step?.args ?? [])].join(' ')

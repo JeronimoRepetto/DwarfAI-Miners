@@ -2,7 +2,7 @@
 // ISSUE-056 switches it on; ISSUE-051's HostClient calls it). It resolves the endpoint by the
 // ADR-002 D2 rule, probes it with `hello` over `node:net`, holds the spawn gate in
 // `<hostDataDir>/run/spawn.gate`, and starts the Host with the per-OS spawner (windows.ts on
-// Windows, posix.ts elsewhere). An endpoint that cannot be named (no SID, a socket path over the
+// Windows, with the launch helper loaded from `prebuildsDir`; posix.ts elsewhere). An endpoint that cannot be named (no SID, a socket path over the
 // `sun_path` limit) is `spawn-failed` before anything is spawned. The Host starts from its versioned
 // copy under the per-OS root of ADR-002 D5 (versionedCopy.ts), made from the directory holding the
 // app executable and checked against the build's `host-manifest.json`; the old copies are collected
@@ -35,6 +35,7 @@ import {
 } from './versionedCopy'
 import { collectVersionedCopies } from './versionedCopyGc'
 import type { HostAttach, UpgradeFlowDeps } from './upgradeFlow'
+import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
 
 /** The Host's run folder and the files the launcher reads or writes there. */
@@ -60,6 +61,11 @@ export interface NodeHostLauncherOptions {
   hostManifest: string
   /** The Host entry script (`out/host/main.js`). */
   hostEntry: string
+  /**
+   * Windows: the folder holding `win32-<arch>/dwarfai_win_launch.node`, the launch helper that
+   * starts the Host with job breakaway (`winLaunchPrebuildsDir(appRoot)`). Unused elsewhere.
+   */
+  prebuildsDir: string
   log: UiLog
   /** This UI build, as `hello.client` describes it. */
   client: { appVersion: string; buildId: string }
@@ -84,7 +90,10 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
   const readStart = createProcessStartReader({ platform, runQuery, env: uiEnv })
   const spawner: HostSpawner =
     platform === 'win32'
-      ? createWindowsSpawner({ env: uiEnv })
+      ? createWindowsSpawner({
+          env: uiEnv,
+          loadHelper: () => loadWinLaunch({ prebuildsDir: options.prebuildsDir })
+        })
       : createPosixSpawner({ stdioFile: join(runDir, HOST_STDIO_FILE) })
   const prepareCopy = createCopyPreparer(options, platform, uiEnv)
   const resolveEndpoint = async () =>

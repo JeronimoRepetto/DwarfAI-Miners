@@ -239,6 +239,20 @@ describe('flat config (05 §5.3)', () => {
     ).toEqual(['shellTrue', 'browserWindow', 'nativeLoad'])
   })
 
+  // ADDED (fix: Windows Host launch timeout; eslint.config.mjs deviation 7): the UI's launch helper
+  // is the second load site. Its folder keeps every Host launcher selector except nativeLoad; the
+  // rest of the Host launcher still may not load a binary.
+  it('[R11] only the UI launch helper folder of the Host launcher may load its native binary (process.dlopen)', async () => {
+    expect(
+      selectorNames(await configOf('src/ui-main/hostLauncher/win-launch/nativeWinLaunch.ts')),
+      'the launch helper folder selectors'
+    ).toEqual(['providerIdCompare', 'providerIdCase', 'shellTrue', 'browserWindow'])
+    expect(
+      selectorNames(await configOf('src/ui-main/hostLauncher/windows.ts')),
+      'a sibling Host launcher file selectors'
+    ).toEqual(['providerIdCompare', 'providerIdCase', 'shellTrue', 'browserWindow', 'nativeLoad'])
+  })
+
   it('[R13, R19] renderer views carry windowApi, innerHtml, insertHtml and newFunction; golden/** is ignored', async () => {
     const views = ['src/renderer/src/components/Panel.vue', 'src/renderer/src/lib/panel.ts']
     for (const file of views) {

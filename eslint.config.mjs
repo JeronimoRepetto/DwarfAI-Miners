@@ -42,6 +42,11 @@ import { providerLiteralPattern } from './src/contracts/catalog/providerLiteral.
 //    tagged R11. A binary is loaded with `process.dlopen` at run time, which no import rule sees, so
 //    it is the `nativeLoad` selector in every syntax object except that folder's, and has its canary
 //    (lint-canaries/R11-native-binding).
+// 7. The UI's launch helper (ADR-002 D6 item 1: job breakaway from inside UI main, built from its
+//    own source so the UI never loads the Host's binary, R10) is the second native load site:
+//    src/ui-main/hostLauncher/win-launch. The same R11 pattern; that folder keeps every Host
+//    launcher selector except `nativeLoad`, and the rest of the Host launcher keeps `nativeLoad`
+//    (canary lint-canaries/R11-native-binding-launcher).
 
 // ---- import groups (no-restricted-imports) ----
 const IMP = {
@@ -142,7 +147,8 @@ function syntaxSelectors(providerIds) {
     },
     nativeLoad: {
       selector: "MemberExpression[object.name='process'][property.name='dlopen']",
-      message: 'R11 (P11): a native binary is loaded only in host/platform/endpoint/win-pipe.'
+      message:
+        'R11 (P11): a native binary is loaded only in host/platform/endpoint/win-pipe and ui-main/hostLauncher/win-launch.'
     },
     osBranch: {
       selector:
@@ -203,6 +209,7 @@ const RENDERER_VIEWS = [
 const WINDOW_FACTORY = 'src/ui-main/window/adapters/secureWindowOptions.ts' // the one `new BrowserWindow(` (ADR-019 item 1)
 const NATIVE_LOADER = 'src/host/platform/endpoint/win-pipe/**' // the one `process.dlopen` (deviation 6)
 const HOST_LAUNCHER = ['src/ui-main/hostLauncher/**'] // not an adapter: may branch on the OS (R18), never on a provider id (R12)
+const LAUNCH_HELPER_LOADER = 'src/ui-main/hostLauncher/win-launch/**' // the UI's one `process.dlopen` (deviation 7)
 const GOLDEN = 'src/renderer/src/golden/**'
 const TESTS = '**/*.test.ts'
 
@@ -283,7 +290,7 @@ export function createBoundaryConfigs(providerIds) {
     },
     {
       files: HOST_LAUNCHER,
-      ignores: [TESTS],
+      ignores: [TESTS, LAUNCH_HELPER_LOADER],
       rules: syntax(
         S.providerIdCompare,
         S.providerIdCase,
@@ -291,6 +298,11 @@ export function createBoundaryConfigs(providerIds) {
         S.browserWindow,
         S.nativeLoad
       ) // R18 exempt only
+    },
+    {
+      files: [LAUNCH_HELPER_LOADER],
+      ignores: [TESTS],
+      rules: syntax(S.providerIdCompare, S.providerIdCase, S.shellTrue, S.browserWindow) // R18, R11 exempt
     },
     // adapters may name providers and OSes; only the factory builds a BrowserWindow, and only the
     // owner-only pipe helper's folder loads a native binary
