@@ -11,7 +11,13 @@
 // createNodeUpgradePorts gives the upgrade handshake (upgradeFlow.ts; ADR-002 D8) the same endpoint
 // and copy root: a `ui` link to the running Host (hostLink.ts) and this UI's versioned copy, made or
 // reused with the spawn gate held, as the `host.upgrade.request` target.
+//
+// createNodeHostConnection gives HostClient (ISSUE-051) the same endpoint: `connect` resolves it by
+// the ADR-002 D2 rule on each call (the SID query runs here, the one UI path allowed to start a
+// process, R17) and opens it over `node:net`; `readToken` reads `<hostDataDir>/run/ui.token` for one
+// `hello` and keeps nothing.
 import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -138,6 +144,42 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
       })
       return launcher.ensureHostRunning()
     }
+  }
+}
+
+/** HostClient's connection to the launcher's endpoint (ADR-002 D2; ADR-003 items 1, 3). */
+export interface NodeHostConnection {
+  /** Opens one connection to the Host's UI endpoint; rejects when nothing listens. */
+  connect(): Promise<import('node:net').Socket>
+  /** The uiToken of `<hostDataDir>/run/ui.token`, read for one `hello`. */
+  readToken(): Promise<string>
+}
+
+export function createNodeHostConnection(
+  options: Pick<NodeHostLauncherOptions, 'hostDataDir' | 'uiEnv' | 'endpoint'> & {
+    /** The user's home folder the macOS endpoint is named under; default `os.homedir()`. */
+    home?: string
+  }
+): NodeHostConnection {
+  const platform = thisPlatform()
+  const uiEnv = options.uiEnv ?? process.env
+  const runQuery = createQueryRunner()
+  return {
+    async connect() {
+      const endpoint =
+        options.endpoint === undefined
+          ? await resolveUiEndpoint({
+              platform,
+              hostDataDir: options.hostDataDir,
+              env: uiEnv,
+              runQuery,
+              ...(options.home === undefined ? {} : { home: options.home })
+            })
+          : { ok: true as const, value: options.endpoint }
+      if (!endpoint.ok) throw new Error(`no endpoint: ${endpoint.error.kind}`)
+      return connectTo(endpoint.value.path)
+    },
+    readToken: () => readFile(join(options.hostDataDir, RUN_DIR, UI_TOKEN_FILE), 'utf8')
   }
 }
 

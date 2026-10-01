@@ -1,0 +1,11 @@
+[
+  "events.subscribe",
+  "frame:host.closing",
+  "frame:host.state",
+  "frame:resync-required",
+  "host.shutdown",
+  "host.upgrade.request",
+  "ping",
+  "section:meta",
+  "session.snapshot"
+]

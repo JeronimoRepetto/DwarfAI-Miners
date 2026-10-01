@@ -1,6 +1,7 @@
 // One connect-and-`hello` attempt at the Host's UI endpoint (ADR-002 D4 item 1; ADR-003 item 5,
-// frozen): the launcher's readiness probe. The full HostClient (subscribe, snapshot, reconnect) is
-// EPIC-04 (later: ISSUE-051); this sends only the first frame and reads only the first answer.
+// frozen): the launcher's readiness probe. The full client (subscribe, snapshot, reconnect) is
+// host-client/HostClient.ts (ISSUE-051); this sends only the first frame and reads only the first
+// answer.
 //
 // - The hello uses the `notifier` role, the lowest scope that holds the uiToken: the launcher calls
 //   nothing (the Host's own ALREADY_RUNNING probe does the same, host/transport/helloProbe.ts).

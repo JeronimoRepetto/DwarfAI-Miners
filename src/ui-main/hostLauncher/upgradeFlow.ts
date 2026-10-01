@@ -24,7 +24,7 @@
 // an unlisted one leaves the UI as it is. A close the Host announced with `host.closing` is
 // DwarfAI's own stop: it is reported as `restarting`, never as a lost connection, and nothing here
 // raises the PO #62 "stopped unexpectedly" toast (ADR-002 D8). A connection that closes without
-// `host.closing` is `lost`: the ordinary reconnect rule of ADR-002 D9 owns it (HostClient, later:
+// `host.closing` is `lost`: the ordinary reconnect rule of ADR-002 D9 owns it (HostClient,
 // ISSUE-051), not this flow.
 //
 // The reported phases are what HostClient maps onto `HostConnectionView` (14 §3.8: `connected` with
@@ -36,28 +36,24 @@ import {
   methodCapability,
   type DwarfId,
   type HelloOk,
-  type HostFrameData,
   type HostMethods,
-  type IpcError,
   type ProtocolErrorCode
 } from '@dwarfai/contracts'
 import type { UiLog, UiLogEntry } from '../diagnostics/uiLogger'
+import type { CallAnswer, ClosingReason } from '../host-client/channel'
 import type { EnsureHostResult } from './launcher'
 import { decideUpgrade, type UiBuildFacts } from './upgradeDecision'
 
 /** The two seam-B methods the handshake sends. */
 export type LinkMethod = 'host.upgrade.request' | 'host.shutdown'
 
-/** A call's answer: the Host's result, or its typed call error (14 §1.5). */
-export type CallAnswer<R> = { ok: true; result: R } | { ok: false; error: IpcError }
-
-/** The `host.closing` reason (14 B-F05). */
-export type ClosingReason = HostFrameData['host.closing']['reason']
+/** A call's answer and the `host.closing` reason: the one seam-B connection's own types (ISSUE-051). */
+export type { CallAnswer, ClosingReason }
 
 /**
  * One authenticated `ui` connection to the running Host (ADR-003 item 12): what the handshake
- * needs of the UI side of seam B. hostLink.ts is its Node adapter; HostClient (later: ISSUE-051)
- * serves the same port.
+ * needs of the UI side of seam B. hostLink.ts is its Node adapter, over host-client/channel.ts,
+ * the connection HostClient (ISSUE-051) holds its own connections with.
  */
 export interface HostLink {
   /** What the Host answered to this connection's `hello`. */
