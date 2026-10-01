@@ -155,18 +155,102 @@ describe('data directory and database file protection (09 §1, §9; ADR-017 item
     expect(log.byEvent('db.file-mode')).toEqual([])
   })
 
-  it('[ADR-017] on Windows no mode is changed: the files keep the per-user profile ACL they inherit', async () => {
-    const files = new FakeFileModes({
-      [DATA_DIR]: dir(0o666),
-      [DB]: file(0o666)
-    })
+  // Owner-approved amendment (2026-10-01, ISSUE-041): protected owner-only DACL on the Windows
+  // data directory (SP-05 run\ row), replacing 09 §9's inherited profile ACL.
+
+  /** An owner-only directory double: answers `outcome` and records each directory it is asked. */
+  function ownerOnly(outcome: 'repaired' | 'unchanged' | Error) {
+    const asked: string[] = []
+    const protect = (path: string): 'repaired' | 'unchanged' => {
+      asked.push(path)
+      if (outcome instanceof Error) throw outcome
+      return outcome
+    }
+    return { asked, protect }
+  }
+
+  it('[ADR-017] on Windows a hostDataDir found without the owner-only DACL gets it and the repair is logged', async () => {
+    const files = new FakeFileModes({ [DATA_DIR]: dir(0o666) })
     const log = new RecordingDiagnosticsLog()
+    const dacl = ownerOnly('repaired')
 
-    await protectDataDir(DATA_DIR, { log, files, platform: 'win32' })
-    await protectDbFiles(DB, { log, files, platform: 'win32' })
+    await protectDataDir(DATA_DIR, {
+      log,
+      files,
+      platform: 'win32',
+      ownerOnlyDirectory: dacl.protect
+    })
 
+    expect(dacl.asked).toEqual([DATA_DIR])
     expect(files.chmods).toEqual([])
+    expect(log.byEvent('db.file-mode')).toEqual([
+      {
+        level: 'warn',
+        event: 'db.file-mode',
+        subsystem: 'host',
+        causeClass: 'data-dir',
+        outcome: 'ok',
+        count: 1,
+        msg: 'a looser mode was found and narrowed'
+      }
+    ])
+  })
+
+  it('[ADR-017] on Windows a new hostDataDir is created and given the owner-only DACL, and nothing is logged', async () => {
+    const files = new FakeFileModes()
+    const log = new RecordingDiagnosticsLog()
+    const dacl = ownerOnly('repaired')
+
+    await protectDataDir(DATA_DIR, {
+      log,
+      files,
+      platform: 'win32',
+      ownerOnlyDirectory: dacl.protect
+    })
+
     expect(files.madeDirs).toEqual([{ path: DATA_DIR, mode: 0o700 }])
+    expect(dacl.asked).toEqual([DATA_DIR])
+    expect(log.byEvent('db.file-mode')).toEqual([])
+  })
+
+  it('[ADR-017] on Windows a hostDataDir that already has the owner-only DACL is left alone and nothing is logged', async () => {
+    const files = new FakeFileModes({ [DATA_DIR]: dir(0o666), [DB]: file(0o666) })
+    const log = new RecordingDiagnosticsLog()
+    const dacl = ownerOnly('unchanged')
+
+    await protectDataDir(DATA_DIR, {
+      log,
+      files,
+      platform: 'win32',
+      ownerOnlyDirectory: dacl.protect
+    })
+    // The database files inherit the directory's DACL: no mode is changed on them.
+    await protectDbFiles(DB, { log, files, platform: 'win32', ownerOnlyDirectory: dacl.protect })
+
+    expect(dacl.asked).toEqual([DATA_DIR])
+    expect(files.chmods).toEqual([])
+    expect(log.byEvent('db.file-mode')).toEqual([])
+  })
+
+  it('[ADR-017] on Windows the step fails closed when the owner-only DACL cannot be applied', async () => {
+    const files = new FakeFileModes({ [DATA_DIR]: dir(0o666) })
+    const log = new RecordingDiagnosticsLog()
+    const refused = ownerOnly(Object.assign(new Error('access denied'), { code: 'WIN32_5' }))
+
+    await expect(
+      protectDataDir(DATA_DIR, {
+        log,
+        files,
+        platform: 'win32',
+        ownerOnlyDirectory: refused.protect
+      })
+    ).rejects.toMatchObject({ code: 'WIN32_5' })
+    // No helper at all is the same refusal, never the inherited ACL.
+    await expect(protectDataDir(DATA_DIR, { log, files, platform: 'win32' })).rejects.toMatchObject(
+      {
+        code: 'DATA_DIR_ACL_UNAVAILABLE'
+      }
+    )
     expect(log.byEvent('db.file-mode')).toEqual([])
   })
 })

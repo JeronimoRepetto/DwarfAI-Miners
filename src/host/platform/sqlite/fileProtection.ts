@@ -10,17 +10,27 @@
 //   once per call (`db.file-mode`, `count` = paths narrowed); paths and modes are never logged.
 //   A symbolic link or any other non-regular entry named like a database file is never followed and
 //   never changed (`lstat`).
-// - Windows: Node ignores modes for ACLs. The data directory sits in the per-user profile
-//   (`%APPDATA%`) and its files keep the ACL they inherit from it (09 §1, §9, architect-decided);
-//   a stricter DACL is not asked for (ISSUE-041 scope). Only the directory is created.
+// - Windows: Node ignores modes for ACLs. Owner-approved amendment (2026-10-01, ISSUE-041):
+//   protected owner-only DACL on the Windows data directory (SP-05 run\ row), replacing 09 §9's
+//   inherited profile ACL. `protectDataDir` creates the directory and gives it the protected DACL
+//   `D:P(A;OICI;FA;;;<user SID>)(A;OICI;FA;;;SY)` through the native helper
+//   (`ownerOnlyDirectory`, endpoint/win-pipe/nativeOwnerOnlyDirectory.ts), which propagates it to
+//   what the directory already holds; a directory that already has it is left alone. The database
+//   files, backups, quarantined copies and `run\` inherit it, so `protectDbFiles` changes nothing
+//   there. A DACL applied to a directory that existed is a repair, logged like a POSIX one.
 //
-// A failing call (a `chmod` refused, a directory that cannot be created) throws: the boot step
-// fails with its code rather than opening the data with a mode it could not narrow.
+// A failing call (a `chmod` refused, a directory that cannot be created, a DACL that cannot be
+// applied or no helper to apply it) throws: the boot step fails with its code rather than opening
+// the data with a mode or an ACL it could not narrow.
 //
 // This is the only place that branches on the OS for these files (R18).
 import { chmod, lstat, mkdir, readdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
+import {
+  OwnerOnlyDirectoryUnavailableError,
+  type OwnerOnlyDirectory
+} from '../endpoint/win-pipe/nativeOwnerOnlyDirectory'
 
 /** `hostDataDir` on POSIX (09 §1). */
 export const DATA_DIR_MODE = 0o700
@@ -51,6 +61,24 @@ export interface FileProtectionDeps {
   platform?: NodeJS.Platform
   /** `nodeFileModes` by default. */
   files?: FileModes
+  /** Windows: the native protected-DACL helper; without it the Windows data directory is refused. */
+  ownerOnlyDirectory?: OwnerOnlyDirectory
+}
+
+/** The two protection calls of boot step 2 (09 §1, §9; ADR-017 item 6; 18 C-24). */
+export interface HostFileProtection {
+  /** Before the open: the hostDataDir, created or narrowed owner-only. */
+  dataDir(hostDataDir: string): Promise<void>
+  /** Once the file is open: the database, its companions, backups and quarantined copies. */
+  dbFiles(dbPath: string): Promise<void>
+}
+
+/** The production protection: this module's two calls over `deps`. */
+export function createHostFileProtection(deps: FileProtectionDeps): HostFileProtection {
+  return {
+    dataDir: (hostDataDir) => protectDataDir(hostDataDir, deps),
+    dbFiles: (dbPath) => protectDbFiles(dbPath, deps)
+  }
 }
 
 /** The real file operations over `node:fs`. */
@@ -90,12 +118,33 @@ function logRepair(log: DiagnosticsLog, causeClass: 'data-dir' | 'db-file', coun
 /** Creates `hostDataDir` owner-only, or narrows the mode it has (09 §1, §9). */
 export async function protectDataDir(hostDataDir: string, deps: FileProtectionDeps): Promise<void> {
   const files = deps.files ?? nodeFileModes
+  if ((deps.platform ?? process.platform) === 'win32') {
+    await protectWindowsDataDir(hostDataDir, files, deps)
+    return
+  }
   await files.makeDir(hostDataDir, DATA_DIR_MODE)
-  if ((deps.platform ?? process.platform) === 'win32') return
   const found = await files.inspect(hostDataDir)
   if (found?.kind !== 'dir' || found.mode === DATA_DIR_MODE) return
   await files.chmod(hostDataDir, DATA_DIR_MODE)
   logRepair(deps.log, 'data-dir', 1)
+}
+
+/** The protected owner-only DACL on the Windows data directory (ISSUE-041 amendment). */
+async function protectWindowsDataDir(
+  hostDataDir: string,
+  files: FileModes,
+  deps: FileProtectionDeps
+): Promise<void> {
+  // Checked before anything is created: no helper, no data directory of ours.
+  if (deps.ownerOnlyDirectory === undefined) {
+    throw new OwnerOnlyDirectoryUnavailableError('binary-missing')
+  }
+  const existed = (await files.inspect(hostDataDir)) !== null
+  await files.makeDir(hostDataDir, DATA_DIR_MODE)
+  // A new directory getting its DACL is its creation, not a repair.
+  if (deps.ownerOnlyDirectory(hostDataDir) === 'repaired' && existed) {
+    logRepair(deps.log, 'data-dir', 1)
+  }
 }
 
 /** True for the database file `dbName` and the files SQLite and the Host keep beside it. */
