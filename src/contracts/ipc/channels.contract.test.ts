@@ -133,6 +133,15 @@ const NEW_ROWS = [
     kind: 'invoke',
     placement: 'ui-local',
     sensitive: false
+  },
+  // AMENDMENT (owner-approved 2026-10-01, ISSUE-316): the renderer's own entry to Stop everything and quit
+  {
+    id: 'A-N34',
+    wire: 'tray:stopEverything:request',
+    member: 'requestStopEverything',
+    kind: 'send',
+    placement: 'ui-local',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -301,6 +310,7 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 },
   'tray:stopEverything:confirm': { confirmationId: CONFIRMATION, requestId: U2 },
   'tray:stopEverything:cancel': { confirmationId: CONFIRMATION },
+  'tray:stopEverything:request': undefined,
   'host:connection:get': undefined,
   'host:connection:retry': undefined,
   'host:connection:confirm-restart': undefined
@@ -473,10 +483,11 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
 
   it('[ADR-019] every found registration, preload member and push of the re-inventory maps to exactly one CHANNELS entry or is a NEW / UNLISTED row', async () => {
     const table = await foundRows()
-    // The table also lists the 33 NEW rows of 14 §2.2 that the found tree does not have yet.
+    // The table also lists the 34 NEW rows of 14 §2.2 that the found tree does not have yet.
+    // AMENDED for the A-N34 amendment (owner-approved 2026-10-01, ISSUE-316; was: 33): seam A NEW 33 → 34.
     const found = table.filter((row) => row.status !== 'NEW')
     expect(found).toHaveLength(66)
-    expect(table.filter((row) => row.status === 'NEW')).toHaveLength(33)
+    expect(table.filter((row) => row.status === 'NEW')).toHaveLength(34)
     const resolveEntry = (key: string): string[] => {
       if (key in registry) return [key]
       const id = ROW_IDS[key]

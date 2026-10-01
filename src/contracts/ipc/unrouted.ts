@@ -51,6 +51,8 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   'tray:stopEverything:requested': 'cut-0',
   'tray:stopEverything:confirm': 'cut-0',
   'tray:stopEverything:cancel': 'cut-0',
+  // A-N34 (amendment 2026-10-01, ISSUE-316), routed ui-local by ISSUE-056 (21 §2 cut 0)
+  'tray:stopEverything:request': 'cut-0',
   'host:connection:get': 'cut-0', // A-N03, routed ui-local by ISSUE-056 (21 §2 cut 0)
   'host:connection:changed': 'cut-0', // A-N04, routed ui-local by ISSUE-056 (21 §2 cut 0)
   'host:connection:retry': 'cut-0', // A-N05, routed ui-local by ISSUE-056 (21 §2 cut 0)

@@ -641,6 +641,17 @@ export const CHANNELS = {
     request: cancelStopEverythingSchema,
     response: none
   },
+  // A-N34 `requestStopEverything` (amendment owner-approved 2026-10-01, ISSUE-316): the renderer's entry to the
+  // tray item's Stop everything and quit (ADR-002 D8 item 5: the incompatible message's one action). UI main runs
+  // the tray's flow (mints the confirmation id, pushes A-N25) and opens no second confirmation while one is open
+  'tray:stopEverything:request': {
+    name: 'tray:stopEverything:request',
+    kind: 'send',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: none
+  },
   // A-N03 `getHostConnection`, A-N04 `onHostConnection`, A-N05 `retryHostConnection` (ADR-002 D9): the Host
   // connection state of HostClient, served by UI main; never forwarded to the Host
   'host:connection:get': {

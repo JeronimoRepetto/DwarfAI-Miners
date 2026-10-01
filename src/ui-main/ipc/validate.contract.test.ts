@@ -115,6 +115,7 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 },
   'tray:stopEverything:confirm': { confirmationId: CONFIRMATION, requestId: U2 },
   'tray:stopEverything:cancel': { confirmationId: CONFIRMATION },
+  'tray:stopEverything:request': undefined,
   'host:connection:get': undefined,
   'host:connection:retry': undefined,
   'host:connection:confirm-restart': undefined

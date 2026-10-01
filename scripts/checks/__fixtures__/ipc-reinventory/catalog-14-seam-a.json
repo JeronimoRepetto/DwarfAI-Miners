@@ -1,5 +1,5 @@
 {
-  "source": "Hand-written from 14-ipc-contract.md (frozen, with its approved amendments): the seam A rows of §2.1 and §2.2 with their id, wire name, member name, kind and status, reviewed against the §7 counts (KEEP 35, CHANGE 16, NEW 33, RETIRE 13); plus the two legacy channels of §8 I-21 (AMENDMENT-12, OQ-82), which have no §2 id: RETIRE at cut 5, successors A-N08 and A-N09, wire and member names as I-21 gives them, kind as found (invoke). Data for scripts/checks/ipc-reinventory.test.mjs, not a copy of the contract.",
+  "source": "Hand-written from 14-ipc-contract.md (frozen, with its approved amendments): the seam A rows of §2.1 and §2.2 with their id, wire name, member name, kind and status, reviewed against the §7 counts (KEEP 35, CHANGE 16, NEW 34, RETIRE 13; NEW 34 with the A-N34 amendment owner-approved 2026-10-01); plus the two legacy channels of §8 I-21 (AMENDMENT-12, OQ-82), which have no §2 id: RETIRE at cut 5, successors A-N08 and A-N09, wire and member names as I-21 gives them, kind as found (invoke). Data for scripts/checks/ipc-reinventory.test.mjs, not a copy of the contract.",
   "rows": [
     {
       "id": "A-01",
@@ -678,6 +678,13 @@
       "wire": "host:connection:confirm-restart",
       "member": "confirmHostRestart",
       "kind": "invoke",
+      "status": "NEW"
+    },
+    {
+      "id": "A-N34",
+      "wire": "tray:stopEverything:request",
+      "member": "requestStopEverything",
+      "kind": "send",
       "status": "NEW"
     },
     {

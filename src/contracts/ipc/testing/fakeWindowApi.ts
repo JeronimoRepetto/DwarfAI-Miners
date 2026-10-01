@@ -77,6 +77,7 @@ export const WINDOW_API_MEMBERS = {
   onStopEverythingRequested: 'push',
   confirmStopEverything: 'invoke',
   cancelStopEverything: 'send',
+  requestStopEverything: 'send',
   getHostConnection: 'invoke',
   onHostConnection: 'push',
   retryHostConnection: 'invoke',
