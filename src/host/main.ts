@@ -9,10 +9,15 @@
 // ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot. What keeps the process running after `ready` is
 // the UI endpoint the bind step listens on (createUiEndpoint, ISSUE-022).
 //
-// Bound later, each by its issue: the HostStateSink (ISSUE-028), the database (ISSUE-039), the
-// modules and their bridges (16 §8.2 step 4).
+// The boot reports its lifecycle into the transport's HostStateHolder, which `hello.ok` and
+// HOST_NOT_READY read (ISSUE-023); the `host.state` frame on top of it is ISSUE-028's. The seam-B
+// Dispatcher starts empty: each method joins it with the issue that serves it.
+//
+// Bound later, each by its issue: the database (ISSUE-039), the modules and their bridges (16 §8.2
+// step 4).
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv, type HostDiagnostics } from './modules/diagnostics'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
@@ -23,11 +28,15 @@ import { EnvAppPaths } from './platform/paths/EnvAppPaths'
 import { NodeProcessControl, createQueryRunner } from './platform/process/NodeProcessControl'
 import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
-import { errorCode, runBoot, type HostStateSink } from './wiring/boot'
-import { createBootSteps, createUiEndpoint } from './wiring/bootSteps'
+import { Dispatcher } from './transport/dispatcher'
+import { HostStateHolder } from './transport/hostState'
+import { errorCode, runBoot } from './wiring/boot'
+import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
 declare const __DWARFAI_APP_VERSION__: string
+/** The git commit (short) of this build (20 §3.1), stamped by electron.vite.host.config.ts. */
+declare const __DWARFAI_BUILD_ID__: string
 
 /**
  * Where the Host logs when DWARFAI_HOST_DATA_DIR is missing: the log folder is `<userData>/logs/`,
@@ -39,9 +48,6 @@ const NO_LOG_FOLDER: HostDiagnostics = {
   record: () => {},
   flush: () => Promise.resolve()
 }
-
-/** Until transport holds the lifecycle state (later: ISSUE-028), nobody listens to it. */
-const NO_STATE_LISTENER: HostStateSink = { report: () => {} }
 
 async function main(): Promise<void> {
   const entry = fileURLToPath(import.meta.url)
@@ -80,6 +86,9 @@ async function main(): Promise<void> {
       })
   })
   const ids = new UuidV7Generator({ clock })
+  const hostState = new HostStateHolder()
+  const dispatcher = new Dispatcher({ log, clock, state: () => hostState.current().state })
+  const epoch = mintBootEpoch(ids)
   const runQuery = createQueryRunner()
   const processControl = new NodeProcessControl({
     scheduler,
@@ -100,13 +109,24 @@ async function main(): Promise<void> {
         endpoint: createUiEndpoint({
           facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),
           log,
-          scheduler
+          scheduler,
+          clock,
+          ids,
+          identity: {
+            hostVersion: __DWARFAI_APP_VERSION__,
+            buildId: __DWARFAI_BUILD_ID__,
+            protocolVersion: PROTOCOL_VERSION
+          },
+          pid: process.pid,
+          epoch,
+          state: () => hostState.current(),
+          dispatcher
         })
       }),
     {
       log,
       clock,
-      state: NO_STATE_LISTENER,
+      state: hostState,
       privilege: createPrivilegeCheck({ runQuery }),
       paths,
       runtime: hostRuntime(),

@@ -12,9 +12,10 @@
 //   refuses the connection is stale; a live endpoint is asked `probeExisting` (a `hello`). What
 //   follows is `decide`'s: bound, ALREADY_RUNNING, remove the stale socket and bind once more, or
 //   an error the boot logs (FM-008, FM-009, FM-037).
-// - Every accepted connection is held silent: the Host sends no byte before authentication
-//   (ADR-003 item 2; 18 C-11). It is read by nobody until the auth layer takes it (later:
-//   ISSUE-023, with its 5 s hello timeout; throttling, later: ISSUE-024).
+// - Every accepted connection is held: the endpoint itself never reads or writes it, and hands it
+//   to `accept`, the auth layer (host/transport/connection.ts: hello first with its 5 s timeout,
+//   no byte before authentication, ADR-003 item 2; 18 C-11; throttling, later: ISSUE-024).
+//   Without `accept` a connection stays silent until it closes.
 // - `close` ends the held connections, stops listening and removes the socket file.
 //
 // The endpoint's kind, not the OS, selects the steps (R18: the OS was read by the platform adapter
@@ -40,6 +41,8 @@ export interface EndpointServerDeps {
    * caller closes the connection afterwards.
    */
   probeExisting: (connection: Socket) => Promise<ExistingEndpoint>
+  /** Takes each accepted connection (the auth layer); the endpoint still ends it on close. */
+  accept?: (connection: Socket) => void
 }
 
 export interface BoundEndpoint {
@@ -137,10 +140,12 @@ async function tryBind(
 ): Promise<{ attempt: BindAttempt; listener?: Listener }> {
   const held = new Set<Socket>()
   const server = createServer((socket) => {
-    // Held, never written to and never read: nothing reaches a connection before it authenticates.
+    // Held, and never written to or read here: nothing reaches a connection before it
+    // authenticates, which is the auth layer's to decide.
     held.add(socket)
     socket.on('error', () => {})
     socket.once('close', () => held.delete(socket))
+    deps.accept?.(socket)
   })
   const failure = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
     server.once('error', resolve)
