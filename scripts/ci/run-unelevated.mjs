@@ -27,7 +27,9 @@ import {
   integrityRid,
   isElevatedRid,
   parseArgs,
-  PASSWORD_ENV
+  ensureUserScript,
+  PASSWORD_ENV,
+  windowsPowerShellEnvironment
 } from './unelevated.mjs'
 
 const USER = 'dwarfai-ci'
@@ -55,23 +57,12 @@ function powershell(script, env) {
   tool(
     POWERSHELL,
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-    env
+    windowsPowerShellEnvironment(env)
   )
 }
 
 function ensureUser(password) {
-  powershell(
-    [
-      "$ErrorActionPreference = 'Stop'",
-      `$password = ConvertTo-SecureString $env:${PASSWORD_ENV} -AsPlainText -Force`,
-      `$user = Get-LocalUser -Name '${USER}' -ErrorAction SilentlyContinue`,
-      `if ($null -eq $user) { New-LocalUser -Name '${USER}' -Password $password -PasswordNeverExpires -AccountNeverExpires -Description 'DwarfAI CI non-elevated test user' | Out-Null }`,
-      `else { Set-LocalUser -Name '${USER}' -Password $password }`,
-      `$users = Get-LocalGroup -SID 'S-1-5-32-545'`,
-      `if (-not (Get-LocalGroupMember -Group $users | Where-Object { $_.Name -like '*\\${USER}' })) { Add-LocalGroupMember -Group $users -Member '${USER}' }`
-    ].join('; '),
-    { ...process.env, [PASSWORD_ENV]: password }
-  )
+  powershell(ensureUserScript(USER, PASSWORD_ENV), { ...process.env, [PASSWORD_ENV]: password })
 }
 
 function grant(folder, rights) {
@@ -104,7 +95,7 @@ function runAsUser(command, password, seen) {
         workDir
       ],
       {
-        env: { ...process.env, [PASSWORD_ENV]: password },
+        env: windowsPowerShellEnvironment({ ...process.env, [PASSWORD_ENV]: password }),
         stdio: ['ignore', 'pipe', 'inherit'],
         windowsHide: true
       }

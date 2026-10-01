@@ -87,3 +87,32 @@ export function parseArgs(argv) {
   if (argv[0] === '--' && argv.length > 1) return { kind: 'run', command: argv.slice(1).join(' ') }
   return { kind: 'usage' }
 }
+
+/**
+ * The environment of a Windows PowerShell 5.1 the wrapper starts: the job's without `PSModulePath`. A pwsh (7) step
+ * sets it to its own module folders, and 5.1 then cannot load its own modules (`CouldNotAutoloadMatchingModule`, the
+ * same rule as the Host's POWERSHELL_DROPPED_ENV).
+ */
+export function windowsPowerShellEnvironment(env) {
+  const child = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && name.toUpperCase() !== 'PSMODULEPATH') child[name] = value
+  }
+  return child
+}
+
+/**
+ * The Windows PowerShell 5.1 script that creates the standard local user `user`, or resets its password, from the
+ * password in the variable `passwordEnv` (never in argv), and adds it to Users (well-known SID S-1-5-32-545, which
+ * holds the right to log on interactively; the SID, because group names are localized). Never Administrators.
+ */
+export function ensureUserScript(user, passwordEnv) {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$password = ConvertTo-SecureString $env:${passwordEnv} -AsPlainText -Force`,
+    `$user = Get-LocalUser -Name '${user}' -ErrorAction SilentlyContinue`,
+    `if ($null -eq $user) { New-LocalUser -Name '${user}' -Password $password -PasswordNeverExpires -AccountNeverExpires -Description 'DwarfAI CI non-elevated test user' | Out-Null } else { Set-LocalUser -Name '${user}' -Password $password }`,
+    `try { Add-LocalGroupMember -SID 'S-1-5-32-545' -Member '${user}' } catch [Microsoft.PowerShell.Commands.MemberExistsException] { }`,
+    `Write-Output 'run-unelevated: user ${user} ready (member of Users)'`
+  ].join('\n')
+}
