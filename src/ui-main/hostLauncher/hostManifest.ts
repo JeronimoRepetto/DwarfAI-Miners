@@ -13,11 +13,15 @@
 //   hashing (SP-03: re-hashing costs 0.2–0.4 s on every start).
 //
 // Node built-ins only and erasable TypeScript only, so the plain-Node build script imports this
-// file as it is (Node 24 strips the types).
+// file as it is (Node 24 strips the types); for that script the one local import names its `.ts`.
+// The files are read without Electron's asar layer, since the folder holds an `.asar` archive
+// (plainFs.ts).
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { lstat, readdir, readlink } from 'node:fs/promises'
 import { join } from 'node:path'
+import { plainFs } from './plainFs.ts'
+
+const { createReadStream } = plainFs
+const { lstat, readdir, readlink } = plainFs.promises
 
 /** The manifest's file name (ADR-002 D5). */
 export const HOST_MANIFEST_FILE = 'host-manifest.json'

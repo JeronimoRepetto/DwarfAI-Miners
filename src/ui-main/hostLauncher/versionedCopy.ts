@@ -22,9 +22,9 @@
 // Each outcome is logged as `versioned-copy` (19 §9.1, proc `ui`): outcome, cause class (`copy`,
 // `reuse`), error code and duration, never a path.
 import { createHash } from 'node:crypto'
-import { cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { UiLog, UiLogEntry } from '../diagnostics/uiLogger'
+import { plainFs } from './plainFs'
 import {
   checkManifestPresence,
   HOST_MANIFEST_FILE,
@@ -34,6 +34,9 @@ import {
 } from './hostManifest'
 import type { CopyPlatform } from './copySource'
 import type { LauncherClock } from './ports'
+
+// Without Electron's asar layer: the copied folder holds an `.asar` archive (plainFs.ts).
+const { cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } = plainFs.promises
 
 export { copySourceOf, type CopyPlatform } from './copySource'
 // The per-OS copy root (ADR-002 D5): one rule, shared with the Host through contracts (ISSUE-032).

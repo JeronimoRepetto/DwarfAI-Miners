@@ -14,10 +14,13 @@
 //
 // Each deletion or skip is logged as `versioned-copy` (19 §9.1, proc `ui`) with cause class `gc`,
 // never a path or a version.
-import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { UiLog } from '../diagnostics/uiLogger'
+import { plainFs } from './plainFs'
 import { errnoOf, TEMP_MARKER, type CopyOps } from './versionedCopy'
+
+// Without Electron's asar layer: a copy holds an `.asar` archive (plainFs.ts).
+const { readdir } = plainFs.promises
 
 /** How many of the newest copies are kept besides the one in use (ADR-027 item 2). */
 export const KEPT_NEWEST_COPIES = 2
