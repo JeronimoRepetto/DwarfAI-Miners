@@ -271,6 +271,18 @@ jobs:
 
       # ---- Stage 5: OS lane ----
 
+      # The Host's owner-only pipe helper (ADR-003 item 2), a native module
+      # prebuilt here and never on a person's machine. The runner's Visual
+      # Studio has the MSVC x64 and ARM64 build tools (actions/runner-images,
+      # Windows Server 2025), so arm64 is cross-compiled to prove it builds;
+      # the OS lane below loads the x64 one, and the native-arm64 job runs the
+      # arm64 one on an arm64 runner.
+      - name: Build the owner-only pipe helper (Windows x64 and arm64)
+        if: runner.os == 'Windows'
+        run: |
+          pnpm build:native --arch x64
+          pnpm build:native --arch arm64
+
       # Real OS facilities, per platform, on every pull request and push
       # (17 §1.8, §1.13). The guard fails the leg when its lane executed zero
       # tests, so a mistyped platform guard cannot pass silently (HO-38).
@@ -292,6 +304,37 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # The owner-only pipe helper (ADR-003 item 2) as an arm64 binary on an arm64
+  # Windows runner (a standard GitHub-hosted runner, free on public
+  # repositories): built natively and run through its OS-lane tests, the
+  # security test of the Host's pipe included. The checks job only
+  # cross-compiles it. Not a required merge check: the ruleset names only the
+  # checks job.
+  native-arm64:
+    name: Owner-only pipe helper on Windows arm64
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the owner-only pipe helper (arm64)
+        run: pnpm build:native --arch arm64
+
+      - name: Owner-only pipe helper OS-lane tests
+        run: pnpm vitest run --config vitest.os.config.ts src/host/platform/endpoint/win-pipe src/host/transport/endpoint/server.os.test.ts
 
   # Release lane L9, E2E (17 §1.9, §1.13, §5.2; 20 §2.1): the built app under
   # Playwright's `_electron`, on every push to main, nightly, on release tags
@@ -469,6 +512,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # The Windows installers ship the Host's prebuilt owner-only pipe helper
+      # (prebuilds/, asar-unpacked by package.json `build`); `pnpm package`
+      # builds x64 only.
+      - name: Build the owner-only pipe helper (Windows x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
 
       - name: Package installers
         run: pnpm ${{ matrix.package_script }}

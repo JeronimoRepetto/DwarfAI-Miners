@@ -17,10 +17,12 @@
     "afterPack": "scripts/pruneSdkRuntimes.mjs",
     "files": [
       "out/**/*",
+      "prebuilds/**/*",
       "package.json"
     ],
     "asarUnpack": [
-      "out/main/jevMcpServer.mjs"
+      "out/main/jevMcpServer.mjs",
+      "prebuilds/**"
     ],
     "extraResources": [
       {
@@ -85,6 +87,7 @@
     "dev": "install-electron && pnpm build:mcp-server && electron-vite dev",
     "build": "electron-vite build && pnpm build:mcp-server",
     "build:mcp-server": "electron-vite build --config electron.vite.jevMcpServer.config.ts",
+    "build:native": "node scripts/native/build-win-pipe.mjs",
     "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
     "package:mac": "pnpm build && electron-builder --mac --publish never",
     "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",

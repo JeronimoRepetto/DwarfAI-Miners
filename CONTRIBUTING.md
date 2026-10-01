@@ -49,6 +49,18 @@ except the one matching the artifact actually being packaged, before code signin
 `package.json` also declares a `homepage`, which electron-builder's `.deb` (fpm) target refuses to
 build without.
 
+### The Windows pipe helper
+
+On Windows the Host creates its UI pipe through one small native module,
+`src/host/platform/endpoint/win-pipe/win_pipe.c`: Node cannot give a pipe the owner-only DACL or
+reject remote clients, which the architecture requires (ADR-003 item 2, spike SP-05). It is built
+with `pnpm build:native [--arch x64|arm64]` into `prebuilds/win32-<arch>/` (git-ignored), against
+the C Node-API, with the static C runtime, so the installed app needs no VC++ redistributable and
+nothing is ever compiled on a user's machine. CI builds it; the packaged app carries it
+asar-unpacked. Building it locally needs Visual Studio with the MSVC C++ tools, and only the Windows
+OS lane (`pnpm test:os`) and a local Host run need it: `pnpm test` uses a double. The Host refuses
+to bind its pipe without it rather than fall back to Node's default pipe.
+
 ## Verification
 
 Before opening a pull request, run the same checks CI runs, in the same order

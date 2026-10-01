@@ -21,6 +21,7 @@ import { acceptConnection } from '../transport/connection'
 import type { ConnectionRegistry } from '../transport/connectionRegistry'
 import type { Dispatcher } from '../transport/dispatcher'
 import { bindEndpoint, EndpointBindError, type BoundEndpoint } from '../transport/endpoint/server'
+import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecurity'
 import type { HostIdentity } from '../transport/hello'
 import { createHelloProbe } from '../transport/helloProbe'
 import { errorCode, type BootStep, type BootStepName, type HostStateReport } from './boot'
@@ -103,6 +104,11 @@ export interface UiEndpointDeps {
   connections: ConnectionRegistry
   /** The frames this Host publishes, advertised in `hello.ok.capabilities` (14 §1.3). */
   frames: readonly HostFrameName[]
+  /**
+   * Creates a Windows endpoint's pipe owner-only (ADR-003 item 2): the native helper of
+   * host/platform/endpoint/win-pipe. Never used for a Unix socket.
+   */
+  ownerOnlyPipe: ListenOwnerOnlyPipe
 }
 
 /**
@@ -173,7 +179,8 @@ export function createUiEndpoint(deps: UiEndpointDeps): UiEndpoint {
             log: deps.log,
             dispatcher: deps.dispatcher,
             connections: deps.connections
-          })
+          }),
+        ownerOnlyPipe: deps.ownerOnlyPipe
       })
       if (outcome.kind === 'already-running') return 'already-running'
       try {

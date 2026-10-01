@@ -12,13 +12,16 @@ import { NodeScheduler } from '../platform/clock/NodeScheduler'
 import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
 import { ConnectionRegistry } from '../transport/connectionRegistry'
 import { Dispatcher } from '../transport/dispatcher'
+import { createFakeOwnerOnlyPipe } from '../transport/endpoint/fakes/FakeOwnerOnlyPipe'
+import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecurity'
 import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostState'
 import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
 import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 // L6 (17 §1.6): the bind step's composition — the platform facts, the one ADR-002 D2 rule and the
-// real endpoint server — on this OS's real transport. Synthetic SID only (privacy-guard).
+// real endpoint server — on this OS's real transport. Synthetic SID only (privacy-guard). On Windows
+// the pipe comes from the owner-only pipe helper's double (the native helper is the OS lane's).
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
 
@@ -95,7 +98,10 @@ function channelDeps(log = new RecordingDiagnosticsLog()) {
       state: () => state.current().state
     }),
     connections,
-    frames: LIFECYCLE_FRAMES
+    frames: LIFECYCLE_FRAMES,
+    // ADDED for the ISSUE-022 Windows half: a Windows endpoint is created only through the
+    // owner-only pipe helper; its double here (the native helper is the OS lane's).
+    ownerOnlyPipe: createFakeOwnerOnlyPipe().listen
   }
 }
 
@@ -242,4 +248,30 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
       expect.arrayContaining(['frame:host.closing', 'frame:host.state'])
     )
   })
+
+  it.runIf(process.platform === 'win32')(
+    '[ADR-003, FM-036] the bind step creates a Windows pipe only through the owner-only pipe helper it is given',
+    async () => {
+      const input = factsForThisOs(caseRoot())
+      const asked: string[] = []
+      const helper: ListenOwnerOnlyPipe = (name) => {
+        asked.push(name)
+        return Promise.resolve({ ok: true, server: { close: () => Promise.resolve() } })
+      }
+      const endpoint = createUiEndpoint({
+        facts: () => Promise.resolve({ ok: true, value: input }),
+        log: new RecordingDiagnosticsLog(),
+        scheduler: scheduler(),
+        ...channelDeps(),
+        ownerOnlyPipe: helper
+      })
+      cleanups.push(() => endpoint.close())
+
+      expect(await endpoint.bind()).toBe('bound')
+
+      const named = endpointFor(input)
+      if (!named.ok) throw new Error(named.error.kind)
+      expect(asked).toEqual([named.value.path])
+    }
+  )
 })

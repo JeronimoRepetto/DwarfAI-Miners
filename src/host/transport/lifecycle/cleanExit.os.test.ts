@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkSocketPathLength, PROTOCOL_VERSION, type HostEndpoint } from '@dwarfai/contracts'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
@@ -16,6 +17,7 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { RecordingShutdownCheckpoint } from '../../kernel/fakes/RecordingShutdownCheckpoint'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { NodeScheduler } from '../../platform/clock/NodeScheduler'
+import { createNativeOwnerOnlyPipe } from '../../platform/endpoint/win-pipe/nativeOwnerOnlyPipe'
 import { decideBind } from '../../wiring/singleInstance'
 import { UI_TOKEN_FILE, UiToken } from '../auth/uiToken'
 import { acceptConnection } from '../connection'
@@ -68,6 +70,11 @@ async function bind(endpoint: HostEndpoint, connections: ConnectionRegistry, run
     scheduler: scheduler(),
     decide: decideBind,
     probeExisting: () => Promise.resolve('no-hello'),
+    // AMENDED for the ISSUE-022 Windows half (was: no helper): a named pipe is created only by
+    // the native owner-only pipe helper (built by `pnpm build:native`); a Unix socket ignores it.
+    ownerOnlyPipe: createNativeOwnerOnlyPipe({
+      prebuildsDir: fileURLToPath(new URL('../../../../prebuilds', import.meta.url))
+    }),
     accept: (connection) =>
       acceptConnection(connection, {
         token,

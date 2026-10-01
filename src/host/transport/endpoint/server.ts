@@ -6,8 +6,10 @@
 // - Unix socket: the run directory is created `0700` (and set to `0700` when it already exists),
 //   the socket `0600` right after the bind (ADR-003 item 1; 09 §1). The directory keeps the socket
 //   owner-only in the moment between the bind and the chmod.
-// - Named pipe: Node's pipe, with the interim rule of windowsPipeSecurity.ts until the SP-05 helper
-//   exists; every bind logs that interim as degraded.
+// - Named pipe: created by the owner-only pipe helper (windowsPipeSecurity.ts; ADR-003 item 2, as
+//   spike SP-05 made it mandatory) with the protected DACL and remote clients rejected; the helper
+//   hands each connected client over as a socket. Without the helper a named pipe is never served:
+//   the bind fails closed with PIPE_ACL_UNAVAILABLE, never a Node pipe with the default DACL.
 // - In use: a socket path holding something that is not a socket is never touched; a socket that
 //   refuses the connection is stale; a live endpoint is asked `probeExisting` (a `hello`). What
 //   follows is `decide`'s: bound, ALREADY_RUNNING, remove the stale socket and bind once more, or
@@ -15,7 +17,8 @@
 // - Every accepted connection is held: the endpoint itself never reads or writes it, and hands it
 //   to `accept`, the auth layer (host/transport/connection.ts: hello first with its 5 s timeout,
 //   no byte before authentication, ADR-003 item 2; 18 C-11; throttling, later: ISSUE-024).
-//   Without `accept` a connection stays silent until it closes.
+//   Without `accept` a connection stays silent until it closes. A named pipe's connections come
+//   from the owner-only pipe helper and are held and accepted the same way.
 // - `close` ends the held connections, stops listening and removes the socket file.
 //
 // The endpoint's kind, not the OS, selects the steps (R18: the OS was read by the platform adapter
@@ -26,7 +29,11 @@ import type { HostEndpoint } from '@dwarfai/contracts'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { Scheduler } from '../../kernel/ports/scheduler'
 import type { BindAttempt, BindDecision } from '../../wiring/singleInstance'
-import { INTERIM_PIPE_ACL_RECORD } from './windowsPipeSecurity'
+import {
+  PIPE_ACL_UNAVAILABLE,
+  PIPE_NAME_IN_USE,
+  type ListenOwnerOnlyPipe
+} from './windowsPipeSecurity'
 
 /** What a live endpoint answered when asked whether it is a Host. */
 export type ExistingEndpoint = 'answers-hello' | 'no-hello'
@@ -41,6 +48,11 @@ export interface EndpointServerDeps {
    * caller closes the connection afterwards.
    */
   probeExisting: (connection: Socket) => Promise<ExistingEndpoint>
+  /**
+   * Creates a named pipe owner-only (ADR-003 item 2): the native helper in production. A
+   * named-pipe endpoint without it is never served (PIPE_ACL_UNAVAILABLE).
+   */
+  ownerOnlyPipe?: ListenOwnerOnlyPipe
   /** Takes each accepted connection (the auth layer); the endpoint still ends it on close. */
   accept?: (connection: Socket) => void
 }
@@ -83,8 +95,9 @@ export const PROBE_CONNECT_TIMEOUT_MS = 2_000
 
 const SUBSYSTEM = 'host'
 
+/** A bound endpoint before it serves: how it stops, and the connections it holds. */
 interface Listener {
-  server: Server
+  close(): Promise<void>
   held: Set<Socket>
 }
 
@@ -100,7 +113,7 @@ export async function bindEndpoint(
     switch (decision.kind) {
       case 'continue':
         if (listener === undefined) throw new EndpointBindError('ENDPOINT_NOT_LISTENING')
-        return { kind: 'bound', endpoint: await serve(endpoint, listener, deps.log) }
+        return { kind: 'bound', endpoint: await serve(endpoint, listener) }
       case 'exit':
         return { kind: 'already-running' }
       case 'remove-stale-and-retry':
@@ -139,27 +152,78 @@ async function tryBind(
   retried: boolean
 ): Promise<{ attempt: BindAttempt; listener?: Listener }> {
   const held = new Set<Socket>()
-  const server = createServer((socket) => {
-    // Held, and never written to or read here: nothing reaches a connection before it
-    // authenticates, which is the auth layer's to decide.
+  // Held, and never written to or read here: nothing reaches a connection before it
+  // authenticates, which is the auth layer's to decide.
+  const hold = (socket: Socket): void => {
     held.add(socket)
     socket.on('error', () => {})
     socket.once('close', () => held.delete(socket))
     deps.accept?.(socket)
-  })
-  const failure = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
-    server.once('error', resolve)
-    server.listen(endpoint.path, () => {
-      server.off('error', resolve)
-      resolve(null)
-    })
-  })
-  if (failure === null)
-    return { attempt: { outcome: 'bound', retried }, listener: { server, held } }
-  if (failure.code !== 'EADDRINUSE') {
-    return { attempt: { outcome: 'failed', errCode: failure.code ?? 'unknown', retried } }
+  }
+  const listened =
+    endpoint.kind === 'named-pipe'
+      ? await listenOwnerOnly(endpoint.path, deps, hold)
+      : await listenSocket(endpoint.path, deps.log, hold)
+  if (listened.ok) {
+    return { attempt: { outcome: 'bound', retried }, listener: { close: listened.close, held } }
+  }
+  if (listened.code !== PIPE_NAME_IN_USE) {
+    return { attempt: { outcome: 'failed', errCode: listened.code, retried } }
   }
   return { attempt: { outcome: 'in-use', existing: await whoHolds(endpoint, deps), retried } }
+}
+
+type Listened = { ok: true; close: () => Promise<void> } | { ok: false; code: string }
+
+/** A Unix socket from Node's `net`; an accept failure after the bind is logged. */
+function listenSocket(
+  path: string,
+  log: DiagnosticsLog,
+  hold: (socket: Socket) => void
+): Promise<Listened> {
+  const server: Server = createServer(hold)
+  return new Promise((resolve) => {
+    server.once('error', (error: NodeJS.ErrnoException) =>
+      resolve({ ok: false, code: error.code ?? 'unknown' })
+    )
+    server.listen(path, () => {
+      server.removeAllListeners('error')
+      server.on('error', (error: NodeJS.ErrnoException) =>
+        logAcceptError(log, error.code ?? error.name)
+      )
+      resolve({ ok: true, close: () => new Promise((done) => server.close(() => done())) })
+    })
+  })
+}
+
+/** A named pipe from the owner-only pipe helper (ADR-003 item 2); never one without it. */
+async function listenOwnerOnly(
+  path: string,
+  deps: EndpointServerDeps,
+  hold: (socket: Socket) => void
+): Promise<Listened> {
+  if (deps.ownerOnlyPipe === undefined) return { ok: false, code: PIPE_ACL_UNAVAILABLE }
+  const outcome = await deps.ownerOnlyPipe(path, {
+    onConnection: hold,
+    onError: (code) => logAcceptError(deps.log, code)
+  })
+  if (outcome.ok) return { ok: true, close: () => outcome.server.close() }
+  if (outcome.code === PIPE_ACL_UNAVAILABLE) {
+    deps.log.record({
+      level: 'error',
+      event: 'host.endpoint.acl',
+      subsystem: SUBSYSTEM,
+      outcome: 'failed',
+      ...(outcome.causeClass === undefined ? {} : { causeClass: outcome.causeClass }),
+      msg: 'the owner-only pipe helper is unavailable, so the UI pipe is not created'
+    })
+  }
+  return { ok: false, code: outcome.code }
+}
+
+/** An accept failure after the bind (for example out of file handles) is logged; it never ends the Host. */
+function logAcceptError(log: DiagnosticsLog, errCode: string): void {
+  log.record({ level: 'error', event: 'host.endpoint.error', subsystem: SUBSYSTEM, errCode })
 }
 
 /** What holds an endpoint in use (ADR-002 D3). */
@@ -209,46 +273,27 @@ function connectBounded(
   })
 }
 
-async function serve(
-  endpoint: HostEndpoint,
-  { server, held }: Listener,
-  log: DiagnosticsLog
-): Promise<BoundEndpoint> {
+async function serve(endpoint: HostEndpoint, listener: Listener): Promise<BoundEndpoint> {
   if (endpoint.kind === 'unix-socket') {
     try {
       await chmod(endpoint.path, SOCKET_MODE)
     } catch (error) {
-      await stop(endpoint, server, held)
+      await stop(endpoint, listener)
       throw error
     }
-  } else {
-    log.record({ ...INTERIM_PIPE_ACL_RECORD })
   }
-  // An accept failure after the bind (for example out of file handles) is logged; it never ends
-  // the Host.
-  server.on('error', (error: NodeJS.ErrnoException) =>
-    log.record({
-      level: 'error',
-      event: 'host.endpoint.error',
-      subsystem: SUBSYSTEM,
-      errCode: error.code ?? error.name
-    })
-  )
   return {
-    address: () => {
-      const address = server.address()
-      return typeof address === 'string' ? address : endpoint.path
-    },
+    address: () => endpoint.path,
     get heldConnections() {
-      return held.size
+      return listener.held.size
     },
-    close: () => stop(endpoint, server, held)
+    close: () => stop(endpoint, listener)
   }
 }
 
-async function stop(endpoint: HostEndpoint, server: Server, held: Set<Socket>): Promise<void> {
+async function stop(endpoint: HostEndpoint, { close, held }: Listener): Promise<void> {
   for (const socket of held) socket.destroy()
-  await new Promise<void>((resolve) => server.close(() => resolve()))
+  await close()
   if (endpoint.kind === 'unix-socket') {
     // libuv removes the file on close; a socket left behind is removed here, anything else kept.
     const stats = await lstat(endpoint.path).catch(() => null)

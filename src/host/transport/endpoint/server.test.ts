@@ -6,12 +6,14 @@ import { checkSocketPathLength, type HostEndpoint } from '@dwarfai/contracts'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { NodeScheduler } from '../../platform/clock/NodeScheduler'
 import { decideBind } from '../../wiring/singleInstance'
+import { createFakeOwnerOnlyPipe } from './fakes/FakeOwnerOnlyPipe'
 import {
   bindEndpoint,
   EndpointBindError,
   type BoundEndpoint,
   type EndpointServerDeps
 } from './server'
+import { PIPE_ACL_UNAVAILABLE } from './windowsPipeSecurity'
 
 // L6 (17 §1.6), in process: the real endpoint server on this OS's real transport — a named pipe on
 // Windows, a Unix socket in a temp directory elsewhere. The POSIX-only cases run on the macOS and
@@ -60,6 +62,7 @@ function deps(overrides: Partial<EndpointServerDeps> = {}): EndpointServerDeps &
     }),
     decide: decideBind,
     probeExisting: () => Promise.resolve('no-hello'),
+    ownerOnlyPipe: createFakeOwnerOnlyPipe().listen,
     ...overrides
   } as EndpointServerDeps & { log: RecordingDiagnosticsLog }
 }
@@ -212,21 +215,58 @@ describe('the Host UI endpoint server (ADR-003 items 1–2, ADR-002 D3)', () => 
     }
   )
 
+  // AMENDED for the ISSUE-022 Windows half (was: "until the SP-05 pipe helper exists the default
+  // pipe DACL is never silent: the bind logs it as degraded"): the helper exists, so the pipe is
+  // the helper's and the interim degraded record is gone.
   it.runIf(WINDOWS)(
-    '[ADR-003, FM-036] until the SP-05 pipe helper exists the default pipe DACL is never silent: the bind logs it as degraded',
+    '[ADR-003, FM-036] a named pipe is created by the owner-only pipe helper and the bind logs no degraded ACL record',
     async () => {
-      const d = deps()
+      const pipe = createFakeOwnerOnlyPipe()
+      const d = deps({ ownerOnlyPipe: pipe.listen })
+      const endpoint = testEndpoint()
 
-      await bound(testEndpoint(), d)
+      await bound(endpoint, d)
 
-      expect(d.log.byEvent('host.endpoint.acl')).toEqual([
-        expect.objectContaining({
-          level: 'warn',
-          subsystem: 'host',
-          outcome: 'degraded',
-          causeClass: 'sp05-helper-pending'
-        })
-      ])
+      expect(pipe.names).toEqual([endpoint.path])
+      expect(d.log.byEvent('host.endpoint.acl')).toEqual([])
     }
   )
+
+  it('[ADR-003, FM-036] a named-pipe endpoint without the owner-only pipe helper is never served: the bind fails closed', async () => {
+    const endpoint: HostEndpoint = {
+      kind: 'named-pipe',
+      path: `\\\\.\\pipe\\dwarfai-test-022-nohelper-${process.pid}`
+    }
+    const d = deps({ ownerOnlyPipe: undefined })
+
+    const error = await bindEndpoint(endpoint, d).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(EndpointBindError)
+    expect(error).toMatchObject({ code: PIPE_ACL_UNAVAILABLE })
+    if (WINDOWS) await expect(client(endpoint.path)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('[ADR-003, FM-036] a helper that cannot load fails the bind and logs why, never falling back to a default DACL pipe', async () => {
+    const endpoint: HostEndpoint = {
+      kind: 'named-pipe',
+      path: `\\\\.\\pipe\\dwarfai-test-022-noload-${process.pid}`
+    }
+    const d = deps({
+      ownerOnlyPipe: () =>
+        Promise.resolve({ ok: false, code: PIPE_ACL_UNAVAILABLE, causeClass: 'binary-missing' })
+    })
+
+    const error = await bindEndpoint(endpoint, d).catch((caught: unknown) => caught)
+
+    expect(error).toMatchObject({ code: PIPE_ACL_UNAVAILABLE })
+    expect(d.log.byEvent('host.endpoint.acl')).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        subsystem: 'host',
+        outcome: 'failed',
+        causeClass: 'binary-missing'
+      })
+    ])
+    if (WINDOWS) await expect(client(endpoint.path)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })

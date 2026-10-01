@@ -63,9 +63,19 @@ const SELECTORS = {
   shellTrue: "Property[key.name='shell'][value.value=true]",
   osBranch: "MemberExpression[object.name='process'][property.name='platform']",
   // ADR-019 item 1, ISSUE-046 (eslint.config.mjs deviation 5): not in 05 §5.3's table
-  browserWindow: "NewExpression[callee.name='BrowserWindow']"
+  browserWindow: "NewExpression[callee.name='BrowserWindow']",
+  // The owner-only pipe helper's binary, ISSUE-022 (eslint.config.mjs deviation 6): R11's pattern
+  nativeLoad: "MemberExpression[object.name='process'][property.name='dlopen']"
 }
-const COMMON = ['providerIdCompare', 'providerIdCase', 'shellTrue', 'osBranch', 'browserWindow']
+// AMENDED for ISSUE-022 (was: without 'nativeLoad'): no process.dlopen outside the win-pipe folder.
+const COMMON = [
+  'providerIdCompare',
+  'providerIdCase',
+  'shellTrue',
+  'osBranch',
+  'browserWindow',
+  'nativeLoad'
+]
 const LEGACY_RULE = 'arch/legacy-only-through-bridge'
 
 async function configOf(file, engine = eslint) {
@@ -182,7 +192,8 @@ describe('flat config (05 §5.3)', () => {
         'providerIdCompare',
         'providerIdCase',
         'shellTrue',
-        'browserWindow'
+        'browserWindow',
+        'nativeLoad'
       ]
     }
     for (const [file, expected] of Object.entries(nonAdapters)) {
@@ -196,9 +207,11 @@ describe('flat config (05 §5.3)', () => {
     ]
     for (const file of adapters) {
       // AMENDED for ISSUE-046 (was: `['shellTrue']`): adapters build no BrowserWindow either (ADR-019 item 1).
+      // AMENDED for ISSUE-022 (was: without 'nativeLoad'): nor load a native binary (R11).
       expect(selectorNames(await configOf(file)), `${file} selectors`).toEqual([
         'shellTrue',
-        'browserWindow'
+        'browserWindow',
+        'nativeLoad'
       ])
     }
   })
@@ -207,11 +220,23 @@ describe('flat config (05 §5.3)', () => {
     expect(
       selectorNames(await configOf('src/ui-main/window/adapters/secureWindowOptions.ts')),
       'the factory selectors'
-    ).toEqual(['shellTrue'])
+      // AMENDED for ISSUE-022 (was: `['shellTrue']` and `['shellTrue', 'browserWindow']`): nativeLoad.
+    ).toEqual(['shellTrue', 'nativeLoad'])
     expect(
       selectorNames(await configOf('src/ui-main/window/adapters/ElectronWindows.ts')),
       'a sibling adapter selectors'
+    ).toEqual(['shellTrue', 'browserWindow', 'nativeLoad'])
+  })
+
+  it('[R11] only the owner-only pipe helper folder may load a native binary (process.dlopen)', async () => {
+    expect(
+      selectorNames(await configOf('src/host/platform/endpoint/win-pipe/nativeOwnerOnlyPipe.ts')),
+      'the helper folder selectors'
     ).toEqual(['shellTrue', 'browserWindow'])
+    expect(
+      selectorNames(await configOf('src/host/platform/endpoint/nodeEndpointEnv.ts')),
+      'a sibling platform adapter selectors'
+    ).toEqual(['shellTrue', 'browserWindow', 'nativeLoad'])
   })
 
   it('[R13, R19] renderer views carry windowApi, innerHtml, insertHtml and newFunction; golden/** is ignored', async () => {
