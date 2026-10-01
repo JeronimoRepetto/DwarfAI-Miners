@@ -18,6 +18,7 @@ import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostSt
 import { FrameClient } from '../transport/testing/frameClient'
 import { createUiEndpoint } from './bootSteps'
 import { createHostDispatcher } from './hostDispatcher'
+import { emptyOwnerStopAll } from './emptyOwnerStopAll'
 import { FakeScheduler } from '../kernel/fakes/FakeScheduler'
 
 // L6 (17 §1.6): the bind step's composition — the platform facts, the one ADR-002 D2 rule and the
@@ -321,11 +322,15 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     const input = factsForThisOs(caseRoot())
     const log = new RecordingDiagnosticsLog()
     const deps = channelDeps(log)
+    // AMENDED for ISSUE-029 (was: the four Dispatcher deps only): main also binds the StopAllPort
+    // and the clean exit for host.shutdown, which this ping case never calls.
     const dispatcher = createHostDispatcher({
       log,
       clock: deps.clock,
       scheduler: new FakeScheduler(deps.clock),
-      state: () => deps.state().state
+      state: () => deps.state().state,
+      stopAll: emptyOwnerStopAll,
+      lifecycle: { closeCleanly: () => Promise.resolve() }
     })
     const endpoint = createUiEndpoint({
       facts: () => Promise.resolve({ ok: true, value: input }),

@@ -102,6 +102,12 @@ export interface LaunchFailure {
 export type LaunchState =
   'routing' | 'resolving' | 'spawned' | 'succeeded' | 'failed' | 'handed-back' | 'lost'
 
+/** 06 §0.2 launching `StopAllOutcome` (ADR-002 D7 step 3; INV-121): the result of Stop everything and quit. */
+export interface StopAllOutcome {
+  ended: DwarfId[]
+  failed: DwarfId[]
+}
+
 /** ADR-015 item 5 `UnrecoveredReason`. */
 export type UnrecoveredReason =
   'turn-lost' | 'no-resume' | 'stale-ref' | 'resume-error' | 'end-failed'
@@ -390,6 +396,10 @@ export const launchStateSchema = z.enum([
   'handed-back',
   'lost'
 ])
+
+export const stopAllOutcomeSchema = z
+  .object({ ended: z.array(dwarfIdSchema), failed: z.array(dwarfIdSchema) })
+  .strict()
 
 export const unrecoveredReasonSchema = z.enum([
   'turn-lost',
