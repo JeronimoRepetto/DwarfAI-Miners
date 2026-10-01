@@ -11,7 +11,10 @@
 // 5. a mutating method's repeat — the same `requestId` in flight or settled less than 10 min ago —
 //    gets the first call's answer from the RequestTable, with no second effect (ADR-003 item 6);
 // 6. the handler's result, or INTERNAL when it throws (details in the log only, ADR-026). A
-//    mutating handler also receives the `requestId`, so a module can key it durably.
+//    mutating handler also receives the `requestId`, so a module can key it durably, and may
+//    defer an effect until its answer has been handed to the writer (`afterAnswer`, 14 §1.7).
+//
+// Every answer goes to `dispatch`'s `onAnswer` (the connection's write) before `dispatch` settles.
 //
 // Logging is names only (14 §1.10): the method name of a served method, the correlation fields,
 // outcome and error code; never params or results, and never a name the client made up. A repeat
@@ -44,6 +47,14 @@ export type MethodHandler<P> = (params: P, context: RequestContext) => unknown
 /** What a mutating handler receives: the caller plus the call's validated `requestId`. */
 export interface MutatingContext extends RequestContext {
   requestId: string
+  /**
+   * Defers `effect` until this call's answer — and that of every repeat waiting on the same
+   * `requestId` — has been handed to the writer (`dispatch`'s `onAnswer`), for an effect that
+   * must follow its own `res` on the wire, as the clean exit after `host.shutdown {stop-all}` does
+   * (14 §1.7). It runs once, only when the handler answered without throwing; a repeat answered
+   * from the RequestTable defers none.
+   */
+  afterAnswer(effect: () => void): void
 }
 
 export type MutatingHandler<P> = (params: P, context: MutatingContext) => unknown
@@ -70,6 +81,15 @@ type MethodEntry =
 type Answer =
   | { ok: true; result: Extract<ResponseFrame, { ok: true }>['result'] }
   | { ok: false; error: IpcError; errCode: string }
+
+/**
+ * The calls waiting on one `requestId` and the effects its handler deferred: they run once the
+ * last of those calls has been answered, so every waiting call gets its `res` before them.
+ */
+interface Flight {
+  waiting: number
+  deferred: Array<() => void>
+}
 
 /** Fixed diagnostics sentences (`IpcError.message` is never copy and never carries a value). */
 const MESSAGES: Readonly<Record<IpcErrorCode, string>> = {
@@ -98,6 +118,8 @@ export class Dispatcher {
   private readonly entries = new Map<string, MethodEntry>()
   /** One per Host process: it ends with this object and is never persisted (ADR-003 item 6). */
   private readonly requests: RequestTable<Answer>
+  /** The mutating calls being answered, by `requestId`: a repeat in flight joins its first call. */
+  private readonly flights = new Map<string, Flight>()
 
   constructor(private readonly deps: DispatcherDeps) {
     this.requests = new RequestTable<Answer>({
@@ -151,7 +173,8 @@ export class Dispatcher {
 
   async dispatch(
     request: { id: string; method: string; params: unknown },
-    context: RequestContext
+    context: RequestContext,
+    onAnswer: (res: ResponseFrame) => void = () => {}
   ): Promise<ResponseFrame> {
     const startedAt = this.deps.clock.now()
     const entry = this.entries.get(request.method)
@@ -172,6 +195,7 @@ export class Dispatcher {
         durationMs: this.deps.clock.now() - startedAt,
         ...extra
       })
+      onAnswer(res)
       return res
     }
     const refuse = (code: IpcErrorCode): ResponseFrame =>
@@ -209,11 +233,32 @@ export class Dispatcher {
     if (requestId.requestId === undefined) return refuse('INVALID_PARAMS')
 
     const id = requestId.requestId
+    const flight = this.flights.get(id) ?? this.openFlight(id)
+    flight.waiting += 1
     const admission = this.requests.run(id, () =>
-      runHandler(() => entry.handler(params, { ...context, requestId: id }))
+      runHandler(() =>
+        entry.handler(params, {
+          ...context,
+          requestId: id,
+          afterAnswer: (effect) => flight.deferred.push(effect)
+        })
+      )
     )
     if (admission.repeat) this.record({ level: 'debug', event: 'channel.dedupe', requestId: id })
-    return answerWith(await admission.outcome)
+    const answer = await admission.outcome
+    const res = answerWith(answer)
+    flight.waiting -= 1
+    if (flight.waiting === 0) {
+      this.flights.delete(id)
+      if (answer.ok) for (const effect of flight.deferred) effect()
+    }
+    return res
+  }
+
+  private openFlight(requestId: string): Flight {
+    const flight: Flight = { waiting: 0, deferred: [] }
+    this.flights.set(requestId, flight)
+    return flight
   }
 
   private add(method: string, entry: MethodEntry): void {

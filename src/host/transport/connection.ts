@@ -188,7 +188,9 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
       return
     }
     const context = { role: state.role, clientId: state.clientId }
-    void deps.dispatcher.dispatch(request.data, context).then(write)
+    // The answer is written as the dispatcher settles it, before any effect deferred past it
+    // (14 §1.7: `host.shutdown {stop-all}` answers before its host.closing).
+    void deps.dispatcher.dispatch(request.data, context, write)
   }
 
   stream.on('data', (chunk: Uint8Array) => {

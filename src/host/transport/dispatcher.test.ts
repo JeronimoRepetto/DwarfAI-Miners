@@ -59,3 +59,44 @@ describe('Dispatcher role scopes (ADR-003 item 12)', () => {
     expect(notifierFrames).toEqual(['attention.notify', 'attention.withdraw', 'host.closing'])
   })
 })
+
+describe('Dispatcher effects deferred past the answer (14 §1.7)', () => {
+  it('[ADR-002] an effect a mutating handler defers runs only after its answer was handed to the writer, and a repeat answered from the table runs none', async () => {
+    const dispatcher = new Dispatcher({
+      log: new RecordingDiagnosticsLog(),
+      clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
+      state: () => 'ready'
+    })
+    const journal: string[] = []
+    dispatcher.registerMutating('test.after', MUTATING_PARAMS, ['ui'], (_params, context) => {
+      journal.push('handler')
+      context.afterAnswer(() => journal.push('effect'))
+      return { done: true }
+    })
+    const ui = { role: 'ui' as const, clientId: 'c' }
+    const write = (res: unknown): void => {
+      journal.push(`res:${JSON.stringify(res)}`)
+    }
+
+    const first = await dispatcher.dispatch(
+      { id: '1', method: 'test.after', params: { requestId: REQUEST_ID } },
+      ui,
+      write
+    )
+    const repeat = await dispatcher.dispatch(
+      { id: '2', method: 'test.after', params: { requestId: REQUEST_ID } },
+      ui,
+      write
+    )
+
+    expect(first).toEqual({ type: 'res', id: '1', ok: true, result: { done: true } })
+    expect(repeat).toEqual({ type: 'res', id: '2', ok: true, result: { done: true } })
+    expect(journal).toEqual([
+      'handler',
+      `res:${JSON.stringify(first)}`,
+      'effect',
+      `res:${JSON.stringify(repeat)}`
+    ])
+  })
+})
