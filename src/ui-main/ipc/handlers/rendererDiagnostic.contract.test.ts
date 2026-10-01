@@ -235,4 +235,21 @@ describe('A-N30 reportRendererDiagnostic (14 §1.10)', () => {
       }
     ])
   })
+
+  it('[ADR-001] the A-N30 handler serves only its own channel and refuses any other with a typed error', async () => {
+    const clock = new FakeClock(START)
+    const log = new RecordingUiLog()
+    const { diagnostics, handler } = handlerOver(log, clock)
+    expect(await handler.serve('panel:hide', { event: 'renderer.error' }, from(PANEL_ID))).toEqual({
+      ok: false,
+      error: { code: 'METHOD_NOT_FOUND', message: 'no route for panel:hide', retryable: false }
+    })
+    expect(log.entries).toEqual([])
+    expect(diagnostics.counters()).toEqual({
+      logged: 0,
+      invalid: 0,
+      unknownSender: 0,
+      rateLimited: 0
+    })
+  })
 })
