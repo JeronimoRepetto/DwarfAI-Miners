@@ -29,6 +29,9 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, '**/*.golden.test.*', '**/*.os.test.*'],
     // Node by default (main-process tests); component tests opt into jsdom
     // with a `@vitest-environment jsdom` docblock.
-    environment: 'node'
+    environment: 'node',
+    // The Host database template (17 §1.5 "Speed"; 09 §6.5 "Template DB"): migrated once per run,
+    // copied by each database test through `copyTemplateDb()` / `openTemplateCopy()`.
+    globalSetup: ['src/host/platform/sqlite/testing/templateDb.globalSetup.ts']
   }
 })
