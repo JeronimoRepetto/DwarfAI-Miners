@@ -16,13 +16,16 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from '../../wiring/hostDatabase'
-import { createQueryRunner } from '../process/NodeProcessControl'
 import {
-  POWERSHELL_DROPPED_ENV,
-  windowsPowerShell,
-  windowsSystemTool
-} from '../process/probe/types'
+  ADMINISTRATORS_SID,
+  currentWindowsToken,
+  readWindowsAcls,
+  SYSTEM_SID
+} from '../endpoint/win-pipe/testing/windowsAcl'
+import { fileURLToPath } from 'node:url'
+import { createNativeOwnerOnlyDirectory } from '../endpoint/win-pipe/nativeOwnerOnlyDirectory'
 import { VacuumIntoBackup } from './backup'
+import { createHostFileProtection } from './fileProtection'
 import { migrationsFor } from './migrations'
 import { openHostDb } from './migrations/runner'
 import { defineMigration, type Migration } from './migrations/types'
@@ -31,6 +34,7 @@ import { defineMigration, type Migration } from './migrations/types'
 // item 6; 18 C-24, T-36), over real files. The calls and the repair are fileProtection.test.ts's.
 
 const T0 = 1_790_000_000_000
+const PREBUILDS = fileURLToPath(new URL('../../../../prebuilds', import.meta.url))
 
 /** A migration this build adds on top of the shipped ones, so a boot backs the file up first. */
 const NEXT: Migration = defineMigration({
@@ -68,7 +72,12 @@ function machine(parent: string) {
         releaseDataDir: join(root, 'release-data'),
         appVersion: '0.0.0-test',
         migrations: [...migrationsFor({ clock, ids }), ...extra]
-      }
+      },
+      // The production protection, with the built native helper on Windows.
+      protectFiles: createHostFileProtection({
+        log: new RecordingDiagnosticsLog(),
+        ownerOnlyDirectory: createNativeOwnerOnlyDirectory({ prebuildsDir: PREBUILDS })
+      })
     })
     cleanups.push(() => database.close())
     await database.open({ reportMigrating: () => undefined })
@@ -193,76 +202,13 @@ function observingVacuumInto(db: SqliteDatabase, seen: Array<number | null>): Sq
   })
 }
 
-// --- Windows: the inherited per-user profile ACL (09 §1, §9; TC-041-03) ---------------------------
-
-/** Everyone, Anonymous, Authenticated Users, Interactive, Users and Guests: never granted. */
-const BROAD_SIDS = new Set([
-  'S-1-1-0',
-  'S-1-5-7',
-  'S-1-5-11',
-  'S-1-5-4',
-  'S-1-5-32-545',
-  'S-1-5-32-546'
-])
-const ADMINISTRATORS = 'S-1-5-32-544'
-/** The integrity label of an elevated token (privilege.ts reads the same SID). */
-const HIGH_INTEGRITY = 'S-1-16-12288'
-/** The Host's own OS query runner: execFile with an argv array, never a shell (R17). */
-const query = createQueryRunner()
-const QUERY_TIMEOUT_MS = 30_000
-
-interface AclView {
-  owner: string
-  rules: Array<{ sid: string; type: 'Allow' | 'Deny'; inherited: boolean }>
-}
-
-/**
- * The owner and the DACL entries of each of `paths`, every principal as its full SID (never an SDDL
- * alias or a localized name, SP-05 finding 7). icacls cannot report the owner, so Windows
- * PowerShell 5.1's Get-Acl is read by its System32 path, once for every path, with the paths in
- * the environment (no shell, no quoting).
- */
-async function aclsOf(paths: readonly string[]): Promise<AclView[]> {
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    '$sid = [System.Security.Principal.SecurityIdentifier]',
-    '$views = @($env:DWARFAI_ACL_PATHS -split "`n" | ForEach-Object {',
-    '  $acl = Get-Acl -LiteralPath $_',
-    '  $rules = @($acl.GetAccessRules($true, $true, $sid) | ForEach-Object {',
-    '    [pscustomobject]@{ sid = $_.IdentityReference.Value; type = $_.AccessControlType.ToString(); inherited = $_.IsInherited }',
-    '  })',
-    '  [pscustomobject]@{ owner = $acl.GetOwner($sid).Value; rules = $rules }',
-    '})',
-    'ConvertTo-Json -InputObject $views -Compress -Depth 4'
-  ].join('\n')
-  const out = await query(
-    windowsPowerShell(),
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    {
-      timeoutMs: QUERY_TIMEOUT_MS,
-      env: { DWARFAI_ACL_PATHS: paths.join('\n') },
-      dropEnv: POWERSHELL_DROPPED_ENV
-    }
-  )
-  if (!out.ok) throw new Error(`Get-Acl ${out.cause}`)
-  return JSON.parse(out.stdout) as AclView[]
-}
-
-/** The current user's SID and whether this process runs elevated, from whoami of System32. */
-async function currentToken(): Promise<{ user: string; elevated: boolean }> {
-  const whoami = windowsSystemTool('whoami.exe')
-  const user = await query(whoami, ['/user', '/fo', 'csv', '/nh'], { timeoutMs: QUERY_TIMEOUT_MS })
-  const groups = await query(whoami, ['/groups', '/fo', 'csv', '/nh'], {
-    timeoutMs: QUERY_TIMEOUT_MS
-  })
-  if (!user.ok || !groups.ok) throw new Error('whoami could not be read')
-  const sid = /"(S-1-[\d-]+)"/.exec(user.stdout)?.[1]
-  if (sid === undefined) throw new Error('whoami /user printed no SID')
-  return { user: sid, elevated: groups.stdout.includes(`"${HIGH_INTEGRITY}"`) }
-}
+// --- Windows: the protected owner-only DACL of the data directory (TC-041-03) -------------------
+//
+// Owner-approved amendment (2026-10-01, ISSUE-041): protected owner-only DACL on the Windows data
+// directory (SP-05 run\ row), replacing 09 §9's inherited profile ACL.
 
 describe.runIf(process.platform === 'win32')('Windows ACL of the Host data (09 §1, §9)', () => {
-  it('[ADR-017] the database files inherit the per-user profile ACL: the owner is the current user and no Everyone or Users allow entry exists', async () => {
+  it('[ADR-017] the data directory has a protected DACL and it and the database files grant no principal but the user and SYSTEM', async () => {
     const appData = process.env['APPDATA']
     if (appData === undefined) throw new Error('APPDATA is not set: no per-user profile to test in')
     mkdirSync(appData, { recursive: true })
@@ -271,34 +217,25 @@ describe.runIf(process.platform === 'win32')('Windows ACL of the Host data (09 �
     first.close()
     m.clock.advance(1_000)
     const second = await m.boot([NEXT])
-    const token = await currentToken()
+    const token = await currentWindowsToken()
     // An elevated administrator's new objects are owned by Administrators, by Windows default
     // ("Default owner for objects created by members of the Administrators group").
-    const owners = token.elevated ? [token.user, ADMINISTRATORS] : [token.user]
+    const owners = token.elevated ? [token.user, ADMINISTRATORS_SID] : [token.user]
     const backup = readdirSync(m.dataDir).find((name) => name.startsWith(`${HOST_DB_FILE}.bak-`))
     expect(backup).toBeDefined()
     const paths = [m.dataDir, m.db, `${m.db}-wal`, `${m.db}-shm`, join(m.dataDir, String(backup))]
 
-    const acls = await aclsOf(paths)
+    const acls = await readWindowsAcls(paths)
 
     expect(acls).toHaveLength(paths.length)
+    // The data directory inherits nothing from %APPDATA%: its own two entries only.
+    expect(acls[0]?.protected, m.dataDir).toBe(true)
     for (const [index, acl] of acls.entries()) {
       const path = paths[index]
       expect(owners, path).toContain(acl.owner)
-      // Nothing of its own: every entry comes from the per-user profile tree.
-      expect(
-        acl.rules.filter((rule) => !rule.inherited),
-        path
-      ).toEqual([])
-      expect(
-        acl.rules.filter((rule) => rule.type === 'Allow' && BROAD_SIDS.has(rule.sid)),
-        path
-      ).toEqual([])
-      // The owner can use its own data.
-      expect(
-        acl.rules.some((rule) => rule.type === 'Allow' && owners.includes(rule.sid)),
-        path
-      ).toBe(true)
+      expect(acl.rules.map((rule) => `${rule.type} ${rule.sid}`).sort(), path).toEqual(
+        [`Allow ${SYSTEM_SID}`, `Allow ${token.user}`].sort()
+      )
     }
     second.close()
   }, 60_000)

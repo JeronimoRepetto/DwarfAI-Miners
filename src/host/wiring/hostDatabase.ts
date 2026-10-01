@@ -4,7 +4,8 @@
 //
 // `open(context)`:
 //   0. protects the data at rest (09 §1, §9; ADR-017 item 6; 18 C-24, `fileProtection.ts`): the
-//      hostDataDir is created or narrowed owner-only before the open, and the database file, its
+//      hostDataDir is created or narrowed owner-only before the open (on Windows the protected
+//      owner-only DACL of the ISSUE-041 amendment, fail closed), and the database file, its
 //      companions, backups and quarantined copies are narrowed once it is open (also read-only);
 //   1. opens the file through the migration runner (ISSUE-034), reporting `migrating` when a
 //      migration will run (07 S12.05). A refusal — a foreign or tampered file, a dev build on the
@@ -40,7 +41,7 @@ import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnostic
 import type { ProcessControl } from '../kernel/ports/processControl'
 import type { ShutdownCheckpoint } from '../kernel/ports/shutdownCheckpoint'
 import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
-import { protectDataDir, protectDbFiles } from '../platform/sqlite/fileProtection'
+import type { HostFileProtection } from '../platform/sqlite/fileProtection'
 import { HostEpochLog, readResetEpoch } from '../platform/sqlite/hostEpochLog'
 import {
   openHostDb,
@@ -64,16 +65,11 @@ export interface HostDatabaseDeps {
   processControl: Pick<ProcessControl, 'currentBootIdentity'>
   /** The runner's build facts and migrations (`migrationsFor` over the boot's clock and ids). */
   open: Omit<OpenHostDbOptions, 'clock' | 'log' | 'onMigrating'>
-  /** The data-at-rest protection (09 §1, §9); `fileProtection.ts` over `log` by default. */
-  protectFiles?: HostFileProtection
-}
-
-/** The two protection calls of step 2 (09 §1, §9; ADR-017 item 6; 18 C-24). */
-export interface HostFileProtection {
-  /** Before the open: the hostDataDir, created or narrowed owner-only. */
-  dataDir(hostDataDir: string): Promise<void>
-  /** Once the file is open: the database, its companions, backups and quarantined copies. */
-  dbFiles(dbPath: string): Promise<void>
+  /**
+   * The data-at-rest protection (09 §1, §9): `createHostFileProtection` of `fileProtection.ts` in
+   * production, with the native owner-only directory helper on Windows (ISSUE-041 amendment).
+   */
+  protectFiles: HostFileProtection
 }
 
 export interface HostDatabase {
@@ -137,10 +133,7 @@ function decisionEntries(decided: PreviousEpochEnd): Array<Omit<DiagnosticEntry,
 export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
   let opened: Opened | null = null
   let decided: PreviousEpochEnd | null = null
-  const protectFiles: HostFileProtection = deps.protectFiles ?? {
-    dataDir: (hostDataDir) => protectDataDir(hostDataDir, { log: deps.log }),
-    dbFiles: (dbPath) => protectDbFiles(dbPath, { log: deps.log })
-  }
+  const protectFiles = deps.protectFiles
   const record = (entry: Omit<DiagnosticEntry, 'subsystem'>): void =>
     deps.log.record({ ...entry, subsystem: SUBSYSTEM })
 

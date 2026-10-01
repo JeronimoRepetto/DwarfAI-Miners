@@ -28,6 +28,7 @@ import { createDiagnostics, logLevelFromEnv, type HostDiagnostics } from './modu
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
+import { createNativeOwnerOnlyDirectory } from './platform/endpoint/win-pipe/nativeOwnerOnlyDirectory'
 import {
   createNativeOwnerOnlyPipe,
   winPipePrebuildsDir
@@ -40,6 +41,7 @@ import { NodeProcessControl, createQueryRunner } from './platform/process/NodePr
 import { nodeOsSessionSignals } from './platform/process/osSessionSignals'
 import { createPrivilegeCheck } from './platform/process/privilege'
 import { hostRuntime } from './platform/process/runtimeFacts'
+import { createHostFileProtection } from './platform/sqlite/fileProtection'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
@@ -138,7 +140,16 @@ async function main(): Promise<void> {
           releaseDataDir: thisProcessReleaseHostDataDir(),
           appVersion: __DWARFAI_APP_VERSION__,
           migrations: migrationsFor({ clock, ids })
-        }
+        },
+        // Owner-approved amendment (2026-10-01, ISSUE-041): protected owner-only DACL on the
+        // Windows data directory (SP-05 run\ row), replacing 09 §9's inherited profile ACL. The
+        // helper binary is loaded on its first (Windows-only) call.
+        protectFiles: createHostFileProtection({
+          log,
+          ownerOnlyDirectory: createNativeOwnerOnlyDirectory({
+            prebuildsDir: winPipePrebuildsDir(appRoot)
+          })
+        })
       })
       const endpoint = createUiEndpoint({
         facts: createNodeEndpointFacts({ hostDataDir: dataDir.userDataDir, runQuery }),

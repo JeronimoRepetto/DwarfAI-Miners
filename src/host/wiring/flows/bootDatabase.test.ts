@@ -43,6 +43,12 @@ const FUTURE: Migration = defineMigration({
   sql: 'CREATE TABLE from_a_newer_build (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
 })
 
+/** A data-at-rest protection that does nothing (ISSUE-041's protection is proven in L1 and L8). */
+const NO_FILE_PROTECTION = {
+  dataDir: () => Promise.resolve(),
+  dbFiles: () => Promise.resolve()
+}
+
 const cleanups: Array<() => void> = []
 
 afterEach(() => {
@@ -89,7 +95,9 @@ async function bootHost(m: Machine, migrations?: readonly Migration[]): Promise<
       releaseDataDir: join(m.dataDir, 'release-data'),
       appVersion: '0.0.0-test',
       migrations: migrations ?? migrationsFor({ clock: m.clock, ids: m.ids })
-    }
+    },
+    // The real modes and DACL are fileProtection.os.test.ts's (L8); this flow is about the epoch.
+    protectFiles: NO_FILE_PROTECTION
   })
   cleanups.push(() => database.close())
   const outcome = await runBoot(
