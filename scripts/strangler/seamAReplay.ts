@@ -6,10 +6,11 @@
 // `record-seam-a.mjs` runs it on the pre-cut build and writes the recording; `e2e/cut-0/seam-a-replay.e2e.ts` runs it
 // on the cut build and compares the canonical bytes. Shared here so both sides run exactly the same steps. Plain
 // erasable TypeScript, so Node runs it as it is (type stripping) for the recorder.
-import { mkdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ElectronApplication, Page } from '@playwright/test'
+import { homeIn, type IsolatedProfile } from '../../e2e/_harness/launchApp.ts'
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -62,17 +63,10 @@ const SETTLE_MS = 3_000
  * pointed into the profile, so no run reads the developer's own sessions, settings or provider data, and none writes
  * outside the profile (17 §1.4: a recording holds nothing of the machine it was made on).
  */
-export function replayEnv(scenario: Scenario, profileRoot: string): Record<string, string> {
-  const home = path.join(profileRoot, 'home')
-  mkdirSync(path.join(home, 'AppData', 'Roaming'), { recursive: true })
-  return {
-    ...scenario.world,
-    HOME: home,
-    USERPROFILE: home,
-    APPDATA: path.join(home, 'AppData', 'Roaming'),
-    XDG_CONFIG_HOME: path.join(home, '.config'),
-    XDG_STATE_HOME: path.join(home, '.local', 'state')
-  }
+export function replayEnv(scenario: Scenario, profile: IsolatedProfile): Record<string, string> {
+  // The harness's own per-user folders (`homeIn`), so a recording and its replay run in the same world, and on macOS
+  // HOME stays short enough for the cut build's Host socket.
+  return { ...scenario.world, ...homeIn(profile) }
 }
 
 /** The stub CLIs every replay run has installed (ISSUE-313 kit), so each machine detects the same providers. */

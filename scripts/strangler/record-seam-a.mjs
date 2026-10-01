@@ -55,7 +55,7 @@ const launched = await launchApp({
   stubs: replayPath(stubs.stubs),
   pathOnly: true,
   // The home folders point into the profile, which the harness removes.
-  env: (profile) => ({ ...stubs.env, ...replayEnv(scenario, profile.root) })
+  env: (profile) => ({ ...stubs.env, ...replayEnv(scenario, profile) })
 })
 let failure
 try {

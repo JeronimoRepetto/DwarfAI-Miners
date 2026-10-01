@@ -62,7 +62,7 @@ test.describe('cut 0: the legacy seam-A replay (TC-056-02)', () => {
     launched = await launchApp({
       stubs: replayPath(setup.stubs),
       pathOnly: true,
-      env: (profile) => ({ ...setup.env, ...replayEnv(scenario, profile.root) }),
+      env: (profile) => ({ ...setup.env, ...replayEnv(scenario, profile) }),
       tracePath: test.info().outputPath('trace.zip')
     })
     await keepOffTheDesktop(launched.app)
