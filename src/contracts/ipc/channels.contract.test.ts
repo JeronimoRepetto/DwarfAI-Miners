@@ -101,6 +101,38 @@ const NEW_ROWS = [
     kind: 'send',
     placement: 'ui-local',
     sensitive: false
+  },
+  {
+    id: 'A-N03',
+    wire: 'host:connection:get',
+    member: 'getHostConnection',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N04',
+    wire: 'host:connection:changed',
+    member: 'onHostConnection',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N05',
+    wire: 'host:connection:retry',
+    member: 'retryHostConnection',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N33',
+    wire: 'host:connection:confirm-restart',
+    member: 'confirmHostRestart',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -268,7 +300,10 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'dwarf:resetName': LEGACY_DWARF,
   'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 },
   'tray:stopEverything:confirm': { confirmationId: CONFIRMATION, requestId: U2 },
-  'tray:stopEverything:cancel': { confirmationId: CONFIRMATION }
+  'tray:stopEverything:cancel': { confirmationId: CONFIRMATION },
+  'host:connection:get': undefined,
+  'host:connection:retry': undefined,
+  'host:connection:confirm-restart': undefined
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */

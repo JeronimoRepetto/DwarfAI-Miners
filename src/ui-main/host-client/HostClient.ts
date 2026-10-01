@@ -21,24 +21,38 @@
 //   the `notifier` never carries one, nor any method outside its scope (`ping`, `attention.clicked`, the names
 //   sections of `session.snapshot`). Each call has its 14 §3.10 deadline: past it, TIMEOUT (retryable), and the
 //   call is never re-sent.
+// - The state is the 12B machine's (connectionMachine.ts; 07 §12B; ADR-002 D9): the client feeds it what happened
+//   (a `hello.ok`, a frame, a loss, an attempt that found the endpoint bound or gone, a timer, the person's retry) and
+//   runs the actions it answers. `state()` is ADR-002 D9's `HostConnection`; the Electron-main-only `retrying` shows
+//   as `unavailable{unresponsive}`.
 // - A lost connection (closed without `host.closing`, or silent for 15 s, ADR-003 item 9) → `reconnecting`; the client
-//   tries again after 250 ms, doubling to 5 s (ADR-002 D9), each time through the launcher, which respawns a Host
-//   whose endpoint is gone. After it attached again, each in-flight mutation is re-sent once with the same
-//   `requestId`: any of them on a hot reconnect (same epoch), only `conversation.send` and `asking.answer*` after a
-//   new epoch (14 §1.6); every other in-flight call answers HOST_UNAVAILABLE (retryable) and the snapshot shows the
-//   real state. The crash-loop rule, the hung-Host state and Retry are the connection-state machine's (later:
-//   ISSUE-052).
+//   tries the endpoint again after 250 ms, doubling to 5 s (ADR-002 D9). An attempt that finds nothing listening is a
+//   Host crash: the launcher respawns it at once, silently (S12.19), a respawn that fails being one more crash; the
+//   third Host crash within 5 minutes is `unavailable{crash-loop}` and nothing respawns until the person's retry
+//   (S12.20, S12.B06). An attempt that finds the endpoint bound but silent keeps trying; 60 s without any frame from the
+//   Host is `unavailable{unresponsive}` (ADR-003 item 9, S12.B09, S12.B10). After it attached again, each in-flight
+//   mutation is re-sent once with the same `requestId`: any of them on a hot reconnect (same epoch), only
+//   `conversation.send` and `asking.answer*` after a new epoch (14 §1.6); every other in-flight call answers
+//   HOST_UNAVAILABLE (retryable) and the snapshot shows the real state.
+// - `ensureHost` while `unavailable` is the person's retry (14 A-N05; S12.B07): a new attach through the launcher. For
+//   a hung Host it is ADR-002 D9's Retry (S12.B11–S12.B15): one `hello` with its 5 s budget; unanswered, the launcher's
+//   identity-checked end of that one Host process (hostLauncher/hungHost.ts), logged as `host.hung-end` (19 §9.1),
+//   then a respawn when it was ended, counted as one Host crash; nothing is signalled when the identity does not match.
+//   `generation-restart` has no retry (S12.B16, dormant in v1).
+// - `wake` (Electron `powerMonitor` `resume`, 13 FM-109): a clock that jumped past the 15 s silence is a lost
+//   connection at once; otherwise the client pings now.
 // - `host.closing` (B-F05) before a close is DwarfAI's own stop: no reconnect; `onClosing` tells the composition
 //   (the tray process exits with the Host, ADR-002 D7, later: ISSUE-053).
 // - `withUiConnection`: the `ui` connection when one is open, else a short-lived one (same uiToken, `hello {role:
 //   'ui'}`) closed when the work settled (OQ-47).
-// - Logging: `host.connection` on every state change, with the state and reason as `causeClass` (19 §9.1); never a
-//   frame's content, a token or a path (14 §1.10).
+// - Logging: `host.connection` on every 12B transition, with the state and reason as `causeClass` (19 §9.1); never a
+//   frame's content, a token, a pid or a path (14 §1.10).
 import type { Duplex } from 'node:stream'
 import {
   isAdvertised,
   SNAPSHOT_SECTIONS,
   type Hello,
+  type HelloOk,
   type HostFrameData,
   type HostMethod,
   type HostParams,
@@ -49,6 +63,7 @@ import {
   type SnapshotSection
 } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
+import type { HungHostEnd } from '../hostLauncher/hungHost'
 import type { EnsureHostResult } from '../hostLauncher/launcher'
 import type {
   HostAvailability,
@@ -64,6 +79,15 @@ import {
   type ClosingReason,
   type HostChannel
 } from './channel'
+import {
+  HOST_UNRESPONSIVE_MS,
+  initialMachine,
+  step,
+  wireState,
+  type ConnectionAction,
+  type ConnectionEvent,
+  type ConnectionMachine
+} from './connectionMachine'
 import { deadlineOf } from './deadlines'
 import { isMutation, resendAfterReconnect } from './requestIds'
 import { SnapshotReader } from './snapshotReader'
@@ -91,6 +115,8 @@ export interface HostClientDeps {
   client: Hello['client']
   timers: HostClientTimers
   log: UiLog
+  /** ADR-002 D9 steps 2 and 4: the host launcher's identity-checked end of a hung Host (hostLauncher/hungHost.ts). */
+  hungHost: { endHungHost(): Promise<HungHostEnd> }
 }
 
 /** A call the client refused or the Host answered with a call error (14 §1.5, §3.3). */
@@ -107,6 +133,10 @@ export interface HostClientService extends HostClient {
   onClosing(h: (reason: ClosingReason) => void): () => void
   /** Closes both connections and stops every timer; nothing reconnects after. */
   dispose(): void
+  /** The Host's lifecycle and job status from the current connection's `hello.ok` (14 §3.8), or null. */
+  hostFacts(): { hostState: HelloOk['state']; jobStatus: HelloOk['jobStatus'] } | null
+  /** Electron `powerMonitor` `resume` (13 FM-109): ping at once. */
+  wake(): void
 }
 
 /** The notifier scope of ADR-003 item 12 (14 §2.3 "Notifier scope"). */
@@ -126,6 +156,18 @@ interface Call {
   resent: boolean
 }
 
+/** What one attempt at the notifier `hello` found. */
+type Attempt = 'open' | { bound: boolean }
+
+/** 19 §9.1 `host.hung-end`: the outcome name as `causeClass`, the record's own outcome class beside it. */
+const HUNG_END_OUTCOME = {
+  attached: 'ok',
+  ended: 'ok',
+  'identity-missing': 'skipped',
+  'identity-mismatch': 'skipped',
+  'end-failed': 'failed'
+} as const
+
 const unavailable = (message: string): IpcError => ({
   code: 'HOST_UNAVAILABLE',
   message,
@@ -137,14 +179,19 @@ export function createHostClient(deps: HostClientDeps): HostClientService {
 }
 
 class NodeHostClient implements HostClientService {
-  private connection: HostConnection = { state: 'connecting' }
+  private machine: ConnectionMachine
   private notifier: HostChannel | null = null
   private ui: HostChannel | null = null
   private reader: SnapshotReader | null = null
   /** The epoch of the state the handlers hold, and the seq applied last in it. */
   private applied: { epoch: string; seq: number | null } | null = null
   private run: Promise<HostAvailability> | null = null
+  /** The number of the run `run` is. */
+  private runOf = 0
+  /** Bumped by every new run: a run whose number is no longer current stops at its next step. */
+  private runNo = 0
   private cancelWait: () => void = () => {}
+  private cancelUnresponsive: () => void = () => {}
   private disposed = false
   /** A `ui` hello is under way: a second attach waits for it instead of opening another connection. */
   private uiOpening = false
@@ -161,8 +208,11 @@ class NodeHostClient implements HostClientService {
   private readonly channelDeps: ChannelDeps
   /** `hello.ok.capabilities` of the last connection: replaced on every reconnect, kept while reconnecting. */
   private advertised: readonly string[] = []
+  /** The Host's lifecycle and job status: the notifier's `hello.ok`, then each `host.state` frame. */
+  private facts: { hostState: HelloOk['state']; jobStatus: HelloOk['jobStatus'] } | null = null
 
   constructor(private readonly deps: HostClientDeps) {
+    this.machine = initialMachine(deps.timers.now())
     this.channelDeps = {
       connect: deps.connect,
       readToken: deps.readToken,
@@ -177,17 +227,22 @@ class NodeHostClient implements HostClientService {
 
   ensureHost(): Promise<HostAvailability> {
     if (this.disposed) return Promise.resolve({ unavailable: 'spawn-failed' })
-    if (this.connection.state === 'connected' && this.notifier?.open === true) {
+    const now = this.state()
+    if (now.state === 'connected' && this.notifier?.open === true) {
       return Promise.resolve('available')
     }
-    this.run ??= this.connectLoop().finally(() => {
-      this.run = null
-    })
-    return this.run
+    if (now.state === 'unavailable') {
+      // The person's retry (S12.B07, S12.B11); none for `generation-restart` (S12.B16).
+      if (this.dispatch({ kind: 'retry' }).length === 0) {
+        return Promise.resolve({ unavailable: now.reason })
+      }
+      return this.startRun()
+    }
+    return this.run ?? this.startRun()
   }
 
   state(): HostConnection {
-    return this.connection
+    return wireState(this.machine)
   }
 
   onStateChange(h: (s: HostConnection) => void): () => void {
@@ -210,7 +265,7 @@ class NodeHostClient implements HostClientService {
   subscribe(handler: (e: HostEvent) => void): () => void {
     this.handlers.add(handler)
     if (this.handlers.size === 1) {
-      if (this.connection.state === 'connected' && this.ui === null) void this.attachUi()
+      if (this.state().state === 'connected' && this.ui === null) void this.attachUi()
     } else {
       this.reader?.refresh()
     }
@@ -255,9 +310,26 @@ class NodeHostClient implements HostClientService {
     return () => this.closingListeners.delete(h)
   }
 
+  hostFacts(): { hostState: HelloOk['state']; jobStatus: HelloOk['jobStatus'] } | null {
+    return this.state().state === 'connected' ? this.facts : null
+  }
+
+  wake(): void {
+    const notifier = this.notifier
+    if (this.disposed || notifier === null || this.state().state !== 'connected') return
+    // Only a Host that can be pinged is held to the silence bound (ADR-003 item 9; channel.ts).
+    if (isAdvertised(notifier.helloOk.capabilities, 'ping')) {
+      this.act(this.dispatch({ kind: 'tick' }))
+      if (this.state().state !== 'connected') return
+    }
+    this.act(this.dispatch({ kind: 'power-resume' }))
+  }
+
   dispose(): void {
     this.disposed = true
+    this.runNo += 1
     this.cancelWait()
+    this.cancelUnresponsive()
     this.closeUi()
     if (this.notifier !== null) this.retire(this.notifier)
     this.notifier = null
@@ -266,48 +338,199 @@ class NodeHostClient implements HostClientService {
 
   // ---- connecting ----
 
-  /** Attaches, trying again on the ADR-002 D9 schedule, until connected or the launcher reports unavailable. */
-  private async connectLoop(): Promise<HostAvailability> {
+  /** A new run for the state now; any older run stops at its next step. */
+  private startRun(): Promise<HostAvailability> {
+    const no = (this.runNo += 1)
+    const run: Promise<HostAvailability> = this.drive(no).finally(() => {
+      if (this.run === run) this.run = null
+    })
+    this.run = run
+    this.runOf = no
+    return run
+  }
+
+  private drive(no: number): Promise<HostAvailability> {
+    switch (this.machine.state.state) {
+      case 'retrying':
+        return this.hungRetry(no)
+      case 'reconnecting':
+        return this.reconnectLoop(no)
+      default:
+        return this.connectLoop(no)
+    }
+  }
+
+  /** Whether run `no` must stop: disposed, replaced by a newer run, or the state left `inState`. */
+  private stopped(no: number, inState: ConnectionMachine['state']['state']): boolean {
+    return this.disposed || no !== this.runNo || this.machine.state.state !== inState
+  }
+
+  /** What run `no` answers once it stopped: a newer run's answer, else the state now (never its own promise). */
+  private settled(no: number): Promise<HostAvailability> | HostAvailability {
+    if (this.run !== null && this.runOf !== no && !this.disposed) return this.run
+    const now = this.state()
+    if (now.state === 'connected') return 'available'
+    return { unavailable: now.state === 'unavailable' ? now.reason : 'spawn-failed' }
+  }
+
+  /**
+   * `connecting` (S12.B01–S12.B03, S12.B10): attach through the launcher, trying again on the ADR-002 D9 schedule,
+   * until connected or unavailable. A launcher `spawn-failed` while the endpoint is bound but silent is not B03's: the
+   * attempts go on until the hung-Host bound.
+   */
+  private async connectLoop(no: number): Promise<HostAvailability> {
     let delay = RECONNECT_FIRST_MS
+    this.armUnresponsive()
     for (;;) {
-      if (this.disposed) return { unavailable: 'spawn-failed' }
+      if (this.stopped(no, 'connecting')) return this.settled(no)
       const launched = await this.deps.launcher.ensureHostRunning()
-      if (typeof launched === 'object') {
-        this.setState({ state: 'unavailable', reason: launched.unavailable })
-        return { unavailable: launched.unavailable }
+      if (this.stopped(no, 'connecting')) return this.settled(no)
+      if (typeof launched === 'object' && launched.unavailable !== 'spawn-failed') {
+        this.dispatch({ kind: 'launch-unavailable', reason: launched.unavailable })
+        return this.settled(no)
       }
-      if (await this.attachNotifier()) return 'available'
+      const attempt = await this.attachNotifier()
+      if (attempt === 'open') return 'available'
+      if (this.stopped(no, 'connecting')) return this.settled(no)
+      if (typeof launched === 'object' && !attempt.bound) {
+        this.dispatch({ kind: 'launch-unavailable', reason: 'spawn-failed' })
+        return this.settled(no)
+      }
+      this.dispatch({ kind: 'endpoint', bound: attempt.bound })
       await this.wait(delay)
       delay = Math.min(delay * 2, RECONNECT_MAX_MS)
     }
   }
 
-  private wait(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      this.cancelWait = this.deps.timers.after(ms, resolve)
+  /**
+   * `reconnecting` (S12.B04–S12.B06, S12.B09; S12.19, S12.20): the endpoint again on the ADR-002 D9 schedule. An
+   * attempt that finds nothing listening is a Host crash and the launcher respawns it at once; a respawn that fails is
+   * one more crash. The machine says when respawning stops (crash-loop) and when a silent Host is unresponsive.
+   */
+  private async reconnectLoop(no: number): Promise<HostAvailability> {
+    let delay = RECONNECT_FIRST_MS
+    this.armUnresponsive()
+    for (;;) {
+      await this.wait(delay)
+      delay = Math.min(delay * 2, RECONNECT_MAX_MS)
+      if (this.stopped(no, 'reconnecting')) return this.settled(no)
+      let attempt = await this.attachNotifier()
+      for (;;) {
+        if (attempt === 'open') return 'available'
+        if (this.stopped(no, 'reconnecting')) return this.settled(no)
+        const actions = this.dispatch({ kind: 'endpoint', bound: attempt.bound })
+        if (!actions.some((action) => action.kind === 'respawn')) break
+        const launched = await this.deps.launcher.ensureHostRunning()
+        if (this.stopped(no, 'reconnecting')) return this.settled(no)
+        if (typeof launched === 'object') {
+          if (launched.unavailable !== 'spawn-failed') {
+            this.dispatch({ kind: 'launch-unavailable', reason: launched.unavailable })
+            return this.settled(no)
+          }
+          // The respawned Host died or never got ready: one more Host crash.
+          attempt = { bound: false }
+          continue
+        }
+        attempt = await this.attachNotifier()
+      }
+      if (this.stopped(no, 'reconnecting')) return this.settled(no)
+    }
+  }
+
+  /**
+   * ADR-002 D9's Retry of a hung Host (S12.B11–S12.B15): one `hello` with its 5 s budget (the hello bound of
+   * channel.ts); unanswered, the launcher's identity-checked end, then a respawn when that one process was ended.
+   */
+  private async hungRetry(no: number): Promise<HostAvailability> {
+    const startedAt = this.deps.timers.now()
+    const attempt = await this.attachNotifier()
+    if (attempt === 'open') {
+      this.logHungEnd('attached', startedAt)
+      return 'available'
+    }
+    if (this.stopped(no, 'retrying')) return this.settled(no)
+    const end = await this.deps.hungHost
+      .endHungHost()
+      .catch((): HungHostEnd => ({ outcome: 'end-failed', errCode: 'signal-failed' }))
+    this.logHungEnd(end.outcome, startedAt, end.outcome === 'end-failed' ? end.errCode : undefined)
+    if (this.stopped(no, 'retrying')) return this.settled(no)
+    const actions = this.dispatch({ kind: 'retry-unanswered', hungEnd: end.outcome })
+    if (actions.some((action) => action.kind === 'respawn')) return this.connectLoop(no)
+    return this.settled(no)
+  }
+
+  private logHungEnd(
+    outcome: keyof typeof HUNG_END_OUTCOME,
+    startedAt: number,
+    errCode?: string
+  ): void {
+    this.deps.log.record({
+      level: 'warn',
+      event: 'host.hung-end',
+      subsystem: SUBSYSTEM,
+      outcome: HUNG_END_OUTCOME[outcome],
+      causeClass: outcome,
+      ...(errCode === undefined ? {} : { errCode }),
+      durationMs: this.deps.timers.now() - startedAt
     })
   }
 
-  private async attachNotifier(): Promise<boolean> {
+  /** Waits `ms`; an interrupted wait ends at once. */
+  private wait(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const cancel = this.deps.timers.after(ms, resolve)
+      this.cancelWait = () => {
+        cancel()
+        resolve()
+      }
+    })
+  }
+
+  /** The hung-Host bound of the attach under way: a `tick` HOST_UNRESPONSIVE_MS after the last frame. */
+  private armUnresponsive(): void {
+    this.cancelUnresponsive()
+    const { state } = this.machine.state
+    if (state !== 'connecting' && state !== 'reconnecting') return
+    const due = Math.max(0, this.machine.quietSince + HOST_UNRESPONSIVE_MS - this.deps.timers.now())
+    this.cancelUnresponsive = this.deps.timers.after(due, () => {
+      this.dispatch({ kind: 'tick' })
+      this.armUnresponsive()
+    })
+  }
+
+  /** One attempt at the notifier `hello`; a connection that answers while no attach is wanted is closed again. */
+  private async attachNotifier(): Promise<Attempt> {
     const opened = await openChannel(this.channelDeps, 'notifier')
-    if (opened.kind !== 'open' || this.disposed) {
-      if (opened.kind === 'open') this.retire(opened.channel)
-      return false
+    if (opened.kind !== 'open') return { bound: opened.kind === 'refused' || opened.bound }
+    const { state } = this.machine.state
+    if (
+      this.disposed ||
+      (state !== 'connecting' && state !== 'reconnecting' && state !== 'retrying')
+    ) {
+      this.retire(opened.channel)
+      return { bound: true }
     }
     const channel = this.adopt(opened.channel)
     this.notifier = channel
     this.advertised = channel.helloOk.capabilities
+    channel.heard(() => this.heard(channel))
     void channel.closed.then((reason) => this.lost(channel, reason))
     const { helloOk } = channel
+    this.facts = { hostState: helloOk.state, jobStatus: helloOk.jobStatus }
     const epochChanged = this.applied !== null && this.applied.epoch !== helloOk.epoch
-    this.setState({
-      state: 'connected',
+    this.dispatch({
+      kind: 'hello-ok',
       hostVersion: helloOk.hostVersion,
       compat: helloOk.protocolVersion !== this.deps.protocolVersion
     })
     if (this.handlers.size > 0) await this.attachUi()
     this.resendInFlight(epochChanged)
-    return true
+    return 'open'
+  }
+
+  /** A frame from the Host on a connection the client holds (the hung-Host bound counts from the last one). */
+  private heard(channel: HostChannel): void {
+    if (channel === this.notifier || channel === this.ui) this.dispatch({ kind: 'frame' })
   }
 
   /** The `ui` connection: hello, `events.subscribe` first, then replay or the paged snapshot. */
@@ -344,8 +567,7 @@ class NodeHostClient implements HostClientService {
           for (const handler of [...this.handlers]) handler(event)
         },
         // A Host back in `starting` or `migrating` is waited for; any other refusal leaves the last whole board in
-        // place: a Host that stops answering is the hung-Host state's (later: ISSUE-052), a lost connection the
-        // reconnect's.
+        // place: a Host that stops answering is the hung-Host state's, a lost connection the reconnect's.
         failed: (error) => {
           if (error.code !== 'HOST_NOT_READY') return
           readiness.notReady()
@@ -358,10 +580,15 @@ class NodeHostClient implements HostClientService {
       lastSeq
     )
     this.reader = reader
+    channel.heard(() => this.heard(channel))
     channel.events((frame) => {
       if (frame.name === 'host.state') {
-        readiness.update((frame.data as HostFrameData['host.state']).state)
+        const data = frame.data as HostFrameData['host.state']
+        readiness.update(data.state)
+        this.facts = { hostState: data.state, jobStatus: data.jobStatus }
       }
+      // S12.B08: the reader takes the fresh snapshot itself (snapshotReader.ts).
+      if (frame.name === 'resync-required') this.dispatch({ kind: 'events-lost' })
       reader.frame(frame)
     })
     void channel.closed.then((reason) => {
@@ -425,22 +652,40 @@ class NodeHostClient implements HostClientService {
     }
     if (channel === this.notifier) this.notifier = null
     this.detachCalls(channel, !deliberate)
-    if (deliberate || this.disposed || this.connection.state !== 'connected') return
+    if (deliberate || this.disposed || this.state().state !== 'connected') return
     if (reason !== null) {
       // The notifier's marker is the one the tray process acts on (ADR-003 item 12).
       if (channel.role !== 'notifier') return
       this.closeUi()
       for (const call of [...this.calls]) this.fail(call, unavailable('the Host closed'))
-      this.setState({ state: 'connecting' })
+      this.dispatch({ kind: 'closing' })
       for (const listener of [...this.closingListeners]) listener(reason)
       return
     }
+    this.act(this.dispatch({ kind: 'lost' }))
+  }
+
+  /** Runs what the machine asked for that is not part of the run under way. */
+  private act(actions: readonly ConnectionAction[]): void {
+    for (const action of actions) {
+      if (action.kind === 'reconnect') this.reconnect()
+      if (action.kind === 'ping') {
+        this.notifier?.pingNow()
+        this.ui?.pingNow()
+      }
+    }
+  }
+
+  /** S12.B04: the connections go; in-flight mutations wait for the re-send; the reconnect run starts. */
+  private reconnect(): void {
     if (this.ui !== null) this.detachCalls(this.ui, true)
     this.closeUi()
-    if (this.notifier !== null) this.retire(this.notifier)
+    if (this.notifier !== null) {
+      this.detachCalls(this.notifier, true)
+      this.retire(this.notifier)
+    }
     this.notifier = null
-    this.setState({ state: 'reconnecting', since: this.deps.timers.now() })
-    void this.wait(RECONNECT_FIRST_MS).then(() => this.ensureHost())
+    void this.startRun()
   }
 
   /**
@@ -485,7 +730,7 @@ class NodeHostClient implements HostClientService {
       )
     }
     const mutation = isMutation(params)
-    if (fixed === null && mutation && this.connection.state !== 'connected') {
+    if (fixed === null && mutation && this.state().state !== 'connected') {
       return Promise.reject(new HostCallError(unavailable('mutations wait for the connection')))
     }
     const channel = fixed ?? this.channelFor(method, params, mutation)
@@ -615,22 +860,42 @@ class NodeHostClient implements HostClientService {
     }
   }
 
-  private setState(next: HostConnection): void {
-    this.connection = next
-    this.deps.log.record({
-      level: next.state === 'unavailable' ? 'warn' : 'info',
-      event: 'host.connection',
-      subsystem: SUBSYSTEM,
-      ...(next.state === 'connected'
-        ? { outcome: 'ok' as const }
-        : next.state === 'reconnecting'
-          ? { outcome: 'degraded' as const }
-          : next.state === 'unavailable'
-            ? { outcome: 'failed' as const }
-            : {}),
-      causeClass: next.state === 'unavailable' ? `unavailable:${next.reason}` : next.state
-    })
-    for (const listener of [...this.stateListeners]) listener(next)
+  /**
+   * Feeds the machine one event: each 12B transition is logged (`host.connection`, 19 §9.1), each change of the wire
+   * state reaches the listeners, and a state that leaves the attach under way stops its timers.
+   */
+  private dispatch(event: ConnectionEvent): ConnectionAction[] {
+    const before = this.state()
+    const next = step(this.machine, event, this.deps.timers.now())
+    this.machine = next.machine
+    const after = this.state()
+    const { state } = this.machine.state
+    if (state !== 'connecting' && state !== 'reconnecting') this.cancelUnresponsive()
+    if (state === 'unavailable') this.cancelWait()
+    if (next.transition !== null) {
+      this.deps.log.record({
+        level: after.state === 'unavailable' ? 'warn' : 'info',
+        event: 'host.connection',
+        subsystem: SUBSYSTEM,
+        ...(after.state === 'connected'
+          ? { outcome: 'ok' as const }
+          : after.state === 'reconnecting'
+            ? { outcome: 'degraded' as const }
+            : after.state === 'unavailable'
+              ? { outcome: 'failed' as const }
+              : {}),
+        causeClass:
+          state === 'retrying'
+            ? 'retrying'
+            : after.state === 'unavailable'
+              ? `unavailable:${after.reason}`
+              : after.state
+      })
+    }
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      for (const listener of [...this.stateListeners]) listener(after)
+    }
+    return next.actions
   }
 }
 

@@ -10,7 +10,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PROTOCOL_VERSION, type SnapshotPage } from '@dwarfai/contracts'
 import { RecordingUiLog } from '../hostLauncher/fakes/RecordingUiLog'
-import { createNodeHostConnection } from '../hostLauncher'
+import { createNodeHostConnection, createNodeHungHostEnder } from '../hostLauncher'
 import {
   buildRealHost,
   REPO_ROOT,
@@ -89,7 +89,8 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
                 return () => clearTimeout(timer)
               }
             },
-            log
+            log,
+            hungHost: createNodeHungHostEnder({ hostDataDir, uiEnv: { ...process.env, ...env } })
           })
           const events: HostEvent[] = []
           client.subscribe((event) => events.push(event))

@@ -103,7 +103,8 @@ async function world(options: { noSystemTray?: boolean } = {}) {
     protocolVersion: 1,
     client: { appVersion: '0.0.0-test', buildId: 'test', pid: 4242 },
     timers: new ManualTimers(),
-    log: new RecordingUiLog()
+    log: new RecordingUiLog(),
+    hungHost: { endHungHost: () => Promise.resolve({ outcome: 'identity-missing' }) }
   })
   clients.push(client)
   await client.ensureHost()

@@ -5,14 +5,17 @@
 // - `openChannel` connects, sends `hello` first with the role and this boot's uiToken, read from
 //   `<hostDataDir>/run/ui.token` for this one frame, never logged, never kept (ADR-003 item 3), and reads the first
 //   frame: `hello.ok` (strict schema) → open; a protocol `error` frame → refused with its code; a failed connect, a
-//   close, an unexpected frame or silence for HELLO_ANSWER_TIMEOUT_MS → unreachable.
+//   close, an unexpected frame or silence for HELLO_ANSWER_TIMEOUT_MS → unreachable, `bound` when the connection was
+//   accepted (something holds the endpoint, ADR-003 item 9: the hung-Host rule of ADR-002 D9 needs it), not when
+//   nothing listens.
 // - Open: `request` writes one `req` frame and returns its correlation id; each `res` and each `evt` (strict
 //   envelope schemas) goes to its handler; `host.closing` (B-F05) is remembered, and `closed` settles with its reason
 //   once the connection closed, or with null when it closed without one (a crash, a lost connection, `close()`).
 // - Liveness (ADR-003 item 9, when `liveness` is on and the Host advertised `ping`, 14 §1.3): a `ping` (B-M02) after
 //   LIVENESS_PING_MS without a frame sent; LIVENESS_SILENCE_MS without a frame received closes the connection, which
 //   then counts as lost (HostClient moves to `reconnecting`, ADR-002 D9). A Host that cannot be pinged is never
-//   held to the silence bound.
+//   held to the silence bound. `pingNow` pings at once (Electron `powerMonitor` `resume`, 13 FM-109), and `heard`
+//   tells the caller of every frame received (the 60 s hung-Host bound counts from the last one).
 // - Nothing here logs: a frame's content is never logged (14 §1.10); the caller logs names and codes.
 import type { Duplex } from 'node:stream'
 import {
@@ -64,7 +67,8 @@ export interface ChannelDeps {
 export type ChannelOpen =
   | { kind: 'open'; channel: HostChannel }
   | { kind: 'refused'; code: ProtocolErrorCode }
-  | { kind: 'unreachable' }
+  /** No `hello.ok`: `bound` when a connection was accepted, false when nothing listens. */
+  | { kind: 'unreachable'; bound: boolean }
 
 export async function openChannel(
   deps: ChannelDeps,
@@ -74,7 +78,7 @@ export async function openChannel(
   try {
     socket = await deps.connect()
   } catch {
-    return { kind: 'unreachable' }
+    return { kind: 'unreachable', bound: false }
   }
   const token = (await deps.readToken().catch(() => '')).trim()
   const hello: Hello = {
@@ -96,7 +100,9 @@ export async function openChannel(
       if (open.kind !== 'open') socket.destroy()
       resolve(open)
     }
-    const cancel = deps.after(HELLO_ANSWER_TIMEOUT_MS, () => answer({ kind: 'unreachable' }))
+    const cancel = deps.after(HELLO_ANSWER_TIMEOUT_MS, () =>
+      answer({ kind: 'unreachable', bound: true })
+    )
     socket.on('data', (chunk: Uint8Array) => {
       decoder.push(chunk)
       for (let next = decoder.next(); next !== null; next = decoder.next()) {
@@ -124,7 +130,7 @@ export async function openChannel(
     socket.once('end', () => socket.destroy())
     socket.once('close', () => {
       channel?.ended()
-      answer({ kind: 'unreachable' })
+      answer({ kind: 'unreachable', bound: true })
     })
     socket.write(encodeFrame(hello))
   })
@@ -138,6 +144,7 @@ export class HostChannel {
   private settleClosed: (reason: ClosingReason | null) => void = () => {}
   private onResponse: (id: string, answer: CallAnswer<unknown>) => void = () => {}
   private onEvent: (frame: EvtFrame) => void = () => {}
+  private onHeard: () => void = () => {}
   private readonly pings = new Set<string>()
   private cancelPing: () => void = () => {}
   private cancelSilence: () => void = () => {}
@@ -168,6 +175,17 @@ export class HostChannel {
     this.onEvent = handler
   }
 
+  /** Called on every frame received after `hello.ok`, before it is handed on. */
+  heard(handler: () => void): void {
+    this.onHeard = handler
+  }
+
+  /** Pings at once when the Host can be pinged (13 FM-109); a closed connection sends nothing. */
+  pingNow(): void {
+    if (!this.deps.liveness || !isAdvertised(this.helloOk.capabilities, 'ping')) return
+    this.request('ping', {}, (id) => this.pings.add(id))
+  }
+
   /**
    * Writes one `req` frame and returns its correlation id, or null when the connection is closed. `register` runs
    * with the id before the frame is written, since its answer may arrive before `request` returns.
@@ -193,6 +211,7 @@ export class HostChannel {
   /** One frame after `hello.ok`. */
   receive(message: unknown): void {
     this.armSilence()
+    this.onHeard()
     const res = resFrameSchema.safeParse(message)
     if (res.success) {
       if (this.pings.delete(res.data.id)) return
@@ -241,5 +260,5 @@ function refusalOf(message: unknown): ChannelOpen {
     const known = protocolErrorCodeSchema.safeParse(code)
     if (type === 'error' && known.success) return { kind: 'refused', code: known.data }
   }
-  return { kind: 'unreachable' }
+  return { kind: 'unreachable', bound: true }
 }

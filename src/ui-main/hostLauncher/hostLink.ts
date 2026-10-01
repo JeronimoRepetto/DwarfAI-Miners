@@ -61,7 +61,8 @@ export function createHostLinkOpener(
       'ui'
     )
     if (opened.kind === 'open') return { kind: 'attached', link: new NodeHostLink(opened.channel) }
-    return opened
+    // Whether something held the endpoint is HostClient's concern (the hung-Host rule), not the handshake's.
+    return opened.kind === 'refused' ? opened : { kind: 'unreachable' }
   }
 }
 

@@ -104,7 +104,11 @@ const MEMBERS = {
   'diag:renderer:report': 'reportRendererDiagnostic', // A-N30
   'tray:stopEverything:requested': 'onStopEverythingRequested', // A-N25
   'tray:stopEverything:confirm': 'confirmStopEverything', // A-N26
-  'tray:stopEverything:cancel': 'cancelStopEverything' // A-N27
+  'tray:stopEverything:cancel': 'cancelStopEverything', // A-N27
+  'host:connection:get': 'getHostConnection', // A-N03
+  'host:connection:changed': 'onHostConnection', // A-N04
+  'host:connection:retry': 'retryHostConnection', // A-N05
+  'host:connection:confirm-restart': 'confirmHostRestart' // A-N33 (AMENDMENT-11; unrouted until generation-2)
 }
 
 /**

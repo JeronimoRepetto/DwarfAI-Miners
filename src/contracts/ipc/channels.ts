@@ -71,6 +71,7 @@ import {
   cancelStopEverythingSchema,
   confirmStopEverythingSchema,
   consoleOpenResultSchema,
+  hostConnectionViewSchema,
   openCodeSettingsViewSchema,
   rendererDiagnosticSchema,
   stopEverythingRequestedSchema
@@ -639,6 +640,42 @@ export const CHANNELS = {
     status: 'new',
     request: cancelStopEverythingSchema,
     response: none
+  },
+  // A-N03 `getHostConnection`, A-N04 `onHostConnection`, A-N05 `retryHostConnection` (ADR-002 D9): the Host
+  // connection state of HostClient, served by UI main; never forwarded to the Host
+  'host:connection:get': {
+    name: 'host:connection:get',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: hostConnectionViewSchema
+  },
+  'host:connection:changed': {
+    name: 'host:connection:changed',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: hostConnectionViewSchema
+  },
+  'host:connection:retry': {
+    name: 'host:connection:retry',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: hostConnectionViewSchema
+  },
+  // A-N33 `confirmHostRestart` (AMENDMENT-11, OQ-79): dormant in v1, born with the first release that bumps
+  // `endpointGeneration`; no handler until then (review R8B-06)
+  'host:connection:confirm-restart': {
+    name: 'host:connection:confirm-restart',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: hostConnectionViewSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

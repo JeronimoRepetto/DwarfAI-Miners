@@ -76,7 +76,11 @@ export const WINDOW_API_MEMBERS = {
   reportRendererDiagnostic: 'send',
   onStopEverythingRequested: 'push',
   confirmStopEverything: 'invoke',
-  cancelStopEverything: 'send'
+  cancelStopEverything: 'send',
+  getHostConnection: 'invoke',
+  onHostConnection: 'push',
+  retryHostConnection: 'invoke',
+  confirmHostRestart: 'invoke'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS

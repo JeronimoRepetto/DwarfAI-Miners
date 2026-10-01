@@ -75,5 +75,9 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'diag:renderer:report': 'A-N30',
   'tray:stopEverything:requested': 'A-N25',
   'tray:stopEverything:confirm': 'A-N26',
-  'tray:stopEverything:cancel': 'A-N27'
+  'tray:stopEverything:cancel': 'A-N27',
+  'host:connection:get': 'A-N03',
+  'host:connection:changed': 'A-N04',
+  'host:connection:retry': 'A-N05',
+  'host:connection:confirm-restart': 'A-N33'
 }

@@ -13,6 +13,7 @@ import {
   type UiMainDeps,
   type UiMainLifecycle
 } from './index'
+import type { HostClientService } from './host-client/HostClient'
 import type { IpcMainRegistrar } from './ipc/router'
 import type { IpcSenderEvent } from './ipc/senderCheck'
 import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
@@ -33,6 +34,24 @@ import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
  * takes; only a process that holds it composes today's runtime and its Panel window (ADR-001, ADR-002
  * D3, PO #73).
  */
+/** A HostClient that never attaches: what the composition root reads of it, and how often it was woken. */
+function quietHostClient(): { client: HostClientService; wakes: () => number } {
+  let wakes = 0
+  const client = {
+    ensureHost: () => new Promise<never>(() => {}),
+    subscribe: () => () => {},
+    state: () => ({ state: 'connecting' as const }),
+    capabilities: () => [],
+    onStateChange: () => () => {},
+    hostFacts: () => null,
+    wake: () => {
+      wakes += 1
+    },
+    dispose: () => {}
+  } as unknown as HostClientService
+  return { client, wakes: () => wakes }
+}
+
 describe('ui-main composition root (05 §2.3)', () => {
   /** Records every lifecycle call and lets the test decide when the app is ready. */
   class RecordingLifecycle implements UiMainLifecycle {
@@ -272,6 +291,32 @@ describe('ui-main composition root (05 §2.3)', () => {
     expect(served).toEqual([['app:build', undefined]])
   })
 
+  it('[FM-109] an OS resume from sleep after the app is ready wakes the Host client, which pings at once', async () => {
+    class ResumingLifecycle extends RecordingLifecycle {
+      resume: () => void = () => {}
+      onResume(h: () => void): void {
+        this.calls.push('onResume')
+        this.resume = h
+      }
+    }
+    const lifecycle = new ResumingLifecycle()
+    const host = quietHostClient()
+    const started = startUiMain({
+      lock: new FakeSingleInstanceLock(true),
+      lifecycle,
+      legacyRuntime: countingLegacyRuntime().legacyRuntime,
+      ipc: new RecordingIpcMain(),
+      appEntry,
+      host: { client: host.client }
+    })
+    lifecycle.becomeReady()
+    await started
+
+    expect(lifecycle.calls).toContain('onResume')
+    lifecycle.resume()
+    expect(host.wakes()).toBe(1)
+  })
+
   it('[ADR-001] a process that does not hold the single-instance lock registers no seam A listener', async () => {
     const ipc = new RecordingIpcMain()
     const { legacyRuntime } = countingLegacyRuntime()
@@ -406,6 +451,19 @@ describe('ui-main composition root (05 §2.3)', () => {
         }
       })
       expect(composeUiLocal({ modeWindows: registeredPanel() })).toBeUndefined()
+    })
+
+    it('[ADR-001] the Host connection rows join the ui-local target with the Host client, and A-N33 is not one of them', async () => {
+      const uiLocal = composeUiLocal({
+        hostConnection: quietHostClient().client,
+        modeWindows: registeredPanel()
+      })
+      expect(await uiLocal?.serve('host:connection:get', undefined, eventFrom(3))).toEqual({
+        state: 'connecting'
+      })
+      expect(
+        await uiLocal?.serve('host:connection:confirm-restart', undefined, eventFrom(3))
+      ).toMatchObject({ ok: false, error: { code: 'METHOD_NOT_FOUND', retryable: false } })
     })
 
     it('[ADR-026] the UI preference store records reach the ui segments through the UI record rules', async () => {
