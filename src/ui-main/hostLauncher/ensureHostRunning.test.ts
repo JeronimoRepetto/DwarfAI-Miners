@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { RecordingSpawnProcess } from './fakes/FakeChildProcess'
+import { FakeCopyPreparer } from './fakes/FakeCopyPreparer'
 import { FakeHostSpawner } from './fakes/FakeHostSpawner'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
@@ -50,10 +51,14 @@ function harness(uiEnv: Record<string, string | undefined> = { PATH: '/usr/bin' 
   const spawner = new FakeHostSpawner()
   const gate = new FreeGate()
   const log = new RecordingUiLog()
+  // AMENDED for ISSUE-031: the launcher prepares the versioned copy before it spawns; this one is
+  // the source folder itself, so the spawn paths below stay as configured.
+  const copy = new FakeCopyPreparer('/opt/DwarfAI-Miners')
   const deps: HostLauncherDeps = {
     probe: prober.probe,
     gate,
     spawner: spawner.spawn,
+    prepareCopy: copy.prepare,
     host: {
       execPath: '/opt/DwarfAI-Miners/dwarfai-miners',
       hostEntry: '/opt/DwarfAI-Miners/resources/app.asar/out/host/main.js',
@@ -64,7 +69,7 @@ function harness(uiEnv: Record<string, string | undefined> = { PATH: '/usr/bin' 
     sleep: clock.sleep,
     log
   }
-  return { clock, prober, spawner, gate, log, launcher: createHostLauncher(deps) }
+  return { clock, prober, spawner, gate, log, copy, launcher: createHostLauncher(deps) }
 }
 
 describe('ensureHostRunning (ADR-002 D4)', () => {
@@ -352,5 +357,56 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     expect(sent.commandLine).toBe(
       '"C:\\DwarfAI\\DwarfAI-Miners.exe" "C:\\DwarfAI\\resources\\app.asar\\out\\host\\main.js"'
     )
+  })
+})
+
+// ADDED for ISSUE-031: the Host starts from the versioned copy (ADR-002 D5; ADR-027 item 2; UC-002:
+// the copy is ensured with the spawn gate held, right before the spawn).
+describe('ensureHostRunning starts the Host from the versioned copy (ADR-002 D5)', () => {
+  it('[ADR-002, SP-03] the Host is spawned with the executable and the entry inside host/<version>/, never from the install folder', async () => {
+    const h = harness()
+    h.copy.outcome = {
+      ok: true,
+      sourceDir: '/opt/DwarfAI-Miners',
+      contentDir: '/home/j/.local/share/dwarfai/host/1.4.0'
+    }
+    h.spawner.onLaunch = () => {
+      h.prober.answer = () => helloOk('ready')
+    }
+
+    expect(await h.launcher.ensureHostRunning()).toBe('spawned')
+
+    expect(h.copy.prepared).toBe(1)
+    expect(h.spawner.requests).toMatchObject([
+      {
+        file: '/home/j/.local/share/dwarfai/host/1.4.0/dwarfai-miners',
+        args: ['/home/j/.local/share/dwarfai/host/1.4.0/resources/app.asar/out/host/main.js']
+      }
+    ])
+  })
+
+  it('[ADR-027, FM-129] when the copy cannot be made no Host is spawned: spawn-failed with the copy code, and the gate is released', async () => {
+    const h = harness()
+    h.copy.outcome = { ok: false, errCode: 'COPY_ENOSPC' }
+
+    expect(await h.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+
+    expect(h.spawner.requests).toEqual([])
+    expect(h.gate.released).toBe(1)
+    expect(h.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        causeClass: 'spawn-failed',
+        errCode: 'COPY_ENOSPC'
+      })
+    ])
+  })
+
+  it('[ADR-027] the copy is prepared only when this UI is about to spawn, never when a Host answers', async () => {
+    const h = harness()
+    h.prober.answer = () => helloOk('ready')
+
+    expect(await h.launcher.ensureHostRunning()).toBe('attached')
+    expect(h.copy.prepared).toBe(0)
   })
 })

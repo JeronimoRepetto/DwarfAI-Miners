@@ -78,3 +78,20 @@ export type LaunchOutcome =
 
 /** Starts the Host detached from the UI, the per-OS way of ADR-002 D6. */
 export type HostSpawner = (request: HostSpawnRequest) => Promise<LaunchOutcome>
+
+/**
+ * The versioned copy the Host starts from (ADR-002 D5; ADR-027 item 2): `host/<version>/` made or
+ * reused (versionedCopy.ts), then the old copies collected (versionedCopyGc.ts).
+ */
+export type PreparedHostCopy =
+  | {
+      ok: true
+      /** The app directory the copy was made from. */
+      sourceDir: string
+      /** Where that directory's copy is: the executable and a packaged entry are found inside it. */
+      contentDir: string
+    }
+  | { ok: false; errCode: string }
+
+/** Prepares the copy; called only with the spawn gate held, right before the spawn (UC-002). */
+export type HostCopyPreparer = () => Promise<PreparedHostCopy>

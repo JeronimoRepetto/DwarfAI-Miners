@@ -1,0 +1,297 @@
+// The Host's versioned copy (ADR-002 D5; ADR-027 item 2; 13 FM-129; SP-03 decision table).
+// L3-style over a temporary directory: the copy, the rename and the removal are real file
+// operations; a fault (a copy killed mid-way) is injected through CopyOps.
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { FakeLauncherClock } from './fakes/FakeLauncherClock'
+import { RecordingUiLog } from './fakes/RecordingUiLog'
+import { buildManifest, serializeManifest, verifyManifest } from './hostManifest'
+import {
+  copySourceOf,
+  ensureVersionedCopy,
+  nodeCopyOps,
+  versionedCopyRoot,
+  type CopyOps,
+  type VersionedCopyRequest
+} from './versionedCopy'
+
+const dirs: string[] = []
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
+const VERSION = '1.4.0'
+
+/** A build: an app directory, its manifest file beside it, and an empty copy root. */
+async function world(appName = 'app') {
+  const base = mkdtempSync(path.join(tmpdir(), 'dwarfai-031-copy-'))
+  dirs.push(base)
+  const sourceDir = path.join(base, 'build', appName)
+  mkdirSync(path.join(sourceDir, 'resources'), { recursive: true })
+  writeFileSync(path.join(sourceDir, 'app.exe'), 'executable bytes')
+  writeFileSync(path.join(sourceDir, 'resources', 'app.asar'), 'archive bytes v1')
+  writeFileSync(path.join(sourceDir, 'resources', 'extra.pak'), 'pak bytes')
+  const manifestPath = path.join(base, 'build', 'host-manifest.json')
+  const root = path.join(base, 'DwarfAI', 'host')
+  const writeManifest = async (): Promise<void> =>
+    writeFileSync(manifestPath, serializeManifest(await buildManifest(sourceDir)))
+  await writeManifest()
+  const log = new RecordingUiLog()
+  const request = (overrides: Partial<VersionedCopyRequest> = {}): VersionedCopyRequest => ({
+    version: VERSION,
+    sourceDir,
+    manifestPath,
+    root,
+    platform: 'linux',
+    pid: 4242,
+    ops: nodeCopyOps,
+    log,
+    clock: new FakeLauncherClock(1_000),
+    ...overrides
+  })
+  return { base, sourceDir, manifestPath, root, log, request, writeManifest }
+}
+
+/** CopyOps that record every call and pass it on to the real ones. */
+function recordingOps(observe: (call: string, args: string[]) => void = () => {}): {
+  ops: CopyOps
+  calls: Array<[string, ...string[]]>
+} {
+  const calls: Array<[string, ...string[]]> = []
+  const ops: CopyOps = {
+    async copyTree(from, to) {
+      calls.push(['copyTree', from, to])
+      observe('copyTree', [from, to])
+      await nodeCopyOps.copyTree(from, to)
+    },
+    async rename(from, to) {
+      calls.push(['rename', from, to])
+      observe('rename', [from, to])
+      await nodeCopyOps.rename(from, to)
+    },
+    async removeTree(target) {
+      calls.push(['removeTree', target])
+      observe('removeTree', [target])
+      await nodeCopyOps.removeTree(target)
+    }
+  }
+  return { ops, calls }
+}
+
+describe('ensureVersionedCopy (ADR-002 D5, ADR-027 item 2)', () => {
+  it('[ADR-027, FM-129] a copy killed mid-way leaves only a .tmp- directory, which the next start removes before copying again', async () => {
+    const w = await world()
+    // The UI dies during the copy: one file reaches the destination, then nothing else runs
+    // (no clean-up either, as after a kill).
+    const killed: CopyOps = {
+      async copyTree(_from, to) {
+        mkdirSync(to, { recursive: true })
+        writeFileSync(path.join(to, 'app.exe'), 'executable bytes')
+        throw Object.assign(new Error('killed'), { code: 'KILLED' })
+      },
+      rename: () => Promise.reject(new Error('dead process')),
+      removeTree: () => Promise.reject(new Error('dead process'))
+    }
+
+    const first = await ensureVersionedCopy(w.request({ ops: killed, pid: 111 }))
+
+    expect(first.ok).toBe(false)
+    expect(readdirSync(w.root), 'only the temporary directory is left').toEqual([
+      `${VERSION}.tmp-111`
+    ])
+
+    const { ops, calls } = recordingOps()
+    const second = await ensureVersionedCopy(w.request({ ops, pid: 222 }))
+
+    expect(second).toEqual({
+      ok: true,
+      reused: false,
+      copyDir: path.join(w.root, VERSION),
+      contentDir: path.join(w.root, VERSION)
+    })
+    expect(calls[0], 'the leftover is removed before copying again').toEqual([
+      'removeTree',
+      path.join(w.root, `${VERSION}.tmp-111`)
+    ])
+    expect(readdirSync(w.root)).toEqual([VERSION])
+    const manifest = await buildManifest(w.sourceDir)
+    expect(
+      await verifyManifest(path.join(w.root, VERSION), manifest, {
+        exclude: ['host-manifest.json']
+      })
+    ).toEqual({
+      ok: true
+    })
+  })
+
+  it('[ADR-027] a verified copy is reused; a copy whose manifest hash differs is rebuilt', async () => {
+    const w = await world()
+    expect((await ensureVersionedCopy(w.request())).ok).toBe(true)
+
+    const reuse = recordingOps()
+    const again = await ensureVersionedCopy(w.request({ ops: reuse.ops }))
+    expect(again).toMatchObject({ ok: true, reused: true })
+    expect(reuse.calls, 'nothing is copied, renamed or removed').toEqual([])
+
+    // A new build of the same version: one file changed, so its manifest hash differs.
+    writeFileSync(path.join(w.sourceDir, 'resources', 'app.asar'), 'archive bytes v2')
+    await w.writeManifest()
+    const rebuild = recordingOps()
+    const rebuilt = await ensureVersionedCopy(w.request({ ops: rebuild.ops }))
+
+    expect(rebuilt).toMatchObject({ ok: true, reused: false })
+    expect(rebuild.calls.map(([call]) => call)).toContain('copyTree')
+    expect(await readFile(path.join(w.root, VERSION, 'resources', 'app.asar'), 'utf8')).toBe(
+      'archive bytes v2'
+    )
+    expect(readdirSync(w.root)).toEqual([VERSION])
+    expect(
+      w.log.byEvent('versioned-copy').map((entry) => [entry.outcome, entry.causeClass])
+    ).toEqual([
+      ['ok', 'copy'],
+      ['ok', 'reuse'],
+      ['ok', 'copy']
+    ])
+  })
+
+  it('[ADR-027, FM-008] a reused copy with a listed file gone is rebuilt, not started', async () => {
+    const w = await world()
+    expect((await ensureVersionedCopy(w.request())).ok).toBe(true)
+    // An antivirus removed a file from the copy.
+    rmSync(path.join(w.root, VERSION, 'resources', 'extra.pak'))
+
+    const outcome = await ensureVersionedCopy(w.request())
+
+    expect(outcome).toMatchObject({ ok: true, reused: false })
+    expect(existsSync(path.join(w.root, VERSION, 'resources', 'extra.pak'))).toBe(true)
+  })
+
+  it('[ADR-027] the final directory appears only by rename, never partially', async () => {
+    const w = await world()
+    const finalDir = path.join(w.root, VERSION)
+    const temp = path.join(w.root, `${VERSION}.tmp-4242`)
+    const seen: string[] = []
+    const { ops, calls } = recordingOps((call, args) => {
+      seen.push(`${call}: final ${existsSync(finalDir) ? 'exists' : 'absent'}`)
+      if (call === 'copyTree') expect(args[1]).toBe(temp)
+    })
+
+    const outcome = await ensureVersionedCopy(w.request({ ops }))
+
+    expect(outcome.ok).toBe(true)
+    expect(calls.map(([call]) => call)).toEqual(['copyTree', 'rename'])
+    expect(calls[1]).toEqual(['rename', temp, finalDir])
+    expect(seen).toEqual(['copyTree: final absent', 'rename: final absent'])
+
+    // A source that no longer matches its manifest: the copy is removed and never renamed.
+    const other = await world()
+    writeFileSync(path.join(other.sourceDir, 'resources', 'app.asar'), 'tampered')
+    const tampered = recordingOps()
+    const refused = await ensureVersionedCopy(other.request({ ops: tampered.ops }))
+
+    expect(refused).toEqual({ ok: false, errCode: 'MANIFEST_MISMATCH' })
+    expect(tampered.calls.map(([call]) => call)).toEqual(['copyTree', 'removeTree'])
+    expect(readdirSync(other.root)).toEqual([])
+    expect(other.log.byEvent('versioned-copy')).toMatchObject([
+      { level: 'error', outcome: 'failed', causeClass: 'copy', errCode: 'MANIFEST_MISMATCH' }
+    ])
+  })
+
+  it('[ADR-002, FM-129] a missing or unreadable manifest, or a version that is not a folder name, starts no copy', async () => {
+    const w = await world()
+    rmSync(w.manifestPath)
+    expect(await ensureVersionedCopy(w.request())).toEqual({
+      ok: false,
+      errCode: 'MANIFEST_MISSING'
+    })
+    writeFileSync(w.manifestPath, '{"format":9}')
+    expect(await ensureVersionedCopy(w.request())).toEqual({
+      ok: false,
+      errCode: 'MANIFEST_INVALID'
+    })
+    await w.writeManifest()
+    for (const version of ['', '..', '1.0/2', '1.0\\2', '1.0.tmp-3']) {
+      expect(await ensureVersionedCopy(w.request({ version })), version).toEqual({
+        ok: false,
+        errCode: 'VERSION_INVALID'
+      })
+    }
+    expect(existsSync(w.root) ? readdirSync(w.root) : []).toEqual([])
+  })
+
+  it('[SP-03] on macOS the .app bundle is copied whole, under its own name, inside host/<version>/', async () => {
+    const w = await world('DwarfAI-Miners.app')
+
+    const outcome = await ensureVersionedCopy(w.request({ platform: 'darwin' }))
+
+    expect(outcome).toEqual({
+      ok: true,
+      reused: false,
+      copyDir: path.join(w.root, VERSION),
+      contentDir: path.join(w.root, VERSION, 'DwarfAI-Miners.app')
+    })
+    expect(existsSync(path.join(w.root, VERSION, 'DwarfAI-Miners.app', 'app.exe'))).toBe(true)
+  })
+})
+
+describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
+  it('[ADR-002, ADR-027] the copy root is %LOCALAPPDATA%\\DwarfAI\\host on Windows, ~/Library/Application Support/DwarfAI/host on macOS and $XDG_DATA_HOME/dwarfai/host on Linux', () => {
+    expect(
+      versionedCopyRoot({
+        platform: 'win32',
+        env: { LOCALAPPDATA: 'C:\\Users\\j\\AppData\\Local' },
+        homeDir: 'C:\\Users\\j'
+      })
+    ).toEqual({ ok: true, value: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host' })
+    expect(versionedCopyRoot({ platform: 'darwin', env: {}, homeDir: '/Users/j' })).toEqual({
+      ok: true,
+      value: '/Users/j/Library/Application Support/DwarfAI/host'
+    })
+    expect(
+      versionedCopyRoot({
+        platform: 'linux',
+        env: { XDG_DATA_HOME: '/data/j' },
+        homeDir: '/home/j'
+      })
+    ).toEqual({ ok: true, value: '/data/j/dwarfai/host' })
+    // The XDG Base Directory default when XDG_DATA_HOME is unset, empty or relative.
+    for (const XDG_DATA_HOME of [undefined, '', 'relative/share']) {
+      expect(
+        versionedCopyRoot({ platform: 'linux', env: { XDG_DATA_HOME }, homeDir: '/home/j' })
+      ).toEqual({ ok: true, value: '/home/j/.local/share/dwarfai/host' })
+    }
+  })
+
+  it('[ADR-002, FM-129] without a LOCALAPPDATA or a home folder there is no copy root', () => {
+    expect(versionedCopyRoot({ platform: 'win32', env: {}, homeDir: 'C:\\Users\\j' })).toEqual({
+      ok: false,
+      errCode: 'COPY_ROOT_UNKNOWN'
+    })
+    expect(versionedCopyRoot({ platform: 'darwin', env: {}, homeDir: '' })).toEqual({
+      ok: false,
+      errCode: 'COPY_ROOT_UNKNOWN'
+    })
+    expect(versionedCopyRoot({ platform: 'linux', env: {}, homeDir: '' })).toEqual({
+      ok: false,
+      errCode: 'COPY_ROOT_UNKNOWN'
+    })
+  })
+
+  it('[ADR-002, SP-03] the copy source is the directory holding the executable, and the whole .app bundle on macOS', () => {
+    expect(copySourceOf('C:\\Apps\\DwarfAI-Miners\\DwarfAI-Miners.exe', 'win32')).toBe(
+      'C:\\Apps\\DwarfAI-Miners'
+    )
+    expect(copySourceOf('/opt/DwarfAI-Miners/dwarfai-miners', 'linux')).toBe('/opt/DwarfAI-Miners')
+    expect(
+      copySourceOf('/Applications/DwarfAI-Miners.app/Contents/MacOS/DwarfAI-Miners', 'darwin')
+    ).toBe('/Applications/DwarfAI-Miners.app')
+    // An executable outside a bundle (a bare runtime) is copied by its own folder.
+    expect(copySourceOf('/usr/local/lib/electron/electron', 'darwin')).toBe(
+      '/usr/local/lib/electron'
+    )
+  })
+})

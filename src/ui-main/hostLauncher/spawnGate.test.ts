@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { FakeCopyPreparer } from './fakes/FakeCopyPreparer'
 import { FakeHostSpawner } from './fakes/FakeHostSpawner'
 import { FakeIdentityProbe } from './fakes/FakeIdentityProbe'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
@@ -105,6 +106,8 @@ describe('spawn gate (ADR-002 D3)', () => {
       probe: prober.probe,
       gate: gateFor(files, probe, clock),
       spawner: spawner.spawn,
+      // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
+      prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
       host: HOST,
       clock,
       sleep: clock.sleep,
@@ -137,6 +140,8 @@ describe('spawn gate (ADR-002 D3)', () => {
       probe: prober.probe,
       gate: gateFor(files, new FakeIdentityProbe().alive(OWNER), clock),
       spawner: spawner.spawn,
+      // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
+      prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
       host: HOST,
       clock,
       sleep,
@@ -163,6 +168,8 @@ describe('spawn gate (ADR-002 D3)', () => {
       probe: prober.probe,
       gate: gateFor(files, new FakeIdentityProbe().alive(OWNER), clock),
       spawner: new FakeHostSpawner().spawn,
+      // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
+      prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
       host: HOST,
       clock,
       sleep: clock.sleep,
@@ -197,6 +204,8 @@ describe('spawn gate (ADR-002 D3)', () => {
           self: () => Promise.resolve(self)
         }),
         spawner: spawner.spawn,
+        // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
+        prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
         host: HOST,
         clock,
         sleep: clock.sleep,
