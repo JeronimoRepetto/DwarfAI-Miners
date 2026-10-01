@@ -43,18 +43,18 @@ first seen).
 
 ### The cut-0 exit list (TC-056-05; `21` §2 cut 0 "Exit criteria")
 
-| Exit item                                                                                                              | Evidence (all run on Windows 11 Pro 26200, 2026-10-01; macOS and Linux run in CI and on the owner's machines)                                  |
-| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| L3 contracts of every kernel port                                                                                      | `pnpm test` (the `run*Contract` suites of `src/host/kernel/**`): passed                                                                        |
-| L5 schema suite (snapshot, pragmas, FK coverage, STRICT, tamper, future file, `NOT_A_DWARFAI_DB`, dev guard, template) | `pnpm test` (`src/host/platform/sqlite/**`): passed                                                                                            |
-| L6 seam B transport suite in-process, and over a real pipe or socket                                                   | `pnpm test` (in-process) and `pnpm test:os` after `pnpm build:native --arch x64` (real pipe): passed                                           |
-| ADR-002 L8 tests and the D8 upgrade handshake, the older-UI rule                                                       | `pnpm test:os` (`src/ui-main/hostLauncher/*.os.test.ts`) and `pnpm test`: passed                                                               |
-| Stop everything and quit with a fixture legacy-launched session                                                        | `e2e/cut-0/stop-all-legacy-first.e2e.ts` and `e2e/cut-0/tray-stop-everything.e2e.ts`: passed                                                   |
-| A session that cannot be ended keeps the Host, the windows and the tray                                                | L2 `src/ui-main/index.cut0.test.ts` and the ISSUE-054 L2 cases: passed; its L9 case is not built (no fixture process the app may not end here) |
-| Registry completeness and router tests, with the `shape` of every route                                                | `src/ui-main/ipc/ipc-routing.contract.test.ts`, `src/contracts/ipc/channels.contract.test.ts`, `src/preload/preload.contract.test.ts`: passed  |
-| Canary job R1–R19                                                                                                      | `pnpm test:canaries`: 23 of 23 canaries report exactly their rule                                                                              |
-| The legacy seam-A replay                                                                                               | above                                                                                                                                          |
-| Census shows no silent loss                                                                                            | `node skills/test-safety/assets/test-census.mjs --base 73193605`: no file lost test statements                                                 |
+| Exit item                                                                                                              | Evidence (all run on Windows 11 Pro 26200, 2026-10-01; macOS and Linux run in CI and on the owner's machines)                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L3 contracts of every kernel port                                                                                      | `pnpm test` (the `run*Contract` suites of `src/host/kernel/**`): passed                                                                                                                       |
+| L5 schema suite (snapshot, pragmas, FK coverage, STRICT, tamper, future file, `NOT_A_DWARFAI_DB`, dev guard, template) | `pnpm test` (`src/host/platform/sqlite/**`): passed                                                                                                                                           |
+| L6 seam B transport suite in-process, and over a real pipe or socket                                                   | `pnpm test` (in-process) and `pnpm test:os` after `pnpm build:native --arch x64` (real pipe): passed                                                                                          |
+| ADR-002 L8 tests and the D8 upgrade handshake, the older-UI rule                                                       | `pnpm test:os` (`src/ui-main/hostLauncher/*.os.test.ts`) and `pnpm test`: passed                                                                                                              |
+| Stop everything and quit with a fixture legacy-launched session                                                        | `e2e/cut-0/stop-all-legacy-first.e2e.ts` and `e2e/cut-0/tray-stop-everything.e2e.ts`: passed                                                                                                  |
+| A session that cannot be ended keeps the Host, the windows and the tray                                                | `e2e/cut-0/stop-all-legacy-first.e2e.ts` (today's runtime finds its probe but not its kill, so its end is refused and nothing is signalled): passed; also L2 `src/ui-main/index.cut0.test.ts` |
+| Registry completeness and router tests, with the `shape` of every route                                                | `src/ui-main/ipc/ipc-routing.contract.test.ts`, `src/contracts/ipc/channels.contract.test.ts`, `src/preload/preload.contract.test.ts`: passed                                                 |
+| Canary job R1–R19                                                                                                      | `pnpm test:canaries`: 23 of 23 canaries report exactly their rule                                                                                                                             |
+| The legacy seam-A replay                                                                                               | above                                                                                                                                                                                         |
+| Census shows no silent loss                                                                                            | `node skills/test-safety/assets/test-census.mjs --base 73193605`: no file lost test statements                                                                                                |
 
 ## Intended differences
 
@@ -67,11 +67,13 @@ first seen).
 | The Stop everything confirmation's count             | (no Stop everything)                                                                                              | counts the Host-owned sessions only, so through cut 4 it omits the sessions today's runtime launched, which are still ended first                                          | OQ-78 (amendment A10-03 declined); `14` §2.2 A-N25 Notes; `21` §3 `LegacyEndFirstAdapter`                        |
 | The tray's Quit and the Panel window                 | Quit ended the app                                                                                                | Quit hides the Panel (its page stays loaded) and the app keeps running; nothing ends                                                                                       | ADR-018 item 5; OQ-44, OQ-47 (hiding rather than closing: see "A note on Quit" below)                            |
 
-A note on Quit. ADR-018's Quit "closes every window". The frozen window ports (`16` §4.14 `WindowFactory`, and the
-`PanelWindowSurface` read-backs) give the Panel use case no signal that its window was closed, so a closed Panel would
-leave the use case believing it is shown. Cut 0 has one mode window and no window-bound `ui` connection (the Host
-connection is held by UI main from start) and no UI-main session store yet (ISSUE-059), so the tray's Quit hides the
-Panel: the person sees every window go, as the ADR asks. A close read-back for the window module is a lead decision.
+A note on Quit. ADR-018's Quit "closes every window". The Panel use case now reads whether its window is shown back
+from the window (the visibility read-back of the owner-approved amendment to `16` §4.14, 2026-10-01), so a Panel the OS
+closed no longer reads as shown. Its other read-backs (`bounds`, `applyZoom`) still act on "the Panel window the factory
+built, building it if there is none", and the use case keeps re-fitting a window it built once, so after a real close a
+display change would build a new hidden Panel. Cut 0 has one mode window, no window-bound `ui` connection and no UI-main
+session store yet (ISSUE-059), so the tray's Quit hides the Panel: the person sees every window go, as the ADR asks. A
+"closed" signal or an "exists" read-back for the window module is a lead decision.
 
 ## Routes moved in this step
 
