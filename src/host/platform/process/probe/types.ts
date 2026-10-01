@@ -68,6 +68,23 @@ export function parsed<T>(
 }
 
 /**
+ * The two facts `ProcessControl.currentBootIdentity` reads beside the boot id (16 §3, AMENDMENT-3;
+ * sources of ADR-015 item 4, UNVERIFIED until S-015-2). Each read is bounded by
+ * BOOT_ID_QUERY_TIMEOUT_MS and answers why it failed instead of rejecting.
+ */
+export interface BootSourceReader {
+  /**
+   * The OS boot instant in epoch ms. Never on the probe path: a slow or failed read makes only this
+   * field `'unknown'`, never a process identity.
+   */
+  bootTimeMs(): Promise<ReadOutcome<number>>
+  /** The logon session of the process this runs in (the Host). */
+  logonSessionId(): Promise<ReadOutcome<string>>
+  /** Where each field comes from on this OS, as the L8 lane states it for the S-015-2 record. */
+  readonly sources: Readonly<Record<'bootId' | 'bootTimeMs' | 'logonSessionId', string>>
+}
+
+/**
  * The absolute path of a program in Windows' own System32 folder, built from `%SystemRoot%`. Named
  * by path, never looked up on PATH: an earlier program of the same name on PATH would run instead
  * (Git for Windows ships its own `whoami` and `klist`, which take other arguments). Only when

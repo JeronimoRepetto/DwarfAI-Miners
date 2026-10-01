@@ -43,3 +43,15 @@ export function matchesRecorded(probed: ProbeResult, recorded: ProcessIdentity):
   if (probed === 'absent' || probed === 'unknown') return false
   return sameProcess(probed, recorded)
 }
+
+/**
+ * Whether two readings of one boot-identity field (`bootId`, `bootTimeMs`, `logonSessionId`) are
+ * the same value (16 §3 `currentBootIdentity`, AMENDMENT-3): `'unknown'` is no reading, so it never
+ * compares equal to anything, not even another `'unknown'` (ADR-015 item 4 rules 1–4 fall through).
+ */
+export function sameBootField<T extends string | number>(
+  a: T | 'unknown',
+  b: T | 'unknown'
+): boolean {
+  return a !== 'unknown' && b !== 'unknown' && a === b
+}

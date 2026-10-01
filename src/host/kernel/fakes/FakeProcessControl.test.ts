@@ -1,19 +1,48 @@
 import { describe, expect, it } from 'vitest'
-import { runProcessControlContract } from '../testing/processControl.contract'
+import { runProcessControlContract, type KillWorld } from '../testing/processControl.contract'
 import { FakeClock } from './FakeClock'
 import { FakeProcessControl } from './FakeProcessControl'
 
 const UNREADABLE_PID = 4242
 const ABSENT_PID = 999_999
+const OWN_PID = 777
 
 describe('FakeProcessControl', () => {
   runProcessControlContract(() => {
     const control = new FakeProcessControl()
     control.script(UNREADABLE_PID, 'unknown')
+    control.script(OWN_PID, { pid: OWN_PID, processStartTimeMs: 1_000, bootId: 'fake-boot' })
+    let nextTreePid = 50_000
+    const kill: KillWorld = {
+      liveTree: ({ rootEndsOn, access }) => {
+        const root = {
+          pid: nextTreePid,
+          processStartTimeMs: 1_790_000_000_000,
+          bootId: 'fake-boot'
+        }
+        const child = {
+          ...root,
+          pid: nextTreePid + 1,
+          processStartTimeMs: root.processStartTimeMs + 5
+        }
+        nextTreePid += 2
+        control.scriptTree(root, {
+          endsOn: rootEndsOn,
+          ...(access === undefined ? {} : { access }),
+          descendants: [child]
+        })
+        return Promise.resolve({ root, child })
+      },
+      signals: () => control.signals,
+      isRunning: async (pid) => (await control.probe(pid)) !== 'absent'
+    }
     return {
       control,
+      ownPid: OWN_PID,
       unreadablePid: UNREADABLE_PID,
       absentPid: ABSENT_PID,
+      kill,
+      failingBootIdentity: () => new FakeProcessControl({ bootReads: 'failing' }),
       echoSpec: (args, env) => ({
         executable: 'echo-target',
         args,
