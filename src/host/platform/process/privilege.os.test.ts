@@ -2,6 +2,8 @@
 // OS. Runs only in `pnpm test:os`. The expected elevation is the OS's own answer, read another way:
 // a normal start is not elevated, while CI's Windows runner runs elevated (an administrator with
 // UAC off), so a fixed `false` would assert something untrue there.
+// AMENDED for ISSUE-051: CI's Windows legs run the OS lane as a standard local user
+// (scripts/ci/run-unelevated.mjs), so on Windows the test user is also asserted not elevated.
 import { release } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { createQueryRunner } from './NodeProcessControl'
@@ -34,6 +36,11 @@ describe.runIf(process.platform === 'win32')('privilege check on Windows', () =>
 
     await annotate(`ADR-002 D6 ${JSON.stringify({ release: release(), report, elevated })}`)
     expect(report.elevated).toEqual({ ok: true, value: elevated })
+    // AMENDED for ISSUE-051: ISSUE-021's L8 case is "not elevated for the test user". CI's Windows legs now run the
+    // OS lane as a standard local user (scripts/ci/run-unelevated.mjs), so a lane that ran elevated, where the real
+    // Host refuses to start (ADR-002 D6), fails here, loudly, instead of passing on an elevated runner.
+    expect(elevated, 'the OS lane runs as a non-elevated test user').toBe(false)
+    expect(report.elevated).toEqual({ ok: true, value: false })
     expect(report.inJob).toEqual({ ok: true, value: expect.any(Boolean) })
   }, 30_000)
 })

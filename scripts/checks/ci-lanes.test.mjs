@@ -48,6 +48,10 @@ const PUSH_TO_MAIN = "github.event_name == 'push' && github.ref == 'refs/heads/m
 const NIGHTLY = "github.event_name == 'schedule'"
 const RELEASE_TAG = "startsWith(github.ref, 'refs/tags/v')"
 const E2E_LABEL = "contains(github.event.pull_request.labels.*.name, 'e2e')"
+// ADDED for ISSUE-051: the Windows legs' non-elevated wrapper (scripts/ci/run-unelevated.mjs).
+const UNELEVATED_PROBE = 'run: node scripts/ci/run-unelevated.mjs --probe\n'
+const UNELEVATED_OS_LANE = 'run: node scripts/ci/run-unelevated.mjs -- pnpm test:os\n'
+const UNELEVATED_E2E = 'run: node scripts/ci/run-unelevated.mjs -- pnpm test:e2e\n'
 
 describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
   it('[ADR-001] the e2e job runs on the three OSes on push to main, nightly, release tags and the e2e label, and is not a required merge check', () => {
@@ -68,7 +72,9 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     expect(job, 'Linux runs the app under Xvfb').toMatch(
       /if: runner\.os == 'Linux'\n\s+run: xvfb-run --auto-servernum pnpm test:e2e\n/
     )
-    expect(job).toMatch(/if: runner\.os != 'Linux'\n\s+run: pnpm test:e2e\n/)
+    // AMENDED for ISSUE-051: the Windows leg runs the E2E cases as a non-elevated user (a test below), so the plain
+    // command is the macOS leg's.
+    expect(job).toMatch(/if: runner\.os == 'macOS'\n\s+run: pnpm test:e2e\n/)
 
     // Not a required merge check: the ruleset names only the checks job, which needs neither lane.
     expect(workflow.split(REQUIRED_CHECK).length - 1, 'one job carries the required name').toBe(1)
@@ -83,7 +89,30 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     const job = jobText('e2e')
     const native = job.search(/if: runner\.os == 'Windows'\n\s+run: pnpm build:native --arch x64\n/)
     expect(native, 'the Windows leg builds the native modules').toBeGreaterThanOrEqual(0)
-    expect(native).toBeLessThan(job.search(/if: runner\.os != 'Linux'\n\s+run: pnpm test:e2e\n/))
+    expect(native).toBeLessThan(job.indexOf(UNELEVATED_E2E))
+  })
+
+  // ADDED for ISSUE-051: the hosted Windows runner runs every step elevated, the package assumes a test user who is
+  // not (ISSUE-021 L8), and the real Host refuses to start elevated (ADR-002 D6). The Windows steps that run the real
+  // Host run as a standard local user, after a probe that prints that user's integrity level and fails unless it is
+  // medium or below; the job names stay as the "Protect main" ruleset knows them.
+  it('[ADR-002] the Windows OS-lane and E2E steps run as a non-elevated user, after a probe of its integrity level', () => {
+    for (const [id, command] of [
+      ['checks', UNELEVATED_OS_LANE],
+      ['e2e', UNELEVATED_E2E]
+    ]) {
+      const job = jobText(id)
+      const run = job.indexOf(command)
+      expect(run, `the ${id} job's Windows leg runs ${command.trim()}`).toBeGreaterThanOrEqual(0)
+      expect(
+        job.slice(job.lastIndexOf('- name:', run), run),
+        "that step is the Windows leg's"
+      ).toContain("if: runner.os == 'Windows'")
+      const probe = job.indexOf(UNELEVATED_PROBE)
+      expect(probe, `the ${id} job probes the non-elevated user`).toBeGreaterThanOrEqual(0)
+      expect(probe, 'the probe runs before the command').toBeLessThan(run)
+    }
+    expect(jobText('checks')).toContain(REQUIRED_CHECK)
   })
 
   it('[ADR-001] the perf job runs nightly and on release tags and uploads perf-results', () => {
