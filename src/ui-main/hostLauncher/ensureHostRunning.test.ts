@@ -1,0 +1,356 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { RecordingSpawnProcess } from './fakes/FakeChildProcess'
+import { FakeHostSpawner } from './fakes/FakeHostSpawner'
+import { FakeLauncherClock } from './fakes/FakeLauncherClock'
+import { RecordingUiLog } from './fakes/RecordingUiLog'
+import { ScriptedHelloProber, UNREACHABLE, helloOk } from './fakes/ScriptedHelloProber'
+import { createHostLauncher, type HostLauncherDeps } from './index'
+import { createPosixSpawner } from './posix'
+import { READINESS_BUDGET_MS, MIGRATING_EXTENSION_MS, READINESS_POLL_MS } from './readiness'
+import { buildHostSpawn } from './spawnHost'
+import {
+  CREATE_BREAKAWAY_FROM_JOB,
+  CREATE_NEW_PROCESS_GROUP,
+  CREATE_NO_WINDOW,
+  createWindowsSpawner
+} from './windows'
+
+/** The creation flag ADR-002 D6 item 3 forbids (console flash for every console descendant, L-12). */
+const DETACHED_PROCESS = 0x0000_0008
+
+/** The PowerShell script a launcher call carries after -EncodedCommand. */
+function encodedScript(args: readonly string[]): string {
+  const at = args.indexOf('-EncodedCommand')
+  return Buffer.from(args[at + 1] ?? '', 'base64').toString('utf16le')
+}
+
+const HOST_DATA_DIR = '/home/j/.config/DwarfAI-Miners/host'
+const SECRET = 'f00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeed'
+
+/** A gate nobody else holds, recording what the launcher does with it. */
+class FreeGate {
+  taken = 0
+  released = 0
+  take(): Promise<'taken' | 'held'> {
+    this.taken += 1
+    return Promise.resolve('taken')
+  }
+  release(): Promise<void> {
+    this.released += 1
+    return Promise.resolve()
+  }
+}
+
+function harness(uiEnv: Record<string, string | undefined> = { PATH: '/usr/bin' }) {
+  const clock = new FakeLauncherClock(1_000)
+  const prober = new ScriptedHelloProber(clock)
+  const spawner = new FakeHostSpawner()
+  const gate = new FreeGate()
+  const log = new RecordingUiLog()
+  const deps: HostLauncherDeps = {
+    probe: prober.probe,
+    gate,
+    spawner: spawner.spawn,
+    host: {
+      execPath: '/opt/DwarfAI-Miners/dwarfai-miners',
+      hostEntry: '/opt/DwarfAI-Miners/resources/app.asar/out/host/main.js',
+      hostDataDir: HOST_DATA_DIR,
+      uiEnv
+    },
+    clock,
+    sleep: clock.sleep,
+    log
+  }
+  return { clock, prober, spawner, gate, log, launcher: createHostLauncher(deps) }
+}
+
+describe('ensureHostRunning (ADR-002 D4)', () => {
+  it('[ADR-002] a Host that already answers hello is attached without spawning', async () => {
+    const h = harness()
+    h.prober.answer = () => helloOk('ready')
+
+    expect(await h.launcher.ensureHostRunning()).toBe('attached')
+    expect(h.spawner.requests).toEqual([])
+    expect(h.gate.taken).toBe(0)
+    expect(h.prober.attempts).toEqual([1_000])
+  })
+
+  it('[ADR-002, FM-008] readiness waits for hello, not for a timer or a pid, and gives up after 15 s as spawn-failed', async () => {
+    const h = harness()
+    // The Host is launched (the spawner reports it started) but never answers: the launch alone is not readiness.
+    expect(await h.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+    expect(h.spawner.requests).toHaveLength(1)
+
+    // Probed every 50 ms from the launch until exactly 15 s had passed, then given up.
+    const launchedAt = h.prober.attempts[1] ?? Number.NaN
+    const polls = h.prober.attempts.slice(1)
+    expect(polls.at(-1)! - launchedAt).toBe(READINESS_BUDGET_MS)
+    expect(polls).toHaveLength(READINESS_BUDGET_MS / READINESS_POLL_MS + 1)
+    expect(polls.every((at, i) => i === 0 || at - polls[i - 1]! === READINESS_POLL_MS)).toBe(true)
+    expect(h.gate.released).toBe(1)
+    expect(h.spawner.released).toBe(1)
+    expect(h.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        subsystem: 'host-launcher',
+        outcome: 'failed',
+        causeClass: 'spawn-failed',
+        errCode: 'READINESS_TIMEOUT'
+      })
+    ])
+
+    // A Host that answers `starting` the whole time keeps the UI waiting inside the same 15 s, then fails too.
+    const starting = harness()
+    starting.spawner.onLaunch = () => {
+      starting.prober.answer = () => helloOk('starting')
+    }
+    expect(await starting.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+    expect(starting.clock.now() - (starting.prober.attempts[1] ?? Number.NaN)).toBe(
+      READINESS_BUDGET_MS
+    )
+
+    // A Host that answers `ready` within the budget is spawned.
+    const ready = harness()
+    ready.spawner.onLaunch = () => {
+      const at = ready.clock.now()
+      ready.prober.answer = (now) => (now - at >= 400 ? helloOk('ready') : UNREACHABLE)
+    }
+    expect(await ready.launcher.ensureHostRunning()).toBe('spawned')
+    expect(ready.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({ level: 'info', outcome: 'ok', causeClass: 'detached' })
+    ])
+  })
+
+  it('[ADR-002] a Host reporting migrating extends the wait by up to 30 s', async () => {
+    // Migrating the whole time: the wait ends at 15 s + 30 s.
+    const long = harness()
+    long.spawner.onLaunch = () => {
+      long.prober.answer = () => helloOk('migrating')
+    }
+    expect(await long.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+    expect(long.clock.now() - (long.prober.attempts[1] ?? Number.NaN)).toBe(
+      READINESS_BUDGET_MS + MIGRATING_EXTENSION_MS
+    )
+
+    // Migrating past 15 s, ready at 40 s: spawned.
+    const slow = harness()
+    slow.spawner.onLaunch = () => {
+      const at = slow.clock.now()
+      slow.prober.answer = (now) => helloOk(now - at >= 40_000 ? 'ready' : 'migrating')
+    }
+    expect(await slow.launcher.ensureHostRunning()).toBe('spawned')
+
+    // The extension holds only while the Host reports migrating: migrating at 5 s, starting after → 15 s.
+    const brief = harness()
+    brief.spawner.onLaunch = () => {
+      const at = brief.clock.now()
+      brief.prober.answer = (now) =>
+        helloOk(now - at >= 5_000 && now - at < 6_000 ? 'migrating' : 'starting')
+    }
+    expect(await brief.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+    expect(brief.clock.now() - (brief.prober.attempts[1] ?? Number.NaN)).toBe(READINESS_BUDGET_MS)
+  })
+
+  it('[S12.03, FM-011] a Host exit ELEVATED_REFUSED maps to unavailable elevated-refused', async () => {
+    const h = harness()
+    h.spawner.onLaunch = () => {
+      const at = h.clock.now()
+      h.prober.answer = (now) => {
+        if (now - at === 200) h.spawner.exit(65)
+        return UNREACHABLE
+      }
+    }
+    expect(await h.launcher.ensureHostRunning()).toEqual({ unavailable: 'elevated-refused' })
+    // Mapped as soon as the exit is seen, not after the readiness budget.
+    expect(h.clock.now() - (h.prober.attempts[1] ?? Number.NaN)).toBeLessThan(1_000)
+    expect(h.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({
+        level: 'error',
+        outcome: 'failed',
+        causeClass: 'elevated-refused',
+        errCode: 'ELEVATED_REFUSED'
+      })
+    ])
+  })
+
+  it('[S12.02, FM-009] a spawned Host that exits ALREADY_RUNNING leaves the UI attached to the running Host', async () => {
+    const h = harness()
+    h.spawner.onLaunch = () => {
+      const at = h.clock.now()
+      h.prober.answer = (now) => {
+        if (now - at === 100) h.spawner.exit(64)
+        return now - at >= 300 ? helloOk('ready') : UNREACHABLE
+      }
+    }
+    expect(await h.launcher.ensureHostRunning()).toBe('attached')
+  })
+
+  it('[ADR-002, FM-008] a Host that exits with any other code before it is ready is spawn-failed at once', async () => {
+    const h = harness()
+    h.spawner.onLaunch = () => {
+      const at = h.clock.now()
+      h.prober.answer = (now) => {
+        if (now - at === 100) h.spawner.exit(66)
+        return UNREACHABLE
+      }
+    }
+    expect(await h.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+    expect(h.clock.now() - (h.prober.attempts[1] ?? Number.NaN)).toBeLessThan(1_000)
+    expect(h.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({ causeClass: 'spawn-failed', errCode: 'HOST_EXIT_66' })
+    ])
+  })
+
+  it('[ADR-002, FM-012] a Host that cannot be started outside the UI job is unavailable in-job, and a refused launch is spawn-failed', async () => {
+    const inJob = harness()
+    inJob.spawner.outcome = { kind: 'in-job', errCode: 'WMI_9' }
+    expect(await inJob.launcher.ensureHostRunning()).toEqual({ unavailable: 'in-job' })
+    expect(inJob.gate.released).toBe(1)
+
+    const failed = harness()
+    failed.spawner.outcome = { kind: 'failed', errCode: 'ENOENT' }
+    expect(await failed.launcher.ensureHostRunning()).toEqual({ unavailable: 'spawn-failed' })
+    expect(failed.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({ causeClass: 'spawn-failed', errCode: 'ENOENT' })
+    ])
+  })
+
+  it('[ADR-002, FM-008] a spawn gate that cannot be read or written is spawn-failed, never a thrown error', async () => {
+    const h = harness()
+    h.gate.take = () =>
+      Promise.reject(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    await expect(h.launcher.ensureHostRunning()).resolves.toEqual({ unavailable: 'spawn-failed' })
+    expect(h.spawner.requests).toEqual([])
+    expect(h.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({ causeClass: 'spawn-failed', errCode: 'EACCES' })
+    ])
+  })
+
+  it('[ADR-002] a Host that holds the endpoint but is still starting is waited for, not spawned again', async () => {
+    const h = harness()
+    h.prober.answer = (now) => helloOk(now >= 1_500 ? 'ready' : 'starting')
+    expect(await h.launcher.ensureHostRunning()).toBe('attached')
+    expect(h.spawner.requests).toEqual([])
+    expect(h.gate.taken).toBe(0)
+  })
+
+  it('[ADR-002] the spawn env holds ELECTRON_RUN_AS_NODE and DWARFAI_HOST_DATA_DIR and no token or secret', async () => {
+    const h = harness({
+      PATH: '/usr/bin',
+      HOME: '/home/j',
+      ELECTRON_RUN_AS_NODE: '0',
+      DWARFAI_LOG: 'debug',
+      DWARFAI_DELEGATION_TOKEN: SECRET,
+      DWARFAI_HOST_UI_TOKEN: SECRET,
+      UNSET: undefined
+    })
+    h.spawner.onLaunch = () => {
+      h.prober.answer = () => helloOk('ready')
+    }
+    expect(await h.launcher.ensureHostRunning()).toBe('spawned')
+
+    const [request] = h.spawner.requests
+    expect(request?.file).toBe('/opt/DwarfAI-Miners/dwarfai-miners')
+    expect(request?.args).toEqual(['/opt/DwarfAI-Miners/resources/app.asar/out/host/main.js'])
+    expect(request?.env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/j',
+      ELECTRON_RUN_AS_NODE: '1',
+      DWARFAI_HOST_DATA_DIR: HOST_DATA_DIR,
+      DWARFAI_LOG: 'debug'
+    })
+    const everything = JSON.stringify(request)
+    expect(everything).not.toContain(SECRET)
+
+    // DWARFAI_LOG is passed only when the UI has it.
+    const quiet = harness({ PATH: '/usr/bin' })
+    quiet.spawner.onLaunch = () => {
+      quiet.prober.answer = () => helloOk('ready')
+    }
+    await quiet.launcher.ensureHostRunning()
+    expect(quiet.spawner.requests[0]?.env).toEqual({
+      PATH: '/usr/bin',
+      ELECTRON_RUN_AS_NODE: '1',
+      DWARFAI_HOST_DATA_DIR: HOST_DATA_DIR
+    })
+  })
+
+  it('[FM-114] the spawn never uses a shell and never sets DETACHED_PROCESS', async () => {
+    const request = buildHostSpawn({
+      execPath: 'C:\\Program Files\\DwarfAI-Miners\\DwarfAI-Miners.exe',
+      hostEntry: 'C:\\Program Files\\DwarfAI-Miners\\resources\\app.asar\\out\\host\\main.js',
+      hostDataDir: 'C:\\Users\\j\\AppData\\Roaming\\DwarfAI-Miners\\host',
+      uiEnv: { SystemRoot: 'C:\\Windows', Path: 'C:\\Windows\\System32' }
+    })
+
+    // Windows: one launcher step (Windows PowerShell by path), never a shell, never Node's detached
+    // spawn (libuv adds DETACHED_PROCESS for it), hidden.
+    const onWindows = new RecordingSpawnProcess()
+    onWindows.onSpawn = (child) => child.print('launched breakaway 4242')
+    const windows = await createWindowsSpawner({
+      spawnProcess: onWindows.spawn,
+      env: { SystemRoot: 'C:\\Windows' }
+    })(request)
+    expect(windows.kind).toBe('launched')
+    const [step] = onWindows.calls
+    expect(step?.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(step?.options).toMatchObject({ shell: false, windowsHide: true })
+    expect(step?.options.detached).not.toBe(true)
+    // The breakaway step's creation flags: breakaway, new group, no window; never DETACHED_PROCESS.
+    const script = encodedScript(step?.args ?? [])
+    const flags = Number(/\$creationFlags = (0x[0-9A-Fa-f]+)/.exec(script)?.[1])
+    const required = CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    expect(flags & required).toBe(required)
+    expect(flags & DETACHED_PROCESS).toBe(0)
+    expect(script).not.toMatch(/DETACHED_PROCESS|CREATE_NEW_CONSOLE/)
+    // The WMI step starts it hidden.
+    expect(script).toContain('ShowWindow = [uint16]0')
+
+    // POSIX: a new session (Node's detached = setsid), never a shell, stdio to a file, unref'd.
+    const root = mkdtempSync(join(tmpdir(), 'dwarfai-030-posix-'))
+    try {
+      const onPosix = new RecordingSpawnProcess()
+      onPosix.onSpawn = (child) => child.emit('spawn')
+      const posix = await createPosixSpawner({
+        spawnProcess: onPosix.spawn,
+        stdioFile: join(root, 'run', 'host-stdio.log')
+      })({ ...request, file: '/opt/DwarfAI-Miners/dwarfai-miners', cwd: root })
+      expect(posix.kind).toBe('launched')
+      const [call] = onPosix.calls
+      expect(call?.options).toMatchObject({ shell: false, windowsHide: true, detached: true })
+      expect((call?.options.stdio as unknown[])[0]).toBe('ignore')
+      expect(typeof (call?.options.stdio as unknown[])[1]).toBe('number')
+      expect(call?.child.unrefs).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('[ADR-002] on Windows the Host request reaches the launcher step on stdin, never in its argv', async () => {
+    const request = buildHostSpawn({
+      execPath: 'C:\\DwarfAI\\DwarfAI-Miners.exe',
+      hostEntry: 'C:\\DwarfAI\\resources\\app.asar\\out\\host\\main.js',
+      hostDataDir: 'C:\\Users\\j\\AppData\\Roaming\\DwarfAI-Miners\\host',
+      uiEnv: { PROVIDER_API_KEY: SECRET }
+    })
+    const recorder = new RecordingSpawnProcess()
+    recorder.onSpawn = (child) => child.print('launched wmi 4242')
+    await createWindowsSpawner({ spawnProcess: recorder.spawn, env: {} })(request)
+    const [step] = recorder.calls
+
+    const argv = [step?.file, ...(step?.args ?? []), encodedScript(step?.args ?? [])].join(' ')
+    expect(argv).not.toContain(SECRET)
+    expect(argv).not.toContain('DWARFAI_HOST_DATA_DIR')
+    expect(JSON.stringify(step?.options.env ?? {})).not.toContain(SECRET)
+    expect(step?.child.stdinText).toMatch(/^\{/)
+    const sent = JSON.parse(step?.child.stdinText ?? '') as { env: string[]; commandLine: string }
+    expect(sent.env).toContain(`PROVIDER_API_KEY=${SECRET}`)
+    expect(sent.env).toContain('ELECTRON_RUN_AS_NODE=1')
+    expect(sent.commandLine).toBe(
+      '"C:\\DwarfAI\\DwarfAI-Miners.exe" "C:\\DwarfAI\\resources\\app.asar\\out\\host\\main.js"'
+    )
+  })
+})

@@ -42,6 +42,12 @@ production paths; no production code knows the kit.
 Stubs today: `claude` (replays into `CLAUDE_CONFIG_DIR`), `codex` (`CODEX_HOME`) and `opencode`
 (`XDG_DATA_HOME`, the store root holding `opencode/opencode.db`).
 
+`bin/fake-host/fake-host.cjs` is not a provider stub: it stands in for the DwarfAI Host in the Host launcher's OS
+lane (`src/ui-main/hostLauncher/detach.os.test.ts`, ISSUE-030). The launcher starts it as it starts the real Host
+(Electron with `ELECTRON_RUN_AS_NODE=1`); it reads `<DWARFAI_HOST_DATA_DIR>/fake-host.json` for its endpoint and mode,
+binds the endpoint as the Host's mutex (`ALREADY_RUNNING` when a Host answers there), writes `run/ui.token`, answers
+`hello`, can report `migrating` or exit `ELEVATED_REFUSED`, and ends itself after `maxLifeMs`.
+
 **A script** is `{ version, replay, exitCode, ignoreStdin }`. `--version` prints `version` and exits 0. Otherwise the
 stub runs the `replay` steps in order: `{ file, records }` writes into `file`, a relative path under the provider
 directory (`.jsonl`: one JSON line per record; `.json`: its single record; `.db`: each record is an SQL statement run
