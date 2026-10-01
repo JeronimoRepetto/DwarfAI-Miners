@@ -30,7 +30,7 @@ import {
   type SetOpenCodePermissionsResult
 } from '../host-protocol/params'
 import type { IpcResult } from '../host-protocol'
-import type { FeedPage, MineHistoryView, MineId, SupplierEntryView } from '../wire'
+import type { FeedPage, MineHistoryView, MineId, StopAllOutcome, SupplierEntryView } from '../wire'
 import { CHANNELS, PRELOAD_HELPERS, todayShapeOf } from './channels'
 import type { ChannelSpec } from './channelSpec'
 import { ROW_IDS } from './rowIds'
@@ -74,6 +74,30 @@ const NEW_ROWS = [
     id: 'A-N30',
     wire: 'diag:renderer:report',
     member: 'reportRendererDiagnostic',
+    kind: 'send',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N25',
+    wire: 'tray:stopEverything:requested',
+    member: 'onStopEverythingRequested',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N26',
+    wire: 'tray:stopEverything:confirm',
+    member: 'confirmStopEverything',
+    kind: 'invoke',
+    placement: 'host',
+    sensitive: false
+  },
+  {
+    id: 'A-N27',
+    wire: 'tray:stopEverything:cancel',
+    member: 'cancelStopEverything',
     kind: 'send',
     placement: 'ui-local',
     sensitive: false
@@ -149,6 +173,7 @@ function nonStrictObjects(schema: z.ZodTypeAny, path: string, seen = new Set<unk
 const U1 = '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b'
 const U2 = '0190a1b2-c3d4-7e5f-9a6b-7c8d9e0f1a2c'
 const LEGACY_DWARF = 'claude:3f1c9a2e-session'
+const CONFIRMATION = '6f1d2c3b-4a59-4e6d-8c7b-9a0b1c2d3e4f'
 const LEGACY_MINE = 'mine:/home/person/project'
 const TYPOGRAPHY = {
   style: 'dwarfai',
@@ -241,7 +266,9 @@ const VALID_REQUESTS: Record<string, unknown> = {
   pathForDroppedFile: new File(['x'], 'dropped.txt'),
   'dwarf:setName': { dwarfId: LEGACY_DWARF, name: 'Gimli' },
   'dwarf:resetName': LEGACY_DWARF,
-  'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 }
+  'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 },
+  'tray:stopEverything:confirm': { confirmationId: CONFIRMATION, requestId: U2 },
+  'tray:stopEverything:cancel': { confirmationId: CONFIRMATION }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */
@@ -615,5 +642,27 @@ describe('CHANNELS registry (14 §2.1, ADR-019 item 6)', () => {
     expectTypeOf<Res<'opencode:password:set'>>().toEqualTypeOf<IpcResult<OpenCodeSettingsView>>()
     expectTypeOf<Req<'opencode:password:clear'>>().toEqualTypeOf<undefined>()
     expectTypeOf<Res<'opencode:password:clear'>>().toEqualTypeOf<IpcResult<OpenCodeSettingsView>>()
+    // NEW members of 14 §3.8 declared so far.
+    expectTypeOf<Res<'tray:stopEverything:requested'>>().toEqualTypeOf<{ confirmationId: string }>()
+    expectTypeOf<Req<'tray:stopEverything:confirm'>>().toEqualTypeOf<{
+      confirmationId: string
+      requestId: string
+    }>()
+    expectTypeOf<Res<'tray:stopEverything:confirm'>>().toEqualTypeOf<IpcResult<StopAllOutcome>>()
+    expectTypeOf<Req<'tray:stopEverything:cancel'>>().toEqualTypeOf<{ confirmationId: string }>()
+    expectTypeOf<Res<'tray:stopEverything:cancel'>>().toEqualTypeOf<undefined>()
+  })
+
+  it('[ADR-002] the Stop everything rows carry the confirmationId UI main issued and A-N26 the requestId of host.shutdown', () => {
+    const push = registry['tray:stopEverything:requested']?.response
+    expect(push?.safeParse({ confirmationId: CONFIRMATION }).success).toBe(true)
+    expect(push?.safeParse({ confirmationId: 'not-an-id' }).success).toBe(false)
+    const confirm = registry['tray:stopEverything:confirm']?.request
+    expect(confirm?.safeParse({ confirmationId: CONFIRMATION, requestId: 'r-1' }).success).toBe(
+      false
+    )
+    const answer = registry['tray:stopEverything:confirm']?.response
+    expect(answer?.safeParse({ ok: true, value: { ended: [U1], failed: [U2] } }).success).toBe(true)
+    expect(answer?.safeParse({ ok: true, value: { ended: [U1] } }).success).toBe(false)
   })
 })

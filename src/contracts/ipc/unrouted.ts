@@ -46,5 +46,9 @@ export const STEP_ORDER: readonly StepId[] = [
 
 /** Each registry-declared but unrouted NEW row, with the step that will route it. */
 export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
-  'diag:renderer:report': 'cut-0' // A-N30, routed ui-local by ISSUE-056 (21 §2 cut 0)
+  'diag:renderer:report': 'cut-0', // A-N30, routed ui-local by ISSUE-056 (21 §2 cut 0)
+  // A-N25, A-N27 routed ui-local and A-N26 host (through LegacyEndFirstAdapter, ISSUE-054) by ISSUE-056 (21 §2 cut 0)
+  'tray:stopEverything:requested': 'cut-0',
+  'tray:stopEverything:confirm': 'cut-0',
+  'tray:stopEverything:cancel': 'cut-0'
 }

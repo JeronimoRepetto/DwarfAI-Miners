@@ -176,6 +176,10 @@ export function goldenApi(sample: GoldenSample): Api {
     getLaunchView: () => Promise.resolve({ ...(sample.launch ?? DEFAULT_LAUNCH_VIEW) }),
     setLaunchView: none,
     // A-N30: a golden renders a fixed sample, so a renderer diagnostic goes nowhere.
-    reportRendererDiagnostic: none
+    reportRendererDiagnostic: none,
+    // A-N25…A-N27: a golden has no tray, so no confirmation is ever asked for and nothing stops.
+    onStopEverythingRequested: unsubscribe,
+    confirmStopEverything: refuse('confirmStopEverything'),
+    cancelStopEverything: none
   }
 }

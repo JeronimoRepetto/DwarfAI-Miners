@@ -11,6 +11,7 @@ import {
   feedPageSchema,
   mineHistoryViewSchema,
   mineIdSchema,
+  stopAllOutcomeSchema,
   supplierEntryViewSchema
 } from '../wire'
 import { ipcResultSchema } from '../host-protocol/errors'
@@ -67,9 +68,12 @@ import {
 } from './today/preferences'
 import {
   activateDwarfRequestSchema,
+  cancelStopEverythingSchema,
+  confirmStopEverythingSchema,
   consoleOpenResultSchema,
   openCodeSettingsViewSchema,
-  rendererDiagnosticSchema
+  rendererDiagnosticSchema,
+  stopEverythingRequestedSchema
 } from './windowApi'
 
 const none = noPayloadSchema
@@ -608,6 +612,32 @@ export const CHANNELS = {
     placement: 'ui-local',
     status: 'new',
     request: rendererDiagnosticSchema,
+    response: none
+  },
+  // A-N25…A-N27 Stop everything and quit (PO #105; OQ-47; ADR-002 D7): the confirmation UI main asks for (push), its
+  // Confirm, relayed to the Host as `host.shutdown {mode:'stop-all'}` (14 §6.3), and its Cancel
+  'tray:stopEverything:requested': {
+    name: 'tray:stopEverything:requested',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: stopEverythingRequestedSchema
+  },
+  'tray:stopEverything:confirm': {
+    name: 'tray:stopEverything:confirm',
+    kind: 'invoke',
+    placement: 'host',
+    status: 'new',
+    request: confirmStopEverythingSchema,
+    response: ipcResultSchema(stopAllOutcomeSchema)
+  },
+  'tray:stopEverything:cancel': {
+    name: 'tray:stopEverything:cancel',
+    kind: 'send',
+    placement: 'ui-local',
+    status: 'new',
+    request: cancelStopEverythingSchema,
     response: none
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:

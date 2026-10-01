@@ -9,6 +9,9 @@
 - **Updated for ISSUE-055:** A-N30 `reportRendererDiagnostic` (`diag:renderer:report`, NEW) is declared in the
   registry and now has a generated preload member, so its row moved to the found table. The router registers its
   `ipcMain` listener from the registry, not by a literal, so the preload is the only file the scanner finds.
+- **Updated for ISSUE-053:** A-N25 `onStopEverythingRequested`, A-N26 `confirmStopEverything` and A-N27
+  `cancelStopEverything` (`tray:stopEverything:*`, NEW) are declared in the registry and now have generated preload
+  members, so their rows moved to the found table, as A-N30 did.
 - **Compared with:** `14-ipc-contract.md` §2.1, §2.2, §7 and §8 I-21 of the architecture package. `14` is frozen
   and lives in the package, not in this repository.
 - **For the registry issue (ISSUE-007):** `dwarf:setName` and `dwarf:resetName` have no `14` §2 id. Their
@@ -37,11 +40,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 1   | 11     | 0        | 60    |
-| Pushes                                            | 2    | 0      | 0   | 4      | 0        | 6     |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 3   | 11     | 0        | 62    |
+| Pushes                                            | 2    | 0      | 1   | 4      | 0        | 7     |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 16     | 1   | 15     | 0        | 67    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 32  | —      | —        | 32    |
+| **Found total**                                   | 35   | 16     | 4   | 15     | 0        | 70    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 29  | —      | —        | 29    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -133,45 +136,45 @@ kind `14` gives it.
 | `shell:openExternalLink`         | `openExternalLink`            | invoke | src/main/index.ts:1790<br>src/preload/index.ts:687<br>src/shared/contracts.ts:5199                                                | A-21    | KEEP   | —                 |                                                                                                                                           |
 | `shortcut:get`                   | `getToggleShortcut`           | invoke | src/main/index.ts:1659<br>src/preload/index.ts:599<br>src/shared/contracts.ts:5087                                                | A-10    | KEEP   | —                 |                                                                                                                                           |
 | `shortcut:set`                   | `setToggleShortcut`           | invoke | src/main/index.ts:1660<br>src/preload/index.ts:603<br>src/shared/contracts.ts:5088                                                | A-11    | KEEP   | —                 |                                                                                                                                           |
+| `tray:stopEverything:cancel`     | `cancelStopEverything`        | send   | src/preload/index.ts:521                                                                                                          | A-N27   | NEW    | —                 | Declared by ISSUE-053; its preload member is generated (ISSUE-045); main registers it by the router's registry loop, unrouted until cut 0 |
+| `tray:stopEverything:confirm`    | `confirmStopEverything`       | invoke | src/preload/index.ts:519                                                                                                          | A-N26   | NEW    | —                 | Declared by ISSUE-053; its preload member is generated (ISSUE-045); main registers it by the router's registry loop, unrouted until cut 0 |
+| `tray:stopEverything:requested`  | `onStopEverythingRequested`   | push   | src/preload/index.ts:512                                                                                                          | A-N25   | NEW    | —                 | Declared by ISSUE-053; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 0                               |
 | `typography:preferences:changed` | `onTypographyPreferences`     | push   | src/legacy-bridge/LegacyRuntimeRoute.ts:908<br>src/main/index.ts:1409<br>src/preload/index.ts:905<br>src/shared/contracts.ts:5442 | A-P6    | KEEP   | —                 |                                                                                                                                           |
 | `typography:preferences:get`     | `getTypographyPreferences`    | invoke | src/main/index.ts:1398<br>src/preload/index.ts:895<br>src/shared/contracts.ts:5440                                                | A-45    | KEEP   | —                 |                                                                                                                                           |
 | `typography:preferences:set`     | `setTypographyPreferences`    | invoke | src/main/index.ts:1399<br>src/preload/index.ts:900<br>src/shared/contracts.ts:5441                                                | A-46    | KEEP   | —                 |                                                                                                                                           |
 
 ### 14 §2.2 rows not in the tree
 
-| Wire name                         | Member                      | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
-| --------------------------------- | --------------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
-| `host:snapshot`                   | `getHostSnapshot`           | invoke | not found | A-N01 | NEW    | —                 |                                                                                               |
-| `host:event`                      | `onHostEvent`               | push   | not found | A-N02 | NEW    | —                 |                                                                                               |
-| `host:connection:get`             | `getHostConnection`         | invoke | not found | A-N03 | NEW    | —                 |                                                                                               |
-| `host:connection:changed`         | `onHostConnection`          | push   | not found | A-N04 | NEW    | —                 |                                                                                               |
-| `host:connection:retry`           | `retryHostConnection`       | invoke | not found | A-N05 | NEW    | —                 |                                                                                               |
-| `dwarf:message:retry`             | `retryDwarfMessage`         | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
-| `ask:step:set`                    | `setAskStep`                | invoke | not found | A-N07 | NEW    | —                 |                                                                                               |
-| `dwarf:rename`                    | `renameDwarf`               | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
-| `dwarf:name:reset`                | `resetDwarfName`            | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
-| `host:recovery:retry`             | `retryRecovery`             | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |
-| `host:recovery:dismiss`           | `dismissRecovery`           | invoke | not found | A-N11 | NEW    | —                 |                                                                                               |
-| `ui:preferences:reset`            | `onUiPreferencesReset`      | push   | not found | A-N12 | NEW    | —                 |                                                                                               |
-| `mode:move`                       | `moveToMode`                | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:transition`                 | `onModeTransition`          | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:transition:done`            | `modeTransitionDone`        | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `mode:revealDwarfChat`            | `onRevealDwarfChat`         | push   | not found | A-N16 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `ui:session:get`                  | `getUiSession`              | invoke | not found | A-N17 | NEW    | —                 |                                                                                               |
-| `ui:session:patch`                | `patchUiSession`            | send   | not found | A-N18 | NEW    | —                 |                                                                                               |
-| `ui:session:changed`              | `onUiSessionChanged`        | push   | not found | A-N19 | NEW    | —                 |                                                                                               |
-| `ui:preferences:get`              | `getUiPreferences`          | invoke | not found | A-N20 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `ui:preferences:set`              | `setUiPreference`           | invoke | not found | A-N21 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:clickThrough`               | `setVetaClickThrough`       | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `veta:layout`                     | `layoutVeta`                | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `window:limits`                   | `getWindowingLimits`        | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `tray:stopEverything:requested`   | `onStopEverythingRequested` | push   | not found | A-N25 | NEW    | —                 |                                                                                               |
-| `tray:stopEverything:confirm`     | `confirmStopEverything`     | invoke | not found | A-N26 | NEW    | —                 |                                                                                               |
-| `tray:stopEverything:cancel`      | `cancelStopEverything`      | send   | not found | A-N27 | NEW    | —                 |                                                                                               |
-| `veta:dock:changed`               | `onVetaDockChanged`         | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `dwarf:stop`                      | `stopDwarf`                 | invoke | not found | A-N29 | NEW    | —                 |                                                                                               |
-| `claude:hooks:set`                | `setClaudeHooksEnabled`     | invoke | not found | A-N31 | NEW    | —                 |                                                                                               |
-| `welcome:answer`                  | `answerWelcome`             | invoke | not found | A-N32 | NEW    | —                 |                                                                                               |
-| `host:connection:confirm-restart` | `confirmHostRestart`        | invoke | not found | A-N33 | NEW    | —                 | Dormant in v1 (14 §2.2)                                                                       |
+| Wire name                         | Member                  | Kind   | Found at  | 14 id | Status | Amendment request | Notes                                                                                         |
+| --------------------------------- | ----------------------- | ------ | --------- | ----- | ------ | ----------------- | --------------------------------------------------------------------------------------------- |
+| `host:snapshot`                   | `getHostSnapshot`       | invoke | not found | A-N01 | NEW    | —                 |                                                                                               |
+| `host:event`                      | `onHostEvent`           | push   | not found | A-N02 | NEW    | —                 |                                                                                               |
+| `host:connection:get`             | `getHostConnection`     | invoke | not found | A-N03 | NEW    | —                 |                                                                                               |
+| `host:connection:changed`         | `onHostConnection`      | push   | not found | A-N04 | NEW    | —                 |                                                                                               |
+| `host:connection:retry`           | `retryHostConnection`   | invoke | not found | A-N05 | NEW    | —                 |                                                                                               |
+| `dwarf:message:retry`             | `retryDwarfMessage`     | invoke | not found | A-N06 | NEW    | —                 |                                                                                               |
+| `ask:step:set`                    | `setAskStep`            | invoke | not found | A-N07 | NEW    | —                 |                                                                                               |
+| `dwarf:rename`                    | `renameDwarf`           | invoke | not found | A-N08 | NEW    | —                 | Successor of the found legacy `dwarf:setName` (14 §8 I-21)                                    |
+| `dwarf:name:reset`                | `resetDwarfName`        | invoke | not found | A-N09 | NEW    | —                 | Successor of the found legacy `dwarf:resetName` (14 §8 I-21), which uses the same member name |
+| `host:recovery:retry`             | `retryRecovery`         | invoke | not found | A-N10 | NEW    | —                 |                                                                                               |
+| `host:recovery:dismiss`           | `dismissRecovery`       | invoke | not found | A-N11 | NEW    | —                 |                                                                                               |
+| `ui:preferences:reset`            | `onUiPreferencesReset`  | push   | not found | A-N12 | NEW    | —                 |                                                                                               |
+| `mode:move`                       | `moveToMode`            | invoke | not found | A-N13 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:transition`                 | `onModeTransition`      | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:transition:done`            | `modeTransitionDone`    | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `mode:revealDwarfChat`            | `onRevealDwarfChat`     | push   | not found | A-N16 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `ui:session:get`                  | `getUiSession`          | invoke | not found | A-N17 | NEW    | —                 |                                                                                               |
+| `ui:session:patch`                | `patchUiSession`        | send   | not found | A-N18 | NEW    | —                 |                                                                                               |
+| `ui:session:changed`              | `onUiSessionChanged`    | push   | not found | A-N19 | NEW    | —                 |                                                                                               |
+| `ui:preferences:get`              | `getUiPreferences`      | invoke | not found | A-N20 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `ui:preferences:set`              | `setUiPreference`       | invoke | not found | A-N21 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:clickThrough`               | `setVetaClickThrough`   | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:layout`                     | `layoutVeta`            | invoke | not found | A-N23 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `window:limits`                   | `getWindowingLimits`    | invoke | not found | A-N24 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `veta:dock:changed`               | `onVetaDockChanged`     | push   | not found | A-N28 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
+| `dwarf:stop`                      | `stopDwarf`             | invoke | not found | A-N29 | NEW    | —                 |                                                                                               |
+| `claude:hooks:set`                | `setClaudeHooksEnabled` | invoke | not found | A-N31 | NEW    | —                 |                                                                                               |
+| `welcome:answer`                  | `answerWelcome`         | invoke | not found | A-N32 | NEW    | —                 |                                                                                               |
+| `host:connection:confirm-restart` | `confirmHostRestart`    | invoke | not found | A-N33 | NEW    | —                 | Dormant in v1 (14 §2.2)                                                                       |
 
 <!-- reinventory-table:end -->
