@@ -180,6 +180,11 @@ export function goldenApi(sample: GoldenSample): Api {
     // A-N25…A-N27: a golden has no tray, so no confirmation is ever asked for and nothing stops.
     onStopEverythingRequested: unsubscribe,
     confirmStopEverything: refuse('confirmStopEverything'),
-    cancelStopEverything: none
+    cancelStopEverything: none,
+    // A-N03…A-N05, A-N33: a golden renders a fixed sample, never a Host connection, so these are not answered.
+    getHostConnection: refuse('getHostConnection'),
+    onHostConnection: unsubscribe,
+    retryHostConnection: refuse('retryHostConnection'),
+    confirmHostRestart: refuse('confirmHostRestart')
   }
 }

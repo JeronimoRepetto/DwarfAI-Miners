@@ -289,6 +289,16 @@ export interface DwarfAiMinersApi {
   ) => Promise<TargetResult<'tray:stopEverything:confirm'>>
   /** A-N27 · `tray:stopEverything:cancel` · send · NEW · target shape */
   cancelStopEverything: (request: TargetRequest<'tray:stopEverything:cancel'>) => void
+  /** A-N03 · `host:connection:get` · invoke · NEW · target shape */
+  getHostConnection: () => Promise<TargetResult<'host:connection:get'>>
+  /** A-N04 · `host:connection:changed` · push · NEW · target shape */
+  onHostConnection: (
+    listener: (payload: TargetResult<'host:connection:changed'>) => void
+  ) => () => void
+  /** A-N05 · `host:connection:retry` · invoke · NEW · target shape */
+  retryHostConnection: () => Promise<TargetResult<'host:connection:retry'>>
+  /** A-N33 · `host:connection:confirm-restart` · invoke · NEW · target shape */
+  confirmHostRestart: () => Promise<TargetResult<'host:connection:confirm-restart'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -519,7 +529,18 @@ const api: DwarfAiMinersApi = {
   confirmStopEverything: (request) =>
     invokeOrReject(() => ipcRenderer.invoke('tray:stopEverything:confirm', request)),
   cancelStopEverything: (request) =>
-    sendOrDrop(() => ipcRenderer.send('tray:stopEverything:cancel', request))
+    sendOrDrop(() => ipcRenderer.send('tray:stopEverything:cancel', request)),
+  getHostConnection: () => invokeOrReject(() => ipcRenderer.invoke('host:connection:get')),
+  onHostConnection: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'host:connection:changed'>)
+    }
+    ipcRenderer.on('host:connection:changed', wrapped)
+    return () => ipcRenderer.removeListener('host:connection:changed', wrapped)
+  },
+  retryHostConnection: () => invokeOrReject(() => ipcRenderer.invoke('host:connection:retry')),
+  confirmHostRestart: () =>
+    invokeOrReject(() => ipcRenderer.invoke('host:connection:confirm-restart'))
 }
 
 contextBridge.exposeInMainWorld('api', api)

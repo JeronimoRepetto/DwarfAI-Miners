@@ -50,5 +50,11 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // A-N25, A-N27 routed ui-local and A-N26 host (through LegacyEndFirstAdapter, ISSUE-054) by ISSUE-056 (21 §2 cut 0)
   'tray:stopEverything:requested': 'cut-0',
   'tray:stopEverything:confirm': 'cut-0',
-  'tray:stopEverything:cancel': 'cut-0'
+  'tray:stopEverything:cancel': 'cut-0',
+  'host:connection:get': 'cut-0', // A-N03, routed ui-local by ISSUE-056 (21 §2 cut 0)
+  'host:connection:changed': 'cut-0', // A-N04, routed ui-local by ISSUE-056 (21 §2 cut 0)
+  'host:connection:retry': 'cut-0', // A-N05, routed ui-local by ISSUE-056 (21 §2 cut 0)
+  // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
+  // restart"); no handler in v1 (review R8B-06)
+  'host:connection:confirm-restart': 'generation-2'
 }

@@ -114,7 +114,10 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'dwarf:resetName': LEGACY_DWARF,
   'diag:renderer:report': { event: 'renderer.error', errCode: 'TypeError', count: 3 },
   'tray:stopEverything:confirm': { confirmationId: CONFIRMATION, requestId: U2 },
-  'tray:stopEverything:cancel': { confirmationId: CONFIRMATION }
+  'tray:stopEverything:cancel': { confirmationId: CONFIRMATION },
+  'host:connection:get': undefined,
+  'host:connection:retry': undefined,
+  'host:connection:confirm-restart': undefined
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */
