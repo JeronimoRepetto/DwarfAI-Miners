@@ -170,6 +170,7 @@ function rebuiltPanel(windows: FakeWindowFactory, onBuilt: () => void) {
         isAlwaysOnTop: () => false,
         raise: () => undefined,
         isMinimized: () => false,
+        isVisible: () => windows.built.length > 0 && windows.panel().visible,
         onMinimizedChanged: () => undefined
       },
       screen: new FakeScreenAreaProvider([

@@ -49,6 +49,8 @@ describe('Panel window rows (14 §2.1 A-01…A-05, A-08, A-09, A-P1)', () => {
     isAlwaysOnTop = () => this.pinned
     raise = () => undefined
     isMinimized = () => false
+    // AMENDED for ISSUE-056 (was: absent): the visibility read-back of the 2026-10-01 amendment.
+    isVisible = () => this.windows.built.length > 0 && this.windows.panel().visible
     onMinimizedChanged = () => undefined
   }
 

@@ -78,6 +78,12 @@ class FakePanelSurface implements PanelWindowSurface {
     return this.minimized
   }
 
+  // AMENDED for ISSUE-056 (was: absent): the visibility read-back of the 2026-10-01 amendment; a window the fake never
+  // built is not visible, and asking builds none.
+  isVisible(): boolean {
+    return this.windows.built.length > 0 && this.windows.panel().visible
+  }
+
   onMinimizedChanged(h: () => void): void {
     this.minimizeHandlers.push(h)
   }
@@ -435,6 +441,7 @@ describe('the Panel window built by a factory that asks where it opens (ISSUE-05
       isAlwaysOnTop: () => (windows.panel(), surface.isAlwaysOnTop()),
       raise: () => (windows.panel(), surface.raise()),
       isMinimized: () => (windows.panel(), surface.isMinimized()),
+      isVisible: () => surface.isVisible(),
       onMinimizedChanged: (h) => surface.onMinimizedChanged(h)
     }
     use = createPanelWindow({
@@ -451,5 +458,21 @@ describe('the Panel window built by a factory that asks where it opens (ISSUE-05
     expect(built.panel().bounds).toEqual(
       panelBounds(PRIMARY.workArea, 'right', { mineOpen: false, dockOpen: false }, 32)
     )
+  })
+})
+
+describe('the Panel window closed by the OS (ISSUE-056; 16 §4.14 read-backs, visible)', () => {
+  it('[US-SHELL-002.AC01] a Panel closed outside the app reads as not on screen, and the next toggle shows it again', () => {
+    const { panel, window } = subject()
+    panel.show()
+    expect(panel.visible()).toBe(true)
+
+    // The OS or the person closed the window; the use case was not asked.
+    window().visible = false
+
+    expect(panel.visible(), 'A-05 answers what the window is').toBe(false)
+    panel.toggleVisible()
+    expect(window().visible, 'the toggle shows it, not hides it').toBe(true)
+    expect(panel.visible()).toBe(true)
   })
 })

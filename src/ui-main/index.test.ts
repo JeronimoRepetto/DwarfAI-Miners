@@ -361,6 +361,8 @@ describe('ui-main composition root (05 §2.3)', () => {
           isAlwaysOnTop: () => false,
           raise: () => undefined,
           isMinimized: () => false,
+          // AMENDED for ISSUE-056 (was: absent): the visibility read-back of the 2026-10-01 amendment.
+          isVisible: () => windows.built.length > 0 && windows.panel().visible,
           onMinimizedChanged: () => undefined
         },
         screen: new FakeScreenAreaProvider([

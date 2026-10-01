@@ -41,6 +41,12 @@ export interface PanelWindowSurface {
   /** Brings a visible window to the front and focuses it; a hidden one stays hidden (#165). */
   raise(): void
   isMinimized(): boolean
+  /**
+   * Whether the Panel window exists and is on screen, read back from the window (owner-approved additive amendment to
+   * 16 §4.14, 2026-10-01, "PanelWindowSurface read-backs (visible)"): a window the OS or the person closed is not, and
+   * asking builds none.
+   */
+  isVisible(): boolean
   /** The person minimized or restored the window. */
   onMinimizedChanged(h: () => void): void
 }
@@ -152,8 +158,6 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   let held: PanelColumns | null = null
   /** Whether the window was built: nothing reads or moves a window before it exists. */
   let built = false
-  /** Whether the Panel is shown (S10 `panel` vs `hidden`); minimized is the window's, read back. */
-  let shown = false
   /** The visibility the page was last told (A-P1), so each change is pushed once. */
   let told = false
 
@@ -187,7 +191,13 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   /** What the window is right now: the layout asked, less what the window as it ended up cannot hold. */
   const current = (): PanelLayout => ({ ...layoutAsked(), ...held })
 
-  const visible = (): boolean => built && shown && !surface.isMinimized()
+  /**
+   * Whether the Panel is shown (S10 `panel` vs `hidden`), read back from its window (16 §4.14 read-backs, visible): a
+   * window closed outside the app is not, whatever this use case last did with it (ISSUE-056).
+   */
+  const shown = (): boolean => built && surface.isVisible()
+
+  const visible = (): boolean => shown() && !surface.isMinimized()
 
   const publish = (): void => {
     const now = visible()
@@ -211,14 +221,12 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
     // Re-derived on every show: a Panel hidden across a display change comes back docked to the display as it is now.
     fit()
     panel().showInactive()
-    shown = true
     // Shown is not raised (#165): the window may come back under whatever had the foreground.
     surface.raise()
     publish()
   }
 
   const hide = (): void => {
-    shown = false
     if (!built) return
     panel().hide()
     publish()
@@ -235,7 +243,7 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   return {
     hide,
     show,
-    toggleVisible: () => (shown ? hide() : show()),
+    toggleVisible: () => (shown() ? hide() : show()),
     setAlwaysOnTop(on) {
       const real = built ? surface.setAlwaysOnTop(on) : on
       persist('alwaysOnTop', real)
@@ -256,7 +264,7 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
       return current()
     },
     raise() {
-      if (shown && built) surface.raise()
+      if (shown()) surface.raise()
     },
     alwaysOnTop: () => (built ? surface.isAlwaysOnTop() : store.load('alwaysOnTop')),
     visible,
