@@ -56,6 +56,29 @@ describe('FaultyDuplex (CH-03)', () => {
     expect(clientClosed).toBe(true)
   })
 
+  it('[CH-03] stallReads leaves the Host bytes unsent, as a client that stopped reading, and resumeReads delivers them and drains', async () => {
+    const faults = new FaultyDuplex()
+    const back: number[][] = []
+    faults.client.on('data', (chunk: Uint8Array) => back.push([...chunk]))
+    let drained = 0
+    faults.host.on('drain', () => (drained += 1))
+    faults.stallReads()
+    const chunk = new Uint8Array(32 * 1024).fill(7)
+    faults.host.write(chunk)
+    faults.host.write(chunk)
+    await settle()
+    expect(back).toEqual([])
+    // The bytes sit unsent on the Host end, as in a full socket buffer.
+    expect(faults.host.writableLength).toBe(64 * 1024)
+    expect(faults.host.writableNeedDrain).toBe(true)
+
+    faults.resumeReads()
+    await settle()
+    expect(back.flat()).toHaveLength(64 * 1024)
+    expect(faults.host.writableLength).toBe(0)
+    expect(drained).toBe(1)
+  })
+
   it('[CH-03] close kills both ends, as a closed pipe or socket handle', async () => {
     const faults = new FaultyDuplex()
     const seen = hostReads(faults)
