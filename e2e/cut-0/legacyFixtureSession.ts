@@ -41,9 +41,13 @@ export async function seedLegacyFixtureSession(
   profile: IsolatedProfile,
   maxMs = 120_000
 ): Promise<LegacyFixtureSession> {
+  // Detached on POSIX, as today's runtime spawns a launch (`launchRunner.ts`): the process leads its own group, which
+  // is what today's end signals there (`kill -TERM -- -<pid>`, `processEnd.ts`). On Windows the end is `taskkill /T` by
+  // pid, and a detached child would only lose its console.
   const child: ChildProcess = spawn(process.execPath, [SLEEPER, 'sleep', String(maxMs)], {
     stdio: ['pipe', 'ignore', 'ignore'],
-    windowsHide: true
+    windowsHide: true,
+    detached: process.platform !== 'win32'
   })
   let exitedAt: number | null = null
   child.once('exit', () => (exitedAt = Date.now()))
