@@ -77,6 +77,15 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     expect(job).not.toContain(REQUIRED_CHECK)
   })
 
+  // ADDED for ISSUE-051: the built app's Host binds its pipe through the owner-only pipe helper and the UI starts it
+  // through the launch helper (prebuilds/, git-ignored), so the Windows E2E leg builds them before the E2E run.
+  it('[ADR-002] the e2e job builds the Windows native modules before it runs the E2E cases', () => {
+    const job = jobText('e2e')
+    const native = job.search(/if: runner\.os == 'Windows'\n\s+run: pnpm build:native --arch x64\n/)
+    expect(native, 'the Windows leg builds the native modules').toBeGreaterThanOrEqual(0)
+    expect(native).toBeLessThan(job.search(/if: runner\.os != 'Linux'\n\s+run: pnpm test:e2e\n/))
+  })
+
   it('[ADR-001] the perf job runs nightly and on release tags and uploads perf-results', () => {
     const job = jobText('perf')
     expect(job).toContain(THREE_OSES)

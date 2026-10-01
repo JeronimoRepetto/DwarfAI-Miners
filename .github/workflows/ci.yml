@@ -397,6 +397,13 @@ jobs:
       - name: Install the Electron binary
         run: pnpm exec install-electron
 
+      # The Windows native modules the built app loads from prebuilds/ (git-ignored): the
+      # Host's owner-only pipe helper (ADR-003 item 2) and the UI's launch helper (ADR-002
+      # D6 item 1). Without them the Host the app starts cannot bind its pipe (ISSUE-051).
+      - name: Build the Windows native modules (x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
       - name: Build (E2E build profile)
         env:
           DWARFAI_BUILD_PROFILE: e2e
