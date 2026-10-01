@@ -7,6 +7,10 @@
 // copy under the per-OS root of ADR-002 D5 (versionedCopy.ts), made from the directory holding the
 // app executable and checked against the build's `host-manifest.json`; the old copies are collected
 // right after (versionedCopyGc.ts).
+//
+// createNodeUpgradePorts gives the upgrade handshake (upgradeFlow.ts; ADR-002 D8) the same endpoint
+// and copy root: a `ui` link to the running Host (hostLink.ts) and this UI's versioned copy, made or
+// reused with the spawn gate held, as the `host.upgrade.request` target.
 import { execFile } from 'node:child_process'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
@@ -16,6 +20,7 @@ import type { UiLog } from '../diagnostics/uiLogger'
 import { resolveUiEndpoint } from './endpointFacts'
 import { NodeGateFiles } from './gateFiles'
 import { createHelloProber } from './helloProber'
+import { createHostLinkOpener } from './hostLink'
 import { createHostLauncher, type HostLauncher } from './launcher'
 import type { HostCopyPreparer, HostSpawner, ProcessStart } from './ports'
 import { createPosixSpawner } from './posix'
@@ -29,6 +34,7 @@ import {
   type CopyPlatform
 } from './versionedCopy'
 import { collectVersionedCopies } from './versionedCopyGc'
+import type { HostAttach, UpgradeFlowDeps } from './upgradeFlow'
 import { createWindowsSpawner } from './windows'
 
 /** The Host's run folder and the files the launcher reads or writes there. */
@@ -63,6 +69,11 @@ export interface NodeHostLauncherOptions {
   endpoint?: HostEndpoint
   /** The copy root to use instead of the ADR-002 D5 one (OS-lane tests use a temporary folder). */
   copyRoot?: string
+  /**
+   * The protocol version the upgrade handshake's hello carries instead of this build's (OS-lane
+   * tests stand in for a newer or an older UI build, ISSUE-032).
+   */
+  protocolVersion?: number
 }
 
 export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLauncher {
@@ -71,13 +82,6 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
   const runQuery = createQueryRunner()
   const runDir = join(options.hostDataDir, RUN_DIR)
   const readStart = createProcessStartReader({ platform, runQuery, env: uiEnv })
-  const self = async (): Promise<ProcessStart> => {
-    const start = await readStart(process.pid)
-    return {
-      pid: process.pid,
-      processStartTimeMs: start.kind === 'started' ? start.ms : Math.round(performance.timeOrigin)
-    }
-  }
   const spawner: HostSpawner =
     platform === 'win32'
       ? createWindowsSpawner({ env: uiEnv })
@@ -110,12 +114,7 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
           protocolVersion: PROTOCOL_VERSION,
           client: { ...options.client, pid: process.pid }
         }),
-        gate: new SpawnGate({
-          files: new NodeGateFiles(join(runDir, SPAWN_GATE_FILE)),
-          probe: createIdentityProbe(readStart),
-          clock: { now: Date.now },
-          self
-        }),
+        gate: spawnGateIn(runDir, readStart),
         spawner,
         prepareCopy,
         host: {
@@ -131,6 +130,89 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
       return launcher.ensureHostRunning()
     }
   }
+}
+
+/** The upgrade handshake's two Node ports (upgradeFlow.ts), on the launcher's endpoint and copy root. */
+export interface NodeUpgradePorts {
+  attach: UpgradeFlowDeps['attach']
+  prepareTarget: UpgradeFlowDeps['prepareTarget']
+}
+
+export function createNodeUpgradePorts(options: NodeHostLauncherOptions): NodeUpgradePorts {
+  const platform = thisPlatform()
+  const uiEnv = options.uiEnv ?? process.env
+  const runQuery = createQueryRunner()
+  const runDir = join(options.hostDataDir, RUN_DIR)
+  const readStart = createProcessStartReader({ platform, runQuery, env: uiEnv })
+  return {
+    async attach(generation): Promise<HostAttach> {
+      const endpoint =
+        options.endpoint === undefined
+          ? await resolveUiEndpoint({
+              platform,
+              hostDataDir: options.hostDataDir,
+              env: uiEnv,
+              runQuery
+            })
+          : { ok: true as const, value: options.endpoint }
+      if (!endpoint.ok) return { kind: 'unreachable' }
+      const path = endpoint.value.path
+      return createHostLinkOpener({
+        connect: () => connectTo(path),
+        tokenFile: join(runDir, UI_TOKEN_FILE),
+        protocolVersion: options.protocolVersion ?? PROTOCOL_VERSION,
+        client: { ...options.client, pid: process.pid }
+      })(generation)
+    },
+    // No other launcher copies while the gate is held (versionedCopy.ts); the running Host keeps
+    // its own copy, which is never collected here.
+    async prepareTarget() {
+      const root =
+        options.copyRoot === undefined
+          ? versionedCopyRoot({ platform, env: uiEnv, homeDir: homedir() })
+          : { ok: true as const, value: options.copyRoot }
+      if (!root.ok) return root
+      const gate = spawnGateIn(runDir, readStart)
+      if ((await gate.take()) === 'held') return { ok: false, errCode: 'SPAWN_GATE_HELD' }
+      try {
+        const copy = await ensureVersionedCopy({
+          version: options.client.appVersion,
+          sourceDir: copySourceOf(options.execPath, platform),
+          manifestPath: options.hostManifest,
+          root: root.value,
+          platform,
+          pid: process.pid,
+          ops: nodeCopyOps,
+          log: options.log,
+          clock: { now: Date.now }
+        })
+        if (!copy.ok) return copy
+        return { ok: true, targetVersion: options.client.appVersion, targetDir: copy.copyDir }
+      } finally {
+        await gate.release()
+      }
+    }
+  }
+}
+
+/** The spawn gate `<hostDataDir>/run/spawn.gate` (ADR-002 D3), held by this UI process. */
+function spawnGateIn(
+  runDir: string,
+  readStart: ReturnType<typeof createProcessStartReader>
+): SpawnGate {
+  const self = async (): Promise<ProcessStart> => {
+    const start = await readStart(process.pid)
+    return {
+      pid: process.pid,
+      processStartTimeMs: start.kind === 'started' ? start.ms : Math.round(performance.timeOrigin)
+    }
+  }
+  return new SpawnGate({
+    files: new NodeGateFiles(join(runDir, SPAWN_GATE_FILE)),
+    probe: createIdentityProbe(readStart),
+    clock: { now: Date.now },
+    self
+  })
 }
 
 /** Makes or reuses `host/<version>/`, then collects the old copies (ADR-002 D5; ADR-027 item 2). */

@@ -6,7 +6,10 @@
 //
 // It reads `<DWARFAI_HOST_DATA_DIR>/fake-host.json`, written by the test before the spawn:
 //   { "endpoint": "<pipe or socket path>", "mode": "ready" | "migrating" | "elevated-refused" |
-//     "silent", "migratingMs": 1000, "maxLifeMs": 120000 }
+//     "silent", "migratingMs": 1000, "maxLifeMs": 120000,
+//     "protocolVersion": 7, "serveUpgrade": true }
+// (`protocolVersion` and `serveUpgrade` are ISSUE-032's: a Host of another build for the upgrade
+// handshake.)
 // and then behaves as the Host does at the seam the launcher sees (ADR-002 D3, D6; ADR-003 item 5):
 // - `elevated-refused`: exits ELEVATED_REFUSED (65) at once;
 // - binds the endpoint; the bind is the mutex: when the endpoint is in use it sends a `hello` to
@@ -14,7 +17,16 @@
 //   stale POSIX socket file is removed and the bind tried again, once);
 // - writes `<dataDir>/run/ui.token` after the bind, and answers each connection's first frame:
 //   `hello.ok` for a hello with that token (state `ready`, or `migrating` for `migratingMs` first),
-//   AUTH_FAILED otherwise; `silent` answers nothing;
+//   AUTH_FAILED otherwise; `silent` answers nothing. `hello.ok.protocolVersion` is the configured
+//   `protocolVersion`, else the hello's own;
+// - with `serveUpgrade`, it lists `host.shutdown` and `host.upgrade.request` in its capabilities and
+//   serves them as the Host's seam does (ADR-002 D7, D8; 14 B-M05, B-M06): `host.upgrade.request`
+//   with a `targetDir` that exists and is named `targetVersion`, and `host.shutdown {upgrade-drain}`,
+//   send `host.state {upgrade-pending}` and their answer, then `host.closing {reason:'upgrade'}`,
+//   and exit 0 (nothing is open: the drain is immediate); `host.shutdown {stop-all}` answers
+//   `{ended:[], failed:[]}` and closes with reason `stop-all`; another `targetDir` is
+//   INVALID_PARAMS, another method METHOD_NOT_FOUND. Every method name it is sent is added to its
+//   report's `requests`;
 // - writes `<dataDir>/fake-host-<pid>.json` with what the test checks: pid, epoch, whether
 //   ELECTRON_RUN_AS_NODE and DWARFAI_HOST_DATA_DIR arrived, its working folder, the names (never
 //   the values) of its environment, and the executable it runs on (ISSUE-031: the versioned copy);
@@ -71,33 +83,121 @@ function main() {
     return Buffer.concat([prefix, json])
   }
 
-  /** Calls `onFrame` with the first complete frame read from `socket`. */
-  const firstFrame = (socket, onFrame) => {
+  /** Calls `onFrame` with each complete frame read from `socket`, until it returns false. */
+  const eachFrame = (socket, onFrame) => {
     let buffered = Buffer.alloc(0)
     const onData = (chunk) => {
       buffered = Buffer.concat([buffered, chunk])
-      if (buffered.length < 4) return
-      const length = buffered.readUInt32LE(0)
-      if (buffered.length < 4 + length) return
-      socket.off('data', onData)
-      let message = null
-      try {
-        message = JSON.parse(buffered.subarray(4, 4 + length).toString('utf8'))
-      } catch {
-        message = null
+      while (buffered.length >= 4) {
+        const length = buffered.readUInt32LE(0)
+        if (buffered.length < 4 + length) return
+        let message = null
+        try {
+          message = JSON.parse(buffered.subarray(4, 4 + length).toString('utf8'))
+        } catch {
+          message = null
+        }
+        buffered = buffered.subarray(4 + length)
+        if (onFrame(message) === false) {
+          socket.off('data', onData)
+          return
+        }
       }
-      onFrame(message)
     }
     socket.on('data', onData)
+  }
+
+  /** Calls `onFrame` with the first complete frame read from `socket`. */
+  const firstFrame = (socket, onFrame) =>
+    eachFrame(socket, (message) => {
+      onFrame(message)
+      return false
+    })
+
+  const serveUpgrade = control.serveUpgrade === true
+  const attached = new Set()
+  const requests = []
+  let seq = 0
+  let closing = false
+  const reportFile = path.join(dataDir, `fake-host-${process.pid}.json`)
+
+  const evt = (name, data) => frame({ type: 'evt', seq: ++seq, epoch, name, data })
+
+  /** ADR-002 D7: host.closing on every connection, then the close and exit 0. */
+  const closeCleanly = (reason) => {
+    if (closing) return
+    closing = true
+    for (const socket of attached) socket.end(evt('host.closing', { reason, clean: true }))
+    server.close()
+    setTimeout(() => process.exit(0), 200)
+  }
+
+  const answer = (socket, id, result) => socket.write(frame({ type: 'res', id, ok: true, result }))
+  const refuse = (socket, id, code) =>
+    socket.write(
+      frame({ type: 'res', id, ok: false, error: { code, message: code, retryable: false } })
+    )
+
+  /** S12.13: `upgrade-pending` to every connection, before the answer. */
+  const enterPending = () => {
+    for (const peer of attached) {
+      peer.write(evt('host.state', { state: 'upgrade-pending', jobStatus: 'n/a' }))
+    }
+  }
+
+  /** One request on an authenticated connection. */
+  const serve = (socket, message) => {
+    if (!message || message.type !== 'req') return
+    requests.push(message.method)
+    const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'))
+    fs.writeFileSync(reportFile, JSON.stringify({ ...report, requests }))
+    const params = message.params || {}
+    if (message.method === 'host.upgrade.request') {
+      const target = typeof params.targetDir === 'string' ? params.targetDir : ''
+      const valid =
+        path.isAbsolute(target) &&
+        fs.existsSync(target) &&
+        path.basename(target) === params.targetVersion
+      if (!valid) {
+        refuse(socket, message.id, 'INVALID_PARAMS')
+        return
+      }
+      enterPending()
+      answer(socket, message.id, { state: 'upgrade-pending' })
+      setImmediate(() => closeCleanly('upgrade'))
+      return
+    }
+    if (message.method === 'host.shutdown' && params.mode === 'upgrade-drain') {
+      enterPending()
+      answer(socket, message.id, { mode: 'upgrade-drain', accepted: true })
+      setImmediate(() => closeCleanly('upgrade'))
+      return
+    }
+    if (message.method === 'host.shutdown' && params.mode === 'stop-all') {
+      answer(socket, message.id, { mode: 'stop-all', outcome: { ended: [], failed: [] } })
+      setImmediate(() => closeCleanly('stop-all'))
+      return
+    }
+    refuse(socket, message.id, 'METHOD_NOT_FOUND')
   }
 
   const server = net.createServer((socket) => {
     socket.on('error', () => {})
     if (mode === 'silent') return
-    firstFrame(socket, (message) => {
+    let authenticated = false
+    eachFrame(socket, (message) => {
+      if (authenticated) {
+        serve(socket, message)
+        return true
+      }
       if (!message || message.type !== 'hello' || message.token !== token) {
         socket.end(frame({ type: 'error', code: 'AUTH_FAILED' }))
-        return
+        return false
+      }
+      authenticated = true
+      if (serveUpgrade) {
+        attached.add(socket)
+        socket.once('close', () => attached.delete(socket))
       }
       const migrating = mode === 'migrating' && Date.now() - startedAt < (control.migratingMs || 0)
       socket.write(
@@ -105,15 +205,21 @@ function main() {
           type: 'hello.ok',
           hostVersion: '0.0.0',
           buildId: 'fakehost',
-          protocolVersion: message.protocolVersion,
+          protocolVersion:
+            typeof control.protocolVersion === 'number'
+              ? control.protocolVersion
+              : message.protocolVersion,
           endpointGeneration: 1,
           epoch,
           state: migrating ? 'migrating' : 'ready',
           jobStatus: process.platform === 'win32' ? 'none' : 'n/a',
-          capabilities: [],
+          capabilities: serveUpgrade
+            ? ['frame:host.closing', 'frame:host.state', 'host.shutdown', 'host.upgrade.request']
+            : [],
           clientId: crypto.randomUUID()
         })
       )
+      return serveUpgrade
     })
   })
 
@@ -131,7 +237,7 @@ function main() {
       envNames: Object.keys(process.env).sort(),
       execPath: process.execPath
     }
-    fs.writeFileSync(path.join(dataDir, `fake-host-${process.pid}.json`), JSON.stringify(report))
+    fs.writeFileSync(reportFile, JSON.stringify({ ...report, requests }))
   }
 
   /** ADR-002 D3: is a Host answering `hello` on the endpoint in use? */
