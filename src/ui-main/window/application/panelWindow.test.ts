@@ -404,3 +404,52 @@ describe('the Panel window at the start of UI main (ISSUE-056; 21 §2 cut 0)', (
     expect(windows.built).toEqual([{ kind: 'panel' }])
   })
 })
+
+describe('the Panel window built by a factory that asks where it opens (ISSUE-056)', () => {
+  it('[ADR-001] building the Panel asks panelStart once, on the display the screen names, with no read-back of a window that does not exist yet', () => {
+    // As ElectronWindows does: the factory asks `panelStart` while it builds the window, and every read-back of the
+    // surface acts on the window the factory built, building it if there is none.
+    const storage = createInMemoryUiPreferenceStorage()
+    const built = new FakeWindowFactory()
+    let use: ReturnType<typeof createPanelWindow> | null = null
+    let starts = 0
+    const windows = {
+      panel: () => {
+        if (built.built.length === 0) {
+          starts += 1
+          if (starts > 1) throw new Error('panelStart asked again while the Panel was being built')
+          const start = use?.panelStart()
+          built.panel().placeAt(start?.bounds ?? { x: 0, y: 0, width: 0, height: 0 })
+        }
+        return built.panel()
+      },
+      veta: (key: string) => built.veta(key),
+      valle: (from: string) => built.valle(from)
+    }
+    const surface = new FakePanelSurface(built)
+    const readBack: PanelWindowSurface = {
+      ...surface,
+      applyZoom: (factor) => (windows.panel(), surface.applyZoom(factor)),
+      bounds: () => (windows.panel(), surface.bounds()),
+      setAlwaysOnTop: (on) => (windows.panel(), surface.setAlwaysOnTop(on)),
+      isAlwaysOnTop: () => (windows.panel(), surface.isAlwaysOnTop()),
+      raise: () => (windows.panel(), surface.raise()),
+      isMinimized: () => (windows.panel(), surface.isMinimized()),
+      onMinimizedChanged: (h) => surface.onMinimizedChanged(h)
+    }
+    use = createPanelWindow({
+      windows,
+      surface: readBack,
+      screen: new FakeScreenAreaProvider([PRIMARY, SECOND]),
+      store: new InMemoryUiPreferenceStore(storage),
+      floor: 32,
+      onDisplaysChanged: () => undefined
+    })
+
+    expect(() => use?.load()).not.toThrow()
+    expect(starts).toBe(1)
+    expect(built.panel().bounds).toEqual(
+      panelBounds(PRIMARY.workArea, 'right', { mineOpen: false, dockOpen: false }, 32)
+    )
+  })
+})

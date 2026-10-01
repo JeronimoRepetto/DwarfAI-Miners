@@ -158,8 +158,11 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   let told = false
 
   const panel = () => {
+    // The factory asks `panelStart` while it builds the window (ElectronWindows), so the window counts as built only
+    // once it exists: until then nothing reads back a window that is still being made (ISSUE-056).
+    const window = windows.panel()
     built = true
-    return windows.panel()
+    return window
   }
 
   /** The work area of the display the Panel is on, or of the primary display when it is on none (FM-111). */
