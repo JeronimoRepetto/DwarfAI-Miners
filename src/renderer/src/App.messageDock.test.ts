@@ -2724,4 +2724,27 @@ describe('the Host connection in the shell', () => {
     await flushPromises()
     expect(api.sendDwarfText).toHaveBeenCalledOnce()
   })
+
+  it('[ADR-002] the incompatible message offers only Stop everything and quit, which sends A-N34 and never an upgrade request', async () => {
+    const rows = hostRows()
+    const requestStopEverything = vi.fn()
+    const confirmHostRestart = vi.fn().mockResolvedValue(connected)
+    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
+      ...rows.overrides,
+      requestStopEverything,
+      confirmHostRestart
+    })
+
+    await rows.push({ state: 'unavailable', reason: 'incompatible' })
+    const buttons = wrapper.get('.dm-host-state').findAll('button')
+    expect(buttons.map((button) => button.text())).toEqual([
+      '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
+    ])
+    await buttons[0]!.trigger('click')
+    await flushPromises()
+
+    expect(requestStopEverything).toHaveBeenCalledOnce()
+    expect(confirmHostRestart).not.toHaveBeenCalled()
+    expect(api.retryHostConnection).not.toHaveBeenCalled()
+  })
 })

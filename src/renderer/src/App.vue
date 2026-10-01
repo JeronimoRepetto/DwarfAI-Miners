@@ -1124,14 +1124,15 @@ function showMineFromNotification(mineId: string): void {
 
 /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
 // The one Host-state message over the Panel (ADR-002 D9; 07 §12B). useHostConnection is also the one source every
-// read model that sends a Host-owned mutation gates on (13 FM-146). Stop everything and quit has no renderer entry
-// (only the tray starts it, 14 §6.3), so no handler is passed and the incompatible message shows without it.
+// read model that sends a Host-owned mutation gates on (13 FM-146). The incompatible message's Stop everything and quit
+// asks UI main for the tray item's flow over A-N34 (amendment owner-approved 2026-10-01).
 const {
   message: hostMessage,
   retrying: hostRetrying,
   start: followHostConnection,
   stop: stopFollowingHostConnection,
-  retry: retryHostConnection
+  retry: retryHostConnection,
+  stopEverything: stopEverythingFromHostMessage
 } = useHostConnection()
 /* --- end of the ISSUE-316 block --------------------------------------------- */
 
@@ -1525,6 +1526,7 @@ const {
           <HostStateMessage
             :message="hostMessage"
             :retrying="hostRetrying"
+            :on-stop-everything="stopEverythingFromHostMessage"
             @retry="retryHostConnection"
           />
         </div>

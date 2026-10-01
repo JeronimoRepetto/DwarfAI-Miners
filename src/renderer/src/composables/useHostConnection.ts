@@ -85,6 +85,16 @@ async function retry(): Promise<void> {
   }
 }
 
+/**
+ * The incompatible message's one action (ADR-002 D8 item 5): A-N34 `requestStopEverything` (amendment owner-approved
+ * 2026-10-01) asks UI main for the tray item's Stop everything and quit, whose confirmation follows on A-N25. Sent
+ * only while the message offers it; never an upgrade request.
+ */
+function stopEverything(): void {
+  if (message.value.action !== 'stop-everything') return
+  window.api.requestStopEverything()
+}
+
 export function useHostConnection() {
   return {
     view: readonly(view),
@@ -93,6 +103,7 @@ export function useHostConnection() {
     readOnly,
     start,
     stop,
-    retry
+    retry,
+    stopEverything
   }
 }

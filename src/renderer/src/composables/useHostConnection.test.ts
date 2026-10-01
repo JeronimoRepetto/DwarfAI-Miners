@@ -394,4 +394,29 @@ describe('useHostConnection', () => {
     expect(api.getHostConnection).toHaveBeenCalledOnce()
     expect(api.onHostConnection).toHaveBeenCalledOnce()
   })
+
+  it('[ADR-002] Stop everything from the incompatible message sends requestStopEverything once and never an upgrade request', async () => {
+    const requestStopEverything = vi.fn()
+    const confirmHostRestart = vi.fn(() => Promise.resolve(connected))
+    const retryHostConnection = vi.fn(() => Promise.resolve(connected))
+    const { push } = install(connected, {
+      requestStopEverything,
+      confirmHostRestart,
+      retryHostConnection
+    })
+    const host = useHostConnection()
+    await host.start()
+
+    // Nothing to stop from while no message offers it.
+    host.stopEverything()
+    expect(requestStopEverything).not.toHaveBeenCalled()
+
+    push({ state: 'unavailable', reason: 'incompatible' })
+    expect(host.message.value.action).toBe('stop-everything')
+    host.stopEverything()
+    expect(requestStopEverything).toHaveBeenCalledOnce()
+    expect(requestStopEverything).toHaveBeenCalledWith()
+    expect(confirmHostRestart).not.toHaveBeenCalled()
+    expect(retryHostConnection).not.toHaveBeenCalled()
+  })
 })
