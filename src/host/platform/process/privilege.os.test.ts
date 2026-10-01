@@ -1,0 +1,52 @@
+// L8 OS lane (17 §1.8): the real privilege facts of the user running the tests, one describe per
+// OS. Runs only in `pnpm test:os`. The expected elevation is the OS's own answer, read another way:
+// a normal start is not elevated, while CI's Windows runner runs elevated (an administrator with
+// UAC off), so a fixed `false` would assert something untrue there.
+import { release } from 'node:os'
+import { describe, expect, it } from 'vitest'
+import { createQueryRunner } from './NodeProcessControl'
+import { createPrivilegeCheck } from './privilege'
+import { POWERSHELL_DROPPED_ENV, windowsPowerShell } from './probe/types'
+
+/** Windows' own answer: is this token an administrator one with the role enabled (elevated)? */
+async function windowsSaysElevated(): Promise<boolean> {
+  const out = await createQueryRunner()(
+    windowsPowerShell(),
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'
+    ],
+    { timeoutMs: 20_000, dropEnv: POWERSHELL_DROPPED_ENV }
+  )
+  if (!out.ok) throw new Error(`the elevation oracle failed: ${out.cause}`)
+  return out.stdout.trim() === 'True'
+}
+
+describe.runIf(process.platform === 'win32')('privilege check on Windows', () => {
+  it('[ADR-002] the privilege check reports the OS elevation for the test user (not elevated on a normal start) and IsProcessInJob returns a value on Windows', async ({
+    annotate
+  }) => {
+    const check = createPrivilegeCheck({ runQuery: createQueryRunner() })
+
+    const [report, elevated] = await Promise.all([check(), windowsSaysElevated()])
+
+    await annotate(`ADR-002 D6 ${JSON.stringify({ release: release(), report, elevated })}`)
+    expect(report.elevated).toEqual({ ok: true, value: elevated })
+    expect(report.inJob).toEqual({ ok: true, value: expect.any(Boolean) })
+  }, 30_000)
+})
+
+describe.runIf(process.platform !== 'win32')('privilege check on POSIX', () => {
+  it('[ADR-002] the privilege check reports not elevated for a non-root test user and no job objects outside Windows', async ({
+    annotate
+  }) => {
+    const report = await createPrivilegeCheck()()
+
+    await annotate(`ADR-002 D6 ${JSON.stringify({ platform: process.platform, report })}`)
+    if (process.geteuid?.() !== 0) expect(report.elevated).toEqual({ ok: true, value: false })
+    else expect(report.elevated.ok).toBe(true)
+    expect(report.inJob).toBe('not-applicable')
+  })
+})
