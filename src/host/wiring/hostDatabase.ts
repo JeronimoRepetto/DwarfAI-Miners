@@ -3,6 +3,9 @@
 // composition root and run by boot step 2 (bootSteps.ts).
 //
 // `open(context)`:
+//   0. protects the data at rest (09 §1, §9; ADR-017 item 6; 18 C-24, `fileProtection.ts`): the
+//      hostDataDir is created or narrowed owner-only before the open, and the database file, its
+//      companions, backups and quarantined copies are narrowed once it is open (also read-only);
 //   1. opens the file through the migration runner (ISSUE-034), reporting `migrating` when a
 //      migration will run (07 S12.05). A refusal — a foreign or tampered file, a dev build on the
 //      release data, a failed backup or quarantine — throws `HostDbRefusedError` with the refusal
@@ -24,6 +27,7 @@
 // WAL, `markClean` writes the marker of the running epoch with its reason and truncates the WAL
 // again, so the marker sits in the main file when the Host exits (09 §8.1, §8.4 step 4). Before
 // the database is open, and on a read-only one, it does nothing.
+import { dirname } from 'node:path'
 import {
   BOOT_TIME_TOLERANCE_MS,
   decidePreviousEpochEnd,
@@ -36,6 +40,7 @@ import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnostic
 import type { ProcessControl } from '../kernel/ports/processControl'
 import type { ShutdownCheckpoint } from '../kernel/ports/shutdownCheckpoint'
 import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
+import { protectDataDir, protectDbFiles } from '../platform/sqlite/fileProtection'
 import { HostEpochLog, readResetEpoch } from '../platform/sqlite/hostEpochLog'
 import {
   openHostDb,
@@ -59,6 +64,16 @@ export interface HostDatabaseDeps {
   processControl: Pick<ProcessControl, 'currentBootIdentity'>
   /** The runner's build facts and migrations (`migrationsFor` over the boot's clock and ids). */
   open: Omit<OpenHostDbOptions, 'clock' | 'log' | 'onMigrating'>
+  /** The data-at-rest protection (09 §1, §9); `fileProtection.ts` over `log` by default. */
+  protectFiles?: HostFileProtection
+}
+
+/** The two protection calls of step 2 (09 §1, §9; ADR-017 item 6; 18 C-24). */
+export interface HostFileProtection {
+  /** Before the open: the hostDataDir, created or narrowed owner-only. */
+  dataDir(hostDataDir: string): Promise<void>
+  /** Once the file is open: the database, its companions, backups and quarantined copies. */
+  dbFiles(dbPath: string): Promise<void>
 }
 
 export interface HostDatabase {
@@ -122,6 +137,10 @@ function decisionEntries(decided: PreviousEpochEnd): Array<Omit<DiagnosticEntry,
 export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
   let opened: Opened | null = null
   let decided: PreviousEpochEnd | null = null
+  const protectFiles: HostFileProtection = deps.protectFiles ?? {
+    dataDir: (hostDataDir) => protectDataDir(hostDataDir, { log: deps.log }),
+    dbFiles: (dbPath) => protectDbFiles(dbPath, { log: deps.log })
+  }
   const record = (entry: Omit<DiagnosticEntry, 'subsystem'>): void =>
     deps.log.record({ ...entry, subsystem: SUBSYSTEM })
 
@@ -146,6 +165,7 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
 
   return {
     async open(context) {
+      await protectFiles.dataDir(dirname(deps.path))
       const result = openHostDb(deps.path, {
         ...deps.open,
         clock: deps.clock,
@@ -154,6 +174,12 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
       })
       if (!result.ok) throw new HostDbRefusedError(result.error)
       const { db } = result.value
+      try {
+        await protectFiles.dbFiles(deps.path)
+      } catch (error) {
+        db.close()
+        throw error
+      }
       if (result.value.readOnly) {
         opened = { readOnly: true, db }
         return
