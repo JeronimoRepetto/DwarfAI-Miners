@@ -23,8 +23,18 @@ import { resolveEntry, type AppEntry } from './resolveEntry.ts'
  * - `teardown()` quits the app, waits for its process to exit and removes the temp profile, all
  *   within a quit budget (`quitTimeoutMs`, default 15 s). An app still running at the end of it is
  *   killed with its process tree and the teardown fails with that, so a quit that never finishes
- *   is a visible failure, never a test plus worker timeout that leaves the app running. The
- *   Stop-everything teardown for a case that leaves a Host running comes later: ISSUE-056.
+ *   is a visible failure, never a test plus worker timeout that leaves the app running.
+ * - From cut 0 the app starts a DwarfAI Host for its profile, which never exits on its own (OQ-63).
+ *   `teardown({ stopEverything: true })` ends it the way a person does: the app's own Stop
+ *   everything and quit (A-N34, then Confirm in the window's confirmation), after which the app
+ *   exits with its Host; a Host or an app still running after it fails the teardown (ISSUE-056,
+ *   review R7V-01). A plain `teardown()` quits the app and then ends a Host the profile still runs,
+ *   by the pid of its `run/host.identity`, so no case leaves one behind.
+ * - The Host's versioned copy (ADR-002 D5) is made under the profile too: LOCALAPPDATA (Windows),
+ *   XDG_DATA_HOME (Linux) or HOME (macOS, a short folder under /tmp so its socket path fits) point
+ *   into it unless `env` names them.
+ * - Electron's `-r` switch preloads `mainErrorGuard.cjs` before the app's main file runs, so an
+ *   uncaught exception while it loads ends the app with its stack recorded, never a modal box.
  *
  * No production code knows about this harness (R14): everything goes through the command line,
  * the environment and Playwright's own main-process `evaluate`.
@@ -36,15 +46,29 @@ export interface IsolatedProfile {
   readonly userDataDir: string
   readonly claudeConfigDir: string
   readonly codexHome: string
+  /** Where the app's per-user data root points (the Host's versioned copy): inside `root`, or a /tmp folder on macOS. */
+  readonly dataRoot: string
 }
 
 export interface LaunchOptions {
   /** `'current'` (default): the build's Electron main entry; `'ui-main'`: the UI-main target. */
   readonly entry?: AppEntry
+  /**
+   * The app folder to launch (default: this repository). The legacy seam-A replay records on another build's folder,
+   * the pre-cut build (`scripts/strangler/record-seam-a.mjs`).
+   */
+  readonly appDir?: string
   /** A directory of stub CLIs to prepend to the app's `PATH`. */
   readonly stubs?: string
-  /** Extra environment for the app, applied last. */
-  readonly env?: Readonly<Record<string, string>>
+  /**
+   * With `stubs`, the app's `PATH` is `stubs` alone, nothing of the runner's: the legacy seam-A replay detects the same
+   * CLIs on every machine (`scripts/strangler/seamAReplay.ts`).
+   */
+  readonly pathOnly?: boolean
+  /** Extra environment for the app, applied last; a function gets the profile, to point a variable into it. */
+  readonly env?:
+    | Readonly<Record<string, string>>
+    | ((profile: IsolatedProfile) => Readonly<Record<string, string>>)
   /** Where `teardown()` saves the Playwright trace (a case's output folder keeps it on failure). */
   readonly tracePath?: string
   /** How long `teardown()` lets the app quit on its own before it kills the app's process tree. */
@@ -55,8 +79,17 @@ export interface LaunchedApp {
   readonly app: ElectronApplication
   readonly window: Page
   readonly profile: IsolatedProfile
-  /** Quits the app and removes the temp profile; a second call does nothing. */
-  teardown(): Promise<void>
+  /**
+   * Quits the app, ends the profile's Host and removes the temp profile; a second call does nothing. With
+   * `stopEverything`, the app's own Stop everything and quit ends the Host and the app, and anything left running
+   * fails the teardown.
+   */
+  teardown(options?: TeardownOptions): Promise<void>
+}
+
+export interface TeardownOptions {
+  /** End the profile's Host and the app through the app's own Stop everything and quit (ISSUE-056). */
+  readonly stopEverything?: boolean
 }
 
 /** The app folder: the repository root, holding `package.json` and the build output `out/`. */
@@ -71,12 +104,27 @@ function createProfile(): IsolatedProfile {
     root,
     userDataDir: path.join(root, 'userData'),
     claudeConfigDir: path.join(root, 'claude'),
-    codexHome: path.join(root, 'codex')
+    codexHome: path.join(root, 'codex'),
+    // On macOS the Host's socket lives under HOME, and a path under the per-user temp folder is too long for it.
+    dataRoot: process.platform === 'darwin' ? mkdtempSync('/tmp/dwe-') : path.join(root, 'data')
   }
   for (const dir of [profile.userDataDir, profile.claudeConfigDir, profile.codexHome])
     mkdirSync(dir)
+  if (process.platform !== 'darwin') mkdirSync(profile.dataRoot)
   return profile
 }
+
+/** The variable naming the per-user data root the Host's versioned copy goes under, per OS (versionedCopyRoot.ts). */
+function dataRootVariable(): string {
+  if (process.platform === 'win32') return 'LOCALAPPDATA'
+  return process.platform === 'darwin' ? 'HOME' : 'XDG_DATA_HOME'
+}
+
+/** The preload that keeps an uncaught exception during the main file's load from opening a modal box. */
+const MAIN_ERROR_GUARD = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'mainErrorGuard.cjs'
+)
 
 /**
  * The app's environment: the runner's, minus Electron start-up switches, with the stub directory
@@ -92,11 +140,16 @@ function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string
     const current = pathKeys.map((key) => env[key]).find((value) => value !== '') ?? ''
     for (const key of pathKeys) delete env[key]
     env[pathKeys[0] ?? 'PATH'] =
-      current === '' ? options.stubs : options.stubs + path.delimiter + current
+      current === '' || options.pathOnly === true
+        ? options.stubs
+        : options.stubs + path.delimiter + current
   }
   env.CLAUDE_CONFIG_DIR = profile.claudeConfigDir
   env.CODEX_HOME = profile.codexHome
-  return { ...env, ...options.env }
+  env[dataRootVariable()] = profile.dataRoot
+  env.DWARFAI_E2E_MAIN_ERRORS = path.join(profile.root, MAIN_ERRORS_FILE)
+  const extra = typeof options.env === 'function' ? options.env(profile) : options.env
+  return { ...env, ...extra }
 }
 
 /** A started app quits in well under a second on every OS; this is the bound, not the expectation. */
@@ -263,16 +316,18 @@ function readMainErrors(file: string): string | undefined {
 }
 
 export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedApp> {
-  const { main } = JSON.parse(readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')) as {
+  const appDir = options.appDir ?? APP_DIR
+  const { main } = JSON.parse(readFileSync(path.join(appDir, 'package.json'), 'utf8')) as {
     main: string
   }
-  const mainFile = resolveEntry(options.entry, APP_DIR, { main })
+  const mainFile = resolveEntry(options.entry, appDir, { main })
   const profile = createProfile()
   const removeProfile = async (): Promise<void> => {
     const deadline = Date.now() + KILL_TIMEOUT_MS
     for (;;) {
       try {
         rmSync(profile.root, { recursive: true, force: true })
+        rmSync(profile.dataRoot, { recursive: true, force: true })
         return
       } catch (error) {
         // Windows frees a killed tree's open files a moment after the app exits (EPERM, EBUSY).
@@ -289,16 +344,21 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
       // `package.json` (name, `main`) and `app.getAppPath()` is the app folder. Before the cut-0
       // switch the ui-main target is not `main` yet, so it starts from its file.
       args: [
-        options.entry === 'ui-main' ? mainFile : APP_DIR,
+        '-r',
+        MAIN_ERROR_GUARD,
+        options.entry === 'ui-main' ? mainFile : appDir,
         `--user-data-dir=${profile.userDataDir}`
       ],
-      cwd: APP_DIR,
+      cwd: appDir,
       env: appEnv(profile, options)
     })
   } catch (error) {
     await removeProfile()
     throw error
   }
+  // Held from the launch: an app that already exited on its own (from cut 0, Stop everything and quit ends it when its
+  // Host closes, ADR-002 D7 step 4) still has its process for the teardown to read.
+  const appProcess = app.process()
   const mainErrorsFile = path.join(profile.root, MAIN_ERRORS_FILE)
   await captureMainProcessErrors(app, mainErrorsFile)
   if (options.tracePath !== undefined) {
@@ -306,11 +366,17 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
   }
 
   let tornDown = false
-  const teardown = async (): Promise<void> => {
+  let firstWindow: Page | undefined
+  const teardown = async (teardownOptions: TeardownOptions = {}): Promise<void> => {
     if (tornDown) return
     tornDown = true
-    const child = app.process()
+    const child = appProcess
     const quitTimeoutMs = options.quitTimeoutMs ?? DEFAULT_QUIT_TIMEOUT_MS
+    const hostPid = profileHostPid(profile.userDataDir)
+    if (teardownOptions.stopEverything === true) {
+      await teardownThroughStopEverything(app, child, firstWindow, profile, quitTimeoutMs, hostPid)
+      return
+    }
     let quitError: unknown
     // The harness sends `app.quit()` itself instead of Playwright's `close()`, which drops its
     // connection to the main process at once and then waits, unbounded, for the exit. Keeping the
@@ -351,6 +417,8 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     } catch (error) {
       failure = error
     }
+    // A plain quit leaves the profile's Host running, as it leaves a person's (OQ-63): the harness ends it.
+    endHost(hostPid ?? profileHostPid(profile.userDataDir))
     const mainErrors = readMainErrors(mainErrorsFile)
     if (mainErrors !== undefined) {
       failure = new Error(
@@ -367,8 +435,55 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     if (failure !== undefined) throw failure
   }
 
+  async function teardownThroughStopEverything(
+    launchedApp: ElectronApplication,
+    child: ChildProcess,
+    window: Page | undefined,
+    isolated: IsolatedProfile,
+    budgetMs: number,
+    knownHostPid: number | null
+  ): Promise<void> {
+    let failure: unknown
+    try {
+      if (window === undefined)
+        throw new Error('the app has no window to run Stop everything and quit from')
+      await stopEverythingFromWindow(window)
+      if (!(await waitForExit(child, budgetMs))) {
+        const diagnosis = await diagnoseStuckQuit(launchedApp, child, options.tracePath)
+        killProcessTree(child)
+        await waitForExit(child, KILL_TIMEOUT_MS)
+        throw new Error(
+          `the app (pid ${child.pid}) did not exit within ${budgetMs} ms of Stop everything and quit; ` +
+            `its process tree was killed. ${diagnosis}`
+        )
+      }
+      await settleWithin(launchedApp.close(), KILL_TIMEOUT_MS)
+      const hostPid = knownHostPid ?? profileHostPid(isolated.userDataDir)
+      if (hostPid !== null && (await stillAlive(hostPid, budgetMs))) {
+        endHost(hostPid)
+        throw new Error(`Stop everything and quit left the profile's Host (pid ${hostPid}) running`)
+      }
+    } catch (error) {
+      failure = error
+      endHost(knownHostPid ?? profileHostPid(isolated.userDataDir))
+    }
+    const mainErrors = readMainErrors(mainErrorsFile)
+    if (mainErrors !== undefined) {
+      failure = new Error(`uncaught exception in the main process: ${mainErrors}`, {
+        cause: failure
+      })
+    }
+    try {
+      await removeProfile()
+    } catch (error) {
+      failure ??= error
+    }
+    if (failure !== undefined) throw failure
+  }
+
   try {
     const window = await app.firstWindow()
+    firstWindow = window
     // The first window is created before its page loads (the legacy entry loads it last, after
     // every IPC handler is registered). A case starts from a started app, so it never quits one
     // whose page is still loading, which is not a state a person quits from.
@@ -378,4 +493,60 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     await teardown()
     throw error
   }
+}
+
+/** The pid of the Host the profile runs, from its `run/host.identity` (ADR-002 D2), or `null` when none runs. */
+export function profileHostPid(userDataDir: string): number | null {
+  const file = path.join(userDataDir, 'host', 'run', 'host.identity')
+  if (!existsSync(file)) return null
+  try {
+    const pid = (JSON.parse(readFileSync(file, 'utf8')) as { pid?: unknown }).pid
+    return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/** Whether the process `pid` runs (EPERM: it runs, under another user). */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** Whether `pid` still runs after up to `ms`. */
+async function stillAlive(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (isProcessAlive(pid)) {
+    if (Date.now() >= deadline) return true
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return false
+}
+
+/** Ends the test profile's Host, the harness's own cleanup (a test process, never a person's). */
+function endHost(pid: number | null): void {
+  if (pid === null || !isProcessAlive(pid)) return
+  try {
+    process.kill(pid)
+  } catch {
+    // Gone meanwhile.
+  }
+}
+
+/** The confirm button of the window's Stop everything and quit confirmation (ISSUE-317; the design's copy marker). */
+const CONFIRM_BUTTON = /confirm button naming the count/
+
+/**
+ * Stop everything and quit as a person runs it from the window: the window asks for the tray item's flow (A-N34),
+ * UI main pushes the confirmation (A-N25) and the person confirms it (A-N26).
+ */
+export async function stopEverythingFromWindow(window: Page): Promise<void> {
+  await window.evaluate(() => {
+    ;(window as unknown as { api: { requestStopEverything(): void } }).api.requestStopEverything()
+  })
+  await window.getByRole('button', { name: CONFIRM_BUTTON }).click({ timeout: 30_000 })
 }
