@@ -6,12 +6,14 @@ import {
   folderPathSchema,
   instantSchema,
   messageIdSchema,
+  mineIdSchema,
   providerIdSchema,
   uuidV7Schema,
   type DwarfId,
   type FolderPath,
   type Instant,
   type MessageId,
+  type MineId,
   type ProviderId
 } from './ids'
 
@@ -175,6 +177,13 @@ export interface AskRecord {
 /** ADR-010 item 5 `AnswerRefusalReason`. */
 export type AnswerRefusalReason =
   'channel-rejected' | 'invalid-answer' | 'channel-unavailable' | 'ask-closed'
+
+/**
+ * 06 §0.2 asking read model `NeedsYouQueue`: one entry per dwarf with an open ask, ordered by
+ * `askedAt` (arrival order, never re-sorted; ADR-032 D6). The snapshot's `asks` section carries it
+ * (14 §3.7).
+ */
+export type NeedsYouQueue = Array<{ dwarfId: DwarfId; mineId: MineId; askedAt: Instant }>
 
 // ---- conversation (ADR-022 item 1; 06 §0.2, §9.1)
 
@@ -463,6 +472,10 @@ export const askRecordSchema = z
     closedAt: instantSchema.optional()
   })
   .strict()
+
+export const needsYouQueueSchema = z.array(
+  z.object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema, askedAt: instantSchema }).strict()
+)
 
 export const answerRefusalReasonSchema = z.enum([
   'channel-rejected',
