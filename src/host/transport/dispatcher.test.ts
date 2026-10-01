@@ -100,3 +100,33 @@ describe('Dispatcher effects deferred past the answer (14 §1.7)', () => {
     ])
   })
 })
+
+describe('Dispatcher afterAnswer on a method that does not mutate (14 §3.4)', () => {
+  it('[ADR-003] a query handler may defer an effect until its answer was handed to the writer; a throwing handler defers none', async () => {
+    const dispatcher = new Dispatcher({
+      log: new RecordingDiagnosticsLog(),
+      clock: new FakeClock(),
+      scheduler: new FakeScheduler(new FakeClock()),
+      state: () => 'ready'
+    })
+    const journal: string[] = []
+    dispatcher.register('test.follow', z.object({}).strict(), ['ui'], (_params, context) => {
+      journal.push('handler')
+      context.afterAnswer(() => journal.push('follow'))
+      return { status: 'live' }
+    })
+    dispatcher.register('test.throws', z.object({}).strict(), ['ui'], (_params, context) => {
+      context.afterAnswer(() => journal.push('never'))
+      throw new Error('boom')
+    })
+    const ui = { role: 'ui' as const, clientId: 'c' }
+    const write = (res: { id: string }): void => {
+      journal.push(`res:${res.id}`)
+    }
+
+    await dispatcher.dispatch({ id: '1', method: 'test.follow', params: {} }, ui, write)
+    await dispatcher.dispatch({ id: '2', method: 'test.throws', params: {} }, ui, write)
+
+    expect(journal).toEqual(['handler', 'res:1', 'follow', 'res:2'])
+  })
+})

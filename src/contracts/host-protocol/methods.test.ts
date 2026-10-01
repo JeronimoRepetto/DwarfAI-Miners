@@ -1,11 +1,13 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
-import type { DwarfId, Instant } from '../wire'
+import type { DwarfId, HostEpoch, Instant } from '../wire'
 import {
   HOST_METHOD_SCHEMAS,
   type HostMethods,
   type HostShutdownParams,
-  type HostShutdownResult
+  type HostShutdownResult,
+  type SubscribeParams,
+  type SubscribeResult
 } from './methods'
 
 // The B-M02 and B-M05 entries of 14 §3.4 and their strict() schemas (14 §1.4).
@@ -70,5 +72,45 @@ describe('host.shutdown params and result (14 §3.4, B-M05)', () => {
     ).toBe(false)
     expect(result.safeParse({ mode: 'upgrade-drain', accepted: true }).success).toBe(true)
     expect(result.safeParse({ mode: 'stop-all', accepted: true }).success).toBe(false)
+  })
+})
+
+// The B-M03 entry of 14 §3.4 and its strict() schemas (14 §1.4).
+
+describe('events.subscribe params and result (14 §3.4, B-M03)', () => {
+  it('[ADR-003] the events.subscribe schemas infer exactly the 14 §3.4 SubscribeParams and SubscribeResult and refuse any other key', () => {
+    expectTypeOf<HostMethods['events.subscribe']['params']>().toEqualTypeOf<SubscribeParams>()
+    expectTypeOf<HostMethods['events.subscribe']['result']>().toEqualTypeOf<SubscribeResult>()
+    expectTypeOf<SubscribeParams>().toEqualTypeOf<{
+      resume?: { epoch: HostEpoch; lastSeq: number }
+    }>()
+    expectTypeOf<SubscribeResult>().toEqualTypeOf<
+      | { status: 'replaying'; fromSeq: number; toSeq: number }
+      | { status: 'live'; fromSeq: number }
+      | { status: 'resync-required' }
+    >()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['events.subscribe']['params']>
+    >().toEqualTypeOf<SubscribeParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['events.subscribe']['result']>
+    >().toEqualTypeOf<SubscribeResult>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['events.subscribe']
+    expect(params.safeParse({}).success).toBe(true)
+    expect(params.safeParse({ resume: { epoch: 'epoch-1', lastSeq: 7 } }).success).toBe(true)
+    expect(params.safeParse({ resume: { epoch: 'epoch-1', lastSeq: -1 } }).success).toBe(false)
+    expect(params.safeParse({ resume: { epoch: 'epoch-1', lastSeq: 1.5 } }).success).toBe(false)
+    expect(params.safeParse({ resume: { epoch: 'epoch-1' } }).success).toBe(false)
+    expect(params.safeParse({ resume: { epoch: 'e', lastSeq: 1, at: 1 } }).success).toBe(false)
+    expect(params.safeParse({ lastSeq: 1 }).success).toBe(false)
+    expect(result.safeParse({ status: 'replaying', fromSeq: 8, toSeq: 9 }).success).toBe(true)
+    expect(result.safeParse({ status: 'live', fromSeq: 1 }).success).toBe(true)
+    expect(result.safeParse({ status: 'resync-required' }).success).toBe(true)
+    expect(result.safeParse({ status: 'live' }).success).toBe(false)
+    expect(result.safeParse({ status: 'live', fromSeq: 1, toSeq: 2 }).success).toBe(false)
+    expect(result.safeParse({ status: 'resync-required', reason: 'backpressure' }).success).toBe(
+      false
+    )
   })
 })

@@ -32,3 +32,31 @@ describe('host.state and host.closing payloads (14 §3.5, B-F04, B-F05)', () => 
     expect(closing.safeParse({ reason: 'stop-all', clean: true, at: 1 }).success).toBe(false)
   })
 })
+
+// The B-F03 payload of 14 §3.5 and its strict() schema (14 §1.4).
+
+describe('resync-required payload (14 §3.5, B-F03)', () => {
+  it('[ADR-003] the resync-required schema infers exactly its 14 §3.5 payload with its five reasons and refuses any other', () => {
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['resync-required']>>().toEqualTypeOf<
+      HostFrames['resync-required']
+    >()
+    expectTypeOf<HostFrames['resync-required']>().toEqualTypeOf<{
+      reason:
+        'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset'
+    }>()
+
+    const resync = HOST_FRAME_SCHEMAS['resync-required']
+    for (const reason of [
+      'epoch-changed',
+      'seq-not-in-ring',
+      'ring-overrun',
+      'backpressure',
+      'metrics-reset'
+    ]) {
+      expect(resync.safeParse({ reason }).success, reason).toBe(true)
+    }
+    expect(resync.safeParse({ reason: 'events-lost' }).success).toBe(false)
+    expect(resync.safeParse({ reason: 'backpressure', seq: 3 }).success).toBe(false)
+    expect(resync.safeParse({}).success).toBe(false)
+  })
+})

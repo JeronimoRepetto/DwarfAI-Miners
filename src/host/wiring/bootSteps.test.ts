@@ -324,13 +324,17 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     const deps = channelDeps(log)
     // AMENDED for ISSUE-029 (was: the four Dispatcher deps only): main also binds the StopAllPort
     // and the clean exit for host.shutdown, which this ping case never calls.
+    // AMENDED for ISSUE-025 (was: no `connections`, no `epoch`): the Host dispatcher also serves
+    // `events.subscribe`, which reads the calling connection's frame delivery and the boot epoch.
     const dispatcher = createHostDispatcher({
       log,
       clock: deps.clock,
       scheduler: new FakeScheduler(deps.clock),
       state: () => deps.state().state,
       stopAll: emptyOwnerStopAll,
-      lifecycle: { closeCleanly: () => Promise.resolve() }
+      lifecycle: { closeCleanly: () => Promise.resolve() },
+      connections: deps.connections,
+      epoch: deps.epoch
     })
     const endpoint = createUiEndpoint({
       facts: () => Promise.resolve({ ok: true, value: input }),

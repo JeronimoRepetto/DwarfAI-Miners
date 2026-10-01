@@ -15,10 +15,10 @@
 // The boot reports its lifecycle into the transport's HostStateHolder, which `hello.ok` and
 // HOST_NOT_READY read and which sends `host.state` to the `ui` connections through the
 // ConnectionRegistry. The seam-B Dispatcher comes from wiring/hostDispatcher.ts, which registers
-// the transport's own `ping` and `host.shutdown` and where each method joins with the issue that
-// serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every owned session: bound to
-// the empty-owner implementation, since the Host owns no session yet, until the launching module
-// serves it (later: ISSUE-175).
+// the transport's own `ping`, `events.subscribe` and `host.shutdown` and where each method joins
+// with the issue that serves it. `host.shutdown {stop-all}` asks the StopAllPort to end every
+// owned session: bound to the empty-owner implementation, since the Host owns no session yet,
+// until the launching module serves it (later: ISSUE-175).
 //
 // Boot step 2 opens `<hostDataDir>/dwarfai.db` and keeps the Host epoch (createHostDatabase,
 // ISSUE-039); its checkpoint is the clean exit's (the clean-shutdown marker), and a newer file
@@ -47,6 +47,7 @@ import { hostRuntime } from './platform/process/runtimeFacts'
 import { createHostFileProtection } from './platform/sqlite/fileProtection'
 import { migrationsFor } from './platform/sqlite/migrations'
 import { ConnectionRegistry } from './transport/connectionRegistry'
+import { TRANSPORT_FRAMES } from './transport/events/framePublisher'
 import { HostStateHolder, LIFECYCLE_FRAMES } from './transport/lifecycle/hostState'
 import { HostIdentityFile } from './transport/runFiles/hostIdentityFile'
 import { NodeRunFileWriter } from './transport/runFiles/nodeRunFileWriter'
@@ -112,6 +113,7 @@ async function main(): Promise<void> {
       })
   })
   const ids = new UuidV7Generator({ clock })
+  const epoch = mintBootEpoch(ids)
   const connections = new ConnectionRegistry()
   const hostState = new HostStateHolder(connections)
   // The dispatcher serves `host.shutdown`, which ends in the clean exit, which closes the endpoint
@@ -131,9 +133,10 @@ async function main(): Promise<void> {
     state: () => hostState.current().state,
     // Cut 0: no owned session exists yet (later: ISSUE-175 binds launching.stopAll).
     stopAll: emptyOwnerStopAll,
-    lifecycle
+    lifecycle,
+    connections,
+    epoch
   })
-  const epoch = mintBootEpoch(ids)
   const runQuery = createQueryRunner()
   const processControl = new NodeProcessControl({
     scheduler,
@@ -196,7 +199,7 @@ async function main(): Promise<void> {
         state: () => hostState.current(),
         dispatcher,
         connections,
-        frames: LIFECYCLE_FRAMES,
+        frames: [...LIFECYCLE_FRAMES, ...TRANSPORT_FRAMES],
         // Loaded on the first Windows bind only; a Unix socket never needs it.
         ownerOnlyPipe: createNativeOwnerOnlyPipe({ prebuildsDir: winPipePrebuildsDir(appRoot) }),
         conditions: () => database.capabilities(),

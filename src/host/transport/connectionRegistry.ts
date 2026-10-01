@@ -1,28 +1,31 @@
 // The authenticated connections of the UI endpoint, and the one way a Host frame reaches them
-// (ADR-003 items 6, 12, frozen; 14 §2.4 "Roles"). connection.ts attaches a connection here once its
-// `hello.ok` is written and detaches it on every close; nothing before authentication is ever here,
-// so no frame is sent before a valid hello (ADR-003 item 2).
+// (ADR-003 items 6–8, 12, frozen; 14 §1.7–§1.9, §2.4 "Roles"). connection.ts attaches a connection
+// here once its `hello.ok` is written and detaches it on every close; nothing before
+// authentication is ever here, so no frame is sent before a valid hello (ADR-003 item 2).
 //
-// `publish` sends one `evt` frame to every attached connection whose role the frame's FRAME_ROLES
-// row names, and to no other: `host.state` reaches `ui` only, `host.closing` reaches `ui` and
-// `notifier` (B-F04, B-F05). Each connection numbers its own frames (`seq`, per connection,
-// monotonic from 1 after `hello.ok`, 14 §3.2). The replay ring, the outbound high-water rule and
-// the per-dwarf audience of a `viewer` are the event plumbing's (later: ISSUE-025), which takes
-// over the delivery behind this same `publish`.
+// `publish` / `publishFrame` hand a frame to the frame publisher (events/framePublisher.ts), which
+// numbers it per connection target, keeps it in the target's replay ring and sends it to every
+// attached connection whose role the frame's FRAME_ROLES row names, and to no other: `host.state`
+// reaches `ui` only, `host.closing` reaches `ui` and `notifier` (B-F04, B-F05), a viewer frame
+// reaches only the viewers of the dwarf its audience names. `subscribe` is B-M03's
+// (methods/eventsSubscribe.ts) and `resync` the outbound queue's, after a backpressure drain.
 //
 // `endAll` is the clean exit's: every connection is ended after the frames already written reach
 // it, bounded so that a stalled client cannot hold the Host (the endpoint's close then destroys
 // what is left).
-import type { HostFrameData, HostFrameName } from '@dwarfai/contracts'
+import type { HostFrameData, HostFrameName, SubscribeParams } from '@dwarfai/contracts'
 import type { Scheduler } from '../kernel/ports/scheduler'
-import { FRAME_ROLES, type ChannelRole } from './roles'
+import {
+  FrameDelivery,
+  type DeliveryConnection,
+  type FrameAudience,
+  type FrameValidator,
+  type ResyncReason,
+  type SubscribeOutcome
+} from './events/framePublisher'
 
 /** One authenticated connection as the registry drives it. */
-export interface AttachedConnection {
-  readonly role: ChannelRole
-  readonly clientId: string
-  /** Writes one `evt` frame with this connection's next `seq`. */
-  send<F extends HostFrameName>(name: F, data: HostFrameData[F]): void
+export interface AttachedConnection extends DeliveryConnection {
   /** Ends the connection once every frame written so far has been handed to the peer. */
   end(): Promise<void>
 }
@@ -32,27 +35,55 @@ export interface FramePublisher {
   publish<F extends HostFrameName>(name: F, data: HostFrameData[F]): void
 }
 
+export interface ConnectionRegistryOptions {
+  /** Checks every published frame against its contract schema (14 §1.4): tests pass one. */
+  validateFrame?: FrameValidator
+}
+
 export class ConnectionRegistry implements FramePublisher {
-  private readonly attached = new Set<AttachedConnection>()
+  private readonly delivery: FrameDelivery<AttachedConnection>
+
+  constructor(options: ConnectionRegistryOptions = {}) {
+    this.delivery = new FrameDelivery(options.validateFrame)
+  }
 
   attach(connection: AttachedConnection): void {
-    this.attached.add(connection)
+    this.delivery.attach(connection)
   }
 
   detach(connection: AttachedConnection): void {
-    this.attached.delete(connection)
+    this.delivery.detach(connection)
   }
 
   /** The connections attached right now. */
   connections(): readonly AttachedConnection[] {
-    return [...this.attached]
+    return this.delivery.connections()
   }
 
+  /** Publishes a frame to every role of its 14 §2.4 row. */
   publish<F extends HostFrameName>(name: F, data: HostFrameData[F]): void {
-    const roles = FRAME_ROLES[name] ?? []
-    for (const connection of this.connections()) {
-      if (roles.includes(connection.role)) connection.send(name, data)
-    }
+    this.delivery.publishFrame(name, data)
+  }
+
+  /** Publishes a frame to `audience` (roles within its 14 §2.4 row; for a viewer, its dwarf). */
+  publishFrame<F extends HostFrameName>(
+    name: F,
+    data: HostFrameData[F],
+    audience?: FrameAudience
+  ): void {
+    this.delivery.publishFrame(name, data, audience)
+  }
+
+  /** B-M03 for the attached connection `clientId` (14 §3.4). */
+  subscribe(clientId: string, params: SubscribeParams, epoch: string): SubscribeOutcome {
+    const connection = this.connections().find((attached) => attached.clientId === clientId)
+    if (connection === undefined) throw new Error('events.subscribe from a connection not attached')
+    return this.delivery.subscribe(connection, params, epoch)
+  }
+
+  /** Sends one `resync-required` with `reason` to `connection` alone. */
+  resync(connection: AttachedConnection, reason: ResyncReason): void {
+    this.delivery.resync(connection, reason)
   }
 
   /**

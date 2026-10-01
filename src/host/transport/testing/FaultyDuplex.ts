@@ -9,10 +9,22 @@
 //   each its own read, so a frame arrives split.
 // - `dropAfter(bytes)`: once `bytes` more bytes reached the Host, the connection is killed and the
 //   rest of the write is dropped.
+// - `stallReads()` / `resumeReads()`: the Host's bytes are held unacknowledged, not delivered, until
+//   `resumeReads()`, as a client that stopped reading: they stay unsent on the Host end
+//   (`writableLength`, `writableNeedDrain`) as in a full socket buffer, and the Host end drains when
+//   they are delivered.
 //
-// Host → client bytes pass through unchanged, in the chunks they were written in.
+// Otherwise Host → client bytes pass through unchanged, in the chunks they were written in. Both
+// ends have the same high water on every OS (FAULTY_DUPLEX_HIGH_WATER).
 import { Duplex } from 'node:stream'
 import type { DuplexPair } from './inProcessDuplex'
+
+/**
+ * The high water of both ends, fixed: Node's default is 16 KiB on Windows and 64 KiB elsewhere, so
+ * an end left at the default would ask to drain at another point on each OS, and a test of what
+ * waits behind a full socket would pass on one and fail on the other.
+ */
+export const FAULTY_DUPLEX_HIGH_WATER = 16 * 1024
 
 export class FaultyDuplex implements DuplexPair {
   /** The end the Host's transport takes. */
@@ -23,14 +35,19 @@ export class FaultyDuplex implements DuplexPair {
   private held: Uint8Array[] = []
   private chunkSize = Number.POSITIVE_INFINITY
   private dropBudget = Number.POSITIVE_INFINITY
+  private readsStalled = false
+  private unread: Array<{ chunk: Uint8Array; done: () => void }> = []
 
   constructor() {
     this.host = this.makeEnd(
-      (chunk) => this.pushTo(this.client, chunk),
+      (chunk, done) => this.towardClient(chunk, done),
       () => this.client
     )
     this.client = this.makeEnd(
-      (chunk) => this.towardHost(chunk),
+      (chunk, done) => {
+        this.towardHost(chunk)
+        done()
+      },
       () => this.host
     )
   }
@@ -50,6 +67,20 @@ export class FaultyDuplex implements DuplexPair {
     for (const chunk of held) this.deliver(chunk)
   }
 
+  stallReads(): void {
+    this.readsStalled = true
+  }
+
+  resumeReads(): void {
+    this.readsStalled = false
+    const unread = this.unread
+    this.unread = []
+    for (const { chunk, done } of unread) {
+      this.pushTo(this.client, chunk)
+      done()
+    }
+  }
+
   splitInto(size: number): void {
     if (!Number.isInteger(size) || size < 1) {
       throw new RangeError(`FaultyDuplex.splitInto needs a positive integer; got ${size}`)
@@ -62,6 +93,16 @@ export class FaultyDuplex implements DuplexPair {
       throw new RangeError(`FaultyDuplex.dropAfter needs a non-negative integer; got ${bytes}`)
     }
     this.dropBudget = bytes
+  }
+
+  /** A stalled reader leaves the write unacknowledged, so the Host end keeps it as unsent bytes. */
+  private towardClient(chunk: Uint8Array, done: () => void): void {
+    if (this.readsStalled) {
+      this.unread.push({ chunk, done })
+      return
+    }
+    this.pushTo(this.client, chunk)
+    done()
   }
 
   private towardHost(chunk: Uint8Array): void {
@@ -88,13 +129,16 @@ export class FaultyDuplex implements DuplexPair {
     if (!end.destroyed) end.push(Uint8Array.from(chunk))
   }
 
-  private makeEnd(onWrite: (chunk: Uint8Array) => void, peer: () => Duplex): Duplex {
+  private makeEnd(
+    onWrite: (chunk: Uint8Array, done: () => void) => void,
+    peer: () => Duplex
+  ): Duplex {
     return new Duplex({
       allowHalfOpen: false,
+      highWaterMark: FAULTY_DUPLEX_HIGH_WATER,
       read() {},
       write(chunk: Buffer, _encoding, callback) {
-        onWrite(Uint8Array.from(chunk))
-        callback()
+        onWrite(Uint8Array.from(chunk), () => callback())
       },
       final(callback) {
         const other = peer()

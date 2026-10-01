@@ -9,9 +9,10 @@ import { z } from 'zod'
 import type { HelloOk } from './adr-003'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F04 and B-F05 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04 and B-F05 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
+  'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
   'host.state':           { state: HelloOk['state']; jobStatus: HelloOk['jobStatus'] }
   'host.closing':         { reason: 'idle' | 'stop-all' | 'upgrade' | 'os-session-end'; clean: true }   // 'idle' retired by AMENDMENT-5 (OQ-63), never sent
 }
@@ -19,6 +20,17 @@ export interface HostFrames {
 
 /** The strict() schema of each frame's `data`, by frame name. */
 export const HOST_FRAME_SCHEMAS = {
+  'resync-required': z
+    .object({
+      reason: z.enum([
+        'epoch-changed',
+        'seq-not-in-ring',
+        'ring-overrun',
+        'backpressure',
+        'metrics-reset'
+      ])
+    })
+    .strict(),
   'host.state': z
     .object({
       state: z.enum(['starting', 'migrating', 'ready', 'upgrade-pending']),
