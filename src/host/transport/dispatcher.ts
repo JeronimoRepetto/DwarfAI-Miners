@@ -11,8 +11,9 @@
 // 5. a mutating method's repeat — the same `requestId` in flight or settled less than 10 min ago —
 //    gets the first call's answer from the RequestTable, with no second effect (ADR-003 item 6);
 // 6. the handler's result, or INTERNAL when it throws (details in the log only, ADR-026). A
-//    mutating handler also receives the `requestId`, so a module can key it durably, and may
-//    defer an effect until its answer has been handed to the writer (`afterAnswer`, 14 §1.7).
+//    mutating handler also receives the `requestId`, so a module can key it durably. Any handler
+//    may defer an effect until its answer has been handed to the writer (`afterAnswer`, 14 §1.7,
+//    §3.4).
 //
 // Every answer goes to `dispatch`'s `onAnswer` (the connection's write) before `dispatch` settles.
 //
@@ -42,19 +43,24 @@ export interface RequestContext {
   clientId: string
 }
 
-export type MethodHandler<P> = (params: P, context: RequestContext) => unknown
-
-/** What a mutating handler receives: the caller plus the call's validated `requestId`. */
-export interface MutatingContext extends RequestContext {
-  requestId: string
+/** What every handler receives: the caller, and a way to act after its own answer. */
+export interface HandlerContext extends RequestContext {
   /**
-   * Defers `effect` until this call's answer — and that of every repeat waiting on the same
-   * `requestId` — has been handed to the writer (`dispatch`'s `onAnswer`), for an effect that
-   * must follow its own `res` on the wire, as the clean exit after `host.shutdown {stop-all}` does
-   * (14 §1.7). It runs once, only when the handler answered without throwing; a repeat answered
-   * from the RequestTable defers none.
+   * Defers `effect` until this call's answer has been handed to the writer (`dispatch`'s
+   * `onAnswer`), for an effect that must follow its own `res` on the wire: the clean exit after
+   * `host.shutdown {stop-all}` (14 §1.7), the frames that follow an `events.subscribe` result
+   * (14 §3.4). It runs once, only when the handler answered without throwing. For a mutating
+   * method it waits for the answer of every repeat waiting on the same `requestId`, and a repeat
+   * answered from the RequestTable defers none.
    */
   afterAnswer(effect: () => void): void
+}
+
+export type MethodHandler<P> = (params: P, context: HandlerContext) => unknown
+
+/** What a mutating handler receives: the caller plus the call's validated `requestId`. */
+export interface MutatingContext extends HandlerContext {
+  requestId: string
 }
 
 export type MutatingHandler<P> = (params: P, context: MutatingContext) => unknown
@@ -229,7 +235,15 @@ export class Dispatcher {
             { ...requestId, errCode: answer.errCode }
           )
 
-    if (!entry.mutating) return answerWith(await runHandler(() => entry.handler(params, context)))
+    if (!entry.mutating) {
+      const deferred: Array<() => void> = []
+      const answer = await runHandler(() =>
+        entry.handler(params, { ...context, afterAnswer: (effect) => deferred.push(effect) })
+      )
+      const res = answerWith(answer)
+      if (answer.ok) for (const effect of deferred) effect()
+      return res
+    }
     if (requestId.requestId === undefined) return refuse('INVALID_PARAMS')
 
     const id = requestId.requestId

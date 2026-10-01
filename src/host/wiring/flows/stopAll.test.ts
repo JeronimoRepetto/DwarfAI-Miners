@@ -79,13 +79,17 @@ async function readyHost(stopAll: RecordingStopAll, journal: string[]) {
       journal.push(`exit:${code}`)
     }
   })
+  // AMENDED for ISSUE-025 (was: no `connections`, no `epoch`): the Host dispatcher also serves
+  // `events.subscribe`, which reads the calling connection's frame delivery and the boot epoch.
   const dispatcher = createHostDispatcher({
     log,
     clock,
     scheduler,
     state: () => state.current().state,
     stopAll,
-    lifecycle
+    lifecycle,
+    connections,
+    epoch: 'epoch-0029'
   })
   const outcome = await runBoot(
     (paths) =>

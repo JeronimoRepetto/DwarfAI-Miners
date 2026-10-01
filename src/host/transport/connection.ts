@@ -11,8 +11,13 @@
 //   gets PROTOCOL_ERROR and the close (item 5); any other frame that is not a valid `req`
 //   envelope is the same protocol error, since it cannot be answered by correlation id. Once
 //   `hello.ok` is written the connection is attached to the ConnectionRegistry, which sends it
-//   the Host frames of its role as `evt` frames numbered by this connection's `seq`, and which
-//   the clean exit uses to end it after `host.closing` (ADR-003 item 12).
+//   the Host frames of its role as `evt` frames numbered by its connection target's `seq`, and
+//   which the clean exit uses to end it after `host.closing` (ADR-003 item 12). From `hello.ok`
+//   on every frame is written through the connection's outbound queue (events/outbound.ts):
+//   responses and `evt` frames in one order, the 4 MiB high water, the allowed coalescing, and
+//   one `resync-required {backpressure}` once a stalled client drained (14 §1.8), logged
+//   `channel.resync`. The dispatcher hands each answer to `write` before any effect a handler
+//   deferred past it (`afterAnswer`): the frames that follow a result (14 §3.4) come after it.
 // - Throttle (ADR-003 item 5; 14 §1.5): every hello refusal counts as one failure; the fifth within
 //   60 s logs `channel.rate-limited` once, with the count, and for 10 s each new connection gets
 //   one `error {code:'RATE_LIMITED'}` frame and the close, before reading anything.
@@ -35,6 +40,8 @@ import type { Scheduler } from '../kernel/ports/scheduler'
 import type { HelloThrottle } from './auth/throttle'
 import type { AttachedConnection, ConnectionRegistry } from './connectionRegistry'
 import type { Dispatcher } from './dispatcher'
+import { RESYNC_CAUSE_CLASS } from './events/framePublisher'
+import { Outbound } from './events/outbound'
 import { answerHello, type HelloDeps } from './hello'
 import { watchSilence, type SilenceWatch } from './liveness'
 import type { ChannelRole } from './roles'
@@ -60,6 +67,7 @@ type ConnectionState =
       role: ChannelRole
       clientId: string
       attached: AttachedConnection
+      outbound: Outbound
       silence: SilenceWatch
     }
   | { kind: 'closed' }
@@ -73,8 +81,6 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
     return
   }
   let state: ConnectionState = { kind: 'awaiting-hello' }
-  /** The `seq` of the last `evt` frame written: per connection, from 1 after hello.ok (14 §3.2). */
-  let seq = 0
   const decoder = new FrameDecoder()
   const record = (entry: Omit<DiagnosticEntry, 'subsystem'>): void =>
     deps.log.record({ ...entry, subsystem: SUBSYSTEM })
@@ -83,8 +89,9 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
 
   const isClosed = (): boolean => state.kind === 'closed'
 
+  /** Writes a response: through the outbound queue once authenticated (14 §1.7 order). */
   const write = (frame: unknown): void => {
-    if (state.kind !== 'closed' && !stream.destroyed) stream.write(encodeFrame(frame))
+    if (state.kind === 'authenticated') state.outbound.write(frame)
   }
 
   /**
@@ -95,6 +102,7 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
     if (state.kind === 'authenticated') {
       record({ level: 'info', event: 'channel.detach', ...who(), ...detail })
       deps.connections.detach(state.attached)
+      state.outbound.close()
       state.silence.stop()
     }
     state = { kind: 'closed' }
@@ -119,6 +127,7 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
    */
   const end = (): Promise<void> => {
     if (state.kind === 'closed') return Promise.resolve()
+    if (state.kind === 'authenticated') state.outbound.flush()
     leave()
     if (stream.destroyed) return Promise.resolve()
     return new Promise((resolve) => {
@@ -154,13 +163,22 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
         return
       }
       helloTimer.cancel()
+      const outbound = new Outbound(stream, {
+        onDrained: () => {
+          record({
+            level: 'info',
+            event: 'channel.resync',
+            causeClass: RESYNC_CAUSE_CLASS.backpressure,
+            ...who()
+          })
+          deps.connections.resync(attached, 'backpressure')
+        }
+      })
       const attached: AttachedConnection = {
         role: answer.role,
         clientId: answer.helloOk.clientId,
-        send: (name, data) => {
-          seq += 1
-          write({ type: 'evt', seq, epoch: deps.epoch, name, data })
-        },
+        send: (name, data, seq) =>
+          outbound.sendEvt({ type: 'evt', seq, epoch: deps.epoch, name, data }),
         end: () => end()
       }
       state = {
@@ -168,6 +186,7 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
         role: answer.role,
         clientId: answer.helloOk.clientId,
         attached,
+        outbound,
         silence: watchSilence(deps.scheduler, detachSilent)
       }
       decoder.helloOk()
@@ -189,7 +208,8 @@ export function acceptConnection(stream: Duplex, deps: ConnectionDeps): void {
     }
     const context = { role: state.role, clientId: state.clientId }
     // The answer is written as the dispatcher settles it, before any effect deferred past it
-    // (14 §1.7: `host.shutdown {stop-all}` answers before its host.closing).
+    // (14 §1.7: `host.shutdown {stop-all}` answers before its host.closing; the frames that follow
+    // an `events.subscribe` result, 14 §3.4).
     void deps.dispatcher.dispatch(request.data, context, write)
   }
 
