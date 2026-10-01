@@ -15,20 +15,74 @@ import {
   createLegacyRuntimeRoute,
   type LegacyRuntimeRoute
 } from '../legacy-bridge/LegacyRuntimeRoute'
-import { createRouter, type IpcMainRegistrar } from './ipc/router'
+import { createRouter, type IpcMainRegistrar, type RouteTarget } from './ipc/router'
 import { ROUTES } from './ipc/routes'
 import { ElectronSingleInstanceLock } from './window/adapters/ElectronSingleInstanceLock'
 import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { wireSecondLaunch } from './window/application/secondLaunch'
 import type { SingleInstanceLock } from './window/ports/singleInstanceLock'
-import { createUiPreferenceRows } from './ipc/handlers/uiPreferenceRows'
+import { createUiPreferenceRows, UI_PREFERENCE_ROWS } from './ipc/handlers/uiPreferenceRows'
 import { JsonUiPreferenceStore } from './window/adapters/JsonUiPreferenceStore'
 import { createUiPreferences, type ModeWindowSender } from './window/application/uiPreferences'
 import type { UiPreferenceStore } from './window/ports/uiPreferenceStore'
+import { NodeLogFiles } from './diagnostics/adapters/NodeLogFiles'
+import type { UiClock } from './diagnostics/ports/clock'
+import { createRendererDiagnostics } from './diagnostics/rendererDiagnostics'
+import { createUiLogger, logLevelFromEnv, type UiLog } from './diagnostics/uiLogger'
+import { composeRouteTargets, type RouteTargetPart } from './ipc/composeRouteTargets'
+import {
+  createRendererDiagnosticHandler,
+  RENDERER_DIAGNOSTIC_CHANNEL
+} from './ipc/handlers/rendererDiagnostic'
+import type { ModeWindowRegistry } from './window/application/modeWindowRegistry'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
   readonly webContentsId: number
+}
+
+/**
+ * The router's one `ui-local` target (ADR-001 item 3), composed from the parts whose dependencies are given, each
+ * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048) and A-N30 renderer diagnostics (ISSUE-055).
+ * `undefined` when no part is present. None of these rows is routed `ui-local` before the cut-0 switch (ISSUE-056).
+ */
+export function composeUiLocal({
+  uiPreferences,
+  uiLog,
+  modeWindows,
+  clock = { now: () => Date.now() }
+}: {
+  uiPreferences?: UiMainDeps['uiPreferences']
+  uiLog?: UiLog
+  modeWindows: ModeWindowRegistry
+  clock?: UiClock
+}): RouteTarget | undefined {
+  const parts: RouteTargetPart[] = []
+  if (uiPreferences !== undefined) {
+    parts.push({
+      channels: UI_PREFERENCE_ROWS,
+      target: createUiPreferenceRows(
+        createUiPreferences({
+          store: uiPreferences.store,
+          modeWindows: () => uiPreferences.windows().filter((w) => modeWindows.has(w.webContentsId))
+        })
+      )
+    })
+  }
+  if (uiLog !== undefined) {
+    parts.push({
+      channels: [RENDERER_DIAGNOSTIC_CHANNEL],
+      target: createRendererDiagnosticHandler(
+        createRendererDiagnostics({
+          log: uiLog,
+          clock,
+          // Until the window factory registers each window's mode (ISSUE-046), the one mode window is the Panel.
+          modeOf: (id) => (modeWindows.has(id) ? 'panel' : undefined)
+        })
+      )
+    })
+  }
+  return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
 /** A window Electron created, as the mode-window registry needs it. */
@@ -63,6 +117,8 @@ export interface UiMainDeps {
    * keeps writing today's files, until the cut-0 switch (ISSUE-056) routes them here.
    */
   uiPreferences?: { store: UiPreferenceStore; windows(): readonly WindowContents[] }
+  /** The UI logger (ADR-026; 05 §3.14): A-N30 renderer diagnostics join the `ui-local` target with it. */
+  uiLog?: UiLog
 }
 
 /**
@@ -84,7 +140,8 @@ export async function startUiMain({
   legacyRuntime,
   ipc,
   appEntry,
-  uiPreferences
+  uiPreferences,
+  uiLog
 }: UiMainDeps): Promise<void> {
   if (!lock.acquire()) {
     lifecycle.quit()
@@ -100,14 +157,7 @@ export async function startUiMain({
   })
   // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
   // that checks its sender and its payload (ADR-019 items 7, 8).
-  const uiLocal =
-    uiPreferences &&
-    createUiPreferenceRows(
-      createUiPreferences({
-        store: uiPreferences.store,
-        modeWindows: () => uiPreferences.windows().filter((w) => modeWindows.has(w.webContentsId))
-      })
-    )
+  const uiLocal = composeUiLocal({ uiPreferences, uiLog, modeWindows })
   createRouter({
     routes: ROUTES,
     legacy: legacyRuntime,
@@ -180,6 +230,15 @@ function appEntryUrl(env: NodeJS.ProcessEnv = process.env): string {
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it.
 if (process.type === 'browser') {
+  const uiLog = createUiLogger({
+    files: new NodeLogFiles(),
+    logDir: join(app.getPath('userData'), 'logs'), // ADR-026 item 1, the folder the Host writes into too
+    clock: { now: () => Date.now() },
+    appVersion: app.getVersion(),
+    pid: process.pid,
+    level: logLevelFromEnv(process.env),
+    appRoot: app.getAppPath()
+  })
   void startUiMain({
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
@@ -189,14 +248,18 @@ if (process.type === 'browser') {
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),
     uiPreferences: {
-      // The UI preference files of userData (ADR-024 item 1). Its log records (19 §9.6) join the UI log segments
-      // when those are bound (ISSUE-055); until the cut-0 switch no row reaches this store, so none is written.
-      store: new JsonUiPreferenceStore({ dir: app.getPath('userData'), log: () => {} }),
+      // The UI preference files of userData (ADR-024 item 1); their log records (19 §9.6 `uiprefs.corrupt`,
+      // `uiprefs.write-failed`) go to the UI log segments.
+      store: new JsonUiPreferenceStore({
+        dir: app.getPath('userData'),
+        log: (record) => uiLog.record(record)
+      }),
       windows: () =>
         BrowserWindow.getAllWindows().map((window) => ({
           webContentsId: window.webContents.id,
           send: (push, payload) => window.webContents.send(push, payload)
         }))
-    }
+    },
+    uiLog
   })
 }

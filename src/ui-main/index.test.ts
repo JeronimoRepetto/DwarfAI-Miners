@@ -1,10 +1,26 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
-import { startUiMain, type CreatedWindow, type UiMainDeps, type UiMainLifecycle } from './index'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { FakeClock } from './diagnostics/ports/fakes/FakeClock'
+import { FakeLogFiles } from './diagnostics/ports/fakes/FakeLogFiles'
+import { createUiLogger, type UiLog, type UiLogEntry } from './diagnostics/uiLogger'
+import {
+  composeUiLocal,
+  startUiMain,
+  type CreatedWindow,
+  type UiMainDeps,
+  type UiMainLifecycle
+} from './index'
 import type { IpcMainRegistrar } from './ipc/router'
 import type { IpcSenderEvent } from './ipc/senderCheck'
 import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
+import { JsonUiPreferenceStore, type UiPreferenceFs } from './window/adapters/JsonUiPreferenceStore'
+import { createModeWindowRegistry } from './window/application/modeWindowRegistry'
+import { defaultsOf } from './window/domain/uiPreferenceValues'
+import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
 
 /**
  * The Electron composition root (05 §2.3, 16 §8.4): the single-instance lock is the first thing it
@@ -263,5 +279,118 @@ describe('ui-main composition root (05 §2.3)', () => {
     })
 
     expect([...ipc.handled.keys(), ...ipc.listened.keys()]).toEqual([])
+  })
+
+  describe('the ui-local route target (ADR-001 item 3; 21 §1 item 1)', () => {
+    class RecordingUiLog implements UiLog {
+      readonly entries: UiLogEntry[] = []
+      record(entry: UiLogEntry): void {
+        this.entries.push(entry)
+      }
+    }
+    const registeredPanel = () => {
+      const modeWindows = createModeWindowRegistry()
+      modeWindows.register(3)
+      return modeWindows
+    }
+
+    it('[ADR-001] the preference rows and A-N30 are served by one ui-local target, each by its own part', async () => {
+      const uiLog = new RecordingUiLog()
+      const uiLocal = composeUiLocal({
+        uiPreferences: { store: new InMemoryUiPreferenceStore(), windows: () => [] },
+        uiLog,
+        modeWindows: registeredPanel(),
+        clock: new FakeClock(0)
+      })
+      expect(uiLocal).toBeDefined()
+      expect(await uiLocal?.serve('audio:preferences:get', undefined, eventFrom(3))).toEqual(
+        defaultsOf('audio')
+      )
+      expect(
+        await uiLocal?.serve('diag:renderer:report', { event: 'renderer.error' }, eventFrom(3))
+      ).toBeUndefined()
+      expect(uiLog.entries).toEqual([
+        { level: 'error', event: 'renderer.error', subsystem: 'window', msg: 'panel' }
+      ])
+      expect(await uiLocal?.serve('panel:hide', undefined, eventFrom(3))).toEqual({
+        ok: false,
+        error: { code: 'METHOD_NOT_FOUND', message: 'no route for panel:hide', retryable: false }
+      })
+    })
+
+    it('[ADR-001] only the parts whose dependencies are given join the target, and with none there is no target', async () => {
+      const onlyDiagnostics = composeUiLocal({
+        uiLog: new RecordingUiLog(),
+        modeWindows: registeredPanel(),
+        clock: new FakeClock(0)
+      })
+      expect(
+        await onlyDiagnostics?.serve('audio:preferences:get', undefined, eventFrom(3))
+      ).toEqual({
+        ok: false,
+        error: {
+          code: 'METHOD_NOT_FOUND',
+          message: 'no route for audio:preferences:get',
+          retryable: false
+        }
+      })
+      expect(composeUiLocal({ modeWindows: registeredPanel() })).toBeUndefined()
+    })
+
+    it('[ADR-026] the UI preference store records reach the ui segments through the UI record rules', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'dwarfai-uiprefs-log-'))
+      try {
+        const files = new FakeLogFiles()
+        const logDir = join('/', 'user-data', 'logs')
+        const uiLog = createUiLogger({
+          files,
+          logDir,
+          clock: new FakeClock(Date.parse('2026-10-01T09:00:00.000Z')),
+          appVersion: '0.20.0',
+          pid: 7,
+          level: 'info'
+        })
+        const denied = Object.assign(new Error('denied'), { code: 'EACCES' })
+        const failing: UiPreferenceFs = {
+          readFileSync: () => {
+            throw denied
+          },
+          writeFileSync: () => {
+            throw denied
+          },
+          renameSync: () => {},
+          mkdirSync: () => undefined
+        }
+        const store = new JsonUiPreferenceStore({ dir, fs: failing, log: (r) => uiLog.record(r) })
+        store.load('launchView')
+        // A failed save is logged and rethrown for the use case to answer (ISSUE-048).
+        expect(() => store.save('audio', defaultsOf('audio'))).toThrow('denied')
+        await uiLog.flush()
+
+        const lines = (files.textOf(join(logDir, 'ui-000001.jsonl')) ?? '')
+          .trimEnd()
+          .split('\n')
+          .map((line) => JSON.parse(line) as Record<string, unknown>)
+        expect(lines).toEqual([
+          expect.objectContaining({
+            proc: 'ui',
+            level: 'warn',
+            event: 'uiprefs.corrupt',
+            subsystem: 'window',
+            msg: 'launchView',
+            errCode: 'EACCES'
+          }),
+          expect.objectContaining({
+            proc: 'ui',
+            event: 'uiprefs.write-failed',
+            msg: 'audio',
+            errCode: 'EACCES'
+          })
+        ])
+        expect(uiLog.counters()).toMatchObject({ refused: 0, failed: 0 })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
   })
 })
