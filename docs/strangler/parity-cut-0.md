@@ -56,6 +56,13 @@ first seen).
 | The legacy seam-A replay                                                                                               | above                                                                                                                                                                                         |
 | Census shows no silent loss                                                                                            | `node skills/test-safety/assets/test-census.mjs --base 73193605`: no file lost test statements                                                                                                |
 
+The Host-connection L9 case (`e2e/cut-0/host-connection-ui.e2e.ts`, moved from ISSUE-316) asserts what the simulated
+valley can show: after three Host kills the one crash-loop message with Retry, Retry reaching the Host again, and the
+board's dwarfs staying drawn. The composer keeping its draft and sending nothing while the Host is down stay at L2
+(ISSUE-316's `App.messageDock.test.ts`; orchestrator decision 2026-10-02): no fixture world has a dwarf with a text
+channel yet. Forward note: the L9 draft-kept case is added when one exists (ISSUE-143's `SimulatedDriver`, or a
+stream-json stub CLI).
+
 ## Intended differences
 
 | Behaviour                                            | Legacy build                                                                                                      | This step                                                                                                                                                                  | Decided by                                                                                                       |
