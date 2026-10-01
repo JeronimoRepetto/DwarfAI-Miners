@@ -26,6 +26,20 @@ const SNAPSHOT_PATH = path.join(SQLITE_DIR, 'schema.snapshot.sql')
 const RUNNER_PATH = path.join(SQLITE_DIR, 'migrations', 'runner.ts')
 const RENDER_PATH = path.join(SQLITE_DIR, 'testing', 'schemaSnapshot.ts')
 
+/**
+ * The runner's required `DiagnosticsLog`. This developer tool has no Host segment writer (ADR-026):
+ * on a fresh temp file the runner can only record `db.migration` (ok, or failed before it throws)
+ * and `db.sqlite-error`, so a failure's record goes to stderr, where the person running the tool
+ * sees it, and the routine `info` record is dropped.
+ */
+const stderrLog = {
+  record(entry) {
+    if (entry.level === 'error' || entry.level === 'warn') {
+      process.stderr.write(`${JSON.stringify(entry)}\n`)
+    }
+  }
+}
+
 /** Migrate an empty temp file with the registered migrations and render its schema. */
 async function freshSnapshot() {
   const { runnerImport } = await import('vite')
@@ -38,7 +52,8 @@ async function freshSnapshot() {
       buildKind: 'test',
       releaseDataDir: path.join(dir, 'release-data'),
       appVersion: 'dump-schema',
-      clock: { now: () => 0 }
+      clock: { now: () => 0 },
+      log: stderrLog
     })
     if (!opened.ok) throw new Error(`the runner refused an empty file: ${opened.error}`)
     try {

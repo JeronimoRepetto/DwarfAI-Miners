@@ -5,11 +5,15 @@
 //
 // - Every connection it opens, the writer and each `openReader()`, carries the 09 §8.1 policy
 //   (`connectionPolicy.ts`); a reader is `query_only`.
-// - A failing statement throws `SqliteInfrastructureError` with the `SQLITE_*` code (16 §2.1 c).
+// - A failing statement throws `SqliteInfrastructureError` with the `SQLITE_*` code (16 §2.1 c);
+//   a full disk, an I/O error or a lock held past the busy timeout (`SQLITE_FULL`, `SQLITE_IOERR`,
+//   `SQLITE_BUSY`) is also logged `db.sqlite-error` with that code (19 §9.5; FM-104, FM-106). The
+//   command's transaction rolls back (`SqliteTransactionRunner`); the connection stays usable.
 //   The message is SQLite's own text, which names no bound parameter; errors that are not
 //   SQLite results (a wrong parameter type) are programming errors and pass through unchanged.
 import { DatabaseSync } from 'node:sqlite'
 import { SqliteInfrastructureError } from '../../kernel/domain/errors'
+import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type {
   SqliteDatabase,
   SqliteParam,
@@ -48,6 +52,13 @@ const PRIMARY_RESULT_NAMES: Readonly<Record<number, string>> = {
   25: 'RANGE',
   26: 'NOTADB'
 }
+
+/**
+ * The failures that abort a command and are logged `db.sqlite-error` (19 §9.5; 13 FM-104, FM-106).
+ * An unreadable file (`SQLITE_CORRUPT`, `SQLITE_NOTADB`) at open is the quarantine's
+ * `db.quarantined` instead.
+ */
+const LOGGED_FAILURES = new Set(['SQLITE_FULL', 'SQLITE_IOERR', 'SQLITE_BUSY'])
 
 function sqliteErrcode(error: unknown): number | null {
   if (typeof error !== 'object' || error === null) return null
@@ -91,6 +102,11 @@ function allRows(db: DatabaseSync, sql: string, params: readonly SqliteParam[]):
   return mapped(() => db.prepare(sql).all(...params) as SqliteRow[])
 }
 
+export interface NodeSqliteOptions {
+  /** Where `db.sqlite-error` records go (19 §9.5). */
+  log?: DiagnosticsLog
+}
+
 export class NodeSqliteDatabase implements SqliteDatabase {
   private readonly db: DatabaseSync
 
@@ -101,27 +117,28 @@ export class NodeSqliteDatabase implements SqliteDatabase {
    */
   protected constructor(
     readonly location: string,
-    private readonly journalMode: JournalMode
+    private readonly journalMode: JournalMode,
+    protected readonly options: NodeSqliteOptions = {}
   ) {
     this.db = openConnection(location, 'writer', journalMode)
   }
 
   /** The Host's writer: a database file in WAL mode. */
-  static open(location: string): NodeSqliteDatabase {
-    return new NodeSqliteDatabase(location, 'wal')
+  static open(location: string, options: NodeSqliteOptions = {}): NodeSqliteDatabase {
+    return new NodeSqliteDatabase(location, 'wal', options)
   }
 
   exec(sql: string): void {
-    mapped(() => this.db.exec(sql))
+    this.statement(sql, () => this.db.exec(sql))
   }
 
   run(sql: string, params: readonly SqliteParam[] = []): SqliteRunResult {
-    const result = mapped(() => this.db.prepare(sql).run(...params))
+    const result = this.statement(sql, () => this.db.prepare(sql).run(...params))
     return { changes: Number(result.changes) }
   }
 
   all(sql: string, params: readonly SqliteParam[] = []): SqliteRow[] {
-    return allRows(this.db, sql, params)
+    return this.statement(sql, () => this.db.prepare(sql).all(...params) as SqliteRow[])
   }
 
   openReader(): SqliteReader {
@@ -134,5 +151,30 @@ export class NodeSqliteDatabase implements SqliteDatabase {
 
   close(): void {
     this.db.close()
+  }
+
+  /**
+   * Every statement on the writer runs through here, inside the error mapping. The fault-injecting
+   * test double (`testing/FaultySqlite.ts`) overrides it to fail a statement the way the driver
+   * would; production code never does.
+   */
+  protected intercept<T>(_sql: string, execute: () => T): T {
+    return execute()
+  }
+
+  private statement<T>(sql: string, execute: () => T): T {
+    try {
+      return mapped(() => this.intercept(sql, execute))
+    } catch (error) {
+      if (error instanceof SqliteInfrastructureError && LOGGED_FAILURES.has(error.code)) {
+        this.options.log?.record({
+          level: 'error',
+          event: 'db.sqlite-error',
+          subsystem: 'host',
+          errCode: error.code
+        })
+      }
+      throw error
+    }
   }
 }

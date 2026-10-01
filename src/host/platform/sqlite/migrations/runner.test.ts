@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import { FakeClock } from '../../../kernel/fakes/FakeClock'
+import { RecordingDiagnosticsLog } from '../../../kernel/fakes/RecordingDiagnosticsLog'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import { openHostDb, type OpenHostDbOptions, type OpenedHostDb } from './runner'
 import { defineMigration } from './types'
@@ -50,6 +51,11 @@ const T3 = defineMigration({
   name: '0003-t3',
   sql: 'CREATE TABLE t3 (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
 })
+
+/** A backup-step spy's answer: it records the call and reports a written backup. */
+function recorded(_call: unknown): { ok: true; value: undefined } {
+  return { ok: true, value: undefined }
+}
 
 function pragma(db: Pick<SqliteDatabase, 'all'>, name: string): unknown {
   const [row] = db.all(`PRAGMA ${name}`)
@@ -112,6 +118,7 @@ describe('openHostDb (09 §6.2)', () => {
       releaseDataDir: join(dir, 'release-data'),
       appVersion: '0.0.0-test',
       clock,
+      log: new RecordingDiagnosticsLog(),
       migrations: [T1],
       ...overrides
     }
@@ -138,7 +145,7 @@ describe('openHostDb (09 §6.2)', () => {
 
     const opened = open({
       migrations: [T1, T2],
-      backup: { beforeMigrating: ({ fromVersion }) => void backupCalls.push(fromVersion) }
+      backup: { beforeMigrating: ({ fromVersion }) => recorded(backupCalls.push(fromVersion)) }
     })
 
     expect(opened).toMatchObject({ readOnly: false, version: 2, applied: [1, 2] })
@@ -211,7 +218,7 @@ describe('openHostDb (09 §6.2)', () => {
     const seen: [string, unknown][] = []
     const backup = {
       beforeMigrating: ({ db }: { db: SqliteDatabase }) => {
-        seen.push(['backup', pragma(db, 'foreign_keys')])
+        return recorded(seen.push(['backup', pragma(db, 'foreign_keys')]))
       }
     }
     const recording = defineMigration({
@@ -297,7 +304,7 @@ describe('openHostDb (09 §6.2)', () => {
 
     const opened = open({
       migrations: [T1, T2],
-      backup: { beforeMigrating: ({ fromVersion }) => void backupCalls.push(fromVersion) }
+      backup: { beforeMigrating: ({ fromVersion }) => recorded(backupCalls.push(fromVersion)) }
     })
 
     expect(opened).toMatchObject({ readOnly: true, capability: 'db-read-only', version: 3 })
@@ -359,7 +366,7 @@ describe('openHostDb (09 §6.2)', () => {
     closeAll()
     const before = { file: fileHash(path), data: dump(path) }
     const backupCalls: number[] = []
-    const backup = { beforeMigrating: () => void backupCalls.push(1) }
+    const backup = { beforeMigrating: () => recorded(backupCalls.push(1)) }
 
     for (const buildKind of ['dev', 'test'] as const) {
       for (const releaseDataDir of [dir, `${dir}${sep}`, join(dir, 'sub', '..')]) {

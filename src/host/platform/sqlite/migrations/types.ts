@@ -10,6 +10,7 @@
 // - `up` runs synchronously inside the one migration transaction; by default it executes `sql`.
 //   A migration that binds seed parameters supplies its own `up` over the same `sql`.
 import { createHash } from 'node:crypto'
+import type { Result } from '../../../kernel/domain/values'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 
 export interface Migration {
@@ -41,12 +42,13 @@ export function defineMigration(source: MigrationSource): Migration {
 
 /**
  * Step 5 of 09 §6.2: before pending migrations are applied to a non-empty database, a backup is
- * written (`VACUUM INTO`, later: ISSUE-040). A step that throws aborts the open before anything is
- * migrated.
+ * written (`VACUUM INTO`, `../backup.ts`). `BACKUP_FAILED` means no complete backup exists, and
+ * the runner then migrates nothing (13 FM-105).
  */
 export interface BackupStep {
-  beforeMigrating(input: { db: SqliteDatabase; path: string; fromVersion: number }): void
+  beforeMigrating(input: {
+    db: SqliteDatabase
+    path: string
+    fromVersion: number
+  }): Result<void, 'BACKUP_FAILED'>
 }
-
-/** The backup step until ISSUE-040 provides the real one: it writes nothing. */
-export const noBackup: BackupStep = { beforeMigrating: () => undefined }
