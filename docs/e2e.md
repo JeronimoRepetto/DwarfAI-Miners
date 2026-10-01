@@ -40,6 +40,10 @@ pnpm test:e2e
   (`taskkill /T` on Windows, the app's process group on macOS and Linux), and the teardown fails with "did not exit
   within … of app.quit()". A quit that never finishes is a visible failure in seconds, not a test timeout followed by a
   worker teardown timeout that leaves the app running.
+- before that kill, the failure records the app's state: what the main process still answers (its windows and web
+  contents, or no answer within 3 s) and, on macOS, a `sample` of every thread written as `quit-sample.txt` next to the
+  case's trace. Windows still alive mean the quit was turned down; all destroyed mean it stalled after closing them; no
+  answer means the main thread is blocked.
 
 Assertions go through the UI, Playwright's main-process `evaluate`, or the profile's `dwarfai.db` opened read-only after
 the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in production code.

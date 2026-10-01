@@ -1,4 +1,4 @@
-import { execFileSync, type ChildProcess } from 'node:child_process'
+import { execFile, execFileSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -164,6 +164,67 @@ export function killProcessTree(child: ChildProcess): void {
   }
 }
 
+/** How long the main process gets to answer the diagnosis of a quit that ran out of budget. */
+const DIAGNOSIS_ANSWER_MS = 3_000
+
+/** How long macOS `sample` records the stuck app's threads, in seconds. */
+const SAMPLE_SECONDS = 3
+
+/**
+ * What the app still is when its quit ran out of budget, for the failure message:
+ *
+ * - the main process's own answer (its windows and web contents): windows that are not destroyed
+ *   mean the quit was turned down or never ran; all destroyed means it stalled after closing them;
+ *   no answer means the main thread is blocked or its Node environment is already gone;
+ * - on macOS, a `sample` of every thread's native stack, written next to the case's trace, which
+ *   shows where a blocked main thread sits.
+ */
+async function diagnoseStuckQuit(
+  app: ElectronApplication,
+  child: ChildProcess,
+  tracePath: string | undefined
+): Promise<string> {
+  let timer: NodeJS.Timeout | undefined
+  const answer = await Promise.race([
+    app
+      .evaluate(({ app: electronApp, BrowserWindow, webContents }) =>
+        JSON.stringify({
+          ready: electronApp.isReady(),
+          windows: BrowserWindow.getAllWindows().map((window) => ({
+            destroyed: window.isDestroyed(),
+            visible: !window.isDestroyed() && window.isVisible()
+          })),
+          webContents: webContents.getAllWebContents().length
+        })
+      )
+      .then(
+        (state) => `the main process answered: ${state}`,
+        (error: unknown) => `the main process could not answer: ${String(error)}`
+      ),
+    new Promise<string>((resolve) => {
+      timer = setTimeout(
+        () => resolve(`the main process did not answer within ${DIAGNOSIS_ANSWER_MS} ms`),
+        DIAGNOSIS_ANSWER_MS
+      )
+    })
+  ])
+  clearTimeout(timer)
+  if (process.platform !== 'darwin' || tracePath === undefined || child.pid === undefined) {
+    return answer
+  }
+  const samplePath = path.join(path.dirname(tracePath), 'quit-sample.txt')
+  const sampled = await new Promise<string>((resolve) => {
+    // `sample` ships with macOS; shell stays off.
+    execFile(
+      'sample',
+      [String(child.pid), String(SAMPLE_SECONDS), '-file', samplePath],
+      { timeout: KILL_TIMEOUT_MS },
+      (error) => resolve(error ? `sample failed: ${error.message}` : `thread sample: ${samplePath}`)
+    )
+  })
+  return `${answer}; ${sampled}`
+}
+
 export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedApp> {
   const { main } = JSON.parse(readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')) as {
     main: string
@@ -212,33 +273,41 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     const child = app.process()
     const quitTimeoutMs = options.quitTimeoutMs ?? DEFAULT_QUIT_TIMEOUT_MS
     let quitError: unknown
-    // Playwright's `close()` is `app.quit()` and then an unbounded wait for the process to exit,
-    // so the budget runs beside it instead of after it.
+    // The harness sends `app.quit()` itself instead of Playwright's `close()`, which drops its
+    // connection to the main process at once and then waits, unbounded, for the exit. Keeping the
+    // connection lets a quit that runs out of budget be asked what state the app is in.
     const quit = (async () => {
       if (options.tracePath !== undefined) {
         await app.context().tracing.stop({ path: options.tracePath })
       }
-      await app.close()
+      await app.evaluate(({ app: electronApp }) => {
+        electronApp.quit()
+      })
     })().catch((error: unknown) => {
-      quitError = error
+      // An app that exits while answering ends the call with a closed connection: not a failure.
+      if (!hasExited(child)) quitError = error
     })
     let failure: unknown
     try {
       if (!(await waitForExit(child, quitTimeoutMs))) {
+        const diagnosis = await diagnoseStuckQuit(app, child, options.tracePath)
         killProcessTree(child)
         if (!(await waitForExit(child, KILL_TIMEOUT_MS))) {
           throw new Error(`the app (pid ${child.pid}) survived a kill of its process tree`)
         }
         await settleWithin(quit, KILL_TIMEOUT_MS)
+        await settleWithin(app.close(), KILL_TIMEOUT_MS)
         // Killed, so nothing is left behind, but a quit that never finishes is a defect: the case
         // fails with it instead of hanging until the test and worker timeouts.
         throw new Error(
           `the app (pid ${child.pid}) did not exit within ${quitTimeoutMs} ms of app.quit(); ` +
-            'its process tree was killed',
+            `its process tree was killed. ${diagnosis}`,
           { cause: quitError }
         )
       }
       await settleWithin(quit, KILL_TIMEOUT_MS)
+      // Releases Playwright's side of the exited app; it no longer waits on anything.
+      await settleWithin(app.close(), KILL_TIMEOUT_MS)
       if (quitError !== undefined) throw quitError
     } catch (error) {
       failure = error

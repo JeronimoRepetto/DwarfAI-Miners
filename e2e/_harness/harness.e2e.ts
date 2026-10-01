@@ -165,6 +165,9 @@ test.describe('E2E harness: a bounded teardown (17 §1.9)', () => {
       ])
 
       expect(outcome).toMatch(/did not exit within 2000 ms of app\.quit\(\)/)
+      // The failure carries what the main process still answered before the kill: here, a
+      // responsive main whose window survived the quit, the signature of a quit turned down.
+      expect(outcome).toMatch(/the main process answered: .*"destroyed":false/)
       await expect
         .poll(() => pids.filter(isAlive), {
           message: 'app processes still running',
