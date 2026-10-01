@@ -229,3 +229,82 @@ describe('ElectronWindows (05 §3.14; ADR-019 items 1, 8)', () => {
     expectTypeOf<typeof dialog>().toMatchTypeOf<CrashMessageDialog<BrowserWindow>>()
   })
 })
+
+// ---- the Panel window surface (ISSUE-047) ----
+
+describe('ElectronWindows Panel surface (05 §3.14; ADR-024 item 9; 13 FM-052)', () => {
+  it('[ADR-019] asking for the Panel surface builds no window', () => {
+    new ElectronWindows(deps()).panelSurface()
+    expect(FakeBrowserWindow.built).toEqual([])
+  })
+
+  it('[FM-052] the Panel surface answers the always-on-top the window reads back, never the wish', () => {
+    const windows = new ElectronWindows(deps())
+    windows.panel()
+    const surface = windows.panelSurface()
+    const window = FakeBrowserWindow.built[0]!
+    expect(surface.setAlwaysOnTop(false)).toBe(false)
+    expect(window.pinned).toBe(false)
+    window.honorsPin = false
+    expect(surface.setAlwaysOnTop(true)).toBe(false)
+    expect(surface.isAlwaysOnTop()).toBe(false)
+  })
+
+  it('[ADR-024] the Panel surface reads back the bounds and the zoom the window and its page really took', () => {
+    const windows = new ElectronWindows(deps())
+    const panel = windows.panel()
+    windows.panel()
+    const surface = windows.panelSurface()
+    const window = FakeBrowserWindow.built[0]!
+    window.widest = 600
+    panel.placeAt({ x: 10, y: 0, width: 900, height: 1000 })
+    expect(surface.bounds()).toEqual({ x: 10, y: 0, width: 600, height: 1000 })
+    expect(surface.applyZoom(1.25)).toBe(1.25)
+    expect(window.webContents.zoomMode).toBe('isolated')
+    expect(FakeBrowserWindow.built, 'one Panel window').toHaveLength(1)
+  })
+
+  it('[US-SHELL-002.AC05] the Panel surface raises a visible Panel and never shows a hidden one', () => {
+    const windows = new ElectronWindows(deps())
+    windows.panel()
+    const surface = windows.panelSurface()
+    const window = FakeBrowserWindow.built[0]!
+    surface.raise()
+    expect(window.calls).not.toContain('moveTop')
+    expect(window.calls).not.toContain('show')
+    window.showInactive()
+    window.minimized = true
+    surface.raise()
+    expect(window.calls.slice(-3)).toEqual(['restore', 'moveTop', 'focus'])
+  })
+
+  it('[ADR-024] the Panel surface reports a minimize and a restore of the Panel window', () => {
+    const windows = new ElectronWindows(deps())
+    windows.panel()
+    const surface = windows.panelSurface()
+    let changes = 0
+    surface.onMinimizedChanged(() => changes++)
+    const window = FakeBrowserWindow.built[0]!
+    window.minimized = true
+    window.emit('minimize')
+    expect(surface.isMinimized()).toBe(true)
+    window.minimized = false
+    window.emit('restore')
+    expect(changes).toBe(2)
+  })
+
+  it('[NFR-PLAT-12] a reloaded Panel page gets back the zoom it was last given', () => {
+    const windows = new ElectronWindows(deps())
+    windows.panel()
+    const surface = windows.panelSurface()
+    const window = FakeBrowserWindow.built[0]!
+    // Loaded before any zoom was asked: nothing is applied.
+    window.webContents.emit('did-finish-load')
+    expect(window.webContents.zoom).toBe(1)
+    surface.applyZoom(2)
+    // Electron resets a page's zoom on every navigation (a crash reload included).
+    window.webContents.zoom = 1
+    window.webContents.emit('did-finish-load')
+    expect(window.webContents.zoom).toBe(2)
+  })
+})

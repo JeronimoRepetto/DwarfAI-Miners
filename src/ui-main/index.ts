@@ -8,6 +8,7 @@ import {
   globalShortcut,
   ipcMain,
   nativeImage,
+  screen,
   session,
   shell
 } from 'electron'
@@ -38,6 +39,10 @@ import {
 import type { ModeWindowRegistry } from './window/application/modeWindowRegistry'
 import { devHmrOriginOf } from './window/adapters/contentSecurityPolicy'
 import { installWindowHardening } from './window/adapters/windowHardening'
+import { createPanelRows, PANEL_ROWS } from './ipc/handlers/panel'
+import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
+import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
+import { ElectronWindows, showRendererCrashedMessage } from './window/adapters/ElectronWindows'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -46,17 +51,20 @@ export interface WindowContents extends ModeWindowSender {
 
 /**
  * The router's one `ui-local` target (ADR-001 item 3), composed from the parts whose dependencies are given, each
- * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048) and A-N30 renderer diagnostics (ISSUE-055).
+ * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048), A-N30 renderer diagnostics (ISSUE-055) and
+ * the Panel window rows (ISSUE-047).
  * `undefined` when no part is present. None of these rows is routed `ui-local` before the cut-0 switch (ISSUE-056).
  */
 export function composeUiLocal({
   uiPreferences,
   uiLog,
+  panelWindow,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
   uiPreferences?: UiMainDeps['uiPreferences']
   uiLog?: UiLog
+  panelWindow?: PanelWindowUseCases
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -84,6 +92,9 @@ export function composeUiLocal({
         })
       )
     })
+  }
+  if (panelWindow !== undefined) {
+    parts.push({ channels: PANEL_ROWS, target: createPanelRows(panelWindow) })
   }
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
@@ -122,6 +133,12 @@ export interface UiMainDeps {
   uiPreferences?: { store: UiPreferenceStore; windows(): readonly WindowContents[] }
   /** The UI logger (ADR-026; 05 §3.14): A-N30 renderer diagnostics join the `ui-local` target with it. */
   uiLog?: UiLog
+  /**
+   * The rebuilt Panel window (ISSUE-047), composed over the mode-window registry. Its rows join the `ui-local` target;
+   * they stay `legacy` in the table until the cut-0 switch (ISSUE-056), so until then nothing calls it: it builds no
+   * window, writes no preference and today's runtime keeps the one Panel window (21 §1 item 4).
+   */
+  panelWindow?: (modeWindows: ModeWindowRegistry) => PanelWindowUseCases
 }
 
 /**
@@ -144,7 +161,8 @@ export async function startUiMain({
   ipc,
   appEntry,
   uiPreferences,
-  uiLog
+  uiLog,
+  panelWindow
 }: UiMainDeps): Promise<void> {
   if (!lock.acquire()) {
     lifecycle.quit()
@@ -160,7 +178,12 @@ export async function startUiMain({
   })
   // Every seam A call goes through the router table from the first renderer load (21 §1 item 1), behind the gate
   // that checks its sender and its payload (ADR-019 items 7, 8).
-  const uiLocal = composeUiLocal({ uiPreferences, uiLog, modeWindows })
+  const uiLocal = composeUiLocal({
+    uiPreferences,
+    uiLog,
+    panelWindow: panelWindow?.(modeWindows),
+    modeWindows
+  })
   createRouter({
     routes: ROUTES,
     legacy: legacyRuntime,
@@ -175,6 +198,7 @@ export async function startUiMain({
   lifecycle.onWindowAllClosed(() => {})
   try {
     await lifecycle.whenReady()
+    // Today's Panel window answers a second launch until the cut-0 switch (ISSUE-056) attaches the rebuilt one.
     secondLaunch.attach(await legacyRuntime.compose())
   } catch {
     // Today's composition reports its own failure before it rethrows (LegacyRuntimeRoute).
@@ -229,13 +253,65 @@ function appEntryUrl(env: NodeJS.ProcessEnv = process.env): string {
   return pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
 }
 
+/** A file under `resources/`: beside the app in development, under `process.resourcesPath` once packaged. */
+function resourcePath(name: string): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, name)
+    : join(app.getAppPath(), 'resources', name)
+}
+
+/**
+ * The rebuilt Panel window over Electron (ISSUE-047): `ElectronWindows` builds it through the secure factory with the
+ * sandboxed CommonJS preload (ISSUE-045, ISSUE-046), `ElectronScreenArea` answers the displays, and the pin and the
+ * docking edge are the `alwaysOnTop` and `dockSide` stores of `store` (ADR-024 item 1). Composing it builds no window,
+ * reads no store and touches no display: the window is built on the first call that needs it, and Electron's `screen`
+ * is read only after the app is ready.
+ */
+function electronPanelWindow(
+  store: UiPreferenceStore
+): (modeWindows: ModeWindowRegistry) => PanelWindowUseCases {
+  return (modeWindows) => {
+    const screenArea = new ElectronScreenArea(() => screen, currentUiPlatform())
+    let panel: PanelWindowUseCases | null = null
+    const windows = new ElectronWindows({
+      BrowserWindow,
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
+      icon: resourcePath('app-icon.png'),
+      appEntry: appEntryUrl(),
+      registry: modeWindows,
+      panelStart: () => {
+        if (panel === null) throw new Error('the Panel window was asked for before it was composed')
+        return panel.panelStart()
+      },
+      timers: {
+        now: () => Date.now(),
+        setTimeout: (fire, ms) => setTimeout(fire, ms),
+        clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
+      },
+      // Every window ElectronWindows builds is an Electron BrowserWindow (the class handed to it above).
+      crashMessage: (window) =>
+        showRendererCrashedMessage<BrowserWindow>(dialog, window as unknown as BrowserWindow)
+    })
+    panel = createPanelWindow({
+      windows,
+      surface: windows.panelSurface(),
+      screen: screenArea,
+      store,
+      floor: screenArea.minWindowWidth(),
+      onDisplaysChanged: (h) => void app.whenReady().then(() => screenArea.onChange(h))
+    })
+    return panel
+  }
+}
+
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it.
 if (process.type === 'browser') {
   // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
-  // the CSP once Electron is ready. The secure window factory builds the Panel once the Panel window rows are served
-  // (ISSUE-047) with a preload that loads sandboxed (ISSUE-045); until then the window is today's (LegacyRuntimeRoute).
+  // the CSP once Electron is ready. The secure window factory builds the Panel once the cut-0 switch (ISSUE-056) routes
+  // the Panel window rows to it (ISSUE-047) with a preload that loads sandboxed (ISSUE-045); until then the window is
+  // today's (LegacyRuntimeRoute).
   installWindowHardening({
     app,
     session: () => session.defaultSession,
@@ -252,6 +328,12 @@ if (process.type === 'browser') {
     level: logLevelFromEnv(process.env),
     appRoot: app.getAppPath()
   })
+  // The UI preference files of userData (ADR-024 item 1); their log records (19 §9.6 `uiprefs.corrupt`,
+  // `uiprefs.write-failed`) go to the UI log segments.
+  const uiPreferenceStore = new JsonUiPreferenceStore({
+    dir: app.getPath('userData'),
+    log: (record) => uiLog.record(record)
+  })
   void startUiMain({
     lock: new ElectronSingleInstanceLock(app),
     lifecycle: electronLifecycle(),
@@ -261,18 +343,14 @@ if (process.type === 'browser') {
     ipc: electronIpcMain(),
     appEntry: appEntryUrl(),
     uiPreferences: {
-      // The UI preference files of userData (ADR-024 item 1); their log records (19 §9.6 `uiprefs.corrupt`,
-      // `uiprefs.write-failed`) go to the UI log segments.
-      store: new JsonUiPreferenceStore({
-        dir: app.getPath('userData'),
-        log: (record) => uiLog.record(record)
-      }),
+      store: uiPreferenceStore,
       windows: () =>
         BrowserWindow.getAllWindows().map((window) => ({
           webContentsId: window.webContents.id,
           send: (push, payload) => window.webContents.send(push, payload)
         }))
     },
-    uiLog
+    uiLog,
+    panelWindow: electronPanelWindow(uiPreferenceStore)
   })
 }
