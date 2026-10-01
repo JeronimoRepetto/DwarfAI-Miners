@@ -1,9 +1,8 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { connect, createServer, type Server, type Socket } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { HostEndpoint } from '@dwarfai/contracts'
+import { checkSocketPathLength, type HostEndpoint } from '@dwarfai/contracts'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { NodeScheduler } from '../../platform/clock/NodeScheduler'
 import { decideBind } from '../../wiring/singleInstance'
@@ -38,10 +37,15 @@ function testEndpoint(): HostEndpoint {
     const suffix = `${process.pid}-${pipeCounter}-${Math.random().toString(16).slice(2, 10)}`
     return { kind: 'named-pipe', path: `\\\\.\\pipe\\dwarfai-test-022-${suffix}` }
   }
-  const root = mkdtempSync(join(tmpdir(), 'dwarfai-022-'))
+  // Directly under /tmp: the socket path must fit `sun_path` (104 bytes on macOS), and the macOS
+  // runner's os.tmpdir() (`/var/folders/<2>/<30>/T`) leaves too little room for it.
+  const root = mkdtempSync('/tmp/dw022-')
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const dir = join(root, 'run')
-  return { kind: 'unix-socket', dir, path: join(dir, 'host-0123456789ab.sock') }
+  const path = join(dir, 'host-0123456789ab.sock')
+  const fits = checkSocketPathLength(process.platform === 'darwin' ? 'darwin' : 'linux', path)
+  if (!fits.ok) throw new Error(`test socket path too long for this OS: ${JSON.stringify(fits)}`)
+  return { kind: 'unix-socket', dir, path }
 }
 
 function deps(overrides: Partial<EndpointServerDeps> = {}): EndpointServerDeps & {

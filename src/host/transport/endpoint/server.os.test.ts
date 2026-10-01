@@ -6,7 +6,6 @@
 // case here, and the interim rule (no byte before authentication, a logged degraded ACL) is
 // proven on a real pipe by server.test.ts.
 import { lstatSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
@@ -22,7 +21,9 @@ afterEach(async () => {
 
 describe.runIf(process.platform !== 'win32')('the UI endpoint on POSIX', () => {
   it('[ADR-003] the socket is 0600 and its run directory 0700', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dwarfai-022-os-'))
+    // Directly under /tmp: the socket paths must fit `sun_path` (104 bytes on macOS), and the
+    // macOS runner's os.tmpdir() (`/var/folders/<2>/<30>/T`) leaves too little room for them.
+    const root = mkdtempSync('/tmp/dw022-')
     cleanups.push(() => rmSync(root, { recursive: true, force: true }))
     const dir = join(root, 'run')
     // A run directory left wider by someone else is narrowed, not trusted.

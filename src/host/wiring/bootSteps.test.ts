@@ -21,14 +21,39 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-/** Facts for this OS around a fresh temp hostDataDir, as the platform adapter would read them. */
-function factsForThisOs(hostDataDir: string): EndpointInput {
+/**
+ * A fresh folder for one case. On POSIX it sits directly under `/tmp`: a socket path must fit
+ * `sun_path` (104 bytes on macOS), and the macOS runner's `os.tmpdir()`
+ * (`/var/folders/<2>/<30>/T`) leaves too little room for it.
+ */
+function caseRoot(): string {
+  const root =
+    process.platform === 'win32'
+      ? mkdtempSync(join(tmpdir(), 'dwarfai-022-wiring-'))
+      : mkdtempSync('/tmp/dw022-')
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }))
+  return root
+}
+
+/**
+ * Facts for this OS under `root`, as the platform adapter reads them: each OS runs its own rule,
+ * with its own `sun_path` limit. The macOS home is `root`, so the socket never lands in the real
+ * home.
+ */
+function factsForThisOs(root: string): EndpointInput {
   if (process.platform === 'win32') {
-    return { platform: 'win32', hostDataDir, userSid: 'S-1-5-5-0-4242', sha256 }
+    return { platform: 'win32', hostDataDir: join(root, 'host'), userSid: 'S-1-5-5-0-4242', sha256 }
   }
-  // The Linux rule with its hostDataDir fallback keeps the socket inside the temp folder on any
-  // POSIX host (the macOS rule would put it under the real home).
-  return { platform: 'linux', hostDataDir, sha256 }
+  if (process.platform === 'darwin') {
+    return {
+      platform: 'darwin',
+      hostDataDir: join(root, 'DwarfAI-Miners', 'host'),
+      home: root,
+      caseInsensitiveVolume: false,
+      sha256
+    }
+  }
+  return { platform: 'linux', hostDataDir: join(root, 'host'), sha256 }
 }
 
 function scheduler(): NodeScheduler {
@@ -37,9 +62,7 @@ function scheduler(): NodeScheduler {
 
 describe('the bind step composition (ADR-002 D2, D3)', () => {
   it('[ADR-002] the bind step binds the endpoint the one pure rule names for the hostDataDir, and a client reaches it there', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dwarfai-022-wiring-'))
-    cleanups.push(() => rmSync(root, { recursive: true, force: true }))
-    const input = factsForThisOs(join(root, 'host'))
+    const input = factsForThisOs(caseRoot())
     const facts: EndpointFacts = () => Promise.resolve({ ok: true, value: input })
     const endpoint = createUiEndpoint({
       facts,
