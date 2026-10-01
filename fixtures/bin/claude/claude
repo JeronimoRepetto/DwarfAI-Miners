@@ -1,0 +1,10 @@
+#!/bin/sh
+# StubClaudeCli: the POSIX wrapper of the claude stub CLI (fixtures/README.md).
+# Shell built-ins only: a launcher may start it with a PATH holding just this folder and node's.
+# $0 is the path the wrapper was started by; a PATH lookup always gives it a slash, and a bare
+# name (sh claude, run from this folder) means the current folder.
+case "$0" in
+  */*) dir=${0%/*} ;;
+  *) dir=. ;;
+esac
+exec node "$dir/claude.mjs" "$@"

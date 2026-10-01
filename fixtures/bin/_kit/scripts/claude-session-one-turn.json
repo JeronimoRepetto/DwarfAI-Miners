@@ -1,0 +1,45 @@
+{
+  "version": "2.1.14 (Claude Code)",
+  "replay": [
+    {
+      "file": "projects/-work-sample-project/00000000-0000-4000-8000-000000000001.jsonl",
+      "records": [
+        {
+          "type": "user",
+          "uuid": "00000000-0000-4000-8000-000000000101",
+          "parentUuid": null,
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "cwd": "/work/sample-project",
+          "version": "2.1.14",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "message": { "role": "user", "content": "Summarize the sample project." }
+        },
+        {
+          "type": "assistant",
+          "uuid": "00000000-0000-4000-8000-000000000102",
+          "parentUuid": "00000000-0000-4000-8000-000000000101",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "cwd": "/work/sample-project",
+          "version": "2.1.14",
+          "timestamp": "2026-01-01T00:00:03.000Z",
+          "message": {
+            "id": "msg_000000000000000000000001",
+            "type": "message",
+            "role": "assistant",
+            "model": "sample-model",
+            "content": [{ "type": "text", "text": "The sample project is a placeholder." }],
+            "stop_reason": "end_turn",
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 8,
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "exitCode": 0,
+  "ignoreStdin": false
+}

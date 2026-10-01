@@ -25,6 +25,46 @@ pnpm vitest run scripts/checks/fixtures-layout.test.mjs
 `db/`, `ipc/capabilities/` and `bin/` always exist (a `.gitkeep` holds each until its first file). There is no
 `claude/agent-sdk/` directory: Claude driver fixtures exist only for `stream-json` and `acp` (OQ-52).
 
+## The stub-CLI kit (`bin/`)
+
+E2E cases put a provider "installed" on the machine with a stub CLI (`Stub<Provider>Cli`, `17` §1.9, §2.2):
+a small Node program named exactly as the real binary, whose folder `e2e/_harness/stubs.ts` (`withStubs`)
+hands to `launchApp`, which prepends it to the app's `PATH`. Detection, spawn and argv building then take their
+production paths; no production code knows the kit.
+
+| Path                                         | Content                                                                                                         |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `bin/_kit/stubCli.mjs`                       | the shared engine: `--version`, the scripted replay, the scripted exit                                          |
+| `bin/_kit/scripts/<scenario>.json`           | hand-written scenarios, scrubbed, in the shapes of the provider's own files (`15` §5)                           |
+| `bin/<name>/<name>.mjs`                      | the stub: a thin wrapper calling the engine with its provider directory and default script                      |
+| `bin/<name>/<name>.cmd`, `bin/<name>/<name>` | the Windows shim and the POSIX executable wrapper (mode `100755`, shell built-ins only), both `node <name>.mjs` |
+
+Stubs today: `claude` (replays into `CLAUDE_CONFIG_DIR`), `codex` (`CODEX_HOME`) and `opencode`
+(`XDG_DATA_HOME`, the store root holding `opencode/opencode.db`).
+
+**A script** is `{ version, replay, exitCode, ignoreStdin }`. `--version` prints `version` and exits 0. Otherwise the
+stub runs the `replay` steps in order: `{ file, records }` writes into `file`, a relative path under the provider
+directory (`.jsonl`: one JSON line per record; `.json`: its single record; `.db`: each record is an SQL statement run
+on that SQLite file), and `{ exit: <code> }` stops there with that code (CH-04). After the last step the stub exits
+with `exitCode`, or, with `ignoreStdin: true`, reads nothing and runs until it is killed (CH-05). The variable
+`DWARFAI_STUB_<NAME>_SCRIPT` names a script file that replaces the default one; `withStubs(names, scenario)` sets it
+from a scenario name. A stub fails closed, before any write: an unparsable script, an unset provider directory
+variable or a replay file outside that directory ends it with exit code 64, so it never writes into a person's real
+provider data.
+
+**How a spawn with `shell: false` reaches a stub.** On Windows the platform lookup (each `PATH` folder, each
+`PATHEXT` extension) finds `<name>.cmd`; Node refuses to start a `.cmd` without a shell (`EINVAL`, SP-04), and
+`%ComSpec% /d /s /c "<quoted command line>"` still with `shell: false` runs it. On POSIX the lookup finds the
+executable `<name>`, started directly. `node <name>.mjs` works on every OS.
+
+**Extending a stub.** A driver issue (for example ISSUE-150's `StubClaudeCli` protocol replay) extends
+`bin/<name>/<name>.mjs` and the engine with its protocol steps and adds its scenarios to `bin/_kit/scripts/`; it
+never adds a second stub for the same provider. Protocol fixtures stay in `<provider>/<driver>/<version>/`.
+
+**Never a real binary.** The kit is test data: no provider code, no provider binary (never bundled, downloaded or
+patched, ADR-008 item 1), no credential, no real path and no unscrubbed transcript. Nothing under `bin/` is packaged:
+electron-builder ships only `out/` and `package.json`, and `bin/_kit/stubCli.test.mjs` checks both rules.
+
 ## Rules
 
 - **Scrubbed only.** A provider fixture is committed only after the scrub step of `17` §1.4 ("Redaction (scrub
