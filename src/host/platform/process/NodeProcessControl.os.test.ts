@@ -24,18 +24,19 @@ function thisBootId(): string {
   if (process.platform === 'darwin') {
     return execFileSync('sysctl', ['-n', 'kern.bootsessionuuid'], { encoding: 'utf8' }).trim()
   }
-  const filetime = execFileSync(
+  // ISSUE-019: the Windows boot id is the registry BootId counter (was CIM LastBootUpTime, too
+  // slow for the 2 000 ms bound on a cold runner), read here through PowerShell's registry
+  // provider rather than the adapter's reg.exe.
+  return execFileSync(
     'powershell.exe',
     [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToFileTime()'
+      "(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters').BootId"
     ],
     { encoding: 'utf8', windowsHide: true }
   ).trim()
-  const bootMs = Number((BigInt(filetime) - 116_444_736_000_000_000n) / 10_000n)
-  return String(Math.round(bootMs / 1_000) * 1_000)
 }
 
 function probeCases(): void {

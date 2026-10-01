@@ -211,7 +211,7 @@ function notStarted(error: unknown): SpawnedProcess {
  * "could not start (<errno>)".
  */
 export function createQueryRunner(): QueryRunner {
-  return (file, args, { timeoutMs, env }) =>
+  return (file, args, { timeoutMs, env, dropEnv }) =>
     new Promise((resolve) => {
       execFile(
         file,
@@ -221,7 +221,9 @@ export function createQueryRunner(): QueryRunner {
           windowsHide: true,
           shell: false,
           encoding: 'utf8',
-          ...(env === undefined ? {} : { env: { ...process.env, ...env } })
+          ...(env === undefined && dropEnv === undefined
+            ? {}
+            : { env: childEnvironment(env ?? {}, dropEnv ?? []) })
         },
         (error, stdout) => {
           if (error === null) resolve({ ok: true, stdout })
@@ -233,6 +235,22 @@ export function createQueryRunner(): QueryRunner {
         }
       )
     })
+}
+
+/**
+ * This process's environment plus `extra`, without the names in `dropped`. Names are compared
+ * ignoring case, as Windows compares them, so a `PSModulePath` spelled any way is left out.
+ */
+function childEnvironment(
+  extra: Readonly<Record<string, string>>,
+  dropped: readonly string[]
+): Record<string, string | undefined> {
+  const drop = new Set(dropped.map((name) => name.toUpperCase()))
+  const env: Record<string, string | undefined> = {}
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!drop.has(name.toUpperCase())) env[name] = value
+  }
+  return { ...env, ...extra }
 }
 
 function readerForThisOs(): OsProcessReader {

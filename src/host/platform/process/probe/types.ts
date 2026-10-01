@@ -30,12 +30,30 @@ export const START_TIME_QUERY_TIMEOUT_MS = 5_000
  */
 export const BOOT_ID_QUERY_TIMEOUT_MS = 2_000
 
-/** Runs one OS query as an argv array, never through a shell, killed at `timeoutMs`. */
+/**
+ * Runs one OS query as an argv array, never through a shell, killed at `timeoutMs`. The child gets
+ * this process's environment plus `env`, without the names in `dropEnv` (compared ignoring case,
+ * as Windows does).
+ */
 export type QueryRunner = (
   file: string,
   args: readonly string[],
-  options: { timeoutMs: number; env?: Record<string, string> }
+  options: { timeoutMs: number; env?: Record<string, string>; dropEnv?: readonly string[] }
 ) => Promise<QueryOutcome>
+
+/**
+ * What a Windows PowerShell 5.1 child must not inherit: a `PSModulePath` set by PowerShell 7 (a
+ * Host started from a UI launched in a pwsh session) makes 5.1 fail to autoload its own modules
+ * (`CouldNotAutoloadMatchingModule` for Get-Process and Get-CimInstance, seen by ISSUE-315).
+ */
+export const POWERSHELL_DROPPED_ENV: readonly string[] = ['PSModulePath']
+
+/** Windows PowerShell 5.1 by its full path under SystemRoot (never found on PATH). */
+export function windowsPowerShell(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string {
+  return windowsSystemTool('WindowsPowerShell\\v1.0\\powershell.exe', env)
+}
 
 export const UNPARSEABLE = { ok: false, cause: 'gave an unparseable answer' } as const
 
@@ -47,4 +65,18 @@ export function parsed<T>(
   if (!outcome.ok) return outcome
   const value = parse(outcome.stdout)
   return value === null ? UNPARSEABLE : { ok: true, value }
+}
+
+/**
+ * The absolute path of a program in Windows' own System32 folder, built from `%SystemRoot%`. Named
+ * by path, never looked up on PATH: an earlier program of the same name on PATH would run instead
+ * (Git for Windows ships its own `whoami` and `klist`, which take other arguments). Only when
+ * `SystemRoot` is missing from the environment is the Windows default `C:\Windows` assumed.
+ */
+export function windowsSystemTool(
+  name: string,
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string {
+  const root = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? 'C:\\Windows'
+  return `${root.replace(/[\\/]+$/, '')}\\System32\\${name}`
 }
