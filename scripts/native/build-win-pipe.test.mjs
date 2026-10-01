@@ -45,6 +45,7 @@ describe('build-win-pipe', () => {
   // ADDED (fix: Windows Host launch timeout): the UI's launch helper is the second module the
   // script builds, from its own source in the UI tree, into its own binary, with the same runtime
   // and hardening, linking only kernel32.
+  // AMENDED (fix: FM-009 LAUNCHER_TIMEOUT): it now also links ole32 and oleaut32 (case below).
   it('[ADR-002] the UI launch helper is built from its own source into its own binary, with the static C runtime and the delayed node.exe', () => {
     expect(NATIVE_MODULES.map((module) => module.binary)).toEqual([
       'dwarfai_win_pipe.node',
@@ -70,5 +71,12 @@ describe('build-win-pipe', () => {
     expect(link?.args).toContain(path.join('w', 'win_launch.obj'))
     expect(link?.args).toContain('kernel32.lib')
     expect(link?.args).not.toContain('advapi32.lib')
+  })
+
+  // ADDED (fix: FM-009 LAUNCHER_TIMEOUT): the helper makes the WMI create (ADR-002 D6 item 2) in
+  // process through COM, so it links COM (ole32) and its strings and arrays (oleaut32) besides
+  // kernel32; the WMI class ids are defined in its source, so no wbemuuid static library.
+  it('[ADR-002] the UI launch helper links exactly kernel32, ole32 and oleaut32', () => {
+    expect(NATIVE_MODULES[1]?.libs).toEqual(['kernel32.lib', 'ole32.lib', 'oleaut32.lib'])
   })
 })

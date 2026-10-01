@@ -1,6 +1,7 @@
-// The UI's launch helper on Windows (ADR-002 D6 item 1; spike-results/SP-02.md): the loader of the
-// native module win_launch.c in this folder, which starts the Host with job breakaway from inside
-// UI main, so no PowerShell or compiler process stands between the UI and the Host (windows.ts).
+// The UI's launch helper on Windows (ADR-002 D6 items 1 and 2; spike-results/SP-02.md): the loader
+// of the native module win_launch.c in this folder, which starts the Host with job breakaway, or
+// through WMI when breakaway is refused, from inside UI main, so no PowerShell or compiler process
+// stands between the UI and the Host (windows.ts).
 //
 // - Only this folder loads the binary (R11 containment, eslint.config.mjs deviation 7). It is the
 //   UI's own module, built from this folder's source: the UI never loads the Host's binary
@@ -29,6 +30,16 @@ export type BreakawayResult =
   /** The create itself failed (`CREATE_<n>`, `RESUME_<n>`); nothing runs. */
   | { status: 'failed'; code: string }
 
+/** What one WMI `Win32_Process.Create` did (ADR-002 D6 item 2). */
+export type WmiCreateResult =
+  /** WMI created the process outside the UI's job; `pid` is opened to watch it. */
+  | { status: 'launched'; pid: number }
+  /**
+   * WMI did not create it: `WMI_<ReturnValue>` (Win32_Process.Create answered non-zero) or
+   * `WMI_0x<HRESULT>` (the WMI call itself failed). Nothing runs.
+   */
+  | { status: 'refused'; code: string }
+
 /** The surface of win_launch.c. */
 export interface WinLaunchBinding {
   /**
@@ -44,6 +55,16 @@ export interface WinLaunchBinding {
     environment: string,
     flags: number
   ): BreakawayResult
+  /**
+   * WMI `Win32_Process.Create` of `commandLine` in `cwd`, with exactly the `environment` entries
+   * (`NAME=value`) and a hidden window, run in this process on a worker thread: the WMI service
+   * creates the process outside every job of the UI. Throws a TypeError for bad arguments.
+   */
+  wmiCreate(
+    commandLine: string,
+    cwd: string,
+    environment: readonly string[]
+  ): Promise<WmiCreateResult>
   /** The process `pid`, opened to wait for it and read its exit code; null when it cannot be. */
   open(pid: number): HostProcessHandle | null
   /**
@@ -67,7 +88,7 @@ export interface LoadWinLaunchOptions {
   load?: (path: string) => WinLaunchBinding
 }
 
-const SURFACE = ['breakaway', 'open', 'watch', 'release'] as const
+const SURFACE = ['breakaway', 'wmiCreate', 'open', 'watch', 'release'] as const
 
 export function loadWinLaunch(options: LoadWinLaunchOptions): LoadedWinLaunch {
   const path = join(

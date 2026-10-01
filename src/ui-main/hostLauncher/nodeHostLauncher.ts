@@ -97,7 +97,6 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
   const spawner: HostSpawner =
     platform === 'win32'
       ? createWindowsSpawner({
-          env: uiEnv,
           loadHelper: () => loadWinLaunch({ prebuildsDir: options.prebuildsDir })
         })
       : createPosixSpawner({ stdioFile: join(runDir, HOST_STDIO_FILE) })
