@@ -5,6 +5,7 @@ import {
   STEP_ORDER,
   UNROUTED,
   type ChannelKey,
+  type DwarfId,
   type HostResult,
   type SnapshotPage,
   type StepId
@@ -300,47 +301,63 @@ describe('pre-cut table', () => {
     expect(CHANNELS[STOP_EVERYTHING_CONFIRM].placement).toBe('host')
     expect(UNROUTED[STOP_EVERYTHING_CONFIRM]).toBe('cut-0')
 
-    // The root's A-N26 relay, over a legacy runtime holding one live launch and a Host recording what it is sent.
-    const events: string[] = []
-    const relay = composeStopAllRelay({
-      liveLaunches: async () => [{ launchId: 'launch:1', dwarfId: 'codex:s-a' }],
-      endLaunch: async (launchId) => {
-        events.push(`legacy end ${launchId}`)
-        return 'ended'
+    // The root's A-N26 relay, over a legacy runtime holding one live launch whose end reports `verdict`, and a Host
+    // recording what it is sent; A-N26 is served by its one handler over the Stop everything use case.
+    const HOST_DWARF = '01890a5d-ac96-774b-bcce-b302099ad101' as DwarfId
+    async function confirmThroughRoot(verdict: 'ended' | 'refused') {
+      const events: string[] = []
+      const relay = composeStopAllRelay({
+        liveLaunches: async () => [{ launchId: 'launch:1' }],
+        endLaunch: async (launchId) => {
+          events.push(`legacy end ${launchId}`)
+          return verdict
+        }
+      })
+      const connection = {
+        snapshot: async (): Promise<SnapshotPage> => ({
+          snapshotId: 'snap-1',
+          seq: 1,
+          epoch: 'epoch-1' as SnapshotPage['epoch'],
+          chunks: []
+        }),
+        call: async (method: string, params: unknown): Promise<HostResult['host.shutdown']> => {
+          events.push(`${method} ${JSON.stringify(params)}`)
+          return { mode: 'stop-all', outcome: { ended: [HOST_DWARF], failed: [] } }
+        }
       }
-    })
-    const connection = {
-      snapshot: async (): Promise<SnapshotPage> => ({
-        snapshotId: 'snap-1',
-        seq: 1,
-        epoch: 'epoch-1' as SnapshotPage['epoch'],
-        chunks: []
-      }),
-      call: async (method: string, params: unknown): Promise<HostResult['host.shutdown']> => {
-        events.push(`${method} ${JSON.stringify(params)}`)
-        return { mode: 'stop-all', outcome: { ended: [], failed: [] } }
-      }
+      const stop = createStopEverything({
+        host: {
+          withUiConnection: (use) => use(connection as unknown as Parameters<typeof use>[0])
+        },
+        windows: { anyOpen: () => true, open: () => {}, push: () => {} },
+        newConfirmationId: () => 'c-1',
+        relay
+      })
+      await stop.request()
+      const answer = await createStopEverythingRows(stop).serve(STOP_EVERYTHING_CONFIRM, {
+        confirmationId: 'c-1',
+        requestId: 'r-1'
+      })
+      return { events, answer }
     }
-    const stop = createStopEverything({
-      host: {
-        withUiConnection: (use) => use(connection as unknown as Parameters<typeof use>[0])
-      },
-      windows: { anyOpen: () => true, open: () => {}, push: () => {} },
-      newConfirmationId: () => 'c-1',
-      relay
-    })
-    await stop.request()
-    const rows = createStopEverythingRows(stop)
+    const response = CHANNELS[STOP_EVERYTHING_CONFIRM].response
 
-    const answer = await rows.serve(STOP_EVERYTHING_CONFIRM, {
-      confirmationId: 'c-1',
-      requestId: 'r-1'
-    })
-
-    expect(events).toEqual([
+    // Every legacy launch ended: relayed after it, and the Host's outcome answered unchanged.
+    const ended = await confirmThroughRoot('ended')
+    expect(ended.events).toEqual([
       'legacy end launch:1',
       'host.shutdown {"mode":"stop-all","requestId":"r-1"}'
     ])
-    expect(answer).toEqual({ ok: true, value: { ended: ['codex:s-a'], failed: [] } })
+    expect(ended.answer).toEqual({ ok: true, value: { ended: [HOST_DWARF], failed: [] } })
+    expect(response.safeParse(ended.answer).success).toBe(true)
+
+    // TC-054-02: a legacy launch that could not be ended: nothing relayed, A-N26 answers INTERNAL (eB).
+    const refused = await confirmThroughRoot('refused')
+    expect(refused.events).toEqual(['legacy end launch:1'])
+    expect(refused.answer).toMatchObject({
+      ok: false,
+      error: { code: 'INTERNAL', retryable: false }
+    })
+    expect(response.safeParse(refused.answer).success).toBe(true)
   })
 })

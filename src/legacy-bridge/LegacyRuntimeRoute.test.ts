@@ -110,7 +110,7 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     const { composer, counts } = countingComposer(
       {},
       {
-        liveLaunches: async () => [{ launchId: 'launch:1', dwarfId: 'codex:s-a' }],
+        liveLaunches: async () => [{ launchId: 'launch:1' }],
         endLaunch: async (launchId) => {
           ended.push(launchId)
           return 'ended'
@@ -123,7 +123,7 @@ describe('LegacyRuntimeRoute (21 §3)', () => {
     const verdict = await route.endLaunch('launch:1')
 
     expect(counts.composed).toBe(1)
-    expect(live).toEqual([{ launchId: 'launch:1', dwarfId: 'codex:s-a' }])
+    expect(live).toEqual([{ launchId: 'launch:1' }])
     expect(verdict).toBe('ended')
     expect(ended).toEqual(['launch:1'])
   })

@@ -1,6 +1,12 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
-import type { DwarfId, HostParams, HostResult, StopAllOutcome } from '@dwarfai/contracts'
+import {
+  stopAllOutcomeSchema,
+  type DwarfId,
+  type HostParams,
+  type HostResult,
+  type StopAllOutcome
+} from '@dwarfai/contracts'
 import { ManualTimers } from '../ui-main/host-client/testing/ManualTimers'
 import type { Dwarf, Mine } from '../main/domain/types'
 import type { LaunchedProcess } from '../main/sessionLaunch/launchedSessions'
@@ -17,7 +23,8 @@ import {
 // L2 (17 §1): `LegacyEndFirstAdapter` (21 §3, cuts 0–4) on the A-N26 path of Stop everything and quit (ADR-002 D7;
 // ADR-014 items 2, 9). The fake legacy runtime is today's launched register (`LegacyLaunchRegister` over the legacy
 // `LaunchedSessionRegistry`) with scripted kills, whose verdict is the legacy runtime's own end report; the Host is a
-// recording HostClient answering `host.shutdown`. TC-054-01, TC-054-02.
+// recording HostClient answering `host.shutdown`. TC-054-01, TC-054-02. A-N26 names Host dwarf ids only: a legacy end
+// is never listed, and a legacy end that fails answers an INTERNAL error (owner ruling, 2026-10-01).
 
 const MINE_PATH = '/work/project'
 
@@ -120,10 +127,18 @@ async function settle(rounds = 10): Promise<void> {
     await new Promise((resolve) => setImmediate(resolve))
 }
 
+/** Host dwarf ids (UUIDv7, `dwarfIdSchema`): the only ids a `StopAllOutcome` may carry. */
+const H1 = '01890a5d-ac96-774b-bcce-b302099ad101'
+const H2 = '01890a5d-ac96-774b-bcce-b302099ad102'
+const H3 = '01890a5d-ac96-774b-bcce-b302099ad103'
+
+/** The error branch A-N26 answers when a legacy-launched session could not be ended (owner ruling, 2026-10-01). */
+const LEGACY_END_FAILED = { error: { code: 'INTERNAL', retryable: false } }
+
 describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
   it('[ADR-002] every legacy-launched session is ended and reported before host.shutdown stop-all is relayed', async () => {
     // TC-054-01
-    const world = legacyWorld({ 101: 'held', 102: 'held' }, { ended: ids('h-1'), failed: [] })
+    const world = legacyWorld({ 101: 'held', 102: 'held' }, { ended: ids(H1), failed: [] })
     world.launch(101)
     world.launch(102)
     world.register.observe([mine([dwarf('s-a'), dwarf('s-b')])])
@@ -139,7 +154,8 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
     expect(world.host.calls).toEqual([])
     world.release(101)
 
-    expect(await answer).toEqual({ ended: ['codex:s-a', 'codex:s-b', 'h-1'], failed: [] })
+    // The Host's outcome, unchanged: the legacy ends are never listed in it.
+    expect(await answer).toEqual({ ended: [H1], failed: [] })
     expect(world.events).toEqual([
       'kill 101',
       'kill 102',
@@ -150,7 +166,7 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
     expect(world.host.calls).toEqual([['host.shutdown', { mode: 'stop-all', requestId: 'req-1' }]])
   })
 
-  it('[ADR-002] a failed legacy kill answers a StopAllOutcome naming that dwarf and relays nothing', async () => {
+  it('[ADR-002] a failed legacy kill answers an INTERNAL error and relays nothing', async () => {
     // TC-054-02
     const world = legacyWorld({ 101: 'refused', 102: 'ends' })
     world.launch(101)
@@ -158,14 +174,31 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
     world.register.observe([mine([dwarf('s-a'), dwarf('s-b')])])
     const adapter = createLegacyEndFirstAdapter({ legacy: world.register, timers: world.timers })
 
-    const outcome = await adapter.beforeStopAll('req-2', world.shutdown)
+    await expect(adapter.beforeStopAll('req-2', world.shutdown)).rejects.toMatchObject(
+      LEGACY_END_FAILED
+    )
 
-    expect(outcome).toEqual({ ended: ['codex:s-b'], failed: ['codex:s-a'] })
     expect(world.host.calls).toEqual([])
     // The refused session is still today's to end: a later Stop everything tries it again.
-    expect(await world.register.liveLaunches()).toEqual([
-      { launchId: 'launch:1', dwarfId: 'codex:s-a' }
-    ])
+    expect(await world.register.liveLaunches()).toEqual([{ launchId: 'launch:1' }])
+  })
+
+  it('[ADR-002] a legacy end that throws answers an INTERNAL error and relays nothing', async () => {
+    // TC-054-02
+    const world = legacyWorld({})
+    const adapter = createLegacyEndFirstAdapter({
+      legacy: {
+        liveLaunches: async () => [{ launchId: 'launch:1' }],
+        endLaunch: () => Promise.reject(new Error('the legacy register could not be read'))
+      },
+      timers: world.timers
+    })
+
+    await expect(adapter.beforeStopAll('req-7', world.shutdown)).rejects.toMatchObject(
+      LEGACY_END_FAILED
+    )
+    expect(world.host.calls).toEqual([])
+    expect(world.timers.pending()).toBe(0)
   })
 
   it("[ADR-002] an end report that does not arrive within the legacy kill's bound counts as failed and relays nothing", async () => {
@@ -176,27 +209,30 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
     world.register.observe([mine([dwarf('s-a'), dwarf('s-b')])])
     const adapter = createLegacyEndFirstAdapter({ legacy: world.register, timers: world.timers })
 
-    let outcome: StopAllOutcome | undefined
-    void adapter.beforeStopAll('req-3', world.shutdown).then((answer) => (outcome = answer))
+    let settled: { outcome?: StopAllOutcome; error?: unknown } | undefined
+    void adapter.beforeStopAll('req-3', world.shutdown).then(
+      (outcome) => (settled = { outcome }),
+      (error: unknown) => (settled = { error })
+    )
     await settle()
     world.timers.advance(LEGACY_KILL_BOUND_MS - 1)
     await settle()
-    expect(outcome).toBeUndefined()
+    expect(settled).toBeUndefined()
 
     world.timers.advance(1)
     await settle()
-    expect(outcome).toEqual({ ended: ['codex:s-b'], failed: ['codex:s-a'] })
+    expect(settled).toMatchObject({ error: LEGACY_END_FAILED })
     expect(world.host.calls).toEqual([])
     expect(world.timers.pending()).toBe(0)
   })
 
   it('[ADR-014] with no legacy-launched session the adapter relays at once', async () => {
-    const world = legacyWorld({}, { ended: ids('h-1', 'h-2'), failed: ids('h-3') })
+    const world = legacyWorld({}, { ended: ids(H1, H2), failed: ids(H3) })
     const adapter = createLegacyEndFirstAdapter({ legacy: world.register, timers: world.timers })
 
     const outcome = await adapter.beforeStopAll('req-4', world.shutdown)
 
-    expect(outcome).toEqual({ ended: ['h-1', 'h-2'], failed: ['h-3'] })
+    expect(outcome).toEqual({ ended: [H1, H2], failed: [H3] })
     expect(world.events).toEqual(['host.shutdown req-4'])
     expect(world.timers.pending()).toBe(0)
   })
@@ -204,7 +240,7 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
   it("[ADR-014] sessions started in the person's own terminal are never ended by the adapter", async () => {
     // INV-120: only what DwarfAI started ends. The person's own session is on the board, observed, never retained; a
     // launch whose process already exited on its own is not signalled again.
-    const world = legacyWorld({}, { ended: [], failed: [] })
+    const world = legacyWorld({}, { ended: ids(H1), failed: [] })
     world.launch(101)
     world.launch(102).exit()
     world.register.observe([
@@ -214,7 +250,7 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
 
     const outcome = await adapter.beforeStopAll('req-5', world.shutdown)
 
-    expect(outcome).toEqual({ ended: ['codex:s-a'], failed: [] })
+    expect(outcome).toEqual({ ended: [H1], failed: [] })
     expect(world.events).toEqual(['kill 101', 'ended 101', 'host.shutdown req-5'])
   })
 
@@ -246,7 +282,22 @@ describe('LegacyEndFirstAdapter (21 §3) on A-N26', () => {
 
     const outcome = await adapter.beforeStopAll('req-6', world.shutdown)
 
-    expect(outcome).toEqual({ ended: ['codex:s-old'], failed: [] })
+    expect(outcome).toEqual({ ended: [], failed: [] })
     expect(world.events).toEqual(['kill 107', 'ended 107', 'host.shutdown req-6'])
+  })
+
+  it('[ADR-002] no legacy id ever appears in a successful outcome, which validates as a StopAllOutcome', async () => {
+    // Owner ruling (2026-10-01): `ended` and `failed` carry Host DwarfIds only (dwarfIdSchema, ADR-015).
+    const world = legacyWorld({}, { ended: ids(H1, H2), failed: ids(H3) })
+    world.launch(101) // bound to a legacy dwarf below
+    world.launch(102) // never shown on the legacy board: only its launch id names it
+    world.register.observe([mine([dwarf('s-a')])])
+    const adapter = createLegacyEndFirstAdapter({ legacy: world.register, timers: world.timers })
+
+    const outcome = await adapter.beforeStopAll('req-8', world.shutdown)
+
+    expect(world.events.filter((e) => e.startsWith('ended'))).toEqual(['ended 101', 'ended 102'])
+    expect(stopAllOutcomeSchema.safeParse(outcome).success).toBe(true)
+    expect([...outcome.ended, ...outcome.failed]).toEqual([H1, H2, H3])
   })
 })
