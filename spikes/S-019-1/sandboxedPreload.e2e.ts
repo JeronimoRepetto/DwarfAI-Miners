@@ -15,7 +15,7 @@ import { launchApp, type LaunchedApp } from '../../e2e/_harness/launchApp.ts'
  *
  * Inside the built app (the ISSUE-312 harness), a test window is created in the main process with `sandbox: true`,
  * context isolation, no Node integration and its own in-memory session. It first tries the found tree's preload
- * (`out/preload/index.mjs`) and records whether it loads sandboxed; then it loads the spike's own facade
+ * (`out/preload/index.cjs`, one CommonJS file since ISSUE-045) and records whether it loads sandboxed; then it loads the spike's own facade
  * (`spikes/S-019-1/preload.ts`, compiled to CommonJS here), asserts the sandbox flag, makes one `ipcRenderer` round
  * trip and drops a file. A drag from the OS file manager cannot be synthesised; the drop here carries a disk-backed
  * `File` obtained through a file input (Playwright `setInputFiles`), the same `File` kind a real drop hands the page.
@@ -25,7 +25,7 @@ import { launchApp, type LaunchedApp } from '../../e2e/_harness/launchApp.ts'
  */
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const FOUND_PRELOAD = path.join(REPO, 'out', 'preload', 'index.mjs')
+const FOUND_PRELOAD = path.join(REPO, 'out', 'preload', 'index.cjs')
 const FACADE_SOURCE = path.join(REPO, 'spikes', 'S-019-1', 'preload.ts')
 
 const PAGE = `<!doctype html>
