@@ -16,17 +16,28 @@
 // the ADR-002 D2 rule on each call (the SID query runs here, the one UI path allowed to start a
 // process, R17) and opens it over `node:net`; `readToken` reads `<hostDataDir>/run/ui.token` for one
 // `hello` and keeps nothing.
+//
+// createNodeHungHostEnder is the hung-Host end of ADR-002 D9 steps 2 and 4 (hungHost.ts; ISSUE-052): it reads
+// `<hostDataDir>/run/host.identity`, matches it by the ADR-014 item 2 rule with this machine's boot id (bootId.ts) and
+// the pid's start time (processStart.ts), and ends that one process with `process.kill`.
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { PROTOCOL_VERSION, type HostEndpoint } from '@dwarfai/contracts'
+import {
+  HOST_IDENTITY_FILE,
+  hostIdentityRecordSchema,
+  PROTOCOL_VERSION,
+  type HostEndpoint
+} from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
+import { createBootIdReader } from './bootId'
 import { resolveUiEndpoint } from './endpointFacts'
 import { NodeGateFiles } from './gateFiles'
 import { createHelloProber } from './helloProber'
 import { createHostLinkOpener } from './hostLink'
+import { endHungHost, type HungHostEnd, type HungHostPorts } from './hungHost'
 import { createHostLauncher, type HostLauncher } from './launcher'
 import type { HostCopyPreparer, HostSpawner, ProcessStart } from './ports'
 import { createPosixSpawner } from './posix'
@@ -319,6 +330,57 @@ function connectTo(path: string): Promise<import('node:net').Socket> {
     }
     socket.once('error', onError)
   })
+}
+
+/** The hung-Host end of ADR-002 D9 steps 2 and 4 over the Host's identity file (hungHost.ts). */
+export interface NodeHungHostEnder {
+  endHungHost(): Promise<HungHostEnd>
+}
+
+export function createNodeHungHostEnder(
+  options: Pick<NodeHostLauncherOptions, 'hostDataDir' | 'uiEnv'>
+): NodeHungHostEnder {
+  const platform = thisPlatform()
+  const uiEnv = options.uiEnv ?? process.env
+  const runQuery = createQueryRunner()
+  const identityFile = join(options.hostDataDir, RUN_DIR, HOST_IDENTITY_FILE)
+  const ports: HungHostPorts = {
+    platform,
+    async readIdentity() {
+      try {
+        const parsed = hostIdentityRecordSchema.safeParse(
+          JSON.parse(await readFile(identityFile, 'utf8'))
+        )
+        return parsed.success ? parsed.data : null
+      } catch {
+        return null
+      }
+    },
+    currentBootId: createBootIdReader({ platform, runQuery, env: uiEnv }),
+    readStart: createProcessStartReader({ platform, runQuery, env: uiEnv }),
+    // That one pid (the schema allows only a positive one, so never a process group); on Windows `process.kill` is
+    // TerminateProcess whatever the signal.
+    signal(pid, signal) {
+      try {
+        process.kill(pid, signal)
+        return 'sent'
+      } catch (error) {
+        const code = (error as { code?: unknown }).code
+        return code === 'ESRCH' ? 'gone' : code === 'EPERM' ? 'access-denied' : 'failed'
+      }
+    },
+    isAlive(pid) {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch (error) {
+        return (error as { code?: unknown }).code === 'EPERM'
+      }
+    },
+    clock: { now: Date.now },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  }
+  return { endHungHost: () => endHungHost(ports) }
 }
 
 /** One OS query as an argv array, never through a shell, killed at its timeout. */

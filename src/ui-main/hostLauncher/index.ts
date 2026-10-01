@@ -2,7 +2,8 @@
 // (the rules, over ports) or createNodeHostLauncher (the same rules over the Node adapters, for UI
 // main's composition root; wired by ISSUE-056), and the ADR-002 D8 upgrade handshake after `hello`
 // (upgradeDecision, runUpgradeFlow over createNodeUpgradePorts; ISSUE-032); createNodeHostConnection
-// is HostClient's connection to the same endpoint (ISSUE-051).
+// is HostClient's connection to the same endpoint (ISSUE-051); createNodeHungHostEnder ends a hung Host after the
+// identity check of ADR-002 D9 step 2 (ISSUE-052).
 export {
   createHostLauncher,
   type EnsureHostResult,
@@ -12,11 +13,14 @@ export {
 export {
   createNodeHostConnection,
   createNodeHostLauncher,
+  createNodeHungHostEnder,
   createNodeUpgradePorts,
   type NodeHostConnection,
   type NodeHostLauncherOptions,
+  type NodeHungHostEnder,
   type NodeUpgradePorts
 } from './nodeHostLauncher'
+export { endHungHost, type HungHostEnd, type HungHostPorts } from './hungHost'
 export { decideUpgrade, type UpgradeDecision } from './upgradeDecision'
 export {
   runUpgradeFlow,
