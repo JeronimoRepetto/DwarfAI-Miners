@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
@@ -24,13 +25,33 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  * resolve from it exactly as from `out/main`. `emptyOutDir: false` because
  * this build writes only `out/ui-main/index.js` and never owns the folder's
  * other files. Only `main` is built: preload and renderer are the app's own.
+ *
+ * ADDED for ISSUE-051: `__DWARFAI_BUILD_ID__` stamps the build's git commit,
+ * short (20 §3.1 `buildId`), which HostClient sends in `hello.client` (ADR-003
+ * item 5), as electron.vite.host.config.ts does for the Host's `hello.ok`. A
+ * build made outside a git checkout says `unknown`.
  */
+function gitShortCommit(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
 export default defineConfig({
   main: {
     resolve: {
       alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
     },
     plugins: [externalizeDepsPlugin()],
+    define: {
+      __DWARFAI_BUILD_ID__: JSON.stringify(gitShortCommit())
+    },
     build: {
       outDir: 'out/ui-main',
       emptyOutDir: false,
