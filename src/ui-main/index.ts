@@ -8,6 +8,7 @@ import {
   globalShortcut,
   ipcMain,
   nativeImage,
+  powerMonitor,
   screen,
   session,
   shell
@@ -40,6 +41,11 @@ import type { ModeWindowRegistry } from './window/application/modeWindowRegistry
 import { devHmrOriginOf } from './window/adapters/contentSecurityPolicy'
 import { installWindowHardening } from './window/adapters/windowHardening'
 import { createPanelRows, PANEL_ROWS } from './ipc/handlers/panel'
+import {
+  createHostConnectionRows,
+  HOST_CONNECTION_ROWS,
+  type HostConnectionSource
+} from './ipc/handlers/hostConnection'
 import { createPanelWindow, type PanelWindowUseCases } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
@@ -60,20 +66,22 @@ export interface WindowContents extends ModeWindowSender {
 
 /**
  * The router's one `ui-local` target (ADR-001 item 3), composed from the parts whose dependencies are given, each
- * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048), A-N30 renderer diagnostics (ISSUE-055) and
- * the Panel window rows (ISSUE-047).
+ * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048), A-N30 renderer diagnostics (ISSUE-055),
+ * the Panel window rows (ISSUE-047) and the Host connection rows A-N03, A-N05 (ISSUE-052).
  * `undefined` when no part is present. None of these rows is routed `ui-local` before the cut-0 switch (ISSUE-056).
  */
 export function composeUiLocal({
   uiPreferences,
   uiLog,
   panelWindow,
+  hostConnection,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
   uiPreferences?: UiMainDeps['uiPreferences']
   uiLog?: UiLog
   panelWindow?: PanelWindowUseCases
+  hostConnection?: HostConnectionSource
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -105,6 +113,12 @@ export function composeUiLocal({
   if (panelWindow !== undefined) {
     parts.push({ channels: PANEL_ROWS, target: createPanelRows(panelWindow) })
   }
+  if (hostConnection !== undefined) {
+    parts.push({
+      channels: HOST_CONNECTION_ROWS,
+      target: createHostConnectionRows(hostConnection)
+    })
+  }
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
 }
 
@@ -124,6 +138,8 @@ export interface UiMainLifecycle {
   onWindowAllClosed(h: () => void): void
   /** Electron created a window (`browser-window-created`). */
   onWindowCreated(h: (window: CreatedWindow) => void): void
+  /** The OS resumed from sleep (`powerMonitor` `resume`, bound once the app is ready). */
+  onResume?(h: () => void): void
 }
 
 export interface UiMainDeps {
@@ -152,9 +168,10 @@ export interface UiMainDeps {
    * The Host attach (ISSUE-051; ADR-002 D4; ADR-003 items 7, 12): HostClient over the host launcher. The root reads
    * the remembered launch view, then starts the attach without awaiting it, before Electron is ready and the window
    * is composed, so the first paint never waits for the Host (US-RES-003.AC07); the board it keeps changes only when a
-   * whole snapshot arrived (window/application/reopen.ts). No seam A row reaches the client: the Host-connection rows
-   * (A-N03…A-N05) stay `legacy` in the table until the cut-0 switch (ISSUE-056) routes them to their handlers
-   * (ISSUE-052). Disposed at will-quit, so a closing app never reconnects or respawns.
+   * whole snapshot arrived (window/application/reopen.ts). Its Host connection rows A-N03, A-N05 join the `ui-local`
+   * target (ISSUE-052), but they are listed in `contracts/ipc/unrouted.ts` until the cut-0 switch (ISSUE-056) routes
+   * them and starts the A-N04 push, so until then the router refuses them and no seam A row reaches the client. An OS
+   * resume wakes it (13 FM-109). Disposed at will-quit, so a closing app never reconnects or respawns.
    */
   host?: { client: HostClientService }
 }
@@ -207,6 +224,7 @@ export async function startUiMain({
     uiPreferences,
     uiLog,
     panelWindow: panelWindow?.(modeWindows),
+    ...(host === undefined ? {} : { hostConnection: host.client }),
     modeWindows
   })
   createRouter({
@@ -219,6 +237,7 @@ export async function startUiMain({
   // The launch view, then the Host attach in parallel: neither waits for the other or holds the window back.
   const reopen =
     host === undefined ? null : startReopen({ store: uiPreferences?.store, host: host.client })
+  lifecycle.onResume?.(() => host?.client.wake())
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
   lifecycle.onWillQuit(() => {
     host?.client.dispose()
@@ -252,6 +271,9 @@ function electronLifecycle(): UiMainLifecycle {
     },
     onWindowAllClosed: (h) => {
       app.on('window-all-closed', () => h())
+    },
+    onResume: (h) => {
+      void app.whenReady().then(() => powerMonitor.on('resume', () => h()))
     },
     onWindowCreated: (h) => {
       app.on('browser-window-created', (_event, window) => {
