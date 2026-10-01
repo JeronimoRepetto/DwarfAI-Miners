@@ -14,6 +14,7 @@ import {
   FRAME_CAP_BEFORE_HELLO_OK,
   helloOkSchema,
   PROTOCOL_VERSION,
+  requestIdSchema,
   resFrameSchema,
   type HelloOk
 } from '@dwarfai/contracts'
@@ -38,6 +39,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup()
 })
 
+const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
 const IDENTITY = { hostVersion: '0.20.0', buildId: 'abc1234', protocolVersion: PROTOCOL_VERSION }
 const EPOCH = 'epoch-0001'
 
@@ -69,9 +71,11 @@ async function boot(dir = runDir()) {
     METHOD_ROLES['preferences.get'] ?? [],
     (params) => ({ length: params.text.length })
   )
-  dispatcher.register(
+  // AMENDED for ISSUE-027 (was: `register` with params `{ mode }`): host.shutdown mutates (14 ยง1.6),
+  // so it registers as mutating and its params carry the requestId, as HostShutdownParams does.
+  dispatcher.registerMutating(
     'host.shutdown',
-    z.object({ mode: z.literal('stop-all') }).strict(),
+    z.object({ mode: z.literal('stop-all'), requestId: requestIdSchema }).strict(),
     METHOD_ROLES['host.shutdown'] ?? [],
     () => ({ accepted: true })
   )
@@ -335,7 +339,9 @@ describe('the seam-B transport: hello first, roles, dispatcher (ADR-003 items 3โ
     })
     // The same method on a ui connection is allowed.
     const ui = await authenticated(host)
-    expect(await call(ui, '9', 'host.shutdown', { mode: 'stop-all' })).toMatchObject({ ok: true })
+    expect(
+      await call(ui, '9', 'host.shutdown', { mode: 'stop-all', requestId: REQUEST_ID })
+    ).toMatchObject({ ok: true })
   })
 
   it('[ADR-003, FM-031, FM-033] an unknown method gets METHOD_NOT_FOUND; invalid params get INVALID_PARAMS; during starting or migrating a non-protocol method gets HOST_NOT_READY', async () => {
