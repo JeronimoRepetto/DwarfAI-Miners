@@ -138,6 +138,12 @@ const GUILD_ON = { getFeatureFlags: vi.fn().mockResolvedValue({ guildAreasEnable
  * is `ipcRenderer.send`) is a plain spy. The same discipline MineScene.test.ts's own stub stated
  * in as many words, before that file went with its scene (#635).
  */
+/** How the router answers a row with no route yet (ui-main/ipc/router.ts): a typed refusal, never a guess. */
+const HOST_CONNECTION_UNROUTED = {
+  ok: false,
+  error: { code: 'METHOD_NOT_FOUND', message: 'no route', retryable: false }
+}
+
 function stubApi(overrides: Record<string, unknown> = {}) {
   const api = {
     hidePanel: vi.fn(),
@@ -346,6 +352,13 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      */
     getLaunchView: vi.fn().mockResolvedValue({ area: 'map', mineId: null }),
     setLaunchView: vi.fn(),
+    /*
+     * AMENDED for ISSUE-316 (was: absent). The Host connection rows A-N03…A-N05, read on mount: unrouted until the
+     * cut-0 switch, so main refuses them as it does today and the panel stays usable. No existing assertion changed.
+     */
+    getHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
+    onHostConnection: vi.fn().mockReturnValue(() => undefined),
+    retryHostConnection: vi.fn().mockResolvedValue(HOST_CONNECTION_UNROUTED),
     ...overrides
   }
   Object.defineProperty(window, 'api', { configurable: true, value: api })

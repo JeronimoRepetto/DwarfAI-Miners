@@ -17,6 +17,7 @@ import MineColumn from './components/scene/MineColumn.vue'
 import MinesList from './components/browse/MinesList.vue'
 import ToastHost from './components/overlay/ToastHost.vue'
 import StopEverythingConfirmation from './components/stopEverything/StopEverythingConfirmation.vue'
+import HostStateMessage from './components/hostConnection/HostStateMessage.vue'
 import PanelTransition from './components/shell/PanelTransition.vue'
 import SettingsPanel from './components/panel/SettingsPanel.vue'
 import PanelNav from './components/shell/PanelNav.vue'
@@ -45,6 +46,7 @@ import { useNotificationSettings } from './composables/useNotificationSettings'
 import { useJevSettings } from './composables/useJevSettings'
 import { useOpenCodeSettings } from './composables/useOpenCodeSettings'
 import { useTypography } from './composables/useTypography'
+import { useHostConnection } from './composables/useHostConnection'
 import { INTERIOR_ART_SIZE } from './lib/art'
 import {
   MINE_COLUMN_ART_INSET,
@@ -1120,6 +1122,19 @@ function showMineFromNotification(mineId: string): void {
 }
 /* --- end of the #316 block ------------------------------------------------- */
 
+/* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
+// The one Host-state message over the Panel (ADR-002 D9; 07 §12B). useHostConnection is also the one source every
+// read model that sends a Host-owned mutation gates on (13 FM-146). Stop everything and quit has no renderer entry
+// (only the tray starts it, 14 §6.3), so no handler is passed and the incompatible message shows without it.
+const {
+  message: hostMessage,
+  retrying: hostRetrying,
+  start: followHostConnection,
+  stop: stopFollowingHostConnection,
+  retry: retryHostConnection
+} = useHostConnection()
+/* --- end of the ISSUE-316 block --------------------------------------------- */
+
 onMounted(() => {
   // The footprint the first opening unfolds from: whatever rectangle main
   // created the window at, which is the Panel with nothing beside its page.
@@ -1173,6 +1188,9 @@ onMounted(() => {
   // outside this window changes it, so there is no push to hear.
   void syncOpenCodeSettings()
   /* --- end of the #588 T6 block --------------------------------------------- */
+  /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
+  void followHostConnection()
+  /* --- end of the ISSUE-316 block --------------------------------------------- */
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
@@ -1186,6 +1204,9 @@ onBeforeUnmount(() => {
   // Every sound released with the window: a clip left decoding would outlive
   // the surface that asked for it.
   disposeAudio()
+  /* --- Host connection (ISSUE-316) — one block, appended ---------------------- */
+  stopFollowingHostConnection()
+  /* --- end of the ISSUE-316 block --------------------------------------------- */
 })
 
 /* --- Stop everything and quit (ISSUE-317) — one block, appended ----------- */
@@ -1500,6 +1521,12 @@ const {
             MessagePanel's composer. The column is the containing block.
           -->
           <ToastHost />
+          <!-- ISSUE-316: the one Host-state message, over the Panel's page column (ADR-002 D9). -->
+          <HostStateMessage
+            :message="hostMessage"
+            :retrying="hostRetrying"
+            @retry="retryHostConnection"
+          />
         </div>
 
         <!--
