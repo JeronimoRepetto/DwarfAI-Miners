@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -11,6 +11,7 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import { FaultySqlite } from './testing/FaultySqlite'
 import { openHostDb, type OpenHostDbOptions, type OpenedHostDb } from './migrations/runner'
 import { defineMigration, type Migration } from './migrations/types'
+import { NodeSqliteDatabase } from './NodeSqliteDatabase'
 
 // L5 (17 §1.5): the pre-migration backup of 09 §6.2 step 5 and §8.3 (ADR-005 item 6) over real
 // database files, one temp dir per test. T1…T5 are test-only migrations; T1 stands in for
@@ -320,4 +321,46 @@ describe('pre-migration backup (09 §6.2 step 5, §8.3; ADR-005 item 6)', () => 
       }
     ])
   })
+
+  it('[ADR-017] the backup copy is created by the Host, empty, before VACUUM INTO writes its first byte', () => {
+    const atV1 = open({ migrations: [T1] })
+    atV1.db.run('INSERT INTO t1 (id, label) VALUES (?, ?)', [1, 'kept'])
+    closeAll()
+    clock.advance(1_000)
+    // The size of the copy's file as VACUUM INTO is about to write it: null when it does not exist.
+    const seen: Array<number | null> = []
+    const openWriter = (location: string): SqliteDatabase =>
+      observingVacuumInto(NodeSqliteDatabase.open(location, { log }), seen)
+
+    expect(open({ migrations: [T1, T2], openWriter })).toMatchObject({ applied: [2] })
+
+    // The Host made the file itself (with the owner-only mode, 09 §9), so SQLite writes into it
+    // and never creates it with the process umask; fileProtection.os.test.ts reads the real mode.
+    expect(seen).toEqual([0])
+    expect(contents(join(dir, 'dwarfai.db.bak-v1-20250615T150641000Z'))).toMatchObject({
+      rows: [{ id: 1, label: 'kept' }]
+    })
+  })
 })
+
+/** `db` with `exec` reporting, for each `VACUUM INTO '<file>'`, the size `<file>` has before it. */
+function observingVacuumInto(db: SqliteDatabase, seen: Array<number | null>): SqliteDatabase {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'exec') {
+        return (sql: string): void => {
+          const match = /^VACUUM INTO '(.*)'$/s.exec(sql)
+          if (match !== null) {
+            const file = String(match[1]).replace(/''/g, "'")
+            seen.push(existsSync(file) ? statSync(file).size : null)
+          }
+          target.exec(sql)
+        }
+      }
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function'
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value
+    }
+  })
+}

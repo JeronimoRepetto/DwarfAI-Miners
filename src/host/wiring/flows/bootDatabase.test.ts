@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -42,6 +42,12 @@ const FUTURE: Migration = defineMigration({
   name: '0002-from-a-newer-build',
   sql: 'CREATE TABLE from_a_newer_build (id INTEGER NOT NULL PRIMARY KEY) STRICT;'
 })
+
+/** A data-at-rest protection that does nothing (ISSUE-041's protection is proven in L1 and L8). */
+const NO_FILE_PROTECTION = {
+  dataDir: () => Promise.resolve(),
+  dbFiles: () => Promise.resolve()
+}
 
 const cleanups: Array<() => void> = []
 
@@ -89,7 +95,9 @@ async function bootHost(m: Machine, migrations?: readonly Migration[]): Promise<
       releaseDataDir: join(m.dataDir, 'release-data'),
       appVersion: '0.0.0-test',
       migrations: migrations ?? migrationsFor({ clock: m.clock, ids: m.ids })
-    }
+    },
+    // The real modes and DACL are fileProtection.os.test.ts's (L8); this flow is about the epoch.
+    protectFiles: NO_FILE_PROTECTION
   })
   cleanups.push(() => database.close())
   const outcome = await runBoot(
@@ -412,5 +420,44 @@ describe('boot step 2: open the database and keep the Host epoch (09 ยง8.4, 16 ย
       })
     )
     expect(host.states).toEqual(['starting'])
+  })
+
+  it('[ADR-017] step 2 protects the data directory before it opens the database, and the database files once it is open', async () => {
+    const m = machine()
+    // What each protection call found: whether the database file existed and was readable then.
+    const calls: Array<{ call: string; path: string; dbExists: boolean }> = []
+    const database = createHostDatabase({
+      path: m.path,
+      epoch: mintBootEpoch(m.ids),
+      clock: m.clock,
+      log: new RecordingDiagnosticsLog(),
+      processControl: m.processControl,
+      open: {
+        buildKind: 'test',
+        releaseDataDir: join(m.dataDir, 'release-data'),
+        appVersion: '0.0.0-test',
+        migrations: migrationsFor({ clock: m.clock, ids: m.ids })
+      },
+      protectFiles: {
+        dataDir: (path) => {
+          calls.push({ call: 'dataDir', path, dbExists: existsSync(m.path) })
+          return Promise.resolve()
+        },
+        dbFiles: (path) => {
+          calls.push({ call: 'dbFiles', path, dbExists: existsSync(m.path) })
+          return Promise.resolve()
+        }
+      }
+    })
+    cleanups.push(() => database.close())
+
+    await database.open({ reportMigrating: () => undefined })
+
+    expect(calls).toEqual([
+      { call: 'dataDir', path: m.dataDir, dbExists: false },
+      { call: 'dbFiles', path: m.path, dbExists: true }
+    ])
+    // The protection ran over the open database: epoch kept, file migrated.
+    expect(database.resetEpoch()).toBe(0)
   })
 })

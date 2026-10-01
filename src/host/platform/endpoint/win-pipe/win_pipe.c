@@ -25,6 +25,10 @@
 //     onEvent(0, fd): a client connected; onEvent(error, -1): accepting failed with that Win32 error.
 //   close(listener: object): void
 //     closes the waiting instances; descriptors already handed over are not touched.
+//   protectDirectory(path: string): boolean
+//     gives the directory the protected DACL D:P(A;OICI;FA;;;<user SID>)(A;OICI;FA;;;SY) (the SP-05
+//     run\ row), propagated to what it holds; true when applied, false when it was already in
+//     place; throws "WIN32_<n>" when it cannot be applied (ISSUE-041 amendment, 2026-10-01).
 //
 // The listener keeps the event loop alive until it is closed. The static C runtime (/MT) keeps the
 // binary free of any VC++ redistributable (the build's import check proves it).
@@ -36,6 +40,7 @@
 #pragma warning(disable : 4201)
 #include <delayimp.h>
 #pragma warning(pop)
+#include <aclapi.h>
 #include <sddl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -252,28 +257,39 @@ static void on_listener_collected(napi_env env, void *data, void *hint) {
   release_listener(data);
 }
 
-// The SDDL of ADR-003 item 2 for this process's user, converted. Returns 0 or a Win32 error.
-static DWORD owner_only_security(PSECURITY_DESCRIPTOR *security) {
+// This process's user SID as a string; the caller LocalFree()s it. Returns 0 or a Win32 error.
+static DWORD current_user_sid(wchar_t **sid) {
   HANDLE token;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return GetLastError();
   DWORD size = 0, error = 0;
   GetTokenInformation(token, TokenUser, NULL, 0, &size);
   TOKEN_USER *user = size > 0 ? malloc(size) : NULL;
-  wchar_t *sid = NULL;
   if (user == NULL) error = ERROR_NOT_ENOUGH_MEMORY;
   else if (!GetTokenInformation(token, TokenUser, user, size, &size) ||
-           !ConvertSidToStringSidW(user->User.Sid, &sid))
+           !ConvertSidToStringSidW(user->User.Sid, sid))
     error = GetLastError();
   free(user);
   CloseHandle(token);
+  return error;
+}
+
+// `format` (one %s: the user SID) for this process's user, converted. Returns 0 or a Win32 error.
+static DWORD security_for_user(const wchar_t *format, PSECURITY_DESCRIPTOR *security) {
+  wchar_t *sid = NULL;
+  DWORD error = current_user_sid(&sid);
   if (error != 0) return error;
   wchar_t sddl[256];
-  int length = _snwprintf_s(sddl, _countof(sddl), _TRUNCATE, OWNER_ONLY_SDDL, sid);
+  int length = _snwprintf_s(sddl, _countof(sddl), _TRUNCATE, format, sid);
   LocalFree(sid);
   if (length < 0) return ERROR_INSUFFICIENT_BUFFER;
   if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, security, NULL))
     return GetLastError();
   return 0;
+}
+
+// The SDDL of ADR-003 item 2 for this process's user, converted. Returns 0 or a Win32 error.
+static DWORD owner_only_security(PSECURITY_DESCRIPTOR *security) {
+  return security_for_user(OWNER_ONLY_SDDL, security);
 }
 
 static napi_value throw_win32(napi_env env, DWORD error, const char *what) {
@@ -346,6 +362,82 @@ static napi_value js_close(napi_env env, napi_callback_info info) {
   return NULL;
 }
 
+// ---- the owner-only data directory ------------------------------------------------------------
+
+// The SP-05 run\ row: owner and SYSTEM, full access, inherited by files and folders, protected
+// (nothing is inherited from the parent); %s is the user SID. Owner-approved amendment (2026-10-01,
+// ISSUE-041): protected owner-only DACL on the Windows data directory (SP-05 run\ row), replacing
+// 09 §9's inherited profile ACL.
+#define OWNER_ONLY_DIRECTORY_SDDL L"D:P(A;OICI;FA;;;%s)(A;OICI;FA;;;SY)"
+
+// True when both ACLs hold the same entries in the same order, byte for byte.
+static BOOL same_entries(PACL a, PACL b) {
+  if (a == NULL || b == NULL || a->AceCount != b->AceCount) return FALSE;
+  for (WORD index = 0; index < a->AceCount; index++) {
+    ACE_HEADER *left, *right;
+    if (!GetAce(a, index, (LPVOID *)&left) || !GetAce(b, index, (LPVOID *)&right)) return FALSE;
+    if (left->AceSize != right->AceSize || memcmp(left, right, left->AceSize) != 0) return FALSE;
+  }
+  return TRUE;
+}
+
+// Gives `path` the owner-only directory DACL unless it already has it. SetNamedSecurityInfoW
+// propagates the inheritable entries to everything the directory already holds (their inherited
+// entries are replaced). Sets *repaired; returns 0 or a Win32 error.
+static DWORD protect_directory(const wchar_t *path, BOOL *repaired) {
+  PSECURITY_DESCRIPTOR wanted = NULL, current = NULL;
+  PACL wanted_dacl = NULL, current_dacl = NULL;
+  BOOL present = FALSE, defaulted = FALSE;
+  *repaired = FALSE;
+  DWORD error = security_for_user(OWNER_ONLY_DIRECTORY_SDDL, &wanted);
+  if (error != 0) return error;
+  if (!GetSecurityDescriptorDacl(wanted, &present, &wanted_dacl, &defaulted) || !present) {
+    error = present ? GetLastError() : ERROR_INVALID_SECURITY_DESCR;
+    LocalFree(wanted);
+    return error;
+  }
+  error = GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL,
+                                &current_dacl, NULL, &current);
+  if (error == ERROR_SUCCESS) {
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    BOOL in_place = GetSecurityDescriptorControl(current, &control, &revision) &&
+                    (control & SE_DACL_PROTECTED) != 0 && same_entries(current_dacl, wanted_dacl);
+    if (!in_place) {
+      error = SetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+                                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                    NULL, NULL, wanted_dacl, NULL);
+      if (error == ERROR_SUCCESS) *repaired = TRUE;
+    }
+  }
+  LocalFree(current);
+  LocalFree(wanted);
+  return error == ERROR_SUCCESS ? 0 : error;
+}
+
+static napi_value js_protect_directory(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_valuetype path_type;
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 1 ||
+      napi_typeof(env, argv[0], &path_type) != napi_ok || path_type != napi_string) {
+    napi_throw_type_error(env, NULL, "protectDirectory(path: string)");
+    return NULL;
+  }
+  size_t length;
+  napi_get_value_string_utf16(env, argv[0], NULL, 0, &length);
+  wchar_t *path = calloc(length + 1, sizeof(wchar_t));
+  if (path == NULL) return throw_win32(env, ERROR_NOT_ENOUGH_MEMORY, "out of memory");
+  napi_get_value_string_utf16(env, argv[0], (char16_t *)path, length + 1, &length);
+  BOOL repaired = FALSE;
+  DWORD error = protect_directory(path, &repaired);
+  free(path);
+  if (error != 0) return throw_win32(env, error, "the owner-only directory DACL could not be applied");
+  napi_value result;
+  napi_get_boolean(env, repaired, &result);
+  return result;
+}
+
 NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   open_osfhandle = (open_osfhandle_fn)(void *)GetProcAddress(GetModuleHandleW(NULL), "uv_open_osfhandle");
   if (open_osfhandle == NULL) {
@@ -358,5 +450,8 @@ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_set_named_property(env, exports, "listen", function);
   napi_create_function(env, "close", NAPI_AUTO_LENGTH, js_close, NULL, &function);
   napi_set_named_property(env, exports, "close", function);
+  napi_create_function(env, "protectDirectory", NAPI_AUTO_LENGTH, js_protect_directory, NULL,
+                       &function);
+  napi_set_named_property(env, exports, "protectDirectory", function);
   return exports;
 }
