@@ -7,6 +7,12 @@ export type { AppPaths } from './ports/appPaths'
 export type { Clock } from './ports/clock'
 export type { DomainEventBus } from './ports/domainEventBus'
 export type { IdGenerator } from './ports/idGenerator'
+export type {
+  LifecycleDepartureCause,
+  LifecycleFact,
+  LifecycleFactLog,
+  LifecycleFactType
+} from './ports/lifecycleFactLog'
 export type { Scheduler } from './ports/scheduler'
 export type { TransactionScope } from './ports/transactionScope'
 export {
