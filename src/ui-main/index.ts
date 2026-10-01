@@ -47,6 +47,7 @@ import { createHostClient, type HostClientService } from './host-client/HostClie
 import {
   createNodeHostConnection,
   createNodeHostLauncher,
+  createNodeHungHostEnder,
   winLaunchPrebuildsDir
 } from './hostLauncher'
 import { ElectronWindows, showRendererCrashedMessage } from './window/adapters/ElectronWindows'
@@ -367,7 +368,9 @@ function electronHostClient(uiLog: UiLog): HostClientService {
         return () => clearTimeout(timer)
       }
     },
-    log: uiLog
+    log: uiLog,
+    // ADR-002 D9 steps 2 and 4: the hung-Host Retry ends that one process only when its identity file matches.
+    hungHost: createNodeHungHostEnder({ hostDataDir })
   })
 }
 

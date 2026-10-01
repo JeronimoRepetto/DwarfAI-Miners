@@ -72,7 +72,9 @@ function world(
     protocolVersion: 1,
     client: { appVersion: '0.0.0-test', buildId: 'test', pid: 4242 },
     timers,
-    log
+    log,
+    // The hung-Host Retry is connectionMachine.test.ts's and hostConnection.contract.test.ts's (ISSUE-052).
+    hungHost: { endHungHost: () => Promise.resolve({ outcome: 'identity-missing' }) }
   })
   clients.push(client)
   const events: HostEvent[] = []
