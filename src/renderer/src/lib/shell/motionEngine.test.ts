@@ -20,7 +20,7 @@
  * `boundedMotion.ts`'s re-apply is what closes it.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { animate, MotionGlobalConfig } from 'motion-v'
+import { animate, frameData, frameSteps, MotionGlobalConfig } from 'motion-v'
 import { createBoundedMotion } from './boundedMotion'
 import { motionBoundMs } from './motionTiming'
 
@@ -30,7 +30,31 @@ import { motionBoundMs } from './motionTiming'
 afterEach(() => {
   MotionGlobalConfig.instantAnimations = false
   MotionGlobalConfig.skipAnimations = false
+  MotionGlobalConfig.useManualTiming = false
 })
+
+const FRAME_MS = 1000 / 60
+
+/**
+ * One batch of motion-v's own frameloop, run by hand at `timestamp` instead of
+ * on jsdom's real 60 Hz `requestAnimationFrame`. It does what motion-dom's
+ * `processBatch` does for a frame: it sets the shared `frameData`, then runs
+ * every step (`frameSteps` is keyed in the engine's own step order: read,
+ * resolveKeyframes, update, render, postRender, …) on the engine's real queues.
+ * Only the scheduler and the clock are the test's. Under
+ * `MotionGlobalConfig.useManualTiming`, the engine's `time.now()` reads this
+ * same `frameData.timestamp`.
+ */
+function renderEngineFrame(timestamp: number): void {
+  frameData.delta = FRAME_MS
+  frameData.timestamp = timestamp
+  frameData.isProcessing = true
+  try {
+    for (const step of Object.values(frameSteps)) step.process(frameData)
+  } finally {
+    frameData.isProcessing = false
+  }
+}
 
 describe('motion-v engine: lands the final frame', () => {
   it('writes opacity, the x transform shortcut and clip-path onto the element under instantAnimations', async () => {
@@ -214,17 +238,47 @@ describe('motion-v engine: the imperative controls contract the bound relies on'
    * after it is `boundedMotion.ts`'s own answer to it, against this same
    * real engine.
    */
+  /*
+   * AMENDED (flake fix): this case used to wait on jsdom's real 60 Hz
+   * `requestAnimationFrame`, and its outcome then depended on real time. The
+   * deferred render only exists if `cancel()`'s `tick(0)` CHANGES the x
+   * MotionValue (motion-dom's `MotionValue` notifies, and so schedules a
+   * render, only when `current !== prev`). That needs the first frame to have
+   * moved x off its initial `0`, which fails whenever that frame's elapsed
+   * time rounds to 0: when the first frame lands more than 40 ms after
+   * `animate()`, motion-dom rebases the start onto the keyframe resolution
+   * time (`AsyncMotionValueAnimation`'s `MAX_RESOLVE_DELAY`), and a loaded CI
+   * runner did exactly that, leaving `'translateX(120px)'` in place. So the
+   * frames are now driven by hand: the engine's own steps, in its own order
+   * (`frameSteps`), on an engine clock the test sets (`useManualTiming`),
+   * never yielding to a macrotask, so neither jsdom's interval nor real time
+   * can reach the outcome.
+   */
   it('a value written right after cancel() does NOT survive two frames later — the engine’s own deferred render wins (#566 T2b)', async () => {
     const element = document.createElement('div')
     document.body.append(element)
+    MotionGlobalConfig.useManualTiming = true
+    // Lets motion-dom's synchronous `time` cache clear, as it would between two
+    // real frames, so the next `time.now()` reads the clock this test sets.
+    const flushEngineMicrotasks = (): Promise<void> => Promise.resolve()
+    const start = 1000
+    frameData.timestamp = start
+    await flushEngineMicrotasks()
     const controls = animate(element, { x: [0, 120] }, { duration: 0.25, ease: [0.2, 0, 0, 1] })
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await flushEngineMicrotasks()
+    renderEngineFrame(start + FRAME_MS)
+    // The precondition the deferred render needs: the first frame moved x off
+    // its initial keyframe, so `cancel()`'s `tick(0)` is a real change.
+    expect(element.style.transform).toMatch(/^translateX\(\d+(\.\d+)?px\)$/)
+    expect(element.style.transform).not.toBe('translateX(120px)')
     controls.cancel()
     // Stands in for `settle` — the exact write `boundedMotion.ts`'s `run`
     // makes right after `cancel()`.
     element.style.transform = 'translateX(120px)'
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await flushEngineMicrotasks()
+    renderEngineFrame(start + 2 * FRAME_MS)
+    await flushEngineMicrotasks()
+    renderEngineFrame(start + 3 * FRAME_MS)
     expect(element.style.transform).toBe('none')
     element.remove()
   })
