@@ -1,0 +1,49 @@
+{
+  "spike": "S-030-1",
+  "platform": "win32",
+  "osRelease": "10.0.26100",
+  "node": "v24.21.0",
+  "rounds": 20,
+  "measurements": [
+    {
+      "label": "ntfs",
+      "how": "NTFS temp folder, default",
+      "expected": "case-insensitive",
+      "verdict": "case-insensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.072,
+        "median": 0.085,
+        "max": 1.833
+      },
+      "realpathOfSwappedSpelling": "the on-disk spelling"
+    },
+    {
+      "label": "ntfs-case-sensitive",
+      "how": "NTFS temp folder with the per-directory case-sensitive flag (fsutil, not elevated)",
+      "expected": "case-sensitive",
+      "verdict": "case-sensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.082,
+        "median": 0.144,
+        "max": 3.793
+      },
+      "realpathOfSwappedSpelling": "not found (ENOENT)"
+    },
+    {
+      "label": "os-temp",
+      "how": "the OS's own temp folder",
+      "expected": null,
+      "verdict": "case-insensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.096,
+        "median": 0.249,
+        "max": 0.809
+      },
+      "realpathOfSwappedSpelling": "the on-disk spelling"
+    }
+  ],
+  "setupNotes": []
+}
