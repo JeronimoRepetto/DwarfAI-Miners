@@ -10,7 +10,8 @@
 //
 // createNodeUpgradePorts gives the upgrade handshake (upgradeFlow.ts; ADR-002 D8) the same endpoint
 // and copy root: a `ui` link to the running Host (hostLink.ts) and this UI's versioned copy, made or
-// reused with the spawn gate held, as the `host.upgrade.request` target.
+// reused with the spawn gate held, as the `host.upgrade.request` target. createNodeHostAttach gives
+// UI main both over one set of options (composeHostClient.ts).
 //
 // createNodeHostConnection gives HostClient (ISSUE-051) the same endpoint: `connect` resolves it by
 // the ADR-002 D2 rule on each call (the SID query runs here, the one UI path allowed to start a
@@ -261,6 +262,17 @@ export function createNodeUpgradePorts(options: NodeHostLauncherOptions): NodeUp
       }
     }
   }
+}
+
+/**
+ * The launcher and the upgrade handshake's ports over one set of options, so both use the same endpoint, Host data
+ * folder, build manifest and copy root: what UI main's Host attach composes (host-client/composeHostClient.ts).
+ */
+export function createNodeHostAttach(options: NodeHostLauncherOptions): {
+  launcher: HostLauncher
+  upgrade: NodeUpgradePorts
+} {
+  return { launcher: createNodeHostLauncher(options), upgrade: createNodeUpgradePorts(options) }
 }
 
 /** The spawn gate `<hostDataDir>/run/spawn.gate` (ADR-002 D3), held by this UI process. */

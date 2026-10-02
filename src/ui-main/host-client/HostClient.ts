@@ -64,7 +64,7 @@ import {
 } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
 import type { HungHostEnd } from '../hostLauncher/hungHost'
-import type { EnsureHostResult } from '../hostLauncher/launcher'
+import type { UpgradingLaunchResult } from '../hostLauncher/upgradingLauncher'
 import type {
   HostAvailability,
   HostClient,
@@ -104,8 +104,15 @@ export interface HostClientTimers {
 }
 
 export interface HostClientDeps {
-  /** ADR-002 D4: attach to or spawn the Host (hostLauncher/launcher.ts). */
-  launcher: { ensureHostRunning(): Promise<EnsureHostResult> }
+  /**
+   * ADR-002 D4: attach to or spawn the Host (hostLauncher/launcher.ts); composed with the ADR-002 D8 handshake after it
+   * (hostLauncher/upgradingLauncher.ts, composeHostClient.ts), whose `incompatible` and `generation-restart` are S12.B03.
+   */
+  launcher: {
+    ensureHostRunning(): Promise<UpgradingLaunchResult>
+    /** Ends what the launcher holds (the handshake's links); called by `dispose`. */
+    dispose?(): void
+  }
   /** Opens one connection to the Host's UI endpoint; rejects when nothing listens. */
   connect(): Promise<Duplex>
   /** The uiToken of `<hostDataDir>/run/ui.token`, read for each `hello`. */
@@ -334,6 +341,7 @@ class NodeHostClient implements HostClientService {
     if (this.notifier !== null) this.retire(this.notifier)
     this.notifier = null
     for (const call of [...this.calls]) this.fail(call, unavailable('the client was disposed'))
+    this.deps.launcher.dispose?.()
   }
 
   // ---- connecting ----

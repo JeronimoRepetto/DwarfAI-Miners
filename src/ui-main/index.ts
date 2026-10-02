@@ -107,10 +107,11 @@ import {
 } from './window/adapters/ElectronGlobalShortcut'
 import { ElectronTray } from './window/adapters/ElectronTray'
 import { readUserDataConfigFile } from './window/adapters/userDataConfigFile'
-import { createHostClient, type HostClientService } from './host-client/HostClient'
+import type { HostClientService } from './host-client/HostClient'
+import { composeHostClient } from './host-client/composeHostClient'
 import {
+  createNodeHostAttach,
   createNodeHostConnection,
-  createNodeHostLauncher,
   createNodeHungHostEnder,
   nodeHostManifestPath,
   winLaunchPrebuildsDir
@@ -732,8 +733,9 @@ function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
   const outDir = join(import.meta.dirname, '..')
   const hostDataDir = join(dataDir, 'host')
   const client = { appVersion: app.getVersion(), buildId: __DWARFAI_BUILD_ID__ }
-  return createHostClient({
-    launcher: createNodeHostLauncher({
+  // Every attach is held to the ADR-002 D8 upgrade handshake first (composeHostClient.ts).
+  return composeHostClient({
+    ...createNodeHostAttach({
       hostDataDir,
       execPath: process.execPath,
       hostManifest: nodeHostManifestPath({
