@@ -5,3 +5,5 @@ export * from './externalLink'
 export * from './heldSessionText'
 export * from './jsonText'
 export * from './truncate'
+// The copy dictionary (owner rule 2026-10-02): every user-visible string of both UI trees, by key.
+export * from './copy'
