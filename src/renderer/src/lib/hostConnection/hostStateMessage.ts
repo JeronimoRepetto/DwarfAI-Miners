@@ -28,7 +28,8 @@ export interface HostStateMessage {
   actionLabel: string | null
   /**
    * How a screen reader hears it: a Host that is down interrupts (`assertive`), a reconnect or a degraded Host waits
-   * its turn (`polite`). Never a toast and never an OS notification (ADR-002 D9).
+   * its turn (`polite`). A message with an action is the dialog, one without an action is one toast
+   * (`hostStateToast`; owner's ruling 2026-10-02, over ADR-002 D9's "no toast"); never an OS notification.
    */
   live: 'off' | 'polite' | 'assertive'
 }

@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
-import { connect, createServer, type Server, type Socket } from 'node:net'
+import { existsSync, lstatSync, mkdtempSync, rmSync } from 'node:fs'
+import { connect, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkSocketPathLength, type HostEndpoint } from '@dwarfai/contracts'
@@ -16,13 +16,10 @@ import {
 import { PIPE_ACL_UNAVAILABLE } from './windowsPipeSecurity'
 
 // L6 (17 §1.6), in process: the real endpoint server on this OS's real transport — a named pipe on
-// Windows, a Unix socket in a temp directory elsewhere. The POSIX-only cases run on the macOS and
-// Linux legs of `pnpm test`; their mode checks are the L8 server.os.test.ts.
+// Windows, a Unix socket in a temp directory elsewhere. The cases that run on one platform only, and
+// the mode checks, are the L8 server.os.test.ts.
 
 const WINDOWS = process.platform === 'win32'
-
-/** How long a connection is watched for a byte the Host must not send. */
-const SILENCE_MS = 300
 
 const cleanups: Array<() => Promise<void> | void> = []
 
@@ -85,33 +82,79 @@ function client(path: string): Promise<Socket> {
   })
 }
 
-/** Everything the socket receives in `ms`, and whether it was closed meanwhile. */
-function watch(socket: Socket, ms: number): Promise<{ bytes: number; closed: boolean }> {
-  return new Promise((resolve) => {
-    let bytes = 0
-    let closed = false
-    socket.on('data', (chunk: Buffer) => (bytes += chunk.length))
-    socket.once('close', () => (closed = true))
-    setTimeout(() => resolve({ bytes, closed }), ms)
-  })
+// AMENDED for the cut-0 conformance audit (was: `watch(socket, ms)`, which counted the bytes a client received during a
+// real-timer window of 50 or 300 ms, 17 §2.2, §5.3): silence is now read back from the endpoint's own side of the
+// connection once a marker the client sent has reached it, so no clock decides the outcome.
+
+interface AcceptLog {
+  /** The endpoint's `accept`: each connection it hands to the auth layer. */
+  accept: (connection: Socket) => void
+  served: Socket[]
+  /** Calls `listener` for every connection served so far and for each one still to come. */
+  onServed: (listener: (connection: Socket) => void) => void
 }
 
-function listen(server: Server, path: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(path, resolve)
-  })
+/** Every connection the endpoint hands to the auth layer (`accept`), and a hook for the ones still to come. */
+function acceptLog(): AcceptLog {
+  const served: Socket[] = []
+  const listeners: Array<(connection: Socket) => void> = []
+  return {
+    served,
+    accept: (connection) => {
+      served.push(connection)
+      for (const listener of listeners) listener(connection)
+    },
+    onServed: (listener) => {
+      listeners.push(listener)
+      for (const connection of served) listener(connection)
+    }
+  }
+}
+
+let markers = 0
+
+/**
+ * Whether the endpoint holds `socket` open and silent: the client sends a marker, the held connection that receives it
+ * is the client's own, and what the endpoint wrote to it is read back from that connection (`bytesWritten`), along with
+ * what the client received and whether it was closed.
+ */
+async function heldSilently(
+  socket: Socket,
+  log: AcceptLog
+): Promise<{ written: number; received: number; closed: boolean }> {
+  let received = 0
+  let closed = false
+  socket.on('data', (chunk: Buffer) => (received += chunk.length))
+  socket.once('close', () => (closed = true))
+  markers += 1
+  const marker = `marker-${markers}`
+  const served = new Promise<Socket>((resolve) =>
+    log.onServed((connection) =>
+      connection.on('data', (chunk: Buffer) => {
+        if (chunk.toString().includes(marker)) resolve(connection)
+      })
+    )
+  )
+  socket.write(marker)
+  const connection = await served
+  return { written: connection.bytesWritten, received, closed }
+}
+
+/** Resolves when `socket` closes. */
+function closeOf(socket: Socket): Promise<void> {
+  return new Promise((resolve) => socket.once('close', () => resolve()))
 }
 
 describe('the Host UI endpoint server (ADR-003 items 1–2, ADR-002 D3)', () => {
   it('[ADR-003, C-11] an accepted connection receives no byte before authentication', async () => {
     const endpoint = testEndpoint()
-    const server = await bound(endpoint)
+    const log = acceptLog()
+    const server = await bound(endpoint, deps({ accept: log.accept }))
 
     const socket = await client(endpoint.path)
-    const seen = await watch(socket, SILENCE_MS)
+    const seen = await heldSilently(socket, log)
 
-    expect(seen).toEqual({ bytes: 0, closed: false })
+    expect(seen).toEqual({ written: 0, received: 0, closed: false })
     // Accepted and held, not refused: the auth layer (ISSUE-023) takes it from here.
     expect(server.heldConnections).toBe(1)
   })
@@ -127,7 +170,8 @@ describe('the Host UI endpoint server (ADR-003 items 1–2, ADR-002 D3)', () => 
 
   it('[ADR-002, S12.02] a second bind on a live endpoint that answers hello reports already-running and leaves the first one serving', async () => {
     const endpoint = testEndpoint()
-    await bound(endpoint)
+    const log = acceptLog()
+    await bound(endpoint, deps({ accept: log.accept }))
     const probed: string[] = []
 
     const second = await bindEndpoint(
@@ -144,7 +188,7 @@ describe('the Host UI endpoint server (ADR-003 items 1–2, ADR-002 D3)', () => 
     // The probe ran over a real connection to the first Host.
     expect(probed).toEqual(['open'])
     const socket = await client(endpoint.path)
-    expect(await watch(socket, 50)).toEqual({ bytes: 0, closed: false })
+    expect(await heldSilently(socket, log)).toEqual({ written: 0, received: 0, closed: false })
   })
 
   it('[ADR-002, FM-009] a live endpoint that does not answer hello fails the bind and nothing is removed', async () => {
@@ -166,71 +210,22 @@ describe('the Host UI endpoint server (ADR-003 items 1–2, ADR-002 D3)', () => 
     const outcome = await bindEndpoint(endpoint, deps())
     if (outcome.kind !== 'bound') throw new Error('expected a bind')
     const socket = await client(endpoint.path)
-    const seen = watch(socket, SILENCE_MS)
+    const closed = closeOf(socket)
 
     await outcome.endpoint.close()
 
-    expect((await seen).closed).toBe(true)
+    await expect(closed).resolves.toBeUndefined()
     await expect(client(endpoint.path)).rejects.toMatchObject({ code: expect.any(String) })
     if (!WINDOWS) expect(existsSync(endpoint.path)).toBe(false)
   })
 
-  it.runIf(!WINDOWS)(
-    '[FM-037] a stale socket file with no listener is removed and the bind succeeds once',
-    async () => {
-      const endpoint = testEndpoint()
-      if (endpoint.kind !== 'unix-socket') throw new Error('POSIX only')
-      mkdirSync(endpoint.dir, { recursive: true, mode: 0o700 })
-      // A socket file whose listener is gone: bound under another name, renamed into place, then
-      // closed (the close removes only the old name), as a crashed Host leaves it.
-      const decoy = createServer()
-      const decoyPath = join(endpoint.dir, 'decoy.sock')
-      await listen(decoy, decoyPath)
-      renameSync(decoyPath, endpoint.path)
-      await new Promise<void>((resolve) => decoy.close(() => resolve()))
-      expect(lstatSync(endpoint.path).isSocket()).toBe(true)
-      const d = deps()
-
-      await bound(endpoint, d)
-
-      expect(d.log.byEvent('host.endpoint.stale-removed')).toEqual([
-        expect.objectContaining({ level: 'info', subsystem: 'host' })
-      ])
-      const socket = await client(endpoint.path)
-      expect(await watch(socket, 50)).toEqual({ bytes: 0, closed: false })
-    }
-  )
-
-  it.runIf(!WINDOWS)(
-    '[ADR-003, FM-037] a file at the socket path that is not a socket is never removed',
-    async () => {
-      const endpoint = testEndpoint()
-      if (endpoint.kind !== 'unix-socket') throw new Error('POSIX only')
-      mkdirSync(endpoint.path, { recursive: true })
-
-      const error = await bindEndpoint(endpoint, deps()).catch((caught: unknown) => caught)
-
-      expect(error).toMatchObject({ code: 'ENDPOINT_IN_USE_WITHOUT_HELLO' })
-      expect(lstatSync(endpoint.path).isDirectory()).toBe(true)
-    }
-  )
-
-  // AMENDED for the ISSUE-022 Windows half (was: "until the SP-05 pipe helper exists the default
-  // pipe DACL is never silent: the bind logs it as degraded"): the helper exists, so the pipe is
-  // the helper's and the interim degraded record is gone.
-  it.runIf(WINDOWS)(
-    '[ADR-003, FM-036] a named pipe is created by the owner-only pipe helper and the bind logs no degraded ACL record',
-    async () => {
-      const pipe = createFakeOwnerOnlyPipe()
-      const d = deps({ ownerOnlyPipe: pipe.listen })
-      const endpoint = testEndpoint()
-
-      await bound(endpoint, d)
-
-      expect(pipe.names).toEqual([endpoint.path])
-      expect(d.log.byEvent('host.endpoint.acl')).toEqual([])
-    }
-  )
+  // MOVED for the cut-0 conformance audit to server.os.test.ts (17 §1.8: a test that runs on one platform only is an OS
+  // lane test, marked by its file, not an `it.runIf` in `pnpm test`), assertions unchanged:
+  // - "[FM-037] a stale socket file with no listener is removed and the bind succeeds once" (POSIX);
+  // - "[ADR-003, FM-037] a file at the socket path that is not a socket is never removed" (POSIX);
+  // - "[ADR-003, FM-036] a named pipe is created by the owner-only pipe helper and the bind logs no degraded ACL record"
+  //   (Windows).
+  // Recorded in docs/test-removals.md.
 
   it('[ADR-003, FM-036] a named-pipe endpoint without the owner-only pipe helper is never served: the bind fails closed', async () => {
     const endpoint: HostEndpoint = {

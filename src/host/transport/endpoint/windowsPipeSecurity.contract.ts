@@ -32,7 +32,10 @@ export function runOwnerOnlyPipeContract(subject: string, make: () => OwnerOnlyP
       for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
     })
 
-    /** Listens on a fresh name; handed-over sockets are collected and destroyed after the test. */
+    /**
+     * Listens on a fresh name; handed-over sockets are collected and destroyed after the test. `handedOver(n)`
+     * resolves once `n` sockets were handed over, on the hand-over itself.
+     */
     async function listening(
       pipe: OwnerOnlyPipeSubject,
       name = pipe.freshName()
@@ -41,13 +44,19 @@ export function runOwnerOnlyPipeContract(subject: string, make: () => OwnerOnlyP
       server: OwnerOnlyPipeServer
       accepted: Socket[]
       errors: string[]
+      handedOver: (count: number) => Promise<void>
     }> {
       const accepted: Socket[] = []
       const errors: string[] = []
+      const waiting: Array<{ count: number; resolve: () => void }> = []
       const outcome = await pipe.listen(name, {
         onConnection: (socket) => {
           socket.on('error', () => {})
           accepted.push(socket)
+          for (const waiter of waiting.filter(({ count }) => accepted.length >= count)) {
+            waiting.splice(waiting.indexOf(waiter), 1)
+            waiter.resolve()
+          }
         },
         onError: (code) => errors.push(code)
       })
@@ -60,7 +69,11 @@ export function runOwnerOnlyPipeContract(subject: string, make: () => OwnerOnlyP
         await outcome.server.close()
       }
       cleanups.push(close)
-      return { name, server: { close }, accepted, errors }
+      const handedOver = (count: number): Promise<void> =>
+        accepted.length >= count
+          ? Promise.resolve()
+          : new Promise((resolve) => waiting.push({ count, resolve }))
+      return { name, server: { close }, accepted, errors, handedOver }
     }
 
     function client(name: string): Promise<Socket> {
@@ -82,19 +95,16 @@ export function runOwnerOnlyPipeContract(subject: string, make: () => OwnerOnlyP
       )
     }
 
-    async function until(condition: () => boolean, what: string): Promise<void> {
-      for (let waited = 0; !condition(); waited += 10) {
-        if (waited > 5_000) throw new Error(`timed out waiting for ${what}`)
-        await new Promise((resolve) => setTimeout(resolve, 10))
-      }
-    }
+    // AMENDED for the cut-0 conformance audit (was: `until(condition, what)`, which polled every 10 ms on a real timer
+    // for up to 5 s, 17 §2.2, §5.3): each wait now resolves on the event itself, the hand-over or the close, and a hand-over
+    // that never comes fails the case at the runner's timeout.
 
     it('[ADR-003] a connected client is handed over as a socket that carries bytes both ways', async () => {
       const pipe = make()
-      const { name, accepted, errors } = await listening(pipe)
+      const { name, accepted, errors, handedOver } = await listening(pipe)
 
       const socket = await client(name)
-      await until(() => accepted.length === 1, 'the handed-over socket')
+      await handedOver(1)
       const served = accepted[0] as Socket
       const atHost = nextData(served)
       socket.write('from-client')
@@ -118,12 +128,13 @@ export function runOwnerOnlyPipeContract(subject: string, make: () => OwnerOnlyP
 
     it('[ADR-003] clients connecting at the same time are each handed over', async () => {
       const pipe = make()
-      const { name, accepted, errors } = await listening(pipe)
+      const { name, accepted, errors, handedOver } = await listening(pipe)
 
       const clients = await Promise.all(
         Array.from({ length: CONCURRENT_CLIENTS }, () => client(name))
       )
-      await until(() => accepted.length === CONCURRENT_CLIENTS, 'every handed-over socket')
+      await handedOver(CONCURRENT_CLIENTS)
+      expect(accepted).toHaveLength(CONCURRENT_CLIENTS)
       const replies = await Promise.all(
         clients.map((socket, index) => {
           const reply = nextData(socket)
@@ -138,31 +149,30 @@ export function runOwnerOnlyPipeContract(subject: string, make: () => OwnerOnlyP
 
     it('[ADR-003] a client that disconnects ends its handed-over socket', async () => {
       const pipe = make()
-      const { name, accepted } = await listening(pipe)
+      const { name, accepted, handedOver } = await listening(pipe)
       const socket = await client(name)
-      await until(() => accepted.length === 1, 'the handed-over socket')
+      await handedOver(1)
       const served = accepted[0] as Socket
-      let ended = false
-      served.once('close', () => (ended = true))
+      const ended = new Promise<void>((resolve) => served.once('close', () => resolve()))
       served.resume()
 
       socket.destroy()
 
-      await until(() => ended, 'the handed-over socket to close')
+      await expect(ended).resolves.toBeUndefined()
     })
 
     it('[ADR-002] after close no client connects and the name can be listened on again', async () => {
       const pipe = make()
       const first = await listening(pipe)
       await client(first.name)
-      await until(() => first.accepted.length === 1, 'the handed-over socket')
+      await first.handedOver(1)
 
       await first.server.close()
 
       await expect(client(first.name)).rejects.toMatchObject({ code: expect.any(String) })
       const again = await listening(pipe, first.name)
       await client(again.name)
-      await until(() => again.accepted.length === 1, 'a socket from the second listen')
+      await again.handedOver(1)
     })
   })
 }

@@ -2,9 +2,13 @@
 // `TrayMenuModel` — Open, Quit, a separator, Stop everything and quit — shown for the Host's whole life.
 //
 // - Open (S10.13) opens the window per "Mode at launch" (the same path as a second launch, ADR-002 D7, D3).
-// - Quit (S10.15; OQ-44, OQ-47; INV-122) closes every window, and so the `ui` connection, and clears the UI-main session
-//   store; the tray process, its `notifier` connection and the icon stay. It sends nothing: no frame exists for a Quit
-//   (14 §2.4) and nothing ends, launched or observed. From tray-only it changes nothing.
+// - Quit (S10.15; OQ-44, OQ-47; INV-122) asks `TrayWindows.closeAll` and clears the UI-main session store; the tray
+//   process, its `notifier` connection and the icon stay. It sends nothing: no frame exists for a Quit (14 §2.4) and
+//   nothing ends, launched or observed. From tray-only it changes nothing. ADR-018's Quit closes every window and so
+//   the `ui` connection; in cut 0 the composition root binds `closeAll` to hiding the one mode window, the Panel, whose
+//   page stays loaded, because the `ui` connection is not bound to a window yet (ADR-003 item 12) and there is no
+//   UI-main session store to clear (later: ISSUE-059). `docs/strangler/parity-cut-0.md` records it as an intended
+//   difference.
 // - Stop everything and quit hands over to the confirmation flow (`stopEverything.ts`, S10.18).
 // - The icon is removed only when the Host exits cleanly (`host.closing`, ADR-003 item 12 as revised): for
 //   `'stop-all'` (this process's own Confirm, S10.20) and `'os-session-end'` (S10.16) the windows close, the icon goes

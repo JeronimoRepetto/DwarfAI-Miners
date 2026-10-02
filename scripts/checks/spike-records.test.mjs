@@ -9,7 +9,8 @@ import { describe, expect, it } from 'vitest'
  * A spike closes only when `spike-results/<ID>.md` exists with the front matter
  * `{ id, date, os[], versions{}, verdict: passed | failed | partial, exitCriterion }` and the decision taken.
  * This file holds the checker and runs it over every record present, so a later spike record that breaks the
- * form fails `pnpm test`.
+ * form fails `pnpm test`. AMENDED for the cut-0 conformance audit: a P-4 stub (`21` §2) is
+ * `{ id, date, verdict: pending, owner, gate, exitCriterion }` with no Decision, until its spike issue records it.
  */
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -78,6 +79,26 @@ function decisionText(body) {
   return match ? match[1].trim() : null
 }
 
+/**
+ * The verdict of a P-4 stub (`21` §2 P-4): the spike has an owner and a record file but has not run. It never counts
+ * as a record that closes the spike (`17` §4 "Gate").
+ */
+const PENDING = 'pending'
+
+/** A stub names its owner, what it gates and its exit criterion, and claims no result: no `## Decision`. */
+function checkPendingStub(data, body) {
+  const problems = []
+  for (const key of ['owner', 'gate', 'exitCriterion']) {
+    if (typeof data[key] !== 'string' || data[key].trim() === '') {
+      problems.push(`${key} is missing or empty in a pending stub`)
+    }
+  }
+  if (/^## Decision\b/m.test(body)) {
+    problems.push('a pending stub claims no result, so it has no ## Decision section')
+  }
+  return problems
+}
+
 /** Checks one record; returns the list of problems (empty when the record is valid). */
 function checkSpikeRecord(text, fileName) {
   const parsed = parseFrontMatter(text)
@@ -91,6 +112,7 @@ function checkSpikeRecord(text, fileName) {
     problems.push(`id ${data.id} does not match the file name ${fileName}`)
   }
   if (!isIsoDate(data.date)) problems.push('date is missing or is not a YYYY-MM-DD date')
+  if (data.verdict === PENDING) return [...problems, ...checkPendingStub(data, body)]
   const osValid =
     Array.isArray(data.os) &&
     data.os.length > 0 &&
@@ -219,6 +241,47 @@ describe('spike records (17 §4)', () => {
       expect(proposal?.[1], `the proposed table has a ${os} row`).toMatch(
         new RegExp(`^\\| ${os}\\b`, 'm')
       )
+    }
+  })
+
+  // ADDED for the cut-0 conformance audit: 21 §2 P-4 asks a `spike-results/<ID>.md` stub with an owner for each
+  // long-lead spike of wave 1. A stub is `verdict: pending`: it names its owner, what it gates and its exit criterion,
+  // and claims no result, so it has no os, versions or Decision of its own.
+  it('[ADR-001] a P-4 pending stub (SP-08, S-008-1, SP-16, SP-07) names its owner, its gate and its exit criterion and claims no result', () => {
+    const stub = `---
+id: SP-08
+date: 2026-10-02
+verdict: pending
+owner: provider devs
+gate: ISSUE-321 (step 3a entry)
+exitCriterion: Flag presence and routing recorded per version
+---
+
+# SP-08
+
+Not run yet.
+`
+    expect(checkSpikeRecord(stub, 'SP-08.md'), 'the complete stub').toEqual([])
+    for (const key of ['owner', 'gate', 'exitCriterion']) {
+      const lines = stub.split('\n').filter((line) => !line.startsWith(`${key}:`))
+      expect(
+        checkSpikeRecord(lines.join('\n'), 'SP-08.md').join('\n'),
+        `a stub without ${key}`
+      ).toMatch(new RegExp(`\\b${key}\\b`))
+    }
+    const decided = `${stub}\n## Decision\n\nKept.\n`
+    expect(checkSpikeRecord(decided, 'SP-08.md').join('\n'), 'a stub with a decision').toMatch(
+      /\bDecision\b/
+    )
+
+    const dir = path.join(repoRoot, 'spike-results')
+    for (const id of ['SP-08', 'S-008-1', 'SP-16', 'SP-07']) {
+      const file = path.join(dir, `${id}.md`)
+      expect(existsSync(file), `spike-results/${id}.md exists`).toBe(true)
+      expect(
+        checkSpikeRecord(readFileSync(file, 'utf8'), `${id}.md`),
+        `spike-results/${id}.md`
+      ).toEqual([])
     }
   })
 
