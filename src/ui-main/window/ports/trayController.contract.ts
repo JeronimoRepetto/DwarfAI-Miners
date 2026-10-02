@@ -29,7 +29,7 @@ export function runTrayControllerContract(
   ]
 
   describe(`${name} meets the TrayController contract (16 §4.14)`, () => {
-    it('[ADR-018, OQ-47] create shows one icon whose menu holds the model items in order, and each item runs its own action', () => {
+    it('[ADR-018] create shows one icon whose menu holds the model items in order, and each item runs its own action', () => {
       const subject = make({ systemTray: true })
       const chosen: string[] = []
 
