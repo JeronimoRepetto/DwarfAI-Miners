@@ -476,3 +476,60 @@ describe('the Panel window closed by the OS (ISSUE-056; 16 §4.14 read-backs, vi
     expect(panel.visible()).toBe(true)
   })
 })
+
+describe('the Panel window built again after it closed (ISSUE-056)', () => {
+  it('[ADR-001, FM-111] rebuilding a closed Panel asks panelStart once and reads back no window while the new one is built', () => {
+    // As ElectronWindows does: a closed (destroyed) Panel window is built again on the next ask, the factory asks
+    // `panelStart` while it builds, and every read-back of the surface acts on the window the factory has, building
+    // one if there is none. Reading the closed window's bounds from panelStart re-entered the build without end (macOS
+    // E2E, CI run 36970221778: RangeError in JsonUiPreferenceStore.load under panelStart).
+    const storage = createInMemoryUiPreferenceStorage()
+    const placed: Rect[] = []
+    let current: { destroyed: boolean; bounds: Rect } | null = null
+    let use: ReturnType<typeof createPanelWindow> | null = null
+    let building = 0
+    const fakeWindow = new FakeWindowFactory()
+    const windows = {
+      panel: () => {
+        if (current === null || current.destroyed) {
+          building += 1
+          if (building > 1)
+            throw new Error('panelStart asked again while the Panel was being built')
+          const start = use!.panelStart()
+          current = { destroyed: false, bounds: start.bounds }
+          placed.push(start.bounds)
+          building -= 1
+        }
+        return fakeWindow.panel()
+      },
+      veta: (key: string) => fakeWindow.veta(key),
+      valle: (from: string) => fakeWindow.valle(from)
+    }
+    const surface = new FakePanelSurface(fakeWindow)
+    const readBack: PanelWindowSurface = {
+      ...surface,
+      applyZoom: (factor) => (windows.panel(), surface.applyZoom(factor)),
+      bounds: () => (windows.panel(), current!.bounds),
+      setAlwaysOnTop: (on) => (windows.panel(), surface.setAlwaysOnTop(on)),
+      isAlwaysOnTop: () => (windows.panel(), surface.isAlwaysOnTop()),
+      raise: () => (windows.panel(), surface.raise()),
+      isMinimized: () => (windows.panel(), surface.isMinimized()),
+      isVisible: () => current !== null && !current.destroyed,
+      onMinimizedChanged: (h) => surface.onMinimizedChanged(h)
+    }
+    use = createPanelWindow({
+      windows,
+      surface: readBack,
+      screen: new FakeScreenAreaProvider([PRIMARY, SECOND]),
+      store: new InMemoryUiPreferenceStore(storage),
+      floor: 32,
+      onDisplaysChanged: () => undefined
+    })
+    use.load()
+    current!.destroyed = true
+
+    expect(() => use?.show()).not.toThrow()
+    const docked = panelBounds(PRIMARY.workArea, 'right', { mineOpen: false, dockOpen: false }, 32)
+    expect(placed).toEqual([docked, docked])
+  })
+})

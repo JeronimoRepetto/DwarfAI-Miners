@@ -163,7 +163,10 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
 
   const panel = () => {
     // The factory asks `panelStart` while it builds the window (ElectronWindows), so the window counts as built only
-    // once it exists: until then nothing reads back a window that is still being made (ISSUE-056).
+    // once it exists: until then nothing reads back a window that is still being made (ISSUE-056). That holds for a
+    // rebuild too: a Panel closed outside the app is built again on the next ask, and a read-back of the closed window
+    // from panelStart would ask for the window again, without end (macOS E2E, CI run 36970221778).
+    built = false
     const window = windows.panel()
     built = true
     return window
