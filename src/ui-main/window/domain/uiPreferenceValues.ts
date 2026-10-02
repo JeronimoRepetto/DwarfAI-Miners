@@ -47,7 +47,9 @@ export const UI_PREFERENCE_DEFAULTS: Readonly<UiPreferenceStoreMap> = {
   launchView: { area: 'map', mineId: null },
   dockSide: 'right',
   alwaysOnTop: true,
-  shortcut: null
+  shortcut: null,
+  // ON by default, also on a fresh install (OQ-65; ADR-027 item 7; 07 S40.01).
+  startWithSystem: true
 }
 
 /** A fresh copy of a store's defaults, so a caller that edits it cannot edit the defaults. */
@@ -92,7 +94,8 @@ const STORED_FORMS: StoredForms = {
   launchView: (v) => ({ area: v.area, mineId: v.mineId === '' ? null : v.mineId }),
   dockSide: (v) => v,
   alwaysOnTop: (v) => v,
-  shortcut: (v) => v
+  shortcut: (v) => v,
+  startWithSystem: (v) => v
 }
 
 /** The one stored form of `value` for `key`: what a setter stores and answers (ADR-024 item 9). */
