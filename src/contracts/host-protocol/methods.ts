@@ -12,11 +12,13 @@ import {
   instantSchema,
   preferencesViewSchema,
   stopAllOutcomeSchema,
+  stranglerDwarfIdentitySchema,
   type HostEpoch,
   type HostPreferences,
   type Instant,
   type PreferencesView,
-  type StopAllOutcome
+  type StopAllOutcome,
+  type StranglerDwarfIdentity
 } from '../wire'
 import {
   metricsResetResultSchema,
@@ -36,7 +38,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M09, B-M12, B-M13 and B-M15 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M09, B-M12, B-M13, B-M15 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -53,6 +55,9 @@ export interface HostMethods {
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
   'preferences.resetMetrics':        { params: ResetMetricsParams; result: MetricsResetResult }
+  // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
+  'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
 }
 // end verbatim: 14 §3.4
 
@@ -151,6 +156,12 @@ export const HOST_METHOD_SCHEMAS = {
   'preferences.resetMetrics': {
     params: resetMetricsParamsSchema,
     result: metricsResetResultSchema
+  },
+  // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
+  // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).
+  'strangler.dwarfIdentities': {
+    params: z.object({}).strict(),
+    result: z.array(stranglerDwarfIdentitySchema)
   }
 } as const satisfies Partial<{
   [M in keyof HostMethods]: {
