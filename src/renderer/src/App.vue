@@ -1527,6 +1527,7 @@ const {
             :message="hostMessage"
             :retrying="hostRetrying"
             :on-stop-everything="stopEverythingFromHostMessage"
+            :covered="stopEverythingView.kind !== 'closed'"
             @retry="retryHostConnection"
           />
         </div>

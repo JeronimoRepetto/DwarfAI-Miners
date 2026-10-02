@@ -2686,17 +2686,20 @@ describe('the Host connection in the shell', () => {
       rows.push({ state: 'unavailable', reason: 'crash-loop' })
     )
     expect(raised).toEqual([])
-    const message = wrapper.get('.dm-host-state')
-    expect(message.attributes('role')).toBe('alert')
-    expect(message.text()).toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
-    await message.get('button').trigger('click')
+    // AMENDED for the owner's design ruling of 2026-10-02 (was: `.dm-host-state` and its button inside the App's own
+    // element): the message with its Retry is the design's dialog in <body>, so it is read from the document; the
+    // expectations are unchanged.
+    const message = document.body.querySelector<HTMLElement>('[role="dialog"] .dm-host-state')!
+    expect(message.getAttribute('role')).toBe('alert')
+    expect(message.textContent).toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+    document.body.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click()
     await flushPromises()
     expect(api.retryHostConnection).toHaveBeenCalledOnce()
     // The dwarf of the last snapshot stays.
     expect(wrapper.find('.dm-msg').exists()).toBe(true)
 
     await rows.push(connected)
-    expect(wrapper.find('.dm-host-state').exists()).toBe(false)
+    expect(document.body.querySelector('.dm-host-state')).toBeNull()
   })
 
   it('[FM-146, ADR-002] while reconnecting the composer keeps its draft and sends nothing', async () => {
@@ -2733,7 +2736,7 @@ describe('the Host connection in the shell', () => {
       askConfirmation?.({ confirmationId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e' })
     )
     const confirmHostRestart = vi.fn().mockResolvedValue(connected)
-    const { wrapper, api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
+    const { api } = await openOn([OBSERVED_DWARF], 'claude:s1', {
       ...rows.overrides,
       requestStopEverything,
       confirmHostRestart,
@@ -2744,18 +2747,28 @@ describe('the Host connection in the shell', () => {
     })
 
     await rows.push({ state: 'unavailable', reason: 'incompatible' })
-    const buttons = wrapper.get('.dm-host-state').findAll('button')
-    expect(buttons.map((button) => button.text())).toEqual([
+    // AMENDED for the owner's design ruling of 2026-10-02 (was: the action inside `.dm-host-state`, and no dialog
+    // before it was pressed): the message is itself the design's dialog now, the only one on screen, and it steps
+    // aside for ISSUE-317's confirmation, so one dialog is shown at a time.
+    const dialogs = (): HTMLElement[] => [
+      ...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')
+    ]
+    expect(dialogs()).toHaveLength(1)
+    expect(dialogs()[0]!.querySelector('.dm-host-state')?.getAttribute('data-variant')).toBe(
+      'incompatible'
+    )
+    const buttons = [...dialogs()[0]!.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons.map((button) => button.textContent?.trim())).toEqual([
       '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
     ])
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    await buttons[0]!.trigger('click')
+    buttons[0]!.click()
     await flushPromises()
 
     expect(requestStopEverything).toHaveBeenCalledOnce()
     expect(confirmHostRestart).not.toHaveBeenCalled()
     expect(api.retryHostConnection).not.toHaveBeenCalled()
-    // The confirmation that follows is ISSUE-317's, the same one the tray item shows.
-    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    // The confirmation that follows is ISSUE-317's, the same one the tray item shows, alone on screen.
+    expect(dialogs()).toHaveLength(1)
+    expect(dialogs()[0]!.querySelector('.dm-host-state')).toBeNull()
   })
 })

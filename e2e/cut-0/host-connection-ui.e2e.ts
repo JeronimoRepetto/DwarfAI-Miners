@@ -99,7 +99,8 @@ test.describe('cut 0: the Host connection in the Panel (ISSUE-316)', () => {
     await expect(dwarfs, 'the board keeps its dwarfs').toHaveCount(drawn)
 
     // Retry: main starts the Host again and the Panel follows; the crash-loop message goes.
-    await message.getByRole('button').click()
+    // The message with its Retry is the design's dialog (owner's design ruling 2026-10-02): Retry is its action.
+    await window.getByRole('dialog').filter({ has: message }).getByRole('button').click()
     await waitForHostAttached(profile)
     await expect
       .poll(
