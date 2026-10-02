@@ -1,4 +1,5 @@
 import type { BrowserWindowConstructorOptions } from 'electron'
+import { t } from '@dwarfai/contracts'
 import type { ModeWindowRegistry } from '../application/modeWindowRegistry'
 import type { PanelWindowSurface } from '../application/panelWindow'
 import type {
@@ -38,13 +39,14 @@ export const RENDERER_HANG_MS = 30_000
 
 /**
  * The "renderer crashed" message and its actions. The copy is a design item (ADR-019 open item, DG "renderer crashed";
- * design request DR-01): until it exists, each string is the marked placeholder, never shipped text (AGENTS.md §8.1).
+ * design request DR-01), looked up in the copy dictionary: until it exists, each string is the marked placeholder,
+ * never shipped text (AGENTS.md §8.1).
  */
 export const RENDERER_CRASHED_MESSAGE = {
   key: 'copy-needed.renderer-crashed',
-  message: '⟦COPY NEEDED: DG "renderer crashed"⟧',
-  reload: '⟦COPY NEEDED: DG "renderer crashed" Reload⟧',
-  dismiss: '⟦COPY NEEDED: DG "renderer crashed" dismiss⟧'
+  message: t('rendererCrashed.message'),
+  reload: t('rendererCrashed.reload'),
+  dismiss: t('rendererCrashed.dismiss')
 } as const
 
 /** What the person chose on the "renderer crashed" message. */

@@ -20,11 +20,12 @@
  * the Panel. An action that cannot run here (Stop everything with no caller) draws nothing either, never a dead button.
  *
  * Presentational: the message comes from lib/hostConnection/hostStateMessage, and App.vue owns the calls. The words
- * are design's (ADR-002 O-4, O-5): every string is a marked placeholder. Stop everything and quit shows only when the
+ * are design's (ADR-002 O-4, O-5), looked up in the copy dictionary: every one is a marked placeholder so far. Stop everything and quit shows only when the
  * caller can run it (`onStopEverything`). With nothing to run it the action is absent, never a dead button (21 §1
  * item 8).
  */
 import { computed } from 'vue'
+import { t, type PlainCopyKey } from '@dwarfai/contracts'
 import ModalDialog from '../overlay/ModalDialog.vue'
 import type { DialogAction } from '../../lib/overlay/dialog'
 import type { HostStateMessage, HostStateVariant } from '../../lib/hostConnection/hostStateMessage'
@@ -42,11 +43,11 @@ const props = withDefaults(
 const emit = defineEmits<{ retry: [] }>()
 
 /** The dialog titles of the variants that carry an action: design's words, none written yet (ADR-002 O-5, O-15). */
-const TITLE: Readonly<Partial<Record<HostStateVariant, string>>> = {
-  'crash-loop': '⟦COPY NEEDED: O-15 crash-loop variant, dialog title⟧',
-  unresponsive: '⟦COPY NEEDED: O-5 Host-unresponsive message, dialog title⟧',
-  'spawn-failed': '⟦COPY NEEDED: O-5 Host did not start message, dialog title⟧',
-  incompatible: '⟦COPY NEEDED: O-5 incompatible Host message, dialog title⟧'
+const TITLE: Readonly<Partial<Record<HostStateVariant, PlainCopyKey>>> = {
+  'crash-loop': 'hostState.crashLoop.title',
+  unresponsive: 'hostState.unresponsive.title',
+  'spawn-failed': 'hostState.spawnFailed.title',
+  incompatible: 'hostState.incompatible.title'
 }
 
 const role = computed(() => (props.message.live === 'assertive' ? 'alert' : 'status'))
@@ -54,7 +55,10 @@ const offersRetry = computed(() => props.message.action === 'retry')
 const offersStop = computed(
   () => props.message.action === 'stop-everything' && props.onStopEverything !== undefined
 )
-const title = computed(() => TITLE[props.message.variant])
+const title = computed(() => {
+  const key = TITLE[props.message.variant]
+  return key === undefined ? undefined : t(key)
+})
 const asDialog = computed(
   () => (offersRetry.value || offersStop.value) && title.value !== undefined
 )

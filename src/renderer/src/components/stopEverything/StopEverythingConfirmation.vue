@@ -11,42 +11,18 @@
  *
  * Presentational: useStopEverything, owned by App, holds the state and the IPC (ADR-033 item 2).
  *
- * The words are design's (ADR-018 D5 copy items 4–7 and 9; ADR-002 O-3) and none is written yet: each is a
- * `⟦COPY NEEDED⟧` marker naming its copy item, the values it will carry filled into its `{slot}`. Cancel is the
- * design's own dialog label (copy.md, Dialog).
+ * The words are design's (ADR-018 D5 copy items 4–7 and 9; ADR-002 O-3), looked up in the copy dictionary, and none
+ * is written yet: each is a `⟦COPY NEEDED⟧` marker naming its copy item, the values it will carry filled into its
+ * `{slot}`. Cancel is the design's own dialog label (copy.md, Dialog).
  */
 import { computed } from 'vue'
+import { formatList, t } from '@dwarfai/contracts'
 import ModalDialog from '../overlay/ModalDialog.vue'
 import type { DialogAction } from '../../lib/overlay/dialog'
 import type { StopEverythingView } from '../../composables/useStopEverything'
 
 const props = defineProps<{ view: StopEverythingView }>()
 const emit = defineEmits<{ confirm: []; cancel: []; dismiss: [] }>()
-
-const COPY = {
-  title: '⟦COPY NEEDED: Stop everything and quit, confirmation title (ADR-018 D5 copy item 4)⟧',
-  count:
-    '⟦COPY NEEDED: Stop everything and quit, {count} sessions DwarfAI started will end, singular, plural and zero forms (ADR-018 D5 copy item 5)⟧',
-  ownTerminal:
-    "⟦COPY NEEDED: Stop everything and quit, sessions started in the person's own terminal keep running and are no longer watched (ADR-018 D5 copy item 6)⟧",
-  confirm:
-    '⟦COPY NEEDED: Stop everything and quit, confirm button naming the count {count} (ADR-018 D5 copy item 7)⟧',
-  cancel: 'Cancel',
-  incompleteTitle:
-    '⟦COPY NEEDED: Stop everything and quit could not end every session, danger message title (ADR-018 D5 copy item 9)⟧',
-  incompleteBody:
-    '⟦COPY NEEDED: Stop everything and quit could not end {names}, danger message naming the dwarfs (ADR-018 D5 copy item 9)⟧',
-  unfinishedTitle:
-    '⟦COPY NEEDED: Stop everything incomplete, no names: danger message title (closest: ADR-018 D5 copy item 9, which names the dwarfs)⟧',
-  unfinishedBody:
-    '⟦COPY NEEDED: Stop everything incomplete, no names: Stop everything and quit did not finish and DwarfAI keeps running (closest: ADR-018 D5 copy item 9, which names the dwarfs)⟧',
-  unfinishedDismiss:
-    '⟦COPY NEEDED: Stop everything incomplete, no names: dismiss button (closest: ADR-018 D5 copy item 9)⟧',
-  dismiss:
-    '⟦COPY NEEDED: Stop everything and quit could not end every session, dismiss button (ADR-018 D5 copy item 9)⟧'
-} as const
-
-const fill = (text: string, slot: string, value: string): string => text.replace(`{${slot}}`, value)
 
 interface Shown {
   title: string
@@ -57,28 +33,35 @@ interface Shown {
 const dialog = computed<Shown | null>(() => {
   const view = props.view
   if (view.kind === 'confirming') {
-    const count = String(view.count)
+    const count = view.count
     return {
-      title: COPY.title,
-      lines: [fill(COPY.count, 'count', count), COPY.ownTerminal],
+      title: t('stopEverything.confirmation.title'),
+      lines: [
+        t('stopEverything.confirmation.count', { count }),
+        t('stopEverything.confirmation.ownTerminal')
+      ],
       actions: [
-        { label: COPY.cancel, disabled: view.sending },
-        { label: fill(COPY.confirm, 'count', count), variant: 'danger', disabled: view.sending }
+        { label: t('dialog.cancel'), disabled: view.sending },
+        {
+          label: t('stopEverything.confirmation.confirm', { count }),
+          variant: 'danger',
+          disabled: view.sending
+        }
       ]
     }
   }
   if (view.kind === 'incomplete') {
     return {
-      title: COPY.incompleteTitle,
-      lines: [fill(COPY.incompleteBody, 'names', view.failed.join(', '))],
-      actions: [{ label: COPY.dismiss }]
+      title: t('stopEverything.incomplete.title'),
+      lines: [t('stopEverything.incomplete.body', { names: formatList(view.failed) })],
+      actions: [{ label: t('stopEverything.incomplete.dismiss') }]
     }
   }
   if (view.kind === 'unfinished') {
     return {
-      title: COPY.unfinishedTitle,
-      lines: [COPY.unfinishedBody],
-      actions: [{ label: COPY.unfinishedDismiss }]
+      title: t('stopEverything.unfinished.title'),
+      lines: [t('stopEverything.unfinished.body')],
+      actions: [{ label: t('stopEverything.unfinished.dismiss') }]
     }
   }
   return null
