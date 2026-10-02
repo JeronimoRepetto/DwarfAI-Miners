@@ -1,17 +1,20 @@
-// The preferences module's wiring (05 §3.12, §4; 16 §4.12, §8.2), run by boot step 3 over the
-// database step 2 opened and the adapters the composition root built (`host/main.ts`, the only file
-// that `new`s them, R6). It constructs the module first, because step 3 resumes an unfinished Reset
-// saga before the rest is constructed and before any command is accepted (05 §2.3; ADR-023 item 4;
-// 07 S13.08):
+// The preferences module's wiring (05 §3.12, §4; 16 §4.12, §8.2), in two parts:
 //
-// - `createPreferences` with the wiring `FeatureFlagReader` (ISSUE-211), and the Reset saga with the
-//   participant list of resetParticipants.ts (ISSUE-212); `resetMetrics` joins the module's
-//   commands here (16 §4.12 `PreferencesCommands.resetMetrics`);
-// - its seam-B members (14 §2.3 B-M12, B-M13, B-M15, B-M09) registered on the Host dispatcher, its
-//   snapshot section (14 §4.1), and its event routes (routes/preferencesRoutes.ts: B-F24, B-F03,
-//   B-F26, B-F27);
-// - the bridges other modules read it through, never by a module import (R4): the kernel
-//   `SecretReader` and the suppliers `IntegrationGateReader` (bridges/).
+// - `servePreferences`, run by the composition root before the boot binds the endpoint: the
+//   module's seam-B members (14 §2.3 B-M12, B-M13, B-M15, B-M09) on the Host dispatcher and its
+//   snapshot section (14 §4.1). A UI that attaches while the Host is `starting` gets a `hello.ok`
+//   whose capabilities already list them (14 §1.3), so its HostClient never refuses them locally.
+//   They forward to the module boot step 3 constructs; until then (`starting`, `migrating`) the
+//   dispatcher answers them HOST_NOT_READY before any handler runs (14 §3.3).
+// - `wire`, run by boot step 3 over the database step 2 opened and the adapters the composition
+//   root built (`host/main.ts`, the only file that `new`s them, R6). It constructs the module first,
+//   because step 3 resumes an unfinished Reset saga before the rest is constructed and before any
+//   command is accepted (05 §2.3; ADR-023 item 4; 07 S13.08): `createPreferences` with the wiring
+//   `FeatureFlagReader` (ISSUE-211), the Reset saga with the participant list of
+//   resetParticipants.ts (ISSUE-212), `resetMetrics` joined to the module's commands (16 §4.12
+//   `PreferencesCommands.resetMetrics`), its event routes (routes/preferencesRoutes.ts: B-F24,
+//   B-F03, B-F26, B-F27), and the bridges other modules read it through, never by a module import
+//   (R4): the kernel `SecretReader` and the suppliers `IntegrationGateReader` (bridges/).
 //
 // Until later steps wire them, three bindings of cut 1 stand in, each the true value while nothing
 // exists to read or write (fail closed):
@@ -25,6 +28,7 @@
 // - `emptyLedgerInstallMoment`: the ledger module, which owns `install_moment`, is not built yet
 //   (later: ISSUE-096 binds `LedgerRepository.setInstallMoment`, ISSUE-121 registers its step), so
 //   the `install-moment` step writes nothing, as no ledger step deletes the moment either.
+import { HostInvariantError } from '../kernel/domain/errors'
 import type { HostEpoch } from '../kernel/domain/values'
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
@@ -53,7 +57,7 @@ import type { IntegrationGateReader } from '../modules/suppliers'
 import type { ConnectionRegistry } from '../transport/connectionRegistry'
 import type { Dispatcher } from '../transport/dispatcher'
 import { preferencesSection, registerPreferences } from '../transport/methods/preferences'
-import { registerResetMetrics } from '../transport/methods/resetMetrics'
+import { ConnectionResetUiFanout, registerResetMetrics } from '../transport/methods/resetMetrics'
 import type { SectionRegistry } from '../transport/snapshot/sectionRegistry'
 import { preferencesIntegrationGate } from './bridges/integrationGateReader'
 import { failClosedSecretReader } from './bridges/secretReader'
@@ -103,13 +107,21 @@ export interface PreferencesWiringDeps {
   secrets: SecretStore
   /** `noOwnedConfigWriter` until ISSUE-323. */
   externalConfig: ExternalConfigWriter
-  connections: ConnectionRegistry
+  /** Whether the Host answers commands (its lifecycle state is `ready`). */
+  ready: () => boolean
+}
+
+export interface PreferencesServeDeps {
   /** The Host dispatcher (hostDispatcher.ts), where the module's methods join. */
   dispatcher: Dispatcher
   /** The snapshot sections, where the `preferences` section joins. */
   sections: SectionRegistry
-  /** Whether the Host answers commands (its lifecycle state is `ready`). */
-  ready: () => boolean
+  connections: ConnectionRegistry
+}
+
+export interface ServedPreferences {
+  /** Boot step 3: constructs and wires the module the served members forward to. */
+  wire(deps: PreferencesWiringDeps): WiredPreferences
 }
 
 export interface WiredPreferences {
@@ -123,7 +135,44 @@ export interface WiredPreferences {
   secretReader: SecretReader
 }
 
-export function wirePreferences(deps: PreferencesWiringDeps): WiredPreferences {
+/** Serves the module's seam-B members before it exists; `wire` constructs it at boot step 3. */
+export function servePreferences(serve: PreferencesServeDeps): ServedPreferences {
+  const acks = new ConnectionResetUiFanout(serve.connections)
+  let wired: WiredPreferences['preferences'] | undefined
+  const current = (): WiredPreferences['preferences'] => {
+    if (wired === undefined) {
+      throw new HostInvariantError('preferences are served from boot step 3 on')
+    }
+    return wired
+  }
+  const served: WiredPreferences['preferences'] = {
+    commands: {
+      set: (key, value) => current().commands.set(key, value),
+      resetMetrics: (cmd) => current().commands.resetMetrics(cmd)
+    },
+    queries: {
+      get: () => current().queries.get(),
+      featureFlags: () => current().queries.featureFlags(),
+      integrationState: (id) => current().queries.integrationState(id)
+    }
+  }
+  registerPreferences(serve.dispatcher, { preferences: served })
+  registerResetMetrics(serve.dispatcher, { reset: served.commands, fanout: acks })
+  serve.sections.registerSection('preferences', ['ui'], preferencesSection(served))
+  return {
+    wire: (deps) => {
+      if (wired !== undefined) throw new HostInvariantError('preferences are wired once')
+      const result = wirePreferences(deps, { connections: serve.connections, acks })
+      wired = result.preferences
+      return result
+    }
+  }
+}
+
+function wirePreferences(
+  deps: PreferencesWiringDeps,
+  transport: { connections: ConnectionRegistry; acks: ConnectionResetUiFanout }
+): WiredPreferences {
   const { db, transactions, bus, clock, ids, hostEpoch, log } = deps
   const module = createPreferences({
     db,
@@ -134,10 +183,11 @@ export function wirePreferences(deps: PreferencesWiringDeps): WiredPreferences {
     hostEpoch,
     featureFlags: deps.featureFlags
   })
-  const routes = routePreferences({
+  const sagaUi = routePreferences({
     bus,
-    connections: deps.connections,
+    connections: transport.connections,
     log,
+    acks: transport.acks,
     ready: deps.ready
   })
   const participants = resetParticipants({
@@ -154,7 +204,7 @@ export function wirePreferences(deps: PreferencesWiringDeps): WiredPreferences {
     maintenance: deps.maintenance,
     secrets: deps.secrets,
     externalConfig: deps.externalConfig,
-    ui: routes.sagaUi,
+    ui: sagaUi,
     bus,
     clock,
     ids,
@@ -168,9 +218,6 @@ export function wirePreferences(deps: PreferencesWiringDeps): WiredPreferences {
     },
     queries: module.queries
   }
-  registerPreferences(deps.dispatcher, { preferences })
-  registerResetMetrics(deps.dispatcher, { reset: preferences.commands, fanout: routes.acks })
-  deps.sections.registerSection('preferences', ['ui'], preferencesSection(preferences))
   return {
     preferences,
     resumeOnBoot: () => saga.resumeOnBoot(),

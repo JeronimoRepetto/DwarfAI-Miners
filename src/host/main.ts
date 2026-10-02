@@ -95,8 +95,8 @@ import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import {
   emptyLedgerInstallMoment,
   noOwnedConfigWriter,
+  servePreferences,
   unavailableSecretStore,
-  wirePreferences,
   type WiredPreferences
 } from './wiring/preferencesWiring'
 import { isPublicBuild, wireSuppliers } from './wiring/suppliersWiring'
@@ -222,6 +222,9 @@ async function main(): Promise<void> {
     sections,
     snapshotMeta
   })
+  // Served before the boot binds the endpoint, so every hello.ok lists them (14 §1.3); boot step 3
+  // constructs the module they forward to.
+  const servedPreferences = servePreferences({ dispatcher, sections, connections })
   const processControl = new NodeProcessControl({
     scheduler,
     diagnostics: log,
@@ -325,7 +328,7 @@ async function main(): Promise<void> {
                 errCode: errorCode(failure.error)
               })
           })
-          const preferences = wirePreferences({
+          const preferences = servedPreferences.wire({
             db,
             transactions,
             bus,
@@ -348,9 +351,6 @@ async function main(): Promise<void> {
             ledger: emptyLedgerInstallMoment,
             secrets: unavailableSecretStore,
             externalConfig: noOwnedConfigWriter,
-            connections,
-            dispatcher,
-            sections,
             ready: () => hostState.current().state === 'ready'
           })
           modules.preferences = preferences

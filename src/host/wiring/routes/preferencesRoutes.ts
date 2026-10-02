@@ -4,8 +4,8 @@
 //   (transport/methods/preferences.ts `publishPreferencesChanged`; ADR-024 D9);
 // - `MetricsResetStarted` → B-F03 `resync-required {metrics-reset}` (transport/methods/resetMetrics.ts
 //   `publishResetFrames`; 14 §1.9);
-// - the Reset saga's way to the attached UIs, B-F27 `reset.progress` and B-F26 `ui.resetPreferences`
-//   (`ConnectionResetUiFanout`, which also takes the B-M09 acks; 14 §6.3).
+// - the Reset saga's way to the attached UIs, B-F27 `reset.progress` and B-F26 `ui.resetPreferences`,
+//   through the `ConnectionResetUiFanout` that also takes the B-M09 acks (14 §6.3).
 //
 // One rule is the wiring's: a saga resumed by the boot (16 §8.2 step 3, before `ready`) does not
 // send B-F26 or wait for an ack. No command is answered before `ready` (14 §3.3 HOST_NOT_READY), so
@@ -20,32 +20,28 @@ import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { PreferencesEvent, ResetUiFanout } from '../../modules/preferences'
 import type { ConnectionRegistry } from '../../transport/connectionRegistry'
 import { publishPreferencesChanged } from '../../transport/methods/preferences'
-import { ConnectionResetUiFanout, publishResetFrames } from '../../transport/methods/resetMetrics'
+import {
+  publishResetFrames,
+  type ConnectionResetUiFanout
+} from '../../transport/methods/resetMetrics'
 
 export interface PreferencesRoutesDeps {
   bus: DomainEventBus<PreferencesEvent>
   connections: ConnectionRegistry
   log: DiagnosticsLog
+  /** The fanout B-M09 `ui.resetPreferences.ack` lands in (registered with the method). */
+  acks: ConnectionResetUiFanout
   /** Whether the Host answers commands: its lifecycle state is `ready`. */
   ready: () => boolean
 }
 
-export interface PreferencesRoutes {
-  /** Where B-M09 `ui.resetPreferences.ack` lands. */
-  acks: ConnectionResetUiFanout
-  /** The saga's `ResetUiFanout`, with the boot rule above. */
-  sagaUi: ResetUiFanout
-}
-
-export function routePreferences(deps: PreferencesRoutesDeps): PreferencesRoutes {
+/** Routes the module's events; returns the saga's `ResetUiFanout`, with the boot rule above. */
+export function routePreferences(deps: PreferencesRoutesDeps): ResetUiFanout {
+  const { acks } = deps
   publishPreferencesChanged(deps.bus, deps.connections)
   publishResetFrames(deps.bus, deps.connections, deps.log)
-  const acks = new ConnectionResetUiFanout(deps.connections)
   return {
-    acks,
-    sagaUi: {
-      progress: (progress) => acks.progress(progress),
-      resetPreferences: (epoch) => (deps.ready() ? acks.resetPreferences(epoch) : Promise.resolve())
-    }
+    progress: (progress) => acks.progress(progress),
+    resetPreferences: (epoch) => (deps.ready() ? acks.resetPreferences(epoch) : Promise.resolve())
   }
 }

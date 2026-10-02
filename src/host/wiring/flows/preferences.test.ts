@@ -1,6 +1,7 @@
 // layer: L2
 // L2 flow (17 §1.2): the preferences module wired into the Host (05 §4; 16 §8.2) through
-// host/wiring/preferencesWiring.ts, as host/main.ts wires it: constructed at boot step 3, which
+// host/wiring/preferencesWiring.ts, as host/main.ts wires it: its members served before the boot
+// binds the endpoint (14 §1.3), the module constructed at boot step 3, which
 // resumes an unfinished Reset saga before any command is accepted (ADR-023 item 4; 07 S13.08), with
 // its seam-B members (14 §2.3 B-M09, B-M12, B-M13, B-M15; §2.4 B-F24, B-F26, B-F27) served over
 // the real transport — connections behind in-process duplexes, the Host dispatcher, the connection
@@ -63,8 +64,8 @@ import { createHostDispatcher } from '../hostDispatcher'
 import {
   emptyLedgerInstallMoment,
   noOwnedConfigWriter,
+  servePreferences,
   unavailableSecretStore,
-  wirePreferences,
   type WiredPreferences
 } from '../preferencesWiring'
 
@@ -224,6 +225,8 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
       }
     })
   })
+  // What host/main.ts does before the boot: the members are served before the module exists.
+  const preferences = servePreferences({ dispatcher, sections, connections })
   const runDir = join(m.dataDir, 'run')
   const token = new UiToken()
   await token.issue(runDir)
@@ -315,7 +318,7 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
                   }
                 }
               : unavailableSecretStore
-          host.wired = wirePreferences({
+          host.wired = preferences.wire({
             db,
             transactions: connection.transactions,
             bus,
@@ -333,9 +336,6 @@ async function bootHost(m: Machine, options: HostOptions = {}) {
             ledger: emptyLedgerInstallMoment,
             secrets,
             externalConfig: noOwnedConfigWriter,
-            connections,
-            dispatcher,
-            sections,
             ready: () => state.current().state === 'ready'
           })
           return host.wired.resumeOnBoot()
@@ -631,6 +631,28 @@ describe('preferences wiring', () => {
       HostInvariantError
     )
     expect(m.fs.calls()).toBe(before)
+  })
+
+  it('[ADR-003] a ui client attached before boot step 3 is offered the preferences members in hello.ok', async () => {
+    const host = await bootHost(machine(), { attachBeforeBoot: true })
+    expect(host.outcome).toEqual({ kind: 'ready' })
+    const early = host.early as FrameClient
+
+    // The client attached while the Host was `starting`; a HostClient never calls a method its
+    // hello.ok did not list (14 §1.3), so the members are listed before the module exists.
+    expect((early.frames[0] as { capabilities?: string[] }).capabilities).toEqual(
+      expect.arrayContaining([
+        'preferences.get',
+        'preferences.set',
+        'preferences.resetMetrics',
+        'ui.resetPreferences.ack',
+        'section:preferences'
+      ])
+    )
+    // Once ready, the same connection is served by the module step 3 constructed.
+    const got = request(early, 'preferences.get', {})
+    const read = await response(early, got)
+    expect(read.ok && read.result).toMatchObject({ preferences: { systemNotificationsOn: true } })
   })
 
   it('[S13.08, S13.09] a saga resumed at boot does not wait for a ui client attached before ready', async () => {
