@@ -1,6 +1,7 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { ElectronClipboard } from './ElectronClipboard'
+import { runClipboardContract } from '../ports/clipboard.contract'
 
 /**
  * The real `ElectronClipboard` over a recording `clipboard` double (16 §4.14 as amended on 2026-10-01, ISSUE-050):
@@ -32,4 +33,15 @@ describe('ElectronClipboard (16 §4.14)', () => {
       'clipboard refused the write'
     )
   })
+})
+
+runClipboardContract('ElectronClipboard over Electron clipboard', () => {
+  const electron = new RecordingClipboard()
+  return {
+    clipboard: new ElectronClipboard(electron),
+    received: () => [...electron.written],
+    refuseWrites: () => {
+      electron.failLater = new Error('clipboard refused the write')
+    }
+  }
 })

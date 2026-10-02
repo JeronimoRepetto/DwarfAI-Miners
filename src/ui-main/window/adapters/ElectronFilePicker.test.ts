@@ -3,6 +3,7 @@ import type { BaseWindow, OpenDialogOptions, OpenDialogReturnValue } from 'elect
 import { describe, expect, it } from 'vitest'
 import type { WindowRef } from '../ports/nativeActions'
 import { ElectronFilePicker } from './ElectronFilePicker'
+import { runFilePickerContract } from '../ports/filePicker.contract'
 
 /**
  * The real `ElectronFilePicker` over a recording `dialog` double (16 §4.14; 05 §3.14 ← `index.ts:578`): today's
@@ -64,4 +65,13 @@ describe('ElectronFilePicker (16 §4.14)', () => {
       { parent: undefined, options: { properties: ['openFile', 'multiSelections'] } }
     ])
   })
+})
+
+runFilePickerContract('ElectronFilePicker over Electron dialog', (chosen) => {
+  const { dialog, picker } = subject({ canceled: chosen === null, filePaths: [...(chosen ?? [])] })
+  return {
+    picker,
+    attachedTo: () =>
+      dialog.calls.map((call) => (call.parent === PANEL ? { windowId: 3 } : { windowId: -1 }))
+  }
 })

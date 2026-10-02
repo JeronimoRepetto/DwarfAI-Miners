@@ -35,7 +35,7 @@ export const SCRIPTED_BOOT = '6f1c2d0e-1b2a-4c3d-9e8f-0a1b2c3d4e5f'
 
 const errno = (code: string): Error => Object.assign(new Error(code), { code })
 
-export class ScriptedOs {
+export class FakeOs {
   /** Every signal or taskkill the adapter sent, in order, allowed or not. */
   readonly sent: SentSignal[] = []
   /** Every delay the adapter asked the scheduler for, in order. */

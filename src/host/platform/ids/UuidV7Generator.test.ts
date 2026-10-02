@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { UuidV7Generator } from './UuidV7Generator'
+import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { runIdGeneratorContract } from '../../kernel/testing/idGenerator.contract'
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
@@ -31,3 +33,6 @@ describe('UuidV7Generator', () => {
     expect(timestampOf(ids[0] ?? '')).toBe(start)
   })
 })
+
+// A clock that never moves: every id falls in one millisecond, past the 12-bit counter.
+runIdGeneratorContract(() => new UuidV7Generator({ clock: new FakeClock(Date.UTC(2026, 9, 2)) }))

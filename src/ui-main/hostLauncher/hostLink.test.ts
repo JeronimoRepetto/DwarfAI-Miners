@@ -5,7 +5,7 @@ import { duplexPair, type Duplex } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import { encodeFrame, FrameDecoder, PROTOCOL_VERSION, type HelloOk } from '@dwarfai/contracts'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from '../host-client/testing/FakeHost'
-import { ManualTimers } from '../host-client/testing/ManualTimers'
+import { FakeHostClientTimers } from '../host-client/testing/FakeHostClientTimers'
 import { createHostLinkOpener } from './hostLink'
 
 // L6 (17 §1.6): the UI side of the handshake's `ui` connection over real frames, against a scripted
@@ -169,7 +169,7 @@ describe('the handshake link (ADR-003 item 12; ADR-002 D8)', () => {
 // ADR-003 item 9, so a drain that outlasts the Host's 15 s silence limit is not read as a lost connection.
 describe('the handshake link keeps the connection alive (ADR-003 item 9)', () => {
   it("[ADR-003] the upgrade link pings while a drain outlasts the Host's 15 s silence limit, so it closes with the drain's host.closing, not as lost", async () => {
-    const timers = new ManualTimers()
+    const timers = new FakeHostClientTimers()
     const host = new FakeHost({
       capabilities: FAKE_HOST_CAPABILITIES,
       dropSilentAfter: { ms: 15_000, after: timers.after }
@@ -216,7 +216,7 @@ describe('the handshake link keeps the connection alive (ADR-003 item 9)', () =>
     expect(host.methods('ui').filter((method) => method === 'ping').length).toBeGreaterThan(0)
   })
   it('[ADR-003] a Host that does not advertise ping gets no ping, and its silence never closes the link', async () => {
-    const timers = new ManualTimers()
+    const timers = new FakeHostClientTimers()
     const host = new FakeHost({
       capabilities: FAKE_HOST_CAPABILITIES.filter((name) => name !== 'ping')
     })

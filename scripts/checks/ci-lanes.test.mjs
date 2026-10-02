@@ -115,6 +115,30 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     expect(jobText('checks')).toContain(REQUIRED_CHECK)
   })
 
+  // ADDED for the cut-0 conformance fixes: the high-integrity branch of ELEVATED_REFUSED, which the non-elevated OS
+  // lane cannot reach. The checks job's Windows leg runs elevated, so one step there, outside the non-elevated
+  // wrapper, starts the built Host and expects exit 65 with nothing bound (scripts/ci/check-elevated-refusal.mjs). It
+  // reads no secret and never runs for a pull request from a fork; the OS lane still runs as the non-elevated user.
+  it('[ADR-002, S12.03] the Windows checks leg starts the built Host elevated, after the build, and expects ELEVATED_REFUSED', () => {
+    const job = jobText('checks')
+    const command = 'run: node scripts/ci/check-elevated-refusal.mjs --entry out/host/main.js\n'
+    const run = job.indexOf(command)
+    expect(run, 'the checks job runs the elevated refusal check').toBeGreaterThanOrEqual(0)
+    const step = job.slice(job.lastIndexOf('- name:', run), run + command.length)
+    expect(step, 'it is the Windows leg').toContain("runner.os == 'Windows'")
+    expect(step, 'it never runs for a pull request from a fork').toContain(
+      "!(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)"
+    )
+    expect(step, 'it reads no secret').not.toContain('secrets.')
+    expect(step, 'it runs elevated, outside the non-elevated wrapper').not.toContain(
+      'run-unelevated.mjs'
+    )
+    expect(run, 'the Host it starts is built first').toBeGreaterThan(
+      job.indexOf('run: pnpm build\n')
+    )
+    expect(job, 'the OS lane still runs as the non-elevated user').toContain(UNELEVATED_OS_LANE)
+  })
+
   it('[ADR-001] the perf job runs nightly and on release tags and uploads perf-results', () => {
     const job = jobText('perf')
     expect(job).toContain(THREE_OSES)

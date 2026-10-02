@@ -1,12 +1,16 @@
 // L8 OS lane (17 §1.6, §1.8): the authentication cases of hello.contract.test.ts over this OS's real
 // UI endpoint — a named pipe on Windows, a Unix socket elsewhere — plus the run/ui.token mode on
 // POSIX. Runs only in `pnpm test:os`.
+// AMENDED for the cut-0 conformance fixes (was: authentication cases only): the generation refusal
+// (INCOMPATIBLE_GENERATION) and the role rule (FORBIDDEN) of the same L6 suite run here too, so the
+// real-pipe suite carries every exit-criteria case of 21 §2 cut 0.
 import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   checkSocketPathLength,
   encodeFrame,
@@ -14,6 +18,8 @@ import {
   FRAME_CAP_BEFORE_HELLO_OK,
   helloOkSchema,
   PROTOCOL_VERSION,
+  requestIdSchema,
+  resFrameSchema,
   type HostEndpoint
 } from '@dwarfai/contracts'
 import { FakeClock } from '../kernel/fakes/FakeClock'
@@ -31,6 +37,7 @@ import { ConnectionRegistry } from './connectionRegistry'
 import { HostStateHolder } from './lifecycle/hostState'
 import { FrameClient } from './testing/frameClient'
 import { HelloThrottle } from './auth/throttle'
+import { METHOD_ROLES } from './roles'
 
 const WINDOWS = process.platform === 'win32'
 
@@ -65,8 +72,12 @@ function endpointUnder(root: string): HostEndpoint {
   return { kind: 'unix-socket', dir, path }
 }
 
-/** One Host: the real endpoint server with the auth layer, its token in <root>/run/ui.token. */
-async function realHost() {
+/**
+ * One Host: the real endpoint server with the auth layer, its token in <root>/run/ui.token. With
+ * `withMethods`, the dispatcher serves the faked modules of hello.contract.test.ts (`ping` and
+ * `host.shutdown`, each under its 14 §2.3 roles); without it, it serves none.
+ */
+async function realHost(options: { withMethods?: boolean } = {}) {
   const root = caseRoot()
   const endpoint = endpointUnder(root)
   const clock = new FakeClock(1_000)
@@ -81,6 +92,17 @@ async function realHost() {
     scheduler: new FakeScheduler(clock),
     state: () => state.current().state
   })
+  if (options.withMethods === true) {
+    dispatcher.register('ping', z.object({}).strict(), METHOD_ROLES['ping'] ?? [], () => ({
+      at: clock.now()
+    }))
+    dispatcher.registerMutating(
+      'host.shutdown',
+      z.object({ mode: z.literal('stop-all'), requestId: requestIdSchema }).strict(),
+      METHOD_ROLES['host.shutdown'] ?? [],
+      () => ({ accepted: true })
+    )
+  }
   const token = new UiToken()
   const outcome = await bindEndpoint(endpoint, {
     log,
@@ -115,6 +137,7 @@ async function realHost() {
   return {
     runDir,
     clock,
+    log,
     token: readFileSync(join(runDir, UI_TOKEN_FILE), 'utf8'),
     connect: (): Promise<FrameClient> =>
       new Promise((resolve, reject) => {
@@ -231,6 +254,52 @@ describe('hello-first authentication over the real UI endpoint (ADR-003 items 2�
     })
     await pause(50)
     expect(client.closed).toBe(false)
+  })
+
+  it('[ADR-003, ADR-002] a hello with endpointGeneration 2 gets INCOMPATIBLE_GENERATION and the connection closes', async () => {
+    const host = await realHost()
+    const client = await host.connect()
+
+    client.send(hello(host.token, { endpointGeneration: 2 }))
+    await client.until(() => client.closed)
+
+    expect(client.frames).toEqual([{ type: 'error', code: 'INCOMPATIBLE_GENERATION' }])
+  })
+
+  it('[ADR-003, FM-035] a notifier calling a method outside its scope gets FORBIDDEN and an error record; the connection stays open', async () => {
+    const host = await realHost({ withMethods: true })
+    const notifier = await host.connect()
+    notifier.send(hello(host.token, { role: 'notifier' }))
+    await notifier.until(() => notifier.frames.length === 1)
+    const connId = helloOkSchema.parse(notifier.frames[0]).clientId
+
+    notifier.send({
+      type: 'req',
+      id: '7',
+      method: 'host.shutdown',
+      params: { mode: 'stop-all', requestId: '01890a5d-ac96-774b-bcce-b302099a8057' }
+    })
+    await notifier.until(() => notifier.frames.length === 2)
+    expect(resFrameSchema.parse(notifier.frames[1])).toEqual({
+      type: 'res',
+      id: '7',
+      ok: false,
+      error: { code: 'FORBIDDEN', message: expect.any(String), retryable: false }
+    })
+    expect(host.log.byEvent('channel.forbidden')).toEqual([
+      expect.objectContaining({ level: 'error', method: 'host.shutdown', role: 'notifier', connId })
+    ])
+
+    // The connection stays open and a method in the notifier's scope is served.
+    notifier.send({ type: 'req', id: '8', method: 'ping', params: {} })
+    await notifier.until(() => notifier.frames.length === 3)
+    expect(resFrameSchema.parse(notifier.frames[2])).toEqual({
+      type: 'res',
+      id: '8',
+      ok: true,
+      result: { at: 1_000 }
+    })
+    expect(notifier.closed).toBe(false)
   })
 
   it.runIf(!WINDOWS)('[ADR-003, NFR-SEC-05] run/ui.token is created 0600 (POSIX)', async () => {

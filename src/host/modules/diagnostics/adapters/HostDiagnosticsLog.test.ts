@@ -8,6 +8,7 @@ import type { FsError } from '../../../kernel/ports/fileSystem'
 import { FakeLogDirectory } from '../ports/fakes/FakeLogDirectory'
 import { FsSegmentWriter } from './FsSegmentWriter'
 import { HostDiagnosticsLog, logLevelFromEnv, type HostLogLevel } from './HostDiagnosticsLog'
+import { runDiagnosticsLogContract } from '../../../kernel/testing/diagnosticsLog.contract'
 
 const LOGS = '/userData/logs'
 const START = Date.parse('2026-10-02T09:00:00.000Z')
@@ -300,4 +301,19 @@ describe('HostDiagnosticsLog over FakeFs (ADR-026, 16 §3 DiagnosticsLog)', () =
     ])
     expect(lines.slice(1).reduce((sum, l) => sum + (l.count as number), 0)).toBe(refused.length)
   })
+})
+
+runDiagnosticsLogContract(() => {
+  const { fs, log } = setup()
+  return {
+    log,
+    async kept() {
+      await log.flush()
+      return (await allLines(fs)).map(({ level, event, subsystem }) => ({
+        level,
+        event,
+        subsystem
+      }))
+    }
+  }
 })

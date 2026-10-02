@@ -5,6 +5,7 @@ import { createNativeActions } from '../application/nativeActions'
 import { FakeClipboard } from '../ports/fakes/FakeClipboard'
 import { FakeFilePicker } from '../ports/fakes/FakeFilePicker'
 import { ElectronExternalOpener } from './ElectronExternalOpener'
+import { runExternalOpenerContract } from '../ports/externalOpener.contract'
 
 /**
  * The real `ElectronExternalOpener` over a recording `shell` double (ADR-019 item 2; 18 C-02): only an address the
@@ -92,4 +93,19 @@ describe('ElectronExternalOpener (16 §4.14; ADR-019 item 2)', () => {
     expect(await opener.openPath(path)).toBe('Failed to open path')
     expect(shell.openedPaths).toEqual([path, path])
   })
+})
+
+runExternalOpenerContract('ElectronExternalOpener over Electron shell', () => {
+  const shell = new RecordingShell()
+  return {
+    opener: new ElectronExternalOpener(shell),
+    openedLinks: () => [...shell.opened],
+    openedPaths: () => [...shell.openedPaths],
+    osRefusesLinks: () => {
+      shell.failOpen = new Error('no handler for the address')
+    },
+    osPathError: (text) => {
+      shell.openPathAnswer = text
+    }
+  }
 })

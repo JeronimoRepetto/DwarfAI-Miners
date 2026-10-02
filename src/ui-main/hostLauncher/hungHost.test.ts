@@ -16,7 +16,7 @@ const IDENTITY: HostIdentityRecord = {
 }
 
 /** A scripted OS: one process, its start time, how it reacts to each signal; every signal sent is recorded. */
-class ScriptedOs {
+class FakeOs {
   now = 0
   alive = true
   identity: HostIdentityRecord | null = IDENTITY
@@ -67,7 +67,7 @@ class ScriptedOs {
 
 describe('endHungHost (ADR-002 D9 steps 2 and 4)', () => {
   it('[ADR-002, ADR-014] a Host whose identity file matches pid, start time within 2 000 ms and boot is ended with SIGTERM, that one pid only, and its exit is observed', async () => {
-    const os = new ScriptedOs()
+    const os = new FakeOs()
     os.start = { kind: 'started', ms: IDENTITY.processStartTimeMs + 2_000 }
     os.onSignal = { SIGTERM: { exitAfterMs: 300 } }
 
@@ -77,7 +77,7 @@ describe('endHungHost (ADR-002 D9 steps 2 and 4)', () => {
   })
 
   it('[ADR-002, ADR-014] a POSIX Host still alive 2 s after SIGTERM gets SIGKILL, re-checked first, and is ended once its exit is observed', async () => {
-    const os = new ScriptedOs()
+    const os = new FakeOs()
     os.onSignal = { SIGTERM: 'never', SIGKILL: { exitAfterMs: 100 } }
 
     expect(await endHungHost(os.ports('darwin'))).toEqual({ outcome: 'ended' })
@@ -88,7 +88,7 @@ describe('endHungHost (ADR-002 D9 steps 2 and 4)', () => {
   })
 
   it('[ADR-002, ADR-014] on Windows the one TerminateProcess is the whole end: no second signal', async () => {
-    const os = new ScriptedOs()
+    const os = new FakeOs()
     os.onSignal = { SIGTERM: { exitAfterMs: 2_500 } }
 
     expect(await endHungHost(os.ports('win32'))).toEqual({ outcome: 'ended' })
@@ -96,7 +96,7 @@ describe('endHungHost (ADR-002 D9 steps 2 and 4)', () => {
   })
 
   it('[ADR-002, S12.B14] a missing identity file, another boot, a start time off by more than 2 000 ms, a gone pid or an unknown read signal nothing', async () => {
-    const cases: Array<[string, (os: ScriptedOs) => void, string]> = [
+    const cases: Array<[string, (os: FakeOs) => void, string]> = [
       ['no identity file', (os) => (os.identity = null), 'identity-missing'],
       ['another boot', (os) => (os.bootId = '8'), 'identity-mismatch'],
       ['boot unknown now', (os) => (os.bootId = null), 'identity-mismatch'],
@@ -114,7 +114,7 @@ describe('endHungHost (ADR-002 D9 steps 2 and 4)', () => {
       ['start time unknown', (os) => (os.start = { kind: 'unknown' }), 'identity-mismatch']
     ]
     for (const [name, arrange, outcome] of cases) {
-      const os = new ScriptedOs()
+      const os = new FakeOs()
       arrange(os)
       expect(await endHungHost(os.ports()), name).toEqual({ outcome })
       expect(os.signals, name).toEqual([])
@@ -123,14 +123,14 @@ describe('endHungHost (ADR-002 D9 steps 2 and 4)', () => {
   })
 
   it('[ADR-002, S12.B14] an end the OS refuses, or a Host still alive after 5 s, is end-failed', async () => {
-    const denied = new ScriptedOs()
+    const denied = new FakeOs()
     denied.onSignal = { SIGTERM: 'access-denied' }
     expect(await endHungHost(denied.ports())).toEqual({
       outcome: 'end-failed',
       errCode: 'access-denied'
     })
 
-    const stubborn = new ScriptedOs()
+    const stubborn = new FakeOs()
     stubborn.onSignal = { SIGTERM: 'never', SIGKILL: 'never' }
     expect(await endHungHost(stubborn.ports())).toEqual({
       outcome: 'end-failed',

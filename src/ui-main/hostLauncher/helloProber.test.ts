@@ -5,6 +5,7 @@ import { Duplex } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import { encodeFrame, FrameDecoder, PROTOCOL_VERSION, type HelloOk } from '@dwarfai/contracts'
 import { createHelloProber, type HelloProberDeps } from './helloProber'
+import { runHelloProberContract } from './testing/helloProber.contract'
 
 const TOKEN = 'ab'.repeat(32)
 const CLIENT = { appVersion: '0.20.0', buildId: 'abc1234', pid: 7 }
@@ -150,4 +151,39 @@ describe('hello prober (ADR-002 D4 item 1, ADR-003 item 5)', () => {
     timers.forEach((run) => run())
     expect(await silentAnswer).toEqual({ kind: 'no-answer' })
   })
+})
+
+// L3: the real prober over an in-process connection whose far end plays the endpoint's script; its timer is the
+// injected `after`, so the hello bound passes with no real time (the real pipe or socket is detach.os.test.ts's).
+runHelloProberContract('createHelloProber over an in-process connection', (endpoint) => {
+  const timers: Array<() => void> = []
+  const connect = (): Promise<Duplex> => {
+    if (endpoint.kind === 'nothing-listens') {
+      return Promise.reject(Object.assign(new Error('connect ENOENT'), { code: 'ENOENT' }))
+    }
+    const { client, host } = pair()
+    void firstFrame(host).then(() => {
+      if (endpoint.kind === 'hello-ok') {
+        host.write(
+          encodeFrame({ ...HELLO_OK, state: endpoint.state, jobStatus: endpoint.jobStatus })
+        )
+      } else if (endpoint.kind === 'error-frame') {
+        host.write(encodeFrame({ type: 'error', code: endpoint.code }))
+      }
+    })
+    return Promise.resolve(client)
+  }
+  // Once the bound has passed, a timer the attempt arms later (after its connect and token read) is already due.
+  let boundPassed = false
+  return {
+    probe: prober(connect, tokenFile(TOKEN), (_ms, run) => {
+      if (boundPassed) queueMicrotask(run)
+      else timers.push(run)
+      return () => {}
+    }),
+    passAnswerBound: () => {
+      boundPassed = true
+      for (const run of timers.splice(0)) run()
+    }
+  }
 })

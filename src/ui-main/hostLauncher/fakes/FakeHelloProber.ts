@@ -10,7 +10,7 @@ export function helloOk(
   return { kind: 'hello-ok', state, jobStatus: 'none' }
 }
 
-export class ScriptedHelloProber {
+export class FakeHelloProber {
   /** The clock time of every attempt, in order. */
   readonly attempts: number[] = []
 

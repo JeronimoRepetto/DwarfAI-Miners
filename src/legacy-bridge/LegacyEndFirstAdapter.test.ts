@@ -7,7 +7,7 @@ import {
   type HostResult,
   type StopAllOutcome
 } from '@dwarfai/contracts'
-import { ManualTimers } from '../ui-main/host-client/testing/ManualTimers'
+import { FakeHostClientTimers } from '../ui-main/host-client/testing/FakeHostClientTimers'
 import type { Dwarf, Mine } from '../main/domain/types'
 import type { LaunchedProcess } from '../main/sessionLaunch/launchedSessions'
 import type {
@@ -117,7 +117,7 @@ function legacyWorld(
     shutdown,
     launch,
     release: (pid: number, ended = true) => held.get(pid)?.(ended),
-    timers: new ManualTimers()
+    timers: new FakeHostClientTimers()
   }
 }
 

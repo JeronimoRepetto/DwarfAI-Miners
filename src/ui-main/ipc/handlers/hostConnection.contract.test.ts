@@ -18,7 +18,7 @@ import {
   type HostClientService
 } from '../../host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from '../../host-client/testing/FakeHost'
-import { ManualTimers } from '../../host-client/testing/ManualTimers'
+import { FakeHostClientTimers } from '../../host-client/testing/FakeHostClientTimers'
 import type { HostEvent } from '../../window/ports/hostClient'
 import { createRouter, type RouteTarget } from '../router'
 import { ROUTES } from '../routes'
@@ -47,7 +47,7 @@ async function settle(rounds = 20): Promise<void> {
 }
 
 /** Lets `ms` pass in steps of at most 250 ms, the pipes settling in between. */
-async function elapse(timers: ManualTimers, ms: number): Promise<void> {
+async function elapse(timers: FakeHostClientTimers, ms: number): Promise<void> {
   for (let left = ms; left > 0; left -= Math.min(250, left)) {
     timers.advance(Math.min(250, left))
     await settle()
@@ -70,7 +70,7 @@ function hungConnection(): Duplex {
  */
 function world() {
   const host = new FakeHost({ capabilities: [...FAKE_HOST_CAPABILITIES, 'conversation.send'] })
-  const timers = new ManualTimers()
+  const timers = new FakeHostClientTimers()
   let launches = 0
   const respawn: { next: () => EnsureHostResult } = {
     next: () => ({ unavailable: 'spawn-failed' })
