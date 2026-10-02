@@ -11,7 +11,7 @@
 // after signing. verify-packaged-host-manifest.mjs fails any build whose manifest no longer matches its app.
 //
 // Plain Node: the TypeScript modules it imports use Node built-ins only, and Node 24 strips their types.
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { packagedResourcesRelativeOf } from '../../src/ui-main/hostLauncher/copySource.ts'
 import {
@@ -56,9 +56,27 @@ export async function writePackagedHostManifest(sourceDir, platform) {
 }
 
 /**
+ * The files electron-builder 26's installer targets write into the packed folder while they build, after every
+ * hook, so no manifest written by a hook can list them (app-builder-lib 26.15.3):
+ * - Windows, `nsis` and `portable`: `resources/elevate.exe`, copied by CopyElevateHelper (targets/nsis/nsisUtil.js)
+ *   from AppPackageHelper.packArch, right before the folder is archived into the installer.
+ * - Linux, `deb`: `resources/apparmor-profile`, always (targets/FpmTarget.js, for Ubuntu 24+); `deb` and
+ *   `AppImage`: `resources/app-update.yml`, and for `deb` `resources/package-type`, when a publish configuration
+ *   exists (targets/FpmTarget.js, targets/appimage/AppImageTarget.js).
+ * They serve the installer and the updater, never the Host, which runs under ELECTRON_RUN_AS_NODE from its
+ * versioned copy; the launcher copies only the entries the manifest lists, so they never reach that copy.
+ */
+export const INSTALLER_FILES = {
+  win32: ['resources/elevate.exe'],
+  linux: ['resources/apparmor-profile', 'resources/app-update.yml', 'resources/package-type'],
+  darwin: []
+}
+
+/**
  * Whether the packed app at `sourceDir` carries a manifest that matches it byte for byte, the check a fresh
  * versioned copy of it passes: `missing`, `invalid` (a file the launcher would refuse) or `mismatch`, which
- * names every differing entry (manifestDifferences).
+ * names every differing entry (manifestDifferences). An installer file of this OS (INSTALLER_FILES) that the
+ * manifest does not list is left out of the comparison and named in `installerFiles`; any other extra fails.
  */
 export async function verifyPackagedHostManifest(sourceDir, platform) {
   const { manifestPath, relative } = packagedManifestOf(sourceDir, platform)
@@ -66,9 +84,17 @@ export async function verifyPackagedHostManifest(sourceDir, platform) {
   if (text === null) return { ok: false, reason: 'missing' }
   const parsed = parseManifest(text)
   if (!parsed.ok) return { ok: false, reason: 'invalid' }
-  const exclude = [relative]
+  const listed = new Set(parsed.value.entries.map((entry) => entry.path))
+  const unlisted = INSTALLER_FILES[platform].filter((file) => !listed.has(file))
+  const installerFiles = []
+  for (const file of unlisted) {
+    if (await lstat(path.join(sourceDir, ...file.split('/'))).catch(() => null)) {
+      installerFiles.push(file)
+    }
+  }
+  const exclude = [relative, ...installerFiles]
   const check = await verifyManifest(sourceDir, parsed.value, { exclude })
-  if (check.ok) return { ok: true }
+  if (check.ok) return installerFiles.length === 0 ? { ok: true } : { ok: true, installerFiles }
   const actual = await buildManifest(sourceDir, { exclude }).catch(() => ({ entries: [] }))
   return {
     ok: false,

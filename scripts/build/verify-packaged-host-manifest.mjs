@@ -7,7 +7,9 @@
 //   node scripts/build/verify-packaged-host-manifest.mjs <release folder>
 //
 // The packed apps are electron-builder's unpacked output folders: `win-unpacked`, `linux-unpacked` (and
-// `<os>-<arch>-unpacked`), and each `<Name>.app` in `mac` or `mac-<arch>`. A folder with none fails too.
+// `<os>-<arch>-unpacked`), and each `<Name>.app` in `mac` or `mac-<arch>`. A folder with none fails too. The
+// files an installer target adds after every hook (INSTALLER_FILES) are accepted and named; any other
+// difference is printed entry by entry.
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { describeDifference, verifyPackagedHostManifest } from './write-packaged-host-manifest.mjs'
@@ -52,7 +54,10 @@ let failed = false
 for (const app of apps) {
   const check = await verifyPackagedHostManifest(app.sourceDir, app.platform)
   if (check.ok) {
-    console.log(`host-manifest: ${app.name} ok`)
+    const note = check.installerFiles
+      ? ` (installer files, not in the Host copy: ${check.installerFiles.join(', ')})`
+      : ''
+    console.log(`host-manifest: ${app.name} ok${note}`)
   } else {
     failed = true
     console.error(`host-manifest: ${app.name} ${check.reason}`)
