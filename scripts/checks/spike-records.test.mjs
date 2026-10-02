@@ -285,6 +285,35 @@ Not run yet.
     }
   })
 
+  // ADDED for ISSUE-318 (TC-318-01, TC-318-02): the cut-1 entry records. While a spike has not passed on an OS, its
+  // record names the fallback the gated issues follow there (21 §9 "Cut 1 entry"; 24-issues README §6).
+  it('[S-030-1, S-018-1, S-027-4] the cut-1 entry records exist, pass the record check and name the fallback their gated issues follow', () => {
+    const dir = path.join(repoRoot, 'spike-results')
+    const decisionOf = (id) => {
+      const file = path.join(dir, `${id}.md`)
+      expect(existsSync(file), `spike-results/${id}.md exists`).toBe(true)
+      const text = readFileSync(file, 'utf8')
+      expect(checkSpikeRecord(text, `${id}.md`), `spike-results/${id}.md`).toEqual([])
+      expect(existsSync(path.join(dir, id)), `spike-results/${id}/ holds the raw outputs`).toBe(
+        true
+      )
+      return decisionText(parseFrontMatter(text).body) ?? ''
+    }
+    const caseFolding = decisionOf('S-030-1')
+    expect(caseFolding, 'S-030-1 names its fallback').toMatch(
+      /no\s+case\s+folding\s+on\s+unknown\s+volumes/
+    )
+    expect(caseFolding, 'S-030-1 names its gated issues').toMatch(/ISSUE-062[\s\S]*ISSUE-064/)
+    const tray = decisionOf('S-018-1')
+    expect(tray, 'S-018-1 names its fallback').toMatch(/window-only[\s\S]*R-16/)
+    expect(tray, 'S-018-1 names its gated issues').toMatch(/ISSUE-112[\s\S]*ISSUE-113/)
+    const login = decisionOf('S-027-4')
+    expect(login, 'S-027-4 names its fallback').toMatch(/candidate\s+autostart[\s\S]*until\s+v1/)
+    expect(login, 'S-027-4 names the gate ISSUE-060 reads').toMatch(
+      /ISSUE-060[\s\S]*LOGIN_ENTRY_PASSED/
+    )
+  })
+
   it('[SP-02, SP-04, SP-05] every committed spike record passes the record check', () => {
     const dir = path.join(repoRoot, 'spike-results')
     const records = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.md')) : []
