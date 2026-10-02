@@ -14,6 +14,7 @@
 // TC-032-01 and TC-032-04 on this OS.
 import { randomBytes } from 'node:crypto'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -123,6 +124,17 @@ function newWorld(name: string) {
   return { hostDataDir, endpoint, hostReports, options }
 }
 
+/**
+ * What a failed expectation shows: the UI log, and what each fake Host that failed wrote to
+ * `fake-host-errors.log` (the launcher keeps no Host stdio, so its stderr never reaches the test).
+ */
+function failureContext(hostDataDir: string, log: RecordingUiLog): string {
+  const errorsFile = path.join(hostDataDir, 'fake-host-errors.log')
+  const errors = existsSync(errorsFile) ? readFileSync(errorsFile, 'utf8') : '(none)'
+  return `${JSON.stringify(log.entries)}
+fake-host-errors.log: ${errors}`
+}
+
 function reportsIn(hostDataDir: string): FakeHostReport[] {
   return readdirSync(hostDataDir)
     .filter((name) => /^fake-host-\d+\.json$/.test(name))
@@ -207,9 +219,10 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
         world.hostReports(OLDER.protocolVersion)
         const olderLog = new RecordingUiLog()
         const olderLauncher = createNodeHostLauncher(world.options(OLDER, olderLog))
-        expect(await olderLauncher.ensureHostRunning(), JSON.stringify(olderLog.entries)).toBe(
-          'spawned'
-        )
+        expect(
+          await olderLauncher.ensureHostRunning(),
+          failureContext(world.hostDataDir, olderLog)
+        ).toBe('spawned')
         const [running] = reportsIn(world.hostDataDir)
         if (running === undefined) throw new Error('the running Host wrote no report')
 
@@ -235,7 +248,10 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
           log
         })
 
-        expect(result, JSON.stringify(log.entries)).toEqual({ kind: 'swapped', ensure: 'spawned' })
+        expect(result, failureContext(world.hostDataDir, log)).toEqual({
+          kind: 'swapped',
+          ensure: 'spawned'
+        })
         // Compat mode, then DwarfAI's own restart: never a lost connection, so nothing that would
         // raise the PO #62 "stopped unexpectedly" toast, and nothing asked of the person.
         expect(states).toEqual([
@@ -291,9 +307,10 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
         world.hostReports(NEWER.protocolVersion)
         const newerLog = new RecordingUiLog()
         const newerLauncher = createNodeHostLauncher(world.options(NEWER, newerLog))
-        expect(await newerLauncher.ensureHostRunning(), JSON.stringify(newerLog.entries)).toBe(
-          'spawned'
-        )
+        expect(
+          await newerLauncher.ensureHostRunning(),
+          failureContext(world.hostDataDir, newerLog)
+        ).toBe('spawned')
         const [running] = reportsIn(world.hostDataDir)
         if (running === undefined) throw new Error('the running Host wrote no report')
 
@@ -337,7 +354,10 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
         const result = await flow
         stopper.link.close()
 
-        expect(result, JSON.stringify(log.entries)).toEqual({ kind: 'own-host', ensure: 'spawned' })
+        expect(result, failureContext(world.hostDataDir, log)).toEqual({
+          kind: 'own-host',
+          ensure: 'spawned'
+        })
         expect(states).toEqual([
           { phase: 'incompatible', hostVersion: '0.0.0' },
           { phase: 'restarting', reason: 'stop-all' }

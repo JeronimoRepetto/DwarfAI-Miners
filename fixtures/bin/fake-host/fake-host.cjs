@@ -32,14 +32,27 @@
 //   the values) of its environment, and the executable it runs on (ISSUE-031: the versioned copy);
 // - exits on its own after `maxLifeMs` (default 120 s) so a forgotten stub never outlives a run.
 // Exit codes match src/host/wiring/exitCodes.ts. Any load or run error exits 70 with a line on
-// stderr; it never shows anything on screen.
+// stderr and in `<dataDir>/fake-host-errors.log`; it never shows anything on screen.
 'use strict'
 
 const EXIT = { ALREADY_RUNNING: 64, ELEVATED_REFUSED: 65, NO_DATA_DIR: 66, FAILED: 1, ERROR: 70 }
 
+/**
+ * Exit 70 with the reason on stderr and in `<dataDir>/fake-host-errors.log`: the launcher keeps no
+ * stdio (posix.ts, windows.ts), so the file is where a launcher test can show why its Host failed.
+ */
 function fail(error) {
+  const line = `fake-host: ${error && error.stack ? error.stack : String(error)}\n`
   try {
-    process.stderr.write(`fake-host: ${error && error.stack ? error.stack : String(error)}\n`)
+    process.stderr.write(line)
+    const dataDir = process.env.DWARFAI_HOST_DATA_DIR
+    if (dataDir) {
+      const fs = process.getBuiltinModule('node:fs')
+      const path = process.getBuiltinModule('node:path')
+      fs.appendFileSync(path.join(dataDir, 'fake-host-errors.log'), line)
+    }
+  } catch {
+    // Nothing more to say: the exit code still tells the launcher.
   } finally {
     process.exit(EXIT.ERROR)
   }
@@ -226,7 +239,14 @@ function main() {
   const onBound = () => {
     fs.mkdirSync(runDir, { recursive: true, mode: 0o700 })
     token = crypto.randomBytes(32).toString('hex')
-    fs.rmSync(tokenFile, { force: true })
+    // As the Host's uiToken does (fs/promises `rm`, a libuv unlink): on Windows that removes the name
+    // at once even while a UI's probe still reads the previous token. `fs.rmSync` under Electron's
+    // Node leaves it "delete pending" instead, and the exclusive create below then fails with EPERM.
+    try {
+      fs.unlinkSync(tokenFile)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
     fs.writeFileSync(tokenFile, token, { mode: 0o600, flag: 'wx' })
     const report = {
       pid: process.pid,
