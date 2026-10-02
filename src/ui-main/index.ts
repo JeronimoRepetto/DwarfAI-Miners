@@ -132,6 +132,12 @@ import {
   type UiSession
 } from './window/application/uiSession'
 import { createUiSessionRows, UI_SESSION_ROWS } from './ipc/handlers/uiSession'
+import { createUiPreferenceMapRows, UI_PREFERENCE_MAP_ROWS } from './ipc/handlers/uiPreferenceMap'
+import { createUiPreferenceMap } from './window/application/uiPreferenceMap'
+import { createStartWithSystem, type StartWithSystem } from './window/application/startWithSystem'
+import { ElectronAutostart } from './window/adapters/autostart/ElectronAutostart'
+import { loginEntryOffered } from './window/domain/loginEntryGate'
+import { LOGIN_ENTRY_ARGS, uiStartPlanOf, type UiStartPlan } from './window/domain/uiStart'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -143,8 +149,9 @@ export interface WindowContents extends ModeWindowSender {
  * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048), A-N30 renderer diagnostics (ISSUE-055),
  * the Panel window rows (ISSUE-047), the Host connection rows A-N03, A-N05 (ISSUE-052), the native rows (ISSUE-050),
  * the shortcut rows (ISSUE-049), the tray's confirmation rows A-N27, A-N34 (ISSUE-053, ISSUE-316) and the UI session
- * rows A-N17, A-N18 (ISSUE-059). `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows
- * here, but for the UI session rows, which the cut-1 switch (ISSUE-123) routes.
+ * rows A-N17, A-N18 (ISSUE-059) and, with the UI preferences, the UI preference map rows A-N20, A-N21 (ISSUE-060).
+ * `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows here, but for the UI session and
+ * UI preference map rows, which the cut-1 switch (ISSUE-123) routes.
  */
 export function composeUiLocal({
   uiPreferences,
@@ -155,6 +162,7 @@ export function composeUiLocal({
   shortcut,
   stopEverything,
   uiSession,
+  startWithSystem,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -166,6 +174,8 @@ export function composeUiLocal({
   shortcut?: Pick<ToggleShortcut, 'state' | 'set'>
   stopEverything?: Pick<StopEverything, 'confirm' | 'cancel' | 'requestFromWindow'>
   uiSession?: Pick<UiSession, 'get' | 'patch'>
+  /** "Start with the system", served by A-N20 / A-N21 only where S-027-4 passed (loginEntryGate.ts). */
+  startWithSystem?: Pick<StartWithSystem, 'stored' | 'toggle'>
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -178,6 +188,12 @@ export function composeUiLocal({
           store: uiPreferences.store,
           modeWindows: () => uiPreferences.windows().filter((w) => modeWindows.has(w.webContentsId))
         })
+      )
+    })
+    parts.push({
+      channels: UI_PREFERENCE_MAP_ROWS,
+      target: createUiPreferenceMapRows(
+        createUiPreferenceMap(startWithSystem === undefined ? {} : { startWithSystem })
       )
     })
   }
@@ -394,6 +410,18 @@ export interface UiMainDeps {
    * (`host`) and disposed at will-quit; deleted in 4a, when the direction flips.
    */
   settingsMirror?: { legacy: LegacySettingsWrites; halves: readonly MirrorHalf[] }
+  /**
+   * How this process was started (07 machine 10): a normal launch, or a `--background` start by the login entry or the
+   * Host, which is tray-only and builds no window until the person opens the app (S10.03, S10.13). Default normal.
+   */
+  launch?: UiStartPlan
+  /**
+   * "Start with the system" (ISSUE-060; 07 machine 40; ADR-027 item 7): re-applied at every start, normal or
+   * `--background`, once Electron is ready and before any window (S40.01, S40.02), and served by A-N20 / A-N21. Composed
+   * only where S-027-4 passed (`loginEntryGate.ts`); elsewhere today's candidate autostart stays the one writer of the
+   * entry until v1 (21 §2 cut 1).
+   */
+  startWithSystem?: StartWithSystem
 }
 
 /** What a started root holds: the reopen state when the Host attach was composed. */
@@ -438,7 +466,9 @@ export async function startUiMain({
   uiLog,
   panelWindow,
   host,
-  settingsMirror
+  settingsMirror,
+  launch = { kind: 'normal', tray: true, window: true },
+  startWithSystem
 }: UiMainDeps): Promise<UiMainStarted | undefined> {
   if (!lock.acquire()) {
     lifecycle.quit()
@@ -510,6 +540,7 @@ export async function startUiMain({
     ...(toggle === undefined ? {} : { shortcut: toggle }),
     ...(stop === undefined ? {} : { stopEverything: stop }),
     ...(uiSession === undefined ? {} : { uiSession }),
+    ...(startWithSystem === undefined ? {} : { startWithSystem }),
     modeWindows
   })
   createRouter({
@@ -563,12 +594,15 @@ export async function startUiMain({
   let step: UiStartStep = 'ready'
   try {
     await lifecycle.whenReady()
+    // "Start with the system" is applied before any window (S40.01, S40.02); a refusal is logged, never shown (S40.07).
+    startWithSystem?.applyAtStart()
     if (rebuilt && panel !== undefined) {
       // A second launch shows the rebuilt Panel from now on; it is built hidden with its page loading, as today's
-      // start built today's (`LegacyRuntimeRoute` serves the legacy rows once today's runtime is composed).
+      // start built today's (`LegacyRuntimeRoute` serves the legacy rows once today's runtime is composed). A
+      // `--background` start builds no window: the Panel is built when the person opens the app (S10.03, S10.13).
       secondLaunch.attach(panel)
       step = 'panel-load'
-      panel.load()
+      if (launch.window) panel.load()
       step = 'shortcut'
       toggle?.start()
       step = 'tray'
@@ -793,6 +827,36 @@ function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
   })
 }
 
+/**
+ * "Start with the system" over `ElectronAutostart` (ISSUE-060; ADR-027 item 7), only in a packaged build of an OS where
+ * S-027-4 passed (`loginEntryGate.ts`): a development run never writes a login entry, and until the spike record
+ * exists today's candidate autostart (`LegacyRuntimeRoute`) stays the one writer of the entry (21 §2 cut 1, §1 item
+ * 4). The entry starts this executable, the channel's launch path, with `--background`; its Run value carries the
+ * name today's candidate writes, so the switch replaces that value rather than adding a second one.
+ */
+function electronStartWithSystem(
+  store: UiPreferenceStore,
+  uiLog: UiLog
+): Pick<UiMainDeps, 'startWithSystem'> {
+  const platform = currentUiPlatform()
+  if (!app.isPackaged || !loginEntryOffered(platform)) return {}
+  return {
+    startWithSystem: createStartWithSystem({
+      autostart: new ElectronAutostart({
+        platform,
+        app,
+        launchPath: process.execPath,
+        args: LOGIN_ENTRY_ARGS,
+        name: 'DwarfAI-Miners',
+        home: app.getPath('home'),
+        env: process.env
+      }),
+      store,
+      log: (record) => uiLog.record(record)
+    })
+  }
+}
+
 // The Electron wiring: the lock first, then the rest (16 §8.4). It runs only when Electron's main
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it. From cut 0 it is the app's Electron entry (21 §2 cut 0, ISSUE-056).
@@ -901,6 +965,8 @@ if (process.type === 'browser') {
       newConfirmationId: () => randomUUID()
     },
     host: { client: electronHostClient(uiLog, dataDir) },
+    launch: uiStartPlanOf(process.argv),
+    ...electronStartWithSystem(uiPreferenceStore, uiLog),
     // The halves register here with their legacy saves wired to the hub (ISSUE-116 from cut 1, ISSUE-194 from 3a).
     settingsMirror: { legacy: createLegacySettingsWriteHub(), halves: [] }
   })
