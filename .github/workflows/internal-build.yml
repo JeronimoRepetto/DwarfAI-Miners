@@ -1,0 +1,192 @@
+name: Internal build
+
+# Installers of an internal cut build for the owner's soak on his own machines (owner, 2026-10-02; 21 §2 retirement
+# criterion, OQ-71). Never a release: no public build exists before cut 5 (OQ-66; 20 §3.2), so this workflow runs
+# only when dispatched by hand, creates no tag, publishes no GitHub Release and uploads only workflow artifacts.
+#
+# The repository is public, so any signed-in GitHub user can download a run's artifacts while they exist. Each one is
+# therefore kept one day (retention-days: 1) and the owner removes it at once after downloading:
+#
+#   gh workflow run internal-build.yml --ref main -f label=cut-0
+#   node scripts/ci/fetch-internal-build.mjs <run-id> <folder>
+#
+# The second command downloads every artifact, verifies each file against that artifact's SHA256SUMS and only then
+# deletes the artifacts of the run (it keeps them when a checksum fails).
+#
+# The packaging legs are a careful copy of ci.yml's `release` (Windows, Linux) and `release-mac` (macOS) jobs, minus
+# their `needs: checks` (the dispatched commit is one main already checked) and their publish step. ci.yml stays
+# unchanged until the package job of the architecture (20 §2.1 `package`, ISSUE-268) replaces both. The fuses flip
+# and the packaged-artifact tests P-01..P-09 of 20 §2.1, §2.3 do not exist in the repository yet (ISSUE-269, ISSUE-271
+# and their siblings), so there is nothing of theirs to run here.
+#
+# Every installer is unsigned (owner, 2026-10-02): the workflow reads no secret and no Environment. On first launch
+# macOS needs "Open Anyway" in System Settings > Privacy & Security, and Windows shows the SmartScreen warning.
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Build label, used in the artifact names (for example cut-0)'
+        required: true
+        default: cut-0
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # As ci.yml: @electron/get caches the Electron download here, restored by the cache step below.
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+
+jobs:
+  # Copy of ci.yml `release`: electron-builder cannot cross-build, so each OS packages on its own runner.
+  package:
+    name: Package internal build (${{ matrix.artifact }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows
+            package_script: package
+            installer_suffixes: .exe
+          - os: ubuntu-latest
+            artifact: linux
+            package_script: package:linux
+            installer_suffixes: .AppImage .deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      # The label names the artifacts, so it is held to a short slug; it reaches the script through env, never
+      # interpolated into it.
+      - name: Check the build label
+        shell: bash
+        env:
+          LABEL: ${{ inputs.label }}
+        run: |
+          if ! printf '%s' "$LABEL" | grep -Eq '^[a-z0-9][a-z0-9.-]{0,31}$'; then
+            echo "::error::label must be a lowercase slug such as cut-0, got: $LABEL"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Windows installers ship the Host's prebuilt owner-only pipe helper (prebuilds/, asar-unpacked by
+      # package.json `build`); `pnpm package` builds x64 only.
+      - name: Build the owner-only pipe helper (Windows x64)
+        if: runner.os == 'Windows'
+        run: pnpm build:native --arch x64
+
+      # The package scripts pass `--publish never`, and no token is in this job's environment.
+      - name: Package installers
+        run: pnpm ${{ matrix.package_script }}
+
+      - name: Write SHA256SUMS
+        run: node scripts/ci/sha256sums.mjs release ${{ matrix.installer_suffixes }}
+
+      - name: Upload installers (kept one day)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dwarfai-internal-${{ inputs.label }}-${{ matrix.artifact }}
+          path: |
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+
+  # Copy of ci.yml `release-mac`, but UNSIGNED (owner, 2026-10-02): the internal macOS build is neither signed nor
+  # notarized, so this job uses no Environment and reads no secret. On first launch macOS refuses the app; the owner
+  # opens it once through System Settings > Privacy & Security > "Open Anyway".
+  # Kept on macos-15 like release-mac, the image that job is known to package on.
+  package-mac:
+    name: Package internal build (macos)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check the build label
+        shell: bash
+        env:
+          LABEL: ${{ inputs.label }}
+        run: |
+          if ! printf '%s' "$LABEL" | grep -Eq '^[a-z0-9][a-z0-9.-]{0,31}$'; then
+            echo "::error::label must be a lowercase slug such as cut-0, got: $LABEL"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Read Electron version
+        id: electron-version
+        shell: bash
+        run: |
+          version=$(node -e "console.log(require('./package.json').devDependencies.electron)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-electron-${{ steps.electron-version.outputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Signing off, explicitly. `-c.mac.identity=null` is electron-builder's own switch to skip macOS code signing
+      # (pnpm appends it to the script's electron-builder command); CSC_IDENTITY_AUTO_DISCOVERY=false stops it from
+      # picking any identity out of the runner's keychain. Notarization runs only after a successful signature
+      # (electron-builder 26 MacPackager.sign), so it is skipped with it, although package.json keeps `notarize: true`
+      # for the release jobs.
+      - name: Package installers (unsigned)
+        run: pnpm package:mac -c.mac.identity=null
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Write SHA256SUMS
+        run: node scripts/ci/sha256sums.mjs release .dmg .zip
+
+      - name: Upload installers (kept one day)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dwarfai-internal-${{ inputs.label }}-macos
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error

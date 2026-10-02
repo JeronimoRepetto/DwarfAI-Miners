@@ -155,3 +155,138 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
     expect(job).not.toContain(REQUIRED_CHECK)
   })
 })
+
+// ADDED for the internal cut build (owner, 2026-10-02): `.github/workflows/internal-build.yml` packages the installers
+// of an internal cut build for the owner's soak on his own machines (`21` §2, OQ-71). No public build exists before
+// cut 5 (OQ-66, `20` §3.2), and the repository is public, so the workflow runs only on a manual dispatch, publishes
+// no release, creates no tag and keeps its artifacts one day. The internal macOS build is unsigned (owner, 2026-10-02):
+// the workflow reads no secret and no environment, and the macOS packaging step turns signing off explicitly.
+// scripts/ci/fetch-internal-build.mjs downloads and deletes the artifacts.
+const internalBuild = readFileSync(
+  path.join(repoRoot, '.github', 'workflows', 'internal-build.yml'),
+  'utf8'
+).replace(/\r\n/g, '\n')
+
+/** The workflow without its comment lines, so prose never satisfies or trips an assertion. */
+const internalCode = internalBuild
+  .split('\n')
+  .filter((line) => !line.trimStart().startsWith('#'))
+  .join('\n')
+
+/** One top-level block (`on:`, `permissions:`, `jobs:`…) of the internal-build workflow, without comments. */
+function internalBlock(key) {
+  const start = internalCode.indexOf(`\n${key}:\n`)
+  expect(start, `internal-build.yml has a top-level ${key}:`).toBeGreaterThanOrEqual(0)
+  const next = internalCode.slice(start + 1).search(/\n[a-z][\w-]*:/)
+  return next === -1 ? internalCode.slice(start) : internalCode.slice(start, start + 1 + next)
+}
+
+/** The jobs of the internal-build workflow by id, each split into its header and its steps. */
+function internalJobs() {
+  const jobs = internalBlock('jobs')
+  const ids = [...jobs.matchAll(/\n {2}([a-z][\w-]*):\n/g)]
+  return ids.map((match, i) => {
+    const text = jobs.slice(match.index, ids[i + 1]?.index ?? jobs.length)
+    const stepsAt = text.indexOf('\n    steps:\n')
+    const steps = text
+      .slice(stepsAt)
+      .split(/\n {6}- /)
+      .slice(1)
+    return { id: match[1], header: text.slice(0, stepsAt), steps }
+  })
+}
+
+const SIGNING_SECRETS = [
+  'APPLE_APP_SPECIFIC_PASSWORD',
+  'APPLE_ID',
+  'APPLE_TEAM_ID',
+  'CSC_KEY_PASSWORD',
+  'CSC_LINK'
+]
+
+describe('internal cut build workflow (20 §2.1, §3.2; OQ-66)', () => {
+  it('[ADR-027] runs only on a manual dispatch that names its label, and never interpolates the label into a script', () => {
+    const on = internalBlock('on')
+    expect([...on.matchAll(/\n {2}([a-z_]+):/g)].map((m) => m[1])).toEqual(['workflow_dispatch'])
+    expect(on).toMatch(/\n {6}label:\n(?: {8}.*\n)*? {8}required: true\n/)
+    for (const { steps } of internalJobs()) {
+      for (const step of steps) {
+        const script = step.slice(step.indexOf('run:') === -1 ? step.length : step.indexOf('run:'))
+        expect(script, 'the label reaches a script only through env').not.toMatch(
+          /\$\{\{ *(github\.event\.)?inputs\./
+        )
+      }
+    }
+  })
+
+  it('[ADR-027] publishes nothing: no release step, no tag, no write permission and no publish token', () => {
+    expect(internalBlock('permissions')).toMatch(/^\npermissions:\n {2}contents: read\n?$/)
+    expect(internalCode).not.toMatch(/: write\b/)
+    expect(internalCode).not.toMatch(/softprops|action-gh-release|gh release|\/releases/i)
+    expect(internalCode).not.toMatch(/git tag|git push|refs\/tags|create-tag|tag_name/)
+    expect(internalCode).not.toMatch(/--publish (?!never\b)/)
+    expect(internalCode, 'electron-builder publishes with a token in the environment').not.toMatch(
+      /GH_TOKEN|GITHUB_TOKEN|secrets\.GITHUB/
+    )
+  })
+
+  it('[ADR-027] packages each OS the way the release jobs do, with pinned actions and a frozen install', () => {
+    const code = internalJobs()
+      .map((job) => job.steps.join('\n'))
+      .join('\n')
+    expect(code).toMatch(/if: runner\.os == 'Windows'\n\s+run: pnpm build:native --arch x64\n/)
+    expect(internalCode).toContain('package_script: package\n')
+    expect(internalCode).toContain('package_script: package:linux\n')
+    // AMENDED (owner, 2026-10-02): the internal macOS build is unsigned, so the script runs with signing off.
+    expect(code).toContain('run: pnpm package:mac -c.mac.identity=null\n')
+    expect(code).toContain('run: pnpm install --frozen-lockfile\n')
+    const uses = [...internalCode.matchAll(/uses: (\S+)/g)].map((m) => m[1])
+    expect(uses.length).toBeGreaterThan(0)
+    for (const action of uses) expect(action, 'pinned by commit SHA').toMatch(/@[0-9a-f]{40}$/)
+  })
+
+  it('[ADR-027] uploads each OS installers with their SHA256SUMS as dwarfai-internal-<label>-<os>, kept one day', () => {
+    const names = []
+    for (const { id, steps } of internalJobs()) {
+      const sums = steps.findIndex((step) => step.includes('run: node scripts/ci/sha256sums.mjs '))
+      steps.forEach((step, i) => {
+        if (!step.includes('uses: actions/upload-artifact@')) return
+        expect(sums, `the ${id} job writes SHA256SUMS before it uploads`).toBeGreaterThanOrEqual(0)
+        expect(sums).toBeLessThan(i)
+        expect(step).toContain('retention-days: 1\n')
+        expect(step).toContain('if-no-files-found: error\n')
+        expect(step).toMatch(/\n {10}path: \|\n(?: {12}.*\n)* {12}release\/SHA256SUMS\n/)
+        names.push(step.match(/\n {10}name: (.+)\n/)[1])
+      })
+    }
+    expect(names.sort()).toEqual([
+      'dwarfai-internal-${{ inputs.label }}-${{ matrix.artifact }}',
+      'dwarfai-internal-${{ inputs.label }}-macos'
+    ])
+    expect(internalCode).toContain('artifact: windows\n')
+    expect(internalCode).toContain('artifact: linux\n')
+    expect([...internalCode.matchAll(/retention-days: (\S+)/g)].map((m) => m[1])).toEqual([
+      '1',
+      '1'
+    ])
+  })
+
+  // AMENDED (owner, 2026-10-02): the internal macOS build is unsigned, so no step holds a signing secret any more.
+  it('[ADR-027] references no secret and no environment at all', () => {
+    expect(internalCode).not.toMatch(/\bsecrets\./)
+    expect(internalCode).not.toMatch(/\n {4}environment:/)
+    for (const name of SIGNING_SECRETS) expect(internalCode).not.toContain(name)
+  })
+
+  it('[ADR-027] packages the macOS dmg and zip unsigned, so nothing is signed or notarized', () => {
+    const mac = internalJobs().find((job) => job.id === 'package-mac')
+    expect(mac, 'the workflow has a package-mac job').toBeDefined()
+    const step = mac.steps.find((s) => s.includes('run: pnpm package:mac'))
+    expect(step, 'the package-mac job packages macOS').toBeDefined()
+    // identity null skips code signing (electron-builder's own CLI switch), and notarization runs only after a signature.
+    expect(step).toContain('run: pnpm package:mac -c.mac.identity=null\n')
+    expect(step).toMatch(/\n {8}env:\n(?: {10}.*\n)* {10}CSC_IDENTITY_AUTO_DISCOVERY: 'false'\n/)
+    const upload = mac.steps.find((s) => s.includes('uses: actions/upload-artifact@'))
+    expect(upload).toMatch(/ {12}release\/\*\.dmg\n {12}release\/\*\.zip\n/)
+  })
+})
