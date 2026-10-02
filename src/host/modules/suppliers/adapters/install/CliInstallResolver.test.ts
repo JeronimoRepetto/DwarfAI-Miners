@@ -26,12 +26,15 @@ describe('CliInstallResolver', () => {
     })
 
     const detected = await detectForDriver(detection, {
+      providerId: 'claude',
       binaries: ['claude'],
       adapterBinaries: ['claude-agent-acp']
     })
 
     expect(detected).toEqual({ kind: 'not-installed' })
-    expect(await detection.detect(['claude'])).toEqual({ kind: 'not-installed' })
+    expect(await detection.detect({ providerId: 'claude', binaries: ['claude'] })).toEqual({
+      kind: 'not-installed'
+    })
     expect(await machine.resolver.resolve(['claude-agent-acp'])).toBeNull()
     expect(machine.spawned()).toEqual([])
   })
@@ -54,7 +57,7 @@ describe('CliInstallResolver', () => {
 
     machine.clock.advance(1)
     await settle()
-    expect(answer).toEqual({ path: '/opt/tools/bin/slow' })
+    expect(answer).toEqual({ path: '/opt/tools/bin/slow', resolvedVia: 'path' })
     expect(PROBE_TIMEOUT_MS).toBe(5_000)
     expect(machine.control.fake.signals.length).toBeGreaterThan(0)
   })
@@ -76,7 +79,8 @@ describe('CliInstallResolver', () => {
 
     expect(await machine.resolver.resolve(['tool'])).toEqual({
       path: 'C:\\Users\\j\\.local\\bin\\tool.exe',
-      version: 'tool 1.0.0'
+      version: 'tool 1.0.0',
+      resolvedVia: 'package-manager-dir'
     })
   })
 
@@ -97,7 +101,10 @@ describe('CliInstallResolver', () => {
     machine.fs.addFile('/opt/tools/bin/tool', 'link', 1)
     machine.links.set('/opt/tools/bin/tool', '/opt/homebrew/Cellar/tool/1.0.0/bin/tool')
 
-    expect(await machine.resolver.resolve(['tool'])).toBeNull()
+    expect(await machine.resolver.resolve(['tool'])).toEqual({
+      path: '/opt/homebrew/Cellar/tool/1.0.0/bin/tool',
+      quarantined: true
+    })
     const quarantineReads = machine
       .spawned()
       .filter((spawn) => spawn.executable === '/usr/bin/xattr')
@@ -116,5 +123,33 @@ describe('CliInstallResolver', () => {
     const [probe] = machine.spawned()
     expect(probe?.args).toEqual(['--version'])
     expect(probe?.env).toEqual({ PATH: machine.env['PATH'], HOME: '/home/j' })
+  })
+
+  it('[ADR-009, FM-055] a binary quarantined by the OS is detected as quarantined, treated as not installed, and never spawned', async () => {
+    const machine = layMachine({
+      platform: 'darwin',
+      installs: [
+        {
+          binary: 'tool',
+          layout: 'path',
+          target: '/opt/tools/bin/tool',
+          version: 'tool 1.0.0',
+          quarantined: true
+        }
+      ]
+    })
+    const detection = createInstallDetection({
+      resolver: machine.resolver,
+      fs: machine.fs,
+      scheduler: new FakeScheduler(machine.clock)
+    })
+
+    expect(await detection.detect({ providerId: 'tool', binaries: ['tool'] })).toEqual({
+      kind: 'quarantined',
+      path: '/opt/tools/bin/tool'
+    })
+    // Only its attribute was read; the file itself never ran, not even for --version.
+    expect(machine.spawned().map((spawn) => spawn.executable)).not.toContain('/opt/tools/bin/tool')
+    expect(machine.spawned().some((spawn) => spawn.args.includes('--version'))).toBe(false)
   })
 })

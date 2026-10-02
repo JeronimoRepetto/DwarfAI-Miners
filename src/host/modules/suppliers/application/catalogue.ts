@@ -45,12 +45,18 @@ export function createSupplierCatalogue(deps: SupplierCatalogueDeps): SupplierCa
   const isInstalled = async (record: CatalogRecord): Promise<boolean> =>
     record.ceiling.installDetection === 'none' ||
     (record.profile.binaries.length > 0 &&
-      (await deps.detection.detect(record.profile.binaries)).kind === 'installed')
+      (
+        await deps.detection.detect({
+          providerId: record.profile.id,
+          binaries: record.profile.binaries
+        })
+      ).kind === 'installed')
 
   /** What the last detection said, without checking again (`entry` is synchronous). */
   const installedNow = (record: CatalogRecord): boolean =>
     record.ceiling.installDetection === 'none' ||
-    deps.detection.last(record.profile.binaries)?.kind === 'installed'
+    deps.detection.last({ providerId: record.profile.id, binaries: record.profile.binaries })
+      ?.kind === 'installed'
 
   return {
     // Re-checked on every call, that is on every Add-panel open (ADR-009 D5). A gated provider in a

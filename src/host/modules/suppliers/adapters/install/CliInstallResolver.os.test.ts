@@ -50,7 +50,11 @@ describe.runIf(process.platform === 'win32')('CliInstallResolver on Windows', ()
       SystemRoot: process.env['SystemRoot'] ?? 'C:\\Windows'
     })
 
-    expect(await resolver.resolve(['stubcli'])).toEqual({ path: entry, version: VERSION })
+    expect(await resolver.resolve(['stubcli'])).toEqual({
+      path: entry,
+      version: VERSION,
+      resolvedVia: 'path'
+    })
     expect(await resolver.resolve(['not-a-cli-anywhere'])).toBeNull()
   }, 30_000)
 })
@@ -66,6 +70,10 @@ describe.runIf(process.platform !== 'win32')('CliInstallResolver on macOS and Li
       SHELL: '/bin/sh'
     })
 
-    expect(await resolver.resolve(['stubcli'])).toEqual({ path: entry, version: VERSION })
+    expect(await resolver.resolve(['stubcli'])).toEqual({
+      path: entry,
+      version: VERSION,
+      resolvedVia: 'path'
+    })
   }, 30_000)
 })

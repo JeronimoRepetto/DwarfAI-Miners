@@ -12,7 +12,9 @@
 // its realpath; never through a shell (ADR-029 row 8). A link to a native program of another name
 // is a dispatcher that reads its own name (a Volta shim) and is kept as the link. Targets are
 // de-duplicated by realpath. A target the OS quarantined is skipped and never spawned (HR R2); the
-// first other target is the answer, with the first line of its own `--version` (through the kernel
+// first other target is the answer, with how it was found (`resolvedVia`) and the first line of its
+// own `--version`; when only a quarantined target exists it is the answer, marked `quarantined`
+// (16 §4.4 as amended, ISSUE-146). The version is read through the kernel
 // `ProcessControl`, an argv array, `PROBE_TIMEOUT_MS`; R17). Nothing is ever taken from a path
 // DwarfAI ships (C-02): the search covers the person's own directories only.
 //
@@ -20,7 +22,7 @@
 import type { FileSystem } from '../../../../kernel/ports/fileSystem'
 import type { ProcessControl, SpawnedProcess } from '../../../../kernel/ports/processControl'
 import type { Scheduler } from '../../../../kernel/ports/scheduler'
-import type { InstallResolver } from '../../ports/installResolver'
+import type { InstallResolver, ResolvedInstall } from '../../ports/installResolver'
 import {
   envValue,
   executableNames,
@@ -30,6 +32,7 @@ import {
   pathDirs,
   pathModule,
   probeEnv,
+  type DirKind,
   type HostEnv,
   type Platform,
   type SearchDir
@@ -70,6 +73,12 @@ interface Target {
   run: { executable: string; args: string[] } | null
 }
 
+/** One search: the targets already checked, and the first quarantined one met on the way. */
+interface Search {
+  seen: Set<string>
+  quarantined: string | null
+}
+
 export class CliInstallResolver implements InstallResolver {
   private readonly path: ReturnType<typeof pathModule>
 
@@ -77,14 +86,20 @@ export class CliInstallResolver implements InstallResolver {
     this.path = pathModule(deps.platform)
   }
 
-  async resolve(binaries: readonly string[]): Promise<{ path: string; version?: string } | null> {
-    const seen = new Set<string>()
-    const found = await this.firstTarget(binaries, this.searchDirs(), seen)
-    const target =
-      found ?? (await this.firstTarget(binaries, await this.loginShellDirs(), seen, false))
-    if (target === null) return null
+  async resolve(binaries: readonly string[]): Promise<ResolvedInstall | null> {
+    const search: Search = { seen: new Set(), quarantined: null }
+    const found =
+      (await this.firstTarget(binaries, this.searchDirs(), search)) ??
+      (await this.firstTarget(binaries, await this.loginShellDirs(), search, false))
+    if (found === null) {
+      // Only a quarantined file was found: answered as such, never spawned (16 §4.4 as amended).
+      return search.quarantined === null ? null : { path: search.quarantined, quarantined: true }
+    }
+    const { target, resolvedVia } = found
     const version = target.run === null ? null : await this.readVersion(target.run)
-    return version === null ? { path: target.path } : { path: target.path, version }
+    return version === null
+      ? { path: target.path, resolvedVia }
+      : { path: target.path, version, resolvedVia }
   }
 
   /** Steps 2–4 of the search order, de-duplicated, in order. */
@@ -110,42 +125,45 @@ export class CliInstallResolver implements InstallResolver {
   private async firstTarget(
     binaries: readonly string[],
     dirs: readonly SearchDir[],
-    seen: Set<string>,
+    search: Search,
     withOverride = true
-  ): Promise<Target | null> {
+  ): Promise<{ target: Target; resolvedVia: DirKind } | null> {
     const { env, platform } = this.deps
     for (const binary of binaries) {
-      const candidates: string[] = []
+      const candidates: { at: string; kind: DirKind }[] = []
+      // The override names the person's own file directly: it counts as found on their path.
       const override = withOverride ? overridePath(binary, env, platform) : null
-      if (override !== null) candidates.push(override)
-      for (const { dir } of dirs) {
+      if (override !== null) candidates.push({ at: override, kind: 'path' })
+      for (const { dir, kind } of dirs) {
         for (const name of executableNames(binary, env, platform)) {
-          candidates.push(this.path.join(dir, name))
+          candidates.push({ at: this.path.join(dir, name), kind })
         }
       }
       for (const candidate of candidates) {
-        const target = await this.usable(binary, candidate, seen)
-        if (target !== null) return target
+        const target = await this.usable(binary, candidate.at, search)
+        if (target !== null) return { target, resolvedVia: candidate.kind }
       }
     }
     return null
   }
 
-  /** The candidate's target when it exists, is not a duplicate and is not quarantined; else null. */
-  private async usable(
-    binary: string,
-    candidate: string,
-    seen: Set<string>
-  ): Promise<Target | null> {
+  /**
+   * The candidate's target when it exists, is not a duplicate and is not quarantined; else null.
+   * A quarantined target is remembered in `search` (the answer when nothing else is usable).
+   */
+  private async usable(binary: string, candidate: string, search: Search): Promise<Target | null> {
     try {
       const stat = await this.deps.fs.stat(candidate)
       if (stat === null || stat.isDirectory) return null
       const target = await this.targetOf(binary, candidate)
       if (target === null) return null
       const key = this.dirKey(target.path)
-      if (seen.has(key)) return null
-      seen.add(key)
-      if (await this.isQuarantined(target.path)) return null
+      if (search.seen.has(key)) return null
+      search.seen.add(key)
+      if (await this.isQuarantined(target.path)) {
+        search.quarantined ??= target.path
+        return null
+      }
       return target
     } catch {
       return null // an unreadable candidate is not a CLI; the search goes on

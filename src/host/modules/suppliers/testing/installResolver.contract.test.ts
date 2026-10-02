@@ -5,7 +5,8 @@ import {
   type InstallLayout,
   type MachineInstall,
   type ResolverMachine,
-  type ResolverUnderTest
+  type ResolverUnderTest,
+  viaOf
 } from './installResolver.contract'
 import { AGY_PLACES, SHIM_TABLE } from './installResolver.fixtures'
 
@@ -38,6 +39,7 @@ function fakeOn(machine: ResolverMachine): ResolverUnderTest {
     resolver.install(install.binary, {
       path: install.target,
       version: install.version,
+      resolvedVia: viaOf(install.layout),
       quarantined: install.quarantined === true,
       loginShellOnly: install.layout === 'login-shell'
     })

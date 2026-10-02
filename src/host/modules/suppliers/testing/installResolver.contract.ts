@@ -2,7 +2,7 @@
 // `CliInstallResolver` adapter over FakeFs and the `FakeInstallResolver` double — must answer for
 // the same machines: the shim resolution table of each OS with an explicit `Platform` (PATH ×
 // PATHEXT, npm, pnpm, Volta, bun, Scoop shims, WinGet links, `.cmd` / `.bat` shims to their target),
-// a quarantined binary never answered and never spawned, the login-shell retry only on a miss, the
+// a quarantined binary answered as quarantined and never spawned, the login-shell retry only on a miss, the
 // AMENDMENT-13 order for `agy`, and nothing ever run through a shell (ADR-009 D5, ADR-029 row 8).
 //
 // A machine names, for every install, the target the resolver must answer: the fixtures say what
@@ -62,6 +62,27 @@ export interface ResolverUnderTest {
 
 export type MakeInstallResolver = (machine: ResolverMachine) => ResolverUnderTest
 
+/** How the resolver found an install (15 §1.2 `resolvedVia`); the override file counts as `path`. */
+export function viaOf(layout: InstallLayout): 'path' | 'package-manager-dir' | 'login-shell-path' {
+  switch (layout) {
+    case 'override':
+    case 'path':
+    case 'path-link':
+    case 'path-cmd':
+    case 'path-bat':
+      return 'path'
+    case 'login-shell':
+      return 'login-shell-path'
+    default:
+      return 'package-manager-dir'
+  }
+}
+
+/** The answer the resolver owes for an install. */
+function answerOf(install: MachineInstall) {
+  return { path: install.target, version: install.version, resolvedVia: viaOf(install.layout) }
+}
+
 const SHELLISH = /(^|[\\/])(cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)$/i
 const BATCH = /\.(cmd|bat)$/i
 
@@ -87,10 +108,7 @@ export function runInstallResolverContract(
           const installs = table[platform].filter((install) => install.layout !== 'login-shell')
           const subject = make({ platform, installs })
           for (const install of installs) {
-            expect(await subject.resolver.resolve([install.binary])).toEqual({
-              path: install.target,
-              version: install.version
-            })
+            expect(await subject.resolver.resolve([install.binary])).toEqual(answerOf(install))
           }
           expect(await subject.resolver.resolve(['never-installed'])).toBeNull()
           expectNoShellSpawn(subject.spawned())
@@ -102,26 +120,17 @@ export function runInstallResolverContract(
             platform,
             installs: [places.override, places.onPath, places.localBin]
           })
-          expect(await everywhere.resolver.resolve(['agy'])).toEqual({
-            path: places.override.target,
-            version: places.override.version
-          })
+          expect(await everywhere.resolver.resolve(['agy'])).toEqual(answerOf(places.override))
 
           const missingOverride = make({
             platform,
             installs: [places.onPath, places.localBin],
             overrideMissing: true
           })
-          expect(await missingOverride.resolver.resolve(['agy'])).toEqual({
-            path: places.onPath.target,
-            version: places.onPath.version
-          })
+          expect(await missingOverride.resolver.resolve(['agy'])).toEqual(answerOf(places.onPath))
 
           const localOnly = make({ platform, installs: [places.localBin], overrideMissing: true })
-          expect(await localOnly.resolver.resolve(['agy'])).toEqual({
-            path: places.localBin.target,
-            version: places.localBin.version
-          })
+          expect(await localOnly.resolver.resolve(['agy'])).toEqual(answerOf(places.localBin))
           // The override variable never reaches a child (15 §4 `childEnv`).
           for (const subject of [everywhere, missingOverride, localOnly]) {
             for (const spawn of subject.spawned()) {
@@ -156,8 +165,11 @@ export function runInstallResolverContract(
       }
       const subject = make({ platform: 'darwin', installs: [quarantined] })
 
-      // Quarantined is "not installed" through this port (15 §1.2: treated as not installed).
-      expect(await subject.resolver.resolve(['mike'])).toBeNull()
+      // Answered as quarantined (16 §4.4 as amended, ISSUE-146); detection treats it as not installed.
+      expect(await subject.resolver.resolve(['mike'])).toEqual({
+        path: quarantined.target,
+        quarantined: true
+      })
       // Reading its attributes is allowed; running it, directly or as a script's entry, is not.
       for (const spawn of subject.spawned()) {
         expect(spawn.executable).not.toBe(quarantined.target)
@@ -174,16 +186,10 @@ export function runInstallResolverContract(
         }
 
         const found = make({ platform, installs: [onPath, viaShell] })
-        expect(await found.resolver.resolve([onPath.binary])).toEqual({
-          path: onPath.target,
-          version: onPath.version
-        })
+        expect(await found.resolver.resolve([onPath.binary])).toEqual(answerOf(onPath))
         expect(found.loginShellReads()).toBe(0)
 
-        expect(await found.resolver.resolve([viaShell.binary])).toEqual({
-          path: viaShell.target,
-          version: viaShell.version
-        })
+        expect(await found.resolver.resolve([viaShell.binary])).toEqual(answerOf(viaShell))
         expect(found.loginShellReads()).toBe(1)
       }
     })
