@@ -1,6 +1,6 @@
 // layer: L3
 // The real POSIX spawner over a recording `spawn` (the child-process double plays the process: it starts, exits or
-// cannot start), with its stdio file in a per-test temporary folder; this OS's real spawn is the L8 leg
+// cannot start), its working folder a per-test temporary folder; this OS's real spawn is the L8 leg
 // (spawner.os.test.ts).
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,10 +31,7 @@ runHostSpawnerContract('createPosixSpawner over a recording spawn', () => {
     if (script === 'exits-with-3') queueMicrotask(() => child.finish(3))
   }
   return Promise.resolve({
-    spawner: createPosixSpawner({
-      spawnProcess: spawn.spawn,
-      stdioFile: join(root, 'run', 'host-stdio.log')
-    }),
+    spawner: createPosixSpawner({ spawnProcess: spawn.spawn }),
     request: (next) => {
       script = next
       return { file: `/opt/app/host-${next}`, args: [], env: {}, cwd: root }

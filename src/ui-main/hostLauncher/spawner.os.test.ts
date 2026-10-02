@@ -78,7 +78,7 @@ runHostSpawnerContract(`the real ${process.platform} spawner`, () => {
     spawner:
       process.platform === 'win32'
         ? createWindowsSpawner({ loadHelper: () => loadWinLaunch({ prebuildsDir: PREBUILDS }) })
-        : createPosixSpawner({ stdioFile: path.join(root, 'run', 'host-stdio.log') }),
+        : createPosixSpawner(),
     request,
     afterLaunch: () => {},
     async stillRunning() {
