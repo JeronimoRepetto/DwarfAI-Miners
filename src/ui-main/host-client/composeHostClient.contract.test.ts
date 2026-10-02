@@ -130,7 +130,7 @@ describe("the app's Host attach runs the ADR-002 D8 upgrade handshake (UC-026)",
     expect(w.host.liveConnections('notifier')).toBe(1)
   })
 
-  it('[ADR-002, FM-131, S12.B02, S12.13, TC-032-01] an older running Host is attached in compat mode, asked to upgrade to this build, and once it drained the new Host is started and attached normally, never as a lost connection', async () => {
+  it('[ADR-002, FM-131, S12.B02, S12.13] an older running Host is attached in compat mode, asked to upgrade to this build, and once it drained the new Host is started and attached normally, never as a lost connection', async () => {
     const w = world(PROTOCOL_VERSION - 1)
     const upgradeRequests: unknown[] = []
     w.host.handle('host.upgrade.request', (params) => {
@@ -160,7 +160,7 @@ describe("the app's Host attach runs the ADR-002 D8 upgrade handshake (UC-026)",
     expect(upgradeRequests).toHaveLength(1)
   })
 
-  it('[ADR-002, FM-133, S12.B03, TC-032-04] a newer running Host is reported incompatible and never sent host.upgrade.request; once the app’s Stop everything and quit stopped it, this build starts its own Host and attaches, without quitting', async () => {
+  it('[ADR-002, FM-133, S12.B03] a newer running Host is reported incompatible and never sent host.upgrade.request; once the app’s Stop everything and quit stopped it, this build starts its own Host and attaches, without quitting', async () => {
     const w = world(PROTOCOL_VERSION + 1)
     w.host.handle('host.shutdown', () => {
       setImmediate(() => w.closeCleanly('stop-all'))
