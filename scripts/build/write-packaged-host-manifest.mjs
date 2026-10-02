@@ -13,12 +13,10 @@
 // Plain Node: the TypeScript modules it imports use Node built-ins only, and Node 24 strips their types.
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import {
-  hostManifestPathOf,
-  packagedResourcesDirOf
-} from '../../src/ui-main/hostLauncher/copySource.ts'
+import { packagedResourcesRelativeOf } from '../../src/ui-main/hostLauncher/copySource.ts'
 import {
   buildManifest,
+  HOST_MANIFEST_FILE,
   parseManifest,
   serializeManifest,
   verifyManifest
@@ -38,16 +36,14 @@ export function packedCopySourceOf(context) {
   return { sourceDir, platform }
 }
 
-/** Where a packed app keeps its manifest, and that path relative to the copy source (with `/`). */
+/**
+ * Where a packed app keeps its manifest: in its resources folder, where the packaged app reads it
+ * (hostManifestPathOf), as a path of this build host, which may package for another OS; and that
+ * path relative to the copy source, with `/`.
+ */
 export function packagedManifestOf(sourceDir, platform) {
-  const manifestPath = hostManifestPathOf(
-    { packaged: true, outDir: '', resourcesPath: packagedResourcesDirOf(sourceDir, platform) },
-    platform
-  )
-  return {
-    manifestPath,
-    relative: path.relative(sourceDir, manifestPath).split(path.sep).join('/')
-  }
+  const relative = `${packagedResourcesRelativeOf(sourceDir, platform)}/${HOST_MANIFEST_FILE}`
+  return { manifestPath: path.join(sourceDir, ...relative.split('/')), relative }
 }
 
 /** Writes the manifest of the packed app at `sourceDir`; returns where, and how many entries it lists. */

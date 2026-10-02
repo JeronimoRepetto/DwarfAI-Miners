@@ -37,9 +37,16 @@ export function copySourceOf(execPath: string, platform: CopyPlatform): string {
  */
 export function packagedResourcesDirOf(sourceDir: string, platform: CopyPlatform): string {
   const paths = platform === 'win32' ? path.win32 : path.posix
-  return platform === 'darwin' && sourceDir.endsWith('.app')
-    ? paths.join(sourceDir, 'Contents', 'Resources')
-    : paths.join(sourceDir, 'resources')
+  return paths.join(sourceDir, ...packagedResourcesRelativeOf(sourceDir, platform).split('/'))
+}
+
+/**
+ * The same folder relative to the copy source, with `/`. The packaging hook joins it to the packed
+ * app with the build host's own path module, since the packed files are on that host whatever OS
+ * the app targets.
+ */
+export function packagedResourcesRelativeOf(sourceDir: string, platform: CopyPlatform): string {
+  return platform === 'darwin' && sourceDir.endsWith('.app') ? 'Contents/Resources' : 'resources'
 }
 
 /**

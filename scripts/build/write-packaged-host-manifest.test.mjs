@@ -8,6 +8,7 @@ import { parseManifest, verifyManifest } from '../../src/ui-main/hostLauncher/ho
 import afterPack from './afterPack.mjs'
 import afterSign from './afterSign.mjs'
 import writePackagedManifest, {
+  packagedManifestOf,
   packedCopySourceOf,
   verifyPackagedHostManifest
 } from './write-packaged-host-manifest.mjs'
@@ -104,6 +105,26 @@ describe('write-packaged-host-manifest.mjs (ADR-002 D5)', () => {
       ).toEqual({ ok: true })
     }
   )
+
+  it('[ADR-002] the manifest of every packed layout is written at a path of this host, whatever OS the app targets', () => {
+    // The packed files are on the build host, so their paths use its separators; only the layout
+    // inside the copy source depends on the target.
+    const base = path.join(tmpdir(), 'release')
+    for (const [platform, sourceDir, relative] of [
+      ['win32', path.join(base, 'win-unpacked'), 'resources/host-manifest.json'],
+      ['linux', path.join(base, 'linux-unpacked'), 'resources/host-manifest.json'],
+      [
+        'darwin',
+        path.join(base, 'mac-arm64', `${PRODUCT}.app`),
+        'Contents/Resources/host-manifest.json'
+      ]
+    ]) {
+      expect(packagedManifestOf(sourceDir, platform), platform).toEqual({
+        manifestPath: path.join(sourceDir, ...relative.split('/')),
+        relative
+      })
+    }
+  })
 
   it('[ADR-002] the copy source of a packed app is its output folder, and the .app bundle inside it on macOS', () => {
     expect(packedCopySourceOf(contextOf(path.join('r', 'win-unpacked'), 'win32'))).toEqual({
