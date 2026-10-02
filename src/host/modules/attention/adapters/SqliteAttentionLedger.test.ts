@@ -81,6 +81,7 @@ describe('SqliteAttentionLedger', () => {
           )
         ),
       reopen: open,
+      clock,
       dispose: () => undefined
     }
   })

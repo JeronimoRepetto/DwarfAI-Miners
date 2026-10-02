@@ -6,6 +6,7 @@
 // INV-103). Never imported by production code (R14).
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DwarfId } from '../../../kernel/domain/values'
+import type { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { carryOverKey, type CarriedKind } from '../domain/carryOver'
 import type { AttentionKind } from '../domain/decideLevel3'
 import type { AttentionLedger } from '../ports/attentionLedger'
@@ -22,6 +23,8 @@ export interface AttentionLedgerSubject {
   recordCarryOver(dwarfId: DwarfId, kind: CarriedKind, preCrashKey: string): void
   /** A new ledger over the same storage: what the next Host boot opens. */
   reopen(): AttentionLedger
+  /** The clock the subject's ledgers stamp `withdrawn_at` with. */
+  clock: FakeClock
   dispose(): void | Promise<void>
 }
 
@@ -101,6 +104,60 @@ export function runAttentionLedgerContract(
 
       // Only once: a second question of that dwarf finds nothing to consume, also after a reopen.
       s.inTransaction(() => ledger.consumeCarryOver(carryOverKey(dwarf, 'question')))
+      expect(ledger.carryOver()).toStrictEqual(left)
+      expect(s.reopen().carryOver()).toStrictEqual(left)
+    })
+
+    it('[S17.05, S17.09] withdraw sets the withdrawal once and returns only the keys newly withdrawn', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfs
+      const emitted = `${dwarf}:question:${s.openAsk(dwarf, 'question')}`
+      const suppressed = `${dwarf}:turn-finished:turn-3`
+      const neverClaimed = `${dwarf}:turn-finished:turn-4` // a gated fact claims no key (S17.04)
+      s.inTransaction(() => {
+        s.ledger.markEmitted(emitted, dwarf, 'question')
+        s.ledger.markSuppressed(suppressed, dwarf, 'turn-finished')
+      })
+
+      expect(
+        s.inTransaction(() => s.ledger.withdraw([emitted, suppressed, neverClaimed]))
+      ).toStrictEqual([emitted, suppressed])
+      expect(s.inTransaction(() => s.ledger.withdraw([emitted]))).toStrictEqual([])
+      const reopened = s.reopen()
+      expect(s.inTransaction(() => reopened.withdraw([suppressed, emitted]))).toStrictEqual([])
+      // A withdrawn key stays claimed until it is swept (INV-100).
+      expect(reopened.emitted()).toStrictEqual(new Set([emitted, suppressed]))
+    })
+
+    it('[ADR-018] sweepWithdrawn deletes at most limit keys withdrawn before the instant, never a key withdrawn at it or still open', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfs
+      const key = (n: number): string => `${dwarf}:turn-finished:turn-${n}`
+      s.inTransaction(() => {
+        for (const n of [1, 2, 3, 4]) s.ledger.markEmitted(key(n), dwarf, 'turn-finished')
+        s.ledger.withdraw([key(1), key(2)])
+      })
+      const before = s.clock.now() + 10
+      s.clock.advance(10)
+      s.inTransaction(() => s.ledger.withdraw([key(3)])) // withdrawn exactly at `before`
+
+      expect(s.inTransaction(() => s.ledger.sweepWithdrawn(before, 1))).toBe(1)
+      expect(s.inTransaction(() => s.ledger.sweepWithdrawn(before, 1))).toBe(1)
+      expect(s.inTransaction(() => s.ledger.sweepWithdrawn(before, 1))).toBe(0)
+      expect(s.reopen().emitted()).toStrictEqual(new Set([key(3), key(4)]))
+    })
+
+    it('[ADR-018] dropCarryOver deletes every carry-over row of that dwarf and no other', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfs
+      s.recordCarryOver(dwarf, 'question', `${dwarf}:question:pre-crash-ask-1`)
+      s.recordCarryOver(dwarf, 'permission', `${dwarf}:permission:pre-crash-ask-2`)
+      s.recordCarryOver(other, 'question', `${other}:question:pre-crash-ask-3`)
+      const ledger = s.reopen()
+
+      s.inTransaction(() => ledger.dropCarryOver(dwarf))
+
+      const left = new Map([[carryOverKey(other, 'question'), `${other}:question:pre-crash-ask-3`]])
       expect(ledger.carryOver()).toStrictEqual(left)
       expect(s.reopen().carryOver()).toStrictEqual(left)
     })

@@ -1,5 +1,6 @@
 import { describe } from 'vitest'
 import type { DwarfId } from '../../../kernel/domain/values'
+import { FakeClock } from '../../../kernel/fakes/FakeClock'
 import { carryOverKey } from '../domain/carryOver'
 import {
   InMemoryAttentionLedger,
@@ -12,15 +13,17 @@ import { runAttentionLedgerContract } from './attentionLedger.contract'
 describe('InMemoryAttentionLedger', () => {
   runAttentionLedgerContract(() => {
     const rows = new InMemoryAttentionRows()
+    const clock = new FakeClock(1_790_000_000_000)
     let asks = 0
     return {
-      ledger: new InMemoryAttentionLedger(rows),
+      ledger: new InMemoryAttentionLedger(rows, clock),
       dwarfs: ['dwarf-0001' as DwarfId, 'dwarf-0002' as DwarfId],
       inTransaction: (work) => work(),
       openAsk: () => `ask-${++asks}`,
       recordCarryOver: (dwarfId, kind, preCrashKey) =>
         rows.announced.set(carryOverKey(dwarfId, kind), preCrashKey),
-      reopen: () => new InMemoryAttentionLedger(rows),
+      reopen: () => new InMemoryAttentionLedger(rows, clock),
+      clock,
       dispose: () => undefined
     }
   })
