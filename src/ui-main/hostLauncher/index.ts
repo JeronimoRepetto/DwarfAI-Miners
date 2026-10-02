@@ -15,6 +15,7 @@ export {
   createNodeHostLauncher,
   createNodeHungHostEnder,
   createNodeUpgradePorts,
+  nodeHostManifestPath,
   type NodeHostConnection,
   type NodeHostLauncherOptions,
   type NodeHungHostEnder,

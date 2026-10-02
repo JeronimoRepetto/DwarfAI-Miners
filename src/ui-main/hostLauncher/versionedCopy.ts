@@ -8,8 +8,9 @@
 // 2. `host/<version>/` is reused when it was verified against the same build manifest (the
 //    manifest stored in it has the same SHA-256 as this build's) and every listed file is still
 //    there with its size (checkManifestPresence: no re-hash on every start, SP-03).
-// 3. Otherwise the app directory is copied into `host/<version>.tmp-<pid>`, verified against the
-//    manifest byte for byte, the manifest is stored beside it, an outdated `host/<version>/` is
+// 3. Otherwise the app directory's listed entries are copied into `host/<version>.tmp-<pid>`
+//    (a file an installer added beside the app is not part of it), verified against the manifest
+//    byte for byte, the manifest is stored beside it, an outdated `host/<version>/` is
 //    removed, and the temporary directory is renamed into place in one step. So the final
 //    directory appears only by rename, never partially, and a copy that fails its check is removed
 //    and never renamed.
@@ -38,14 +39,23 @@ import type { LauncherClock } from './ports'
 // Without Electron's asar layer: the copied folder holds an `.asar` archive (plainFs.ts).
 const { cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } = plainFs.promises
 
-export { copySourceOf, type CopyPlatform } from './copySource'
+export {
+  copySourceOf,
+  hostManifestPathOf,
+  packagedResourcesDirOf,
+  type CopyPlatform
+} from './copySource'
 // The per-OS copy root (ADR-002 D5): one rule, shared with the Host through contracts (ISSUE-032).
 export { versionedCopyRoot } from '@dwarfai/contracts'
 
 /** The file operations that change the copy root; the Node ones in production, faulty ones in tests. */
 export interface CopyOps {
-  /** Copies the directory `from` to `to` (which must not exist), links kept as links. */
-  copyTree(from: string, to: string): Promise<void>
+  /**
+   * Copies the directory `from` to `to` (which must not exist), links kept as links. With `include`,
+   * only the entries whose relative path (with `/`) it accepts are copied, and a folder is entered
+   * only when it accepts the folder's path.
+   */
+  copyTree(from: string, to: string, include?: (relativePath: string) => boolean): Promise<void>
   /** Renames in one step; `to` must not exist. */
   rename(from: string, to: string): Promise<void>
   /** Removes the directory and everything under it; a missing one is a success. */
@@ -53,13 +63,21 @@ export interface CopyOps {
 }
 
 export const nodeCopyOps: CopyOps = {
-  copyTree: (from, to) =>
+  copyTree: (from, to, include) =>
     cp(from, to, {
       recursive: true,
       verbatimSymlinks: true,
       preserveTimestamps: true,
       errorOnExist: true,
-      force: false
+      force: false,
+      ...(include === undefined
+        ? {}
+        : {
+            filter: (source: string) => {
+              const relative = path.relative(from, source)
+              return relative === '' || include(relative.split(path.sep).join('/'))
+            }
+          })
     }),
   rename: (from, to) => rename(from, to),
   removeTree: (target) => rm(target, { recursive: true, force: true, maxRetries: 2 })
@@ -144,7 +162,7 @@ export async function ensureVersionedCopy(
 
     const temp = path.join(request.root, `${request.version}${TEMP_MARKER}${request.pid}`)
     try {
-      await request.ops.copyTree(request.sourceDir, contentIn(temp))
+      await request.ops.copyTree(request.sourceDir, contentIn(temp), listedIn(manifest))
     } catch (error) {
       await request.ops.removeTree(temp).catch(() => undefined)
       return fail(`COPY_${errnoOf(error)}`)
@@ -195,6 +213,21 @@ async function isVerifiedCopy(
   const stored = await readFile(path.join(copyDir, HOST_MANIFEST_FILE), 'utf8').catch(() => null)
   if (stored === null || sha256(stored) !== sha256(manifestText)) return false
   return (await checkManifestPresence(contentDir, manifest)).ok
+}
+
+/**
+ * The entries the copy takes from the source: the listed ones and the folders that hold them. A
+ * file the installer adds beside the app after the build (the nsis uninstaller in the install
+ * directory) is not part of the app and stays out, while a listed entry the source lacks still
+ * fails the check of the copy.
+ */
+function listedIn(manifest: HostManifest): (relativePath: string) => boolean {
+  const listed = new Set<string>()
+  for (const entry of manifest.entries) {
+    const parts = entry.path.split('/')
+    for (let end = 1; end <= parts.length; end++) listed.add(parts.slice(0, end).join('/'))
+  }
+  return (relativePath) => listed.has(relativePath)
 }
 
 /** The manifest's own path, relative with `/`, when it lives inside the copied directory. */

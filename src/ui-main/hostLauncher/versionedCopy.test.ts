@@ -12,7 +12,9 @@ import { buildManifest, serializeManifest, verifyManifest } from './hostManifest
 import {
   copySourceOf,
   ensureVersionedCopy,
+  hostManifestPathOf,
   nodeCopyOps,
+  packagedResourcesDirOf,
   versionedCopyRoot,
   type CopyOps,
   type VersionedCopyRequest
@@ -63,10 +65,10 @@ function recordingOps(observe: (call: string, args: string[]) => void = () => {}
 } {
   const calls: Array<[string, ...string[]]> = []
   const ops: CopyOps = {
-    async copyTree(from, to) {
+    async copyTree(from, to, include) {
       calls.push(['copyTree', from, to])
       observe('copyTree', [from, to])
-      await nodeCopyOps.copyTree(from, to)
+      await nodeCopyOps.copyTree(from, to, include)
     },
     async rename(from, to) {
       calls.push(['rename', from, to])
@@ -236,6 +238,38 @@ describe('ensureVersionedCopy (ADR-002 D5, ADR-027 item 2)', () => {
     })
     expect(existsSync(path.join(w.root, VERSION, 'DwarfAI-Miners.app', 'app.exe'))).toBe(true)
   })
+
+  it('[ADR-002, ADR-027] a file the installer put beside the app, outside the manifest, is left out of the copy and does not fail it', async () => {
+    const w = await world()
+    // The nsis installer writes its uninstaller into the install directory after the build
+    // listed it (electron-builder installer.nsh), so the copy source holds one file more.
+    writeFileSync(path.join(w.sourceDir, 'Uninstall DwarfAI-Miners.exe'), 'uninstaller bytes')
+
+    const outcome = await ensureVersionedCopy(w.request())
+
+    expect(outcome).toEqual({
+      ok: true,
+      reused: false,
+      copyDir: path.join(w.root, VERSION),
+      contentDir: path.join(w.root, VERSION)
+    })
+    expect(readdirSync(path.join(w.root, VERSION)).sort()).toEqual([
+      'app.exe',
+      'host-manifest.json',
+      'resources'
+    ])
+  })
+
+  it('[ADR-002, FM-129] a listed file missing from the copy source still fails the copy', async () => {
+    const w = await world()
+    rmSync(path.join(w.sourceDir, 'resources', 'extra.pak'))
+
+    expect(await ensureVersionedCopy(w.request())).toEqual({
+      ok: false,
+      errCode: 'MANIFEST_MISMATCH'
+    })
+    expect(readdirSync(w.root)).toEqual([])
+  })
 })
 
 describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
@@ -293,5 +327,68 @@ describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
     expect(copySourceOf('/usr/local/lib/electron/electron', 'darwin')).toBe(
       '/usr/local/lib/electron'
     )
+  })
+
+  it('[ADR-002] a development build reads host-manifest.json beside its output; a packaged one reads it from its resources folder, outside app.asar and inside the copy source', () => {
+    expect(
+      hostManifestPathOf(
+        {
+          packaged: false,
+          outDir: 'C:\\src\\dwarfai\\out',
+          resourcesPath: 'C:\\src\\dwarfai\\node_modules\\electron\\dist\\resources'
+        },
+        'win32'
+      )
+    ).toBe('C:\\src\\dwarfai\\out\\host-manifest.json')
+    expect(
+      hostManifestPathOf(
+        {
+          packaged: true,
+          outDir: 'C:\\Apps\\DwarfAI-Miners\\resources\\app.asar\\out',
+          resourcesPath: 'C:\\Apps\\DwarfAI-Miners\\resources'
+        },
+        'win32'
+      )
+    ).toBe('C:\\Apps\\DwarfAI-Miners\\resources\\host-manifest.json')
+    expect(
+      hostManifestPathOf(
+        {
+          packaged: true,
+          outDir: '/Applications/DwarfAI-Miners.app/Contents/Resources/app.asar/out',
+          resourcesPath: '/Applications/DwarfAI-Miners.app/Contents/Resources'
+        },
+        'darwin'
+      )
+    ).toBe('/Applications/DwarfAI-Miners.app/Contents/Resources/host-manifest.json')
+  })
+
+  it('[ADR-002] the packaging hook writes the manifest where the packaged app reads it: the resources folder of the copy source', () => {
+    expect(packagedResourcesDirOf('C:\\Apps\\DwarfAI-Miners', 'win32')).toBe(
+      'C:\\Apps\\DwarfAI-Miners\\resources'
+    )
+    expect(packagedResourcesDirOf('/opt/DwarfAI-Miners', 'linux')).toBe(
+      '/opt/DwarfAI-Miners/resources'
+    )
+    expect(packagedResourcesDirOf('/Applications/DwarfAI-Miners.app', 'darwin')).toBe(
+      '/Applications/DwarfAI-Miners.app/Contents/Resources'
+    )
+    // The same folder the packaged app reads through process.resourcesPath.
+    for (const [sourceDir, platform] of [
+      ['C:\\Apps\\DwarfAI-Miners', 'win32'],
+      ['/opt/DwarfAI-Miners', 'linux'],
+      ['/Applications/DwarfAI-Miners.app', 'darwin']
+    ] as const) {
+      const resourcesPath = packagedResourcesDirOf(sourceDir, platform)
+      expect(
+        hostManifestPathOf(
+          { packaged: true, outDir: `${resourcesPath}/app.asar/out`, resourcesPath },
+          platform
+        )
+      ).toBe(
+        platform === 'win32'
+          ? `${resourcesPath}\\host-manifest.json`
+          : `${resourcesPath}/host-manifest.json`
+      )
+    }
   })
 })
