@@ -26,6 +26,7 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { RecordingStopAll } from '../../kernel/fakes/RecordingStopAll'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus, type HandlerFailure } from '../../kernel/InProcessEventBus'
+import { createAttentionResetStep } from '../../modules/attention'
 import {
   createPreferencesResetStep,
   createResetSaga,
@@ -148,6 +149,7 @@ async function host() {
   const fanout = new ConnectionResetUiFanout(connections)
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock }),
+    attention: createAttentionResetStep({ db, scope: transactions }),
     // The ledger's LedgerRepository.setInstallMoment (16 §11) over the same table.
     ledger: {
       setInstallMoment: (at) =>
