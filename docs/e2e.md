@@ -40,7 +40,8 @@ pnpm test:e2e
   own app (and, once a Host exists, its `hostDataDir` and profile-keyed endpoint, ADR-002 D2);
 - temp `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, so the app never reads the developer's provider data;
 - `stubs`: a directory of stub CLIs prepended to `PATH` (the stub kit lands with ISSUE-313);
-- `launchApp` returns once the first window has loaded its page, so no case quits a half-started app;
+- `launchApp` returns once the first window has loaded its page, as the page (its `load` event) and the main process
+  (no window `isLoading()`, within 15 s) both see it, so no case quits a half-started app;
 - `teardown()` quits the app, waits for its process to exit and removes the profile, within a quit budget
   (`quitTimeoutMs`, default 15 s). An app still running at the end of it is killed with its whole process tree
   (`taskkill /T` on Windows, the app's process group on macOS and Linux), and the teardown fails with "did not exit
