@@ -15,10 +15,13 @@
 //   {mode:'upgrade-drain'}` (B-M05, AMENDMENT-2), then waits as above (S12.B16). Dormant in v1,
 //   where generation 1 is the only one: there is no previous generation to speak.
 // - incompatible (an older UI; FM-133, D8 item 5): it reports `incompatible` and never sends
-//   `host.upgrade.request` — an upgrade never goes towards an older version. It offers only Stop
-//   everything and quit: confirmed, `host.shutdown {mode:'stop-all'}`; once that Host has closed
-//   (`host.closing {reason:'stop-all'}`) it starts its own Host. A stop-all that could not end
-//   every owned session keeps the Host running (S12.21): nothing is started.
+//   `host.upgrade.request` — an upgrade never goes towards an older version. The report is the
+//   offer of Stop everything and quit: the app's own flow runs it (the Host-state message's A-N34,
+//   or the tray item; the A-N25 confirmation with the owned count; A-N26 through
+//   LegacyEndFirstAdapter, the only path of A-N26 to the Host through cut 4, 21 §3; ADR-002 D7;
+//   UC-026), so this flow sends nothing itself. Once that Host has closed (`host.closing
+//   {reason:'stop-all'}`) it starts its own Host. A stop-all that could not end every owned
+//   session keeps the Host running (S12.21): no close comes, nothing is started.
 //
 // Only methods the Host lists in `hello.ok.capabilities` are ever sent (14 §1.3; ADR-027 item 4);
 // an unlisted one leaves the UI as it is. A close the Host announced with `host.closing` is
@@ -34,7 +37,6 @@
 import {
   isAdvertised,
   methodCapability,
-  type DwarfId,
   type HelloOk,
   type HostMethods,
   type ProtocolErrorCode
@@ -99,9 +101,8 @@ export type UpgradeFlowResult =
   | { kind: 'swapped'; ensure: EnsureHostResult }
   /** The newer Host stopped everything and closed; this UI's own Host was ensured. */
   | { kind: 'own-host'; ensure: EnsureHostResult }
-  /** The person declined the notice or the stop-all: nothing was sent. */
+  /** The person declined the blocking notice: nothing was sent. */
   | { kind: 'declined' }
-  | { kind: 'stop-all-incomplete'; link: HostLink; failed: DwarfId[] }
   /** The confirmed restart could not be asked: no previous-generation `hello`, or refused. */
   | { kind: 'restart-unavailable' }
   /** The connection closed without `host.closing`: ADR-002 D9's reconnect rule owns it. */
@@ -118,8 +119,8 @@ export interface UpgradeFlowDeps {
   >
   /** ADR-002 D4: attach to or spawn the Host (launcher.ts). */
   ensureHostRunning(): Promise<EnsureHostResult>
-  /** The person's answer to the blocking notice or the stop-all confirmation (copy: design). */
-  confirm(question: 'generation-restart' | 'stop-everything'): Promise<boolean>
+  /** The person's answer to the blocking notice (A-N33 `confirmHostRestart`; copy: design). */
+  confirm(question: 'generation-restart'): Promise<boolean>
   report(state: UpgradeFlowState): void
   /** A UUIDv7 per intent (14 §1.6). */
   newRequestId(): string
@@ -168,7 +169,7 @@ export async function runUpgradeFlow(deps: UpgradeFlowDeps): Promise<UpgradeFlow
       return requestUpgrade(deps, link, record)
     case 'incompatible-offer-stop-all':
       deps.report({ phase: 'incompatible', hostVersion })
-      return stopNewerHost(deps, link)
+      return awaitNewerHostStop(deps, link)
   }
 }
 
@@ -218,17 +219,11 @@ async function restartOlderGeneration(deps: UpgradeFlowDeps): Promise<UpgradeFlo
   return startAfterClose(deps, previous.link, 'upgrade')
 }
 
-/** D8 item 5: an older UI offers only Stop everything and quit, then starts its own Host. */
-async function stopNewerHost(deps: UpgradeFlowDeps, link: HostLink): Promise<UpgradeFlowResult> {
-  if (!advertises(link, 'host.shutdown')) return { kind: 'declined' }
-  if (!(await deps.confirm('stop-everything'))) return { kind: 'declined' }
-  const answer = await link.call('host.shutdown', {
-    mode: 'stop-all',
-    requestId: deps.newRequestId()
-  })
-  if (answer.ok && answer.result.mode === 'stop-all' && answer.result.outcome.failed.length > 0) {
-    return { kind: 'stop-all-incomplete', link, failed: answer.result.outcome.failed }
-  }
+/**
+ * D8 item 5: an older UI offers only Stop everything and quit (the `incompatible` report), which the app's own flow
+ * runs; once the newer Host has closed for it, this UI starts its own Host.
+ */
+function awaitNewerHostStop(deps: UpgradeFlowDeps, link: HostLink): Promise<UpgradeFlowResult> {
   return startAfterClose(deps, link, 'stop-all')
 }
 

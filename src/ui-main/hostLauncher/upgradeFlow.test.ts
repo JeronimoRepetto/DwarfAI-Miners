@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROTOCOL_VERSION, type DwarfId } from '@dwarfai/contracts'
+import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { FakeHostLink } from './fakes/FakeHostLink'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
 import type { EnsureHostResult } from './launcher'
@@ -16,7 +16,6 @@ import {
 
 const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
 const TARGET_DIR = '/data/j/dwarfai/host/0.21.0'
-const FAILED_DWARF = '01890a5d-ac96-774b-bcce-b302099a8062' as DwarfId
 
 interface World {
   deps: UpgradeFlowDeps
@@ -170,24 +169,31 @@ describe('the UI half of the upgrade handshake (ADR-002 D8; UC-026)', () => {
     ])
   })
 
+  // AMENDED (fix/compose-d8-upgrade, composing D8 into the app): the flow no longer asks a bare confirmation and sends
+  // `host.shutdown {stop-all}` itself. The offer is the `incompatible` report: the renderer's message runs the app's own
+  // Stop everything and quit (A-N34 → A-N25 confirmation with the owned count → A-N26 through LegacyEndFirstAdapter,
+  // the only path of A-N26 to the Host through cut 4, 21 §3; ADR-002 D7; UC-026 "Stop everything and quit, confirmed"
+  // in R), and the flow waits for that Host's `host.closing {stop-all}` before it starts its own Host (D8 item 5).
   it('[ADR-002, FM-133] an older UI never sends host.upgrade.request, offers only stop-all and, once the Host has exited, starts its own Host', async () => {
-    // Declined: nothing at all is sent.
-    const declinedLink = new FakeHostLink({ protocolVersion: PROTOCOL_VERSION + 1 })
-    const declined = world({ first: attached(declinedLink) })
-    const declining = runUpgradeFlow(declined.deps)
+    // The newer Host goes away without a clean close: a lost connection, never a stop-all; nothing is started here.
+    const lostLink = new FakeHostLink({ protocolVersion: PROTOCOL_VERSION + 1 })
+    const lost = world({ first: attached(lostLink), confirm: true })
+    const losing = runUpgradeFlow(lost.deps)
     await settle()
-    expect(declinedLink.calls).toEqual([])
-    declinedLink.hostClosed(null)
-    expect(await declining).toEqual({ kind: 'declined' })
-    expect(declined.questions).toEqual(['stop-everything'])
+    expect(lostLink.calls).toEqual([])
+    lostLink.hostClosed(null)
+    expect(await losing).toEqual({ kind: 'lost' })
+    expect(lost.questions).toEqual([])
+    expect(lost.ensured).toBe(0)
 
     const link = new FakeHostLink({ protocolVersion: PROTOCOL_VERSION + 1, hostVersion: '0.22.0' })
     const w = world({ first: attached(link), confirm: true })
     const running = runUpgradeFlow(w.deps)
     await settle()
-    expect(link.calls).toEqual([
-      { method: 'host.shutdown', params: { mode: 'stop-all', requestId: REQUEST_ID } }
-    ])
+    // Offered, not sent: the flow sends nothing and asks nothing; the app's Stop everything and quit stops the Host.
+    expect(link.calls).toEqual([])
+    expect(w.questions).toEqual([])
+    expect(w.ensured).toBe(0)
     link.hostClosed('stop-all')
 
     expect(await running).toEqual({ kind: 'own-host', ensure: 'spawned' })
@@ -199,22 +205,20 @@ describe('the UI half of the upgrade handshake (ADR-002 D8; UC-026)', () => {
   })
 
   it('[S12.21] an older UI whose stop-all could not end every session stays incompatible and starts nothing', async () => {
-    const link = new FakeHostLink({
-      protocolVersion: PROTOCOL_VERSION + 1,
-      answers: {
-        'host.shutdown': {
-          ok: true,
-          result: { mode: 'stop-all', outcome: { ended: [], failed: [FAILED_DWARF] } }
-        }
-      }
-    })
+    // AMENDED (fix/compose-d8-upgrade): the app's Stop everything answered a non-empty `failed` and the Host kept
+    // running (INV-121): no `host.closing` reaches the flow, which keeps waiting and starts nothing.
+    const link = new FakeHostLink({ protocolVersion: PROTOCOL_VERSION + 1 })
     const w = world({ first: attached(link), confirm: true })
+    let settled = false
 
-    const result = await runUpgradeFlow(w.deps)
+    void runUpgradeFlow(w.deps).then(() => (settled = true))
+    await settle()
 
-    expect(result).toEqual({ kind: 'stop-all-incomplete', link, failed: [FAILED_DWARF] })
+    expect(settled).toBe(false)
+    expect(link.calls).toEqual([])
     expect(w.ensured).toBe(0)
     expect(w.states).toEqual([{ phase: 'incompatible', hostVersion: '0.20.0' }])
+    link.close()
   })
 
   it('[ADR-002] a Host that closes without host.closing during the drain is a lost connection, never an upgrade: the flow starts no Host', async () => {

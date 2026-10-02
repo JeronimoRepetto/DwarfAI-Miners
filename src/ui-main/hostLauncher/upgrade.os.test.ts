@@ -305,28 +305,45 @@ describe('the upgrade handshake between two builds (ADR-002 D8; 21 §2.1 item 3)
         const launcher = createNodeHostLauncher(options)
         const states: UpgradeFlowState[] = []
         const questions: string[] = []
-        const result = await runUpgradeFlow({
+        let offered: () => void = () => {}
+        const incompatible = new Promise<void>((resolve) => (offered = resolve))
+        const flow = runUpgradeFlow({
           build: { ...OLDER, endpointGeneration: 1 },
           attach: ports.attach,
           prepareTarget: ports.prepareTarget,
           ensureHostRunning: () => launcher.ensureHostRunning(),
-          // The person confirms Stop everything and quit, the only action offered.
           confirm: (question) => {
             questions.push(question)
             return Promise.resolve(true)
           },
-          report: (state) => states.push(state),
+          report: (state) => {
+            states.push(state)
+            if (state.phase === 'incompatible') offered()
+          },
           newRequestId: () => REQUEST_ID,
           log
         })
+        // AMENDED (fix/compose-d8-upgrade, D8 composed into the app): the flow only offers Stop everything and quit;
+        // the app's own flow sends it (A-N34 → A-N26 through LegacyEndFirstAdapter, 21 §3; UC-026). The person
+        // confirms it: this stand-in sends `host.shutdown {stop-all}` on its own `ui` connection, as that flow does.
+        await incompatible
+        const stopper = await ports.attach('current')
+        if (stopper.kind !== 'attached') throw new Error('the stand-in could not attach')
+        const stopped = await stopper.link.call('host.shutdown', {
+          mode: 'stop-all',
+          requestId: REQUEST_ID
+        })
+        expect(stopped.ok).toBe(true)
+        const result = await flow
+        stopper.link.close()
 
         expect(result, JSON.stringify(log.entries)).toEqual({ kind: 'own-host', ensure: 'spawned' })
         expect(states).toEqual([
           { phase: 'incompatible', hostVersion: '0.0.0' },
           { phase: 'restarting', reason: 'stop-all' }
         ])
-        expect(questions).toEqual(['stop-everything'])
-        // The newer Host was never asked for an upgrade: only Stop everything and quit.
+        expect(questions).toEqual([])
+        // The newer Host was never asked for an upgrade: only Stop everything and quit (the stand-in's).
         expect(await exitsWithin(running.pid, 10_000), 'the newer Host exited').toBe(true)
         const newerReport = reportsIn(world.hostDataDir).find(
           (report) => report.pid === running.pid
