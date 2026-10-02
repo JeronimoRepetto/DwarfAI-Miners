@@ -62,9 +62,13 @@ production source: the Host has no native module.
 | macOS   | `bootId`         | `sysctl kern.bootsessionuuid` (ADR-015 as written)                             | spawn `/usr/sbin/sysctl`                   |
 | macOS   | `bootTimeMs`     | `sysctl kern.boottime` (ADR-015 as written)                                    | spawn `/usr/sbin/sysctl`                   |
 | macOS   | `logonSessionId` | `SECURITYSESSIONID` (environment), `ps -o sess=`                               | in process / spawn `/bin/ps`               |
+| macOS   | `logonSessionId` | the user's `console` line in `who` (utmpx login minute)                        | spawn `/usr/bin/who`                       |
+| macOS   | `logonSessionId` | start time of the user's `loginwindow` process (`ps -axo uid=,lstart=,comm=`)  | spawn `/bin/ps`                            |
 
 ADR-015 names the audit session id (`getaudit_addr`) for macOS. Node has no binding for it, so the spike measures the
-two values a Node process can read instead.
+values a Node process can read instead. The last two were added after P2 (below). Both readers run with `LC_ALL=C` and
+`TZ=UTC0`: `who` and `ps` print their times with `strftime`, whose names follow the locale and whose clock follows
+the time zone. The `loginwindow` row is matched by uid, so no user name is parsed.
 
 ## Observed on Windows 11 Pro 10.0.26200 (2026-09-30, this machine, Fast Startup on)
 
@@ -95,6 +99,30 @@ Other facts from the same run:
   is step W4 and W2.
 - CIM `LastBootUpTime` costs 0.4–0.8 s warm here, and ISSUE-018 saw a cold read above the 2 000 ms bound. `reg.exe`
   and `whoami.exe` cost 23–122 ms.
+
+## Observed on macOS 26.6.2 (2026-10-02, the owner's Mac, arm64)
+
+From `spike-results/S-015-2/macos-26.6.2-*.json` (Node 24.21.0 for the OS lane and P1-before, Node 22.22.3 after the
+restart). Steps P0, P1, P2 and a second logout P2b with the two GUI-login sources.
+
+| Source                            | Readable  | Stable in one boot | Restart (P1) | Logout (P2, P2b)                               | Latency  |
+| --------------------------------- | --------- | ------------------ | ------------ | ---------------------------------------------- | -------- |
+| `sysctl kern.bootsessionuuid`     | yes       | yes                | changed      | same                                           | 3–9 ms   |
+| `sysctl kern.boottime`            | yes       | yes, exact to ms   | changed      | same                                           | 2–7 ms   |
+| `now − os.uptime()`               | yes       | ±1 s between reads | changed      | same (±1 s)                                    | 0–0.1 ms |
+| `SECURITYSESSIONID`               | mostly no | —                  | null → set   | set → null, also in a fresh Terminal.app shell | 0 ms     |
+| `ps -o sess=`                     | yes       | yes, always `0`    | same         | same                                           | 2–9 ms   |
+| `who` console login               | yes       | yes                | not measured | changed (P2b), to the minute                   | 3–4 ms   |
+| `loginwindow` start (`ps lstart`) | yes       | yes                | not measured | changed (P2b), to the second                   | 37–40 ms |
+
+- `SECURITYSESSIONID` depends on how the process was started, not on the login, and `ps -o sess=` is `0` for every
+  process. Neither is a logon identity.
+- The `who` and `loginwindow` values of P2b were recorded with the first version of the readers, in the Mac's local
+  time zone (the `loginwindow` value was parsed with `Date.parse`, which gives the same instant). The readers now
+  force `LC_ALL=C` and `TZ=UTC0`, so a `who` value read today is printed in UTC and does not compare with the P2b
+  strings; the `loginwindow` instants do.
+- Not measured: fast user switching (two GUI users at once), sleep and resume, a day of uptime (P3), and the readers
+  under `ELECTRON_RUN_AS_NODE`.
 
 ## Manual procedure — Windows 11
 

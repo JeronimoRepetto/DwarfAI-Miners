@@ -1,0 +1,46 @@
+{
+  "label": "after-P1",
+  "takenAt": "2026-10-02T19:18:15.645Z",
+  "platform": "darwin",
+  "osRelease": "25.6.0",
+  "osVersion": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:18:49 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6000",
+  "node": "22.22.3",
+  "fastStartup": null,
+  "readings": [
+    {
+      "source": "sysctl kern.bootsessionuuid",
+      "field": "bootId",
+      "value": "c761abbd23de",
+      "latencyMs": 3.7,
+      "error": null
+    },
+    {
+      "source": "sysctl kern.boottime",
+      "field": "bootTimeMs",
+      "value": 1790968608092,
+      "latencyMs": 2.6,
+      "error": null
+    },
+    {
+      "source": "now - os.uptime() (Node, in process)",
+      "field": "bootTimeMs",
+      "value": 1790968609000,
+      "latencyMs": 0,
+      "error": null
+    },
+    {
+      "source": "SECURITYSESSIONID (environment, audit session)",
+      "field": "logonSessionId",
+      "value": "01fdec1a4839",
+      "latencyMs": 0,
+      "error": null
+    },
+    {
+      "source": "ps -o sess= (session of this process)",
+      "field": "logonSessionId",
+      "value": "5feceb66ffc8",
+      "latencyMs": 2.9,
+      "error": null
+    }
+  ]
+}
