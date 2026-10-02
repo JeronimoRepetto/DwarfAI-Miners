@@ -14,7 +14,8 @@
     "directories": {
       "output": "release"
     },
-    "afterPack": "scripts/pruneSdkRuntimes.mjs",
+    "afterPack": "scripts/build/afterPack.mjs",
+    "afterSign": "scripts/build/afterSign.mjs",
     "files": [
       "out/**/*",
       "prebuilds/**/*",
