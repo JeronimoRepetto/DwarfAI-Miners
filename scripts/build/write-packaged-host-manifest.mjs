@@ -11,7 +11,7 @@
 // after signing. verify-packaged-host-manifest.mjs fails any build whose manifest no longer matches its app.
 //
 // Plain Node: the TypeScript modules it imports use Node built-ins only, and Node 24 strips their types.
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { packagedResourcesRelativeOf } from '../../src/ui-main/hostLauncher/copySource.ts'
 import {
@@ -56,8 +56,27 @@ export async function writePackagedHostManifest(sourceDir, platform) {
 }
 
 /**
+ * The files electron-builder 26's installer targets write into the packed folder while they build, after every
+ * hook, so no manifest written by a hook can list them (app-builder-lib 26.15.3):
+ * - Windows, `nsis` and `portable`: `resources/elevate.exe`, copied by CopyElevateHelper (targets/nsis/nsisUtil.js)
+ *   from AppPackageHelper.packArch, right before the folder is archived into the installer.
+ * - Linux, `deb`: `resources/apparmor-profile`, always (targets/FpmTarget.js, for Ubuntu 24+); `deb` and
+ *   `AppImage`: `resources/app-update.yml`, and for `deb` `resources/package-type`, when a publish configuration
+ *   exists (targets/FpmTarget.js, targets/appimage/AppImageTarget.js).
+ * They serve the installer and the updater, never the Host, which runs under ELECTRON_RUN_AS_NODE from its
+ * versioned copy; the launcher copies only the entries the manifest lists, so they never reach that copy.
+ */
+export const INSTALLER_FILES = {
+  win32: ['resources/elevate.exe'],
+  linux: ['resources/apparmor-profile', 'resources/app-update.yml', 'resources/package-type'],
+  darwin: []
+}
+
+/**
  * Whether the packed app at `sourceDir` carries a manifest that matches it byte for byte, the check a fresh
- * versioned copy of it passes: `missing`, `invalid` (a file the launcher would refuse) or `mismatch`.
+ * versioned copy of it passes: `missing`, `invalid` (a file the launcher would refuse) or `mismatch`, which
+ * names every differing entry (manifestDifferences). An installer file of this OS (INSTALLER_FILES) that the
+ * manifest does not list is left out of the comparison and named in `installerFiles`; any other extra fails.
  */
 export async function verifyPackagedHostManifest(sourceDir, platform) {
   const { manifestPath, relative } = packagedManifestOf(sourceDir, platform)
@@ -65,8 +84,60 @@ export async function verifyPackagedHostManifest(sourceDir, platform) {
   if (text === null) return { ok: false, reason: 'missing' }
   const parsed = parseManifest(text)
   if (!parsed.ok) return { ok: false, reason: 'invalid' }
-  const check = await verifyManifest(sourceDir, parsed.value, { exclude: [relative] })
-  return check.ok ? { ok: true } : { ok: false, reason: 'mismatch' }
+  const listed = new Set(parsed.value.entries.map((entry) => entry.path))
+  const unlisted = INSTALLER_FILES[platform].filter((file) => !listed.has(file))
+  const installerFiles = []
+  for (const file of unlisted) {
+    if (await lstat(path.join(sourceDir, ...file.split('/'))).catch(() => null)) {
+      installerFiles.push(file)
+    }
+  }
+  const exclude = [relative, ...installerFiles]
+  const check = await verifyManifest(sourceDir, parsed.value, { exclude })
+  if (check.ok) return installerFiles.length === 0 ? { ok: true } : { ok: true, installerFiles }
+  const actual = await buildManifest(sourceDir, { exclude }).catch(() => ({ entries: [] }))
+  return {
+    ok: false,
+    reason: 'mismatch',
+    differences: manifestDifferences(parsed.value.entries, actual.entries)
+  }
+}
+
+/**
+ * Every entry on which the manifest (`expected`) and the packed app (`actual`) differ, by path: `missing`
+ * from the app, `extra` in it, or `changed` (another size, hash, link target or kind).
+ */
+export function manifestDifferences(expected, actual) {
+  const found = new Map(actual.map((entry) => [entry.path, entry]))
+  const differences = []
+  for (const entry of expected) {
+    const other = found.get(entry.path)
+    found.delete(entry.path)
+    if (other === undefined)
+      differences.push({ path: entry.path, change: 'missing', expected: entry })
+    else if (JSON.stringify(other) !== JSON.stringify(entry)) {
+      differences.push({ path: entry.path, change: 'changed', expected: entry, actual: other })
+    }
+  }
+  for (const entry of found.values())
+    differences.push({ path: entry.path, change: 'extra', actual: entry })
+  return differences.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+}
+
+/** One difference as the check prints it. */
+export function describeDifference(difference) {
+  const { change, path: where, expected, actual } = difference
+  if (change !== 'changed') return `${change} ${where}`
+  if (expected.kind === 'file' && actual.kind === 'file') {
+    return `changed ${where}: size ${expected.size} -> ${actual.size}, sha256 ${expected.sha256.slice(0, 12)} -> ${actual.sha256.slice(0, 12)}`
+  }
+  return `changed ${where}: ${describeEntry(expected)} -> ${describeEntry(actual)}`
+}
+
+function describeEntry(entry) {
+  return entry.kind === 'file'
+    ? `file of ${entry.size} bytes, sha256 ${entry.sha256.slice(0, 12)}`
+    : `link to ${entry.target}`
 }
 
 /** electron-builder's afterPack step (called by scripts/build/afterPack.mjs, after the prune). */

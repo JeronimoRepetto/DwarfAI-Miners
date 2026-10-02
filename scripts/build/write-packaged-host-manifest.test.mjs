@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,6 +78,10 @@ function packedApp(
     resourcesDir: path.join(appOutDir, 'resources'),
     relative: 'resources/host-manifest.json'
   }
+}
+
+function sha256Of(text) {
+  return createHash('sha256').update(text).digest('hex')
 }
 
 function contextOf(appOutDir, electronPlatformName) {
@@ -155,7 +168,15 @@ describe('write-packaged-host-manifest.mjs (ADR-002 D5)', () => {
     writeFileSync(path.join(app.appOutDir, `${PRODUCT}.exe`), 'signed exe')
     expect(await verifyPackagedHostManifest(app.sourceDir, 'win32')).toEqual({
       ok: false,
-      reason: 'mismatch'
+      reason: 'mismatch',
+      differences: [
+        {
+          path: `${PRODUCT}.exe`,
+          change: 'changed',
+          expected: { path: `${PRODUCT}.exe`, kind: 'file', size: 3, sha256: sha256Of('exe') },
+          actual: { path: `${PRODUCT}.exe`, kind: 'file', size: 10, sha256: sha256Of('signed exe') }
+        }
+      ]
     })
 
     writeFileSync(path.join(app.resourcesDir, 'host-manifest.json'), '{"format":9}')
@@ -163,6 +184,54 @@ describe('write-packaged-host-manifest.mjs (ADR-002 D5)', () => {
       ok: false,
       reason: 'invalid'
     })
+  })
+
+  // The files electron-builder 26's installer targets write into the packed folder while they build, after
+  // every hook (app-builder-lib nsisUtil.js CopyElevateHelper, FpmTarget.js, AppImageTarget.js). They belong to
+  // the installer or the updater, never to the Host, and the launcher copies only listed entries.
+  it.each([
+    ['win32', ['resources/elevate.exe']],
+    ['linux', ['resources/apparmor-profile', 'resources/app-update.yml', 'resources/package-type']]
+  ])(
+    '[ADR-002] on %s the files an installer target adds after every hook are accepted as extras',
+    async (platform, files) => {
+      const app = packedApp(platform)
+      await afterPack(contextOf(app.appOutDir, platform))
+      for (const file of files)
+        write(path.join(app.sourceDir, ...file.split('/')), 'installer file')
+
+      expect(await verifyPackagedHostManifest(app.sourceDir, platform)).toEqual({
+        ok: true,
+        installerFiles: files
+      })
+    }
+  )
+
+  it('[ADR-002] any other extra file, or an installer file of another OS, still fails the check', async () => {
+    const app = packedApp('linux')
+    await afterPack(contextOf(app.appOutDir, 'linux'))
+    write(path.join(app.resourcesDir, 'elevate.exe'), 'not a Linux installer file')
+    write(path.join(app.resourcesDir, 'late.so'), 'added after the hook')
+
+    const check = await verifyPackagedHostManifest(app.sourceDir, 'linux')
+
+    expect(check.ok).toBe(false)
+    expect(check.differences.map(({ path: where, change }) => `${change} ${where}`)).toEqual([
+      'extra resources/elevate.exe',
+      'extra resources/late.so'
+    ])
+  })
+
+  it('[ADR-002] an installer file the manifest lists is checked like any other entry', async () => {
+    const app = packedApp('win32')
+    write(path.join(app.resourcesDir, 'elevate.exe'), 'there before the hook')
+    await afterPack(contextOf(app.appOutDir, 'win32'))
+    writeFileSync(path.join(app.resourcesDir, 'elevate.exe'), 'replaced after the hook')
+
+    const check = await verifyPackagedHostManifest(app.sourceDir, 'win32')
+
+    expect(check.ok).toBe(false)
+    expect(check.differences.map(({ change }) => change)).toEqual(['changed'])
   })
 })
 
@@ -259,6 +328,51 @@ describe('verify-packaged-host-manifest.mjs (CI check after packaging)', () => {
 
     writeFileSync(path.join(winOut, 'resources', 'app.asar'), 'changed after the hook')
     expect(run(release).code, 'a stale manifest').toBe(1)
+  })
+
+  it('[ADR-002] an installer file the nsis target added passes and is named in the output', async () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'dwarfai-packaged-release-'))
+    dirs.push(base)
+    const app = packedApp('win32', base)
+    const release = path.join(base, 'release')
+    const winOut = path.join(release, 'win-unpacked')
+    mkdirSync(release)
+    renameSync(app.appOutDir, winOut)
+    await afterPack(contextOf(winOut, 'win32'))
+    write(path.join(winOut, 'resources', 'elevate.exe'), 'nsis elevate helper')
+
+    const result = run(release)
+
+    expect(result.code, result.output).toBe(0)
+    expect(result.output.split(/\r?\n/).filter(Boolean)).toEqual([
+      'host-manifest: win-unpacked ok (installer files, not in the Host copy: resources/elevate.exe)'
+    ])
+  })
+
+  it('[ADR-002] a mismatch names each differing entry: changed with its size and hash, missing, or extra', async () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'dwarfai-packaged-release-'))
+    dirs.push(base)
+    const app = packedApp('win32', base)
+    // electron-builder's own folder name, which the check looks for.
+    const release = path.join(base, 'release')
+    const winOut = path.join(release, 'win-unpacked')
+    mkdirSync(release)
+    renameSync(app.appOutDir, winOut)
+    await writePackagedManifest(contextOf(winOut, 'win32'))
+    writeFileSync(path.join(winOut, 'resources', 'app.asar'), 'changed after the hook')
+    rmSync(path.join(winOut, 'locales', 'en-US.pak'))
+    write(path.join(winOut, 'resources', 'added-later.dll'), 'added')
+
+    const result = run(release)
+
+    expect(result.code).toBe(1)
+    const short = (text) => sha256Of(text).slice(0, 12)
+    expect(result.output.split(/\r?\n/).filter(Boolean)).toEqual([
+      'host-manifest: win-unpacked mismatch',
+      '  missing locales/en-US.pak',
+      '  extra resources/added-later.dll',
+      `  changed resources/app.asar: size 13 -> 22, sha256 ${short('archive bytes')} -> ${short('changed after the hook')}`
+    ])
   })
 
   it('[ADR-002] a release folder without any packed app fails the check instead of passing empty', () => {
