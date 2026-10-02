@@ -31,12 +31,16 @@
 // adds `db-read-only` to `hello.ok.capabilities`. `session.snapshot` (ISSUE-026) serves the sections of the
 // SectionRegistry, advertised as `section:<name>`: at cut 0 the `meta` section only, over the
 // boot-state SnapshotMetaSource bound here (`resetEpoch` from `app_meta`, `minesEverKnown` false
-// until the mines module reads its table, later: ISSUE-082). Bound later, each by its issue: the modules and
-// their bridges (16 §8.2 step 4).
+// until the mines module reads its table, later: ISSUE-082). Boot step 4 constructs the modules over the
+// database step 2 opened (16 §8.2), each wired by its issue: suppliers (ISSUE-159) with the one
+// CliInstallResolver, the SqliteCapabilityRecordStore and the Host's event bus; the others join later.
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
 import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
+import type { Suppliers, SuppliersEvent } from './modules/suppliers'
+import { createHostInstallResolver } from './modules/suppliers/adapters/install/hostInstallResolver'
+import { SqliteCapabilityRecordStore } from './modules/suppliers/adapters/sqlite/SqliteCapabilityRecordStore'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
@@ -78,7 +82,8 @@ import { composeHostLifecycle } from './wiring/hostLifecycle'
 import { installUncaughtHandlers } from './wiring/uncaught'
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
-import { HostInvariantError } from './kernel'
+import { isPublicBuild, wireSuppliers } from './wiring/suppliersWiring'
+import { HostInvariantError, InProcessEventBus } from './kernel'
 import type { CleanExit } from './transport/lifecycle/cleanExit'
 
 /** The app's version, stamped by electron.vite.host.config.ts from package.json. */
@@ -154,6 +159,8 @@ async function main(): Promise<void> {
   // Opened by boot step 2 (createHostDatabase below). `session.snapshot` is served only once the
   // Host is past `starting` and `migrating` (HOST_NOT_READY before), so after step 2 opened it.
   let database: HostDatabase | undefined
+  // The modules boot step 4 constructs, for the bridges and transport methods that join later.
+  const modules: { suppliers?: Suppliers } = {}
   // The module sections join this registry here, each with its module (16 §8.2 step 4).
   const sections = new SectionRegistry()
   const snapshotMeta: SnapshotMetaSource = {
@@ -284,7 +291,40 @@ async function main(): Promise<void> {
         processControl,
         log,
         endpoint,
-        database: opened
+        database: opened,
+        constructModules: () => {
+          const { db, transactions } = opened.connection()
+          // The Host's one event bus (16 §2.3); each module's events join its union with the module.
+          const bus = new InProcessEventBus<SuppliersEvent>({
+            transactionScope: transactions,
+            onHandlerError: (failure) =>
+              log.record({
+                level: 'error',
+                event: 'uncaught',
+                subsystem: 'host',
+                errCode: errorCode(failure.error)
+              })
+          })
+          modules.suppliers = wireSuppliers({
+            publicBuild: isPublicBuild(buildKindOf(dataDir)),
+            clock,
+            scheduler,
+            ids,
+            fs,
+            log,
+            installResolver: createHostInstallResolver({ fs, processControl, scheduler }),
+            capabilityRecords: new SqliteCapabilityRecordStore({
+              db,
+              tx: transactions,
+              ids,
+              log
+            }),
+            bus,
+            hostEpoch: epoch,
+            // A new demo world each Host start (15 §4.12); development builds only.
+            simulatedSeed: epoch
+          })
+        }
       })
     },
     {
