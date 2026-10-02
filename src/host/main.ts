@@ -6,7 +6,8 @@
 //
 // It arms no parent-death watchdog and no idle timer: the Host never exits on its own (ADR-002 D1,
 // D7; OQ-63; AMENDMENT-5). It exits through the boot's `exit`, for a refusal (ALREADY_RUNNING,
-// ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot, and otherwise only through the clean exit
+// ELEVATED_REFUSED, NO_DATA_DIR) or a failed boot, after a logged uncaught error (wiring/uncaught.ts,
+// FM-001), and otherwise only through the clean exit
 // (composeHostLifecycle: checkpoint, `host.closing`, endpoint closed, exit 0), which the OS session
 // end, Stop everything and quit (`host.shutdown {stop-all}`, ISSUE-029) and the upgrade drain
 // (`host.upgrade.request` or `host.shutdown {upgrade-drain}`, ISSUE-032) start. What keeps the
@@ -74,6 +75,7 @@ import { createHostDispatcher } from './wiring/hostDispatcher'
 import { createBootSteps, createUiEndpoint, mintBootEpoch } from './wiring/bootSteps'
 import { createHostDatabase, HOST_DB_FILE, type HostDatabase } from './wiring/hostDatabase'
 import { composeHostLifecycle } from './wiring/hostLifecycle'
+import { installUncaughtHandlers } from './wiring/uncaught'
 import { emptyDrainGate } from './wiring/emptyDrainGate'
 import { emptyOwnerStopAll } from './wiring/emptyOwnerStopAll'
 import { HostInvariantError } from './kernel'
@@ -122,6 +124,9 @@ async function main(): Promise<void> {
     level: logLevelFromEnv(process.env),
     appRoot
   })
+  // 19 §9.1 `uncaught`, §11 (FM-001): logged, flushed, then the Host exits non-zero and the UI
+  // sees the crash.
+  installUncaughtHandlers({ process, log, exit: (code) => process.exit(code) })
   const scheduler = new NodeScheduler({
     onTaskError: (error) =>
       log.record({

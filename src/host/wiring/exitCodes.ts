@@ -19,3 +19,9 @@ export const EXIT_CODES: Readonly<Record<HostRefusal, number>> = Object.freeze({
 
 /** A boot step threw (FM-008): the boot stopped before `ready`. */
 export const BOOT_FAILED_EXIT_CODE = 1
+
+/**
+ * An uncaught exception or unhandled rejection after the Host logged it (19 §11, FM-001): the code
+ * Node itself exits with for one, so the UI reads it as a crash.
+ */
+export const UNCAUGHT_EXIT_CODE = 1
