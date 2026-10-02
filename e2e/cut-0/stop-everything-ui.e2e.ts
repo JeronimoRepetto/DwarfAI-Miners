@@ -43,6 +43,23 @@ test.describe('cut 0: the Stop everything confirmation in the window (ISSUE-317)
     const confirmation = window.getByRole('dialog')
     await expect(confirmation).toBeVisible({ timeout: 30_000 })
     expect(await anyWindowVisible(app), 'the confirmation opened the window').toBe(true)
+    // Owner's rule (2026-10-02): a popup never scrolls sideways; its text wraps to the card. The long COPY NEEDED
+    // markers are the longest words it holds today.
+    const overflow = await confirmation.evaluate((card) =>
+      [
+        card,
+        ...card.querySelectorAll('.dm-dialog__title, .dm-dialog__body, .dm-dialog__actions')
+      ].map((part) => ({
+        part: part.className,
+        scrollWidth: part.scrollWidth,
+        clientWidth: part.clientWidth
+      }))
+    )
+    for (const part of overflow) {
+      expect(part.scrollWidth, `${part.part} scrolls sideways`).toBeLessThanOrEqual(
+        part.clientWidth
+      )
+    }
 
     await confirmation.getByRole('button', { name: 'Cancel' }).click()
     await expect(confirmation).toBeHidden()

@@ -78,7 +78,14 @@ function enter(event: KeyboardEvent): void {
 </template>
 
 <style scoped>
-/* The design's dialog.css, rule for rule; the scrim is ModalDialog's. */
+/*
+ * The design's dialog.css, rule for rule, plus the owner's rule (2026-10-02): a popup never scrolls sideways, its text
+ * wraps to the card whatever its words (a long COPY NEEDED marker, real copy, a translation). The card keeps the
+ * design's width bounds; its one column is never wider than the card (`minmax(0, 1fr)`, where the implicit `auto`
+ * column grew to the widest unbreakable line); the title, the body and the action labels wrap, a long word included,
+ * where a button keeps one line by default (ActionButton `nowrap`); and nothing scrolls sideways. The scrim is
+ * ModalDialog's.
+ */
 .dm-dialog {
   --mat-fill: var(--wood);
   --mat-hi: var(--wood-hi);
@@ -87,9 +94,11 @@ function enter(event: KeyboardEvent): void {
   width: min(380px, 100%);
   max-height: calc(100vh - 32px);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   padding: 18px 18px 14px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .dm-dialog--wide {
   width: min(520px, 100%);
@@ -97,6 +106,7 @@ function enter(event: KeyboardEvent): void {
 .dm-dialog__title {
   font: var(--fs-title) / 1.15 var(--f-display);
   color: var(--gold);
+  overflow-wrap: anywhere;
 }
 .dm-dialog--danger {
   --mat-edge: var(--danger);
@@ -106,7 +116,9 @@ function enter(event: KeyboardEvent): void {
 }
 .dm-dialog__body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
+  overflow-wrap: anywhere;
   font: var(--fs-body) / 1.4 var(--f-talk);
   color: var(--ink);
 }
@@ -119,6 +131,13 @@ function enter(event: KeyboardEvent): void {
   padding-top: 4px;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+.dm-dialog__actions :deep(.dm-btn) {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+  text-align: center;
 }
 .dm-dialog__typed {
   display: grid;
