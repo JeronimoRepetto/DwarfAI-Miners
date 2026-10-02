@@ -103,34 +103,36 @@ function invokeOrReject<T>(invoke: () => Promise<T>): Promise<T> {
 
 /** API surface exposed to the renderer as `window.api`. */
 export interface DwarfAiMinersApi {
-  /** A-01 · `panel:hide` · send · KEEP · today shape */
+  /** A-01 · `panel:hide` · send · KEEP · target shape */
   hidePanel: () => void
-  /** A-02 · `panel:raise` · send · KEEP · today shape */
+  /** A-02 · `panel:raise` · send · KEEP · target shape */
   raisePanel: () => void
-  /** A-03 · `panel:getAlwaysOnTop` · invoke · KEEP · today shape */
-  getAlwaysOnTop: () => Promise<TodayResult<'panel:getAlwaysOnTop'>>
-  /** A-04 · `panel:setAlwaysOnTop` · invoke · KEEP · today shape */
+  /** A-03 · `panel:getAlwaysOnTop` · invoke · KEEP · target shape */
+  getAlwaysOnTop: () => Promise<TargetResult<'panel:getAlwaysOnTop'>>
+  /** A-04 · `panel:setAlwaysOnTop` · invoke · KEEP · target shape */
   setAlwaysOnTop: (
-    request: TodayRequest<'panel:setAlwaysOnTop'>
-  ) => Promise<TodayResult<'panel:setAlwaysOnTop'>>
-  /** A-05 · `panel:visible:get` · invoke · KEEP · today shape */
-  getPanelVisible: () => Promise<TodayResult<'panel:visible:get'>>
-  /** A-06 · `audio:preferences:get` · invoke · KEEP · today shape */
-  getAudioPreferences: () => Promise<TodayResult<'audio:preferences:get'>>
-  /** A-07 · `audio:preferences:set` · invoke · KEEP · today shape */
+    request: TargetRequest<'panel:setAlwaysOnTop'>
+  ) => Promise<TargetResult<'panel:setAlwaysOnTop'>>
+  /** A-05 · `panel:visible:get` · invoke · KEEP · target shape */
+  getPanelVisible: () => Promise<TargetResult<'panel:visible:get'>>
+  /** A-06 · `audio:preferences:get` · invoke · KEEP · target shape */
+  getAudioPreferences: () => Promise<TargetResult<'audio:preferences:get'>>
+  /** A-07 · `audio:preferences:set` · invoke · KEEP · target shape */
   setAudioPreferences: (
-    request: TodayRequest<'audio:preferences:set'>
-  ) => Promise<TodayResult<'audio:preferences:set'>>
-  /** A-08 · `panel:layout:get` · invoke · KEEP · today shape */
-  getPanelLayout: () => Promise<TodayResult<'panel:layout:get'>>
-  /** A-09 · `panel:layout:set` · invoke · KEEP · today shape */
+    request: TargetRequest<'audio:preferences:set'>
+  ) => Promise<TargetResult<'audio:preferences:set'>>
+  /** A-08 · `panel:layout:get` · invoke · KEEP · target shape */
+  getPanelLayout: () => Promise<TargetResult<'panel:layout:get'>>
+  /** A-09 · `panel:layout:set` · invoke · KEEP · target shape */
   setPanelLayout: (
-    request: TodayRequest<'panel:layout:set'>
-  ) => Promise<TodayResult<'panel:layout:set'>>
-  /** A-10 · `shortcut:get` · invoke · KEEP · today shape */
-  getToggleShortcut: () => Promise<TodayResult<'shortcut:get'>>
-  /** A-11 · `shortcut:set` · invoke · KEEP · today shape */
-  setToggleShortcut: (request: TodayRequest<'shortcut:set'>) => Promise<TodayResult<'shortcut:set'>>
+    request: TargetRequest<'panel:layout:set'>
+  ) => Promise<TargetResult<'panel:layout:set'>>
+  /** A-10 · `shortcut:get` · invoke · KEEP · target shape */
+  getToggleShortcut: () => Promise<TargetResult<'shortcut:get'>>
+  /** A-11 · `shortcut:set` · invoke · KEEP · target shape */
+  setToggleShortcut: (
+    request: TargetRequest<'shortcut:set'>
+  ) => Promise<TargetResult<'shortcut:set'>>
   /** A-12 · `mines:get` · invoke · RETIRE · today shape */
   getMines: () => Promise<TodayResult<'mines:get'>>
   /** A-13 · `dwarf:activate` · invoke · CHANGE · today shape */
@@ -153,16 +155,16 @@ export interface DwarfAiMinersApi {
   getMineHistory: (request: TodayRequest<'mine:history'>) => Promise<TodayResult<'mine:history'>>
   /** A-20 · `mine:openPath` · invoke · KEEP · today shape */
   openMinePath: (request: TodayRequest<'mine:openPath'>) => Promise<TodayResult<'mine:openPath'>>
-  /** A-21 · `shell:openExternalLink` · invoke · KEEP · today shape */
+  /** A-21 · `shell:openExternalLink` · invoke · KEEP · target shape */
   openExternalLink: (
-    request: TodayRequest<'shell:openExternalLink'>
-  ) => Promise<TodayResult<'shell:openExternalLink'>>
-  /** A-22 · `shell:copyText` · invoke · KEEP · today shape */
-  copyText: (request: TodayRequest<'shell:copyText'>) => Promise<TodayResult<'shell:copyText'>>
+    request: TargetRequest<'shell:openExternalLink'>
+  ) => Promise<TargetResult<'shell:openExternalLink'>>
+  /** A-22 · `shell:copyText` · invoke · KEEP · target shape */
+  copyText: (request: TargetRequest<'shell:copyText'>) => Promise<TargetResult<'shell:copyText'>>
   /** A-23 · `dwarf:sendText` · invoke · CHANGE · today shape */
   sendDwarfText: (request: TodayRequest<'dwarf:sendText'>) => Promise<TodayResult<'dwarf:sendText'>>
-  /** A-24 · `dwarf:attachments:choose` · invoke · KEEP · today shape */
-  chooseDwarfAttachments: () => Promise<TodayResult<'dwarf:attachments:choose'>>
+  /** A-24 · `dwarf:attachments:choose` · invoke · KEEP · target shape */
+  chooseDwarfAttachments: () => Promise<TargetResult<'dwarf:attachments:choose'>>
   /** A-25 · `dwarf:attachments:describe` · invoke · KEEP · today shape */
   describeDwarfAttachments: (
     request: TodayRequest<'dwarf:attachments:describe'>
@@ -171,10 +173,10 @@ export interface DwarfAiMinersApi {
   kickDwarf: (request: TodayRequest<'dwarf:kick'>) => Promise<TodayResult<'dwarf:kick'>>
   /** A-27 · `dwarf:retire` · send · RETIRE · today shape */
   retireDwarf: (request: TodayRequest<'dwarf:retire'>) => void
-  /** A-28 · `app:build` · invoke · KEEP · today shape */
-  getAppBuild: () => Promise<TodayResult<'app:build'>>
-  /** A-29 · `app:features` · invoke · KEEP · today shape */
-  getFeatureFlags: () => Promise<TodayResult<'app:features'>>
+  /** A-28 · `app:build` · invoke · KEEP · target shape */
+  getAppBuild: () => Promise<TargetResult<'app:build'>>
+  /** A-29 · `app:features` · invoke · KEEP · target shape */
+  getFeatureFlags: () => Promise<TargetResult<'app:features'>>
   /** A-30 · `mine:declare` · invoke · KEEP · today shape */
   declareMine: () => Promise<TodayResult<'mine:declare'>>
   /** A-31 · `mine:declare-main` · invoke · KEEP · today shape */
@@ -215,12 +217,12 @@ export interface DwarfAiMinersApi {
   ) => Promise<TodayResult<'notifications:enabled:set'>>
   /** A-44 · `panel:openMine` · send · CHANGE · today shape */
   setOpenMine: (request: TodayRequest<'presence:visibleMines'>) => void
-  /** A-45 · `typography:preferences:get` · invoke · KEEP · today shape */
-  getTypographyPreferences: () => Promise<TodayResult<'typography:preferences:get'>>
-  /** A-46 · `typography:preferences:set` · invoke · KEEP · today shape */
+  /** A-45 · `typography:preferences:get` · invoke · KEEP · target shape */
+  getTypographyPreferences: () => Promise<TargetResult<'typography:preferences:get'>>
+  /** A-46 · `typography:preferences:set` · invoke · KEEP · target shape */
   setTypographyPreferences: (
-    request: TodayRequest<'typography:preferences:set'>
-  ) => Promise<TodayResult<'typography:preferences:set'>>
+    request: TargetRequest<'typography:preferences:set'>
+  ) => Promise<TargetResult<'typography:preferences:set'>>
   /** A-47 · `jev:settings:get` · invoke · KEEP · today shape */
   getJevSettings: () => Promise<TodayResult<'jev:settings:get'>>
   /** A-48 · `jev:apiKey:set` · invoke · KEEP · today shape */
@@ -245,13 +247,13 @@ export interface DwarfAiMinersApi {
   ) => Promise<TodayResult<'opencode:password:set'>>
   /** A-55 · `opencode:password:clear` · invoke · CHANGE · today shape */
   clearOpenCodeServerPassword: () => Promise<TodayResult<'opencode:password:clear'>>
-  /** A-56 · `launch-view:get` · invoke · KEEP · today shape */
-  getLaunchView: () => Promise<TodayResult<'launch-view:get'>>
-  /** A-57 · `launch-view:set` · send · KEEP · today shape */
-  setLaunchView: (request: TodayRequest<'launch-view:set'>) => void
-  /** A-P1 · `panel:visible:changed` · push · KEEP · today shape */
+  /** A-56 · `launch-view:get` · invoke · KEEP · target shape */
+  getLaunchView: () => Promise<TargetResult<'launch-view:get'>>
+  /** A-57 · `launch-view:set` · send · KEEP · target shape */
+  setLaunchView: (request: TargetRequest<'launch-view:set'>) => void
+  /** A-P1 · `panel:visible:changed` · push · KEEP · target shape */
   onPanelVisibility: (
-    listener: (payload: TodayResult<'panel:visible:changed'>) => void
+    listener: (payload: TargetResult<'panel:visible:changed'>) => void
   ) => () => void
   /** A-P2 · `mines:update` · push · RETIRE · today shape */
   onMinesUpdated: (listener: (payload: TodayResult<'mines:update'>) => void) => () => void
@@ -263,14 +265,14 @@ export interface DwarfAiMinersApi {
   ) => () => void
   /** A-P5 · `panel:mine:show` · push · RETIRE · today shape */
   onShowMine: (listener: (payload: TodayResult<'panel:mine:show'>) => void) => () => void
-  /** A-P6 · `typography:preferences:changed` · push · KEEP · today shape */
+  /** A-P6 · `typography:preferences:changed` · push · KEEP · target shape */
   onTypographyPreferences: (
-    listener: (payload: TodayResult<'typography:preferences:changed'>) => void
+    listener: (payload: TargetResult<'typography:preferences:changed'>) => void
   ) => () => void
-  /** A-X1 · preload only · helper · KEEP · today shape */
+  /** A-X1 · preload only · helper · KEEP · target shape */
   pathForDroppedFile: (
-    file: TodayRequest<'pathForDroppedFile'>
-  ) => TodayResult<'pathForDroppedFile'>
+    file: TargetRequest<'pathForDroppedFile'>
+  ) => TargetResult<'pathForDroppedFile'>
   /** §8 I-21 · `dwarf:setName` · invoke · RETIRE · today shape */
   setDwarfName: (request: TodayRequest<'dwarf:setName'>) => Promise<TodayResult<'dwarf:setName'>>
   /** §8 I-21 · `dwarf:resetName` · invoke · RETIRE · today shape */
@@ -498,7 +500,7 @@ const api: DwarfAiMinersApi = {
   },
   onTypographyPreferences: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
-      listener(payload as TodayResult<'typography:preferences:changed'>)
+      listener(payload as TargetResult<'typography:preferences:changed'>)
     }
     ipcRenderer.on('typography:preferences:changed', wrapped)
     return () => ipcRenderer.removeListener('typography:preferences:changed', wrapped)

@@ -22,6 +22,13 @@ export const IDENTITY_TOLERANCE_MS = 2_000
 /** The bound on one start-time query: the Host's START_TIME_QUERY_TIMEOUT_MS. */
 export const START_TIME_QUERY_TIMEOUT_MS = 5_000
 
+/**
+ * macOS's own `ps` and `sysctl` by path, never looked up on PATH, which the person's environment decides (the Host's
+ * DARWIN_PS and DARWIN_SYSCTL, restated: R10). Windows already runs its System32 tools by path.
+ */
+export const DARWIN_PS = '/bin/ps'
+export const DARWIN_SYSCTL = '/usr/sbin/sysctl'
+
 export type StartRead = { kind: 'started'; ms: number } | { kind: 'gone' } | { kind: 'unknown' }
 
 /** Runs one OS query as an argv array (never a shell), bounded by `timeoutMs`. */
@@ -107,7 +114,7 @@ async function readLinux(
 }
 
 async function readDarwin(pid: number, runQuery: QueryRunner): Promise<StartRead> {
-  const out = await runQuery('ps', ['-p', String(Math.trunc(pid)), '-o', 'lstart='], {
+  const out = await runQuery(DARWIN_PS, ['-p', String(Math.trunc(pid)), '-o', 'lstart='], {
     timeoutMs: START_TIME_QUERY_TIMEOUT_MS,
     env: { LC_ALL: 'C' }
   })

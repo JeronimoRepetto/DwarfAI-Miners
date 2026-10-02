@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   CHANNELS,
+  PRELOAD_HELPERS,
+  ROW_IDS,
   STEP_ORDER,
   UNROUTED,
   type ChannelKey,
@@ -12,9 +14,19 @@ import {
 } from '@dwarfai/contracts'
 import { composeStopAllRelay } from '../index'
 import { createStopEverything } from '../window/application/stopEverything'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
-import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './routes'
+import { createRouter } from './router'
+import {
+  HOST_ROUTE_MEMBERS,
+  LEGACY_BRIDGE_ADAPTERS,
+  ROUTES,
+  ROUTES_RELEASE,
+  SEAM_B_METHODS_BORN
+} from './routes'
 
 /**
  * The router's contract (ADR-001 item 3; 21 §1 items 1, 2, 2a; 14 §6.5 "Router"): every registry row has exactly one
@@ -23,6 +35,13 @@ import { LEGACY_BRIDGE_ADAPTERS, ROUTES, ROUTES_RELEASE } from './routes'
  * build, `parity: 'pending'`; every legacy-bridge adapter is listed with its cuts and absent after cut 5 (21 §3).
  */
 const KEYS = Object.keys(CHANNELS) as ChannelKey[]
+
+/** The registry key a wire speaks for: the key itself, or the one key sharing its 14 id (A-44's today wire). */
+function keyOfWire(wire: string): string {
+  if (wire in CHANNELS) return wire
+  const matches = KEYS.filter((key) => ROW_IDS[key] !== undefined && ROW_IDS[key] === ROW_IDS[wire])
+  return matches.length === 1 ? (matches[0] ?? wire) : wire
+}
 
 const preCut: RouteTable = {
   release: ROUTES_RELEASE,
@@ -70,15 +89,13 @@ const reasons = (table: RouteTable): string[] =>
 
 describe('pre-cut table', () => {
   it('[ADR-001] every CHANNELS key has exactly one route per qualifier or exactly one unrouted entry naming a later step', () => {
-    expect(ROUTES_RELEASE).toBe('pre-cut-0')
+    // AMENDED for ISSUE-056 (was: the release is 'pre-cut-0' and, TC-043-01, every route is today's runtime with
+    // today's shape): the cut-0 switch moved the table to its first release, whose rows `describe('release cut-0')`
+    // pins; this case keeps the invariant every release's table holds.
     expect(checkRouteTable(preCut, KEYS)).toEqual([])
     for (const key of KEYS) {
       const routes = ROUTES.filter((r) => r.channel === key)
       expect(routes.length + (UNROUTED[key] ? 1 : 0), key).toBe(1)
-    }
-    // TC-043-01: before cut 0 every route is today's runtime with today's shape.
-    for (const route of ROUTES) {
-      expect(route, route.channel).toEqual(legacyToday(route.channel))
     }
   })
 
@@ -299,7 +316,11 @@ describe('pre-cut table', () => {
     })
     // A-N26 is a `host` row the cut-0 switch routes (ISSUE-056); its one handler relays through the root's relay.
     expect(CHANNELS[STOP_EVERYTHING_CONFIRM].placement).toBe('host')
-    expect(UNROUTED[STOP_EVERYTHING_CONFIRM]).toBe('cut-0')
+    // AMENDED for ISSUE-056 (was: `UNROUTED[STOP_EVERYTHING_CONFIRM]` is 'cut-0'): the cut-0 switch routed it.
+    expect(UNROUTED[STOP_EVERYTHING_CONFIRM]).toBeUndefined()
+    expect(ROUTES.filter((r) => r.channel === STOP_EVERYTHING_CONFIRM).map((r) => r.owner)).toEqual(
+      ['host']
+    )
 
     // The root's A-N26 relay, over a legacy runtime holding one live launch whose end reports `verdict`, and a Host
     // recording what it is sent; A-N26 is served by its one handler over the Stop everything use case.
@@ -359,5 +380,153 @@ describe('pre-cut table', () => {
       error: { code: 'INTERNAL', retryable: false }
     })
     expect(response.safeParse(refused.answer).success).toBe(true)
+  })
+})
+
+/**
+ * The 14 ids of the rows cut 0 serves `ui-local` (21 §2 cut 0 "New core serves" U), plus A-N34 (owner-approved
+ * amendment 2026-10-01, ISSUE-316: the renderer's entry to the tray's Stop everything and quit, `ui-local`).
+ */
+// prettier-ignore
+const CUT_0_UI_LOCAL_IDS = [
+  'A-01', 'A-02', 'A-03', 'A-04', 'A-05', 'A-06', 'A-07', 'A-08', 'A-09', 'A-10', 'A-11',
+  'A-21', 'A-22', 'A-24', 'A-28', 'A-29', 'A-45', 'A-46', 'A-56', 'A-57', 'A-P1', 'A-P6', 'A-X1',
+  'A-N03', 'A-N04', 'A-N05', 'A-N30', 'A-N25', 'A-N27', 'A-N34'
+]
+
+/** The registry keys of the given 14 ids (A-44's today wire is not a registry key, so no row matches twice). */
+const keysOf = (ids: readonly string[]): ChannelKey[] =>
+  KEYS.filter((key) => ids.includes(ROW_IDS[key] ?? ''))
+
+describe('release cut-0 (21 §2 cut 0)', () => {
+  const cut0: RouteTable = {
+    release: ROUTES_RELEASE,
+    routes: ROUTES,
+    unrouted: UNROUTED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  }
+  const uiLocal = keysOf(CUT_0_UI_LOCAL_IDS)
+  const routeOf = (key: ChannelKey): ChannelRoute[] => ROUTES.filter((r) => r.channel === key)
+
+  it('[ADR-001] in cut 0 the window family, A-N03 to A-N05, A-N30, A-N25 and A-N27 route ui-local', () => {
+    expect(ROUTES_RELEASE).toBe('cut-0')
+    expect(checkRouteTable(cut0, KEYS)).toEqual([])
+    expect(uiLocal).toHaveLength(CUT_0_UI_LOCAL_IDS.length)
+    for (const key of uiLocal) {
+      // A row that replaces a legacy handler passed its L6 contract suite (TC-056-05); a NEW row has no legacy code.
+      const parity = CHANNELS[key].status === 'new' ? 'n/a' : 'passed'
+      expect(routeOf(key), key).toEqual([
+        { channel: key, owner: 'ui-local', since: 'cut-0', parity, shape: 'target' }
+      ])
+    }
+    // Only A-N33 stays unrouted: dormant until the first release that bumps `endpointGeneration` (AMENDMENT-11).
+    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+  })
+
+  it('[ADR-001] in cut 0 A-N26 routes host through LegacyEndFirstAdapter', () => {
+    expect(routeOf(STOP_EVERYTHING_CONFIRM)).toEqual([
+      {
+        channel: STOP_EVERYTHING_CONFIRM,
+        owner: 'host',
+        since: 'cut-0',
+        parity: 'passed',
+        shape: 'target'
+      }
+    ])
+    expect(ROUTES.filter((r) => r.owner === 'host').map((r) => r.channel)).toEqual([
+      STOP_EVERYTHING_CONFIRM
+    ])
+    // The relay that ends the legacy-launched sessions first lives in this release (21 §3), and the root composes it
+    // as A-N26's only path (`composeStopAllRelay`, the LegacyEndFirstAdapter case above; index.cut0.test.ts).
+    expect(LEGACY_BRIDGE_ADAPTERS.find((a) => a.name === 'LegacyEndFirstAdapter')?.cuts).toContain(
+      ROUTES_RELEASE
+    )
+  })
+
+  it('[ADR-001] in cut 0 every other row routes legacy with shape today, RETIRE rows included', () => {
+    const moved = new Set<ChannelKey>([...uiLocal, STOP_EVERYTHING_CONFIRM])
+    const others = KEYS.filter((key) => !moved.has(key) && UNROUTED[key] === undefined)
+    for (const key of others) {
+      expect(routeOf(key), key).toEqual([legacyToday(key)])
+    }
+    // The 13 RETIRE rows of 14 §2.1 and the two §8 I-21 rows are all still served by today's runtime.
+    const retired = KEYS.filter((key) => CHANNELS[key].status === 'retired')
+    expect(retired).toHaveLength(15)
+    for (const key of retired)
+      expect(
+        routeOf(key).map((r) => r.owner),
+        key
+      ).toEqual(['legacy'])
+    expect(others.length + moved.size + Object.keys(UNROUTED).length).toBe(KEYS.length)
+  })
+
+  it('[ADR-001] in cut 0 every host route uses only seam-B members born in cut 0 and none has parity pending', () => {
+    const at = (step: StepId) => STEP_ORDER.indexOf(step)
+    for (const route of ROUTES.filter((r) => r.owner === 'host')) {
+      expect(route.parity, route.channel).not.toBe('pending')
+      const members = HOST_ROUTE_MEMBERS[route.channel]
+      expect(members, `${route.channel} names the seam B members it relays`).toBeDefined()
+      for (const member of members ?? []) {
+        const born = SEAM_B_METHODS_BORN[member]
+        expect(born, `${member} has a birth release`).toBeDefined()
+        expect(at(born ?? 'generation-2'), `${route.channel} → ${member}`).toBeLessThanOrEqual(
+          at(ROUTES_RELEASE)
+        )
+      }
+    }
+    // 21 §2 "Seam B members: the cut in which each is born", row 0 (B-M02…B-M06; B-M01 `hello` is the handshake).
+    expect(SEAM_B_METHODS_BORN).toEqual({
+      ping: 'cut-0',
+      'events.subscribe': 'cut-0',
+      'session.snapshot': 'cut-0',
+      'host.shutdown': 'cut-0',
+      'host.upgrade.request': 'cut-0'
+    })
+    expect(HOST_ROUTE_MEMBERS).toEqual({ [STOP_EVERYTHING_CONFIRM]: ['host.shutdown'] })
+  })
+
+  it('[ADR-001] in cut 0 LegacyRuntimeRoute and LegacyEndFirstAdapter are the only adapters composed', () => {
+    expect(
+      LEGACY_BRIDGE_ADAPTERS.filter((a) => a.cuts.includes(ROUTES_RELEASE)).map((a) => a.name)
+    ).toEqual(['LegacyRuntimeRoute', 'LegacyEndFirstAdapter'])
+    // No route of this release names a shape adapter (21 §3.1: the first is born in cut 1).
+    expect(ROUTES.filter((r) => r.shapeAdapter !== undefined)).toEqual([])
+  })
+
+  it('[ADR-019] every ipcMain registration, preload member and push of the cut-0 build maps to exactly one CHANNELS entry and back', () => {
+    // ipcMain: the router registers one listener per invoke and send row, under the wire its route speaks.
+    const registered: string[] = []
+    createRouter({
+      routes: ROUTES,
+      legacy: { serve: async () => undefined },
+      uiLocal: { serve: async () => undefined },
+      host: { serve: async () => undefined },
+      senders: { appEntry: 'file:///app/index.html', isModeWindow: () => true }
+    }).register({
+      handle: (wire) => void registered.push(wire),
+      on: (wire) => void registered.push(wire)
+    })
+    const helpers: readonly string[] = PRELOAD_HELPERS
+    const callable = KEYS.filter((key) => CHANNELS[key].kind !== 'push' && !helpers.includes(key))
+    expect(new Set(registered).size).toBe(registered.length)
+    expect(registered.map((wire) => keyOfWire(wire)).sort()).toEqual([...callable].sort())
+
+    // The preload: every `ipcRenderer` wire the generated preload speaks is one CHANNELS entry, and every non-helper
+    // entry is spoken exactly once; its one helper is A-X1, the preload-only member.
+    const preload = readFileSync(resolve(import.meta.dirname, '../../preload/index.ts'), 'utf8')
+    const spoken = [...preload.matchAll(/ipcRenderer\.(?:invoke|send|on)\(\s*'([^']+)'/g)].map(
+      (match) => match[1] ?? ''
+    )
+    expect(spoken.map((wire) => keyOfWire(wire)).sort()).toEqual(
+      KEYS.filter((key) => !helpers.includes(key)).sort()
+    )
+    expect(PRELOAD_HELPERS).toEqual(['pathForDroppedFile'])
+
+    // Pushes: each push row has exactly one owner in this release, and the pushes UI main sends are its `ui-local`
+    // push rows.
+    const pushes = KEYS.filter((key) => CHANNELS[key].kind === 'push')
+    for (const key of pushes) expect(routeOf(key), key).toHaveLength(1)
+    const uiLocalPushes = pushes.filter((key) => routeOf(key)[0]?.owner === 'ui-local').sort()
+    expect([...UI_MAIN_PUSHES].sort()).toEqual(uiLocalPushes)
   })
 })

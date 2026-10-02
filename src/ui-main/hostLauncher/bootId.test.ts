@@ -1,7 +1,7 @@
 // layer: L2
 import { describe, expect, it } from 'vitest'
 import { createBootIdReader, WIN32_BOOT_ID_KEY } from './bootId'
-import type { QueryRunner } from './processStart'
+import { createProcessStartReader, type QueryRunner } from './processStart'
 
 // L2 (17 §1.2): the UI's restatement of the Host's boot id (ADR-015 item 4; ADR-014 item 1) over scripted OS answers,
 // for the hung-Host identity rule (ADR-002 D9 step 2). The real reads are checked against a real Host's identity file
@@ -48,7 +48,18 @@ describe('createBootIdReader (ADR-015 item 4)', () => {
     expect(await createBootIdReader({ platform: 'darwin', runQuery })()).toBe(
       'A1B2C3D4-0000-1111-2222-333344445555'
     )
-    expect(calls).toEqual([{ file: 'sysctl', args: ['-n', 'kern.bootsessionuuid'] }])
+    expect(calls).toEqual([{ file: '/usr/sbin/sysctl', args: ['-n', 'kern.bootsessionuuid'] }])
+  })
+
+  // As the Host's readers (probe/darwin.ts): a bare name was resolved through the UI's PATH, which the person's
+  // environment decides, so a PATH without /usr/sbin left the boot id unreadable and an earlier entry could answer for
+  // the system tool. Windows already runs reg.exe and PowerShell from System32 by full path.
+  it('[ADR-014] on macOS the boot id and the start time run /usr/sbin/sysctl and /bin/ps by full path, never through PATH', async () => {
+    const { calls, runQuery } = scripted({ ok: true, stdout: '' })
+    await createBootIdReader({ platform: 'darwin', runQuery })()
+    await createProcessStartReader({ platform: 'darwin', runQuery })(4242)
+
+    expect(calls.map((call) => call.file)).toEqual(['/usr/sbin/sysctl', '/bin/ps'])
   })
 
   it('[ADR-014] a failed or unparseable read is null, so the identity does not match', async () => {

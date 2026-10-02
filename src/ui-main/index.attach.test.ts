@@ -6,13 +6,25 @@ import type { EnsureHostResult } from './hostLauncher/launcher'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './host-client/testing/FakeHost'
 import { ManualTimers } from './host-client/testing/ManualTimers'
-import { startUiMain, type CreatedWindow, type UiMainDeps, type UiMainLifecycle } from './index'
+import {
+  startUiMain as startUiMainOn,
+  type CreatedWindow,
+  type UiMainDeps,
+  type UiMainLifecycle
+} from './index'
 import type { IpcMainRegistrar } from './ipc/router'
 import type { HostBoardState } from './window/application/reopen'
 import { FakePanelWindowController } from './window/ports/fakes/FakePanelWindowController'
 import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceLock'
 import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
 import type { UiPreferenceStoreKey } from './window/ports/uiPreferenceStore'
+import { PRE_CUT_0_ROUTES } from './ipc/testing/preCutRoutes'
+
+// AMENDED for ISSUE-056 (was: `startUiMain` on the release's own table, which was the pre-cut table): these cases pin
+// the root with the window family served `legacy`, today's Panel window included, as before the cut-0 switch and in a
+// rollback build (21 §2.1); the cut-0 composition is pinned by index.cut0.test.ts.
+const startUiMain = (deps: Parameters<typeof startUiMainOn>[0]) =>
+  startUiMainOn({ routes: PRE_CUT_0_ROUTES, ...deps })
 
 // L2 (17 §1; US-RES-003.AC07, UI-main half; UC-024 "remembered layout and rehydrated sessions arrive together";
 // 14 §4.2): the composition root starts the Host attach beside the launch-view read, never holds the window back
@@ -93,7 +105,10 @@ describe('UI main start: launch view and Host attach together (US-RES-003.AC07)'
       },
       serve: async () => undefined,
       beforeQuit: () => {},
-      willQuit: () => {}
+      willQuit: () => {},
+      // AMENDED for ISSUE-056 (was: absent): the root reaches today's launched register for the A-N26 relay.
+      liveLaunches: async () => [],
+      endLaunch: async () => 'already-ended'
     }
     const ipc: IpcMainRegistrar = { handle: () => {}, on: () => {} }
 

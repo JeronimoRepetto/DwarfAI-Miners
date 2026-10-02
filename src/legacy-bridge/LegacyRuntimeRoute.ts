@@ -173,8 +173,11 @@ export type LegacyHandler = (payload: unknown) => unknown
 export interface LegacyRuntimeComposition {
   /** Today's handler per wire name (every `ipcMain.handle` and `ipcMain.on` of the legacy root). */
   readonly handlers: ReadonlyMap<string, LegacyHandler>
-  /** Today's Panel window behind the window module's port, until ISSUE-047 rebuilds it. */
-  readonly panelWindow: PanelWindowController
+  /**
+   * Today's Panel window behind the window module's port, or `null` when the composition was handed the rebuilt
+   * Panel (`LegacyPanelSurface`) because the route table serves the window family `ui-local` (21 §2 cut 0).
+   */
+  readonly panelWindow: PanelWindowController | null
   /** Today's launched register, for `LegacyEndFirstAdapter` (21 §3, cuts 0–4). */
   readonly launches: LegacyLaunchedSessions
 }
@@ -198,8 +201,8 @@ export interface LegacyRuntimeComposer {
  * reaches today's launched register (ISSUE-054), composing the runtime first when needed.
  */
 export interface LegacyRuntimeRoute extends LegacyLaunchedSessions {
-  /** Composes the legacy runtime (once) and answers its Panel window. */
-  compose(): Promise<PanelWindowController>
+  /** Composes the legacy runtime (once) and answers its Panel window, `null` when it composed none. */
+  compose(): Promise<PanelWindowController | null>
   /** Serves a `legacy` row by today's wire name with today's handler result. */
   serve(channel: string, payload: unknown): Promise<unknown>
   beforeQuit(): void
@@ -245,7 +248,15 @@ export function createLegacyRuntimeRoute(composer: LegacyRuntimeComposer): Legac
 // adaptations only: every handler is put in the table `serve` reads instead of `ipcMain`; the
 // Electron APIs it called directly arrive from the Electron root (lint R7: no `electron` import
 // here); and its module-level singletons live in one closure. `src/main/index.ts` itself is
-// untouched and stays the app entry until ISSUE-056.
+// untouched; it stopped being the app entry with the cut-0 switch (ISSUE-056).
+//
+// The cut-0 switch (ISSUE-056; 21 §2 cut 0, AGENTS §5 "switched off at the switch") turns today's
+// window, tray and panel-toggle shortcut off as a composition: when the Electron root hands over
+// the rebuilt Panel (`LegacyPanelSurface`), because the route table serves the window family
+// `ui-local`, today's composition builds no window, no tray and no shortcut and registers no
+// handler that needs them; its pushes and its notification click reach the rebuilt Panel instead.
+// A rollback build whose table serves the window family `legacy` again hands over nothing and gets
+// today's composition back unchanged (21 §2.1). The code leaves after the soak (ISSUE-058).
 // ---------------------------------------------------------------------------------------------
 
 /** The main window today's composition creates (legacy `shell/window.ts`). */
@@ -284,6 +295,35 @@ export interface LegacyElectronMain {
   }
   clipboard: ClipboardPort
   globalShortcut: GlobalShortcutLike
+}
+
+/** The options of today's open dialog that today's composition uses. */
+export interface LegacyOpenDialogOptions {
+  properties: Array<'openDirectory' | 'openFile' | 'multiSelections'>
+}
+
+/**
+ * The rebuilt Panel as today's runtime reaches it once the route table serves the window family `ui-local` (21 §2
+ * cut 0): the window module owns the window, so today's composition only pushes to it, reads whether it is on
+ * screen and shows it, as it did with its own window.
+ */
+export interface LegacyPanelSurface {
+  /** Sends a push of a row still served `legacy` (A-P2, A-P3, A-P4, A-P5) to every open window of the app. */
+  send(channel: string, payload: unknown): void
+  /** Whether the Panel is on screen: shown and not minimized (the notifier's focus rule, #316). */
+  visible(): boolean
+  /** Shows the Panel (a notification click, #316). */
+  show(): void
+  /** Today's open dialog, attached to the Panel window when it is open (A-30, A-31 folder picker, #85). */
+  showOpenDialog(
+    options: LegacyOpenDialogOptions
+  ): Promise<{ canceled: boolean; filePaths: string[] }>
+}
+
+/** How today's composition is composed: with its own window, tray and shortcut, or onto the rebuilt Panel. */
+export interface LegacyCompositionOptions {
+  /** The rebuilt Panel; absent while the route table serves the window family `legacy`. */
+  panel?: LegacyPanelSurface
 }
 
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display (#408). */
@@ -476,8 +516,12 @@ function appWebContents(): NonNullable<ReturnType<typeof shellWebContents>>[] {
  * Today's composition of the legacy runtime (the body of `init()` in `src/main/index.ts`) and its
  * quit teardown (that file's `before-quit` and `will-quit` handlers).
  */
-export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntimeComposer {
+export function composeLegacyRuntime(
+  electron: LegacyElectronMain,
+  options: LegacyCompositionOptions = {}
+): LegacyRuntimeComposer {
   const { app, dialog, nativeImage, shell, clipboard, globalShortcut } = electron
+  const rebuiltPanel = options.panel
 
   // Today's module-level singletons: the quit teardown reads them, null-safe, at any time.
   let runtime: AgentRuntime | null = null
@@ -488,9 +532,9 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
   let projects: ProjectsStore | null = null
   let toggleShortcut: ToggleShortcutController | null = null
 
-  /** The OS folder picker, owned by the panel window (#85). */
-  async function chooseProjectDirectory(parent: LegacyMainWindow): Promise<string | null> {
-    const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'] })
+  /** The OS folder picker, owned by the panel window (#85): today's window, or the rebuilt Panel's. */
+  async function chooseProjectDirectory(panel: LegacyPanelSurface): Promise<string | null> {
+    const result = await panel.showOpenDialog({ properties: ['openDirectory'] })
     if (result.canceled) return null
     return result.filePaths[0] ?? null
   }
@@ -554,16 +598,42 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       warn: warnWithOptionalCause
     })
 
-    // Read before the window exists, so the first frame has the right stacking and edge (#35, #138).
+    // Today's window, only while the route table serves the window family `legacy` (21 §2 cut 0): the rebuilt
+    // Panel otherwise. Read before the window exists, so the first frame has the right stacking and edge (#35, #138).
     const pinStore = createPinPreferenceStore({
       filePath: join(app.getPath('userData'), 'pin-preference-v1.json')
     })
     const panelEdgeStore = createPanelEdgePreferenceStore({
       filePath: join(app.getPath('userData'), 'panel-edge-v1.json')
     })
-    seedPanelEdge(await panelEdgeStore.load())
-
-    const mainWindow = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
+    // Where the pushes, the pickers and the notification click of today's runtime land: today's own window, or the
+    // rebuilt Panel.
+    let mainWindow: LegacyMainWindow | null = null
+    let panel: LegacyPanelSurface
+    if (rebuiltPanel !== undefined) {
+      panel = rebuiltPanel
+    } else {
+      seedPanelEdge(await panelEdgeStore.load())
+      const window = createMainWindow({ alwaysOnTop: await pinStore.load() }) // starts hidden
+      mainWindow = window
+      // Whether the shell is really on screen (#174, #173): visible and not minimised.
+      const panelVisible = (): boolean => window.isVisible() && !window.isMinimized()
+      const publishPanelVisibility = (): void => {
+        shellWebContents()?.send(IPC_CHANNELS.panelVisibilityChanged, panelVisible())
+      }
+      window.on('show', publishPanelVisibility)
+      window.on('hide', publishPanelVisibility)
+      window.on('minimize', publishPanelVisibility)
+      window.on('restore', publishPanelVisibility)
+      panel = {
+        send: (channel, payload) => {
+          for (const contents of appWebContents()) contents.send(channel, payload)
+        },
+        visible: panelVisible,
+        show: () => showPanel(),
+        showOpenDialog: (options) => dialog.showOpenDialog(window, options)
+      }
+    }
 
     const audioStore = createAudioPreferenceStore({
       filePath: join(app.getPath('userData'), 'audio-preferences-v1.json')
@@ -609,16 +679,6 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       filePath: join(app.getPath('userData'), 'launch-view-v1.json')
     })
 
-    // Whether the shell is really on screen (#174, #173): visible and not minimised.
-    const panelVisible = (): boolean => mainWindow.isVisible() && !mainWindow.isMinimized()
-    const publishPanelVisibility = (): void => {
-      shellWebContents()?.send(IPC_CHANNELS.panelVisibilityChanged, panelVisible())
-    }
-    mainWindow.on('show', publishPanelVisibility)
-    mainWindow.on('hide', publishPanelVisibility)
-    mainWindow.on('minimize', publishPanelVisibility)
-    mainWindow.on('restore', publishPanelVisibility)
-
     // System notifications (#316).
     const notificationStore = createNotificationPreferenceStore({
       filePath: join(app.getPath('userData'), 'notification-preference-v1.json')
@@ -629,10 +689,10 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
     const notifier: Notifier = createNotifier({
       port: createElectronNotifications(),
       enabled: () => notificationsEnabled,
-      focus: () => ({ panelVisible: panelVisible(), openMineId }),
+      focus: () => ({ panelVisible: panel.visible(), openMineId }),
       openMine: (mineId: string) => {
-        showPanel()
-        shellWebContents()?.send(IPC_CHANNELS.showMine, mineId)
+        panel.show()
+        panel.send(IPC_CHANNELS.showMine, mineId)
       }
     })
 
@@ -724,7 +784,7 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       fs,
       appPaths,
       platformAdapters,
-      chooseDirectory: () => chooseProjectDirectory(mainWindow),
+      chooseDirectory: () => chooseProjectDirectory(panel),
       readAttachment,
       // MCP subtask delegation (#511 T4, M1a, #601): the service is read lazily, it starts later.
       delegation: {
@@ -758,22 +818,15 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
         readPassword: openCodePasswordStore.readPassword
       }),
       onMinesUpdated: (mines: Mine[], materials: MaterialTotals, watchedFeed?: WatchedFeedPush) => {
-        const snapshot = toMinesSnapshot(mines, materials, watchedFeed)
-        for (const contents of appWebContents()) {
-          contents.send(IPC_CHANNELS.minesUpdated, snapshot)
-        }
+        panel.send(IPC_CHANNELS.minesUpdated, toMinesSnapshot(mines, materials, watchedFeed))
         // After the renderers (#316): the panel's own paint comes first.
         notifier.update(mines)
       },
       onLaunchFailed: (push: LaunchFailedPush) => {
-        for (const contents of appWebContents()) {
-          contents.send(IPC_CHANNELS.launchFailed, push)
-        }
+        panel.send(IPC_CHANNELS.launchFailed, push)
       },
       onSendSettled: (push: DwarfSendSettledPush) => {
-        for (const contents of appWebContents()) {
-          contents.send(IPC_CHANNELS.dwarfSendSettled, push)
-        }
+        panel.send(IPC_CHANNELS.dwarfSendSettled, push)
       }
     })
     await runtime.loadDeclared()
@@ -865,18 +918,76 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
     })
     openCodePluginError = (await openCodePlugin.restore())?.error
 
-    await createTray({ hooks })
+    // Today's tray, shortcut and window-family handlers, composed only with today's window (21 §2 cut 0): once the
+    // window family is served `ui-local` they are switched off here and the rebuilt window module serves them.
+    if (mainWindow !== null) {
+      const window = mainWindow
+      await createTray({ hooks })
 
-    // Claim the shortcut; a refusal lives in the state the settings panel reads.
-    const toggle = createToggleShortcut({
-      initial: storedAccelerator,
-      onToggle: togglePanel,
-      globalShortcut,
-      platform: shortcutPlatform()
-    })
-    toggleShortcut = toggle
-    const startupState = toggle.start()
-    if (startupState.error !== undefined) console.warn(`[shortcuts] ${startupState.error}`)
+      // Claim the shortcut; a refusal lives in the state the settings panel reads.
+      const toggle = createToggleShortcut({
+        initial: storedAccelerator,
+        onToggle: togglePanel,
+        globalShortcut,
+        platform: shortcutPlatform()
+      })
+      toggleShortcut = toggle
+      const startupState = toggle.start()
+      if (startupState.error !== undefined) console.warn(`[shortcuts] ${startupState.error}`)
+
+      handle(IPC_CHANNELS.hidePanel, () => hidePanel())
+      // Raise and focus the window that sent the click (#165): since #635 always the shell window.
+      handle(IPC_CHANNELS.raisePanel, () => {
+        const contents = shellWebContents()
+        if (contents !== null) raiseWindowOf(contents)
+      })
+      handle(IPC_CHANNELS.getAlwaysOnTop, () => window.isAlwaysOnTop())
+      handle(IPC_CHANNELS.setAlwaysOnTop, async (payload) => {
+        if (typeof payload !== 'boolean') return window.isAlwaysOnTop()
+        const real = applyAlwaysOnTop(window, payload)
+        try {
+          await pinStore.save(real)
+        } catch (error) {
+          console.warn('[pin] Failed to persist the always-on-top preference:', error)
+        }
+        return real
+      })
+      handle(IPC_CHANNELS.getPanelVisible, () => panel.visible())
+      // The docked shell's own shape (#90, #138): answered with what the window is after the move.
+      handle(IPC_CHANNELS.getPanelLayout, () => panelLayout())
+      handle(IPC_CHANNELS.setPanelLayout, async (payload) => {
+        if (typeof payload !== 'object' || payload === null) return panelLayout()
+        const { mineOpen, dockOpen, edge } = payload as Record<string, unknown>
+        if (typeof mineOpen !== 'boolean' || typeof dockOpen !== 'boolean') return panelLayout()
+        const requestedEdge: PanelEdge | undefined =
+          edge === 'left' || edge === 'right' ? edge : undefined
+        const result = setPanelLayout({
+          mineOpen,
+          dockOpen,
+          ...(requestedEdge ? { edge: requestedEdge } : {})
+        })
+        if (requestedEdge !== undefined) {
+          try {
+            await panelEdgeStore.save(result.edge)
+          } catch (error) {
+            console.warn('[panel] Failed to persist the position preference:', error)
+          }
+        }
+        return result
+      })
+      handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
+      handle(IPC_CHANNELS.setToggleShortcut, async (payload) => {
+        if (typeof payload !== 'string') return toggle.state()
+        const state = toggle.apply(payload)
+        try {
+          await shortcutStore.save(state.accelerator)
+        } catch (error) {
+          console.warn('[shortcuts] Failed to persist the panel-toggle shortcut:', error)
+        }
+        return state
+      })
+      handle(IPC_CHANNELS.chooseDwarfAttachments, () => chooseAttachmentFiles(window))
+    }
 
     // Which build is running (#79), asked of Electron.
     const appBuild: AppBuild = { version: app.getVersion(), packaged: app.isPackaged }
@@ -889,24 +1000,6 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
     const noActivation = { focused: false, openedTerminal: false, feed: [] }
     const noFeed: DwarfFeedResult = { readable: false, messages: [] }
     const noFeedPage: DwarfFeedPage = { readable: false, messages: [], reachedStart: false }
-    handle(IPC_CHANNELS.hidePanel, () => hidePanel())
-    // Raise and focus the window that sent the click (#165): since #635 always the shell window.
-    handle(IPC_CHANNELS.raisePanel, () => {
-      const contents = shellWebContents()
-      if (contents !== null) raiseWindowOf(contents)
-    })
-    handle(IPC_CHANNELS.getAlwaysOnTop, () => mainWindow.isAlwaysOnTop())
-    handle(IPC_CHANNELS.setAlwaysOnTop, async (payload) => {
-      if (typeof payload !== 'boolean') return mainWindow.isAlwaysOnTop()
-      const real = applyAlwaysOnTop(mainWindow, payload)
-      try {
-        await pinStore.save(real)
-      } catch (error) {
-        console.warn('[pin] Failed to persist the always-on-top preference:', error)
-      }
-      return real
-    })
-    handle(IPC_CHANNELS.getPanelVisible, () => panelVisible())
     handle(IPC_CHANNELS.getAudioPreferences, () => audioStore.load())
     handle(IPC_CHANNELS.setAudioPreferences, async (payload) => {
       const preferences = parseAudioPreferences(payload)
@@ -1057,39 +1150,6 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       return openCodeSettings()
     })
 
-    // The docked shell's own shape (#90, #138): answered with what the window is after the move.
-    handle(IPC_CHANNELS.getPanelLayout, () => panelLayout())
-    handle(IPC_CHANNELS.setPanelLayout, async (payload) => {
-      if (typeof payload !== 'object' || payload === null) return panelLayout()
-      const { mineOpen, dockOpen, edge } = payload as Record<string, unknown>
-      if (typeof mineOpen !== 'boolean' || typeof dockOpen !== 'boolean') return panelLayout()
-      const requestedEdge: PanelEdge | undefined =
-        edge === 'left' || edge === 'right' ? edge : undefined
-      const result = setPanelLayout({
-        mineOpen,
-        dockOpen,
-        ...(requestedEdge ? { edge: requestedEdge } : {})
-      })
-      if (requestedEdge !== undefined) {
-        try {
-          await panelEdgeStore.save(result.edge)
-        } catch (error) {
-          console.warn('[panel] Failed to persist the position preference:', error)
-        }
-      }
-      return result
-    })
-    handle(IPC_CHANNELS.getToggleShortcut, () => toggle.state())
-    handle(IPC_CHANNELS.setToggleShortcut, async (payload) => {
-      if (typeof payload !== 'string') return toggle.state()
-      const state = toggle.apply(payload)
-      try {
-        await shortcutStore.save(state.accelerator)
-      } catch (error) {
-        console.warn('[shortcuts] Failed to persist the panel-toggle shortcut:', error)
-      }
-      return state
-    })
     handle(IPC_CHANNELS.getMines, () =>
       toMinesSnapshot(runtime?.getMines() ?? [], runtime?.materialTotals())
     )
@@ -1187,8 +1247,6 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       if (request === null) return notDelivered
       return runtime?.sendDwarfText(request) ?? notDelivered
     })
-
-    handle(IPC_CHANNELS.chooseDwarfAttachments, () => chooseAttachmentFiles(mainWindow))
 
     handle(IPC_CHANNELS.describeDwarfAttachments, (payload) => {
       if (!Array.isArray(payload)) return []
@@ -1305,7 +1363,9 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       runtime?.retireDwarf(dwarfId)
     })
 
-    // Loaded last, after every handler exists (#570).
+    // Today's window only: loaded last, after every handler exists (#570). The rebuilt Panel loads its own page.
+    if (mainWindow === null) return { handlers, panelWindow: null, launches }
+    const window = mainWindow
     loadPanelPage()
 
     const panelWindow: PanelWindowController = {
@@ -1313,7 +1373,7 @@ export function composeLegacyRuntime(electron: LegacyElectronMain): LegacyRuntim
       show: () => showPanel(),
       toggleVisible: () => togglePanel(),
       setAlwaysOnTop: (on) => {
-        const real = applyAlwaysOnTop(mainWindow, on)
+        const real = applyAlwaysOnTop(window, on)
         void pinStore.save(real).catch((error: unknown) => {
           console.warn('[pin] Failed to persist the always-on-top preference:', error)
         })

@@ -218,6 +218,10 @@ export class ElectronWindows implements WindowFactory {
       isAlwaysOnTop: () => window().isAlwaysOnTop(),
       raise: () => raisePanelWindow(window()),
       isMinimized: () => window().isMinimized(),
+      isVisible: () => {
+        const built = this.panelWindow?.window
+        return built !== undefined && !built.isDestroyed() && built.isVisible()
+      },
       onMinimizedChanged: (h) => {
         this.panelMinimizeHandlers.push(h)
       }

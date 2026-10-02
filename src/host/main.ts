@@ -40,6 +40,7 @@ import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
 import { createNativeOwnerOnlyDirectory } from './platform/endpoint/win-pipe/nativeOwnerOnlyDirectory'
+import { createNativeProcessInJob } from './platform/endpoint/win-pipe/nativeProcessInJob'
 import {
   createNativeOwnerOnlyPipe,
   winPipePrebuildsDir
@@ -94,6 +95,14 @@ async function main(): Promise<void> {
   const entry = fileURLToPath(import.meta.url)
   // `out/host/main.js` → the app root (the repository in dev, `app.asar` when packaged).
   const appRoot = dirname(dirname(dirname(entry)))
+  // FM-012, S12.04: the Host's own IsProcessInJob is read first, natively, before the Host spawns anything. libuv adds
+  // the process itself to a job of its own at its first non-detached spawn, so a later read always says in-job
+  // (privilege.ts; ISSUE-056). Creating the check takes that read; it spawns nothing.
+  const runQuery = createQueryRunner()
+  const privilege = createPrivilegeCheck({
+    runQuery,
+    readInJob: createNativeProcessInJob({ prebuildsDir: winPipePrebuildsDir(appRoot) })
+  })
   const resourcesPath = (process as { resourcesPath?: string }).resourcesPath
   const paths = EnvAppPaths.create({
     env: process.env,
@@ -182,7 +191,6 @@ async function main(): Promise<void> {
     sections,
     snapshotMeta
   })
-  const runQuery = createQueryRunner()
   const processControl = new NodeProcessControl({
     scheduler,
     diagnostics: log,
@@ -279,7 +287,7 @@ async function main(): Promise<void> {
       log,
       clock,
       state: hostState,
-      privilege: createPrivilegeCheck({ runQuery }),
+      privilege,
       paths,
       runtime: hostRuntime(),
       exit

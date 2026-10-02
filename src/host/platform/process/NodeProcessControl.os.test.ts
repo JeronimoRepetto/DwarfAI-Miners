@@ -1,8 +1,9 @@
 // L8 OS lane (17 §1.8): the real probe against a real stub process, one describe per OS. Runs only
 // in `pnpm test:os`. The spawned process is the sleeper stub, never a provider CLI.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -101,6 +102,33 @@ function probeCases(): void {
     expect(await child.exited).toEqual({ code: 0, signal: null })
 
     expect(await control.probe(identity.pid)).toBe('absent')
+  }, 20_000)
+
+  // The Host's PATH is the person's environment. Its own identity (run/host.identity, ADR-002 D3) must not depend on
+  // it: on macOS a PATH without /usr/sbin once left `sysctl` unfound, the identity unreadable and no identity file
+  // written (CI run 36940954328). Every OS tool the probe runs is named by path, so a PATH of one empty folder reads
+  // the same identity.
+  it('[ADR-014] probe reads the same identity when PATH names only an empty folder', async () => {
+    const control = new NodeProcessControl()
+    const child = startSleeper(control)
+    const identity = await child.identity
+    if (running !== null) running.pid = identity.pid
+    const empty = mkdtempSync(join(tmpdir(), 'dwarfai-empty-path-'))
+    const keys = Object.keys(process.env).filter((key) => key.toUpperCase() === 'PATH')
+    const saved = keys.map((key) => [key, process.env[key]] as const)
+    let probed: Awaited<ReturnType<NodeProcessControl['probe']>>
+    try {
+      for (const key of keys) process.env[key] = empty
+      probed = await new NodeProcessControl().probe(identity.pid)
+    } finally {
+      for (const [key, value] of saved) process.env[key] = value
+      rmSync(empty, { recursive: true, force: true })
+    }
+
+    expect(probed).not.toBe('unknown')
+    expect(probed).not.toBe('absent')
+    expect((probed as ProcessIdentity).bootId).toBe(thisBootId())
+    expect(control.sameProcess(probed as ProcessIdentity, identity)).toBe(true)
   }, 20_000)
 
   it('[INV-51] the default query runner ends a query that outlives its bound on real Node timers', async () => {

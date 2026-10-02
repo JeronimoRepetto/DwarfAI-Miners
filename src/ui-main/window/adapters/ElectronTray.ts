@@ -39,7 +39,7 @@ export class ElectronTray implements TrayController {
   constructor(
     private readonly electron: ElectronTrayApi,
     private readonly iconPath: string,
-    private readonly platform: NodeJS.Platform
+    private readonly platform: NodeJS.Platform = process.platform
   ) {}
 
   create(menu: TrayMenuModel): void {

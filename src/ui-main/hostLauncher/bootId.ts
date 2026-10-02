@@ -4,10 +4,10 @@
 // the same string in one boot, which hungHost.os.test.ts checks against the identity file a real Host wrote:
 // - Windows: the registry `BootId` boot counter (`reg.exe query … /v BootId`, a REG_DWORD) as a decimal string.
 // - Linux: /proc/sys/kernel/random/boot_id, trimmed; no process spawned.
-// - macOS: `sysctl -n kern.bootsessionuuid`, trimmed.
+// - macOS: `/usr/sbin/sysctl -n kern.bootsessionuuid`, trimmed (by path, never through PATH).
 // Any read that fails or answers something else is null: the identity then does not match (`'unknown'` is a mismatch).
 import { readFile } from 'node:fs/promises'
-import type { QueryRunner } from './processStart'
+import { DARWIN_SYSCTL, type QueryRunner } from './processStart'
 
 /** The Host's BOOT_ID_QUERY_TIMEOUT_MS (16 §2.6). */
 export const BOOT_ID_QUERY_TIMEOUT_MS = 2_000
@@ -47,7 +47,7 @@ export function createBootIdReader(options: BootIdReaderOptions): () => Promise<
   if (runQuery === undefined) return () => Promise.resolve(null)
   if (platform === 'darwin') {
     return async () => {
-      const out = await runQuery('sysctl', ['-n', 'kern.bootsessionuuid'], {
+      const out = await runQuery(DARWIN_SYSCTL, ['-n', 'kern.bootsessionuuid'], {
         timeoutMs: BOOT_ID_QUERY_TIMEOUT_MS
       })
       if (!out.ok) return null

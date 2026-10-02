@@ -4,14 +4,14 @@
 //
 // - A-N26 `confirmStopEverything` (`host`): relays `host.shutdown {mode:'stop-all', requestId}` on the confirmation's
 //   `ui` connection and answers `IpcResult<StopAllOutcome>` (window/application/stopEverything.ts). Through cut 4 the
-//   cut-0 switch (ISSUE-056) composes `LegacyEndFirstAdapter` (ISSUE-054) as the use case's relay, so this row ends
-//   the legacy-launched sessions first without another handler.
+//   root composes `LegacyEndFirstAdapter` (ISSUE-054) as the use case's relay (the cut-0 switch, ISSUE-056), so this
+//   row ends the legacy-launched sessions first without another handler.
 // - A-N27 `cancelStopEverything` (`ui-local`): one-way, closes the confirmation, sends nothing.
 // - A-N34 `requestStopEverything` (`ui-local`; amendment owner-approved 2026-10-01, ISSUE-316): one-way, a window asks
 //   for the tray item's flow; the use case opens no second confirmation while one is open or being opened.
 // - A-N25 `onStopEverythingRequested` is a push: UI main sends it (the use case), no handler serves it.
 //
-// The rows are listed in `contracts/ipc/unrouted.ts` until the cut-0 switch routes them. A call of any other channel
+// The cut-0 switch (ISSUE-056) routes the rows (A-N26 `host`, A-N27 and A-N34 `ui-local`). A call of any other channel
 // is refused like a call with no route, so this target never serves a row that is not its own.
 import type { ChannelKey, IpcError } from '@dwarfai/contracts'
 import type { StopEverything } from '../../window/application/stopEverything'

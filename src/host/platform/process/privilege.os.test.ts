@@ -5,10 +5,18 @@
 // AMENDED for ISSUE-051: CI's Windows legs run the OS lane as a standard local user
 // (scripts/ci/run-unelevated.mjs), so on Windows the test user is also asserted not elevated.
 import { release } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { createQueryRunner } from './NodeProcessControl'
 import { createPrivilegeCheck } from './privilege'
 import { POWERSHELL_DROPPED_ENV, windowsPowerShell } from './probe/types'
+import { createNativeProcessInJob } from '../endpoint/win-pipe/nativeProcessInJob'
+
+/** The native binaries: prebuilds/ at the repository root (`pnpm build:native`), or DWARFAI_WIN_PREBUILDS. */
+const PREBUILDS =
+  process.env.DWARFAI_WIN_PREBUILDS ??
+  join(fileURLToPath(new URL('../../../../', import.meta.url)), 'prebuilds')
 
 /** Windows' own answer: is this token an administrator one with the role enabled (elevated)? */
 async function windowsSaysElevated(): Promise<boolean> {
@@ -30,7 +38,12 @@ describe.runIf(process.platform === 'win32')('privilege check on Windows', () =>
   it('[ADR-002] the privilege check reports the OS elevation for the test user (not elevated on a normal start) and IsProcessInJob returns a value on Windows', async ({
     annotate
   }) => {
-    const check = createPrivilegeCheck({ runQuery: createQueryRunner() })
+    // AMENDED for ISSUE-056 (was: the PowerShell job read): the job status is the Host's own native read, as the
+    // Host's composition root takes it; the expectations are unchanged.
+    const check = createPrivilegeCheck({
+      runQuery: createQueryRunner(),
+      readInJob: createNativeProcessInJob({ prebuildsDir: PREBUILDS })
+    })
 
     const [report, elevated] = await Promise.all([check(), windowsSaysElevated()])
 

@@ -171,8 +171,17 @@ const HOSTILE: readonly unknown[] = [
 
 describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () => {
   it("[ADR-033] the generated preload exposes exactly the registry's members with today's names", () => {
-    // Premise: before cut 0 every route keeps today's shape, so every member keeps today's name and wire.
-    expect(ROUTES.filter((route) => route.shape !== 'today')).toEqual([])
+    // Premise: every member keeps today's name and wire. AMENDED for ISSUE-056 (was: every route keeps today's shape,
+    // true before cut 0): from cut 0 a `target` route is a KEEP row, whose target shape is today's (14 §2.1), or a
+    // NEW row (14 §2.2), which has no today shape; no CHANGE or RETIRE row is `target` yet.
+    expect(
+      ROUTES.filter(
+        (route) =>
+          route.shape !== 'today' &&
+          CHANNELS[route.channel].status !== 'kept' &&
+          CHANNELS[route.channel].status !== 'new'
+      )
+    ).toEqual([])
     const expected = KEYS.map(memberOf)
     expect(
       KEYS.filter((key) => memberOf(key) === undefined),
@@ -291,7 +300,9 @@ describe('generated preload (14 §2.1; ADR-033 items 6, 7; 21 §1 item 2a)', () 
   })
 
   it("[ADR-033] a member whose route shape is today exposes today's result type", () => {
-    const today = ['dwarf:activate', 'mines:get', 'panel:getAlwaysOnTop', 'dwarf:sendText']
+    // AMENDED for ISSUE-056 (was: 'panel:getAlwaysOnTop' as the KEEP row): A-03 is `ui-local` + `target` from cut 0, so
+    // A-42, a KEEP row still served `legacy`, stands for it.
+    const today = ['dwarf:activate', 'mines:get', 'notifications:enabled:get', 'dwarf:sendText']
     for (const key of today) {
       expect(
         ROUTES.filter((route) => route.channel === key).map((route) => route.shape),

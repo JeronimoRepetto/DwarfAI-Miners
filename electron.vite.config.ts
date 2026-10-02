@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
@@ -60,6 +61,37 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
  * no `out/main/chunks/`), so there is nothing this build ever produced that
  * skipping the empty step could leave stale.
  */
+/*
+ * AMENDED for ISSUE-056 (was: the `main` target built today's legacy entry
+ * `src/main/index.ts` by electron-vite's own convention into `out/main/index.js`):
+ * from cut 0 the app's Electron entry is the UI-main composition root
+ * `src/ui-main/index.ts` (21 §2 cut 0, "Retired at the end"; 05 §2.3), built
+ * here into `out/ui-main/index.js`, which `package.json` `main` names. The
+ * legacy entry stays in the tree, unbuilt; today's runtime is reached only
+ * through `LegacyRuntimeRoute` (lint R16). It took over the separate
+ * `electron.vite.uiMain.config.ts` target that ISSUE-042 added for the E2E
+ * harness, so `pnpm dev` and `pnpm build` start the same entry. Its own folder
+ * next to `out/preload` and `out/renderer` keeps their relative paths, and
+ * `out/main/` still holds `jevMcpServer.mjs` (its own build, below), which
+ * `emptyOutDir: false` never touches either way.
+ *
+ * `__DWARFAI_BUILD_ID__` stamps the build's git commit, short (20 §3.1
+ * `buildId`), which HostClient sends in `hello.client` (ADR-003 item 5), as
+ * electron.vite.host.config.ts does for the Host's `hello.ok`. A build made
+ * outside a git checkout says `unknown`.
+ */
+function gitShortCommit(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
 // `@dwarfai/contracts` is the one contracts barrel (ADR-004 P13, 05 §2.1), resolved the same way
 // in every build and in both tsconfigs and vitest.config.ts.
 export default defineConfig({
@@ -68,8 +100,15 @@ export default defineConfig({
       alias: { '@dwarfai/contracts': resolve(__dirname, 'src/contracts/index.ts') }
     },
     plugins: [externalizeDepsPlugin()],
+    define: {
+      __DWARFAI_BUILD_ID__: JSON.stringify(gitShortCommit())
+    },
     build: {
-      emptyOutDir: false
+      outDir: 'out/ui-main',
+      emptyOutDir: false,
+      rollupOptions: {
+        input: { index: resolve(__dirname, 'src/ui-main/index.ts') }
+      }
     }
   },
   // The preload is one CommonJS script, `out/preload/index.cjs`, whose only runtime import is `electron`: a

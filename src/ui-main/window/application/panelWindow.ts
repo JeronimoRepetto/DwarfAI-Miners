@@ -3,6 +3,7 @@
 // replaced). It hides and shows the one Panel window (INV-116), docks it to the stored edge on the work area of the
 // display it is on, sizes it for the parts that are open (`domain/panelBounds.ts`), keeps it pinned as stored, and
 // tells the Panel's page whenever it starts or stops being on screen (A-P1).
+import type { ChannelKey } from '@dwarfai/contracts'
 import {
   layoutThatFits,
   panelBounds,
@@ -20,7 +21,7 @@ import type { UiPreferenceStore, UiPreferenceStoreMap } from '../ports/uiPrefere
 import type { Rect, WindowFactory } from '../ports/windowFactory'
 
 /** A-P1 `onPanelVisibility` (14 §2.1, KEEP): whether the Panel window is on screen. */
-export const PANEL_VISIBILITY_PUSH = 'panel:visible:changed'
+export const PANEL_VISIBILITY_PUSH = 'panel:visible:changed' satisfies ChannelKey
 
 /**
  * What the use case reads back from the Panel window the factory built, beyond the frozen `ModeWindow` members
@@ -40,6 +41,12 @@ export interface PanelWindowSurface {
   /** Brings a visible window to the front and focuses it; a hidden one stays hidden (#165). */
   raise(): void
   isMinimized(): boolean
+  /**
+   * Whether the Panel window exists and is on screen, read back from the window (owner-approved additive amendment to
+   * 16 §4.14, 2026-10-01, "PanelWindowSurface read-backs (visible)"): a window the OS or the person closed is not, and
+   * asking builds none.
+   */
+  isVisible(): boolean
   /** The person minimized or restored the window. */
   onMinimizedChanged(h: () => void): void
 }
@@ -71,6 +78,11 @@ export interface PanelWindowUseCases extends PanelWindowController {
   visible(): boolean
   /** Where a new Panel window opens, pinned as stored (#35) and docked to the stored edge (#138). */
   panelStart(): { alwaysOnTop: boolean; bounds: Rect }
+  /**
+   * Builds the Panel window hidden, its page loading, as today's start did (legacy `createMainWindow` then
+   * `loadPanelPage`): the cut-0 entry calls it once the router serves the rows (ISSUE-056; 21 §2 cut 0, "same app").
+   */
+  load(): void
 }
 
 /** What one fit of the Panel window came to, in the display's own pixels. */
@@ -146,14 +158,18 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   let held: PanelColumns | null = null
   /** Whether the window was built: nothing reads or moves a window before it exists. */
   let built = false
-  /** Whether the Panel is shown (S10 `panel` vs `hidden`); minimized is the window's, read back. */
-  let shown = false
   /** The visibility the page was last told (A-P1), so each change is pushed once. */
   let told = false
 
   const panel = () => {
+    // The factory asks `panelStart` while it builds the window (ElectronWindows), so the window counts as built only
+    // once it exists: until then nothing reads back a window that is still being made (ISSUE-056). That holds for a
+    // rebuild too: a Panel closed outside the app is built again on the next ask, and a read-back of the closed window
+    // from panelStart would ask for the window again, without end (macOS E2E, CI run 36970221778).
+    built = false
+    const window = windows.panel()
     built = true
-    return windows.panel()
+    return window
   }
 
   /** The work area of the display the Panel is on, or of the primary display when it is on none (FM-111). */
@@ -178,7 +194,13 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   /** What the window is right now: the layout asked, less what the window as it ended up cannot hold. */
   const current = (): PanelLayout => ({ ...layoutAsked(), ...held })
 
-  const visible = (): boolean => built && shown && !surface.isMinimized()
+  /**
+   * Whether the Panel is shown (S10 `panel` vs `hidden`), read back from its window (16 §4.14 read-backs, visible): a
+   * window closed outside the app is not, whatever this use case last did with it (ISSUE-056).
+   */
+  const shown = (): boolean => built && surface.isVisible()
+
+  const visible = (): boolean => shown() && !surface.isMinimized()
 
   const publish = (): void => {
     const now = visible()
@@ -202,14 +224,12 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
     // Re-derived on every show: a Panel hidden across a display change comes back docked to the display as it is now.
     fit()
     panel().showInactive()
-    shown = true
     // Shown is not raised (#165): the window may come back under whatever had the foreground.
     surface.raise()
     publish()
   }
 
   const hide = (): void => {
-    shown = false
     if (!built) return
     panel().hide()
     publish()
@@ -226,7 +246,7 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
   return {
     hide,
     show,
-    toggleVisible: () => (shown ? hide() : show()),
+    toggleVisible: () => (shown() ? hide() : show()),
     setAlwaysOnTop(on) {
       const real = built ? surface.setAlwaysOnTop(on) : on
       persist('alwaysOnTop', real)
@@ -247,10 +267,13 @@ export function createPanelWindow(deps: PanelWindowDeps): PanelWindowUseCases {
       return current()
     },
     raise() {
-      if (shown && built) surface.raise()
+      if (shown()) surface.raise()
     },
     alwaysOnTop: () => (built ? surface.isAlwaysOnTop() : store.load('alwaysOnTop')),
     visible,
+    load: () => {
+      panel()
+    },
     panelStart: () => ({
       alwaysOnTop: store.load('alwaysOnTop'),
       bounds: panelBounds(currentArea(), layoutAsked().edge, layoutAsked(), floor)

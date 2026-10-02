@@ -3,6 +3,8 @@
 // prints English month names whatever the person's locale.
 import {
   BOOT_ID_QUERY_TIMEOUT_MS,
+  DARWIN_PS,
+  DARWIN_SYSCTL,
   START_TIME_QUERY_TIMEOUT_MS,
   parsed,
   type OsProcessReader,
@@ -51,14 +53,14 @@ export function parseDarwinLstart(text: string): number | null {
 export function createDarwinReader(deps: { runQuery: QueryRunner }): OsProcessReader {
   return {
     async startTimeMs(pid) {
-      const out = await deps.runQuery('ps', ['-p', String(pid), '-o', 'lstart='], {
+      const out = await deps.runQuery(DARWIN_PS, ['-p', String(pid), '-o', 'lstart='], {
         timeoutMs: START_TIME_QUERY_TIMEOUT_MS,
         env: { LC_ALL: 'C' }
       })
       return parsed(out, parseDarwinLstart)
     },
     async bootId() {
-      const out = await deps.runQuery('sysctl', ['-n', 'kern.bootsessionuuid'], {
+      const out = await deps.runQuery(DARWIN_SYSCTL, ['-n', 'kern.bootsessionuuid'], {
         timeoutMs: BOOT_ID_QUERY_TIMEOUT_MS
       })
       return parsed(out, (stdout) => {

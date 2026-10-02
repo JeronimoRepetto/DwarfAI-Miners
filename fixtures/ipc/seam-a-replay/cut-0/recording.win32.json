@@ -1,0 +1,744 @@
+{
+  "calls": [
+    {
+      "answer": {
+        "materials": {
+          "bronze": 0,
+          "coal": 0,
+          "copper": 0,
+          "gold": 0,
+          "silver": 0,
+          "uranium": 0
+        },
+        "mines": [
+          {
+            "dwarfs": [
+              {
+                "effort": "high",
+                "id": "sim:2:0",
+                "lastMessage": "This rock is harder than the survey promised.",
+                "model": "haiku",
+                "name": "Grimla",
+                "provider": "claude",
+                "role": "foreman",
+                "sessionId": "sim-session-2-0",
+                "status": "working",
+                "tokensObserved": 21043
+              }
+            ],
+            "id": "mine:\\simulated-valley\\copperreach",
+            "materials": {
+              "bronze": 0,
+              "coal": 0,
+              "copper": 0,
+              "gold": 0,
+              "silver": 0,
+              "uranium": 0
+            },
+            "name": "Copperreach",
+            "path": "/simulated-valley/Copperreach",
+            "tier": "silver",
+            "tokensObserved": 21043,
+            "updatedAt": "<wall-clock>"
+          },
+          {
+            "dwarfs": [
+              {
+                "effort": "high",
+                "id": "sim:0:0",
+                "lastMessage": "Cutting a fresh gallery along the east seam.",
+                "model": "gpt-5-codex",
+                "name": "Brann",
+                "provider": "codex",
+                "role": "foreman",
+                "sessionId": "sim-session-0-0",
+                "status": "working",
+                "tokensObserved": 5617
+              },
+              {
+                "effort": "high",
+                "id": "sim:0:1",
+                "lastMessage": "Hauling the last cart up to the sorting floor.",
+                "model": "haiku",
+                "name": "Yorin",
+                "provider": "claude",
+                "role": "worker",
+                "sessionId": "sim-session-0-1",
+                "status": "working",
+                "tokensObserved": 61138
+              },
+              {
+                "effort": "low",
+                "id": "sim:0:2",
+                "lastMessage": "This rock is harder than the survey promised.",
+                "model": "haiku",
+                "name": "Grimla",
+                "provider": "claude",
+                "role": "worker",
+                "sessionId": "sim-session-0-2",
+                "status": "working",
+                "tokensObserved": 407587
+              }
+            ],
+            "id": "mine:\\simulated-valley\\silverbarrow",
+            "materials": {
+              "bronze": 0,
+              "coal": 0,
+              "copper": 0,
+              "gold": 0,
+              "silver": 0,
+              "uranium": 0
+            },
+            "name": "Silverbarrow",
+            "path": "/simulated-valley/Silverbarrow",
+            "tier": "bronze",
+            "tokensObserved": 474342,
+            "updatedAt": "<wall-clock>"
+          },
+          {
+            "dwarfs": [
+              {
+                "effort": "medium",
+                "id": "sim:1:0",
+                "lastMessage": "Almost through — one more pass should do it.",
+                "model": "sonnet",
+                "name": "Dorin",
+                "provider": "claude",
+                "role": "foreman",
+                "sessionId": "sim-session-1-0",
+                "status": "working",
+                "tokensObserved": 196534
+              },
+              {
+                "effort": "medium",
+                "id": "sim:1:1",
+                "lastMessage": "Waiting on the foreman before I break through.",
+                "model": "opus",
+                "name": "Ketil",
+                "provider": "claude",
+                "role": "worker",
+                "sessionId": "sim-session-1-1",
+                "status": "working",
+                "tokensObserved": 63573
+              },
+              {
+                "effort": "low",
+                "id": "sim:1:2",
+                "lastMessage": "Timbering the roof before we go deeper.",
+                "model": "gpt-5",
+                "name": "Halvar",
+                "provider": "codex",
+                "role": "worker",
+                "sessionId": "sim-session-1-2",
+                "status": "working",
+                "tokensObserved": 486144
+              }
+            ],
+            "id": "mine:\\simulated-valley\\amberdelve",
+            "materials": {
+              "bronze": 0,
+              "coal": 0,
+              "copper": 0,
+              "gold": 0,
+              "silver": 0,
+              "uranium": 0
+            },
+            "name": "Amberdelve",
+            "path": "/simulated-valley/Amberdelve",
+            "tier": "copper",
+            "tokensObserved": 746251,
+            "updatedAt": "<wall-clock>"
+          }
+        ],
+        "tokensObserved": 1241636
+      },
+      "channel": "mines:get",
+      "member": "getMines",
+      "row": "A-12"
+    },
+    {
+      "answer": {
+        "feed": [],
+        "focused": false,
+        "openedTerminal": false
+      },
+      "channel": "dwarf:activate",
+      "member": "activateDwarf",
+      "row": "A-13"
+    },
+    {
+      "answer": {
+        "messages": [],
+        "readable": false
+      },
+      "channel": "dwarf:feed",
+      "member": "getDwarfFeed",
+      "row": "A-14"
+    },
+    {
+      "answer": {
+        "messages": [],
+        "reachedStart": false,
+        "readable": false
+      },
+      "channel": "dwarf:feed:page",
+      "member": "getDwarfFeedPage",
+      "row": "A-15"
+    },
+    {
+      "answer": null,
+      "channel": "panel:watchDwarfFeed",
+      "member": "setWatchedDwarf",
+      "row": "A-16"
+    },
+    {
+      "answer": null,
+      "channel": "dwarf:refreshTelemetry",
+      "member": "refreshDwarfTelemetry",
+      "row": "A-17"
+    },
+    {
+      "answer": {
+        "applied": false,
+        "reason": "The panel is not holding this session."
+      },
+      "channel": "dwarf:setTuning",
+      "member": "setDwarfTuning",
+      "row": "A-18"
+    },
+    {
+      "answer": {
+        "readable": false,
+        "speakers": []
+      },
+      "channel": "mine:history",
+      "member": "getMineHistory",
+      "row": "A-19"
+    },
+    {
+      "answer": {
+        "opened": false,
+        "reason": "That path is outside this mine's folder."
+      },
+      "channel": "mine:openPath",
+      "member": "openMinePath",
+      "row": "A-20"
+    },
+    {
+      "answer": {
+        "delivered": false,
+        "error": "That dwarf has left the mine.",
+        "via": "none"
+      },
+      "channel": "dwarf:sendText",
+      "member": "sendDwarfText",
+      "row": "A-23"
+    },
+    {
+      "answer": [],
+      "channel": "dwarf:attachments:describe",
+      "member": "describeDwarfAttachments",
+      "row": "A-25"
+    },
+    {
+      "answer": {
+        "delivered": false,
+        "error": "That dwarf has left the mine.",
+        "via": "none"
+      },
+      "channel": "dwarf:kick",
+      "member": "kickDwarf",
+      "row": "A-26"
+    },
+    {
+      "answer": null,
+      "channel": "dwarf:retire",
+      "member": "retireDwarf",
+      "row": "A-27"
+    },
+    {
+      "answer": {
+        "outcome": "failed",
+        "reason": "The projects database didn't open, so mines can't be added right now."
+      },
+      "channel": "mine:declare",
+      "member": "declareMine",
+      "row": "A-30"
+    },
+    {
+      "answer": {
+        "outcome": "failed",
+        "reason": "The projects database didn't open, so mines can't be added right now."
+      },
+      "channel": "mine:declare-main",
+      "member": "declareMainProject",
+      "row": "A-31"
+    },
+    {
+      "answer": {
+        "outcome": "failed",
+        "reason": "The projects database didn't open, so mines can't be added right now."
+      },
+      "channel": "mine:undeclare",
+      "member": "undeclareMine",
+      "row": "A-32"
+    },
+    {
+      "answer": {
+        "outcome": "reset"
+      },
+      "channel": "metrics:reset",
+      "member": "resetMetrics",
+      "row": "A-33"
+    },
+    {
+      "answer": {
+        "answered": false,
+        "projects": [],
+        "reason": "The projects database didn't open, so mines can't be added right now."
+      },
+      "channel": "projects:query",
+      "member": "queryProjects",
+      "row": "A-34"
+    },
+    {
+      "answer": {
+        "error": "The agent could not be started.",
+        "launched": false,
+        "provider": "none"
+      },
+      "channel": "agent:launch",
+      "member": "launchAgent",
+      "row": "A-35"
+    },
+    {
+      "answer": {
+        "providers": [
+          {
+            "installed": false,
+            "launchable": false,
+            "provider": "claude"
+          },
+          {
+            "installed": false,
+            "launchable": false,
+            "provider": "codex"
+          },
+          {
+            "installed": false,
+            "launchable": false,
+            "provider": "antigravity"
+          },
+          {
+            "installed": false,
+            "launchable": false,
+            "provider": "opencode"
+          }
+        ]
+      },
+      "channel": "agent:providers",
+      "member": "listAgentProviders",
+      "row": "A-36"
+    },
+    {
+      "answer": {
+        "catalogs": [
+          {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "models": [],
+            "provider": "claude",
+            "source": "none"
+          },
+          {
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              "ultra"
+            ],
+            "models": [],
+            "provider": "codex",
+            "source": "history"
+          },
+          {
+            "efforts": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "models": [],
+            "provider": "antigravity",
+            "source": "none"
+          },
+          {
+            "efforts": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              "thinking"
+            ],
+            "models": [],
+            "provider": "opencode",
+            "source": "none"
+          }
+        ]
+      },
+      "channel": "agent:models",
+      "member": "listAgentModels",
+      "row": "A-37"
+    },
+    {
+      "answer": {
+        "error": "The agent could not be started.",
+        "launched": false
+      },
+      "channel": "agent:launchHeld",
+      "member": "launchHeldSession",
+      "row": "A-38"
+    },
+    {
+      "answer": {
+        "error": "A simulated valley's mines are not folders, so nothing can start in one.",
+        "launched": false
+      },
+      "channel": "agent:launchHosted",
+      "member": "launchHostedProcess",
+      "row": "A-39"
+    },
+    {
+      "answer": {
+        "answered": false,
+        "error": "That dwarf has left the mine."
+      },
+      "channel": "agent:answerQuestion",
+      "member": "answerDwarfQuestion",
+      "row": "A-40"
+    },
+    {
+      "answer": {
+        "answered": false,
+        "error": "That dwarf has left the mine."
+      },
+      "channel": "agent:answerPermission",
+      "member": "answerDwarfPermission",
+      "row": "A-41"
+    },
+    {
+      "answer": true,
+      "channel": "notifications:enabled:get",
+      "member": "getNotificationsEnabled",
+      "row": "A-42"
+    },
+    {
+      "answer": false,
+      "channel": "notifications:enabled:set",
+      "member": "setNotificationsEnabled",
+      "row": "A-43"
+    },
+    {
+      "answer": false,
+      "channel": "notifications:enabled:get",
+      "member": "getNotificationsEnabled",
+      "row": "A-42"
+    },
+    {
+      "answer": true,
+      "channel": "notifications:enabled:set",
+      "member": "setNotificationsEnabled",
+      "row": "A-43"
+    },
+    {
+      "answer": null,
+      "channel": "presence:visibleMines",
+      "member": "setOpenMine",
+      "row": "A-44"
+    },
+    {
+      "answer": {
+        "configured": false,
+        "preferences": {
+          "default": {},
+          "delegation": false,
+          "profile": "balanced"
+        }
+      },
+      "channel": "jev:settings:get",
+      "member": "getJevSettings",
+      "row": "A-47"
+    },
+    {
+      "answer": {
+        "configured": false,
+        "preferences": {
+          "default": {},
+          "delegation": false,
+          "profile": "balanced"
+        }
+      },
+      "channel": "jev:apiKey:set",
+      "member": "setJevApiKey",
+      "row": "A-48"
+    },
+    {
+      "answer": {
+        "configured": false,
+        "preferences": {
+          "default": {},
+          "delegation": false,
+          "profile": "balanced"
+        }
+      },
+      "channel": "jev:apiKey:clear",
+      "member": "clearJevApiKey",
+      "row": "A-49"
+    },
+    {
+      "answer": {
+        "kind": "fallback",
+        "reason": "invalid-response"
+      },
+      "channel": "jev:route",
+      "member": "routeJevLaunch",
+      "row": "A-50"
+    },
+    {
+      "answer": {
+        "configured": false,
+        "preferences": {
+          "default": {},
+          "delegation": false,
+          "profile": "balanced"
+        }
+      },
+      "channel": "jev:preferences:set",
+      "member": "setJevPreferences",
+      "row": "A-51"
+    },
+    {
+      "answer": {
+        "passwordConfigured": false,
+        "pluginEnabled": false
+      },
+      "channel": "opencode:settings:get",
+      "member": "getOpenCodeSettings",
+      "row": "A-52"
+    },
+    {
+      "answer": {
+        "passwordConfigured": false,
+        "pluginEnabled": false
+      },
+      "channel": "opencode:plugin:set",
+      "member": "setOpenCodePluginEnabled",
+      "row": "A-53"
+    },
+    {
+      "answer": {
+        "passwordConfigured": false,
+        "pluginEnabled": false
+      },
+      "channel": "opencode:password:set",
+      "member": "setOpenCodeServerPassword",
+      "row": "A-54"
+    },
+    {
+      "answer": {
+        "passwordConfigured": false,
+        "pluginEnabled": false
+      },
+      "channel": "opencode:password:clear",
+      "member": "clearOpenCodeServerPassword",
+      "row": "A-55"
+    },
+    {
+      "answer": {
+        "reason": "This dwarf is no longer here, so its name cannot change.",
+        "saved": false
+      },
+      "channel": "dwarf:setName",
+      "member": "setDwarfName",
+      "row": "§8 I-21"
+    },
+    {
+      "answer": {
+        "reason": "This dwarf is no longer here, so its name cannot change.",
+        "saved": false
+      },
+      "channel": "dwarf:resetName",
+      "member": "resetDwarfName",
+      "row": "§8 I-21"
+    }
+  ],
+  "platform": "win32",
+  "pushes": {
+    "agent:launchFailed": [],
+    "dwarf:sendText:settled": [],
+    "mines:update": [
+      {
+        "materials": {
+          "bronze": 0,
+          "coal": 0,
+          "copper": 0,
+          "gold": 0,
+          "silver": 0,
+          "uranium": 0
+        },
+        "mines": [
+          {
+            "dwarfs": [
+              {
+                "effort": "high",
+                "id": "sim:2:0",
+                "lastMessage": "This rock is harder than the survey promised.",
+                "model": "haiku",
+                "name": "Grimla",
+                "provider": "claude",
+                "role": "foreman",
+                "sessionId": "sim-session-2-0",
+                "status": "working",
+                "tokensObserved": 21043
+              }
+            ],
+            "id": "mine:\\simulated-valley\\copperreach",
+            "materials": {
+              "bronze": 0,
+              "coal": 0,
+              "copper": 0,
+              "gold": 0,
+              "silver": 0,
+              "uranium": 0
+            },
+            "name": "Copperreach",
+            "path": "/simulated-valley/Copperreach",
+            "tier": "silver",
+            "tokensObserved": 21043,
+            "updatedAt": "<wall-clock>"
+          },
+          {
+            "dwarfs": [
+              {
+                "effort": "high",
+                "id": "sim:0:0",
+                "lastMessage": "Cutting a fresh gallery along the east seam.",
+                "model": "gpt-5-codex",
+                "name": "Brann",
+                "provider": "codex",
+                "role": "foreman",
+                "sessionId": "sim-session-0-0",
+                "status": "working",
+                "tokensObserved": 5617
+              },
+              {
+                "effort": "high",
+                "id": "sim:0:1",
+                "lastMessage": "Hauling the last cart up to the sorting floor.",
+                "model": "haiku",
+                "name": "Yorin",
+                "provider": "claude",
+                "role": "worker",
+                "sessionId": "sim-session-0-1",
+                "status": "working",
+                "tokensObserved": 61138
+              },
+              {
+                "effort": "low",
+                "id": "sim:0:2",
+                "lastMessage": "This rock is harder than the survey promised.",
+                "model": "haiku",
+                "name": "Grimla",
+                "provider": "claude",
+                "role": "worker",
+                "sessionId": "sim-session-0-2",
+                "status": "working",
+                "tokensObserved": 407587
+              }
+            ],
+            "id": "mine:\\simulated-valley\\silverbarrow",
+            "materials": {
+              "bronze": 0,
+              "coal": 0,
+              "copper": 0,
+              "gold": 0,
+              "silver": 0,
+              "uranium": 0
+            },
+            "name": "Silverbarrow",
+            "path": "/simulated-valley/Silverbarrow",
+            "tier": "bronze",
+            "tokensObserved": 474342,
+            "updatedAt": "<wall-clock>"
+          },
+          {
+            "dwarfs": [
+              {
+                "effort": "medium",
+                "id": "sim:1:0",
+                "lastMessage": "Almost through — one more pass should do it.",
+                "model": "sonnet",
+                "name": "Dorin",
+                "provider": "claude",
+                "role": "foreman",
+                "sessionId": "sim-session-1-0",
+                "status": "working",
+                "tokensObserved": 196534
+              },
+              {
+                "effort": "medium",
+                "id": "sim:1:1",
+                "lastMessage": "Waiting on the foreman before I break through.",
+                "model": "opus",
+                "name": "Ketil",
+                "provider": "claude",
+                "role": "worker",
+                "sessionId": "sim-session-1-1",
+                "status": "working",
+                "tokensObserved": 63573
+              },
+              {
+                "effort": "low",
+                "id": "sim:1:2",
+                "lastMessage": "Timbering the roof before we go deeper.",
+                "model": "gpt-5",
+                "name": "Halvar",
+                "provider": "codex",
+                "role": "worker",
+                "sessionId": "sim-session-1-2",
+                "status": "working",
+                "tokensObserved": 486144
+              }
+            ],
+            "id": "mine:\\simulated-valley\\amberdelve",
+            "materials": {
+              "bronze": 0,
+              "coal": 0,
+              "copper": 0,
+              "gold": 0,
+              "silver": 0,
+              "uranium": 0
+            },
+            "name": "Amberdelve",
+            "path": "/simulated-valley/Amberdelve",
+            "tier": "copper",
+            "tokensObserved": 746251,
+            "updatedAt": "<wall-clock>"
+          }
+        ],
+        "tokensObserved": 1241636
+      }
+    ],
+    "panel:mine:show": []
+  },
+  "release": "cut-0"
+}

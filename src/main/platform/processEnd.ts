@@ -85,7 +85,9 @@ export function buildEndProcessTreeCommand(
   if (platform === 'win32') {
     return { command: 'taskkill', args: ['/PID', String(pid), '/T', '/F'] }
   }
-  return { command: 'kill', args: ['-TERM', `-${pid}`] }
+  // `--` before the group: procps-ng's `kill` reads a bare `-<pid>` as options and signals the group of its first
+  // digit, answering exit 0 for nothing signalled; BSD `kill` (macOS) skips the `--` (see the builder's test).
+  return { command: 'kill', args: ['-TERM', '--', `-${pid}`] }
 }
 
 /**

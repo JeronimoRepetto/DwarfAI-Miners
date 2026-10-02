@@ -15,6 +15,7 @@ import {
 import { parseDarwinLstart } from '../probe/darwin'
 import { parseLinuxStartTime } from '../probe/linux'
 import {
+  DARWIN_PS,
   POWERSHELL_DROPPED_ENV,
   windowsPowerShell,
   type QueryRunner,
@@ -179,7 +180,7 @@ export function createSnapshotReader(
   }
   if (platform === 'darwin') {
     return async () => {
-      const out = await runQuery('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,lstart='], {
+      const out = await runQuery(DARWIN_PS, ['-A', '-o', 'pid=,ppid=,pgid=,stat=,lstart='], {
         timeoutMs: SNAPSHOT_QUERY_TIMEOUT_MS,
         env: { LC_ALL: 'C' }
       })

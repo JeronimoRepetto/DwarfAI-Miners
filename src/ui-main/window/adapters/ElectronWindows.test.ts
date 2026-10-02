@@ -308,3 +308,21 @@ describe('ElectronWindows Panel surface (05 §3.14; ADR-024 item 9; 13 FM-052)',
     expect(window.webContents.zoom).toBe(2)
   })
 })
+
+describe('the Panel visibility read-back (ISSUE-056; 16 §4.14 read-backs, visible)', () => {
+  it('[US-SHELL-002.AC01] the surface reads the Panel window as it is, a closed one as not visible, and builds no window to answer', () => {
+    const windows = new ElectronWindows(deps())
+    const surface = windows.panelSurface()
+    expect(surface.isVisible(), 'no Panel window yet').toBe(false)
+    expect(FakeBrowserWindow.built).toHaveLength(0)
+
+    windows.panel()
+    const window = FakeBrowserWindow.built[0]!
+    window.showInactive()
+    expect(surface.isVisible()).toBe(true)
+
+    window.close()
+    expect(surface.isVisible(), 'a closed Panel').toBe(false)
+    expect(FakeBrowserWindow.built, 'no window built to answer').toHaveLength(1)
+  })
+})

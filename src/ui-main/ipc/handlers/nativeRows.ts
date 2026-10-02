@@ -3,8 +3,8 @@
 // (ADR-001 item 3), so every call has passed the seam A gate first, sender and payload (ADR-019 items 7, 8;
 // ISSUE-044), and arrives in today's shape. Each answers today's shape (ADR-033 item 6). A-X1 `pathForDroppedFile` has
 // no handler: it is the preload's own helper (`PRELOAD_HELPERS`), and the paths it and A-24 yield reach the Host only
-// through A-25 and A-23, which re-validate them (14 §1.10; ADR-019 item 9). The rows stay `legacy` in the route table
-// until the cut-0 switch (ISSUE-056) routes them here.
+// through A-25 and A-23, which re-validate them (14 §1.10; ADR-019 item 9). The cut-0 switch (ISSUE-056) routes the
+// rows here.
 import type { IpcError } from '@dwarfai/contracts'
 import type { AppInfo } from '../../window/application/appInfo'
 import type { ServedNativeActions } from '../../window/application/nativeActions'

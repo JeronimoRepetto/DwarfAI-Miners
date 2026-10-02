@@ -2,6 +2,7 @@
 // boot id itself is the probe's (`probe/darwin.ts`, sysctl kern.bootsessionuuid).
 import {
   BOOT_ID_QUERY_TIMEOUT_MS,
+  DARWIN_SYSCTL,
   parsed,
   type BootSourceReader,
   type QueryRunner
@@ -24,7 +25,7 @@ export function createDarwinBootSources(deps: { runQuery: QueryRunner }): BootSo
       logonSessionId: 'none: the audit session id needs getaudit_addr, which Node cannot call'
     },
     async bootTimeMs() {
-      const out = await deps.runQuery('sysctl', ['-n', 'kern.boottime'], {
+      const out = await deps.runQuery(DARWIN_SYSCTL, ['-n', 'kern.boottime'], {
         timeoutMs: BOOT_ID_QUERY_TIMEOUT_MS
       })
       return parsed(out, parseDarwinBoottime)

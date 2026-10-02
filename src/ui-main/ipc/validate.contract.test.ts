@@ -5,7 +5,9 @@ import { CHANNELS, PRELOAD_HELPERS, todayShapeOf, type ChannelKey } from '@dwarf
 import { createModeWindowRegistry } from '../window/application/modeWindowRegistry'
 import type { ChannelRoute } from './channelRoute'
 import { createRouter, type IpcMainRegistrar, type RouteTarget } from './router'
-import { ROUTES } from './routes'
+// AMENDED for ISSUE-056 (was: `ROUTES`, which was this table until the cut-0 switch): the suite is written against
+// today's table, every row `legacy` with today's shape, kept as `PRE_CUT_0_ROUTES`.
+import { PRE_CUT_0_ROUTES } from './testing/preCutRoutes'
 import type { IpcSenderEvent, SenderPolicy } from './senderCheck'
 import { LEGACY_REFUSALS } from './validate'
 
@@ -281,7 +283,7 @@ const ROWS = (Object.keys(CHANNELS) as ChannelKey[]).filter(
   (key) => CHANNELS[key].kind !== 'push' && !helpers.includes(key)
 )
 /** The rows today's table routes; a NEW row listed in `unrouted.ts` has no route there and reaches no handler. */
-const TODAY_ROUTED = ROWS.filter((key) => ROUTES.some((route) => route.channel === key))
+const TODAY_ROUTED = ROWS.filter((key) => PRE_CUT_0_ROUTES.some((route) => route.channel === key))
 const TODAY_WIRE: Partial<Record<ChannelKey, string>> = {
   'presence:visibleMines': 'panel:openMine'
 }
@@ -290,7 +292,7 @@ const TODAY_WIRE: Partial<Record<ChannelKey, string>> = {
 function todayRouter() {
   const legacy = recordingOwner()
   const router = createRouter({
-    routes: ROUTES,
+    routes: PRE_CUT_0_ROUTES,
     legacy: legacy.target,
     senders: sendersWith(PANEL)
   })
@@ -306,7 +308,7 @@ function targetRouter() {
   const host = recordingOwner()
   const targeted = ROWS.filter((key) => ['changed', 'new'].includes(CHANNELS[key].status))
   const routes: ChannelRoute[] = [
-    ...ROUTES.filter((route) => !targeted.includes(route.channel)),
+    ...PRE_CUT_0_ROUTES.filter((route) => !targeted.includes(route.channel)),
     ...targeted.map((channel): ChannelRoute => ({
       channel,
       owner: 'host',

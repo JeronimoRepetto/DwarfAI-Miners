@@ -24,6 +24,9 @@ export default defineConfig({
   // Each case saves its trace (launchApp `tracePath`) into its output folder; only a failed
   // case's folder is kept, so traces stay on failure only.
   outputDir: 'test-results/e2e',
+  // The run fails when a case left a `dwarfai-e2e-*` temp folder behind (the leftover is removed first; ISSUE-056).
+  globalSetup: './e2e/_harness/globalSetup.ts',
+  globalTeardown: './e2e/_harness/globalTeardown.ts',
   preserveOutput: 'failures-only',
   reporter: process.env.CI ? [['list'], ['github']] : 'list'
 })

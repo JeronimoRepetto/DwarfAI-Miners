@@ -93,7 +93,7 @@ describe('process tree snapshot (ADR-014 item 3)', () => {
       return Promise.resolve({
         ok: true,
         stdout:
-          file === 'ps'
+          file === '/bin/ps'
             ? '   10     1    10 Ss   Sat Aug 29 11:07:36 2026\n   11    10    10 Z    Sat Aug 29 11:07:37 2026\n'
             : '10 1 134352733836959841\r\n4 0 -\r\n'
       })
@@ -111,7 +111,7 @@ describe('process tree snapshot (ADR-014 item 3)', () => {
     })
     expect(win32).toEqual({ ok: true, value: [row(10, 1, 1_790_799_783_695), row(4, 0, null)] })
     expect(queries[0]).toEqual({
-      file: 'ps',
+      file: '/bin/ps',
       args: ['-A', '-o', 'pid=,ppid=,pgid=,stat=,lstart='],
       timeoutMs: SNAPSHOT_QUERY_TIMEOUT_MS
     })

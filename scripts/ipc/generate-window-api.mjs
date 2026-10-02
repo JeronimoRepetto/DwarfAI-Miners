@@ -113,8 +113,10 @@ const MEMBERS = {
 }
 
 /**
- * Today's coercions (the found preload's, kept: ISSUE-045 candidate decision), applied only while the row's route
- * keeps `shape: 'today'`, since each reads today's payload. `arg` is the payload a request or one-way member sends,
+ * Today's coercions (the found preload's, kept: ISSUE-045 candidate decision), applied while the row's route keeps
+ * `shape: 'today'`, since each reads today's payload, and to a KEEP row in either shape, whose target shape is today's
+ * (14 §2.1 KEEP): the cut-0 switch moves a KEEP row to `target` and changes nothing the preload does with it (21 §2
+ * note 1, ISSUE-056). `arg` is the payload a request or one-way member sends,
  * written over its parameter `request`; a push has `payload` (what its listener gets) and optionally `accept` (a push
  * that fails it never reaches the listener). Every expression only reads and compares, so none can throw. A row
  * with no entry passes its value on untouched, for main to validate (14 §1.4). The found preload's shared-parser
@@ -283,7 +285,7 @@ export function windowApiRows({ channels, todayShapes, rowIds, helpers, routes }
       shape,
       status: STATUS_14[spec.status] ?? spec.status,
       noPayload: isNoPayload(schemas?.request),
-      coercion: shape === 'today' ? TODAY_COERCIONS[key] : undefined
+      coercion: shape === 'today' || spec.status === 'kept' ? TODAY_COERCIONS[key] : undefined
     }
   })
   const members = rows.map((row) => row.member)

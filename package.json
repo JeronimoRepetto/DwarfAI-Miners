@@ -7,7 +7,7 @@
   "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
-  "main": "./out/main/index.js",
+  "main": "./out/ui-main/index.js",
   "build": {
     "appId": "com.jeronimorepetto.dwarfaiminers",
     "productName": "DwarfAI-Miners",
@@ -85,7 +85,7 @@
     "icons": "node scripts/build-icons.mjs",
     "interior:map": "node scripts/build-interior-map.mjs",
     "dev": "install-electron && pnpm build:mcp-server && electron-vite dev",
-    "build": "electron-vite build && node scripts/build/write-host-manifest.mjs && electron-vite build --config electron.vite.uiMain.config.ts && electron-vite build --config electron.vite.host.config.ts && pnpm build:mcp-server",
+    "build": "electron-vite build && node scripts/build/write-host-manifest.mjs && electron-vite build --config electron.vite.host.config.ts && pnpm build:mcp-server",
     "build:mcp-server": "electron-vite build --config electron.vite.jevMcpServer.config.ts",
     "build:native": "node scripts/native/build-win-pipe.mjs",
     "package": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
