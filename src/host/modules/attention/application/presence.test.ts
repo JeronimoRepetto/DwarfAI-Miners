@@ -16,6 +16,7 @@ import type { AttentionEvent } from '../domain/events'
 import { FakeAttentionSettings } from '../ports/fakes/FakeAttentionSettings'
 import { InMemoryAttentionLedger } from '../ports/fakes/InMemoryAttentionLedger'
 import { AttentionPolicy } from './attentionPolicy'
+import { RecordingLevel3Sink } from '../ports/fakes/RecordingLevel3Sink'
 
 const T0 = 1_790_000_000_000
 const DWARF = 'dwarf-0111' as DwarfId
@@ -61,6 +62,7 @@ function policy() {
     clock: new FakeClock(T0),
     ids: new SequenceIdGenerator(),
     hostEpoch: 'epoch-0111',
+    sink: new RecordingLevel3Sink(),
     titles: (kind, name) => `${kind}:${name}`
   })
   const notified = (): string[] => bus.ofType('AttentionNotified').map((e) => e.payload.key)
