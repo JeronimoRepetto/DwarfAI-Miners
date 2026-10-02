@@ -17,17 +17,10 @@
 // - No system tray (13 FM-050): `TrayController.create` fails, the process runs windowless with no icon and Stop
 //   everything and quit is offered from the window instead.
 //
-// The labels are design's copy (ADR-002 O-3; ADR-018 D5), kept as `⟦COPY NEEDED⟧` markers until design gives them.
-import type { HostFrames } from '@dwarfai/contracts'
+// The labels are design's copy (ADR-002 O-3; ADR-018 D5), looked up in the copy dictionary, whose values stay
+// `⟦COPY NEEDED⟧` markers until design gives them.
+import { t, type HostFrames } from '@dwarfai/contracts'
 import type { TrayController, TrayMenuModel } from '../ports/trayController'
-
-/** The menu labels: design's copy, not yet written (AGENTS §8.1). */
-export const TRAY_LABELS = {
-  open: '⟦COPY NEEDED: open item label⟧',
-  quit: '⟦COPY NEEDED: quit item label⟧',
-  stopEverything:
-    "⟦COPY NEEDED: label of the tray's secondary-menu action that stops every session the app launched and quits⟧"
-} as const
 
 /** Why the Host closed on purpose (14 B-F05). */
 export type HostClosingReason = HostFrames['host.closing']['reason']
@@ -72,15 +65,15 @@ export function startTrayProcess(deps: TrayProcessDeps): TrayProcess {
   const stopItem = {
     kind: 'item',
     id: 'stop-everything',
-    label: TRAY_LABELS.stopEverything,
+    label: t('tray.stopEverything'),
     choose: () => void stopEverything.request()
   } as const
   const menu: TrayMenuModel = [
-    { kind: 'item', id: 'open', label: TRAY_LABELS.open, choose: () => windows.open() },
+    { kind: 'item', id: 'open', label: t('tray.open'), choose: () => windows.open() },
     {
       kind: 'item',
       id: 'quit',
-      label: TRAY_LABELS.quit,
+      label: t('tray.quit'),
       choose: () => {
         windows.closeAll()
         sessionStore.clear()

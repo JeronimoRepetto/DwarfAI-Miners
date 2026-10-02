@@ -10,15 +10,21 @@ import { describe, expect, it } from 'vitest'
  * free of Node. The TypeScript scanner reads the imports, so a specifier inside a comment or a
  * string never counts and a dynamic `import()` or a `require()` always does.
  */
-const sources: Record<string, string> = import.meta.glob(['./*.ts', '!./*.test.ts'], {
-  query: '?raw',
-  import: 'default',
-  eager: true
-})
+const sources: Record<string, string> = import.meta.glob(
+  ['./*.ts', './copy/*.ts', '!./*.test.ts', '!./copy/*.test.ts'],
+  {
+    query: '?raw',
+    import: 'default',
+    eager: true
+  }
+)
 
 const EXPECTED_MODULES = [
   './accelerator.ts',
   './consoleText.ts',
+  './copy/catalog.ts',
+  './copy/en.ts',
+  './copy/index.ts',
   './externalLink.ts',
   './heldSessionText.ts',
   './index.ts',

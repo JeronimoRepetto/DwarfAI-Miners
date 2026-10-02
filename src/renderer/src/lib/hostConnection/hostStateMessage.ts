@@ -2,9 +2,9 @@
 // the one Host-state message, its variant and its one action, and whether the Panel is read-only. Pure: the view in,
 // the message out; `useHostConnection` holds the view and `HostStateMessage.vue` draws the message.
 //
-// The words are design's (ADR-002 O-4, O-5; 13 FM-007 "O-15 crash-loop variant"), so every string here is a marked
-// `⟦COPY NEEDED⟧` placeholder until design gives it (25-AGENTS §8.1), never shipped text.
-import type { HostConnectionView } from '@dwarfai/contracts'
+// The words are design's (ADR-002 O-4, O-5; 13 FM-007 "O-15 crash-loop variant"): each is a key of the copy dictionary,
+// whose value is a marked `⟦COPY NEEDED⟧` placeholder until design gives it (25-AGENTS §8.1), never shipped text.
+import { t, type PlainCopyKey, type HostConnectionView } from '@dwarfai/contracts'
 
 export type HostStateVariant =
   | 'none'
@@ -36,14 +36,14 @@ export interface HostStateMessage {
 
 type ShownVariant = Exclude<HostStateVariant, 'none'>
 
-const TEXT: Readonly<Record<ShownVariant, string>> = {
-  reconnecting: '⟦COPY NEEDED: O-5 reconnecting message⟧',
-  'crash-loop': '⟦COPY NEEDED: O-15 crash-loop variant⟧',
-  unresponsive: '⟦COPY NEEDED: O-5 Host-unresponsive message⟧',
-  incompatible: '⟦COPY NEEDED: O-5 incompatible Host message⟧',
-  'spawn-failed': '⟦COPY NEEDED: O-5 Host did not start message⟧',
-  'elevated-refused': '⟦COPY NEEDED: O-4 elevated-refused message⟧',
-  'in-job': '⟦COPY NEEDED: O-4 in-job message⟧'
+const TEXT: Readonly<Record<ShownVariant, PlainCopyKey>> = {
+  reconnecting: 'hostState.reconnecting.text',
+  'crash-loop': 'hostState.crashLoop.text',
+  unresponsive: 'hostState.unresponsive.text',
+  incompatible: 'hostState.incompatible.text',
+  'spawn-failed': 'hostState.spawnFailed.text',
+  'elevated-refused': 'hostState.elevatedRefused.text',
+  'in-job': 'hostState.inJob.text'
 }
 
 const ACTION: Readonly<Record<ShownVariant, HostStateAction>> = {
@@ -58,9 +58,9 @@ const ACTION: Readonly<Record<ShownVariant, HostStateAction>> = {
   'in-job': 'none'
 }
 
-const ACTION_LABEL: Readonly<Record<Exclude<HostStateAction, 'none'>, string>> = {
-  retry: '⟦COPY NEEDED: O-5 Host-state Retry action⟧',
-  'stop-everything': '⟦COPY NEEDED: O-3 Stop everything and quit action⟧'
+const ACTION_LABEL: Readonly<Record<Exclude<HostStateAction, 'none'>, PlainCopyKey>> = {
+  retry: 'hostState.action.retry',
+  'stop-everything': 'hostState.action.stopEverything'
 }
 
 const NONE: HostStateMessage = {
@@ -76,8 +76,8 @@ function shown(variant: ShownVariant, live: 'polite' | 'assertive'): HostStateMe
   return {
     variant,
     action,
-    text: TEXT[variant],
-    actionLabel: action === 'none' ? null : ACTION_LABEL[action],
+    text: t(TEXT[variant]),
+    actionLabel: action === 'none' ? null : t(ACTION_LABEL[action]),
     live
   }
 }
