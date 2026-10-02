@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { CATALOG_PROVIDER_IDS } from '../../../contracts/catalog'
 import type { DwarfId, FolderPath, LaunchId, MessageId } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
+import { FakeFs } from '../../kernel/fakes/FakeFs'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { CATALOG_RECORDS } from './adapters/catalog/profiles'
 import { SIMULATED_HANDSHAKE_MS } from './adapters/drivers/simulated/SimulatedDriver'
 import { createSuppliers, type DriverLaunchRequest } from './index'
+import { FakeInstallResolver } from './ports/fakes/FakeInstallResolver'
 import { RecordingSuppliedEventSink } from './ports/fakes/RecordingSuppliedEventSink'
 
-function build(publicBuild: boolean) {
+function build(
+  publicBuild: boolean,
+  installResolver = new FakeInstallResolver(),
+  fs = new FakeFs()
+) {
   const clock = new FakeClock()
   const scheduler = new FakeScheduler(clock)
   const sink = new RecordingSuppliedEventSink()
@@ -18,7 +24,9 @@ function build(publicBuild: boolean) {
     clock,
     scheduler,
     simulatedSeed: 'seed',
-    sink
+    sink,
+    installResolver,
+    fs
   })
   return { clock, sink, suppliers }
 }
@@ -108,5 +116,28 @@ describe('createSuppliers (suppliers skeleton)', () => {
     expect(sink.deliveries.every((d) => d.dwarfId === dwarfId)).toBe(true)
     expect(sink.deliveries.at(-1)?.event).toEqual({ t: 'exited', code: 0 })
     expect(suppliers.sessions.sessionFor(session.ref)).toBeNull()
+  })
+
+  it('[US-RES-005.AC01, US-RES-005.AC05, INV-41] the composed catalogue lists the installed catalog CLIs, Antigravity only in a development build, and the simulated provider only there', async () => {
+    const machine = (): { resolver: FakeInstallResolver; fs: FakeFs } => {
+      const resolver = new FakeInstallResolver()
+      const fs = new FakeFs()
+      for (const binary of ['claude', 'agy', 'opencode']) {
+        fs.addFile(`/opt/tools/${binary}`, 'cli', 1)
+        resolver.install(binary, { path: `/opt/tools/${binary}`, version: '1.0.0' })
+      }
+      return { resolver, fs } // codex is not installed
+    }
+    const inPublic = machine()
+    const inDevelopment = machine()
+    const publicIds = (
+      await build(true, inPublic.resolver, inPublic.fs).suppliers.catalogue.launchable()
+    ).map((entry) => entry.providerId)
+    const developmentIds = (
+      await build(false, inDevelopment.resolver, inDevelopment.fs).suppliers.catalogue.launchable()
+    ).map((entry) => entry.providerId)
+
+    expect(publicIds).toEqual(['claude', 'opencode'])
+    expect(developmentIds).toEqual(['claude', 'antigravity', 'opencode', 'simulated'])
   })
 })
