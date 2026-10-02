@@ -19,6 +19,7 @@ import { resolve } from 'node:path'
 import { UI_MAIN_PUSHES } from '../index'
 import { checkRouteTable, type ChannelRoute, type RouteTable } from './channelRoute'
 import { createStopEverythingRows, STOP_EVERYTHING_CONFIRM } from './handlers/stopEverything'
+import { rollbackOf } from './rollbackTable'
 import { createRouter } from './router'
 import {
   HOST_ROUTE_MEMBERS,
@@ -539,5 +540,112 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     }
     const uiLocalPushes = pushes.filter((key) => routeOf(key)[0]?.owner === 'ui-local').sort()
     expect([...UI_MAIN_PUSHES].sort()).toEqual(uiLocalPushes)
+  })
+})
+
+/**
+ * The rollback table of each cut (21 §2.1 item 1; ISSUE-057; procedure: docs/strangler/rollback.md): a rollback build
+ * is the cut's table with the cut's rows that replaced legacy code flipped back to `legacy` with today's shape. It
+ * passes the same router test as a release table, and it never gives a row back to legacy code an earlier cut's
+ * retirement already deleted (21 §2.1 item 4: after a retirement only forward fixes exist).
+ */
+describe('rollback', () => {
+  const cut0: RouteTable = {
+    release: ROUTES_RELEASE,
+    routes: ROUTES,
+    unrouted: UNROUTED,
+    adapters: LEGACY_BRIDGE_ADAPTERS
+  }
+  /**
+   * A cut-1 table as its switch would build it from the cut-0 table: the NEW rows unrouted until cut 1 born there, one
+   * kept row moved to the Host. It stands for the first table whose rollback meets rows of an earlier, retired cut.
+   */
+  const cut1: RouteTable = {
+    ...cut0,
+    release: 'cut-1',
+    routes: [
+      ...ROUTES.filter((r) => r.channel !== 'mine:history'),
+      { channel: 'mine:history', owner: 'host', since: 'cut-1', parity: 'passed', shape: 'target' },
+      ...(Object.entries(UNROUTED) as [ChannelKey, StepId][])
+        .filter(([, step]) => step === 'cut-1')
+        .map(([channel]): ChannelRoute => ({
+          channel,
+          owner: 'ui-local',
+          since: 'cut-1',
+          parity: 'n/a',
+          shape: 'target'
+        }))
+    ],
+    unrouted: Object.fromEntries(
+      Object.entries(UNROUTED).filter(([, step]) => step !== 'cut-1')
+    ) as RouteTable['unrouted']
+  }
+
+  it('[ADR-001] the rollback table of cut 0 passes the router test with one owner per channel', () => {
+    const rolledBack = rollbackOf(cut0, 'cut-0')
+    expect(checkRouteTable(rolledBack, KEYS)).toEqual([])
+    for (const key of KEYS) {
+      const routes = rolledBack.routes.filter((r) => r.channel === key)
+      expect(routes.length + (UNROUTED[key] ? 1 : 0), key).toBe(1)
+    }
+    // The window family and A-28, A-29 go back to today's runtime; the NEW rows of cut 0 have no legacy code and keep
+    // their owner, so the rollback build still reaches its Host and the tray's Stop everything and quit.
+    const ownerOf = (key: ChannelKey) => rolledBack.routes.find((r) => r.channel === key)?.owner
+    for (const key of keysOf(CUT_0_UI_LOCAL_IDS)) {
+      expect(ownerOf(key), key).toBe(CHANNELS[key].status === 'new' ? 'ui-local' : 'legacy')
+    }
+    expect(ownerOf(STOP_EVERYTHING_CONFIRM)).toBe('host')
+
+    // The router starts over the rollback table and registers each invoke and send row once, under the wire of its
+    // route (today's wire for every row flipped back).
+    const registered: string[] = []
+    createRouter({
+      routes: rolledBack.routes,
+      legacy: { serve: async () => undefined },
+      uiLocal: { serve: async () => undefined },
+      host: { serve: async () => undefined },
+      senders: { appEntry: 'file:///app/index.html', isModeWindow: () => true }
+    }).register({
+      handle: (wire) => void registered.push(wire),
+      on: (wire) => void registered.push(wire)
+    })
+    const helpers: readonly string[] = PRELOAD_HELPERS
+    expect(new Set(registered).size).toBe(registered.length)
+    expect(registered.map((wire) => keyOfWire(wire)).sort()).toEqual(
+      KEYS.filter((key) => CHANNELS[key].kind !== 'push' && !helpers.includes(key)).sort()
+    )
+  })
+
+  it('[ADR-001] a rollback table never routes a row to legacy after that row’s retirement cut', () => {
+    expect(checkRouteTable(cut1, KEYS)).toEqual([])
+    // A route's `since` is a release name (ADR-001 item 3), a `STEP_ORDER` value in every table.
+    const at = (step: string) => (STEP_ORDER as readonly string[]).indexOf(step)
+    for (const table of [cut0, cut1]) {
+      const rolledBack = rollbackOf(table, table.release)
+      expect(checkRouteTable(rolledBack, KEYS), table.release).toEqual([])
+      for (const route of table.routes) {
+        const after = rolledBack.routes.filter((r) => r.channel === route.channel)
+        // A row an earlier cut moved off legacy code: that cut's retirement deleted the code, so the row keeps its route.
+        if (route.owner !== 'legacy' && at(route.since) < at(table.release)) {
+          expect(after, `${table.release} ${route.channel}`).toEqual([route])
+        }
+      }
+      // Every legacy route of the rollback is a legacy route of the table or one of the rolled-back cut's own rows.
+      for (const route of rolledBack.routes.filter((r) => r.owner === 'legacy')) {
+        const before = table.routes.find((r) => r.channel === route.channel)
+        expect(
+          before?.owner === 'legacy' || before?.since === table.release,
+          `${table.release} ${route.channel}`
+        ).toBe(true)
+      }
+    }
+    // The cut-1 rollback gives A-19 back to today's runtime and keeps every cut-0 row where cut 0 put it.
+    const rolledBack1 = rollbackOf(cut1, 'cut-1')
+    expect(rolledBack1.routes.filter((r) => r.channel === 'mine:history')).toEqual([
+      legacyToday('mine:history')
+    ])
+    expect(rolledBack1.routes.filter((r) => r.since === 'cut-0')).toEqual(
+      ROUTES.filter((r) => r.since === 'cut-0')
+    )
   })
 })
