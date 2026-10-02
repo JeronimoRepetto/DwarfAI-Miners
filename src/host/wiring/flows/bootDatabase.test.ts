@@ -10,6 +10,7 @@ import { FakeProcessControl } from '../../kernel/fakes/FakeProcessControl'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
+import { SqliteInfrastructureError } from '../../kernel/domain/errors'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import { migrationsFor } from '../../platform/sqlite/migrations'
 import { defineMigration, type Migration } from '../../platform/sqlite/migrations/types'
@@ -459,5 +460,181 @@ describe('boot step 2: open the database and keep the Host epoch (09 §8.4, 16 �
     ])
     // The protection ran over the open database: epoch kept, file migrated.
     expect(database.resetEpoch()).toBe(0)
+  })
+})
+
+/** Step 2 alone over `m`: the open with `open` overrides, its log and the protection calls it made. */
+async function openStep(
+  m: Machine,
+  open: Partial<Parameters<typeof createHostDatabase>[0]['open']> = {}
+): Promise<{ log: RecordingDiagnosticsLog; protections: string[]; error: unknown }> {
+  const log = new RecordingDiagnosticsLog()
+  const protections: string[] = []
+  const database = createHostDatabase({
+    path: m.path,
+    epoch: mintBootEpoch(m.ids),
+    clock: m.clock,
+    log,
+    processControl: m.processControl,
+    open: {
+      buildKind: 'test',
+      releaseDataDir: join(m.dataDir, 'release-data'),
+      appVersion: '0.0.0-test',
+      migrations: migrationsFor({ clock: m.clock, ids: m.ids }),
+      ...open
+    },
+    protectFiles: {
+      dataDir: () => {
+        protections.push('dataDir')
+        return Promise.resolve()
+      },
+      dbFiles: () => {
+        protections.push('dbFiles')
+        return Promise.resolve()
+      }
+    }
+  })
+  cleanups.push(() => database.close())
+  let error: unknown = null
+  try {
+    await database.open({ reportMigrating: () => undefined })
+  } catch (thrown) {
+    error = thrown
+  }
+  return { log, protections, error }
+}
+
+/** The 19 §9.5 `db.*` records of a log, without the migration and backup steps' own. */
+function openRecords(log: RecordingDiagnosticsLog) {
+  return log.entries.filter((entry) =>
+    ['db.open', 'db.read-only', 'db.dev-guard'].includes(entry.event)
+  )
+}
+
+describe('boot step 2 logs every open of the database (19 §9.5)', () => {
+  it('[FM-102, NFR-OBS-01] a foreign file logs db.open failed with causeClass NOT_A_DWARFAI_DB and only the 19 §9.5 fields', async () => {
+    const m = machine()
+    const foreign = NodeSqliteDatabase.open(m.path)
+    foreign.exec('CREATE TABLE projects (id INTEGER PRIMARY KEY)')
+    foreign.close()
+
+    const opened = await openStep(m)
+
+    expect(opened.error).toMatchObject({ code: 'NOT_A_DWARFAI_DB' })
+    expect(openRecords(opened.log)).toEqual([
+      {
+        level: 'error',
+        event: 'db.open',
+        subsystem: 'host',
+        outcome: 'failed',
+        causeClass: 'NOT_A_DWARFAI_DB'
+      }
+    ])
+  })
+
+  it('[FM-101, NFR-OBS-01] a database whose applied migration no longer matches the build logs db.open failed with causeClass SCHEMA_TAMPERED', async () => {
+    const m = machine()
+    const shipped = migrationsFor({ clock: m.clock, ids: m.ids })
+    expect((await openStep(m, { migrations: shipped })).error).toBeNull()
+    const [first, ...rest] = shipped
+    if (first === undefined) throw new Error('the build ships migration 1')
+    const rewritten = defineMigration({
+      ...first,
+      sql: `${first.sql}\n-- rewritten after shipping`
+    })
+
+    const opened = await openStep(m, { migrations: [rewritten, ...rest] })
+
+    expect(opened.error).toMatchObject({ code: 'SCHEMA_TAMPERED' })
+    expect(openRecords(opened.log)).toEqual([
+      {
+        level: 'error',
+        event: 'db.open',
+        subsystem: 'host',
+        outcome: 'failed',
+        causeClass: 'SCHEMA_TAMPERED'
+      }
+    ])
+  })
+
+  it('[FM-104, NFR-OBS-01] a database SQLite cannot open logs db.open failed with its SQLITE_* code as causeClass, then fails the step', async () => {
+    const m = machine()
+
+    const opened = await openStep(m, {
+      openWriter: () => {
+        throw new SqliteInfrastructureError('SQLITE_CANTOPEN', 14, 'unable to open database file')
+      }
+    })
+
+    expect(opened.error).toBeInstanceOf(SqliteInfrastructureError)
+    expect(openRecords(opened.log)).toEqual([
+      {
+        level: 'error',
+        event: 'db.open',
+        subsystem: 'host',
+        outcome: 'failed',
+        causeClass: 'SQLITE_CANTOPEN'
+      }
+    ])
+  })
+
+  it('[FM-100, ADR-005] a newer database logs db.open degraded and db.read-only, with no other field', async () => {
+    const m = machine()
+    const newer = await openStep(m, {
+      migrations: [...migrationsFor({ clock: m.clock, ids: m.ids }), FUTURE]
+    })
+    expect(newer.error).toBeNull()
+
+    const opened = await openStep(m)
+
+    expect(opened.error).toBeNull()
+    expect(openRecords(opened.log)).toEqual([
+      { level: 'info', event: 'db.open', subsystem: 'host', outcome: 'degraded' },
+      { level: 'warn', event: 'db.read-only', subsystem: 'host' }
+    ])
+  })
+
+  it('[ADR-005] a database opened for writing logs db.open ok', async () => {
+    const m = machine()
+
+    const opened = await openStep(m)
+
+    expect(opened.error).toBeNull()
+    expect(openRecords(opened.log)).toEqual([
+      { level: 'info', event: 'db.open', subsystem: 'host', outcome: 'ok' }
+    ])
+  })
+
+  it('[FM-107, ADR-005] a dev build on the release data directory logs db.dev-guard and protects nothing there: no chmod, no DACL', async () => {
+    const m = machine()
+
+    // The release data directory is the one the database lies in.
+    const opened = await openStep(m, { buildKind: 'dev', releaseDataDir: m.dataDir })
+
+    expect(opened.error).toMatchObject({ code: 'DEV_BUILD_ON_RELEASE_DATA' })
+    expect(openRecords(opened.log)).toEqual([
+      { level: 'error', event: 'db.dev-guard', subsystem: 'host' }
+    ])
+    expect(opened.protections).toEqual([])
+    expect(existsSync(m.path)).toBe(false)
+  })
+
+  it('[FM-107, ADR-005] a dev build refuses an up-to-date release database too, before the data-directory protection runs', async () => {
+    const m = machine()
+    // The person's release Host made the file; nothing is pending for the dev build.
+    expect((await openStep(m, { buildKind: 'release', releaseDataDir: m.dataDir })).error).toBe(
+      null
+    )
+    const before = appMeta(m.path)
+
+    const opened = await openStep(m, { buildKind: 'dev', releaseDataDir: m.dataDir })
+
+    expect(opened.error).toMatchObject({ code: 'DEV_BUILD_ON_RELEASE_DATA' })
+    expect(opened.protections).toEqual([])
+    expect(openRecords(opened.log)).toEqual([
+      { level: 'error', event: 'db.dev-guard', subsystem: 'host' }
+    ])
+    // No epoch of the dev build was written into the person's database.
+    expect(appMeta(m.path)).toEqual(before)
   })
 })

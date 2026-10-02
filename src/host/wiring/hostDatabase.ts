@@ -3,22 +3,31 @@
 // composition root and run by boot step 2 (bootSteps.ts).
 //
 // `open(context)`:
-//   0. protects the data at rest (09 §1, §9; ADR-017 item 6; 18 C-24, `fileProtection.ts`): the
+//   0. the dev guard (ADR-005 item 6, FM-107): a dev or test build whose database lies in the
+//      release data directory is refused before anything touches that directory, so it never
+//      creates, chmods or re-DACLs the person's `host/` folder and never writes its epoch into the
+//      person's database. The runner's own guard refuses only a migration; asked here first, it
+//      refuses every open (ADR-005 item 6: dev and test builds MUST use their own directory);
+//   1. protects the data at rest (09 §1, §9; ADR-017 item 6; 18 C-24, `fileProtection.ts`): the
 //      hostDataDir is created or narrowed owner-only before the open (on Windows the protected
 //      owner-only DACL of the ISSUE-041 amendment, fail closed), and the database file, its
 //      companions, backups and quarantined copies are narrowed once it is open (also read-only);
-//   1. opens the file through the migration runner (ISSUE-034), reporting `migrating` when a
+//   2. opens the file through the migration runner (ISSUE-034), reporting `migrating` when a
 //      migration will run (07 S12.05). A refusal — a foreign or tampered file, a dev build on the
 //      release data, a failed backup or quarantine — throws `HostDbRefusedError` with the refusal
 //      as its code, which fails the boot (FM-008). A newer file opens read-only (ADR-005 item 5,
 //      FM-100): the Host advertises `db-read-only` and writes nothing to it, so no epoch is kept
-//      and no marker written;
-//   2. reads the previous epoch BEFORE replacing it (09 §8.4 step 1), decides how it ended with
+//      and no marker written. Every open is logged with exactly the 19 §9.5 fields: `db.open`
+//      (`outcome`; `causeClass` NOT_A_DWARFAI_DB, SCHEMA_TAMPERED or the SQLITE_* code of an open
+//      SQLite refused), `db.read-only` for a newer file, `db.dev-guard` for step 0. A failed backup
+//      or quarantine is its own step's record (`db.backup`, `db.quarantined`), one per failure (19
+//      §1 item 3);
+//   3. reads the previous epoch BEFORE replacing it (09 §8.4 step 1), decides how it ended with
 //      the current OS boot identity (step 2; ADR-015 item 4) and logs it (19 §9.1):
 //      `host.boot.unclean` for a crash, `host.boot.rebooted` with the matched rule as its class
 //      for a reboot, a logout or a marker `os-session-end`, and `outcome: degraded` when the boot
 //      identity could not be told apart. The values themselves are never logged (09 §8.4);
-//   3. writes the new epoch (this boot's `mintBootEpoch`, the one Host epoch value), its start
+//   4. writes the new epoch (this boot's `mintBootEpoch`, the one Host epoch value), its start
 //      instant and the current boot identity with the marker cleared, in its own transaction
 //      (step 3). At cut 0 there are no owned records to classify; the recovery step (EPIC-10,
 //      ISSUE-173) moves this `beginEpoch` call into its classification transaction and reads the
@@ -34,7 +43,7 @@ import {
   decidePreviousEpochEnd,
   type PreviousEpochEnd
 } from '../kernel/domain/bootIdentity'
-import { HostInvariantError } from '../kernel/domain/errors'
+import { HostInvariantError, SqliteInfrastructureError } from '../kernel/domain/errors'
 import type { HostEpoch } from '../kernel/domain/values'
 import type { Clock } from '../kernel/ports/clock'
 import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnosticsLog'
@@ -44,6 +53,7 @@ import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
 import type { HostFileProtection } from '../platform/sqlite/fileProtection'
 import { HostEpochLog, readResetEpoch } from '../platform/sqlite/hostEpochLog'
 import {
+  isDevBuildOnReleaseData,
   openHostDb,
   type HostDbRefusal,
   type OpenHostDbOptions
@@ -130,6 +140,23 @@ function decisionEntries(decided: PreviousEpochEnd): Array<Omit<DiagnosticEntry,
   return entries
 }
 
+/**
+ * The one 19 §9.5 record of a refused open, or null when the refusing step logged its own
+ * (`db.backup` for BACKUP_FAILED, `db.quarantined` for QUARANTINE_FAILED).
+ */
+function refusalEntry(refusal: HostDbRefusal): Omit<DiagnosticEntry, 'subsystem'> | null {
+  switch (refusal) {
+    case 'NOT_A_DWARFAI_DB':
+    case 'SCHEMA_TAMPERED':
+      return { level: 'error', event: 'db.open', outcome: 'failed', causeClass: refusal }
+    case 'DEV_BUILD_ON_RELEASE_DATA':
+      return { level: 'error', event: 'db.dev-guard' }
+    case 'BACKUP_FAILED':
+    case 'QUARANTINE_FAILED':
+      return null
+  }
+}
+
 export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
   let opened: Opened | null = null
   let decided: PreviousEpochEnd | null = null
@@ -158,14 +185,36 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
 
   return {
     async open(context) {
+      if (isDevBuildOnReleaseData(deps.path, deps.open)) {
+        record({ level: 'error', event: 'db.dev-guard' })
+        throw new HostDbRefusedError('DEV_BUILD_ON_RELEASE_DATA')
+      }
       await protectFiles.dataDir(dirname(deps.path))
-      const result = openHostDb(deps.path, {
-        ...deps.open,
-        clock: deps.clock,
-        log: deps.log,
-        onMigrating: () => context.reportMigrating()
-      })
-      if (!result.ok) throw new HostDbRefusedError(result.error)
+      let result: ReturnType<typeof openHostDb>
+      try {
+        result = openHostDb(deps.path, {
+          ...deps.open,
+          clock: deps.clock,
+          log: deps.log,
+          onMigrating: () => context.reportMigrating()
+        })
+      } catch (error) {
+        if (error instanceof SqliteInfrastructureError) {
+          record({ level: 'error', event: 'db.open', outcome: 'failed', causeClass: error.code })
+        }
+        throw error
+      }
+      if (!result.ok) {
+        const refusal = refusalEntry(result.error)
+        if (refusal !== null) record(refusal)
+        throw new HostDbRefusedError(result.error)
+      }
+      if (result.value.readOnly) {
+        record({ level: 'info', event: 'db.open', outcome: 'degraded' })
+        record({ level: 'warn', event: 'db.read-only' })
+      } else {
+        record({ level: 'info', event: 'db.open', outcome: 'ok' })
+      }
       const { db } = result.value
       try {
         await protectFiles.dbFiles(deps.path)
