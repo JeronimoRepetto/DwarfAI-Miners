@@ -142,6 +142,31 @@ const NEW_ROWS = [
     kind: 'send',
     placement: 'ui-local',
     sensitive: false
+  },
+  // ISSUE-059: the UI-main session store (ADR-024 items 1, 3), born `ui-local` in cut 1
+  {
+    id: 'A-N17',
+    wire: 'ui:session:get',
+    member: 'getUiSession',
+    kind: 'invoke',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N18',
+    wire: 'ui:session:patch',
+    member: 'patchUiSession',
+    kind: 'send',
+    placement: 'ui-local',
+    sensitive: false
+  },
+  {
+    id: 'A-N19',
+    wire: 'ui:session:changed',
+    member: 'onUiSessionChanged',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
@@ -313,7 +338,9 @@ const VALID_REQUESTS: Record<string, unknown> = {
   'tray:stopEverything:request': undefined,
   'host:connection:get': undefined,
   'host:connection:retry': undefined,
-  'host:connection:confirm-restart': undefined
+  'host:connection:confirm-restart': undefined,
+  'ui:session:get': undefined,
+  'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' }
 }
 
 /** A valid today request for every renderer → main row whose today shape differs (CHANGE rows). */

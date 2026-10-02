@@ -187,6 +187,18 @@ export function goldenApi(sample: GoldenSample): Api {
     getHostConnection: refuse('getHostConnection'),
     onHostConnection: unsubscribe,
     retryHostConnection: refuse('retryHostConnection'),
-    confirmHostRestart: refuse('confirmHostRestart')
+    confirmHostRestart: refuse('confirmHostRestart'),
+    // A-N17…A-N19: a golden renders a fixed sample in one window, so its session store is empty and nothing changes it.
+    getUiSession: () =>
+      Promise.resolve({
+        drafts: {},
+        chatViews: {},
+        askPicks: {},
+        openChat: {},
+        currentMine: {},
+        valle: {}
+      }),
+    patchUiSession: none,
+    onUiSessionChanged: unsubscribe
   }
 }

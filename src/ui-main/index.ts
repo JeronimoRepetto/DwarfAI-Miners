@@ -116,6 +116,13 @@ import {
 } from './hostLauncher'
 import { ElectronWindows, showRendererCrashedMessage } from './window/adapters/ElectronWindows'
 import { startReopen, type Reopen } from './window/application/reopen'
+import { InMemorySessionStore } from './window/adapters/InMemorySessionStore'
+import {
+  createUiSession,
+  UI_SESSION_CHANGED_PUSH,
+  type UiSession
+} from './window/application/uiSession'
+import { createUiSessionRows, UI_SESSION_ROWS } from './ipc/handlers/uiSession'
 
 /** A window's contents, as the UI preference pushes need them (A-P6). */
 export interface WindowContents extends ModeWindowSender {
@@ -126,8 +133,9 @@ export interface WindowContents extends ModeWindowSender {
  * The router's one `ui-local` target (ADR-001 item 3), composed from the parts whose dependencies are given, each
  * owning its own rows (21 §1 item 1): the UI preference rows (ISSUE-048), A-N30 renderer diagnostics (ISSUE-055),
  * the Panel window rows (ISSUE-047), the Host connection rows A-N03, A-N05 (ISSUE-052), the native rows (ISSUE-050),
- * the shortcut rows (ISSUE-049) and the tray's confirmation rows A-N27, A-N34 (ISSUE-053, ISSUE-316).
- * `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows here.
+ * the shortcut rows (ISSUE-049), the tray's confirmation rows A-N27, A-N34 (ISSUE-053, ISSUE-316) and the UI session
+ * rows A-N17, A-N18 (ISSUE-059). `undefined` when no part is present. The cut-0 switch (ISSUE-056) routes these rows
+ * here, but for the UI session rows, which the cut-1 switch (ISSUE-123) routes.
  */
 export function composeUiLocal({
   uiPreferences,
@@ -137,6 +145,7 @@ export function composeUiLocal({
   nativeRows,
   shortcut,
   stopEverything,
+  uiSession,
   modeWindows,
   clock = { now: () => Date.now() }
 }: {
@@ -147,6 +156,7 @@ export function composeUiLocal({
   nativeRows?: RouteTarget
   shortcut?: Pick<ToggleShortcut, 'state' | 'set'>
   stopEverything?: Pick<StopEverything, 'confirm' | 'cancel' | 'requestFromWindow'>
+  uiSession?: Pick<UiSession, 'get' | 'patch'>
   modeWindows: ModeWindowRegistry
   clock?: UiClock
 }): RouteTarget | undefined {
@@ -206,6 +216,13 @@ export function composeUiLocal({
     parts.push({
       channels: [STOP_EVERYTHING_CANCEL, STOP_EVERYTHING_REQUEST],
       target: createStopEverythingRows(stopEverything)
+    })
+  }
+  if (uiSession !== undefined) {
+    parts.push({
+      channels: UI_SESSION_ROWS,
+      // Until the window factory registers each window's mode (ISSUE-046), the one mode window is the Panel.
+      target: createUiSessionRows(uiSession, (id) => (modeWindows.has(id) ? 'panel' : undefined))
     })
   }
   return parts.length === 0 ? undefined : composeRouteTargets(parts)
@@ -430,6 +447,22 @@ export async function startUiMain({
   const modeWindowList = (): readonly AppWindow[] =>
     appWindows().filter((window) => modeWindows.has(window.webContentsId))
   const routed = (channel: ChannelKey): boolean => routes.some((r) => r.channel === channel)
+  // The UI-main session store (ISSUE-059; ADR-024 items 1, 3): in memory, shared by the mode windows, pushed to them
+  // (A-N19) once the table routes the push, and cleared on every entry into tray-only (below).
+  const uiSession =
+    host === undefined
+      ? undefined
+      : createUiSession({
+          store: new InMemorySessionStore(),
+          windows: () =>
+            routed(UI_SESSION_CHANGED_PUSH)
+              ? modeWindowList().map((window) => ({
+                  webContentsId: window.webContentsId,
+                  send: (push: string, payload: unknown) => window.send(push, payload)
+                }))
+              : [],
+          host: host.client
+        })
 
   // The rebuilt window module's owners, only where the table gives them their rows (21 §1 item 1).
   const toggle = rebuilt && panel !== undefined ? shortcut?.(panel) : undefined
@@ -460,6 +493,7 @@ export async function startUiMain({
     ...(nativeRows === undefined ? {} : { nativeRows }),
     ...(toggle === undefined ? {} : { shortcut: toggle }),
     ...(stop === undefined ? {} : { stopEverything: stop }),
+    ...(uiSession === undefined ? {} : { uiSession }),
     modeWindows
   })
   createRouter({
@@ -488,12 +522,14 @@ export async function startUiMain({
     toggle?.dispose()
     trayProcess?.dispose()
     stopConnectionPush?.()
+    uiSession?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
   // The app lives in the tray with every window hidden: closing the last window never quits it
-  // (only Stop everything and quit does; before cut 0, today's tray Quit), as today.
-  lifecycle.onWindowAllClosed(() => {})
+  // (only Stop everything and quit does; before cut 0, today's tray Quit), as today. It enters tray-only, so the UI
+  // session store is cleared (S10.14; ADR-024 item 3).
+  lifecycle.onWindowAllClosed(() => uiSession?.clear())
   /** The step of the start running now, recorded when the start fails (`ui.start`). */
   let step: UiStartStep = 'ready'
   try {
@@ -517,8 +553,8 @@ export async function startUiMain({
             open: () => panel.show(),
             closeAll: () => panel.hide()
           },
-          // The UI-main session store is not built yet (later: ISSUE-059): there is nothing to drop.
-          sessionStore: { clear: () => {} },
+          // Quit enters tray-only: the UI-main session store is cleared (S10.15; ADR-024 item 3).
+          sessionStore: { clear: () => uiSession?.clear() },
           stopEverything: stop,
           onHostClosing: (h) => host.client.onClosing(h),
           exit: () => lifecycle.quit(),

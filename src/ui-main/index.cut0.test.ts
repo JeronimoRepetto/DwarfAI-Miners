@@ -415,6 +415,43 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     expect(shortcuts.registerCalls).toEqual([])
   })
 
+  it("[S10.14, S10.15, NFR-PERS-06] the tray's Quit and the last window closing each clear the UI session store", async () => {
+    // The table the cut-1 switch (ISSUE-123) gives the session rows: `ui-local`, target shape.
+    const sessionRoutes: ChannelRoute[] = (
+      ['ui:session:get', 'ui:session:patch', 'ui:session:changed'] as const
+    ).map((channel) => ({
+      channel,
+      owner: 'ui-local',
+      since: 'cut-1',
+      parity: 'n/a',
+      shape: 'target'
+    }))
+    const { ipc, tray, lifecycle } = await cut0App({ routes: [...ROUTES, ...sessionRoutes] })
+    const patch = ipc.listened.get('ui:session:patch')
+    const read = () => ipc.handled.get('ui:session:get')?.(FROM_PANEL, undefined)
+    const draft = { kind: 'draft', dwarfId: HOST_DWARF, text: 'half a thought' }
+    const empty = {
+      drafts: {},
+      chatViews: {},
+      askPicks: {},
+      openChat: {},
+      currentMine: {},
+      valle: {}
+    }
+
+    patch?.(FROM_PANEL, draft)
+    await settle()
+    expect(await read()).toEqual({ ...empty, drafts: { [HOST_DWARF]: 'half a thought' } })
+    tray.choose('quit')
+    expect(await read()).toEqual(empty)
+
+    patch?.(FROM_PANEL, draft)
+    await settle()
+    expect(await read()).toEqual({ ...empty, drafts: { [HOST_DWARF]: 'half a thought' } })
+    lifecycle.handlers.get('window-all-closed')?.()
+    expect(await read()).toEqual(empty)
+  })
+
   it('[ADR-026] a start that fails records ui.start failed with its step and error class, never its message, before it exits with code 1', async () => {
     const { log, lifecycle } = await cut0App({ composeFails: true })
 

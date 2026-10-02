@@ -81,7 +81,10 @@ export const WINDOW_API_MEMBERS = {
   getHostConnection: 'invoke',
   onHostConnection: 'push',
   retryHostConnection: 'invoke',
-  confirmHostRestart: 'invoke'
+  confirmHostRestart: 'invoke',
+  getUiSession: 'invoke',
+  patchUiSession: 'send',
+  onUiSessionChanged: 'push'
 } as const satisfies Record<keyof DwarfAiMinersApi, WindowApiMemberKind>
 
 const MEMBERS: Readonly<Record<string, WindowApiMemberKind>> = WINDOW_API_MEMBERS

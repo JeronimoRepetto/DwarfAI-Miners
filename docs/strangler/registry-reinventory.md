@@ -18,6 +18,9 @@
 - **Updated for ISSUE-316:** A-N34 `requestStopEverything` (`tray:stopEverything:request`, NEW, amendment
   owner-approved 2026-10-01) is declared in the registry and has a generated preload member, so its row is in the
   found table, as A-N25…A-N27 are.
+- **Updated for ISSUE-059:** A-N17 `getUiSession`, A-N18 `patchUiSession` and A-N19 `onUiSessionChanged`
+  (`ui:session:*`, NEW) are declared in the registry and have generated preload members, so their rows moved to the
+  found table, as A-N30 did. The counts below also take in A-N34, which the ISSUE-316 update left out of them.
 - **Compared with:** `14-ipc-contract.md` §2.1, §2.2, §7 and §8 I-21 of the architecture package. `14` is frozen
   and lives in the package, not in this repository.
 - **For the registry issue (ISSUE-007):** `dwarf:setName` and `dwarf:resetName` have no `14` §2 id. Their
@@ -46,11 +49,11 @@ pushes were evaluated against `14` §2 and none of them was changed.
 
 | Found in the tree                                 | KEEP | CHANGE | NEW | RETIRE | UNLISTED | Total |
 | ------------------------------------------------- | ---- | ------ | --- | ------ | -------- | ----- |
-| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 6   | 11     | 0        | 65    |
-| Pushes                                            | 2    | 0      | 2   | 4      | 0        | 8     |
+| Request / one-way channels (`ipcMain` handlers)   | 32   | 16     | 9   | 11     | 0        | 68    |
+| Pushes                                            | 2    | 0      | 3   | 4      | 0        | 9     |
 | Preload helper without IPC                        | 1    | 0      | 0   | 0      | 0        | 1     |
-| **Found total**                                   | 35   | 16     | 8   | 15     | 0        | 73    |
-| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 25  | —      | —        | 25    |
+| **Found total**                                   | 35   | 16     | 12  | 15     | 0        | 78    |
+| `14` §2.2 NEW members not in the tree (2nd table) | —    | —      | 22  | —      | —        | 22    |
 
 Against the dated `0bfd108` counts of `14` §7: the found tree has 59 registrations (57 + 2), 65 `IPC_CHANNELS`
 constants (63 + 2) and 66 preload members (64 + 2). The two extra channels are `dwarf:setName` and
@@ -153,6 +156,9 @@ kind `14` gives it.
 | `typography:preferences:changed`  | `onTypographyPreferences`     | push   | src/legacy-bridge/LegacyRuntimeRoute.ts:908<br>src/main/index.ts:1409<br>src/preload/index.ts:905<br>src/shared/contracts.ts:5442 | A-P6    | KEEP   | —                 |                                                                                                                                           |
 | `typography:preferences:get`      | `getTypographyPreferences`    | invoke | src/main/index.ts:1398<br>src/preload/index.ts:895<br>src/shared/contracts.ts:5440                                                | A-45    | KEEP   | —                 |                                                                                                                                           |
 | `typography:preferences:set`      | `setTypographyPreferences`    | invoke | src/main/index.ts:1399<br>src/preload/index.ts:900<br>src/shared/contracts.ts:5441                                                | A-46    | KEEP   | —                 |                                                                                                                                           |
+| `ui:session:changed`              | `onUiSessionChanged`          | push   | src/preload/index.ts:310                                                                                                          | A-N19   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); UI main pushes it, unrouted until cut 1                               |
+| `ui:session:get`                  | `getUiSession`                | invoke | src/preload/index.ts:306                                                                                                          | A-N17   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); unrouted until cut 1                                                  |
+| `ui:session:patch`                | `patchUiSession`              | send   | src/preload/index.ts:308                                                                                                          | A-N18   | NEW    | —                 | Declared by ISSUE-059; its preload member is generated (ISSUE-045); unrouted until cut 1                                                  |
 
 ### 14 §2.2 rows not in the tree
 
@@ -171,9 +177,6 @@ kind `14` gives it.
 | `mode:transition`       | `onModeTransition`      | push   | not found | A-N14 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `mode:transition:done`  | `modeTransitionDone`    | send   | not found | A-N15 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `mode:revealDwarfChat`  | `onRevealDwarfChat`     | push   | not found | A-N16 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
-| `ui:session:get`        | `getUiSession`          | invoke | not found | A-N17 | NEW    | —                 |                                                                                               |
-| `ui:session:patch`      | `patchUiSession`        | send   | not found | A-N18 | NEW    | —                 |                                                                                               |
-| `ui:session:changed`    | `onUiSessionChanged`    | push   | not found | A-N19 | NEW    | —                 |                                                                                               |
 | `ui:preferences:get`    | `getUiPreferences`      | invoke | not found | A-N20 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `ui:preferences:set`    | `setUiPreference`       | invoke | not found | A-N21 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |
 | `veta:clickThrough`     | `setVetaClickThrough`   | send   | not found | A-N22 | NEW    | —                 | Veta/Valle member, born `ui-local`; may never be routed `legacy` (21 §7)                      |

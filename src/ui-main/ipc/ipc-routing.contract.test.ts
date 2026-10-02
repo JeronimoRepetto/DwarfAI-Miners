@@ -419,8 +419,15 @@ describe('release cut-0 (21 §2 cut 0)', () => {
         { channel: key, owner: 'ui-local', since: 'cut-0', parity, shape: 'target' }
       ])
     }
-    // Only A-N33 stays unrouted: dormant until the first release that bumps `endpointGeneration` (AMENDMENT-11).
-    expect(UNROUTED).toEqual({ 'host:connection:confirm-restart': 'generation-2' })
+    // A-N33 stays unrouted: dormant until the first release that bumps `endpointGeneration` (AMENDMENT-11).
+    // AMENDED for ISSUE-059 (was: only A-N33): a NEW row whose handler lands before the step that routes it is listed
+    // with that step (22 §5): A-N17…A-N19, born `ui-local` in cut 1 and routed by the cut-1 switch (ISSUE-123).
+    expect(UNROUTED).toEqual({
+      'host:connection:confirm-restart': 'generation-2',
+      'ui:session:get': 'cut-1',
+      'ui:session:patch': 'cut-1',
+      'ui:session:changed': 'cut-1'
+    })
   })
 
   it('[ADR-001] in cut 0 A-N26 routes host through LegacyEndFirstAdapter', () => {
@@ -525,7 +532,11 @@ describe('release cut-0 (21 §2 cut 0)', () => {
     // Pushes: each push row has exactly one owner in this release, and the pushes UI main sends are its `ui-local`
     // push rows.
     const pushes = KEYS.filter((key) => CHANNELS[key].kind === 'push')
-    for (const key of pushes) expect(routeOf(key), key).toHaveLength(1)
+    // AMENDED for ISSUE-059 (was: `expect(routeOf(key), key).toHaveLength(1)`): a push row declared ahead of the step
+    // that routes it (A-N19, `UNROUTED` until cut 1, 22 §5) has no owner yet, and nothing pushes it in this release.
+    for (const key of pushes) {
+      expect(routeOf(key).length + (UNROUTED[key] ? 1 : 0), key).toBe(1)
+    }
     const uiLocalPushes = pushes.filter((key) => routeOf(key)[0]?.owner === 'ui-local').sort()
     expect([...UI_MAIN_PUSHES].sort()).toEqual(uiLocalPushes)
   })

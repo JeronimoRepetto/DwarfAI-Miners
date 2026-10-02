@@ -3,16 +3,24 @@
 import { z } from 'zod'
 import { requestIdSchema } from '../host-protocol/requestId'
 import {
+  askIdSchema,
   consentOriginSchema,
   dwarfIdSchema,
   integrationStateSchema,
+  messageIdSchema,
+  mineIdSchema,
   secretBackendSchema,
+  type AskId,
   type ConsentOrigin,
   type DwarfId,
   type IntegrationState,
+  type MessageId,
+  type MineId,
   type SecretBackend
 } from '../wire'
 import { helloOkSchema, type HelloOk } from '../host-protocol/adr-003'
+import { questionAnswersSchema, type QuestionAnswers } from '../host-protocol/params/asking'
+import { MESSAGE_TEXT_MAX_BYTES, messageTextSchema } from '../host-protocol/params/bounds'
 
 // Fields and names exactly as 14 §3.8 writes them.
 export interface ActivateDwarfRequest {
@@ -143,3 +151,169 @@ export const hostConnectionViewSchema = z
     capabilities: z.array(z.string()).optional()
   })
   .strict() satisfies z.ZodType<HostConnectionView>
+
+// A-N17 `getUiSession`, A-N18 `patchUiSession`, A-N19 `onUiSessionChanged` (14 §2.2, §3.9; ADR-024 items 1, 3): the
+// UI-main session store, shared by every window of the app run, never persisted and never sent to the Host
+// (INV-113). Types and comments as 14 §3.9 and ADR-024 item 3 write them; `ChatViewState` is ADR-024's (14 §3.9 names
+// it, ADR-024 item 3 defines it).
+export type WindowMode = 'panel' | 'veta' | 'valle' | 'hidden' // 06 §15
+
+export interface ChatViewState {
+  scrollAnchor: { messageId: MessageId; offsetPx: number } | 'bottom' // anchored to a message, not a pixel offset
+  selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } // composer caret/selection
+}
+
+export interface UiSessionSnapshot {
+  // ADR-024 D1 UI main session store (never persisted)
+  drafts: Record<DwarfId, string> // never sent to the Host (INV-113)
+  chatViews: Record<DwarfId, ChatViewState> // ADR-024 D3
+  askPicks: Record<AskId, QuestionAnswers> // partial picks, not persisted (OQ-03, PO #92)
+  openChat: Partial<Record<'panel' | 'veta' | 'valle', DwarfId | null>> // open chat per host
+  currentMine: Partial<Record<'panel' | 'valle', MineId | null>> // one per host (BR-13, INV-115)
+  valle: {
+    mosaicScrollLeft?: number
+    diveForDwarfId?: DwarfId | null
+    historyOpen?: boolean
+    // 07 N-16: last chat focused per mine since Valle opened; seeded at start-up from the Host's most recent
+    // person-sent message (snapshot tails) or the Panel's last open chat (07 §24 I-29)
+    talkedTo?: Record<MineId, DwarfId>
+    focusedPin?: DwarfId | null // 07 N-20
+    secondPaneDwarfId?: DwarfId | null // 07 N-20: the split's second pane
+    addPins?: Array<{ mineId: MineId; order: number }> // pending Add panels pinned in the deck: session only (PO #67; R5B-27)
+  }
+  vetaRisenChat?: DwarfId | null
+}
+export type UiSessionPatch =
+  | { kind: 'draft'; dwarfId: DwarfId; text: string }
+  | { kind: 'chat-view'; dwarfId: DwarfId; view: ChatViewState }
+  | { kind: 'ask-picks'; askId: AskId; picks: QuestionAnswers | null }
+  | { kind: 'open-chat'; host: 'panel' | 'veta' | 'valle'; dwarfId: DwarfId | null }
+  | { kind: 'current-mine'; host: 'panel' | 'valle'; mineId: MineId | null }
+  | { kind: 'valle'; patch: UiSessionSnapshot['valle'] }
+  | { kind: 'veta-risen-chat'; dwarfId: DwarfId | null }
+// Main drops a dwarf's draft, chat view, open-chat, talkedTo, focusedPin and secondPane entries on dwarf.departed
+// (INV-34) and emits the patches.
+
+/** A-N19's payload: the patch with the window it came from (14 §3.8 `onUiSessionChanged`). */
+export type UiSessionChange = UiSessionPatch & { origin: WindowMode }
+
+export const windowModeSchema = z.enum(['panel', 'veta', 'valle', 'hidden'])
+
+/**
+ * A record keyed by a branded id, typed as 14 writes it (`Record<DwarfId, V>`). zod infers a record whose key is not
+ * plain `string` as `Partial<Record<K, V>>`; the runtime check is the same `z.record`, every key validated by `key`.
+ */
+function idRecordSchema<K extends string, V extends z.ZodTypeAny>(
+  key: z.ZodType<K>,
+  value: V
+): z.ZodType<Record<K, z.output<V>>> {
+  return z.record(key, value) as z.ZodType<Record<K, z.output<V>>>
+}
+
+/** A caret or selection offset in the composer: a UTF-16 index, bounded like a draft (06 `MessageText`). */
+const composerOffsetSchema = z.number().int().nonnegative().max(MESSAGE_TEXT_MAX_BYTES)
+
+export const chatViewStateSchema = z
+  .object({
+    scrollAnchor: z.union([
+      z.object({ messageId: messageIdSchema, offsetPx: z.number().finite() }).strict(),
+      z.literal('bottom')
+    ]),
+    selection: z
+      .object({
+        start: composerOffsetSchema,
+        end: composerOffsetSchema,
+        direction: z.enum(['forward', 'backward', 'none'])
+      })
+      .strict()
+      .optional()
+  })
+  .strict() satisfies z.ZodType<ChatViewState>
+
+const valleSessionSchema = z
+  .object({
+    mosaicScrollLeft: z.number().finite().optional(),
+    diveForDwarfId: dwarfIdSchema.nullable().optional(),
+    historyOpen: z.boolean().optional(),
+    talkedTo: idRecordSchema(mineIdSchema, dwarfIdSchema).optional(),
+    focusedPin: dwarfIdSchema.nullable().optional(),
+    secondPaneDwarfId: dwarfIdSchema.nullable().optional(),
+    addPins: z
+      .array(z.object({ mineId: mineIdSchema, order: z.number().int().nonnegative() }).strict())
+      .optional()
+  })
+  .strict()
+
+export const uiSessionSnapshotSchema = z
+  .object({
+    drafts: idRecordSchema(dwarfIdSchema, messageTextSchema),
+    chatViews: idRecordSchema(dwarfIdSchema, chatViewStateSchema),
+    askPicks: idRecordSchema(askIdSchema, questionAnswersSchema),
+    openChat: z
+      .object({
+        panel: dwarfIdSchema.nullable().optional(),
+        veta: dwarfIdSchema.nullable().optional(),
+        valle: dwarfIdSchema.nullable().optional()
+      })
+      .strict(),
+    currentMine: z
+      .object({
+        panel: mineIdSchema.nullable().optional(),
+        valle: mineIdSchema.nullable().optional()
+      })
+      .strict(),
+    valle: valleSessionSchema,
+    vetaRisenChat: dwarfIdSchema.nullable().optional()
+  })
+  .strict() satisfies z.ZodType<UiSessionSnapshot>
+
+const patchVariants = {
+  draft: z.object({ kind: z.literal('draft'), dwarfId: dwarfIdSchema, text: messageTextSchema }),
+  chatView: z.object({
+    kind: z.literal('chat-view'),
+    dwarfId: dwarfIdSchema,
+    view: chatViewStateSchema
+  }),
+  askPicks: z.object({
+    kind: z.literal('ask-picks'),
+    askId: askIdSchema,
+    picks: questionAnswersSchema.nullable()
+  }),
+  openChat: z.object({
+    kind: z.literal('open-chat'),
+    host: z.enum(['panel', 'veta', 'valle']),
+    dwarfId: dwarfIdSchema.nullable()
+  }),
+  currentMine: z.object({
+    kind: z.literal('current-mine'),
+    host: z.enum(['panel', 'valle']),
+    mineId: mineIdSchema.nullable()
+  }),
+  valle: z.object({ kind: z.literal('valle'), patch: valleSessionSchema }),
+  vetaRisenChat: z.object({
+    kind: z.literal('veta-risen-chat'),
+    dwarfId: dwarfIdSchema.nullable()
+  })
+} as const
+
+/** A-N18's request: one patch kind; an unknown kind or an extra key is refused (14 §1.4). */
+export const uiSessionPatchSchema = z.discriminatedUnion('kind', [
+  patchVariants.draft.strict(),
+  patchVariants.chatView.strict(),
+  patchVariants.askPicks.strict(),
+  patchVariants.openChat.strict(),
+  patchVariants.currentMine.strict(),
+  patchVariants.valle.strict(),
+  patchVariants.vetaRisenChat.strict()
+]) satisfies z.ZodType<UiSessionPatch>
+
+/** A-N19's payload: a patch and the window it came from. */
+export const uiSessionChangeSchema = z.discriminatedUnion('kind', [
+  patchVariants.draft.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.chatView.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.askPicks.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.openChat.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.currentMine.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.valle.extend({ origin: windowModeSchema }).strict(),
+  patchVariants.vetaRisenChat.extend({ origin: windowModeSchema }).strict()
+]) satisfies z.ZodType<UiSessionChange>

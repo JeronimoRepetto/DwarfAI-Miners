@@ -74,7 +74,10 @@ import {
   hostConnectionViewSchema,
   openCodeSettingsViewSchema,
   rendererDiagnosticSchema,
-  stopEverythingRequestedSchema
+  stopEverythingRequestedSchema,
+  uiSessionChangeSchema,
+  uiSessionPatchSchema,
+  uiSessionSnapshotSchema
 } from './windowApi'
 
 const none = noPayloadSchema
@@ -687,6 +690,32 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: hostConnectionViewSchema
+  },
+  // A-N17 `getUiSession`, A-N18 `patchUiSession`, A-N19 `onUiSessionChanged` (ADR-024 items 1, 3; ADR-033 item 4): the
+  // UI-main session store, shared by every window; never persisted, never forwarded to the Host (INV-113)
+  'ui:session:get': {
+    name: 'ui:session:get',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: uiSessionSnapshotSchema
+  },
+  'ui:session:patch': {
+    name: 'ui:session:patch',
+    kind: 'send',
+    placement: 'ui-local',
+    status: 'new',
+    request: uiSessionPatchSchema,
+    response: none
+  },
+  'ui:session:changed': {
+    name: 'ui:session:changed',
+    kind: 'push',
+    placement: 'ui-local',
+    status: 'new',
+    request: none,
+    response: uiSessionChangeSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
