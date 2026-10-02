@@ -115,6 +115,7 @@ function newWorld(name: string) {
     log,
     client: { appVersion: build.appVersion, buildId: 'os-test' },
     endpoint,
+    build: 'dev',
     copyRoot: shared.copyRoot,
     protocolVersion: build.protocolVersion,
     // AMENDED for the Windows launcher fix (#1120): the in-process breakaway helper loads from prebuilds/.

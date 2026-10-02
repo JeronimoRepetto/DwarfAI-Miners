@@ -188,7 +188,9 @@ async function main(): Promise<void> {
       lifecycle,
       log
     }),
-    upgradeTarget: createUpgradeTargetRule(hostCopyRootFacts()),
+    upgradeTarget: createUpgradeTargetRule(
+      hostCopyRootFacts({ build: buildKindOf({ isPackaged }) })
+    ),
     ids,
     sections,
     snapshotMeta

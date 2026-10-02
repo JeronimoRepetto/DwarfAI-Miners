@@ -30,6 +30,7 @@ import {
   HOST_IDENTITY_FILE,
   hostIdentityRecordSchema,
   PROTOCOL_VERSION,
+  type CopyRootBuild,
   type HostEndpoint
 } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
@@ -90,6 +91,11 @@ export interface NodeHostLauncherOptions {
   uiEnv?: Readonly<Record<string, string | undefined>>
   /** The endpoint to use instead of the ADR-002 D2 rule (OS-lane tests bind a private one). */
   endpoint?: HostEndpoint
+  /**
+   * The build kind (`app.isPackaged`: release, else dev), which names the ADR-002 D5 copy root: a dev build's
+   * copies stay apart from the release build's (ADR-005 item 6; contracts `versionedCopyRoot`).
+   */
+  build: CopyRootBuild
   /** The copy root to use instead of the ADR-002 D5 one (OS-lane tests use a temporary folder). */
   copyRoot?: string
   /**
@@ -116,6 +122,7 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
     hostManifest: options.hostManifest,
     appVersion: options.client.appVersion,
     platform,
+    build: options.build,
     uiEnv,
     ...(options.copyRoot === undefined ? {} : { copyRoot: options.copyRoot }),
     log: options.log
@@ -238,7 +245,7 @@ export function createNodeUpgradePorts(options: NodeHostLauncherOptions): NodeUp
     async prepareTarget() {
       const root =
         options.copyRoot === undefined
-          ? versionedCopyRoot({ platform, env: uiEnv, homeDir: homedir() })
+          ? versionedCopyRoot({ platform, build: options.build, env: uiEnv, homeDir: homedir() })
           : { ok: true as const, value: options.copyRoot }
       if (!root.ok) return root
       const gate = spawnGateIn(runDir, readStart)

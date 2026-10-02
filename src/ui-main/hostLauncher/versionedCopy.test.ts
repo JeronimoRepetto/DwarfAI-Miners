@@ -277,17 +277,21 @@ describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
     expect(
       versionedCopyRoot({
         platform: 'win32',
+        build: 'release',
         env: { LOCALAPPDATA: 'C:\\Users\\j\\AppData\\Local' },
         homeDir: 'C:\\Users\\j'
       })
     ).toEqual({ ok: true, value: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host' })
-    expect(versionedCopyRoot({ platform: 'darwin', env: {}, homeDir: '/Users/j' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'darwin', build: 'release', env: {}, homeDir: '/Users/j' })
+    ).toEqual({
       ok: true,
       value: '/Users/j/Library/Application Support/DwarfAI/host'
     })
     expect(
       versionedCopyRoot({
         platform: 'linux',
+        build: 'release',
         env: { XDG_DATA_HOME: '/data/j' },
         homeDir: '/home/j'
       })
@@ -295,21 +299,60 @@ describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
     // The XDG Base Directory default when XDG_DATA_HOME is unset, empty or relative.
     for (const XDG_DATA_HOME of [undefined, '', 'relative/share']) {
       expect(
-        versionedCopyRoot({ platform: 'linux', env: { XDG_DATA_HOME }, homeDir: '/home/j' })
+        versionedCopyRoot({
+          platform: 'linux',
+          build: 'release',
+          env: { XDG_DATA_HOME },
+          homeDir: '/home/j'
+        })
       ).toEqual({ ok: true, value: '/home/j/.local/share/dwarfai/host' })
     }
   })
 
+  it('[ADR-002, ADR-005, FM-107] a development or preview build keeps its copies in host-dev beside the release root, never in it', () => {
+    // A dev Host running from a copy under the release root kept an installed build from replacing that
+    // copy (COPY_EPERM, 2026-10-02). `DwarfAI-dev/host` is not used: on macOS it is the dev hostDataDir.
+    expect(
+      versionedCopyRoot({
+        platform: 'win32',
+        build: 'dev',
+        env: { LOCALAPPDATA: 'C:\\Users\\j\\AppData\\Local' },
+        homeDir: 'C:\\Users\\j'
+      })
+    ).toEqual({ ok: true, value: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host-dev' })
+    expect(
+      versionedCopyRoot({ platform: 'darwin', build: 'dev', env: {}, homeDir: '/Users/j' })
+    ).toEqual({ ok: true, value: '/Users/j/Library/Application Support/DwarfAI/host-dev' })
+    expect(
+      versionedCopyRoot({
+        platform: 'linux',
+        build: 'dev',
+        env: { XDG_DATA_HOME: '/data/j' },
+        homeDir: '/home/j'
+      })
+    ).toEqual({ ok: true, value: '/data/j/dwarfai/host-dev' })
+    // Without a LOCALAPPDATA or a home folder a dev build has no copy root either.
+    expect(
+      versionedCopyRoot({ platform: 'win32', build: 'dev', env: {}, homeDir: 'C:\\Users\\j' })
+    ).toEqual({ ok: false, errCode: 'COPY_ROOT_UNKNOWN' })
+  })
+
   it('[ADR-002, FM-129] without a LOCALAPPDATA or a home folder there is no copy root', () => {
-    expect(versionedCopyRoot({ platform: 'win32', env: {}, homeDir: 'C:\\Users\\j' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'win32', build: 'release', env: {}, homeDir: 'C:\\Users\\j' })
+    ).toEqual({
       ok: false,
       errCode: 'COPY_ROOT_UNKNOWN'
     })
-    expect(versionedCopyRoot({ platform: 'darwin', env: {}, homeDir: '' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'darwin', build: 'release', env: {}, homeDir: '' })
+    ).toEqual({
       ok: false,
       errCode: 'COPY_ROOT_UNKNOWN'
     })
-    expect(versionedCopyRoot({ platform: 'linux', env: {}, homeDir: '' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'linux', build: 'release', env: {}, homeDir: '' })
+    ).toEqual({
       ok: false,
       errCode: 'COPY_ROOT_UNKNOWN'
     })
