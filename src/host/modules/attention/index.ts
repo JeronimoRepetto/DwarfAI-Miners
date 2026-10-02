@@ -1,12 +1,17 @@
 // The attention module (05 §3.11): ADR-018's level-3 policy. Cut 1 serves `onFact`,
 // `presenceChanged` and `preferencesChanged` (ISSUE-109), the withdrawal `onFactEnded`, the
-// carry-over and the 24-hour sweep (ISSUE-110); the sink and the click counter join with
-// ISSUE-112. It imports no other module: its one edge, to preferences, is the `AttentionSettings` bridge composed by `host/wiring` (05 §1.3, R4).
+// carry-over and the 24-hour sweep (ISSUE-110), the Reset-metrics step (ISSUE-118); the sink and
+// the click counter join with ISSUE-112. It imports no other module: its one edge, to preferences,
+// is the `AttentionSettings` bridge composed by `host/wiring`, and its Reset step reaches the saga
+// structurally (05 §1.3, R4).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
+import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../../kernel/ports/transactionScope'
+import { AttentionResetStep } from './adapters/sqlite/AttentionResetStep'
 import { AttentionPolicy, type AttentionInputs } from './application/attentionPolicy'
 import { sweepWithdrawnKeys } from './application/sweep'
 import type { Level3TitleFormatter } from './domain/decideLevel3'
@@ -57,6 +62,24 @@ export interface Attention {
   sweep(): number
   /** 09 §7.1: a person-initiated turn or the departure ends the dwarf's carry-over (ISSUE-120). */
   dropCarryOver(dwarfId: DwarfId): void
+}
+
+/**
+ * The attention step of the Reset-metrics saga (ADR-023; 09 §7.2): the shape of the preferences
+ * module's `ResetDbStep` (16 §4.12), stated here so attention imports nothing from preferences
+ * (05 §1.3, R4). It joins the saga's one `db` transaction.
+ */
+export interface AttentionResetDbStep {
+  readonly name: string
+  reset(tx: TransactionRunner): void
+}
+
+/** `name: 'attention'`; registered with the saga by host/wiring/resetParticipants.ts. */
+export function createAttentionResetStep(deps: {
+  db: SqliteDatabase
+  scope: TransactionScope
+}): AttentionResetDbStep {
+  return new AttentionResetStep(deps)
 }
 
 /** The module over its driven ports; the adapters are composed by `host/main.ts` (ISSUE-119). */

@@ -29,15 +29,18 @@ describe('resetParticipants', () => {
   it('[ADR-023, S13.05] the db transaction runs the preferences step and the install-moment step writes install_moment now through the ledger in its own transaction', () => {
     const clock = new FakeClock(1_750_000_000_000)
     const preferences: ResetDbStep = { name: 'preferences', reset: () => undefined }
+    const attention: ResetDbStep = { name: 'attention', reset: () => undefined }
     const written: Array<{ at: number; inTransaction: boolean }> = []
     const tx = recordingRunner()
     const participants = resetParticipants({
       preferences,
+      attention,
       ledger: { setInstallMoment: (at) => written.push({ at, inTransaction: tx.open }) },
       clock
     })
 
-    expect(participants.dbSteps).toStrictEqual([preferences])
+    // ISSUE-118 registers the attention step after the preferences step, both of 09 §7.2 (3).
+    expect(participants.dbSteps).toStrictEqual([preferences, attention])
     expect(participants.installMoment.name).toBe('ledger-install-moment')
     clock.advance(42)
     participants.installMoment.reset(tx)

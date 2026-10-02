@@ -3,9 +3,9 @@
 // wiring hands it every module's table set here (hot spot, 22 §5):
 //
 // - `dbSteps`: joined in the one `db` transaction, in the 09 §7.2 order — (2) mines and crew,
-//   (3) the other per-table deletions, (4) launching. Cut 1 registers the preferences step only;
-//   the others join with their issues, each in its place (later: ISSUE-097, ISSUE-107, ISSUE-118,
-//   ISSUE-121, ISSUE-139, ISSUE-181, ISSUE-208).
+//   (3) the other per-table deletions, (4) launching. Cut 1 registers the preferences and the
+//   attention (ISSUE-118) steps, both of (3); the others join with their issues, each in its place
+//   (later: ISSUE-097, ISSUE-107, ISSUE-121, ISSUE-139, ISSUE-181, ISSUE-208).
 // - `installMoment`: the ledger's `install_moment(now, 'reset')` (07 S13.05), written through
 //   `LedgerRepository.setInstallMoment` (16 §11) in its own transaction at that step (lead
 //   decision 2026-09-30: the `ResetDbStep` shape, no new port type).
@@ -21,6 +21,8 @@ export interface LedgerInstallMoment {
 export interface ResetParticipantsDeps {
   /** The preferences module's step (`createPreferencesResetStep`). */
   preferences: ResetDbStep
+  /** The attention module's step (`createAttentionResetStep`). */
+  attention: ResetDbStep
   ledger: LedgerInstallMoment
   clock: Clock
 }
@@ -32,7 +34,7 @@ export interface ResetParticipants {
 
 export function resetParticipants(deps: ResetParticipantsDeps): ResetParticipants {
   return {
-    dbSteps: [deps.preferences],
+    dbSteps: [deps.preferences, deps.attention],
     installMoment: {
       name: 'ledger-install-moment',
       reset: (tx) => tx.inTransaction(() => deps.ledger.setInstallMoment(deps.clock.now()))

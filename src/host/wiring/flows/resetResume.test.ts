@@ -22,6 +22,7 @@ import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnostics
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { InProcessEventBus } from '../../kernel/InProcessEventBus'
 import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
+import { createAttentionResetStep } from '../../modules/attention'
 import {
   createPreferencesResetStep,
   createResetSaga,
@@ -134,6 +135,7 @@ function host(m: Machine, killAt?: ResetStep | 'cleanup') {
   }
   const participants = resetParticipants({
     preferences: createPreferencesResetStep({ db, clock: m.clock }),
+    attention: createAttentionResetStep({ db, scope: transactions }),
     ledger: {
       setInstallMoment: (at) =>
         db.run(
