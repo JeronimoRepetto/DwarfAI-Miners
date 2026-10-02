@@ -91,6 +91,7 @@ import {
   type PanelWindowUseCases
 } from './window/application/panelWindow'
 import { currentUiPlatform, ElectronScreenArea } from './window/adapters/ElectronScreenArea'
+import { uiDataDirectory } from './dataDirectory'
 import { DEFAULT_TOGGLE_ACCELERATOR, PROTOCOL_VERSION, type ChannelKey } from '@dwarfai/contracts'
 import { createNativeRows } from './ipc/handlers/nativeRows'
 import { createAppInfo, type AppInfo } from './window/application/appInfo'
@@ -683,13 +684,14 @@ function electronNativeRows(panelWindow: () => BrowserWindow | undefined): Route
 declare const __DWARFAI_BUILD_ID__: string
 
 /**
- * HostClient over the Node host launcher (ISSUE-051; ADR-002 D2, D4, D5): the Host data folder is `userData` + `/host`;
+ * HostClient over the Node host launcher (ISSUE-051; ADR-002 D2, D4, D5): the Host data folder is the UI's data folder
+ * (`dataDirectory.ts`: userData, or `DwarfAI-dev` for a development build, ADR-005 item 6) + `/host`;
  * the Host runs `out/host/main.js` of this build from its versioned copy, checked against `out/host-manifest.json`,
  * both beside this bundle (`out/ui-main/`); the Windows launch helper loads from the app root's `prebuilds/`.
  */
-function electronHostClient(uiLog: UiLog): HostClientService {
+function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
   const outDir = join(import.meta.dirname, '..')
-  const hostDataDir = join(app.getPath('userData'), 'host')
+  const hostDataDir = join(dataDir, 'host')
   const client = { appVersion: app.getVersion(), buildId: __DWARFAI_BUILD_ID__ }
   return createHostClient({
     launcher: createNodeHostLauncher({
@@ -731,19 +733,27 @@ if (process.type === 'browser') {
     appEntry: appEntryUrl(),
     devHmrOrigin: app.isPackaged ? undefined : devHmrOriginOf(process.env.ELECTRON_RENDERER_URL)
   })
+  // The rebuilt UI's data folder: userData, or `DwarfAI-dev` for a development or preview build whose userData is the
+  // release folder (ADR-005 item 6; dataDirectory.ts). Today's runtime keeps userData (ISSUE-056 decision).
+  const dataDir = uiDataDirectory({
+    platform: currentUiPlatform(),
+    isPackaged: app.isPackaged,
+    appData: app.getPath('appData'),
+    userData: app.getPath('userData')
+  })
   const uiLog = createUiLogger({
     files: new NodeLogFiles(),
-    logDir: join(app.getPath('userData'), 'logs'), // ADR-026 item 1, the folder the Host writes into too
+    logDir: join(dataDir, 'logs'), // ADR-026 item 1, the folder the Host writes into too
     clock: { now: () => Date.now() },
     appVersion: app.getVersion(),
     pid: process.pid,
     level: logLevelFromEnv(process.env),
     appRoot: app.getAppPath()
   })
-  // The UI preference files of userData (ADR-024 item 1); their log records (19 §9.6 `uiprefs.corrupt`,
+  // The UI preference files of the data folder (ADR-024 item 1); their log records (19 §9.6 `uiprefs.corrupt`,
   // `uiprefs.write-failed`) go to the UI log segments.
   const uiPreferenceStore = new JsonUiPreferenceStore({
-    dir: app.getPath('userData'),
+    dir: dataDir,
     log: (record) => uiLog.record(record)
   })
   /** Every open window of the app: in cut 0, the rebuilt Panel (the one window UI main builds). */
@@ -811,6 +821,6 @@ if (process.type === 'browser') {
       ),
       newConfirmationId: () => randomUUID()
     },
-    host: { client: electronHostClient(uiLog) }
+    host: { client: electronHostClient(uiLog, dataDir) }
   })
 }
