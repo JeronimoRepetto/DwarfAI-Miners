@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { FakeClock } from '../../../kernel/fakes/FakeClock'
-import { FakeFs } from '../../../kernel/fakes/FakeFs'
-import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { FAIL_CLOSED_CAPABILITIES } from '../domain/capabilities'
 import type { CatalogRecord, ProviderProfile } from '../domain/profile'
-import { FakeInstallResolver, type FakeInstall } from '../ports/fakes/FakeInstallResolver'
-import { createSupplierCatalogue } from './catalogue'
-import { createInstallDetection } from './detection'
+import { catalogueMachine, settle } from '../testing/catalogueMachine'
 
 function record(id: string, overrides: Partial<ProviderProfile> = {}): CatalogRecord {
   return {
@@ -29,32 +24,18 @@ const ALPHA = record('alpha')
 const BRAVO = record('bravo')
 const CHARLIE = record('charlie')
 
-/** A machine: the fake resolver plus the file each resolved path names (detection stats it). */
+/**
+ * A machine: the fake resolver plus the file each resolved path names (detection stats it).
+ * Amended for ISSUE-147: built by the shared `catalogueMachine`, where each record has a driver
+ * that measures its own ceiling, because `launchable` now lists a provider only when a driver's
+ * probe says it can launch (ADR-009 D4, D6). Was: the catalogue over detection alone.
+ */
 function machine(records: readonly CatalogRecord[], build: { publicBuild: boolean }) {
-  const clock = new FakeClock()
-  const scheduler = new FakeScheduler(clock)
-  const fs = new FakeFs()
-  const resolver = new FakeInstallResolver({ scheduler })
-  const detection = createInstallDetection({ resolver, fs, scheduler })
-  const catalogue = createSupplierCatalogue({
-    records,
-    publicBuild: build.publicBuild,
-    detection
-  })
-  const install = (binary: string, extra: Partial<FakeInstall> = {}): void => {
-    const path = `/opt/tools/${binary}`
-    fs.addFile(path, '#!/bin/sh\n', 1_000)
-    resolver.install(binary, { path, version: '1.0.0', ...extra })
-  }
-  const ids = async (): Promise<string[]> =>
-    (await catalogue.launchable()).map((entry) => entry.providerId)
-  return { clock, scheduler, fs, resolver, catalogue, install, ids }
+  return catalogueMachine(records, build)
 }
 
-/** Lets the pending promise chains run without advancing the fake clock. */
-async function settle(): Promise<void> {
-  for (let i = 0; i < 20; i += 1) await Promise.resolve()
-}
+// Amended for ISSUE-147: `settle` is the shared one (50 turns, was 20 here), because a
+// launchable answer now also waits for the probe round's promise hops; no fake time is added.
 
 describe('launchable (INV-41)', () => {
   it('[US-RES-005.AC01, US-LAUNCH-001.AC10, INV-41] a catalog provider that does not resolve is absent from launchable', async () => {

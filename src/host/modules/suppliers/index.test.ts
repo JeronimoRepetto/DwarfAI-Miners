@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { CATALOG_PROVIDER_IDS } from '../../../contracts/catalog'
-import type { DwarfId, FolderPath, LaunchId, MessageId } from '../../kernel/domain/values'
+import type {
+  DwarfId,
+  FolderPath,
+  HostEpoch,
+  LaunchId,
+  MessageId
+} from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeFs } from '../../kernel/fakes/FakeFs'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
+import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
+import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import { CATALOG_RECORDS } from './adapters/catalog/profiles'
 import { SIMULATED_HANDSHAKE_MS } from './adapters/drivers/simulated/SimulatedDriver'
-import { createSuppliers, type DriverLaunchRequest } from './index'
+import { createSuppliers, type DriverLaunchRequest, type SuppliersEvent } from './index'
 import { FakeInstallResolver } from './ports/fakes/FakeInstallResolver'
+import { FakeIntegrationGateReader } from './ports/fakes/FakeIntegrationGateReader'
+import { InMemoryCapabilityRecordStore } from './ports/fakes/InMemoryCapabilityRecordStore'
 import { RecordingSuppliedEventSink } from './ports/fakes/RecordingSuppliedEventSink'
 
 function build(
@@ -26,7 +36,12 @@ function build(
     simulatedSeed: 'seed',
     sink,
     installResolver,
-    fs
+    fs,
+    capabilityRecords: new InMemoryCapabilityRecordStore(),
+    integrationGate: new FakeIntegrationGateReader(),
+    bus: new RecordingEventBus<SuppliersEvent>(),
+    ids: new SequenceIdGenerator(),
+    hostEpoch: 'epoch-1' as HostEpoch
   })
   return { clock, sink, suppliers }
 }
@@ -118,7 +133,7 @@ describe('createSuppliers (suppliers skeleton)', () => {
     expect(suppliers.sessions.sessionFor(session.ref)).toBeNull()
   })
 
-  it('[US-RES-005.AC01, US-RES-005.AC05, INV-41] the composed catalogue lists the installed catalog CLIs, Antigravity only in a development build, and the simulated provider only there', async () => {
+  it('[US-RES-005.AC01, US-RES-005.AC05, INV-41] the composed catalogue knows the installed catalog CLIs and lists as launchable only a provider whose attached driver can launch it, the simulated provider only in a development build', async () => {
     const machine = (): { resolver: FakeInstallResolver; fs: FakeFs } => {
       const resolver = new FakeInstallResolver()
       const fs = new FakeFs()
@@ -137,7 +152,17 @@ describe('createSuppliers (suppliers skeleton)', () => {
       await build(false, inDevelopment.resolver, inDevelopment.fs).suppliers.catalogue.launchable()
     ).map((entry) => entry.providerId)
 
-    expect(publicIds).toEqual(['claude', 'opencode'])
-    expect(developmentIds).toEqual(['claude', 'antigravity', 'opencode', 'simulated'])
+    // Amended for ISSUE-147: a provider is launchable only when a driver probed it able to launch
+    // (ADR-009 D4, D6; INV-44). No real driver is attached yet (ISSUE-150…158), so the installed
+    // CLIs are known to the catalogue but offered on no launch surface; only the simulated
+    // provider, whose driver is attached, is launchable, and only in a development build.
+    // Was: ['claude', 'opencode'] / ['claude', 'antigravity', 'opencode', 'simulated'].
+    expect(publicIds).toEqual([])
+    expect(developmentIds).toEqual(['simulated'])
+    const known = build(true, inPublic.resolver, inPublic.fs).suppliers.catalogue
+    await known.launchable()
+    expect(known.entry('claude')?.installed).toBe(true)
+    expect(known.entry('opencode')?.installed).toBe(true)
+    expect(known.entry('codex')?.installed).toBe(false)
   })
 })

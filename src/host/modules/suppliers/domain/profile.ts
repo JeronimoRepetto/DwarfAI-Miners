@@ -56,6 +56,13 @@ export interface PermissionModeSpec {
   providerArgs: ProviderPolicy // how the driver enforces it (item 3)
 }
 
+/** One provider's permission-mode data (ADR-011 item 1): the spec of each mode id it lists. */
+export interface PermissionModeCatalog {
+  readonly specs: readonly PermissionModeSpec[]
+  /** A verified non-interactive deny policy (15 §2.8) lets `permission: 'none'` offer policy-only modes. */
+  readonly denyPolicyVerified: boolean
+}
+
 // ---------- the catalog record (package gap, resolved in development) ----------
 
 /**
@@ -69,6 +76,12 @@ export interface CatalogRecord {
   readonly profile: ProviderProfile
   readonly ceiling: ProviderCapabilities
   readonly developmentOnly?: boolean
+  /**
+   * The specs behind `profile.permissionModes` (ADR-011 item 1). `ProviderProfile` is frozen and
+   * lists mode ids only, so the specs travel beside it, like the ceiling. Absent: no mode can be
+   * offered (fail closed).
+   */
+  readonly modes?: PermissionModeCatalog
 }
 
 /** The records a build carries: a public build drops every development-only record. */
