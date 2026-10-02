@@ -133,9 +133,23 @@ function createThrowawayDir(fs, tmp) {
 /**
  * Makes `dir` a Git repository with one commit of the scenario's files. The commit identity is a
  * fixed placeholder and signing is off, so no person's Git identity enters what a provider reads.
+ *
+ * Automatic maintenance and garbage collection are off for every command: otherwise `git commit`
+ * leaves a detached `git maintenance run --auto` behind that still writes under `.git/objects`
+ * when the recorder deletes the repository, and the recursive delete can then fail or, on Linux,
+ * return without error and leave the repository in place.
+ *
+ * @param {string} dir
+ * @param {NodeJS.ProcessEnv} [env] the environment the git commands run with
  */
-export function initThrowawayRepo(dir) {
-  const git = (args) => execFileSync('git', args, { cwd: dir, shell: false, stdio: 'ignore' })
+export function initThrowawayRepo(dir, env = process.env) {
+  const git = (args) =>
+    execFileSync('git', ['-c', 'maintenance.auto=false', '-c', 'gc.auto=0', ...args], {
+      cwd: dir,
+      env,
+      shell: false,
+      stdio: 'ignore'
+    })
   git(['init', '-q'])
   git(['add', '-A'])
   git([
@@ -195,6 +209,31 @@ export function createTeeTransport({ fs, folder, caseName, now }) {
     /** Every raw file written so far. */
     files: () => [...written]
   }
+}
+
+/** How often, and how long apart, the recorder tries to delete the throwaway repository. */
+const REMOVE_ATTEMPTS = 5
+const REMOVE_BACKOFF_MS = 50
+
+/**
+ * Deletes the throwaway repository and checks that it is gone. A recursive `rmSync` can return
+ * without error and leave the directory in place when an entry vanishes under it (ENOENT), or
+ * throw when one appears (ENOTEMPTY, EPERM): a background process still writing there (a provider
+ * CLI's child) causes both. So each attempt is checked, and retried after a growing pause.
+ *
+ * @returns {Promise<boolean>} whether the directory is gone
+ */
+async function removeThrowawayDir(fs, dir) {
+  for (let attempt = 1; attempt <= REMOVE_ATTEMPTS; attempt++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // Retried below, like a delete that returned with the directory still there.
+    }
+    if (!fs.existsSync(dir)) return true
+    await new Promise((resolve) => setTimeout(resolve, REMOVE_BACKOFF_MS * attempt))
+  }
+  return false
 }
 
 const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10)
@@ -277,6 +316,7 @@ export async function runRecord(request) {
   fs.mkdirSync(folder, { recursive: true })
   const tee = createTeeTransport({ fs, folder, caseName, now })
   const repoDir = createThrowawayDir(fs, tmp)
+  let exitCode
   try {
     for (const [file, content] of Object.entries(scenario.repoFiles ?? {})) {
       const target = path.join(repoDir, ...file.split(/[\\/]/))
@@ -304,16 +344,19 @@ export async function runRecord(request) {
     await adapter.run({ repoDir, scenario, tee, env })
     log(`record: wrote the raw capture of ${caseName} to ${folder}`)
     log(`record: next, node scripts/fixtures/scrub.mjs ${path.join(folder, `${caseName}.raw.*`)}`)
-    return 0
+    exitCode = 0
   } catch (error) {
     for (const file of [...tee.files(), path.join(folder, `${caseName}.raw.meta.json`)]) {
       fs.rmSync(file, { force: true })
     }
     log(`record: the recording failed and its raw capture was deleted: ${error.message}`)
-    return 1
-  } finally {
-    fs.rmSync(repoDir, { recursive: true, force: true })
+    exitCode = 1
   }
+  if (!(await removeThrowawayDir(fs, repoDir))) {
+    log(`record: could not delete the throwaway repository ${repoDir}; delete it by hand`)
+    return 1
+  }
+  return exitCode
 }
 
 /** `--name value` pairs. */

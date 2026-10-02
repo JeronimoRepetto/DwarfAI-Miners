@@ -11,7 +11,13 @@ import {
   SimulatedDriver
 } from '../../src/host/modules/suppliers/adapters/drivers/simulated/SimulatedDriver.ts'
 import { checkFixturesLayout } from '../checks/fixtures-layout.mjs'
-import { laneRefusal, parseScenario, RECORDING_ADAPTERS, runRecord } from './record.mjs'
+import {
+  initThrowawayRepo,
+  laneRefusal,
+  parseScenario,
+  RECORDING_ADAPTERS,
+  runRecord
+} from './record.mjs'
 import { runScrub } from './scrub.mjs'
 
 /**
@@ -340,5 +346,76 @@ describe('record.mjs (17 §1.4, §5.5)', () => {
     // The lane's script exists and runs only the opt-in integration files (17 §5.5).
     const { scripts } = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
     expect(scripts['test:real-cli']).toMatch(/^vitest run .*integration\.test$/)
+  })
+
+  it('[ADR-008] the throwaway repository starts no background git process that could race its deletion', () => {
+    // A git command can leave a detached child behind (`git commit` starts
+    // `git maintenance run --auto --detach`), which creates and unlinks a lock file under
+    // .git/objects after the command returned. When that races the recorder's recursive delete,
+    // the delete can fail or, on Linux, return without error and leave the repository behind.
+    // Git's trace2 event log names every child process each git command starts.
+    const repoDir = tempDir('record-repo-')
+    const trace = path.join(tempDir('record-trace-'), 'trace2.json')
+    nodeFs.writeFileSync(path.join(repoDir, 'README.md'), '# Throwaway\n')
+
+    initThrowawayRepo(repoDir, { ...process.env, GIT_TRACE2_EVENT: trace })
+
+    const children = readFileSync(trace, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.event === 'child_start')
+      .map((event) => event.argv.join(' '))
+    expect(children).toEqual([])
+  })
+
+  it('[ADR-008] the throwaway repository is gone even when a recursive delete returns without removing it', async () => {
+    // Node's recursive rmSync returns without error when an entry vanishes under it (ENOENT), and
+    // leaves the rest in place: a background process of a provider CLI or of git can do that. The
+    // first delete of the throwaway repository is made a silent no-op here, as on the CI leg.
+    let skipped = 0
+    const silentOnce = new Proxy(nodeFs, {
+      get(target, name) {
+        if (name !== 'rmSync') return target[name]
+        return (target_, options) => {
+          if (/dwarfai-rec-\d+$/.test(String(target_)) && skipped === 0) {
+            skipped++
+            return undefined
+          }
+          return target.rmSync(target_, options)
+        }
+      }
+    })
+    const run = request({
+      fs: silentOnce,
+      adapters: {
+        'simulated/acp': {
+          detect: async () => ({ providerVersion: '1.0.0', capabilities: CAPABILITIES }),
+          run: async () => {
+            throw new Error('the provider exited')
+          }
+        }
+      }
+    })
+
+    expect(await runRecord(run.request)).toBe(1)
+    expect(skipped).toBe(1)
+    expect(readdirSync(run.tmp)).toEqual([])
+  })
+
+  it('[ADR-008] a throwaway repository that cannot be deleted fails the recording and is named for the maintainer', async () => {
+    const neverDeletes = new Proxy(nodeFs, {
+      get(target, name) {
+        if (name !== 'rmSync') return target[name]
+        return (target_, options) =>
+          /dwarfai-rec-\d+$/.test(String(target_)) ? undefined : target.rmSync(target_, options)
+      }
+    })
+    const run = request({ fs: neverDeletes })
+
+    expect(await runRecord(run.request)).toBe(1)
+    expect(run.logged.join('\n')).toMatch(
+      /could not delete the throwaway repository .*dwarfai-rec-1; delete it by hand/
+    )
   })
 })
