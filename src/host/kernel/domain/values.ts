@@ -10,6 +10,20 @@ export type Result<T, E extends string> = { ok: true; value: T } | { ok: false; 
 /** The DwarfAI UUID of a dwarf (05 §3 "Common value types", ADR-015); never a provider session id. */
 export type DwarfId = string & { readonly __brand: 'DwarfId' }
 
+/** The surrogate id of a mine, UUIDv7; never derived from its path (06 §0.1, INV-01). */
+export type MineId = string & { readonly __brand: 'MineId' }
+
+/**
+ * The provider's own ids of a session (06 §0.1, §3; ADR-015 item 7), a key separate from the
+ * `DwarfId` and UNIQUE across dwarfs (INV-21). `providerAgentId` is absent for a root session and
+ * present for a provider subagent sharing its parent's session; stored as `''` when absent.
+ */
+export interface ProviderIdentity {
+  providerId: ProviderId
+  providerSessionId: string
+  providerAgentId?: string
+}
+
 /** UUIDv7 minted by the kernel `IdGenerator` (08 §1.2, 06 §0.1). */
 export type EventId = string & { readonly __brand: 'EventId' }
 
