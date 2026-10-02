@@ -47,7 +47,7 @@ export type {
   DriverResumeError,
   DriverSendError,
   DriverSession,
-  DriverTurnEnded,
+  TurnEndedInput,
   InstalledProvider,
   MessageInput,
   ObservationAdapter,

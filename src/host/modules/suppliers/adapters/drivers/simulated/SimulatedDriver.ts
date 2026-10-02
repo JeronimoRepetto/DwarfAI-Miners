@@ -23,7 +23,7 @@ import type {
   DriverLaunchRequest,
   DriverSendError,
   DriverSession,
-  DriverTurnEnded,
+  TurnEndedInput,
   ProviderDriver,
   SendReceipt,
   SessionRef,
@@ -230,7 +230,7 @@ class SimulatedRun {
 
   private endTurn(kind: 'concluded' | 'interrupted'): void {
     if (this.openTurn === null) return
-    const end: DriverTurnEnded = {
+    const end: TurnEndedInput = {
       turnKey: this.openTurn.turnKey,
       kind,
       at: this.options.clock.now(),
