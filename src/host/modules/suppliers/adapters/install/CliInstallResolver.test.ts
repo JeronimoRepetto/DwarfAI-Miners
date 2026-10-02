@@ -1,7 +1,8 @@
+import { win32 } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import { createInstallDetection, detectForDriver } from '../../application/detection'
-import { layMachine } from '../../testing/cliResolverMachine'
+import { FIXTURE_NODE, layMachine } from '../../testing/cliResolverMachine'
 import { PROBE_TIMEOUT_MS } from './CliInstallResolver'
 
 async function settle(): Promise<void> {
@@ -151,5 +152,30 @@ describe('CliInstallResolver', () => {
     // Only its attribute was read; the file itself never ran, not even for --version.
     expect(machine.spawned().map((spawn) => spawn.executable)).not.toContain('/opt/tools/bin/tool')
     expect(machine.spawned().some((spawn) => spawn.args.includes('--version'))).toBe(false)
+  })
+
+  it('[ADR-009] a CLI reached through an 8.3 short-name PATH entry is answered by its long realpath, for a program and for a .cmd shim entry', async () => {
+    const machine = layMachine({ platform: 'win32', installs: [] })
+    const short = win32.join('C:', 'Users', 'LONGNA~1', 'tools')
+    const long = win32.join('C:', 'Users', 'long-name-user', 'tools')
+    machine.env['Path'] = [short, win32.dirname(FIXTURE_NODE)].join(';')
+    // The OS answers both spellings; only the long one is the realpath.
+    const both = (name: string, content: string): void => {
+      machine.fs.addFile(win32.join(short, name), content, 1)
+      machine.fs.addFile(win32.join(long, name), content, 1)
+      machine.links.set(win32.join(short, name), win32.join(long, name))
+    }
+    both('native.exe', 'program')
+    both('scripted.cmd', `@ECHO off\r\nnode "%~dp0${win32.sep}lib${win32.sep}scripted.js" %*\r\n`)
+    both(win32.join('lib', 'scripted.js'), 'entry')
+
+    expect(await machine.resolver.resolve(['native'])).toMatchObject({
+      path: win32.join(long, 'native.exe'),
+      resolvedVia: 'path'
+    })
+    expect(await machine.resolver.resolve(['scripted'])).toMatchObject({
+      path: win32.join(long, 'lib', 'scripted.js'),
+      resolvedVia: 'path'
+    })
   })
 })

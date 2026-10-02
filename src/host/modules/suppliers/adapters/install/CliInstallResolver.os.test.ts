@@ -17,8 +17,15 @@ const SCRIPT = `process.stdout.write(process.argv.includes('--version') ? '${VER
 let dir = ''
 
 beforeEach(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'dwarfai-resolver-')))
+  // As the OS hands it out: on Windows `os.tmpdir()` can be an 8.3 short path (`C:\Users\LONGNA~1\…`)
+  // and on macOS `/var` links to `/private/var`. PATH gets this spelling, as a person's would.
+  dir = mkdtempSync(join(tmpdir(), 'dwarfai-resolver-'))
 })
+
+/** The resolver answers the OS realpath (15 §1.2 `binaryPath`): long names, links followed. */
+function realpathOf(path: string): string {
+  return realpathSync.native(path)
+}
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
@@ -51,7 +58,7 @@ describe.runIf(process.platform === 'win32')('CliInstallResolver on Windows', ()
     })
 
     expect(await resolver.resolve(['stubcli'])).toEqual({
-      path: entry,
+      path: realpathOf(entry),
       version: VERSION,
       resolvedVia: 'path'
     })
@@ -71,7 +78,7 @@ describe.runIf(process.platform !== 'win32')('CliInstallResolver on macOS and Li
     })
 
     expect(await resolver.resolve(['stubcli'])).toEqual({
-      path: entry,
+      path: realpathOf(entry),
       version: VERSION,
       resolvedVia: 'path'
     })
