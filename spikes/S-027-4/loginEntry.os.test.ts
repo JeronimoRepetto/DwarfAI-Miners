@@ -234,6 +234,8 @@ describe('S-027-4: login autostart entry per OS (ADR-027 item 7)', () => {
         entry.remove()
       }
       expect(entry.read().present).toBe(false)
-    }
+    },
+    // Each step spawns reg.exe on Windows: seven spawns, measured at 7 s in a loaded OS lane.
+    START_TIMEOUT_MS
   )
 })
