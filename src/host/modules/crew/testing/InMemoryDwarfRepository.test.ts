@@ -3,6 +3,7 @@ import type { MineId } from '../../../kernel/domain/values'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import { runDwarfRepositoryContract } from './dwarfRepository.contract'
 import { InMemoryDwarfRepository } from './InMemoryDwarfRepository'
+import { runPresentDwarfsContract } from './presentDwarfs.contract'
 
 // The double runs the same contract as the SQLite adapter (17 §1.3). Its transaction is a
 // TransactionScope fake: open while `work` runs, and a throwing `work` restores the rows it saw.
@@ -25,6 +26,31 @@ describe('InMemoryDwarfRepository', () => {
         } catch (error) {
           repository.restore(before)
           throw error
+        } finally {
+          open = false
+        }
+      },
+      dispose: () => undefined
+    }
+  })
+})
+
+// The strangler-only `PresentDwarfs` read (05 §3.2; AMENDMENT-8), deleted with B-M41 at the end of
+// cut 4: the double runs the same suite as the SQLite adapter.
+describe('InMemoryDwarfRepository (strangler-only present)', () => {
+  runPresentDwarfsContract(() => {
+    let open = false
+    const repository = new InMemoryDwarfRepository({ isInTransaction: () => open })
+    return {
+      repository,
+      mineIds: [
+        '00000000-0000-7000-8000-0000000000f1' as MineId,
+        '00000000-0000-7000-8000-0000000000f2' as MineId
+      ],
+      inTransaction: <T>(work: () => T): T => {
+        open = true
+        try {
+          return work()
         } finally {
           open = false
         }

@@ -64,7 +64,7 @@ export function inMemoryCrew() {
     hostEpoch: CREW_EPOCH,
     statusTimer
   })
-  const queries = new CrewReadModel({ repository, clock, links })
+  const queries = new CrewReadModel({ repository, clock, links, presentDwarfs: repository })
   return {
     commands,
     queries,
