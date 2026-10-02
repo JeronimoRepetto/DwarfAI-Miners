@@ -119,3 +119,15 @@ export function heldHostStateMessage(
 export function hostReadOnly(view: HostConnectionView | null): boolean {
   return view !== null && view.state !== 'connected'
 }
+
+/**
+ * The toast a Host-state notice without an action raises (owner's ruling 2026-10-02): its text, once, when `next`
+ * enters a state `previous` was not in; null otherwise. A state is its variant and its politeness, so a connected
+ * in-job (polite) and an unavailable in-job (assertive) are two states. A notice with an action is the dialog
+ * (HostStateMessage.vue) and never toasts; nothing is no toast either.
+ */
+export function hostStateToast(previous: HostStateMessage, next: HostStateMessage): string | null {
+  if (next.variant === 'none' || next.action !== 'none' || next.text === null) return null
+  const same = previous.variant === next.variant && previous.live === next.live
+  return same ? null : next.text
+}

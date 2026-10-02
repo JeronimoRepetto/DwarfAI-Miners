@@ -47,11 +47,13 @@ describe('HostStateMessage', () => {
     wrapper.unmount()
   })
 
+  // AMENDED for the owner's ruling of 2026-10-02 (was: a polite inline status region): reconnecting is announced by its
+  // one toast, which ToastHost's polite region reads (useHostConnection); the component draws nothing and no action.
   it('[ADR-002] reconnecting is announced politely and offers no action', () => {
     const wrapper = mount(HostStateMessage, {
       props: { message: hostStateMessage({ state: 'reconnecting', since: 1 }) }
     })
-    expect(wrapper.get('[role="status"]').attributes('aria-live')).toBe('polite')
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
     expect(wrapper.findAll('button')).toHaveLength(0)
   })
 
@@ -73,8 +75,10 @@ describe('HostStateMessage', () => {
     offered.unmount()
     // Hidden until built (21 §1 item 8): with nothing to run it, the action is absent, never a dead button.
     const unwired = mount(HostStateMessage, { props: { message: unavailable('incompatible') } })
+    // AMENDED for the owner's ruling of 2026-10-02 (was: the inline text with no button): no Host-state banner is left,
+    // so an action that cannot run here draws nothing; in the app the action is always wired (App.vue).
     expect(unwired.findAll('button')).toHaveLength(0)
-    expect(unwired.text()).toContain('⟦COPY NEEDED: O-5 incompatible Host message⟧')
+    expect(unwired.text()).toBe('')
   })
 
   it('[ADR-002] connected shows nothing', () => {
@@ -185,6 +189,33 @@ describe('HostStateMessage as the design dialog', () => {
     expect(dialog()?.querySelector('.dm-host-state')?.getAttribute('data-variant')).toBe(
       'spawn-failed'
     )
+    wrapper.unmount()
+  })
+})
+
+/*
+ * Owner's ruling (2026-10-02): a Host-state notice without an action is a toast (useHostConnection raises it), so the
+ * component draws no banner for it, and nothing of it can sit over the Panel's header.
+ */
+describe('HostStateMessage without an action', () => {
+  it.each([
+    ['reconnecting', hostStateMessage({ state: 'reconnecting', since: 1 })],
+    ['elevated-refused', unavailable('elevated-refused')],
+    ['unavailable in-job', unavailable('in-job')],
+    [
+      'connected in-job',
+      hostStateMessage({
+        state: 'connected',
+        hostVersion: '1.0.0',
+        compat: false,
+        jobStatus: 'in-job'
+      })
+    ]
+  ] as const)('[ADR-002, FM-012] %s renders no banner and no dialog', (_name, message) => {
+    const wrapper = mount(HostStateMessage, { props: { message }, attachTo: document.body })
+    expect(document.body.querySelector('.dm-host-state')).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(wrapper.text()).toBe('')
     wrapper.unmount()
   })
 })

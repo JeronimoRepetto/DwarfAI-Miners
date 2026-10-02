@@ -2702,6 +2702,22 @@ describe('the Host connection in the shell', () => {
     expect(document.body.querySelector('.dm-host-state')).toBeNull()
   })
 
+  // Owner's ruling (2026-10-02): a Host-state notice without an action is one toast, never a banner over the Panel.
+  it('[ADR-002, FM-012] a connected Host in a job raises one toast and draws nothing over the Panel', async () => {
+    const rows = hostRows()
+    const { wrapper } = await openOn([OBSERVED_DWARF], 'claude:s1', rows.overrides)
+    const inJob = { ...connected, jobStatus: 'in-job' }
+
+    const raised = await toastsRaisedBy(wrapper, async () => {
+      await rows.push(inJob)
+      await rows.push(inJob)
+    })
+    expect(raised).toEqual(['⟦COPY NEEDED: O-4 in-job message⟧'])
+    // No Host-state element anywhere, so none sits over the Panel's header or its controls.
+    expect(document.body.querySelector('.dm-host-state')).toBeNull()
+    expect(wrapper.find('.dm-host-state').exists()).toBe(false)
+  })
+
   it('[FM-146, ADR-002] while reconnecting the composer keeps its draft and sends nothing', async () => {
     const rows = hostRows()
     const { wrapper, api } = await openOn(

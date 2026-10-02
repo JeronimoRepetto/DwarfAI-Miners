@@ -4,6 +4,7 @@ import {
   heldHostStateMessage,
   hostReadOnly,
   hostStateMessage,
+  hostStateToast,
   type HostStateMessage
 } from './hostStateMessage'
 
@@ -174,5 +175,47 @@ describe('heldHostStateMessage', () => {
     expect(heldHostStateMessage(none, { state: 'connecting' }).variant).toBe('none')
     const reconnecting = hostStateMessage({ state: 'reconnecting', since: 1 })
     expect(heldHostStateMessage(reconnecting, { state: 'connecting' }).variant).toBe('none')
+  })
+})
+
+/*
+ * Owner's ruling (2026-10-02): a Host-state notice without an action is a toast, raised once when the state is entered,
+ * never a banner. The notices with an action stay the dialog (HostStateMessage.vue).
+ */
+describe('hostStateToast', () => {
+  const none = hostStateMessage(null)
+  const inJob = hostStateMessage({ ...connected, jobStatus: 'in-job' })
+
+  it.each([
+    [
+      'reconnecting',
+      hostStateMessage({ state: 'reconnecting', since: 1 }),
+      'O-5 reconnecting message'
+    ],
+    [
+      'elevated-refused',
+      hostStateMessage(unavailable('elevated-refused')),
+      'O-4 elevated-refused message'
+    ],
+    ['unavailable in-job', hostStateMessage(unavailable('in-job')), 'O-4 in-job message'],
+    ['connected in-job', inJob, 'O-4 in-job message']
+  ] as const)('[ADR-002, FM-012] entering %s toasts its notice once', (_name, entered, copy) => {
+    expect(hostStateToast(none, entered)).toBe(`⟦COPY NEEDED: ${copy}⟧`)
+    // The same state again (a re-render, a repeated push) toasts nothing.
+    expect(hostStateToast(entered, entered)).toBeNull()
+  })
+
+  it('[ADR-002, S12.B06] a notice with an action never toasts: it is the dialog', () => {
+    for (const reason of ['crash-loop', 'unresponsive', 'spawn-failed', 'incompatible'] as const) {
+      expect(hostStateToast(none, hostStateMessage(unavailable(reason)))).toBeNull()
+    }
+    expect(hostStateToast(none, none)).toBeNull()
+  })
+
+  it('[ADR-002] a new entry into the same state toasts again, and a connected in-job differs from an unavailable one', () => {
+    const reconnecting = hostStateMessage({ state: 'reconnecting', since: 1 })
+    const back = hostStateMessage(connected)
+    expect(hostStateToast(back, reconnecting)).not.toBeNull()
+    expect(hostStateToast(inJob, hostStateMessage(unavailable('in-job')))).not.toBeNull()
   })
 })

@@ -285,7 +285,7 @@ describe('useHostConnection', () => {
     }
   )
 
-  it('[ADR-002, S12.B04] a lost connection keeps every dwarf of the last snapshot and raises no toast', async () => {
+  it('[ADR-002, S12.B04] a lost connection keeps every dwarf of the last snapshot and raises no toast but the reconnecting notice', async () => {
     const { push } = install(connected)
     const host = useHostConnection()
     await host.start()
@@ -301,7 +301,42 @@ describe('useHostConnection', () => {
     expect(host.message.value.variant).toBe('crash-loop')
     expect(mines.state.mines).toBe(before)
     expect(mines.state.mines[0]!.dwarfs.map((dwarf) => dwarf.id)).toEqual(['a', 'b'])
-    expect(useToasts().toasts.value).toEqual([])
+    // AMENDED for the owner's ruling of 2026-10-02 (was: no toast at all): the reconnecting notice is now its one
+    // toast; the crash-loop is the dialog and raises none, and no toast is about the board.
+    const texts = useToasts().toasts.value.map((toast) => toast.text)
+    expect(texts).toContain('⟦COPY NEEDED: O-5 reconnecting message⟧')
+    expect(texts).not.toContain('⟦COPY NEEDED: O-15 crash-loop variant⟧')
+  })
+
+  // Owner's ruling (2026-10-02): a notice without an action is a toast, raised once per entry into its state.
+  it('[ADR-002, FM-012] each state without an action raises exactly one toast when it is entered, and a repeat raises none', async () => {
+    const { push } = install(connected)
+    const host = useHostConnection()
+    await host.start()
+    const raised = (text: string): number =>
+      useToasts().toasts.value.filter((toast) => toast.text === text).length
+    const inJobText = '⟦COPY NEEDED: O-4 in-job message⟧'
+    const reconnectingText = '⟦COPY NEEDED: O-5 reconnecting message⟧'
+    const inJobBefore = raised(inJobText)
+    const reconnectingBefore = raised(reconnectingText)
+
+    push({ ...connected, jobStatus: 'in-job' })
+    push({ ...connected, jobStatus: 'in-job' })
+    expect(raised(inJobText), 'connected in-job toasts once').toBe(inJobBefore + 1)
+
+    push(reconnecting)
+    push({ state: 'reconnecting', since: 2_000 })
+    expect(raised(reconnectingText), 'reconnecting toasts once').toBe(reconnectingBefore + 1)
+
+    push(connected)
+    push(reconnecting)
+    expect(raised(reconnectingText), 'a second reconnect toasts again').toBe(reconnectingBefore + 2)
+
+    push(crashLoop)
+    expect(
+      raised('⟦COPY NEEDED: O-15 crash-loop variant⟧'),
+      'a notice with an action is no toast'
+    ).toBe(0)
   })
 
   it('[ADR-002] retry calls retryHostConnection once and the message stays until the push reports connected', async () => {

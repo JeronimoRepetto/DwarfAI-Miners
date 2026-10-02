@@ -14,8 +14,9 @@
  * - While another dialog holds the window (`covered`: the Stop everything and quit confirmation that its own action
  *   or the tray opens), it steps aside, and it comes back when that one closes. Two modal dialogs would fight over the
  *   focus trap, and only one message shows at a time.
- * A message without an action (reconnecting, elevated-refused, in-job), or whose action cannot run here, stays the
- * inline notice. Redrawing those is a design follow-up.
+ * A message without an action (reconnecting, elevated-refused, in-job) draws nothing here: it is one toast that
+ * useHostConnection raises when its state is entered (owner's ruling 2026-10-02), so no Host-state banner sits over
+ * the Panel. An action that cannot run here (Stop everything with no caller) draws nothing either, never a dead button.
  *
  * Presentational: the message comes from lib/hostConnection/hostStateMessage, and App.vue owns the calls. The words
  * are design's (ADR-002 O-4, O-5): every string is a marked placeholder. Stop everything and quit shows only when the
@@ -87,43 +88,4 @@ function act(): void {
       <p>{{ message.text }}</p>
     </div>
   </ModalDialog>
-  <div
-    v-else-if="message.variant !== 'none'"
-    class="dm-host-state dm-host-state--inline m-mat m-raised"
-    :class="{ 'dm-host-state--down': message.live === 'assertive' }"
-    :role="role"
-    :aria-live="message.live"
-    :data-variant="message.variant"
-  >
-    <p class="dm-host-state__text">{{ message.text }}</p>
-  </div>
 </template>
-
-<style scoped>
-/* The inline notice of a message without an action, undrawn by design yet (ADR-002 O-5): the dialog's material and
-   type tokens, nothing invented. The dialog form is DialogCard's own. */
-.dm-host-state--inline {
-  --mat-fill: var(--wood);
-  --mat-hi: var(--wood-hi);
-  --mat-lo: var(--wood-lo);
-  --mat-edge: var(--parchment);
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--z-overlay);
-  width: min(380px, calc(100% - 16px));
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 10px 12px;
-}
-.dm-host-state--down {
-  --mat-edge: var(--danger);
-}
-.dm-host-state__text {
-  flex: 1;
-  font: var(--fs-body) / 1.4 var(--f-talk);
-  color: var(--ink);
-}
-</style>

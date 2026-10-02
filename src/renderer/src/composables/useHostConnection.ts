@@ -4,8 +4,10 @@ import {
   heldHostStateMessage,
   hostReadOnly,
   hostStateMessage,
+  hostStateToast,
   type HostStateMessage
 } from '../lib/hostConnection/hostStateMessage'
+import { useToasts } from './useToasts'
 
 /*
  * The renderer's read model of the Host connection (14 §6.4 new `useHostConnection`; ADR-002 D9; 07 §12B): a
@@ -13,8 +15,11 @@ import {
  * once, and offers A-N05 `retryHostConnection`.
  *
  * - `readOnly` is the one source every read model that sends a Host-owned mutation gates on (13 FM-146): true in every
- *   state but `connected`. The last snapshot stays on screen; nothing here clears a store, drops a dwarf or raises a
- *   toast (ADR-033 item 3).
+ *   state but `connected`. The last snapshot stays on screen; nothing here clears a store or drops a dwarf (ADR-033
+ *   item 3).
+ * - A notice without an action (reconnecting, elevated-refused, in-job) is one polite toast raised when its state is
+ *   entered, never a banner (owner's ruling 2026-10-02, over ADR-002 D9's "no toast"). A notice with an action is the
+ *   dialog HostStateMessage.vue draws.
  * - Hidden until built (21 §1 item 8): until the cut-0 switch routes A-N03…A-N05 the router answers them with a typed
  *   refusal, which is not a `HostConnectionView`. Anything that is not one is ignored, so an unrouted row leaves the
  *   view unknown (null), the Panel usable and no message shown.
@@ -36,7 +41,10 @@ function viewOf(value: unknown): HostConnectionView | null {
 
 function apply(next: HostConnectionView): void {
   view.value = next
-  message.value = heldHostStateMessage(message.value, next)
+  const previous = message.value
+  message.value = heldHostStateMessage(previous, next)
+  const toast = hostStateToast(previous, message.value)
+  if (toast !== null) useToasts().showToast(toast)
 }
 
 async function start(): Promise<void> {
