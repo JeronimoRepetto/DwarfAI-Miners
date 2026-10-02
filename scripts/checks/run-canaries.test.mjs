@@ -66,6 +66,25 @@ describe('canary job (05 §5.2)', () => {
   )
 
   it(
+    '[ADR-026] the no-console canary reports exactly its rule, in each of the four new trees',
+    async () => {
+      await expectCanariesHold(['ADR-026'], ['ADR-026-no-console'])
+      const noConsole = loadCanaries().find((canary) => canary.name === 'ADR-026-no-console')
+      const [content] = Object.values(noConsole.files)
+      for (const root of ['src/host', 'src/ui-main', 'src/contracts']) {
+        const canary = {
+          ...noConsole,
+          name: `ADR-026-no-console in ${root}`,
+          files: { [`${root}/__canary__/printsToConsole.ts`]: content }
+        }
+        const result = await runCanary(canary)
+        expect(result.ok, `${canary.name}: ${result.reason}`).toBe(true)
+      }
+    },
+    JOB_TIMEOUT_MS
+  )
+
+  it(
     '[R11] the Agent SDK canary is rejected from src/host, src/ui-main, src/preload and src/renderer',
     async () => {
       const agentSdk = loadCanaries().find((canary) => canary.name === 'R11-no-claude-agent-sdk')

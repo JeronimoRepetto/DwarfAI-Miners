@@ -24,7 +24,7 @@ import { providerLiteralPattern } from './src/contracts/catalog/providerLiteral.
 //    fixtures with node:fs/path/url, the ISSUE-004 R8-renderer-no-node ruling), and leave the
 //    renderer syntax objects, as Host tests already leave theirs in 05 §5.3.
 // 4. The found tree's renderer and preload, rebuilt in place by later cuts (21 §6), still break R12,
-//    R13 and R16 in 31 places. Those are frozen in ESLint's bulk-suppressions file
+//    R13 and R16 in 29 places. Those are frozen in ESLint's bulk-suppressions file
 //    (eslint-suppressions.json, applied by `eslint` from the repository root): a new violation, or
 //    one more in a suppressed file, fails the lint, and a suppression that no longer occurs fails
 //    it too, so the list only shrinks. scripts/checks/arch-exception-ratchet.test.mjs caps its
@@ -47,6 +47,12 @@ import { providerLiteralPattern } from './src/contracts/catalog/providerLiteral.
 //    src/ui-main/hostLauncher/win-launch. The same R11 pattern; that folder keeps every Host
 //    launcher selector except `nativeLoad`, and the rest of the Host launcher keeps `nativeLoad`
 //    (canary lint-canaries/R11-native-binding-launcher).
+// 8. ADR-026 Verification and 17 §1.7 "Misc static": `console.*` only in the logger. 05 §5.1 gives it
+//    no R number, so it is ESLint's own `no-console`, one object of its own (it sets no other rule),
+//    owned by ADR-026 and proved by lint-canaries/ADR-026-no-console. It covers the four new trees,
+//    tests excluded (a test may print from a child program it runs). Neither logger writes to the
+//    console (each writes its segments), so no file of those trees is exempt; the legacy trees
+//    (src/main, src/shared) and the found renderer keep their calls until their cuts replace them.
 
 // ---- import groups (no-restricted-imports) ----
 const IMP = {
@@ -314,7 +320,18 @@ export function createBoundaryConfigs(providerIds) {
     { files: [WINDOW_FACTORY], rules: syntax(S.shellTrue, S.nativeLoad) },
     { files: [NATIVE_LOADER], ignores: [TESTS], rules: syntax(S.shellTrue, S.browserWindow) },
 
-    { files: ['src/renderer/src/**/*.vue'], ignores: [GOLDEN], rules: { 'vue/no-v-html': 'error' } }
+    {
+      files: ['src/renderer/src/**/*.vue'],
+      ignores: [GOLDEN],
+      rules: { 'vue/no-v-html': 'error' }
+    },
+
+    // ADR-026: console.* only in the logger (deviation 8)
+    {
+      files: ['src/{host,ui-main,contracts,legacy-bridge}/**/*.{ts,mts,cts}'],
+      ignores: [TESTS],
+      rules: { 'no-console': 'error' }
+    }
   ]
 }
 

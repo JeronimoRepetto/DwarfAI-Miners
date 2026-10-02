@@ -794,7 +794,9 @@ if (process.type === 'browser') {
     legacyRuntime: createLegacyRuntimeRoute(
       composeLegacyRuntime(
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
-        windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}
+        windowFamilyOwner(ROUTES) === 'ui-local'
+          ? { panel: legacyPanel, log: uiLog }
+          : { log: uiLog }
       )
     ),
     ipc: electronIpcMain(),

@@ -303,6 +303,32 @@ describe('flat config (05 §5.3)', () => {
     expect(await lint(eslint, domainFile), 'synthetic id with the real catalog').toEqual([])
   })
 
+  // ADDED (cut-0 conformance, ADR-026 Verification; 17 §1.7 "Misc static"): console.* only in the
+  // logger. The new trees carry no console call at all (the logger writes segments, never the
+  // console); the legacy trees and tests keep theirs.
+  it('[ADR-026] no-console is an error in src/host, src/ui-main, src/contracts and src/legacy-bridge, and off elsewhere', async () => {
+    const newTrees = [
+      'src/host/kernel/clock.ts',
+      'src/host/modules/diagnostics/adapters/HostDiagnosticsLog.ts',
+      'src/ui-main/index.ts',
+      'src/ui-main/diagnostics/uiLogger.ts',
+      'src/contracts/wire/views.ts',
+      'src/legacy-bridge/LegacyRuntimeRoute.ts'
+    ]
+    for (const file of newTrees) {
+      expect(severity(await configOf(file), 'no-console'), `${file} no-console`).toBe(2)
+    }
+    const elsewhere = [
+      'src/main/index.ts',
+      'src/renderer/src/lib/panel.ts',
+      'src/ui-main/index.test.ts',
+      'src/host/wiring/flows/boot.test.ts'
+    ]
+    for (const file of elsewhere) {
+      expect(severity(await configOf(file), 'no-console'), `${file} no-console`).toBe(0)
+    }
+  })
+
   it('[ADR-004] lint-canaries/** is ignored by the lint of the real tree', async () => {
     const canary = 'lint-canaries/R1/src/host/modules/crew/domain/__canary__/importsFs.ts'
     expect(await eslint.isPathIgnored(path.join(repoRoot, ...canary.split('/')))).toBe(true)
