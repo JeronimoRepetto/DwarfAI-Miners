@@ -20,7 +20,7 @@ describe('FsGitRepoInspector', () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
-  const rules = hostVolumeRules()
+  const rules = hostVolumeRules(new FakeClock(0))
   runGitRepoInspectorContract(
     'FsGitRepoInspector over a temporary directory',
     rules.style,

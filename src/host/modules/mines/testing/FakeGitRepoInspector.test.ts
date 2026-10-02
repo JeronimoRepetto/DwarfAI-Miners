@@ -24,7 +24,8 @@ describe('FakeGitRepoInspector', () => {
         else fs.addFile(at(entry.path), entry.text)
       }
       const clock = new FakeClock(0)
-      // A Windows volume folds case; a POSIX volume is unknown until S-030-1 passes.
+      // The Windows run stands for a default NTFS folder, which folds case; the POSIX run for a
+      // folder the S-030-1 detection cannot answer, which never folds.
       const caseFold = caseFoldFor(style === 'win32' ? 'case-insensitive' : 'unknown')
       const inspector = new FakeGitRepoInspector({ fs, clock, style, caseFold })
       return {

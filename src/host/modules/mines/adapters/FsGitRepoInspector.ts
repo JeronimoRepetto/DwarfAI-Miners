@@ -8,8 +8,8 @@
 // rule itself is the pure fold of `domain/worktreeFold.ts`, and this adapter gathers the facts it
 // decides from:
 //
-// - the cwd's real path (links, junctions and short names resolved, 18 C-17), and its volume's
-//   case-fold decision (`volumeCase.ts`, S-030-1 or the conservative default);
+// - the cwd's real path (links, junctions and short names resolved, 18 C-17), and that
+//   folder's case-fold decision (`volumeCase.ts`, the S-030-1 detection);
 // - the nearest `.git` at or above it, at most 64 folders up; for a `.git` FILE, its `gitdir:`
 //   pointer, that folder's `commondir` and `HEAD`, and whether the main working tree the common dir
 //   names exists and owns a `.git` DIRECTORY (submodules and bare-repo worktrees never fold).
@@ -65,7 +65,7 @@ export interface FsGitRepoInspectorDeps {
   readonly style: PathStyle
   /** The OS realpath: every link followed to the end; null when nothing is there. */
   realpath(path: string): Promise<string | null>
-  /** What is known about the case sensitivity of the volume holding a real path (S-030-1). */
+  /** Whether the folder at a real path compares names without case (the S-030-1 detection). */
   volumeCase(realPath: string): Promise<VolumeCase>
 }
 
@@ -223,7 +223,7 @@ export function createHostGitRepoInspector(deps: {
   readonly fs: Pick<FileSystem, 'stat' | 'readTextHead'>
   readonly clock: Clock
 }): FsGitRepoInspector {
-  const rules = hostVolumeRules()
+  const rules = hostVolumeRules(deps.clock)
   return new FsGitRepoInspector({
     fs: deps.fs,
     clock: deps.clock,
