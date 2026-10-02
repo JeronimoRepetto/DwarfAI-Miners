@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PRIVILEGE_QUERY_TIMEOUT_MS, createPrivilegeCheck } from './privilege'
-import type { QueryOutcome, QueryRunner } from './probe/types'
+import type { QueryOutcome, QueryRunner, ReadOutcome } from './probe/types'
 
 // `whoami /groups /fo csv /nh` as Windows prints it. Group names are localized (here a Spanish
 // install); the integrity label's SID is not, and is what the check reads.
@@ -17,27 +17,21 @@ interface Query {
   timeoutMs: number
 }
 
-/** A QueryRunner that answers by program name (whoami.exe or powershell.exe) and records calls. */
-function scripted(answers: { whoami?: QueryOutcome; powershell?: QueryOutcome }): {
+/** A QueryRunner that answers whoami.exe and records calls; any other program could not start. */
+function scripted(answers: { whoami?: QueryOutcome }): {
   runQuery: QueryRunner
   queries: Query[]
 } {
   const queries: Query[] = []
   const runQuery: QueryRunner = (file, args, options) => {
     queries.push({ file, args, timeoutMs: options.timeoutMs })
-    const answer = file.endsWith('whoami.exe') ? answers.whoami : answers.powershell
+    const answer = file.endsWith('whoami.exe') ? answers.whoami : undefined
     return Promise.resolve(answer ?? { ok: false, cause: 'could not start (ENOENT)' })
   }
   return { runQuery, queries }
 }
 
 const WINDOWS_ENV = { SystemRoot: 'C:\\Windows' }
-
-/** The PowerShell script carried by `-EncodedCommand` (UTF-16LE, base64). */
-function decodedScript(args: readonly string[]): string {
-  const encoded = args[args.indexOf('-EncodedCommand') + 1] ?? ''
-  return Buffer.from(encoded, 'base64').toString('utf16le')
-}
 
 describe('privilege check (ADR-002 D6)', () => {
   it('[ADR-002, FM-011] a Windows token at high or system integrity is elevated; medium and low are not', async () => {
@@ -50,14 +44,14 @@ describe('privilege check (ADR-002 D6)', () => {
     ]
     for (const [rid, elevated] of answers) {
       const { runQuery, queries } = scripted({
-        whoami: { ok: true, stdout: groupsAt(rid) },
-        powershell: { ok: true, stdout: 'False\r\n' }
+        whoami: { ok: true, stdout: groupsAt(rid) }
       })
+      // AMENDED for ISSUE-056 (was: a PowerShell job answer and the Host's pid): the job status is the native read.
       const check = createPrivilegeCheck({
         platform: 'win32',
         runQuery,
         env: WINDOWS_ENV,
-        pid: 4242
+        readInJob: () => ({ ok: true, value: false })
       })
 
       const report = await check()
@@ -112,60 +106,102 @@ describe('privilege check (ADR-002 D6)', () => {
     }
   })
 
-  it("[FM-012] on Windows the Host's own IsProcessInJob answer is read through PowerShell; elsewhere it is not applicable", async () => {
-    for (const [stdout, inJob] of [
-      ['True\r\n', true],
-      ['False\r\n', false]
-    ] as const) {
-      const { runQuery, queries } = scripted({
-        whoami: { ok: true, stdout: groupsAt(8192) },
-        powershell: { ok: true, stdout }
-      })
+  // AMENDED for ISSUE-056 (was: read through a PowerShell script the Host spawned, with the Host's pid in it): the
+  // answer is the Host's own native read, taken when the check is created (libuv's own job, see below); the
+  // expectation that the Host's own IsProcessInJob answer is reported as read is unchanged.
+  it("[FM-012] on Windows the Host's own IsProcessInJob answer is read natively; elsewhere it is not applicable", async () => {
+    for (const inJob of [true, false]) {
+      const { runQuery, queries } = scripted({ whoami: { ok: true, stdout: groupsAt(8192) } })
       const check = createPrivilegeCheck({
         platform: 'win32',
         runQuery,
         env: WINDOWS_ENV,
-        pid: 4242
+        readInJob: () => ({ ok: true, value: inJob })
       })
 
       expect((await check()).inJob).toEqual({ ok: true, value: inJob })
-
-      const ps = queries.find((q) => q.file.endsWith('powershell.exe'))
-      expect(ps?.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
-      expect(ps?.timeoutMs).toBe(PRIVILEGE_QUERY_TIMEOUT_MS)
-      expect(ps?.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-EncodedCommand'])
-      // The Host's pid is the only value put into the script, and the job is the Host's own.
-      const script = decodedScript(ps?.args ?? [])
-      expect(script).toContain('IsProcessInJob')
-      expect(script).toContain('OpenProcess(0x1000, $false, 4242)')
+      // No PowerShell, and no process at all for the job status: whoami alone is spawned.
+      expect(queries.map((q) => q.file)).toEqual(['C:\\Windows\\System32\\whoami.exe'])
+    }
+    for (const platform of ['darwin', 'linux'] as const) {
+      const check = createPrivilegeCheck({
+        platform,
+        ids: () => ({ uid: 501, euid: 501 }),
+        env: {}
+      })
+      expect((await check()).inJob).toBe('not-applicable')
     }
   })
 
+  // AMENDED for ISSUE-056 (was: the PowerShell job read failing or unparseable): an in-job read that failed, or no native
+  // reader at all, is reported with its cause; the elevation causes are unchanged.
   it('[ADR-002, FM-011, FM-012] an unreadable or unparseable answer is reported with its cause, never guessed', async () => {
     const { runQuery } = scripted({
-      whoami: { ok: false, cause: `timed out after ${PRIVILEGE_QUERY_TIMEOUT_MS} ms` },
-      powershell: { ok: true, stdout: 'Add-Type : no se puede compilar\r\n' }
+      whoami: { ok: false, cause: `timed out after ${PRIVILEGE_QUERY_TIMEOUT_MS} ms` }
     })
-    const check = createPrivilegeCheck({ platform: 'win32', runQuery, env: WINDOWS_ENV, pid: 4242 })
+    const check = createPrivilegeCheck({
+      platform: 'win32',
+      runQuery,
+      env: WINDOWS_ENV,
+      readInJob: () => ({ ok: false, cause: 'WIN32_5' })
+    })
 
     expect(await check()).toEqual({
       elevated: { ok: false, cause: `timed out after ${PRIVILEGE_QUERY_TIMEOUT_MS} ms` },
-      inJob: { ok: false, cause: 'gave an unparseable answer' }
+      inJob: { ok: false, cause: 'WIN32_5' }
     })
 
     const noLabel = scripted({
-      whoami: { ok: true, stdout: '"Todos","Grupo conocido","S-1-1-0",""\r\n' },
-      powershell: { ok: false, cause: 'exited with code 4' }
+      whoami: { ok: true, stdout: '"Todos","Grupo conocido","S-1-1-0",""\r\n' }
     })
     const report = await createPrivilegeCheck({
       platform: 'win32',
       runQuery: noLabel.runQuery,
-      env: WINDOWS_ENV,
-      pid: 4242
+      env: WINDOWS_ENV
     })()
     expect(report).toEqual({
       elevated: { ok: false, cause: 'gave an unparseable answer' },
-      inJob: { ok: false, cause: 'exited with code 4' }
+      inJob: { ok: false, cause: 'has no in-job reader' }
     })
+  })
+
+  /*
+   * libuv adds the process itself to a job of its own at its first non-detached spawn (libuv 1.51.0
+   * src/win/process.c:109, AssignProcessToJobObject(own job, GetCurrentProcess())), so an IsProcessInJob read taken
+   * after any spawn, the PowerShell that took it included, said in-job on every Windows Host (ISSUE-056, owner's live
+   * check). The read is the Host's own native one, taken when the check is created, before the Host spawns anything.
+   */
+  it('[FM-012, S12.04] the job status is read when the check is created, before the first spawn', async () => {
+    const order: string[] = []
+    const runQuery: QueryRunner = (file) => {
+      order.push(`spawn ${file.split('\\').pop() ?? file}`)
+      return Promise.resolve({ ok: true, stdout: groupsAt(8192) })
+    }
+    const readInJob = (): ReadOutcome<boolean> => {
+      order.push('read in-job')
+      return { ok: true, value: false }
+    }
+
+    const check = createPrivilegeCheck({ platform: 'win32', runQuery, env: WINDOWS_ENV, readInJob })
+    expect(order, 'read at creation, nothing spawned yet').toEqual(['read in-job'])
+
+    const report = await check()
+    expect(order).toEqual(['read in-job', 'spawn whoami.exe'])
+    expect(report.inJob).toEqual({ ok: true, value: false })
+  })
+
+  it("[FM-012] a job the Host enters later, libuv's own at its first spawn, does not change the boot answer", async () => {
+    let reads = 0
+    const readInJob = (): ReadOutcome<boolean> => {
+      reads += 1
+      // Outside every job at start; inside libuv's own job once anything was spawned.
+      return { ok: true, value: reads > 1 }
+    }
+    const { runQuery } = scripted({ whoami: { ok: true, stdout: groupsAt(8192) } })
+    const check = createPrivilegeCheck({ platform: 'win32', runQuery, env: WINDOWS_ENV, readInJob })
+
+    expect((await check()).inJob).toEqual({ ok: true, value: false })
+    expect((await check()).inJob).toEqual({ ok: true, value: false })
+    expect(reads).toBe(1)
   })
 })

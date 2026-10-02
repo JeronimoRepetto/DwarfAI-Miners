@@ -29,6 +29,11 @@
 //     gives the directory the protected DACL D:P(A;OICI;FA;;;<user SID>)(A;OICI;FA;;;SY) (the SP-05
 //     run\ row), propagated to what it holds; true when applied, false when it was already in
 //     place; throws "WIN32_<n>" when it cannot be applied (ISSUE-041 amendment, 2026-10-01).
+//   isProcessInJob(): boolean
+//     IsProcessInJob(GetCurrentProcess(), NULL): whether this process is in any job object (13 FM-012,
+//     S12.04). The Host reads it once, before it spawns anything: libuv adds the process itself to a job
+//     of its own at its first non-detached spawn, so a later read always answers true (ISSUE-056).
+//     Throws "WIN32_<n>" when it cannot be read.
 //
 // The listener keeps the event loop alive until it is closed. The static C runtime (/MT) keeps the
 // binary free of any VC++ redistributable (the build's import check proves it).
@@ -438,6 +443,17 @@ static napi_value js_protect_directory(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value js_is_process_in_job(napi_env env, napi_callback_info info) {
+  (void)info;
+  BOOL in_job = FALSE;
+  if (!IsProcessInJob(GetCurrentProcess(), NULL, &in_job)) {
+    return throw_win32(env, GetLastError(), "IsProcessInJob could not be read");
+  }
+  napi_value result;
+  napi_get_boolean(env, in_job, &result);
+  return result;
+}
+
 NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   open_osfhandle = (open_osfhandle_fn)(void *)GetProcAddress(GetModuleHandleW(NULL), "uv_open_osfhandle");
   if (open_osfhandle == NULL) {
@@ -453,5 +469,7 @@ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_create_function(env, "protectDirectory", NAPI_AUTO_LENGTH, js_protect_directory, NULL,
                        &function);
   napi_set_named_property(env, exports, "protectDirectory", function);
+  napi_create_function(env, "isProcessInJob", NAPI_AUTO_LENGTH, js_is_process_in_job, NULL, &function);
+  napi_set_named_property(env, exports, "isProcessInJob", function);
   return exports;
 }

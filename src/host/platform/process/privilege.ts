@@ -8,21 +8,18 @@
 //   the UI user is not root"): the real uid is not root (a set-uid binary), or `sudo` / `pkexec`
 //   named a non-root caller (SUDO_UID, PKEXEC_UID). A root login runs the UI as root too, so a root
 //   Host there is not refused. Read in-process, no command.
-// - In a job (Windows only): `IsProcessInJob` of the Host's own process, through Windows
-//   PowerShell 5.1 by path. The script is passed with -EncodedCommand, and the Host's pid is the
-//   only value put into it. Elsewhere there are no job objects: 'not-applicable'.
+// - In a job (Windows only): `IsProcessInJob` of the Host's own process, read natively
+//   (`readInJob`, the Host's win_pipe.c `isProcessInJob`) once, when the check is created: the
+//   composition root creates it before the Host spawns anything. libuv adds the process itself to a
+//   job of its own at its first non-detached spawn (libuv 1.51.0 src/win/process.c:109,
+//   AssignProcessToJobObject(own job, GetCurrentProcess())), so any later read, and the PowerShell
+//   read this replaced, answers in-job on every Windows Host (ISSUE-056). That job closes only with
+//   the Host, so it is never the job FM-012 is about. Elsewhere there are no job objects:
+//   'not-applicable'.
 //
 // Each Windows read is bounded and answers why it failed instead of rejecting; this module never
 // guesses a value. What a failed read means is the boot's decision.
-import {
-  POWERSHELL_DROPPED_ENV,
-  UNPARSEABLE,
-  parsed,
-  windowsPowerShell,
-  windowsSystemTool,
-  type QueryRunner,
-  type ReadOutcome
-} from './probe/types'
+import { parsed, windowsSystemTool, type QueryRunner, type ReadOutcome } from './probe/types'
 
 export interface PrivilegeReport {
   /** Whether the Host runs elevated (ADR-002 D6), or why it could not be read. */
@@ -45,24 +42,6 @@ const HIGH_INTEGRITY_RID = 0x3000
 
 const INTEGRITY_LABEL = /"S-1-16-(\d+)"/
 
-/** PROCESS_QUERY_LIMITED_INFORMATION: enough for IsProcessInJob on a process of the same user. */
-const IN_JOB_SCRIPT = (pid: number): string =>
-  [
-    "$ErrorActionPreference = 'Stop'",
-    "Add-Type -Namespace DwarfAI -Name JobProbe -MemberDefinition @'",
-    '[DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);',
-    '[DllImport("kernel32.dll", SetLastError = true)] public static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);',
-    '[DllImport("kernel32.dll", SetLastError = true)] public static extern bool CloseHandle(IntPtr handle);',
-    "'@",
-    `$handle = [DwarfAI.JobProbe]::OpenProcess(0x1000, $false, ${Math.trunc(pid)})`,
-    'if ($handle -eq [IntPtr]::Zero) { exit 3 }',
-    '$inJob = $false',
-    '$read = [DwarfAI.JobProbe]::IsProcessInJob($handle, [IntPtr]::Zero, [ref]$inJob)',
-    '[void][DwarfAI.JobProbe]::CloseHandle($handle)',
-    'if (-not $read) { exit 4 }',
-    "if ($inJob) { 'True' } else { 'False' }"
-  ].join('\n')
-
 export interface PrivilegeCheckOptions {
   /** Which OS's rule to apply; default this process's OS. */
   platform?: 'win32' | 'darwin' | 'linux'
@@ -70,8 +49,11 @@ export interface PrivilegeCheckOptions {
   runQuery?: QueryRunner
   /** SUDO_UID / PKEXEC_UID on POSIX, SystemRoot on Windows; default `process.env`. */
   env?: Readonly<Record<string, string | undefined>>
-  /** The Host's pid; default `process.pid`. */
-  pid?: number
+  /**
+   * Windows: reads `IsProcessInJob` of this process (the native helper). Called once, synchronously, when the check is
+   * created; missing, its read is an answer that could not be read.
+   */
+  readInJob?: () => ReadOutcome<boolean>
   /** The POSIX real and effective uid; default `process.getuid()` / `process.geteuid()`. */
   ids?: () => { uid: number; euid: number }
 }
@@ -91,15 +73,13 @@ export function createPrivilegeCheck(options: PrivilegeCheckOptions = {}): Privi
   if (runQuery === undefined) {
     throw new TypeError('createPrivilegeCheck: a QueryRunner is required on Windows')
   }
-  const pid = options.pid ?? process.pid
-  return async () => {
-    const [elevated, inJob] = await Promise.all([
-      readElevated(runQuery, env),
-      readInJob(runQuery, env, pid)
-    ])
-    return { elevated, inJob }
-  }
+  // Before anything is spawned (see the header): a later job is libuv's own and never changes this answer.
+  const inJob: ReadOutcome<boolean> = options.readInJob?.() ?? NO_IN_JOB_READER
+  return async () => ({ elevated: await readElevated(runQuery, env), inJob })
 }
+
+/** A Windows check composed without the native reader: the job status could not be read (never guessed). */
+const NO_IN_JOB_READER: ReadOutcome<boolean> = { ok: false, cause: 'has no in-job reader' }
 
 async function readElevated(
   runQuery: QueryRunner,
@@ -114,24 +94,6 @@ async function readElevated(
     const label = INTEGRITY_LABEL.exec(stdout)
     return label === null ? null : Number(label[1]) >= HIGH_INTEGRITY_RID
   })
-}
-
-async function readInJob(
-  runQuery: QueryRunner,
-  env: Readonly<Record<string, string | undefined>>,
-  pid: number
-): Promise<ReadOutcome<boolean>> {
-  const encoded = Buffer.from(IN_JOB_SCRIPT(pid), 'utf16le').toString('base64')
-  const out = await runQuery(
-    windowsPowerShell(env),
-    ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-    { timeoutMs: PRIVILEGE_QUERY_TIMEOUT_MS, dropEnv: POWERSHELL_DROPPED_ENV }
-  )
-  if (!out.ok) return out
-  const answer = out.stdout.trim()
-  if (answer === 'True') return { ok: true, value: true }
-  if (answer === 'False') return { ok: true, value: false }
-  return UNPARSEABLE
 }
 
 /** ADR-002 D6 on POSIX: root, launched by a user who is not root. */
