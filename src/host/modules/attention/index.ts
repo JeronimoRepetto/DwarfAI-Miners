@@ -1,20 +1,22 @@
-// The attention module (05 §3.11): ADR-018's level-3 policy. Cut 1 serves `onFact` and
-// `presenceChanged` (ISSUE-109); the withdrawal and carry-over (ISSUE-110), the sink and the click
-// counter (ISSUE-112) and the SQLite ledger join with their issues. It imports no other module: its
-// one edge, to preferences, is the `AttentionSettings` bridge composed by `host/wiring` (05 §1.3, R4).
-import type { HostEpoch } from '../../kernel/domain/values'
+// The attention module (05 §3.11): ADR-018's level-3 policy. Cut 1 serves `onFact`,
+// `presenceChanged` and `preferencesChanged` (ISSUE-109), the withdrawal `onFactEnded`, the
+// carry-over and the 24-hour sweep (ISSUE-110); the sink and the click counter join with
+// ISSUE-112. It imports no other module: its one edge, to preferences, is the `AttentionSettings` bridge composed by `host/wiring` (05 §1.3, R4).
+import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { AttentionPolicy, type AttentionInputs } from './application/attentionPolicy'
+import { sweepWithdrawnKeys } from './application/sweep'
 import type { Level3TitleFormatter } from './domain/decideLevel3'
 import type { AttentionEvent } from './domain/events'
 import type { AttentionLedger } from './ports/attentionLedger'
 import type { AttentionSettings } from './ports/attentionSettings'
 
 export type { AttentionInputs }
-export type { AttentionEvent, AttentionNotified } from './domain/events'
+export type { AttentionEvent, AttentionNotified, AttentionWithdrawn } from './domain/events'
+export { carryOverKey, type CarriedKind } from './domain/carryOver'
 export {
   decideLevel3,
   turnFinishedFact,
@@ -51,9 +53,18 @@ export interface AttentionDeps {
 
 export interface Attention {
   inputs: AttentionInputs
+  /** 09 §7.1: deletes the keys withdrawn more than 24 h ago; returns how many. */
+  sweep(): number
+  /** 09 §7.1: a person-initiated turn or the departure ends the dwarf's carry-over (ISSUE-120). */
+  dropCarryOver(dwarfId: DwarfId): void
 }
 
 /** The module over its driven ports; the adapters are composed by `host/main.ts` (ISSUE-119). */
 export function createAttention(deps: AttentionDeps): Attention {
-  return { inputs: new AttentionPolicy(deps) }
+  const policy = new AttentionPolicy(deps)
+  return {
+    inputs: policy,
+    sweep: () => sweepWithdrawnKeys(deps),
+    dropCarryOver: (dwarfId) => policy.dropCarryOver(dwarfId)
+  }
 }
