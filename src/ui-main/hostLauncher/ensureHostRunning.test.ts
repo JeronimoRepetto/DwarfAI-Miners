@@ -8,7 +8,7 @@ import { FakeHostSpawner } from './fakes/FakeHostSpawner'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
 import { FakeWinLaunch } from './fakes/FakeWinLaunch'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
-import { ScriptedHelloProber, UNREACHABLE, helloOk } from './fakes/ScriptedHelloProber'
+import { FakeHelloProber, UNREACHABLE, helloOk } from './fakes/FakeHelloProber'
 import { createHostLauncher, type HostLauncherDeps } from './index'
 import { createPosixSpawner } from './posix'
 import { READINESS_BUDGET_MS, MIGRATING_EXTENSION_MS, READINESS_POLL_MS } from './readiness'
@@ -42,7 +42,7 @@ class FreeGate {
 
 function harness(uiEnv: Record<string, string | undefined> = { PATH: '/usr/bin' }) {
   const clock = new FakeLauncherClock(1_000)
-  const prober = new ScriptedHelloProber(clock)
+  const prober = new FakeHelloProber(clock)
   const spawner = new FakeHostSpawner()
   const gate = new FreeGate()
   const log = new RecordingUiLog()

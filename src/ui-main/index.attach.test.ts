@@ -5,7 +5,7 @@ import { RecordingUiLog } from './hostLauncher/fakes/RecordingUiLog'
 import type { EnsureHostResult } from './hostLauncher/launcher'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './host-client/testing/FakeHost'
-import { ManualTimers } from './host-client/testing/ManualTimers'
+import { FakeHostClientTimers } from './host-client/testing/FakeHostClientTimers'
 import {
   startUiMain as startUiMainOn,
   type CreatedWindow,
@@ -74,7 +74,7 @@ describe('UI main start: launch view and Host attach together (US-RES-003.AC07)'
       readToken: () => Promise.resolve(host.token),
       protocolVersion: 1,
       client: { appVersion: '0.0.0-test', buildId: 'test', pid: 4242 },
-      timers: new ManualTimers(),
+      timers: new FakeHostClientTimers(),
       log: new RecordingUiLog(),
       hungHost: { endHungHost: () => Promise.resolve({ outcome: 'identity-missing' }) }
     })

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { DwarfId, HostConnectionView, StopAllOutcome } from '@dwarfai/contracts'
 import { createHostClient, type HostClientService } from './host-client/HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './host-client/testing/FakeHost'
-import { ManualTimers } from './host-client/testing/ManualTimers'
+import { FakeHostClientTimers } from './host-client/testing/FakeHostClientTimers'
 import { RecordingUiLog } from './hostLauncher/fakes/RecordingUiLog'
 import {
   startUiMain,
@@ -197,7 +197,7 @@ async function connectedClient(host: FakeHost): Promise<HostClientService> {
     readToken: () => Promise.resolve(host.token),
     protocolVersion: 1,
     client: { appVersion: '0.0.0-test', buildId: 'test', pid: 4242 },
-    timers: new ManualTimers(),
+    timers: new FakeHostClientTimers(),
     log: new RecordingUiLog(),
     hungHost: { endHungHost: () => Promise.resolve({ outcome: 'identity-missing' }) }
   })

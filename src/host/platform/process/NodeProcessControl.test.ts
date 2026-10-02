@@ -30,10 +30,10 @@ import { createWin32BootSources } from './bootIdentity/win32'
 import {
   FAILING_READER,
   SCRIPTED_BOOT,
-  ScriptedOs,
+  FakeOs,
   scriptedBootSources,
   type ScriptedPlatform
-} from './testing/ScriptedOs'
+} from './testing/FakeOs'
 
 const SLEEPER = fileURLToPath(
   new URL('../../../../fixtures/bin/sleeper/sleeper.mjs', import.meta.url)
@@ -50,10 +50,7 @@ const FOREIGN = { graceMs: 3_000, group: 'foreign' } as const
 const ROOT = { pid: 100, processStartTimeMs: T0, bootId: SCRIPTED_BOOT }
 
 /** A NodeProcessControl whose every OS primitive is the scripted OS's. */
-function scriptedControl(
-  os: ScriptedOs,
-  diagnostics?: RecordingDiagnosticsLog
-): NodeProcessControl {
+function scriptedControl(os: FakeOs, diagnostics?: RecordingDiagnosticsLog): NodeProcessControl {
   return new NodeProcessControl({
     platform: os.platform,
     reader: os.reader,
@@ -71,8 +68,8 @@ function scriptedControl(
 function scriptedTree(
   platform: ScriptedPlatform,
   root: { endsOn?: 'term' | 'kill' | 'never'; pgid?: number } = {}
-): ScriptedOs {
-  const os = new ScriptedOs(platform)
+): FakeOs {
+  const os = new FakeOs(platform)
   os.add({ pid: 100, ppid: 1, startTimeMs: T0, ...root })
   os.add({ pid: 101, ppid: 100, pgid: root.pgid ?? 100, startTimeMs: T0 + 10 })
   os.add({ pid: 102, ppid: 101, pgid: root.pgid ?? 100, startTimeMs: T0 + 20 })
@@ -115,7 +112,7 @@ describe('NodeProcessControl', () => {
   // platform's kill sequence, so no real process is signalled and no real time passes.
   describe.each(['linux', 'darwin', 'win32'] as const)('kill sequence of %s', (platform) => {
     runProcessControlContract(() => {
-      const os = new ScriptedOs(platform)
+      const os = new FakeOs(platform)
       os.add({ pid: OWN_PID, ppid: 1, startTimeMs: 1_789_000_500_000 })
       os.add({ pid: UNREADABLE_PID, ppid: 1, startTimeMs: 1_789_000_600_000, readable: false })
       const control = scriptedControl(os)

@@ -5,7 +5,7 @@ import { RecordingUiLog } from '../hostLauncher/fakes/RecordingUiLog'
 import type { HostConnection, HostEvent } from '../window/ports/hostClient'
 import { createHostClient, type HostClientService } from './HostClient'
 import { FakeHost } from './testing/FakeHost'
-import { ManualTimers } from './testing/ManualTimers'
+import { FakeHostClientTimers } from './testing/FakeHostClientTimers'
 
 // L10 chaos (17 §1.10, CH-01): the Host is killed — a FakeHost crash, its connections dropped and nothing listening —
 // while the client attaches or while only the tray process holds a connection, over a faulty transport that kills the
@@ -38,7 +38,7 @@ function faultyTransport(host: FakeHost, kill: () => void, killAt: number) {
 /** HostClient whose launcher respawns the FakeHost (a new boot) whenever nothing listens. */
 function world(connect: (host: FakeHost, kill: () => void) => () => Promise<Duplex>) {
   const host = new FakeHost()
-  const timers = new ManualTimers()
+  const timers = new FakeHostClientTimers()
   const log = new RecordingUiLog()
   const launches: number[] = []
   let down = false

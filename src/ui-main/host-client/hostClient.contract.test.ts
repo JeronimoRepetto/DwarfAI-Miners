@@ -7,7 +7,7 @@ import type { HostEvent } from '../window/ports/hostClient'
 import { deadlineOf, HOST_ASK_HANDOVER_MS } from './deadlines'
 import { createHostClient, HostCallError, type HostClientService } from './HostClient'
 import { FAKE_HOST_CAPABILITIES, FakeHost } from './testing/FakeHost'
-import { ManualTimers } from './testing/ManualTimers'
+import { FakeHostClientTimers } from './testing/FakeHostClientTimers'
 
 // L6 (17 §1.6; 16 §4.14.1): the real HostClient against FakeHost, the in-process fake Host speaking the seam-B
 // frames over in-memory duplex pairs (ADR-003 items 4–9, 12; 14 §1.3, §1.6, §1.9, §3.10, §4.2, §4.3; 07 S12.B01,
@@ -46,7 +46,7 @@ async function settle(rounds = 20): Promise<void> {
 }
 
 /** Lets `ms` pass one second at a time, the pipes settling in between (pings and their answers flow). */
-async function elapse(timers: ManualTimers, ms: number): Promise<void> {
+async function elapse(timers: FakeHostClientTimers, ms: number): Promise<void> {
   for (let left = ms; left > 0; left -= Math.min(1_000, left)) {
     timers.advance(Math.min(1_000, left))
     await settle()
@@ -57,7 +57,7 @@ function world(
   options: { capabilities?: readonly string[]; launcher?: () => Promise<EnsureHostResult> } = {}
 ) {
   const host = new FakeHost({ capabilities: options.capabilities ?? FAKE_HOST_CAPABILITIES })
-  const timers = new ManualTimers()
+  const timers = new FakeHostClientTimers()
   const log = new RecordingUiLog()
   const launches: unknown[][] = []
   const client = createHostClient({

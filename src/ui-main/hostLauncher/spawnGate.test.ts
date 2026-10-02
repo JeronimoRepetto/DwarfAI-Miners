@@ -5,7 +5,7 @@ import { FakeIdentityProbe } from './fakes/FakeIdentityProbe'
 import { FakeLauncherClock } from './fakes/FakeLauncherClock'
 import { InMemoryGateFiles } from './fakes/InMemoryGateFiles'
 import { RecordingUiLog } from './fakes/RecordingUiLog'
-import { ScriptedHelloProber, UNREACHABLE, helloOk } from './fakes/ScriptedHelloProber'
+import { FakeHelloProber, UNREACHABLE, helloOk } from './fakes/FakeHelloProber'
 import { createHostLauncher } from './index'
 import { READINESS_BUDGET_MS } from './readiness'
 import { HOST_SPAWN_GATE_STALE_MS, SpawnGate, shouldTakeOver, type GateRecord } from './spawnGate'
@@ -93,7 +93,7 @@ describe('spawn gate (ADR-002 D3)', () => {
     const { files } = heldGate()
     const clock = new FakeLauncherClock(TAKEN_AT + 1_000)
     const probe = new FakeIdentityProbe().alive(OWNER)
-    const prober = new ScriptedHelloProber(clock)
+    const prober = new FakeHelloProber(clock)
     const start = clock.now()
     // The other UI's Host binds after 600 ms and is ready after 900 ms.
     prober.answer = (now) => {
@@ -126,7 +126,7 @@ describe('spawn gate (ADR-002 D3)', () => {
     const { files, record } = heldGate()
     const clock = new FakeLauncherClock(TAKEN_AT + 1_000)
     const start = clock.now()
-    const prober = new ScriptedHelloProber(clock)
+    const prober = new FakeHelloProber(clock)
     const spawner = new FakeHostSpawner()
     spawner.onLaunch = () => {
       prober.answer = () => helloOk('ready')
@@ -157,7 +157,7 @@ describe('spawn gate (ADR-002 D3)', () => {
     const { files } = heldGate()
     const clock = new FakeLauncherClock(TAKEN_AT + 1_000)
     const start = clock.now()
-    const prober = new ScriptedHelloProber(clock)
+    const prober = new FakeHelloProber(clock)
     // Something answers on the endpoint from 500 ms on, but never with a ready hello.ok. (A guard turns a
     // never-ending wait into a visible wrong answer after 10 minutes of virtual time.)
     prober.answer = (now) => {
@@ -189,7 +189,7 @@ describe('spawn gate (ADR-002 D3)', () => {
     spawner.onLaunch = () => {
       hostReadyAt = clock.now() + 300
     }
-    const prober = new ScriptedHelloProber(clock, (now) =>
+    const prober = new FakeHelloProber(clock, (now) =>
       now >= hostReadyAt ? helloOk('ready') : UNREACHABLE
     )
     const ui = (pid: number) => {

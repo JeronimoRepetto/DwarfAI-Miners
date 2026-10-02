@@ -2,7 +2,7 @@
 // moves the clock and runs every timer that falls due, in order. Never imported by production code (R14).
 import type { HostClientTimers } from '../HostClient'
 
-export class ManualTimers implements HostClientTimers {
+export class FakeHostClientTimers implements HostClientTimers {
   private at = 0
   private nextId = 0
   private readonly queue = new Map<number, { due: number; run: () => void }>()
