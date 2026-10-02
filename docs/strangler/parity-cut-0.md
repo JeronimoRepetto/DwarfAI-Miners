@@ -64,14 +64,33 @@ Windows runs on the owner's machine (Windows 11 Pro 26200, 2026-10-01) stay as t
 
 ### Conformance fixes in progress
 
-The cut-0 conformance audit (2026-10-02) found these open; each is being fixed in its own work unit, and this record is
-updated when it merges:
+The cut-0 conformance audit (2026-10-02) found these open; each is fixed in its own work unit, and this record is
+updated when it merges. Still open:
 
 - the real-pipe `INCOMPATIBLE_GENERATION` and role (`FORBIDDEN`) cases of the L6 seam B suite: **in progress: WU-2**;
-- the L8 OS tests for `ELEVATED_REFUSED`, the spawn gate and the atomic versioned copy: **in progress: WU-2**;
-- the process-wide uncaught-exception and unhandled-rejection handlers of the Host and UI main (`19` §9.1, FM-001):
-  **in progress: WU-1**;
-- the `db.open`, `db.read-only` and `db.dev-guard` refusal records (`19`, ADR-026): **in progress: WU-1**.
+- the L8 OS tests for `ELEVATED_REFUSED`, the spawn gate and the atomic versioned copy: **in progress: WU-2**.
+
+Done in WU-1, PR #1135 (merged as `8c70d01f`), green on the three OSes with the E2E release lane at `911b0a9b`:
+[run 36982805427](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427) and [run 36982805639](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805639). The step "Test (L1-L7)" runs on [Windows](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427/job/110760938124), [macOS](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427/job/110760938366), [Linux](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427/job/110760938220):
+
+- **uncaught records:** the Host and UI main each write one `uncaught` record, flush and exit non-zero (`19` §11,
+  FM-001, FM-041): `src/host/wiring/uncaught.test.ts` "[FM-001, ADR-026] an uncaught exception writes one uncaught
+  record…" and `src/ui-main/diagnostics/uncaught.test.ts` "[FM-041, ADR-026] an uncaught exception writes one
+  uncaught record…";
+- **`db.*` refusal events:** boot step 2 logs `db.open`, `db.read-only` and `db.dev-guard` (`19` §9.5):
+  `src/host/wiring/flows/bootDatabase.test.ts` "[FM-102, NFR-OBS-01] a foreign file logs db.open failed…", "[FM-100,
+  ADR-005] a newer database logs db.open degraded and db.read-only…" and "[FM-107, ADR-005] a dev build on the release
+  data directory logs db.dev-guard…";
+- **dev-guard order:** the dev guard runs before the data-directory protection (ADR-005 item 6, FM-107):
+  `bootDatabase.test.ts` "[FM-107, ADR-005] a dev build refuses an up-to-date release database too, before the
+  data-directory protection runs";
+- **`run/host-stdio.log` dropped:** a POSIX Host's stdio is not captured, as on Windows (`19` §7):
+  `src/ui-main/hostLauncher/ensureHostRunning.test.ts` "[FM-114] the spawn never uses a shell and never sets
+  DETACHED_PROCESS" (amended: stdio `ignore` and no `host-stdio.log`);
+- **`no-console`:** an error in `src/{host,ui-main,contracts,legacy-bridge}`, with the canary
+  `lint-canaries/ADR-026-no-console`: step "Lint (ESLint and dependency-cruiser)", step "Lint canaries" and step
+  "ESLint print-config test and arch-exception ratchet" ("[ADR-026] no-console is an error in src/host, src/ui-main,
+  src/contracts and src/legacy-bridge, and off elsewhere") on [Windows](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427/job/110760938124), [macOS](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427/job/110760938366), [Linux](https://github.com/JeronimoRepetto/DwarfAI-Miners/actions/runs/36982805427/job/110760938220).
 
 The Host-connection L9 case (`e2e/cut-0/host-connection-ui.e2e.ts`, moved from ISSUE-316) asserts what the simulated
 valley can show: after three Host kills the one crash-loop message with Retry, Retry reaching the Host again, and the
@@ -144,13 +163,13 @@ Variant: the cut-0 build ships no driver and no provider route: every provider r
 The step's retirement work unit (ISSUE-058) merges only after this internal build met the step's exit criteria on the
 three OSes and then ran for 7 days of normal use with no blocking problem (the soak, OQ-71).
 
-| Field                        | Value                                                                                                                      |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Exit criteria met on Windows | the runs above                                                                                                             |
-| Exit criteria met on macOS   | the CI runs above (main push run 36977223262, E2E release lane included), except the items in progress under WU-1 and WU-2 |
-| Exit criteria met on Linux   | the CI runs above (main push run 36977223262, E2E release lane included), except the items in progress under WU-1 and WU-2 |
-| Soak build                   | pending                                                                                                                    |
-| Soak start                   | pending                                                                                                                    |
-| Soak end                     | pending                                                                                                                    |
-| Blocking problems            | pending                                                                                                                    |
-| Retirement or deletion issue | ISSUE-058                                                                                                                  |
+| Field                        | Value                                                                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Exit criteria met on Windows | the runs above                                                                                                          |
+| Exit criteria met on macOS   | the CI runs above (main push run 36977223262, E2E release lane included), except the items still in progress under WU-2 |
+| Exit criteria met on Linux   | the CI runs above (main push run 36977223262, E2E release lane included), except the items still in progress under WU-2 |
+| Soak build                   | pending                                                                                                                 |
+| Soak start                   | pending                                                                                                                 |
+| Soak end                     | pending                                                                                                                 |
+| Blocking problems            | pending                                                                                                                 |
+| Retirement or deletion issue | ISSUE-058                                                                                                               |
