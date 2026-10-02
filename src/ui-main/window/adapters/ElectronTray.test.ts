@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TrayMenuModel } from '../ports/trayController'
 import { ElectronTray, type ElectronTrayApi } from './ElectronTray'
+import { runTrayControllerContract } from '../ports/trayController.contract'
 
 /**
  * The real `ElectronTray` over recording doubles of Electron's `Tray`, `Menu` and `nativeImage` (16 §4.14; 05 §3.14
@@ -110,4 +111,23 @@ describe('ElectronTray (16 §4.14)', () => {
     electron.failConstruct = true
     expect(() => new ElectronTray(electron.api(), 'icon.png', 'linux').create(model([]))).toThrow()
   })
+})
+
+runTrayControllerContract('ElectronTray over Electron Tray and Menu', ({ systemTray }) => {
+  const electron = new RecordingElectron()
+  electron.failConstruct = !systemTray
+  const live = (): RecordingTray[] => electron.trays.filter((tray) => !tray.destroyed)
+  return {
+    tray: new ElectronTray(electron.api(), 'icon.png', 'win32'),
+    icons: () =>
+      live().map((tray) =>
+        (tray.menu ?? []).map((item) => (item.type === 'separator' ? '—' : (item.label ?? '')))
+      ),
+    choose: (label) => {
+      const [tray] = live()
+      const item = (tray?.menu ?? []).find((entry) => entry.label === label)
+      if (item?.click === undefined) throw new Error(`no ${label} shown`)
+      item.click()
+    }
+  }
 })
