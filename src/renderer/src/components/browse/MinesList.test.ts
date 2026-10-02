@@ -5,6 +5,7 @@ import MinesList from './MinesList.vue'
 import type { MineCardView } from '../../lib/browse/mineCard'
 import { MINE_CARD_ENTER, MINE_CARD_EXIT } from '../../lib/browse/cardMotion'
 import type { MotionAnimate } from '../../lib/shell/boundedMotion'
+import { motionBoundMs } from '../../lib/shell/motionTiming'
 
 /*
  * The redesigned Mines page (#635), organisms/mines-list. It replaces MinesPanel (#92, #85, #165,
@@ -335,6 +336,13 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
   beforeEach(() => {
     runs.length = 0
     scrolled.length = 0
+    /*
+     * The bounded runner's watchdog (#266) is a timer of its own; on real timers it ended a run
+     * whenever the host stalled past its bound, racing the engine every case here drives by hand
+     * (found failing in CI). Faked, it fires only when a case advances it. `flushPromises` turns on
+     * `setImmediate`, which stays real.
+     */
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     Object.defineProperty(HTMLElement.prototype, 'animate', {
       configurable: true,
       value: () => undefined
@@ -347,6 +355,7 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
     })
   })
   afterEach(() => {
+    vi.useRealTimers()
     Reflect.deleteProperty(HTMLElement.prototype, 'animate')
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
   })
@@ -563,6 +572,62 @@ describe('MinesList card motion (#635, PANEL-QUESTIONS 9)', () => {
     await flushPromises()
     expect(runs).toHaveLength(1)
     expect(inline(runs[0]!.element).transition).toBe('none')
+    list.unmount()
+  })
+
+  /*
+   * APPENDED (fix/mineslist-motion-flake): "slides a removed mine's card out…" failed in CI on
+   * Linux and Windows with the card already gone before the engine finished. The bounded runner
+   * also ends a run on its watchdog, a timer one margin past the motion's length (#266); on real
+   * timers, a host busy for longer than that between the slide starting and the test looking ended
+   * the slide before the engine did. The watchdog is the runner's, and this describe holds its clock.
+   */
+  it('holds the leaving card while the host stalls past the watchdog, until its motion ends', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    expect(runs).toHaveLength(1)
+    // A loaded CI worker, in wall-clock time: the event loop turns until the bound has passed.
+    const stalledUntil =
+      Date.now() + motionBoundMs(MINE_CARD_EXIT.keyframes, MINE_CARD_EXIT.transition) + 20
+    while (Date.now() < stalledUntil) await new Promise<void>((turn) => setImmediate(turn))
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(true)
+    runs[0]!.finish()
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(false)
+    list.unmount()
+  })
+
+  // APPENDED with the case above: the watchdog the cases hold still bounds the slide (#266).
+  it('removes the leaving card at the watchdog when its motion never reports ending (#266)', async () => {
+    const list = mount(MinesList, {
+      props: { ...base, engine },
+      attachTo: document.body,
+      global: UNSTUBBED
+    })
+    await list.get('[data-mine="beta"] .dm-card__menu').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="menuitem"]')!.click()
+    await flushPromises()
+    document.body.querySelectorAll<HTMLElement>('.dm-dialog__actions button')[1]!.click()
+    await list.setProps({ cards: [valley[1]!] })
+    expect(runs).toHaveLength(1)
+    const bound = motionBoundMs(MINE_CARD_EXIT.keyframes, MINE_CARD_EXIT.transition)
+    vi.advanceTimersByTime(bound - 1)
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(true)
+    vi.advanceTimersByTime(1)
+    await flushPromises()
+    expect(list.find('[data-mine="beta"]').exists()).toBe(false)
     list.unmount()
   })
 })
