@@ -56,15 +56,25 @@ function outFile(): string {
 }
 
 describe.runIf(process.platform === 'win32')('the Host in-job read on Windows (FM-012)', () => {
-  it('[FM-012, S12.04] a process launched by breakaway from inside a job reads not-in-job before its first spawn, and in-job after it', async () => {
+  // AMENDED (CI run 36974311406; was: breakaway alone, which a runner whose job forbids breakaway refuses with
+  // STILL_IN_JOB): the stub is launched the way the launcher launches the Host, breakaway and then WMI when breakaway is
+  // refused (windows.ts), and the expectation is unchanged.
+  it('[FM-012, S12.04] a process the launcher takes out of the job (breakaway, else WMI) reads not-in-job before its first spawn, and in-job after it', async () => {
     const file = outFile()
     const answer = await probe(
-      [
-        'breakaway',
-        join(BINARIES, 'dwarfai_win_launch.node'),
-        join(BINARIES, WIN_PIPE_BINARY),
-        file
-      ],
+      ['launch', join(BINARIES, 'dwarfai_win_launch.node'), join(BINARIES, WIN_PIPE_BINARY), file],
+      file
+    )
+
+    expect(answer.atStart, 'outside every job at start').toBe(false)
+    expect(answer.afterSpawn, "inside libuv's own job after a plain spawn").toBe(true)
+  }, 30_000)
+
+  // The WMI step alone, so the path a runner that forbids breakaway takes is proven on every Windows machine.
+  it('[FM-012, S12.04] a process created through WMI reads not-in-job before its first spawn', async () => {
+    const file = outFile()
+    const answer = await probe(
+      ['wmi', join(BINARIES, 'dwarfai_win_launch.node'), join(BINARIES, WIN_PIPE_BINARY), file],
       file
     )
 

@@ -6,9 +6,12 @@
 //     loads the Host's native helper and writes {"atStart": <isProcessInJob()>, "afterSpawn": <isProcessInJob()>} to
 //     outFile: the first read before anything is spawned, the second after one plain (non-detached) child_process
 //     spawn, which is when libuv adds this process to a job of its own. Exits once written.
-//   breakaway <winLaunchNode> <winPipeNode> <outFile>
-//     starts `report` through the UI's launch helper with job breakaway (the Host's launch, ADR-002 D6 item 1) and
-//     writes its answer to `<outFile>.launch`. Exits at once; the started process writes outFile itself.
+//   launch <winLaunchNode> <winPipeNode> <outFile>
+//     starts `report` through the UI's launch helper the way the launcher starts the Host (windows.ts; ADR-002 D6
+//     items 1 and 2): job breakaway, and WMI `Win32_Process.Create` when breakaway is refused. Writes how it went to
+//     `<outFile>.launch`, then exits; the started process writes outFile itself.
+//   wmi <winLaunchNode> <winPipeNode> <outFile>
+//     the WMI step alone, as `launch` takes it on a machine whose job forbids breakaway.
 //
 // Every process here exits within CAP_MS, so a forgotten stub never outlives its test run.
 import { spawn } from 'node:child_process'
@@ -36,7 +39,7 @@ if (mode === 'report') {
     writeFileSync(outFile, JSON.stringify({ atStart, afterSpawn: helper.isProcessInJob() }))
     process.exit(0)
   })
-} else if (mode === 'breakaway') {
+} else if (mode === 'launch' || mode === 'wmi') {
   const [winLaunch, winPipe, outFile] = rest
   const helper = load(winLaunch)
   const quote = (arg) => `"${arg.replace(/"/g, '\\"')}"`
@@ -47,19 +50,28 @@ if (mode === 'report') {
     .filter(([name, value]) => name !== '' && !name.includes('=') && value !== undefined)
     .sort(([a], [b]) => (a.toUpperCase() < b.toUpperCase() ? -1 : 1))
     .map(([name, value]) => `${name}=${value}`)
-  // CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP |
-  // CREATE_NO_WINDOW: the launcher's BREAKAWAY_CREATION_FLAGS (windows.ts).
-  const flags = 0x4 | 0x400 | 0x01000000 | 0x200 | 0x08000000
-  const result = helper.breakaway(
-    process.execPath,
-    commandLine,
-    // Not the answer's folder: a working folder the started process still holds could not be removed after it.
-    os.tmpdir(),
-    `${entries.join('\0')}\0\0`,
-    flags
-  )
-  if (result.process) helper.release(result.process)
-  writeFileSync(`${outFile}.launch`, JSON.stringify({ status: result.status, code: result.code }))
+  // Not the answer's folder: a working folder the started process still holds could not be removed after it.
+  const cwd = os.tmpdir()
+  const steps = []
+  if (mode === 'launch') {
+    // CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP |
+    // CREATE_NO_WINDOW: the launcher's BREAKAWAY_CREATION_FLAGS (windows.ts).
+    const flags = 0x4 | 0x400 | 0x01000000 | 0x200 | 0x08000000
+    const result = helper.breakaway(
+      process.execPath,
+      commandLine,
+      cwd,
+      `${entries.join('\0')}\0\0`,
+      flags
+    )
+    if (result.process) helper.release(result.process)
+    steps.push({ how: 'breakaway', status: result.status, code: result.code })
+  }
+  if (steps.length === 0 || steps[0].status === 'refused') {
+    const created = await helper.wmiCreate(commandLine, cwd, entries)
+    steps.push({ how: 'wmi', status: created.status, code: created.code })
+  }
+  writeFileSync(`${outFile}.launch`, JSON.stringify(steps))
   process.exit(0)
 } else {
   process.stderr.write(`job-probe: unknown mode ${JSON.stringify(mode)}\n`)
