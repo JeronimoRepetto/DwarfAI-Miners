@@ -18,6 +18,14 @@ A rollback is a **new internal build**, never an older artifact (`21` §2.1 item
 | The same `endpointGeneration`                                        | A different generation would take the D8 item 4 path (blocking notice), which a rollback never needs |
 | The cut's router rows flipped back to `legacy` with `shape: 'today'` | The legacy code is still in the tree until the cut's retirement step (§4)                            |
 
+**Package inconsistency (recorded by ISSUE-057).** `21` §2.1 item 1 asks the rollback build for "a higher version" and
+says the running Host "is upgraded to it by the ordinary ADR-002 D8 handshake". The app version alone does not do that:
+the D8 table compares `protocolVersion`, never app versions, and with an equal `protocolVersion` item 1 attaches the
+rollback build normally to the faulty build's Host, which keeps running (`upgradeDecision.ts`). The rehearsal shows it:
+a rollback build one patch version above but with the same `protocolVersion` stayed attached to the faulty Host
+(`hostVersion` still the faulty build's). So a rollback build also raises `protocolVersion`, as the table above says;
+`21` §2.1 item 1 should name it.
+
 Steps:
 
 1. Build the rollback table from the faulty cut's table with `rollbackOf(table, cut)`
@@ -88,9 +96,15 @@ retirement once a later cut ships.
 
 ## 5. Where it is tested
 
-| Check                                                                                    | Test                                                                             |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| The cut-0 rollback table flips every cut-0 row that replaced legacy code and stays valid | `src/ui-main/ipc/rollbackTable.test.ts` (L1)                                     |
-| The rollback table passes the router test and never reaches deleted legacy code          | `src/ui-main/ipc/ipc-routing.contract.test.ts`, `describe('rollback')` (L6)      |
-| The D8 handshake between two builds, and the older-UI rule, over real processes          | `src/ui-main/hostLauncher/upgrade.os.test.ts` (L8, ISSUE-032)                    |
-| The cut-0 rollback rehearsed with the built app                                          | `e2e/cut-0/rollback-rehearsal.e2e.ts` (L9, release lane): pending, see ISSUE-057 |
+| Check                                                                                    | Test                                                                        |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| The cut-0 rollback table flips every cut-0 row that replaced legacy code and stays valid | `src/ui-main/ipc/rollbackTable.test.ts` (L1)                                |
+| The rollback table passes the router test and never reaches deleted legacy code          | `src/ui-main/ipc/ipc-routing.contract.test.ts`, `describe('rollback')` (L6) |
+| The D8 handshake between two builds, and the older-UI rule, over real processes          | `src/ui-main/hostLauncher/upgrade.os.test.ts` (L8, ISSUE-032)               |
+| The cut-0 rollback rehearsed with the built app                                          | `e2e/cut-0/rollback-rehearsal.e2e.ts` (L9, release lane)                    |
+
+The rehearsal (TC-057-02, TC-057-03) runs two builds of the tree against one profile: the repository's own `pnpm build`
+as the faulty (or older) build, and a rollback build made for the run by `scripts/e2e/build-rehearsal-app.mjs`, one
+patch version and one `protocolVersion` above, built into its own folder under `test-results/`. The override is an
+electron-vite plugin passed inline by that script only (`scripts/e2e/rehearsalBuild.mjs`); no build config or package
+script names it, so a release build keeps the real `PROTOCOL_VERSION` (`scripts/e2e/rehearsalBuild.test.mjs`).

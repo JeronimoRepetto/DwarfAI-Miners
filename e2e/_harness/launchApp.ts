@@ -89,6 +89,13 @@ export interface LaunchOptions {
    * main file: a harness self-test injects a main-process behaviour with one (never production code, R14).
    */
   readonly mainPreloads?: readonly string[]
+  /**
+   * A profile the case made with `createIsolatedProfile()` and owns, instead of a fresh one: two launches in a row share
+   * it, as two builds installed one after the other share a person's data (the rollback rehearsal, ISSUE-057). The
+   * teardown then quits the app (or runs Stop everything and quit) and keeps its diagnostics, but leaves the profile and
+   * any Host it runs; the case ends both with `disposeProfile()`.
+   */
+  readonly profile?: IsolatedProfile
   /** Writes a case's fixture data into the fresh profile before the app starts. */
   readonly beforeLaunch?: (profile: IsolatedProfile) => Promise<void>
   /** Extra environment for the app, applied last; a function gets the profile, to point a variable into it. */
@@ -124,7 +131,8 @@ const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
 /** Variables of the test runner's environment that would change how Electron itself starts. */
 const DROPPED_ENV = new Set(['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ATTACH_CONSOLE'])
 
-function createProfile(): IsolatedProfile {
+/** A fresh isolated profile: the one `launchApp` makes for each launch, or one a case owns (`LaunchOptions.profile`). */
+export function createIsolatedProfile(): IsolatedProfile {
   const root = mkdtempSync(path.join(tmpdir(), 'dwarfai-e2e-'))
   const profile = {
     root,
@@ -412,48 +420,52 @@ function readMainErrors(file: string): string | undefined {
   return recorded === '' ? undefined : recorded
 }
 
+/**
+ * Removes a profile, and first ends every process still naming its folders (its app and its Host, which runs from the
+ * versioned copy under the profile's data root): on Windows the browser process can outlive the process Playwright
+ * spawned and write its profile files after that one exited, and a Host that was starting when the app quit writes its
+ * run files late. Checked again a moment later, so nothing comes back. `launchApp`'s teardown runs it for the profile
+ * it made; a case that owns its profile (`LaunchOptions.profile`) runs it itself.
+ */
+export async function disposeProfile(profile: IsolatedProfile): Promise<void> {
+  const deadline = Date.now() + KILL_TIMEOUT_MS
+  for (;;) {
+    try {
+      for (const pid of [...processesNaming(profile.root), ...processesNaming(profile.dataRoot)]) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // Gone meanwhile.
+        }
+      }
+      rmSync(profile.root, { recursive: true, force: true })
+      rmSync(profile.dataRoot, { recursive: true, force: true })
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+      const left =
+        existsSync(profile.root) ||
+        existsSync(profile.dataRoot) ||
+        processesNaming(profile.root).length > 0
+      if (!left) return
+      if (Date.now() >= deadline) throw new Error(`the profile ${profile.root} keeps coming back`)
+    } catch (error) {
+      // Windows frees a killed tree's open files a moment after the app exits (EPERM, EBUSY).
+      if (Date.now() >= deadline) throw error
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+  }
+}
+
 export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedApp> {
   const appDir = options.appDir ?? APP_DIR
   const { main } = JSON.parse(readFileSync(path.join(appDir, 'package.json'), 'utf8')) as {
     main: string
   }
   const mainFile = resolveEntry(options.entry, appDir, { main })
-  const profile = createProfile()
-  /**
-   * Removes the profile, and first ends every process still naming its folders: on Windows the browser process can
-   * outlive the process Playwright spawned and write its profile files after that one exited, and a Host that was
-   * starting when the app quit writes its run files late. Checked again a moment later, so nothing comes back.
-   */
-  const removeProfile = async (): Promise<void> => {
-    const deadline = Date.now() + KILL_TIMEOUT_MS
-    for (;;) {
-      try {
-        for (const pid of [
-          ...processesNaming(profile.root),
-          ...processesNaming(profile.dataRoot)
-        ]) {
-          try {
-            process.kill(pid, 'SIGKILL')
-          } catch {
-            // Gone meanwhile.
-          }
-        }
-        rmSync(profile.root, { recursive: true, force: true })
-        rmSync(profile.dataRoot, { recursive: true, force: true })
-        await new Promise((resolve) => setTimeout(resolve, 1_000))
-        const left =
-          existsSync(profile.root) ||
-          existsSync(profile.dataRoot) ||
-          processesNaming(profile.root).length > 0
-        if (!left) return
-        if (Date.now() >= deadline) throw new Error(`the profile ${profile.root} keeps coming back`)
-      } catch (error) {
-        // Windows frees a killed tree's open files a moment after the app exits (EPERM, EBUSY).
-        if (Date.now() >= deadline) throw error
-        await new Promise((resolve) => setTimeout(resolve, 200))
-      }
-    }
-  }
+  const ownedByCase = options.profile !== undefined
+  const profile = options.profile ?? createIsolatedProfile()
+  // A profile the case owns stays for its next launch; `disposeProfile` removes it.
+  const removeProfile = (): Promise<void> =>
+    ownedByCase ? Promise.resolve() : disposeProfile(profile)
 
   let app: ElectronApplication
   try {
@@ -541,8 +553,9 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     } catch (error) {
       failure = error
     }
-    // A plain quit leaves the profile's Host running, as it leaves a person's (OQ-63): the harness ends it.
-    endHost(hostPid ?? profileHostPid(profile.userDataDir))
+    // A plain quit leaves the profile's Host running, as it leaves a person's (OQ-63): the harness ends it, unless the
+    // case owns the profile and starts its next launch against that Host.
+    if (!ownedByCase) endHost(hostPid ?? profileHostPid(profile.userDataDir))
     const mainErrors = readMainErrors(mainErrorsFile)
     if (mainErrors !== undefined) {
       failure = new Error(
