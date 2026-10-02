@@ -82,6 +82,9 @@ electron-builder ships only `out/` and `package.json`, and `bin/_kit/stubCli.tes
 - **Scrubbed only.** A provider fixture is committed only after the scrub step of `17` §1.4 ("Redaction (scrub
   rules)"): no home directory, user name, host name, e-mail address, secret, account or organization id. Its
   `meta.json` says `"scrubbed": true`. Read the scrubbed file before committing it (skill `privacy-guard`).
+  The recorder and the scrubber are `scripts/fixtures/record.mjs` and `scripts/fixtures/scrub.mjs`; how to record
+  a case is in `scripts/fixtures/scenarios/README.md`. `scripts/fixtures/fixturesPrivacy.test.mjs` checks the
+  committed tree.
 - **Never commit `*.raw.*`.** The recorder's raw captures (`<case>.raw.*`) are ignored by `.gitignore` and reported by
   the layout check.
 - **`capturedBy` is a role**: `maintainer` or `ci-synthetic`, never a person's name or account.

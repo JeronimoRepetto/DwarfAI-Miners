@@ -108,6 +108,7 @@
     "test:perf": "node perf/_harness/runPerf.mjs",
     "test:golden": "node scripts/golden/run.mjs",
     "test:canaries": "node scripts/checks/run-canaries.mjs",
+    "test:real-cli": "vitest run --maxWorkers=1 integration.test",
     "trace:check": "node scripts/traceability/extract.mjs && node scripts/traceability/check.mjs",
     "golden:design": "node scripts/golden/design-copy.mjs",
     "ipc:generate": "node scripts/ipc/generate-window-api.mjs"
