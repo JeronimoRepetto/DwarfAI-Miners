@@ -28,7 +28,10 @@ import { resolveEntry, type AppEntry } from './resolveEntry.ts'
  * - `stubs`, when given, is prepended to `PATH`, so detection and spawn resolve the stub CLIs
  *   first (the stub kit is later: ISSUE-313); temp `CLAUDE_CONFIG_DIR` and `CODEX_HOME` keep the
  *   app away from the developer's provider data.
- * - `launchApp` returns once the first window has loaded its page, so no case quits a half-started app.
+ * - `launchApp` returns once the first window has loaded its page, so no case quits a half-started app:
+ *   once the page's `load` event fired (Playwright, the renderer's view) and the main process, too, sees no
+ *   window loading (`webContents.isLoading()`), which it takes in a moment later and, on a slow runner, after a
+ *   main-thread stall (run 37036544456).
  * - `teardown()` quits the app, waits for its process to exit and removes the temp profile, all
  *   within a quit budget (`quitTimeoutMs`, default 15 s). An app still running at the end of it is
  *   killed with its process tree and the teardown fails with that, so a quit that never finishes
@@ -81,6 +84,11 @@ export interface LaunchOptions {
   readonly pathOnly?: boolean
   /** Preloads `trayProbe.cjs`, so the case can choose a tray item and see the icon shown and removed. */
   readonly trayProbe?: boolean
+  /**
+   * More test-only CommonJS files for Electron's `-r` switch, loaded after the harness's own preloads and before the app's
+   * main file: a harness self-test injects a main-process behaviour with one (never production code, R14).
+   */
+  readonly mainPreloads?: readonly string[]
   /** Writes a case's fixture data into the fresh profile before the app starts. */
   readonly beforeLaunch?: (profile: IsolatedProfile) => Promise<void>
   /** Extra environment for the app, applied last; a function gets the profile, to point a variable into it. */
@@ -195,6 +203,36 @@ const DEFAULT_QUIT_TIMEOUT_MS = 15_000
 
 /** How long a killed process tree, and the Playwright close behind it, get to be gone. */
 const KILL_TIMEOUT_MS = 10_000
+
+/** How long the main process gets to see every window's load ended after the first page's `load` event. */
+const MAIN_LOADED_TIMEOUT_MS = 15_000
+
+/** How often the main process is asked while a window still loads. */
+const MAIN_LOADED_POLL_MS = 50
+
+/**
+ * Waits until the main process sees no window loading: Playwright's `load` is the renderer's view, and main takes in
+ * the load's end (`did-stop-loading`) a moment later, or later still behind a main-thread stall or a sub-frame that
+ * still loads. Fails, naming the windows still loading, when that has not happened within `timeoutMs`.
+ */
+async function waitForMainLoaded(app: ElectronApplication, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const loading = await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()
+        .filter((window) => !window.isDestroyed() && window.webContents.isLoading())
+        .map((window) => window.webContents.getURL())
+    )
+    if (loading.length === 0) return
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the main process still sees ${loading.length} window(s) loading ${timeoutMs} ms after the first page's ` +
+          `load event: ${JSON.stringify(loading)}`
+      )
+    }
+    await new Promise((resolve) => setTimeout(resolve, MAIN_LOADED_POLL_MS))
+  }
+}
 
 function hasExited(child: ChildProcess): boolean {
   return child.exitCode !== null || child.signalCode !== null
@@ -431,6 +469,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
         '-r',
         MAIN_LIFECYCLE_PROBE,
         ...(options.trayProbe === true ? ['-r', TRAY_PROBE] : []),
+        ...(options.mainPreloads ?? []).flatMap((preload) => ['-r', preload]),
         options.entry === 'ui-main' ? mainFile : appDir,
         `--user-data-dir=${profile.userDataDir}`
       ],
@@ -577,6 +616,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
     // every IPC handler is registered). A case starts from a started app, so it never quits one
     // whose page is still loading, which is not a state a person quits from.
     await window.waitForLoadState('load')
+    await waitForMainLoaded(app, MAIN_LOADED_TIMEOUT_MS)
     return { app, window, profile, teardown }
   } catch (error) {
     await teardown()

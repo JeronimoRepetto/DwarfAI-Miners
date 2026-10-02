@@ -33,6 +33,9 @@ import {
 /** The app folder the harness launches (the repository root). */
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
+/** This harness folder (its test-only preloads live under fixtures/). */
+const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url))
+
 // The harness self-test runs once: a retry would hide a harness defect (17 §5.4).
 test.describe.configure({ retries: 0 })
 
@@ -168,6 +171,21 @@ test.describe('E2E harness: a bounded teardown (17 §1.9)', () => {
 
   test('[ADR-002] launchApp returns once the first window has finished loading, so a case never quits a half-loaded app', async () => {
     launched = await launchApp({ tracePath: test.info().outputPath('trace.zip') })
+
+    const loading = await launched.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map((window) => window.webContents.isLoading())
+    )
+    expect(loading.length, 'the app has its window').toBeGreaterThan(0)
+    expect(loading, 'no window is still loading its page').not.toContain(true)
+  })
+
+  test("[ADR-002] launchApp returns only once the main process, too, sees no window loading, even when main takes in the load's end late", async () => {
+    // The injected delay: main is held busy from the page's `dom-ready`, so the renderer's `load` comes first, as on a
+    // slow runner (run 37036544456, where the case above failed).
+    launched = await launchApp({
+      mainPreloads: [path.join(HARNESS_DIR, 'fixtures', 'slowMainLoadEnd.cjs')],
+      tracePath: test.info().outputPath('trace.zip')
+    })
 
     const loading = await launched.app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map((window) => window.webContents.isLoading())
