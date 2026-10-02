@@ -7,7 +7,10 @@ import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
 import type { DwarfId, MineId } from '../../kernel/domain/values'
 import { FakeAttentionSettings } from './ports/fakes/FakeAttentionSettings'
-import { InMemoryAttentionLedger } from './ports/fakes/InMemoryAttentionLedger'
+import {
+  InMemoryAttentionLedger,
+  InMemoryAttentionRows
+} from './ports/fakes/InMemoryAttentionLedger'
 import { createAttention, turnFinishedFact, type AttentionEvent } from './index'
 
 const T0 = 1_790_000_000_000
@@ -61,5 +64,32 @@ describe('createAttention', () => {
         sensitive: true
       }
     ])
+  })
+
+  it('[ADR-018] the module exposes the 24-hour sweep and the end of the carry-over of a dwarf for the composition', () => {
+    const clock = new FakeClock(T0)
+    const rows = new InMemoryAttentionRows()
+    const ledger = new InMemoryAttentionLedger(rows, clock)
+    const attention = createAttention({
+      settings: new FakeAttentionSettings(),
+      ledger,
+      transactions: { inTransaction: (work) => work() },
+      bus: new RecordingEventBus<AttentionEvent>(),
+      clock,
+      ids: new SequenceIdGenerator(),
+      hostEpoch: 'epoch-0110',
+      titles: (kind, displayName) => `fake ${kind} title for ${displayName}`
+    })
+    const turnKey = `${DWARF}:turn-finished:turn-1`
+    ledger.markSuppressed(turnKey, DWARF, 'turn-finished')
+    attention.inputs.onFactEnded(turnKey)
+    rows.announced.set(`${DWARF}:question`, `${DWARF}:question:ask-before-crash`)
+
+    clock.advance(24 * 60 * 60 * 1000 + 1)
+    attention.dropCarryOver(DWARF)
+
+    expect(attention.sweep()).toBe(1)
+    expect(rows.keys.size).toBe(0)
+    expect(rows.announced.size).toBe(0)
   })
 })

@@ -4,9 +4,7 @@
 // keeps the port's rule that a suppressed key is claimed like an emitted one (07 S17.08), and
 // records this ledger's writes so a test can see what was emitted and what suppressed.
 import type { DwarfId } from '../../../../kernel/domain/values'
-import { FakeClock } from '../../../../kernel/fakes/FakeClock'
 import type { Clock } from '../../../../kernel/ports/clock'
-import { carryOverKey, type CarriedKind } from '../../domain/carryOver'
 import type { AttentionKind } from '../../domain/decideLevel3'
 import type { AttentionLedger } from '../attentionLedger'
 
@@ -27,7 +25,8 @@ export class InMemoryAttentionRows {
   readonly announced = new Map<string, string>()
 }
 
-const CARRIED_KINDS: readonly CarriedKind[] = ['question', 'permission']
+/** The default clock of a test that never reads `withdrawn_at`. Ports import types only (R2). */
+const AT_ZERO: Clock = { now: () => 0 }
 
 export class InMemoryAttentionLedger implements AttentionLedger {
   /** Every key this ledger claimed, in write order. */
@@ -35,7 +34,7 @@ export class InMemoryAttentionLedger implements AttentionLedger {
 
   constructor(
     readonly rows: InMemoryAttentionRows = new InMemoryAttentionRows(),
-    private readonly clock: Clock = new FakeClock()
+    private readonly clock: Clock = AT_ZERO
   ) {}
 
   emitted(): ReadonlySet<string> {
@@ -82,7 +81,10 @@ export class InMemoryAttentionLedger implements AttentionLedger {
   }
 
   dropCarryOver(dwarfId: DwarfId): void {
-    for (const kind of CARRIED_KINDS) this.rows.announced.delete(carryOverKey(dwarfId, kind))
+    // `carryOverKey` is `${dwarfId}:${kind}` (domain/carryOver.ts); ports import types only (R2).
+    for (const dwarfKind of [...this.rows.announced.keys()]) {
+      if (dwarfKind.startsWith(`${dwarfId}:`)) this.rows.announced.delete(dwarfKind)
+    }
   }
 
   /** A key is claimed once (`attention_keys.key` is the primary key, 09). */

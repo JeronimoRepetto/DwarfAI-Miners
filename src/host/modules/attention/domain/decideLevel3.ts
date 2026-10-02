@@ -159,7 +159,8 @@ export function unionPresence(reports: readonly Presence[]): Presence {
  * ADR-018's `decideLevel3` for a new fact: `show` iff every item-2 condition holds (machine 17
  * S17.01); a fact with `reannounce === false` is treated as already emitted. The names come beside
  * the fact (lead decision 2026-09-30) and the title text from the injected formatter. The `{ ended }`
- * form, the withdrawal, lands with ISSUE-110.
+ * form, the withdrawal, is `AttentionPolicy.onFactEnded` over `AttentionLedger.withdraw` (ISSUE-110):
+ * only the ledger knows, across a Host restart, which keys are withdrawn for the first time.
  */
 export function decideLevel3(
   fact: AttentionFact,

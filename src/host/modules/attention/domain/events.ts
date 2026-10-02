@@ -16,5 +16,8 @@ export type AttentionNotified = DomainEvent<
   }
 >
 
-/** Every event this module publishes in cut 1; `AttentionWithdrawn` joins with ISSUE-110. */
-export type AttentionEvent = AttentionNotified
+/** 08 `AttentionWithdrawn`: the keys of a fact that ended (ADR-018 item 4), once each. */
+export type AttentionWithdrawn = DomainEvent<'AttentionWithdrawn', { keys: string[] }>
+
+/** Every event this module publishes in cut 1. */
+export type AttentionEvent = AttentionNotified | AttentionWithdrawn

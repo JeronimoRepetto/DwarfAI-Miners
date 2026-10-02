@@ -6,14 +6,21 @@
 // nothing and waits. After the commit it publishes `AttentionNotified` (16 §2.3), which the sink
 // turns into `attention.notify` (later: ISSUE-112). `presenceChanged` keeps each UI client's last
 // report, ordered by its `seq`; it and `preferencesChanged` re-evaluate the gated facts that are
-// still open (S17.03).
-// The withdrawal (`onFactEnded`) and the click counter (`clicked`) join with their issues
-// (later: ISSUE-110, ISSUE-112).
-import type { EventId, HostEpoch } from '../../../kernel/domain/values'
+// still open (S17.03). A new ask that finds a carry-over row of its dwarf and kind is the need
+// re-raised after a silent resume: it consumes the row in the same transaction, is suppressed and
+// is linked to the pre-crash key (07 S6.19, ADR-018 item 3).
+//
+// `onFactEnded` (16 §4.11 row `onFactEnded`; ADR-018 item 4) withdraws the fact's key and the key
+// it replaces in one transaction (`AttentionLedger.withdraw`, which withdraws a key once), drops a
+// gated fact, and after the commit publishes one `AttentionWithdrawn` with the keys that left
+// (S17.04, S17.05, S17.09). A fact that already ended publishes nothing.
+// The click counter (`clicked`) joins with its issue (later: ISSUE-112).
+import type { DwarfId, EventId, HostEpoch } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import { reRaisedFact } from '../domain/carryOver'
 import {
   nextAttentionKey,
   osNotification,
@@ -41,6 +48,7 @@ import type { AttentionSettings } from '../ports/attentionSettings'
  */
 export interface AttentionInputs {
   onFact(fact: AttentionFact, names: Level3Names): void
+  onFactEnded(key: string): void
   presenceChanged(uiClient: string, presence: Presence | 'detached'): void
   preferencesChanged(): void
 }
@@ -68,11 +76,32 @@ export class AttentionPolicy implements AttentionInputs {
   private readonly reports = new Map<string, Presence>()
   /** The open facts machine 17 holds in `gated`, by key. */
   private readonly gated = new Map<string, OpenFact>()
+  /** The pre-crash key each decided fact of this Host life replaces (ADR-018 item 3), by key. */
+  private readonly replacing = new Map<string, string>()
 
   constructor(private readonly deps: AttentionPolicyDeps) {}
 
   onFact(fact: AttentionFact, names: Level3Names): void {
     this.decide({ fact, names }, undefined)
+  }
+
+  onFactEnded(key: string): void {
+    const replaced = this.replacing.get(key)
+    const withdrawn = this.deps.transactions.inTransaction(() =>
+      this.deps.ledger.withdraw(replaced === undefined ? [key] : [key, replaced])
+    )
+    // A gated fact claimed no key, so the ledger has nothing to withdraw for it (S17.04).
+    const keys = this.gated.delete(key) ? [key, ...withdrawn] : [...withdrawn]
+    this.replacing.delete(key)
+    if (keys.length > 0) this.publishWithdrawn(keys)
+  }
+
+  /**
+   * The dwarf's carry-over rows end: the route of a person-initiated turn or of its departure
+   * (09 §7.1; later: ISSUE-120). Not an `AttentionInputs` member.
+   */
+  dropCarryOver(dwarfId: DwarfId): void {
+    this.deps.transactions.inTransaction(() => this.deps.ledger.dropCarryOver(dwarfId))
   }
 
   presenceChanged(uiClient: string, presence: Presence | 'detached'): void {
@@ -96,28 +125,60 @@ export class AttentionPolicy implements AttentionInputs {
   }
 
   /** One machine-17 step for an open fact: claim the key, then publish after the commit. */
-  private decide(open: OpenFact, from: 'gated' | undefined): void {
-    const { fact } = open
+  private decide(given: OpenFact, from: 'gated' | undefined): void {
     const gate: Level3Gate = {
       prefs: { systemNotificationsOn: this.deps.settings.systemNotificationsOn() },
       presence: unionPresence([...this.reports.values()])
     }
-    const next = this.deps.transactions.inTransaction((): AttentionKeyState | undefined => {
-      const event: AttentionKeyEvent =
-        from === undefined
-          ? { type: 'fact', fact, gate, emitted: this.deps.ledger.emitted() }
-          : { type: 'gate-changed', fact, gate }
-      const step = nextAttentionKey(from, event)
-      if (!step.ok) return undefined
-      if (step.value === 'emitted') this.deps.ledger.markEmitted(fact.key, fact.dwarfId, fact.kind)
-      if (step.value === 'suppressed') {
-        this.deps.ledger.markSuppressed(fact.key, fact.dwarfId, fact.kind)
+    const { next, open } = this.deps.transactions.inTransaction(() => {
+      if (from === 'gated') {
+        return {
+          next: this.step(given, from, { type: 'gate-changed', fact: given.fact, gate }),
+          open: given
+        }
       }
-      return step.value
+      const emitted = this.deps.ledger.emitted()
+      const carried = reRaisedFact(given.fact, this.deps.ledger.carryOver(), emitted)
+      if (carried.consumed !== undefined) this.deps.ledger.consumeCarryOver(carried.consumed)
+      const decided = { ...given, fact: carried.fact }
+      return {
+        next: this.step(decided, from, { type: 'fact', fact: decided.fact, gate, emitted }),
+        open: decided
+      }
     })
+    const { fact } = open
     if (next === 'gated') this.gated.set(fact.key, open)
     else this.gated.delete(fact.key)
+    if (next !== undefined && fact.replacesKey !== undefined) {
+      this.replacing.set(fact.key, fact.replacesKey)
+    }
     if (next === 'emitted') this.publishNotified(open)
+  }
+
+  /** Inside the decision's transaction: take the transition and claim the key it decides. */
+  private step(
+    { fact }: OpenFact,
+    from: 'gated' | undefined,
+    event: AttentionKeyEvent
+  ): AttentionKeyState | undefined {
+    const step = nextAttentionKey(from, event)
+    if (!step.ok) return undefined
+    if (step.value === 'emitted') this.deps.ledger.markEmitted(fact.key, fact.dwarfId, fact.kind)
+    if (step.value === 'suppressed') {
+      this.deps.ledger.markSuppressed(fact.key, fact.dwarfId, fact.kind)
+    }
+    return step.value
+  }
+
+  private publishWithdrawn(keys: string[]): void {
+    this.deps.bus.publish({
+      type: 'AttentionWithdrawn',
+      v: 1,
+      id: this.deps.ids.uuidv7() as EventId,
+      at: this.deps.clock.now(),
+      hostEpoch: this.deps.hostEpoch,
+      payload: { keys }
+    })
   }
 
   private publishNotified({ fact, names }: OpenFact): void {
