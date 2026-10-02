@@ -11,9 +11,14 @@ import { CATALOG_RECORDS, SIMULATED_RECORD } from './adapters/catalog/profiles'
 import { SimulatedDriver } from './adapters/drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './adapters/registry/CatalogDriverRegistry'
 import { createSupplierCatalogue, type SupplierCatalogueSkeleton } from './application/catalogue'
-import { trackLiveSessions, type SessionChannels } from './application/sessionChannels'
+import {
+  trackLiveSessions,
+  type SessionBindings,
+  type SessionChannels
+} from './application/sessionChannels'
 import { recordsForBuild } from './domain/profile'
 import type { DriverRegistry } from './ports/driverRegistry'
+import type { SuppliedEventSink } from './ports/suppliedEventSink'
 
 // ADR-009 D1–D3 and the 15 §1.2 supporting types: every other module imports them from here.
 export type {
@@ -42,6 +47,7 @@ export type {
   DriverResumeError,
   DriverSendError,
   DriverSession,
+  DriverTurnEnded,
   InstalledProvider,
   MessageInput,
   ObservationAdapter,
@@ -72,7 +78,12 @@ export type {
   SupplierCatalogueSkeleton,
   SupplierEntry
 } from './application/catalogue'
-export type { SessionChannels } from './application/sessionChannels'
+export type { SessionBindings, SessionChannels } from './application/sessionChannels'
+export type {
+  SuppliedEvent,
+  SuppliedEventDelivery,
+  SuppliedEventSink
+} from './ports/suppliedEventSink'
 
 export interface SuppliersDeps {
   /** `CATALOG_PROVIDER_IDS`, handed over by `host/main.ts` (R9): every profile id must be in it. */
@@ -83,11 +94,15 @@ export interface SuppliersDeps {
   readonly scheduler: Scheduler
   /** The SimulatedDriver's seed: the same seed replays the same run. */
   readonly simulatedSeed: string
+  /** Where driver events go, each with its bound dwarf (`host/wiring`, ISSUE-159). */
+  readonly sink: SuppliedEventSink
 }
 
 export interface Suppliers {
   readonly catalogue: SupplierCatalogueSkeleton
   readonly sessions: SessionChannels
+  /** Launching binds each session to its dwarf (ADR-015 item 7); events wait for it. */
+  readonly bindings: SessionBindings
   /** The registry launching uses; every session its drivers open is reachable through `sessions`. */
   readonly registry: DriverRegistry
 }
@@ -112,11 +127,13 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
       records,
       drivers,
       publicBuild: deps.publicBuild
-    })
+    }),
+    { sink: deps.sink, clock: deps.clock }
   )
   return {
     catalogue: createSupplierCatalogue({ records }),
     sessions: tracked.channels,
+    bindings: tracked.bindings,
     registry: tracked.registry
   }
 }

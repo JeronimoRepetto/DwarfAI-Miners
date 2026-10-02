@@ -1,23 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { CATALOG_PROVIDER_IDS } from '../../../contracts/catalog'
-import type { FolderPath, LaunchId } from '../../kernel/domain/values'
+import type { DwarfId, FolderPath, LaunchId, MessageId } from '../../kernel/domain/values'
 import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { FakeScheduler } from '../../kernel/fakes/FakeScheduler'
 import { CATALOG_RECORDS } from './adapters/catalog/profiles'
 import { SIMULATED_HANDSHAKE_MS } from './adapters/drivers/simulated/SimulatedDriver'
-import { createSuppliers, type DriverEvent, type DriverLaunchRequest } from './index'
+import { createSuppliers, type DriverLaunchRequest } from './index'
+import { RecordingSuppliedEventSink } from './ports/fakes/RecordingSuppliedEventSink'
 
 function build(publicBuild: boolean) {
   const clock = new FakeClock()
   const scheduler = new FakeScheduler(clock)
+  const sink = new RecordingSuppliedEventSink()
   const suppliers = createSuppliers({
     catalogIds: CATALOG_PROVIDER_IDS,
     publicBuild,
     clock,
     scheduler,
-    simulatedSeed: 'seed'
+    simulatedSeed: 'seed',
+    sink
   })
-  return { clock, suppliers }
+  return { clock, sink, suppliers }
 }
 
 function launchRequest(launchId: string): DriverLaunchRequest {
@@ -71,26 +74,39 @@ describe('createSuppliers (suppliers skeleton)', () => {
     expect(suppliers.registry.drivers('antigravity')).toEqual([])
   })
 
-  it('[ADR-009] sessionFor finds a session a registry driver launched, and nothing once it exited', async () => {
-    const { clock, suppliers } = build(false)
+  it('[ADR-009, ADR-015] a simulated turn reaches the Host stamped with the bound dwarf, and sessionFor ends with the session', async () => {
+    const { clock, sink, suppliers } = build(false)
     const [driver] = suppliers.registry.drivers('simulated')
     if (driver === undefined) throw new Error('no simulated driver')
+    const dwarfId = '00000000-0000-7000-8000-0000000000aa' as DwarfId
 
     const pending = driver.launch(launchRequest('launch-1'))
     for (let i = 0; i < 20; i++) await Promise.resolve()
     clock.advance(SIMULATED_HANDSHAKE_MS)
     const session = await pending
-
     expect(suppliers.sessions.sessionFor({ ...session.ref })).toBe(session)
     expect(
       suppliers.sessions.sessionFor({ providerId: 'simulated', providerSessionId: 'unknown' })
     ).toBeNull()
 
-    await session.close('end-thread')
-    const events: DriverEvent[] = []
-    for await (const event of session.events()) events.push(event)
+    await session.sendTurn({
+      messageId: 'message-1' as MessageId,
+      kind: 'message',
+      text: 'dig',
+      attachments: []
+    })
+    clock.advance(1_000)
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+    expect(sink.deliveries).toEqual([])
 
-    expect(events.at(-1)).toEqual({ t: 'exited', code: 0 })
+    suppliers.bindings.bind(session.ref, dwarfId)
+    await session.close('end-thread')
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+
+    const ended = sink.deliveries.find((d) => d.event.t === 'turn.ended')
+    expect(ended?.event).toMatchObject({ t: 'turn.ended', end: { dwarfId, kind: 'concluded' } })
+    expect(sink.deliveries.every((d) => d.dwarfId === dwarfId)).toBe(true)
+    expect(sink.deliveries.at(-1)?.event).toEqual({ t: 'exited', code: 0 })
     expect(suppliers.sessions.sessionFor(session.ref)).toBeNull()
   })
 })
