@@ -252,7 +252,7 @@ describe('Host launcher with real processes (ADR-002 D3, D6)', () => {
         // A second Host started the launcher's way against the same data folder and endpoint.
         const spawner = WINDOWS
           ? createWindowsSpawner({ loadHelper: () => loadWinLaunch({ prebuildsDir: PREBUILDS }) })
-          : createPosixSpawner({ stdioFile: path.join(world.hostDataDir, 'run', 'host-stdio.log') })
+          : createPosixSpawner()
         const second = await spawner(
           buildHostSpawn({
             execPath: ELECTRON,

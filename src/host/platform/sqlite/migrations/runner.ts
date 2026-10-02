@@ -266,8 +266,14 @@ function canonicalDir(dir: string): string {
   return process.platform === 'win32' || process.platform === 'darwin' ? real.toLowerCase() : real
 }
 
-/** A dev or test build whose database lies in (or under) the release data directory. */
-function isDevBuildOnReleaseData(path: string, options: OpenHostDbOptions): boolean {
+/**
+ * A dev or test build whose database lies in (or under) the release data directory. Exported for
+ * boot step 2, which asks it before it protects the data directory (hostDatabase.ts).
+ */
+export function isDevBuildOnReleaseData(
+  path: string,
+  options: Pick<OpenHostDbOptions, 'buildKind' | 'releaseDataDir'>
+): boolean {
   if (options.buildKind === 'release') return false
   const inside = relative(canonicalDir(options.releaseDataDir), canonicalDir(dirname(path)))
   return inside === '' || (inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside))

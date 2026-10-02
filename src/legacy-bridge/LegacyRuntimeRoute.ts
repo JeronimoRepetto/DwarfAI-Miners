@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PanelWindowController } from '../ui-main/window/ports/panelWindowController'
 import { LegacyLaunchRegister, type LegacyLaunchedSessions } from './LegacyEndFirstAdapter'
+import { createLegacyDiagnostics, type LegacyArea, type LegacyLog } from './legacyDiagnostics'
 import type { ShortcutPlatform } from '../shared/accelerator'
 import type {
   AgentLaunchRequest,
@@ -134,7 +135,7 @@ import {
   type JevPreferenceSaveRefusalReason
 } from '../main/shell/jevPreferences'
 import { createJevLaunchRouter } from '../main/jev/routeLaunch'
-import { createTypesafeJevRouter, jevDebugEnabled } from '../main/jev/typesafeJevRouter'
+import { createTypesafeJevRouter } from '../main/jev/typesafeJevRouter'
 import { createPanelEdgePreferenceStore } from '../main/shell/panelEdgePreference'
 import { createPinPreferenceStore } from '../main/shell/pinPreference'
 import { AgentRuntime, expandHomePath } from '../main/runtime/runtime'
@@ -324,6 +325,11 @@ export interface LegacyPanelSurface {
 export interface LegacyCompositionOptions {
   /** The rebuilt Panel; absent while the route table serves the window family `legacy`. */
   panel?: LegacyPanelSurface
+  /**
+   * The UI logger (ADR-026): today's warnings reach it as allowlisted records (legacyDiagnostics.ts) instead of the
+   * console, which no file of the new trees writes to (eslint.config.mjs deviation 8).
+   */
+  log: LegacyLog
 }
 
 /** Twice the design's 40px chip, so the preview is sharp on a 2× display (#408). */
@@ -346,12 +352,6 @@ function shortcutPlatform(): ShortcutPlatform {
   if (process.platform === 'darwin') return 'darwin'
   if (process.platform === 'win32') return 'win32'
   return 'other'
-}
-
-/** The `warn` every port is handed: a missing cause is not printed as `undefined` (#555). */
-function warnWithOptionalCause(message: string, error?: unknown): void {
-  if (error === undefined) console.warn(message)
-  else console.warn(message, error)
 }
 
 function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
@@ -518,10 +518,19 @@ function appWebContents(): NonNullable<ReturnType<typeof shellWebContents>>[] {
  */
 export function composeLegacyRuntime(
   electron: LegacyElectronMain,
-  options: LegacyCompositionOptions = {}
+  options: LegacyCompositionOptions
 ): LegacyRuntimeComposer {
   const { app, dialog, nativeImage, shell, clipboard, globalShortcut } = electron
   const rebuiltPanel = options.panel
+  // Today's warnings, as allowlisted UI log records: the area and the error's code, never the text (ADR-026 item 4).
+  const diagnostics = createLegacyDiagnostics(options.log)
+  /** The `warn` a port of `area` is handed: its message is dropped, its error's code kept. */
+  const warnFrom =
+    (area: LegacyArea) =>
+    (_message: string, error?: unknown): void =>
+      diagnostics.warning(area, error)
+  /** Today's informational lines carry paths and content and have no event (legacyDiagnostics.ts): not routed. */
+  const unrouted = (): void => {}
 
   // Today's module-level singletons: the quit teardown reads them, null-safe, at any time.
   let runtime: AgentRuntime | null = null
@@ -585,17 +594,16 @@ export function composeLegacyRuntime(
     loadDotenv({ quiet: true })
     const configFile = createConfigFileStore({
       filePath: join(app.getPath('userData'), CONFIG_FILE_NAME),
-      onWarn: (message) => console.warn(message)
+      onWarn: warnFrom('config')
     })
     const config = loadConfig(withConfigFileFallback(process.env, await configFile.load()))
-    console.log('[main] Config loaded:', config)
 
     await migrateLegacyAutostart(app.isPackaged)
     await ensureDefaultAutostart({
       isPackaged: app.isPackaged,
       markerPath: join(app.getPath('userData'), 'autostart-default-v1.marker'),
       enable: enableAutostart,
-      warn: warnWithOptionalCause
+      warn: warnFrom('autostart')
     })
 
     // Today's window, only while the route table serves the window family `legacy` (21 §2 cut 0): the rebuilt
@@ -653,19 +661,15 @@ export function composeLegacyRuntime(
 
     const jevPreferenceStore = createJevPreferenceStore({ userDataDir: app.getPath('userData') })
 
-    // Jev launch routing (#509, #525/T4): one debug sink, only when JEV_DEBUG says so.
-    const jevDebugLog = jevDebugEnabled() ? (line: string) => console.log(line) : undefined
-    const jevRouterPort = createTypesafeJevRouter({
-      readKey: jevApiKeyStore.readKey,
-      ...(jevDebugLog === undefined ? {} : { debugLog: jevDebugLog })
-    })
+    // Jev launch routing (#509, #525/T4). Its JEV_DEBUG console sink is not composed: its lines carry route content,
+    // which the log never holds (ADR-026 item 4).
+    const jevRouterPort = createTypesafeJevRouter({ readKey: jevApiKeyStore.readKey })
     const jevLaunchRouter = createJevLaunchRouter({
       router: jevRouterPort,
       listProviders: async () => (await runtime?.listAgentProviders())?.providers ?? [],
       listModels: async () => (await runtime?.listAgentModels())?.catalogs ?? [],
       readPreferences: jevPreferenceStore.load,
-      readOpenCodeCatalogue: async () => (await runtime?.readOpenCodeCatalogue()) ?? [],
-      ...(jevDebugLog === undefined ? {} : { debugLog: jevDebugLog })
+      readOpenCodeCatalogue: async () => (await runtime?.readOpenCodeCatalogue()) ?? []
     })
 
     // Typography (#370, v2 presets #635): the v1 document is read once to migrate it.
@@ -712,19 +716,19 @@ export function composeLegacyRuntime(
       database: appDatabase,
       jsonPath: join(app.getPath('userData'), LEDGER_JSON_FILENAME),
       now: Date.now,
-      warn: (message) => console.warn(message),
-      log: (message) => console.log(message)
+      warn: warnFrom('ledger'),
+      log: unrouted
     })
     const ledger = new MaterialLedger({
       store: vault.store,
-      onError: (message, error) => console.warn(message, error)
+      onError: warnFrom('ledger')
     })
     await ledger.load()
 
     // Every project the app has been shown (#93, #572): a null store is a state, not a failure.
     const openedProjects = await openProjectsStore({
       database: appDatabase,
-      warn: (message) => console.warn(message)
+      warn: warnFrom('projects')
     })
     projects = openedProjects.store
     const projectsRefusal = openedProjects.failure
@@ -768,7 +772,7 @@ export function composeLegacyRuntime(
       endProcessTree: (pid) => platformAdapters.processEnd.endProcessTree(pid),
       processStartTimeMs: (pid) => platformAdapters.processProbe.processStartTimeMs(pid),
       ...(launchedSessionStore == null ? {} : { store: launchedSessionStore }),
-      log: (message) => console.log(message),
+      log: unrouted,
       now: Date.now
     })
 
@@ -861,25 +865,12 @@ export function composeLegacyRuntime(
       opencodeStoreRoot: expandHomePath(config.providers.opencode.storeRoot),
       credit: (mineId, tokens) => ledger.creditCoal(mineId, tokens),
       now: Date.now,
-      warn: warnWithOptionalCause
-    })
-      .then((result) => {
-        if (!result.ran) return
-        console.log(
-          `[coal] Backfilled ${result.tokensCredited} historical tokens across ` +
-            `${result.projectsCredited} project(s) from ${result.filesRead} file(s); ` +
-            `${result.done ? 'complete' : 'will continue on the next launch'}.`
-        )
-      })
-      .catch((error: unknown) => console.warn('[coal] Historical backfill failed:', error))
+      warn: warnFrom('coal-backfill')
+    }).catch((error: unknown) => diagnostics.warning('coal-backfill', error))
 
     // Optional push channels (#94, #203, #588 T6 F5): one shared listener, opt-in routes.
     const hookFs = new NodeHookFs()
     const onHookEvent = (event: HookEvent): void => {
-      const kind = event.notificationType === undefined ? '' : ` (${event.notificationType})`
-      console.log(
-        `[hooks] ${event.event}${kind}${event.cwd === undefined ? '' : ` in ${event.cwd}`}`
-      )
       runtime?.noteHookEvent(event)
       runtime?.nudge()
     }
@@ -893,8 +884,8 @@ export function composeLegacyRuntime(
       port: config.hooksPort,
       onEvent: onHookEvent,
       onOpenCodePush,
-      log: (message) => console.log(message),
-      warn: warnWithOptionalCause
+      log: unrouted,
+      warn: warnFrom('hooks')
     })
     hooks = new HookChannel({
       fs: hookFs,
@@ -904,8 +895,8 @@ export function composeLegacyRuntime(
       platform: process.platform,
       onEvent: onHookEvent,
       listener: hookListener,
-      log: (message) => console.log(message),
-      warn: warnWithOptionalCause
+      log: unrouted,
+      warn: warnFrom('hooks')
     })
     await hooks.restore()
     openCodePlugin = new OpenCodePluginChannel({
@@ -913,8 +904,8 @@ export function composeLegacyRuntime(
       pluginDir: openCodeGlobalPluginDir(home, process.env, currentPlatform()),
       userDataDir: app.getPath('userData'),
       listener: hookListener,
-      log: (message) => console.log(message),
-      warn: warnWithOptionalCause
+      log: unrouted,
+      warn: warnFrom('opencode-plugin')
     })
     openCodePluginError = (await openCodePlugin.restore())?.error
 
@@ -933,7 +924,7 @@ export function composeLegacyRuntime(
       })
       toggleShortcut = toggle
       const startupState = toggle.start()
-      if (startupState.error !== undefined) console.warn(`[shortcuts] ${startupState.error}`)
+      if (startupState.error !== undefined) diagnostics.warning('shortcut')
 
       handle(IPC_CHANNELS.hidePanel, () => hidePanel())
       // Raise and focus the window that sent the click (#165): since #635 always the shell window.
@@ -948,7 +939,7 @@ export function composeLegacyRuntime(
         try {
           await pinStore.save(real)
         } catch (error) {
-          console.warn('[pin] Failed to persist the always-on-top preference:', error)
+          diagnostics.preferenceWriteFailed('pin', error)
         }
         return real
       })
@@ -970,7 +961,7 @@ export function composeLegacyRuntime(
           try {
             await panelEdgeStore.save(result.edge)
           } catch (error) {
-            console.warn('[panel] Failed to persist the position preference:', error)
+            diagnostics.preferenceWriteFailed('panel-edge', error)
           }
         }
         return result
@@ -982,7 +973,7 @@ export function composeLegacyRuntime(
         try {
           await shortcutStore.save(state.accelerator)
         } catch (error) {
-          console.warn('[shortcuts] Failed to persist the panel-toggle shortcut:', error)
+          diagnostics.preferenceWriteFailed('shortcut', error)
         }
         return state
       })
@@ -1006,7 +997,7 @@ export function composeLegacyRuntime(
       try {
         await audioStore.save(preferences)
       } catch (error) {
-        console.warn('[audio] Failed to persist the audio preferences:', error)
+        diagnostics.preferenceWriteFailed('audio', error)
       }
       return preferences
     })
@@ -1016,7 +1007,7 @@ export function composeLegacyRuntime(
       try {
         await typographyStore.save(preferences)
       } catch (error) {
-        console.warn('[typography] Failed to persist the typography preferences:', error)
+        diagnostics.preferenceWriteFailed('typography', error)
       }
       for (const contents of appWebContents()) {
         contents.send(IPC_CHANNELS.typographyPreferencesChanged, preferences)
@@ -1030,7 +1021,7 @@ export function composeLegacyRuntime(
       try {
         await notificationStore.save(payload)
       } catch (error) {
-        console.warn('[notifications] Failed to persist the notifications switch:', error)
+        diagnostics.preferenceWriteFailed('notifications', error)
       }
       return notificationsEnabled
     })
@@ -1052,7 +1043,7 @@ export function composeLegacyRuntime(
         const key = parseJevApiKeyInput(payload)
         const result = await jevApiKeyStore.save(key)
         if (!result.saved) {
-          console.warn(`[jev] API key not saved: ${result.reason}`)
+          diagnostics.warning('jev-key')
           if (result.reason === 'encryption-unavailable') {
             return withJevPreferences({
               configured: false,
@@ -1061,7 +1052,7 @@ export function composeLegacyRuntime(
           }
         }
       } catch (error) {
-        console.warn('[jev] Refused to save an API key:', error)
+        diagnostics.warning('jev-key', error)
       }
       return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
     })
@@ -1069,7 +1060,7 @@ export function composeLegacyRuntime(
       try {
         await jevApiKeyStore.clear()
       } catch (error) {
-        console.warn('[jev] Failed to clear the stored API key:', error)
+        diagnostics.warning('jev-key', error)
       }
       return withJevPreferences({ configured: jevApiKeyStore.readKey() !== undefined })
     })
@@ -1079,7 +1070,7 @@ export function composeLegacyRuntime(
         const request = parseJevRouteLaunchRequest(payload)
         return await jevLaunchRouter.route(request)
       } catch (error) {
-        console.warn('[jev] Refused a route request:', error)
+        diagnostics.warning('jev-route', error)
         return jevRouteRefused
       }
     })
@@ -1094,7 +1085,7 @@ export function composeLegacyRuntime(
           error instanceof Error ? error.message : String(error)
         }`
       }
-      if (failure !== undefined) console.warn(`[jev] Preferences not saved: ${failure}`)
+      if (failure !== undefined) diagnostics.warning('jev-preferences')
       const stored = await withJevPreferences(await jevApiKeyStore.load())
       return failure === undefined ? stored : { ...stored, preferencesError: failure }
     })
@@ -1118,26 +1109,23 @@ export function composeLegacyRuntime(
         if (payload) {
           const result = await openCodePlugin.enable()
           openCodePluginError = result.enabled ? undefined : result.error
-          if (!result.enabled)
-            console.warn(`[opencode] Permission relay not enabled: ${result.error}`)
+          if (!result.enabled) diagnostics.warning('opencode-plugin')
         } else {
           await openCodePlugin.disable()
           openCodePluginError = undefined
         }
       } catch (error) {
         openCodePluginError = error instanceof Error ? error.message : String(error)
-        console.warn('[opencode] Permission relay switch failed:', error)
+        diagnostics.warning('opencode-plugin', error)
       }
       return openCodeSettings()
     })
     handle(IPC_CHANNELS.setOpenCodeServerPassword, async (payload) => {
       try {
         const result = await openCodePasswordStore.save(parseOpenCodeServerPasswordInput(payload))
-        if (!result.saved) console.warn(`[opencode] Server password not saved: ${result.reason}`)
+        if (!result.saved) diagnostics.warning('opencode-password')
       } catch (error) {
-        console.warn(
-          `[opencode] Refused to save a server password: ${error instanceof Error ? error.message : 'unknown'}`
-        )
+        diagnostics.warning('opencode-password', error)
       }
       return openCodeSettings()
     })
@@ -1145,7 +1133,7 @@ export function composeLegacyRuntime(
       try {
         await openCodePasswordStore.clear()
       } catch (error) {
-        console.warn('[opencode] Failed to clear the stored server password:', error)
+        diagnostics.warning('opencode-password', error)
       }
       return openCodeSettings()
     })
@@ -1212,7 +1200,7 @@ export function composeLegacyRuntime(
       if (!verdict.opened) return verdict
       const openError = await shell.openPath(verdict.absolutePath)
       if (openError !== '') {
-        console.warn(`[shell] could not open a mine file: ${openError}`)
+        diagnostics.warning('mine-path')
         return { opened: false, reason: MINE_PATH_UNOPENABLE_REASON }
       }
       return { opened: true }
@@ -1226,7 +1214,7 @@ export function composeLegacyRuntime(
       try {
         await shell.openExternal(url)
       } catch (error) {
-        console.warn(`[shell] could not open a link: ${String(error)}`)
+        diagnostics.warning('external-link', error)
         return refused
       }
       return { opened: true }
@@ -1375,7 +1363,7 @@ export function composeLegacyRuntime(
       setAlwaysOnTop: (on) => {
         const real = applyAlwaysOnTop(window, on)
         void pinStore.save(real).catch((error: unknown) => {
-          console.warn('[pin] Failed to persist the always-on-top preference:', error)
+          diagnostics.preferenceWriteFailed('pin', error)
         })
         return real
       },
@@ -1384,7 +1372,7 @@ export function composeLegacyRuntime(
         const result = setPanelLayout(request)
         if (request.edge !== undefined) {
           void panelEdgeStore.save(result.edge).catch((error: unknown) => {
-            console.warn('[panel] Failed to persist the position preference:', error)
+            diagnostics.preferenceWriteFailed('panel-edge', error)
           })
         }
         return result
@@ -1395,14 +1383,9 @@ export function composeLegacyRuntime(
   }
 
   return {
-    async compose() {
-      try {
-        return await init()
-      } catch (error) {
-        console.error('[main] Fatal startup error:', error)
-        throw error
-      }
-    },
+    // A failed composition rejects; the Electron root records it as `ui.start` with the step and the error's class
+    // or code (ADR-026 items 3-4) and exits.
+    compose: () => init(),
     beforeQuit() {
       runtime?.stop()
       runtime = null

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -330,20 +330,23 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     expect(refused.wmiCreates).toHaveLength(1)
     expect(refused.breakaways).toHaveLength(1)
 
-    // POSIX: a new session (Node's detached = setsid), never a shell, stdio to a file, unref'd.
+    // POSIX: a new session (Node's detached = setsid), never a shell, unref'd.
+    // AMENDED (cut-0 conformance, 19 §7 and 09 §1; was: "stdio to a file", stdout and stderr in
+    // run/host-stdio.log): the Host's stdio is not captured, as on Windows. Its own records go to
+    // its log segments through the logger, uncaught errors included (19 §9.1), and raw runtime
+    // output never lands in a file 09 §1 does not list.
     const root = mkdtempSync(join(tmpdir(), 'dwarfai-030-posix-'))
     try {
       const onPosix = new RecordingSpawnProcess()
       onPosix.onSpawn = (child) => child.emit('spawn')
       const posix = await createPosixSpawner({
-        spawnProcess: onPosix.spawn,
-        stdioFile: join(root, 'run', 'host-stdio.log')
+        spawnProcess: onPosix.spawn
       })({ ...request, file: '/opt/DwarfAI-Miners/dwarfai-miners', cwd: root })
       expect(posix.kind).toBe('launched')
       const [call] = onPosix.calls
       expect(call?.options).toMatchObject({ shell: false, windowsHide: true, detached: true })
-      expect((call?.options.stdio as unknown[])[0]).toBe('ignore')
-      expect(typeof (call?.options.stdio as unknown[])[1]).toBe('number')
+      expect(call?.options.stdio).toEqual(['ignore', 'ignore', 'ignore'])
+      expect(existsSync(join(root, 'run', 'host-stdio.log'))).toBe(false)
       expect(call?.child.unrefs).toBe(1)
     } finally {
       rmSync(root, { recursive: true, force: true })

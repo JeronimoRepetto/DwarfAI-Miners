@@ -45,12 +45,45 @@ export function releaseHostDataDir(facts: ReleaseDataDirFacts): string {
 
 /** The release build's hostDataDir for this process's OS, environment and home folder. */
 export function thisProcessReleaseHostDataDir(): string {
-  const platform: ReleasePlatform =
-    process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux'
-  return releaseHostDataDir({ platform, env: process.env, home: homedir() })
+  return releaseHostDataDir({ platform: thisPlatform(), env: process.env, home: homedir() })
+}
+
+function thisPlatform(): ReleasePlatform {
+  return process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux'
 }
 
 /** A packaged Host is the release build; anything else is a dev build (ADR-005 item 6). */
 export function buildKindOf(paths: { isPackaged: boolean }): 'release' | 'dev' {
   return paths.isPackaged ? 'release' : 'dev'
+}
+
+/** The facts the Host's log folder is read from (ADR-026 item 1). */
+export interface HostLogDirFacts extends ReleaseDataDirFacts {
+  isPackaged: boolean
+  /** DWARFAI_HOST_DATA_DIR, or null when the UI handed none. */
+  hostDataDir: string | null
+}
+
+/** The data directory of development builds (ADR-005 item 6; the UI's `dataDirectory.ts`). */
+export const DEV_DATA_DIR_NAME = 'DwarfAI-dev'
+
+/**
+ * The Host's log folder (ADR-026 item 1; 19 §3): `<userData>/logs/`, where userData is the folder
+ * holding the hostDataDir the UI handed over. A Host started without DWARFAI_HOST_DATA_DIR still
+ * logs its NO_DATA_DIR refusal: into the documented folder of its build, the release userData for a
+ * packaged Host and `DwarfAI-dev` beside it for a dev one, so dev logs never mix with a release's
+ * (19 §3).
+ */
+export function hostLogDir(facts: HostLogDirFacts): string {
+  const path = facts.platform === 'win32' ? win32 : posix
+  if (facts.hostDataDir !== null) return path.join(path.dirname(facts.hostDataDir), 'logs')
+  const userData = facts.isPackaged ? PRODUCT_NAME : DEV_DATA_DIR_NAME
+  return path.join(appDataDir(facts), userData, 'logs')
+}
+
+/** hostLogDir for this process's OS, environment and home folder. */
+export function thisProcessHostLogDir(
+  facts: Pick<HostLogDirFacts, 'isPackaged' | 'hostDataDir'>
+): string {
+  return hostLogDir({ ...facts, platform: thisPlatform(), env: process.env, home: homedir() })
 }

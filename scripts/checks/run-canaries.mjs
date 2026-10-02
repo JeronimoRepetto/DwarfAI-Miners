@@ -11,7 +11,9 @@ import { cruiseTree } from './depcruise-fixture.mjs'
  * `lint-canaries/<name>/` holds one minimal violating tree (paths as they must sit in a
  * repository, `src/…`) and a one-line `expect.json` `{ "rule": "<exact rule name>", "tool":
  * "depcruise" | "eslint" }`. `<name>` starts with the architecture rule id it proves (`R1` …
- * `R19`, optionally followed by `-<suffix>`, e.g. `R11-no-claude-agent-sdk`).
+ * `R19`, optionally followed by `-<suffix>`, e.g. `R11-no-claude-agent-sdk`), or, for a static rule
+ * outside 05 §5.1 that 17 §1.7 still gives a lint, with the ADR that owns it (`ADR-026-no-console`:
+ * `console.*` only in the logger, ADR-026 Verification).
  *
  * For each canary the runner writes the tree into a fresh scratch directory and runs both tools
  * on it with the repository's own configs, read in place (so the scratch run can never drift from
@@ -41,10 +43,11 @@ const SCRATCH_MODULE = 'src/scratch.ts'
 /** ESLint rules of 05 §5.3 whose message carries no rule tag, and the rule each one enforces. */
 const UNTAGGED_ESLINT_RULES = {
   'vue/no-v-html': ['R19'],
-  '@typescript-eslint/consistent-type-imports': ['R2']
+  '@typescript-eslint/consistent-type-imports': ['R2'],
+  'no-console': ['ADR-026']
 }
 
-const RULE_ID = /^R(?:[1-9]|1[0-9])(?=$|-)/
+const RULE_ID = /^(?:R(?:[1-9]|1[0-9])|ADR-\d{3})(?=$|-)/
 const MESSAGE_TAG = /\b(R\d{1,2}(?:\/R\d{1,2})*) \(/
 
 /** Node core modules and the packages dependency-cruiser treats as built-ins (`electron`). */
@@ -72,7 +75,9 @@ export function loadCanaries(dir = CANARIES_DIR) {
     const canaryDir = path.join(dir, name)
     if (!statSync(canaryDir).isDirectory()) continue
     const ruleId = RULE_ID.exec(name)?.[0]
-    if (ruleId === undefined) throw new Error(`${name}: a canary directory starts with R1…R19`)
+    if (ruleId === undefined) {
+      throw new Error(`${name}: a canary directory starts with R1…R19 or ADR-<nnn>`)
+    }
     const { rule, tool } = JSON.parse(readFileSync(path.join(canaryDir, 'expect.json'), 'utf8'))
     if (tool !== 'depcruise' && tool !== 'eslint') {
       throw new Error(`${name}: expect.json tool must be "depcruise" or "eslint"`)

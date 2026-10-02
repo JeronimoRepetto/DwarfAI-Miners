@@ -113,12 +113,13 @@ export async function runBoot(
 
   const privilege = await deps.privilege()
   if (!privilege.elevated.ok) {
-    // Fail closed: an elevated Host would run agents elevated (ADR-002 D6).
+    // Fail closed: an elevated Host would run agents elevated (ADR-002 D6). `msg` is a fixed
+    // sentence (ADR-026 item 3): the read's cause text can carry paths and process output.
     record({
       level: 'error',
       event: 'host.elevated-refused',
       causeClass: 'unreadable',
-      msg: `elevation could not be read, ${privilege.elevated.cause}`
+      msg: 'elevation could not be read'
     })
     return refuse('ELEVATED_REFUSED')
   }
@@ -158,8 +159,7 @@ export async function runBoot(
         outcome: 'failed',
         errCode: errorCode(error),
         durationMs: deps.clock.now() - stepStartedAt,
-        msg: `step ${step.name} failed`,
-        ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {})
+        msg: `step ${step.name} failed`
       })
       deps.exit(BOOT_FAILED_EXIT_CODE)
       return { kind: 'failed', step: step.name }
@@ -228,7 +228,7 @@ function jobStatusEntry(
       event: 'host.job-status',
       outcome: 'degraded',
       causeClass: 'unreadable',
-      msg: `job membership could not be read, ${inJob.cause}`
+      msg: 'job membership could not be read'
     }
   }
   return { level: 'warn', event: 'host.job-status', outcome: 'degraded', msg: 'inside a job' }

@@ -60,7 +60,6 @@ export const RUN_DIR = 'run'
 export const SPAWN_GATE_FILE = 'spawn.gate'
 /** Written by the Host after its bind (ISSUE-023); read for the probe's hello. */
 export const UI_TOKEN_FILE = 'ui.token'
-export const HOST_STDIO_FILE = 'host-stdio.log'
 
 /** How long one connect may take before the endpoint counts as unreachable. */
 export const CONNECT_TIMEOUT_MS = 1_000
@@ -110,7 +109,7 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
       ? createWindowsSpawner({
           loadHelper: () => loadWinLaunch({ prebuildsDir: options.prebuildsDir })
         })
-      : createPosixSpawner({ stdioFile: join(runDir, HOST_STDIO_FILE) })
+      : createPosixSpawner()
   const prepareCopy = createCopyPreparer(options, platform, uiEnv)
   const resolveEndpoint = async () =>
     options.endpoint === undefined

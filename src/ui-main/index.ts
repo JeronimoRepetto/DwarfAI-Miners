@@ -69,6 +69,7 @@ import {
   type UiLog,
   type UiLogEntry
 } from './diagnostics/uiLogger'
+import { installUiUncaughtHandlers } from './diagnostics/uncaught'
 import { composeRouteTargets, type RouteTargetPart } from './ipc/composeRouteTargets'
 import {
   createRendererDiagnosticHandler,
@@ -723,16 +724,6 @@ function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
 // process loads this file as its entry (`process.type === 'browser'`), never when a test imports
 // `startUiMain` from it. From cut 0 it is the app's Electron entry (21 §2 cut 0, ISSUE-056).
 if (process.type === 'browser') {
-  // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
-  // the CSP once Electron is ready. From cut 0 the secure window factory builds the Panel (ISSUE-047) with a preload
-  // that loads sandboxed (ISSUE-045); a rollback build's table gives the window back to today's runtime.
-  installWindowHardening({
-    app,
-    session: () => session.defaultSession,
-    openExternal: (url) => void shell.openExternal(url),
-    appEntry: appEntryUrl(),
-    devHmrOrigin: app.isPackaged ? undefined : devHmrOriginOf(process.env.ELECTRON_RENDERER_URL)
-  })
   // The rebuilt UI's data folder: userData, or `DwarfAI-dev` for a development or preview build whose userData is the
   // release folder (ADR-005 item 6; dataDirectory.ts). Today's runtime keeps userData (ISSUE-056 decision).
   const dataDir = uiDataDirectory({
@@ -749,6 +740,19 @@ if (process.type === 'browser') {
     pid: process.pid,
     level: logLevelFromEnv(process.env),
     appRoot: app.getAppPath()
+  })
+  // 19 §9.1 `uncaught`, §11 (FM-041): from the first moment the logger exists, an uncaught error is logged, flushed
+  // and ends Electron main non-zero; the listener also keeps Electron's own error dialog from opening.
+  installUiUncaughtHandlers({ process, log: uiLog, exit: (code) => app.exit(code) })
+  // ADR-019 items 2–4 (ISSUE-046): the navigation guard from the first webContents, then the permission denial and
+  // the CSP once Electron is ready. From cut 0 the secure window factory builds the Panel (ISSUE-047) with a preload
+  // that loads sandboxed (ISSUE-045); a rollback build's table gives the window back to today's runtime.
+  installWindowHardening({
+    app,
+    session: () => session.defaultSession,
+    openExternal: (url) => void shell.openExternal(url),
+    appEntry: appEntryUrl(),
+    devHmrOrigin: app.isPackaged ? undefined : devHmrOriginOf(process.env.ELECTRON_RENDERER_URL)
   })
   // The UI preference files of the data folder (ADR-024 item 1); their log records (19 §9.6 `uiprefs.corrupt`,
   // `uiprefs.write-failed`) go to the UI log segments.
@@ -790,7 +794,9 @@ if (process.type === 'browser') {
     legacyRuntime: createLegacyRuntimeRoute(
       composeLegacyRuntime(
         { app, dialog, nativeImage, shell, clipboard, globalShortcut },
-        windowFamilyOwner(ROUTES) === 'ui-local' ? { panel: legacyPanel } : {}
+        windowFamilyOwner(ROUTES) === 'ui-local'
+          ? { panel: legacyPanel, log: uiLog }
+          : { log: uiLog }
       )
     ),
     ipc: electronIpcMain(),
