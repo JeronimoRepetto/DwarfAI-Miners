@@ -320,6 +320,18 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The high-integrity half of ELEVATED_REFUSED (ADR-002 D6; 07 S12.03; 13
+      # FM-011). The OS lane above runs as the non-elevated test user and still
+      # asserts it is not elevated there, so it can only prove the Host's
+      # fail-closed refusal. This leg's own user is elevated, so this one step,
+      # deliberately outside run-unelevated.mjs, starts the Host just built and
+      # expects exit 65 with nothing bound; the script fails if the token is not
+      # high integrity, since it would prove nothing. It reads no secret, and it
+      # never runs for a pull request from a fork.
+      - name: Elevated start refused (Windows, as the elevated job user)
+        if: runner.os == 'Windows' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)
+        run: node scripts/ci/check-elevated-refusal.mjs --entry out/host/main.js
+
   # The Windows native modules (the owner-only pipe helper, ADR-003 item 2, and
   # the UI's launch helper, ADR-002 D6 item 1) as arm64 binaries on an arm64
   # Windows runner (a standard GitHub-hosted runner, free on public
