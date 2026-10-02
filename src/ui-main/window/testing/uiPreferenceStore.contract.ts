@@ -114,7 +114,7 @@ export function runUiPreferenceStoreContract(
       }
     })
 
-    it('[US-SET-002.AC10, OQ-65] a store never written loads "Start with the system" ON and logs nothing', async () => {
+    it('[US-SET-002.AC10] a store never written loads "Start with the system" ON and logs nothing', async () => {
       const subject = await makeSubject()
 
       expect(subject.open().load('startWithSystem')).toBe(true)
