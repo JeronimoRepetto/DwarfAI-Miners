@@ -2,7 +2,7 @@
 // The per-boot uiToken of ADR-003 item 3 (frozen): 32 random bytes as hex, only its SHA-256 kept in
 // memory, written to <hostDataDir>/run/ui.token with an exclusive create.
 import { timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -68,21 +68,7 @@ describe('UiToken (ADR-003 item 3)', () => {
     expect(second.verify(firstHex)).toBe(false)
   })
 
-  it.runIf(process.platform !== 'win32')(
-    '[ADR-003, NFR-SEC-05] a link planted at run/ui.token is replaced, never written through',
-    async () => {
-      const dir = runDir()
-      const victim = join(dir, '..', 'victim.txt')
-      await new UiToken().issue(dir)
-      rmSync(join(dir, UI_TOKEN_FILE))
-      writeFileSync(victim, 'untouched')
-      symlinkSync(victim, join(dir, UI_TOKEN_FILE))
-
-      await new UiToken().issue(dir)
-
-      expect(readFileSync(victim, 'utf8')).toBe('untouched')
-      expect(existsSync(join(dir, UI_TOKEN_FILE))).toBe(true)
-      expect(readFileSync(join(dir, UI_TOKEN_FILE), 'utf8')).toMatch(/^[0-9a-f]{64}$/)
-    }
-  )
+  // MOVED for the cut-0 conformance audit to uiToken.os.test.ts (17 §1.8: a case that runs on macOS and Linux only, on
+  // a real symlink, belongs in the OS lane), assertions unchanged: "[ADR-003, NFR-SEC-05] a link planted at
+  // run/ui.token is replaced, never written through". Recorded in docs/test-removals.md.
 })

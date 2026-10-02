@@ -13,7 +13,6 @@ import type { EndpointFacts } from '../platform/endpoint/nodeEndpointEnv'
 import { ConnectionRegistry } from '../transport/connectionRegistry'
 import { Dispatcher } from '../transport/dispatcher'
 import { createFakeOwnerOnlyPipe } from '../transport/endpoint/fakes/FakeOwnerOnlyPipe'
-import type { ListenOwnerOnlyPipe } from '../transport/endpoint/windowsPipeSecurity'
 import { HostStateHolder, LIFECYCLE_FRAMES } from '../transport/lifecycle/hostState'
 import { FrameClient } from '../transport/testing/frameClient'
 import { fixedSnapshotMeta } from '../transport/testing/fixedSnapshotMeta'
@@ -222,11 +221,17 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
       token,
       client: { appVersion: '0.20.0', buildId: 'abc1234', pid: 1 }
     })
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    // AMENDED for the cut-0 conformance audit (was: a 300 ms real-timer sleep before reading the frames, 17 §2.2,
+    // §5.3): the answer is awaited, then a ping's answer marks the end of what the Host sent, so a frame sent after
+    // hello.ok is still seen, with no clock involved.
+    await client.until(() => client.frames.length > 0)
+    client.send({ type: 'req', id: 'p1', method: 'ping', params: {} })
+    await client.until(() => client.frames.length > 1)
 
-    expect(client.frames).toEqual([
+    expect(client.frames.slice(0, -1)).toEqual([
       expect.objectContaining({ type: 'hello.ok', epoch: 'epoch-0001', endpointGeneration: 1 })
     ])
+    expect(client.frames.at(-1)).toMatchObject({ type: 'res', id: 'p1' })
   })
 
   it('[ADR-027, ADR-002] hello.ok of the bound endpoint advertises the lifecycle frames frame:host.state and frame:host.closing', async () => {
@@ -261,31 +266,9 @@ describe('the bind step composition (ADR-002 D2, D3)', () => {
     )
   })
 
-  it.runIf(process.platform === 'win32')(
-    '[ADR-003, FM-036] the bind step creates a Windows pipe only through the owner-only pipe helper it is given',
-    async () => {
-      const input = factsForThisOs(caseRoot())
-      const asked: string[] = []
-      const helper: ListenOwnerOnlyPipe = (name) => {
-        asked.push(name)
-        return Promise.resolve({ ok: true, server: { close: () => Promise.resolve() } })
-      }
-      const endpoint = createUiEndpoint({
-        facts: () => Promise.resolve({ ok: true, value: input }),
-        log: new RecordingDiagnosticsLog(),
-        scheduler: scheduler(),
-        ...channelDeps(),
-        ownerOnlyPipe: helper
-      })
-      cleanups.push(() => endpoint.close())
-
-      expect(await endpoint.bind()).toBe('bound')
-
-      const named = endpointFor(input)
-      if (!named.ok) throw new Error(named.error.kind)
-      expect(asked).toEqual([named.value.path])
-    }
-  )
+  // MOVED for the cut-0 conformance audit to bootSteps.os.test.ts (17 §1.8: a case that runs on Windows only belongs in
+  // the OS lane, marked by its file), assertions unchanged: "[ADR-003, FM-036] the bind step creates a Windows pipe only
+  // through the owner-only pipe helper it is given". Recorded in docs/test-removals.md.
 
   it('[ADR-005, FM-100] hello.ok of the bound endpoint advertises the conditions the Host runs in, read at each hello', async () => {
     const input = factsForThisOs(caseRoot())

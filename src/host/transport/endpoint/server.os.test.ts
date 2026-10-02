@@ -9,11 +9,12 @@
 // run with a real second account and a real second machine is the owner's manual step in
 // spike-results/SP-05.md.
 import { randomBytes } from 'node:crypto'
-import { lstatSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { connect, type Socket } from 'node:net'
+import { lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
+import { connect, createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { checkSocketPathLength, type HostEndpoint } from '@dwarfai/contracts'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { NodeScheduler } from '../../platform/clock/NodeScheduler'
 import { createNativeOwnerOnlyPipe } from '../../platform/endpoint/win-pipe/nativeOwnerOnlyPipe'
@@ -23,7 +24,8 @@ import {
   type PipeAccessProbe
 } from '../../platform/endpoint/win-pipe/testing/pipeAccessProbe'
 import { decideBind } from '../../wiring/singleInstance'
-import { bindEndpoint } from './server'
+import { createFakeOwnerOnlyPipe } from './fakes/FakeOwnerOnlyPipe'
+import { bindEndpoint, type BoundEndpoint, type EndpointServerDeps } from './server'
 
 const cleanups: Array<() => Promise<void> | void> = []
 
@@ -159,3 +161,138 @@ describe.runIf(process.platform === 'win32')('the UI endpoint on Windows', () =>
     expect(log.byEvent('host.endpoint.acl'), 'no degraded ACL record').toEqual([])
   }, 120_000)
 })
+
+// MOVED for the cut-0 conformance audit from server.test.ts (17 §1.8: a case that runs on one platform only belongs in
+// the OS lane, marked by its file), with the helpers they used there. Their assertions are unchanged; the 50 ms watch
+// of the stale-socket case is the L8 lane's, where real time is allowed (17 §5.3 covers L1–L7).
+
+let pipeCounter = 0
+
+/** A fresh endpoint of this OS's kind, removed after the test. */
+function testEndpoint(): HostEndpoint {
+  if (process.platform === 'win32') {
+    pipeCounter += 1
+    const suffix = `${process.pid}-${pipeCounter}-${Math.random().toString(16).slice(2, 10)}`
+    return { kind: 'named-pipe', path: `\\\\.\\pipe\\dwarfai-test-022-${suffix}` }
+  }
+  // Directly under /tmp: the socket path must fit `sun_path` (104 bytes on macOS), and the macOS
+  // runner's os.tmpdir() (`/var/folders/<2>/<30>/T`) leaves too little room for it.
+  const root = mkdtempSync('/tmp/dw022-')
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }))
+  const dir = join(root, 'run')
+  const path = join(dir, 'host-0123456789ab.sock')
+  const fits = checkSocketPathLength(process.platform === 'darwin' ? 'darwin' : 'linux', path)
+  if (!fits.ok) throw new Error(`test socket path too long for this OS: ${JSON.stringify(fits)}`)
+  return { kind: 'unix-socket', dir, path }
+}
+
+function deps(overrides: Partial<EndpointServerDeps> = {}): EndpointServerDeps & {
+  log: RecordingDiagnosticsLog
+} {
+  return {
+    log: new RecordingDiagnosticsLog(),
+    scheduler: new NodeScheduler({
+      onTaskError: (error) => {
+        throw error
+      }
+    }),
+    decide: decideBind,
+    probeExisting: () => Promise.resolve('no-hello'),
+    ownerOnlyPipe: createFakeOwnerOnlyPipe().listen,
+    ...overrides
+  } as EndpointServerDeps & { log: RecordingDiagnosticsLog }
+}
+
+async function bound(endpoint: HostEndpoint, d = deps()): Promise<BoundEndpoint> {
+  const outcome = await bindEndpoint(endpoint, d)
+  if (outcome.kind !== 'bound') throw new Error(`expected a bind, got ${outcome.kind}`)
+  cleanups.push(() => outcome.endpoint.close())
+  return outcome.endpoint
+}
+
+function client(path: string): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(path)
+    socket.once('connect', () => {
+      cleanups.push(() => void socket.destroy())
+      resolve(socket)
+    })
+    socket.once('error', reject)
+  })
+}
+
+/** Everything the socket receives in `ms`, and whether it was closed meanwhile. */
+function watch(socket: Socket, ms: number): Promise<{ bytes: number; closed: boolean }> {
+  return new Promise((resolve) => {
+    let bytes = 0
+    let closed = false
+    socket.on('data', (chunk: Buffer) => (bytes += chunk.length))
+    socket.once('close', () => (closed = true))
+    setTimeout(() => resolve({ bytes, closed }), ms)
+  })
+}
+
+function listen(server: Server, path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(path, resolve)
+  })
+}
+
+describe.runIf(process.platform !== 'win32')(
+  'the Host UI endpoint server on POSIX (ADR-003 item 1, ADR-002 D3)',
+  () => {
+    it('[FM-037] a stale socket file with no listener is removed and the bind succeeds once', async () => {
+      const endpoint = testEndpoint()
+      if (endpoint.kind !== 'unix-socket') throw new Error('POSIX only')
+      mkdirSync(endpoint.dir, { recursive: true, mode: 0o700 })
+      // A socket file whose listener is gone: bound under another name, renamed into place, then
+      // closed (the close removes only the old name), as a crashed Host leaves it.
+      const decoy = createServer()
+      const decoyPath = join(endpoint.dir, 'decoy.sock')
+      await listen(decoy, decoyPath)
+      renameSync(decoyPath, endpoint.path)
+      await new Promise<void>((resolve) => decoy.close(() => resolve()))
+      expect(lstatSync(endpoint.path).isSocket()).toBe(true)
+      const d = deps()
+
+      await bound(endpoint, d)
+
+      expect(d.log.byEvent('host.endpoint.stale-removed')).toEqual([
+        expect.objectContaining({ level: 'info', subsystem: 'host' })
+      ])
+      const socket = await client(endpoint.path)
+      expect(await watch(socket, 50)).toEqual({ bytes: 0, closed: false })
+    })
+
+    it('[ADR-003, FM-037] a file at the socket path that is not a socket is never removed', async () => {
+      const endpoint = testEndpoint()
+      if (endpoint.kind !== 'unix-socket') throw new Error('POSIX only')
+      mkdirSync(endpoint.path, { recursive: true })
+
+      const error = await bindEndpoint(endpoint, deps()).catch((caught: unknown) => caught)
+
+      expect(error).toMatchObject({ code: 'ENDPOINT_IN_USE_WITHOUT_HELLO' })
+      expect(lstatSync(endpoint.path).isDirectory()).toBe(true)
+    })
+  }
+)
+
+describe.runIf(process.platform === 'win32')(
+  'the Host UI endpoint server on Windows (ADR-003 item 2)',
+  () => {
+    // AMENDED for the ISSUE-022 Windows half (was: "until the SP-05 pipe helper exists the default
+    // pipe DACL is never silent: the bind logs it as degraded"): the helper exists, so the pipe is
+    // the helper's and the interim degraded record is gone.
+    it('[ADR-003, FM-036] a named pipe is created by the owner-only pipe helper and the bind logs no degraded ACL record', async () => {
+      const pipe = createFakeOwnerOnlyPipe()
+      const d = deps({ ownerOnlyPipe: pipe.listen })
+      const endpoint = testEndpoint()
+
+      await bound(endpoint, d)
+
+      expect(pipe.names).toEqual([endpoint.path])
+      expect(d.log.byEvent('host.endpoint.acl')).toEqual([])
+    })
+  }
+)
