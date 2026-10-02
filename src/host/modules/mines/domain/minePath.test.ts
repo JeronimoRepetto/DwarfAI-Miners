@@ -16,14 +16,19 @@ describe('canonicalMinePath (ADR-030 item 1, 06 §3)', () => {
     expect(canonicalMinePath('/home/j/repo/', linux)).toBe('/home/j/repo')
   })
 
-  it('[ADR-030] case is folded on Windows and on a case-insensitive volume only', () => {
-    // The fold decision: Windows always; POSIX only for a volume known to be case-insensitive.
-    // An unknown volume is never folded (S-030-1 not passed: the conservative default).
-    expect(caseFoldFor('win32', 'unknown')).toBe(true)
-    expect(caseFoldFor('win32', 'case-sensitive')).toBe(true)
-    expect(caseFoldFor('posix', 'case-insensitive')).toBe(true)
-    expect(caseFoldFor('posix', 'case-sensitive')).toBe(false)
-    expect(caseFoldFor('posix', 'unknown')).toBe(false)
+  it('[ADR-030, S-030-1] case is folded only where the folder is known to fold, on every OS', () => {
+    // The fold decision follows the S-030-1 detection alone (spike-results/S-030-1.md, Decision):
+    // a folder known to be case-insensitive folds, and an unknown one never does. Windows follows
+    // the same rule: an NTFS folder with the per-directory case-sensitive flag does not fold.
+    expect(caseFoldFor('case-insensitive')).toBe(true)
+    expect(caseFoldFor('case-sensitive')).toBe(false)
+    expect(caseFoldFor('unknown')).toBe(false)
+    const flagged = 'C:\\Work\\Repo'
+    for (const volume of ['case-sensitive', 'unknown'] as const) {
+      expect(canonicalMinePath(flagged, { style: 'win32', caseFold: caseFoldFor(volume) })).toBe(
+        'C:\\Work\\Repo'
+      )
+    }
 
     const mac = '/Users/j/Repo'
     expect(canonicalMinePath(mac, { style: 'posix', caseFold: true })).toBe('/users/j/repo')

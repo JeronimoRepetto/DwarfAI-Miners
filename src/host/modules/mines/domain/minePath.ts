@@ -6,7 +6,7 @@ import { HostInvariantError } from '../../../kernel/domain/errors'
 /** Which separator rules a path follows. On POSIX a backslash is a filename character. */
 export type PathStyle = 'win32' | 'posix'
 
-/** What the inspector knows about a volume's case sensitivity (S-030-1). */
+/** What the inspector's S-030-1 detection knows about whether a folder compares names without case. */
 export type VolumeCase = 'case-insensitive' | 'case-sensitive' | 'unknown'
 
 /** `canonicalMinePath(p)` of a mine's folder: the mine's identity, unique across all mines (INV-02). */
@@ -19,14 +19,15 @@ export interface CanonicalPathOptions {
 }
 
 /**
- * Whether paths on a volume compare without case (ADR-030 item 1): always on Windows; on POSIX only
- * for a volume known to be case-insensitive. An unknown volume is never folded: folding a
- * case-sensitive volume would merge two different folders into one mine, while not folding a
- * case-insensitive one only risks a second mine for an odd spelling (the conservative default of
- * `21` §2 cut 1 while S-030-1 has not passed).
+ * Whether a mine key folds case (ADR-030 item 1, S-030-1 Decision): only where the inspector's
+ * detection says the folder folds, on every OS. Windows is no exception: an NTFS folder with the
+ * per-directory case-sensitive flag compares names exactly. An unknown folder is never folded:
+ * folding a case-sensitive one would merge two different folders into one mine, while not folding
+ * a case-insensitive one only risks a second mine for an odd spelling (`21` §2 cut 1). The path
+ * style decides separators only.
  */
-export function caseFoldFor(style: PathStyle, volume: VolumeCase): boolean {
-  return style === 'win32' || volume === 'case-insensitive'
+export function caseFoldFor(volume: VolumeCase): boolean {
+  return volume === 'case-insensitive'
 }
 
 /**
