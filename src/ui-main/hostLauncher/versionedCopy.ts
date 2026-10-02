@@ -11,9 +11,10 @@
 // 3. Otherwise the app directory's listed entries are copied into `host/<version>.tmp-<pid>`
 //    (a file an installer added beside the app is not part of it), verified against the manifest
 //    byte for byte, the manifest is stored beside it, an outdated `host/<version>/` is
-//    removed, and the temporary directory is renamed into place in one step. So the final
-//    directory appears only by rename, never partially, and a copy that fails its check is removed
-//    and never renamed.
+//    renamed aside (never deleted in place: one a running Host holds fails the start
+//    `COPY_IN_USE`), and the temporary directory is renamed into place in one step. So the final
+//    directory appears only by rename, never partially, and a copy that fails at any step is
+//    removed and never renamed.
 //
 // The copy source is the directory holding the executable (Windows, Linux) or the whole `.app`
 // bundle (macOS), copied with symbolic links kept as links (SP-03: the bundle keeps its signature
@@ -37,7 +38,7 @@ import type { CopyPlatform } from './copySource'
 import type { LauncherClock } from './ports'
 
 // Without Electron's asar layer: the copied folder holds an `.asar` archive (plainFs.ts).
-const { cp, lstat, mkdir, readdir, readFile, rename, rm, writeFile } = plainFs.promises
+const { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } = plainFs.promises
 
 export {
   copySourceOf,
@@ -60,6 +61,11 @@ export interface CopyOps {
   rename(from: string, to: string): Promise<void>
   /** Removes the directory and everything under it; a missing one is a success. */
   removeTree(target: string): Promise<void>
+  /**
+   * The error code of the first file under the directory that a running process holds (it cannot be opened for
+   * writing: EBUSY on Windows, ETXTBSY on Linux), or null when none is held.
+   */
+  busyFile(dir: string): Promise<string | null>
 }
 
 export const nodeCopyOps: CopyOps = {
@@ -80,8 +86,26 @@ export const nodeCopyOps: CopyOps = {
           })
     }),
   rename: (from, to) => rename(from, to),
-  removeTree: (target) => rm(target, { recursive: true, force: true, maxRetries: 2 })
+  removeTree: (target) => rm(target, { recursive: true, force: true, maxRetries: 2 }),
+  async busyFile(dir) {
+    for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      try {
+        await (await open(path.join(entry.parentPath, entry.name), 'r+')).close()
+      } catch (error) {
+        const code = errnoOf(error)
+        if (BUSY_CODES.has(code)) return code
+      }
+    }
+    return null
+  }
 }
+
+/**
+ * What opening a file for writing gets while a running process executes it: EBUSY on Windows (a running image), ETXTBSY
+ * on Linux. Any other error (a read-only file, say) is not a sign of use. macOS gives no such error.
+ */
+const BUSY_CODES = new Set(['EBUSY', 'ETXTBSY'])
 
 export interface VersionedCopyRequest {
   /** The app version: the copy's folder name. */
@@ -172,11 +196,17 @@ export async function ensureVersionedCopy(
       await request.ops.removeTree(temp).catch(() => undefined)
       return fail('MANIFEST_MISMATCH')
     }
-    await writeFile(path.join(temp, HOST_MANIFEST_FILE), manifestText, 'utf8')
-    // An outdated copy of this version (another build, or a damaged one) goes only now, so a copy
-    // that fails above never costs the one already there.
-    if (await exists(copyDir)) await request.ops.removeTree(copyDir)
-    await request.ops.rename(temp, copyDir)
+    try {
+      await writeFile(path.join(temp, HOST_MANIFEST_FILE), manifestText, 'utf8')
+      const placed = await replaceByRename(request, temp, copyDir)
+      if (!placed.ok) {
+        await request.ops.removeTree(temp).catch(() => undefined)
+        return fail(placed.errCode)
+      }
+    } catch (error) {
+      await request.ops.removeTree(temp).catch(() => undefined)
+      return fail(`COPY_${errnoOf(error)}`)
+    }
   } catch (error) {
     return fail(`COPY_${errnoOf(error)}`)
   }
@@ -196,6 +226,32 @@ function isVersionFolderName(version: string): boolean {
     !version.includes('..') &&
     !version.includes(TEMP_MARKER)
   )
+}
+
+/**
+ * Puts the verified `temp` at `copyDir`. An outdated copy there (another build of this version, or a damaged one) is
+ * never deleted in place, and never while a running process holds one of its files (ADR-027 item 2: a copy used by a
+ * running Host is not deleted). A held copy is left whole and the start fails `COPY_IN_USE`: on Windows the folder of
+ * a running executable can still be renamed, but a removal would delete every file but the held ones
+ * (versionedCopyInUse.os.test.ts). Otherwise it is renamed aside to `<version>.tmp-<pid>-old`, the new copy is renamed
+ * into place, and what went aside is removed; should that removal fail, it is a `.tmp-` leftover, removed at the next
+ * start.
+ */
+async function replaceByRename(
+  request: VersionedCopyRequest,
+  temp: string,
+  copyDir: string
+): Promise<{ ok: true } | { ok: false; errCode: string }> {
+  if (!(await exists(copyDir))) {
+    await request.ops.rename(temp, copyDir)
+    return { ok: true }
+  }
+  if ((await request.ops.busyFile(copyDir)) !== null) return { ok: false, errCode: 'COPY_IN_USE' }
+  const aside = path.join(request.root, `${request.version}${TEMP_MARKER}${request.pid}-old`)
+  await request.ops.rename(copyDir, aside)
+  await request.ops.rename(temp, copyDir)
+  await request.ops.removeTree(aside).catch(() => undefined)
+  return { ok: true }
 }
 
 async function removeLeftovers(root: string, ops: CopyOps): Promise<void> {

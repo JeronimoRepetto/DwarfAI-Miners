@@ -150,6 +150,7 @@ describe('the Host runs from its versioned copy (ADR-002 D5, ADR-027 item 2)', (
           log,
           client: { appVersion: VERSION, buildId: 'os-test' },
           endpoint: world.endpoint,
+          build: 'dev',
           copyRoot: world.copyRoot,
           // ADDED (fix: Windows launch timeout): the launch helper the Windows spawner loads.
           prebuildsDir: path.join(REPO_ROOT, 'prebuilds')

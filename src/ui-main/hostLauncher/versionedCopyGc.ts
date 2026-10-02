@@ -5,11 +5,13 @@
 //
 // - "Newest" is version precedence (compareVersions, SemVer 2.0.0 §11), since each copy's folder is
 //   named by its app version; a folder name that is not a version sorts below every version.
-// - Each copy to delete is first renamed aside to `<name>.tmp-<pid>-gc` and then removed. The rename
-//   is the busy test: a folder holding a running executable cannot be renamed on Windows, so a busy
-//   copy is skipped whole and retried at the next start, never left half-deleted. A copy renamed
-//   aside whose removal fails is a `.tmp-` leftover, which ensureVersionedCopy removes first at the
-//   next start.
+// - A copy a running process still executes from (one of its files cannot be opened for writing,
+//   CopyOps.busyFile) is skipped whole and retried at the next start: on Windows the folder of a
+//   running executable can still be renamed, and a removal would delete every file but the held
+//   ones (versionedCopyInUse.os.test.ts). Any other copy to delete is first renamed aside to
+//   `<name>.tmp-<pid>-gc` and then removed; a rename that fails skips it too. A copy renamed aside
+//   whose removal fails is a `.tmp-` leftover, which ensureVersionedCopy removes first at the next
+//   start.
 // - It never throws: nothing here can fail the Host's start.
 //
 // Each deletion or skip is logged as `versioned-copy` (19 §9.1, proc `ui`) with cause class `gc`,
@@ -65,15 +67,20 @@ export async function collectVersionedCopies(
     const copy = path.join(request.root, name)
     const aside = path.join(request.root, `${name}${TEMP_MARKER}${request.pid}-gc`)
     try {
+      const busy = await request.ops.busyFile(copy)
+      if (busy !== null) {
+        skip(request.log, report, name, busy)
+        continue
+      }
       await request.ops.rename(copy, aside)
     } catch (error) {
-      skip(request.log, report, name, error)
+      skip(request.log, report, name, errnoOf(error))
       continue
     }
     try {
       await request.ops.removeTree(aside)
     } catch (error) {
-      skip(request.log, report, name, error)
+      skip(request.log, report, name, errnoOf(error))
       continue
     }
     report.deleted.push(name)
@@ -88,7 +95,7 @@ export async function collectVersionedCopies(
   return report
 }
 
-function skip(log: UiLog, report: VersionedCopyGcReport, name: string, error: unknown): void {
+function skip(log: UiLog, report: VersionedCopyGcReport, name: string, errCode: string): void {
   report.skipped.push(name)
   log.record({
     level: 'warn',
@@ -96,7 +103,7 @@ function skip(log: UiLog, report: VersionedCopyGcReport, name: string, error: un
     subsystem: SUBSYSTEM,
     outcome: 'skipped',
     causeClass: 'gc',
-    errCode: errnoOf(error)
+    errCode
   })
 }
 

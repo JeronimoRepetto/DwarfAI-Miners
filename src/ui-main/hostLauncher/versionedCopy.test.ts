@@ -79,6 +79,11 @@ function recordingOps(observe: (call: string, args: string[]) => void = () => {}
       calls.push(['removeTree', target])
       observe('removeTree', [target])
       await nodeCopyOps.removeTree(target)
+    },
+    async busyFile(dir) {
+      calls.push(['busyFile', dir])
+      observe('busyFile', [dir])
+      return nodeCopyOps.busyFile(dir)
     }
   }
   return { ops, calls }
@@ -96,7 +101,8 @@ describe('ensureVersionedCopy (ADR-002 D5, ADR-027 item 2)', () => {
         throw Object.assign(new Error('killed'), { code: 'KILLED' })
       },
       rename: () => Promise.reject(new Error('dead process')),
-      removeTree: () => Promise.reject(new Error('dead process'))
+      removeTree: () => Promise.reject(new Error('dead process')),
+      busyFile: () => Promise.reject(new Error('dead process'))
     }
 
     const first = await ensureVersionedCopy(w.request({ ops: killed, pid: 111 }))
@@ -270,6 +276,89 @@ describe('ensureVersionedCopy (ADR-002 D5, ADR-027 item 2)', () => {
     })
     expect(readdirSync(w.root)).toEqual([])
   })
+
+  it('[ADR-027, FM-129] a copy that fails after its temporary directory was made removes that directory', async () => {
+    const w = await world()
+    // The final rename is refused (an antivirus holding the new folder, say).
+    const refused: CopyOps = {
+      ...nodeCopyOps,
+      rename: () => Promise.reject(Object.assign(new Error('refused'), { code: 'EPERM' }))
+    }
+
+    const outcome = await ensureVersionedCopy(w.request({ ops: refused }))
+
+    expect(outcome).toEqual({ ok: false, errCode: 'COPY_EPERM' })
+    expect(readdirSync(w.root), 'no temporary directory is left behind').toEqual([])
+  })
+
+  it('[ADR-027, FM-129] an outdated copy of this version that a running Host holds is never deleted in place: the start fails COPY_IN_USE and that copy stays whole', async () => {
+    const w = await world()
+    expect((await ensureVersionedCopy(w.request())).ok).toBe(true)
+    const copyDir = path.join(w.root, VERSION)
+    const before = readdirSync(copyDir, { recursive: true }).map(String).sort()
+    // Another build of the same version, so the copy there is outdated for this one.
+    writeFileSync(path.join(w.sourceDir, 'resources', 'app.asar'), 'archive bytes v2')
+    await w.writeManifest()
+    // Windows, with a Host running from the copy (versionedCopyInUse.os.test.ts): its executable cannot be opened for
+    // writing (EBUSY) nor removed, so a removal deletes every other file and then fails; the folder holding it can
+    // still be renamed, and the executable goes with it.
+    let held = copyDir
+    const ops: CopyOps = {
+      ...nodeCopyOps,
+      busyFile: async (dir) => (dir === held ? 'EBUSY' : nodeCopyOps.busyFile(dir)),
+      async rename(from, to) {
+        await nodeCopyOps.rename(from, to)
+        if (from === held) held = to
+      },
+      async removeTree(target) {
+        if (target !== held) return nodeCopyOps.removeTree(target)
+        rmSync(path.join(target, 'resources'), { recursive: true, force: true })
+        rmSync(path.join(target, 'host-manifest.json'), { force: true })
+        throw Object.assign(new Error('in use'), { code: 'EPERM' })
+      }
+    }
+
+    const outcome = await ensureVersionedCopy(w.request({ ops, pid: 333 }))
+
+    expect(outcome).toEqual({ ok: false, errCode: 'COPY_IN_USE' })
+    expect(
+      readdirSync(copyDir, { recursive: true }).map(String).sort(),
+      'the copy in use is whole'
+    ).toEqual(before)
+    expect(readdirSync(w.root), 'and no temporary directory is left').toEqual([VERSION])
+    expect(w.log.byEvent('versioned-copy').at(-1)).toMatchObject({
+      level: 'error',
+      outcome: 'failed',
+      causeClass: 'copy',
+      errCode: 'COPY_IN_USE'
+    })
+  })
+
+  it('[ADR-027, FM-129] an outdated copy of this version that nothing holds is replaced by rename, and what it moved aside is removed', async () => {
+    const w = await world()
+    expect((await ensureVersionedCopy(w.request())).ok).toBe(true)
+    writeFileSync(path.join(w.sourceDir, 'resources', 'app.asar'), 'archive bytes v2')
+    await w.writeManifest()
+    const copyDir = path.join(w.root, VERSION)
+    const temp = path.join(w.root, `${VERSION}.tmp-444`)
+    const aside = path.join(w.root, `${VERSION}.tmp-444-old`)
+    const { ops, calls } = recordingOps()
+
+    const outcome = await ensureVersionedCopy(w.request({ ops, pid: 444 }))
+
+    expect(outcome).toMatchObject({ ok: true, reused: false })
+    expect(calls).toEqual([
+      ['copyTree', w.sourceDir, temp],
+      ['busyFile', copyDir],
+      ['rename', copyDir, aside],
+      ['rename', temp, copyDir],
+      ['removeTree', aside]
+    ])
+    expect(readdirSync(w.root)).toEqual([VERSION])
+    expect(await readFile(path.join(copyDir, 'resources', 'app.asar'), 'utf8')).toBe(
+      'archive bytes v2'
+    )
+  })
 })
 
 describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
@@ -277,17 +366,21 @@ describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
     expect(
       versionedCopyRoot({
         platform: 'win32',
+        build: 'release',
         env: { LOCALAPPDATA: 'C:\\Users\\j\\AppData\\Local' },
         homeDir: 'C:\\Users\\j'
       })
     ).toEqual({ ok: true, value: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host' })
-    expect(versionedCopyRoot({ platform: 'darwin', env: {}, homeDir: '/Users/j' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'darwin', build: 'release', env: {}, homeDir: '/Users/j' })
+    ).toEqual({
       ok: true,
       value: '/Users/j/Library/Application Support/DwarfAI/host'
     })
     expect(
       versionedCopyRoot({
         platform: 'linux',
+        build: 'release',
         env: { XDG_DATA_HOME: '/data/j' },
         homeDir: '/home/j'
       })
@@ -295,21 +388,60 @@ describe('where the copy lives and what it is made from (ADR-002 D5)', () => {
     // The XDG Base Directory default when XDG_DATA_HOME is unset, empty or relative.
     for (const XDG_DATA_HOME of [undefined, '', 'relative/share']) {
       expect(
-        versionedCopyRoot({ platform: 'linux', env: { XDG_DATA_HOME }, homeDir: '/home/j' })
+        versionedCopyRoot({
+          platform: 'linux',
+          build: 'release',
+          env: { XDG_DATA_HOME },
+          homeDir: '/home/j'
+        })
       ).toEqual({ ok: true, value: '/home/j/.local/share/dwarfai/host' })
     }
   })
 
+  it('[ADR-002, ADR-005, FM-107] a development or preview build keeps its copies in host-dev beside the release root, never in it', () => {
+    // A dev Host running from a copy under the release root kept an installed build from replacing that
+    // copy (COPY_EPERM, 2026-10-02). `DwarfAI-dev/host` is not used: on macOS it is the dev hostDataDir.
+    expect(
+      versionedCopyRoot({
+        platform: 'win32',
+        build: 'dev',
+        env: { LOCALAPPDATA: 'C:\\Users\\j\\AppData\\Local' },
+        homeDir: 'C:\\Users\\j'
+      })
+    ).toEqual({ ok: true, value: 'C:\\Users\\j\\AppData\\Local\\DwarfAI\\host-dev' })
+    expect(
+      versionedCopyRoot({ platform: 'darwin', build: 'dev', env: {}, homeDir: '/Users/j' })
+    ).toEqual({ ok: true, value: '/Users/j/Library/Application Support/DwarfAI/host-dev' })
+    expect(
+      versionedCopyRoot({
+        platform: 'linux',
+        build: 'dev',
+        env: { XDG_DATA_HOME: '/data/j' },
+        homeDir: '/home/j'
+      })
+    ).toEqual({ ok: true, value: '/data/j/dwarfai/host-dev' })
+    // Without a LOCALAPPDATA or a home folder a dev build has no copy root either.
+    expect(
+      versionedCopyRoot({ platform: 'win32', build: 'dev', env: {}, homeDir: 'C:\\Users\\j' })
+    ).toEqual({ ok: false, errCode: 'COPY_ROOT_UNKNOWN' })
+  })
+
   it('[ADR-002, FM-129] without a LOCALAPPDATA or a home folder there is no copy root', () => {
-    expect(versionedCopyRoot({ platform: 'win32', env: {}, homeDir: 'C:\\Users\\j' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'win32', build: 'release', env: {}, homeDir: 'C:\\Users\\j' })
+    ).toEqual({
       ok: false,
       errCode: 'COPY_ROOT_UNKNOWN'
     })
-    expect(versionedCopyRoot({ platform: 'darwin', env: {}, homeDir: '' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'darwin', build: 'release', env: {}, homeDir: '' })
+    ).toEqual({
       ok: false,
       errCode: 'COPY_ROOT_UNKNOWN'
     })
-    expect(versionedCopyRoot({ platform: 'linux', env: {}, homeDir: '' })).toEqual({
+    expect(
+      versionedCopyRoot({ platform: 'linux', build: 'release', env: {}, homeDir: '' })
+    ).toEqual({
       ok: false,
       errCode: 'COPY_ROOT_UNKNOWN'
     })

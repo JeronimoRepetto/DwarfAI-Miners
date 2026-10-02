@@ -764,6 +764,8 @@ function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
   return composeHostClient({
     ...createNodeHostAttach({
       hostDataDir,
+      // A dev or preview build's copies stay apart from the installed release build's (ADR-005 item 6).
+      build: app.isPackaged ? 'release' : 'dev',
       execPath: process.execPath,
       hostManifest: nodeHostManifestPath({
         packaged: app.isPackaged,
