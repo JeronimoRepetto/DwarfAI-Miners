@@ -1,0 +1,186 @@
+// The MessageLog conformance suite (16 §4.6 `runMessageLogContract`; 16 §2.8; 17 §1.3): run on the
+// in-memory double and on the SQLite adapter. ISSUE-098's cases: one row per source key whatever
+// path delivers it, a dropped record keeps its key and writes no row, an echo merges into its
+// waiting DwarfAI row, pages are newest first and per dwarf, and every write runs inside the
+// caller's transaction. The 50-row cap cases (ISSUE-105) and the `request_id` case (ISSUE-166)
+// are added by their issues.
+import { afterEach, describe, expect, it } from 'vitest'
+import { HostInvariantError } from '../../../kernel/domain/errors'
+import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { ConversationEntry } from '../../suppliers'
+import type { MessageLog } from '../ports/messageLog'
+
+export interface MessageLogSubject {
+  log: MessageLog
+  /** Two dwarfs that exist in the subject's store (the SQLite half seeds their rows). */
+  dwarfIds: readonly [DwarfId, DwarfId]
+  /** The instant the subject's clock reads (stamps `createdAt`). */
+  now: Instant
+  /** The caller's transaction: commits when `work` returns, rolls back when it throws. */
+  inTransaction<T>(work: () => T): T
+  /** A DwarfAI-sent row of `dwarfId` waiting for the echo `correlation` (written by send later). */
+  seedWaitingRow(dwarfId: DwarfId, correlation: string, text: string): MessageId
+  /** The claimed key, with the row it points at, or null when the key was never seen. */
+  keyOf(sourceKey: string): { dwarfId: DwarfId; messageId: MessageId | null } | null
+  /** How many message rows the dwarf has. */
+  rowCount(dwarfId: DwarfId): number
+  dispose(): void | Promise<void>
+}
+
+class CallerFailure extends Error {}
+
+const entry = (n: number, extra: Partial<ConversationEntry> = {}): ConversationEntry => ({
+  sourceKey: `claude:claude:session-1:event-${n}`,
+  role: 'dwarf',
+  text: `message ${n}`,
+  providerTime: null,
+  ...extra
+})
+
+export function runMessageLogContract(
+  makeSubject: () => MessageLogSubject | Promise<MessageLogSubject>
+): void {
+  describe('MessageLog contract', () => {
+    let subject: MessageLogSubject | null = null
+
+    afterEach(async () => {
+      await subject?.dispose()
+      subject = null
+    })
+
+    const setUp = async () => {
+      subject = await makeSubject()
+      return subject
+    }
+
+    it('[INV-60, ADR-006] the same sourceKey appended from two paths inserts one row and reports inserted 1 then 0', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const live = entry(1, { role: 'person', text: 'hello', providerTime: 1_000 })
+      const fromTranscript = { ...live }
+
+      const first = s.inTransaction(() => s.log.append(dwarf, [live], 'live-stream'))
+      const second = s.inTransaction(() => s.log.append(dwarf, [fromTranscript], 'transcript'))
+
+      expect(first.inserted).toBe(1)
+      expect(first.appended).toEqual([
+        {
+          id: expect.any(String),
+          dwarfId: dwarf,
+          sourceKey: live.sourceKey,
+          role: 'person',
+          text: 'hello',
+          attachments: [],
+          origin: 'live-stream',
+          providerTime: 1_000,
+          createdAt: s.now
+        }
+      ])
+      expect(second).toEqual({ inserted: 0, appended: [] })
+      expect(s.rowCount(dwarf)).toBe(1)
+      expect(s.keyOf(live.sourceKey)).toEqual({ dwarfId: dwarf, messageId: first.appended[0]?.id })
+      expect(s.log.page(dwarf, {})).toEqual([
+        { sourceKey: live.sourceKey, role: 'person', text: 'hello', providerTime: 1_000 }
+      ])
+    })
+
+    it('[INV-60] a dropped record claims its key with no message row, and a later replay of that key inserts nothing', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const controlPlane = entry(1, { controlPlane: true, text: 'Warmup' })
+      const handoffEcho = entry(2, { handoffEcho: true, role: 'person' })
+
+      const dropped = s.inTransaction(() =>
+        s.log.append(dwarf, [controlPlane, handoffEcho], 'transcript')
+      )
+      // A replay of the same keys, even one that lost the flags, finds them claimed.
+      const replay = s.inTransaction(() => s.log.append(dwarf, [entry(1), entry(2)], 'live-stream'))
+
+      expect(dropped).toEqual({ inserted: 0, appended: [] })
+      expect(replay).toEqual({ inserted: 0, appended: [] })
+      expect(s.keyOf(controlPlane.sourceKey)).toEqual({ dwarfId: dwarf, messageId: null })
+      expect(s.keyOf(handoffEcho.sourceKey)).toEqual({ dwarfId: dwarf, messageId: null })
+      expect(s.rowCount(dwarf)).toBe(0)
+      expect(s.log.page(dwarf, {})).toEqual([])
+    })
+
+    it('[INV-60, ADR-007] a provider echo of a waiting DwarfAI row is merged into it and its key points at that row', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      const waiting = s.seedWaitingRow(dwarf, 'send-request-7', 'hello')
+      const echo = entry(1, { role: 'person', text: 'hello', echoOf: 'send-request-7' })
+      // The same correlation on another dwarf's row never merges across dwarfs.
+      const elsewhere = entry(2, { role: 'person', text: 'hello', echoOf: 'send-request-8' })
+      s.seedWaitingRow(other, 'send-request-8', 'hello')
+
+      const merged = s.inTransaction(() => s.log.append(dwarf, [echo, elsewhere], 'live-stream'))
+
+      expect(merged.inserted).toBe(1)
+      expect(merged.appended.map((m) => m.sourceKey)).toEqual([elsewhere.sourceKey])
+      expect(s.keyOf(echo.sourceKey)).toEqual({ dwarfId: dwarf, messageId: waiting })
+      expect(s.rowCount(dwarf)).toBe(2)
+      expect(s.rowCount(other)).toBe(1)
+    })
+
+    it('[ADR-007] page returns the newest rows first and never a row of another dwarf', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      const oldest = entry(1, { providerTime: s.now - 3_000 })
+      const newest = entry(2, { providerTime: s.now + 5_000 })
+      const middle = entry(3, { providerTime: s.now - 1_000 })
+      // No provider time: it sorts by its createdAt, the subject's now.
+      const untimed = entry(4)
+      const otherDwarfs = entry(5, { providerTime: s.now + 9_000 })
+
+      const { appended } = s.inTransaction(() =>
+        s.log.append(dwarf, [oldest, newest, middle, untimed], 'transcript')
+      )
+      s.inTransaction(() => s.log.append(other, [otherDwarfs], 'transcript'))
+      const untimedId = appended.find((m) => m.sourceKey === untimed.sourceKey)?.id
+
+      const keys = (req: Parameters<MessageLog['page']>[1]) =>
+        s.log.page(dwarf, req).map((e) => e.sourceKey)
+      expect(keys({})).toEqual([
+        newest.sourceKey,
+        untimed.sourceKey,
+        middle.sourceKey,
+        oldest.sourceKey
+      ])
+      expect(keys({ limit: 2 })).toEqual([newest.sourceKey, untimed.sourceKey])
+      // `before` pages past a row: the rows older than it, newest first.
+      expect(keys({ before: untimedId })).toEqual([middle.sourceKey, oldest.sourceKey])
+      expect(s.log.page(other, {}).map((e) => e.sourceKey)).toEqual([otherDwarfs.sourceKey])
+    })
+
+    it('[ADR-007] append outside an open transaction throws HostInvariantError', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+
+      expect(() => s.log.append(dwarf, [entry(1)], 'live-stream')).toThrow(HostInvariantError)
+      expect(() =>
+        s.inTransaction(() => {
+          s.log.append(dwarf, [entry(2)], 'live-stream')
+          throw new CallerFailure('the caller failed after appending')
+        })
+      ).toThrow(CallerFailure)
+
+      expect(s.keyOf(entry(1).sourceKey)).toBeNull()
+      expect(s.keyOf(entry(2).sourceKey)).toBeNull()
+      expect(s.rowCount(dwarf)).toBe(0)
+    })
+
+    it('[ADR-007] an entry over 64 KiB is refused and its batch leaves nothing in the caller transaction', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const tooLong = entry(2, { text: 'x'.repeat(65_537) })
+
+      expect(() =>
+        s.inTransaction(() => s.log.append(dwarf, [entry(1), tooLong], 'live-stream'))
+      ).toThrow()
+
+      expect(s.keyOf(entry(1).sourceKey)).toBeNull()
+      expect(s.keyOf(tooLong.sourceKey)).toBeNull()
+      expect(s.rowCount(dwarf)).toBe(0)
+    })
+  })
+}

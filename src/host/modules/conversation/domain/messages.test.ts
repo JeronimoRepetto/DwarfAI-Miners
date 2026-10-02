@@ -17,7 +17,12 @@ describe('classifyEntry', () => {
     expect(classifyEntry(plain, isEchoWaiting)).toBe('insert')
   })
 
-  it('[INV-68] a hand-off echo is dropped with its key kept', () => {
+  it('[INV-68] a hand-off echo and a control-plane record are dropped with their key kept', () => {
+    // The control-plane flag is the 2026-10-02 amendment to 15 §1.2 (ISSUE-098).
+    expect(classifyEntry({ controlPlane: true }, isEchoWaiting)).toBe('drop-keep-key')
+    expect(classifyEntry({ controlPlane: true, echoOf: WAITING }, isEchoWaiting)).toBe(
+      'drop-keep-key'
+    )
     const handoffEcho: EntryFlags = { handoffEcho: true }
     // A pushed hand-off writes no DwarfAI row (deliverInvisibly, INV-68), so even an echo
     // correlation that happens to match a waiting row never makes it a message.

@@ -3,6 +3,9 @@
 import type { AnswerRefusalReason, SourceKey } from '../../../kernel/domain/sharedContracts'
 import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 
+/** `MessageText` bound (06 §9.1; 09 §4.4 CHECK): UTF-8 bytes, truncated with a marker upstream. */
+export const MESSAGE_TEXT_MAX_BYTES = 65_536
+
 /** 06 §0.2 `MessageRole` (ADR-007 item 2). */
 export type MessageRole = 'person' | 'dwarf' | 'answers-record' | 'system-line'
 
@@ -69,6 +72,16 @@ export interface Message {
   createdAt: Instant
 }
 
+/** 06 §0.2 `MessageView`: the `Message` without `sourceKey`, `origin` and `askId`. */
+export type MessageView = Omit<Message, 'sourceKey' | 'origin' | 'askId'>
+
+/** The read model of one stored message (06 §0.2): what the UI sees of it. */
+export function toMessageView(message: Message): MessageView {
+  const { sourceKey, origin, askId, ...view } = message
+  void [sourceKey, origin, askId]
+  return view
+}
+
 /**
  * 14 §3.6 `FeedPageRequest`, copied field for field because the Host's ports never import the
  * wire package (05 R2, R3); on any difference the owner wins and this copy is a defect.
@@ -86,14 +99,17 @@ export type EntryDisposition = 'insert' | 'merge-echo' | 'drop-keep-key'
 export interface EntryFlags {
   echoOf?: string
   handoffEcho?: boolean
+  /** Amendment to frozen 15 §1.2 (owner-approved 2026-10-02, ISSUE-098). */
+  controlPlane?: true
 }
 
 /**
  * Classifies one entry whose key was just claimed (09 §5.2 step 1). `isEchoWaiting` tells whether
  * a DwarfAI row of the same dwarf waits for that echo correlation (`messages.pending_echo`).
  *
- * - A hand-off echo is dropped first: a pushed delegation result has no row to merge into
- *   (INV-68), whatever its correlation.
+ * - A hand-off echo or a provider control-plane record is dropped first, whatever its
+ *   correlation: neither ever renders, and a pushed delegation result has no row to merge into
+ *   (INV-68).
  * - An echo of a waiting DwarfAI row is merged into it, never a second bubble (INV-60).
  * - Anything else, including an echo whose row no longer waits, is a new row.
  */
@@ -101,7 +117,7 @@ export function classifyEntry(
   entry: EntryFlags,
   isEchoWaiting: (correlation: string) => boolean
 ): EntryDisposition {
-  if (entry.handoffEcho === true) return 'drop-keep-key'
+  if (entry.handoffEcho === true || entry.controlPlane === true) return 'drop-keep-key'
   if (entry.echoOf !== undefined && isEchoWaiting(entry.echoOf)) return 'merge-echo'
   return 'insert'
 }

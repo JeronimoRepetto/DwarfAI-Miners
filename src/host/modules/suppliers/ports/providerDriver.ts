@@ -188,6 +188,8 @@ export interface ConversationEntry {
   activity?: readonly ActivityStep[] // tool steps folded into this entry (US-MSG-004)
   echoOf?: string // SendReceipt.correlation this entry echoes → merged, no second bubble (INV-60)
   handoffEcho?: boolean // echo of an ADR-013 item 6 pushed handoff: dropped at ingest, key recorded
+  // Amendment to frozen 15 §1.2 (owner-approved 2026-10-02, ISSUE-098):
+  controlPlane?: true // provider control-plane record: key claimed at ingest, no row (INV-68)
   providerAgentId?: string // subagent that wrote it when it shares the parent's session (ADR-015 item 7)
 }
 
