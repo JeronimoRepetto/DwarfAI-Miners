@@ -3,6 +3,7 @@ import { FakeClock } from '../../kernel/fakes/FakeClock'
 import { RecordingDiagnosticsLog } from '../../kernel/fakes/RecordingDiagnosticsLog'
 import { RecordingEventBus } from '../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../kernel/fakes/SequenceIdGenerator'
+import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { fixtureSeeds } from '../../platform/sqlite/testing/fixtureSeeds'
@@ -100,10 +101,14 @@ function recordingStep(
   }
 }
 
-function saga(options: { failingDbStep?: boolean } = {}) {
-  const { db } = openTemplateCopy()
+/**
+ * One Host's saga. `next` builds the saga of the next boot over the same database (CH-01: the
+ * previous instance and its memory are gone).
+ */
+function saga(options: { failingDbStep?: boolean; db?: SqliteDatabase; clock?: FakeClock } = {}) {
+  const db = options.db ?? openTemplateCopy().db
   const transactions = new SqliteTransactionRunner(db)
-  const clock = new FakeClock(T)
+  const clock = options.clock ?? new FakeClock(T)
   const ids = new SequenceIdGenerator()
   const trace: Trace = []
   const epoch = () => Number(db.all('SELECT reset_epoch FROM app_meta')[0]?.['reset_epoch'])
@@ -160,7 +165,9 @@ function saga(options: { failingDbStep?: boolean } = {}) {
       )
   }
   const journalRow = () => ({
-    ...db.all('SELECT step, finished_at, epoch FROM reset_journal ORDER BY started_at DESC')[0]
+    ...db.all(
+      'SELECT step, finished_at, epoch, last_failure FROM reset_journal ORDER BY started_at DESC'
+    )[0]
   })
   return {
     db,
@@ -177,7 +184,8 @@ function saga(options: { failingDbStep?: boolean } = {}) {
     epoch,
     journalStep,
     journalRow,
-    preferences
+    preferences,
+    next: () => saga({ db, clock })
   }
 }
 
@@ -446,5 +454,39 @@ describe('ResetSaga', () => {
       'vacuum tx=false step=db'
     ])
     expect(secrets.deleted).toStrictEqual(['jev-key', 'opencode-password'])
+  })
+
+  it('[S13.07] a failed step writes its reason to reset_journal.last_failure', async () => {
+    const { subject, externalConfig, journalRow } = saga()
+    externalConfig.lock('claude-hooks')
+
+    await subject.resetMetrics(YES)
+
+    expect(journalRow()).toMatchObject({ step: 'secrets', last_failure: 'config-revert-locked' })
+  })
+
+  it('[S13.08, FM-019] resumeOnBoot continues the unfinished saga of a previous Host from its journal step, and finds nothing to do once it is done', async () => {
+    const first = saga()
+    first.ui.holdAcks = true
+    // The Host dies while it waits for the UI acks: the journal reads external-config.
+    void first.subject.resetMetrics(YES)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(first.journalRow()).toMatchObject({ step: 'external-config' })
+
+    const boot = first.next()
+    const resumed = await boot.subject.resumeOnBoot()
+
+    expect(resumed).toStrictEqual({ outcome: 'reset', epoch: 1 })
+    expect(boot.journalRow()).toMatchObject({ step: 'done', epoch: 1 })
+    expect(boot.ui.progressed).toStrictEqual(['ui-prefs', 'install-moment', 'done'])
+    // Nothing before the journal step runs again: no db step, no cleanup, no secret delete.
+    expect(boot.trace.some((line) => /^(first|last|deleteBackups)/.test(line))).toBe(false)
+    expect(boot.secrets.deleted).toStrictEqual([])
+    expect(boot.bus.published.map((event) => event.type)).toStrictEqual(['MetricsResetFinished'])
+    expect(boot.log.byEvent('reset.resumed')).toMatchObject([
+      { level: 'info', subsystem: 'preferences', msg: 'external-config' }
+    ])
+
+    expect(await boot.next().subject.resumeOnBoot()).toBeNull()
   })
 })

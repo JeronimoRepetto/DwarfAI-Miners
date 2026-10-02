@@ -84,6 +84,14 @@ export interface ResetMetricsCommands {
   resetMetrics(cmd: ResetMetricsCommand): Promise<MetricsResetResult>
 }
 
+/**
+ * The saga's boot resume (07 S13.08; 16 §8.2 step 3), called by the Host boot before commands and
+ * observation: the unfinished saga's result, or `null` when no saga is unfinished.
+ */
+export interface ResetSagaResume {
+  resumeOnBoot(): Promise<MetricsResetResult | null>
+}
+
 export interface ResetSagaModuleDeps {
   /** The Host's one writer (09 §8.1), where `reset_journal` lives. */
   db: SqliteDatabase
@@ -106,7 +114,7 @@ export interface ResetSagaModuleDeps {
 }
 
 /** The Reset-metrics saga over the Host database's `reset_journal` (16 §4.12). */
-export function createResetSaga(deps: ResetSagaModuleDeps): ResetMetricsCommands {
+export function createResetSaga(deps: ResetSagaModuleDeps): ResetMetricsCommands & ResetSagaResume {
   const { db, clock, ids, ...rest } = deps
   return new ResetSaga({
     ...rest,

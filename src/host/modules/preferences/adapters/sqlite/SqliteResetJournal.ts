@@ -9,6 +9,9 @@
 //   `reset_journal_one_active` refuses a second unfinished saga, which aborts the transaction.
 // - `advance(id, s)` only moves forward in the 07 §13 order: the same or an earlier step is a no-op,
 //   so a resumed saga that repeats a step leaves the row as it was. `done` writes `finished_at`.
+// - `unfinished()` and `fail(id, reason)` (amendment, owner-approved 2026-10-02, ISSUE-212): the
+//   one row not `done`, for the boot resume (07 S13.08); and `last_failure`, the fixed reason of
+//   the last failed step, never content (07 S13.07; 10 `reset_journal.last_failure`).
 import type { Clock } from '../../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../../../kernel/ports/sqliteDatabase'
@@ -58,5 +61,20 @@ export class SqliteResetJournal implements ResetJournal {
     if (RESET_STEPS.indexOf(s) <= RESET_STEPS.indexOf(this.step(id))) return
     const now = this.deps.clock.now()
     this.deps.db.run(ADVANCE, [s, now, s === 'done' ? now : null, id])
+  }
+
+  unfinished(): { id: string; epoch: number; step: ResetStep } | null {
+    // `reset_journal_one_active` keeps at most one such row (09 §4.1).
+    const [row] = this.deps.db.all("SELECT id, epoch, step FROM reset_journal WHERE step <> 'done'")
+    if (row === undefined) return null
+    return { id: String(row['id']), epoch: Number(row['epoch']), step: row['step'] as ResetStep }
+  }
+
+  fail(id: string, reason: string): void {
+    const { changes } = this.deps.db.run('UPDATE reset_journal SET last_failure = ? WHERE id = ?', [
+      reason,
+      id
+    ])
+    if (changes === 0) throw new Error('no reset_journal row with this id')
   }
 }

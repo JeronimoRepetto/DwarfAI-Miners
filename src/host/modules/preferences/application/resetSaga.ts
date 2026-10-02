@@ -20,8 +20,9 @@
 //
 // Each step's work runs between transactions (16 §2.2) and is idempotent; the journal advances
 // after it, and `reset.progress` (B-F27) reports the step reached. A step that cannot complete is
-// never rolled back (S13.07): `MetricsResetFailed`, `reset.failed`, and `{outcome:'failed',
-// resumesOnNextStart:true}`. A failure of the `db` transaction itself commits nothing, so nothing
+// never rolled back (S13.07): its reason in `reset_journal.last_failure`, `MetricsResetFailed`,
+// `reset.failed`, and `{outcome:'failed', resumesOnNextStart:true}`; the next Host boot resumes the
+// saga from its journal (`resumeOnBoot`, S13.08). A failure of the `db` transaction itself commits nothing, so nothing
 // resumes: `resumesOnNextStart:false`.
 //
 // A second `resetMetrics` while the saga runs waits for it and answers its result (lead decision
@@ -122,6 +123,30 @@ export class ResetSaga {
     if (this.running !== null) return this.running
     const run = this.unfinished === null ? this.start() : this.continueFrom(this.unfinished)
     this.running = run.finally(() => {
+      this.running = null
+    })
+    return this.running
+  }
+
+  /**
+   * S13.08: the boot resume, before commands and observation (16 §8.2 step 3). It continues the
+   * unfinished saga from its journal's last completed step (from `db`, the cleanup runs again
+   * first); `null` when no saga is unfinished.
+   */
+  resumeOnBoot(): Promise<MetricsResetResult | null> {
+    if (this.running !== null) return this.running
+    const found = this.deps.journal.unfinished()
+    if (found === null) return Promise.resolve(null)
+    const saga: Saga = { id: found.id, epoch: found.epoch }
+    this.deps.log.record({
+      level: 'info',
+      event: 'reset.resumed',
+      subsystem: 'preferences',
+      resetId: saga.id,
+      msg: found.step
+    })
+    this.unfinished = saga
+    this.running = this.continueFrom(saga).finally(() => {
       this.running = null
     })
     return this.running
@@ -254,6 +279,7 @@ export class ResetSaga {
 
   /** S13.07: nothing is rolled back; the saga resumes at the next Host boot. */
   private failed(saga: Saga, failure: StepFailure): MetricsResetResult {
+    this.deps.journal.fail(saga.id, failure.reason)
     this.deps.log.record({
       level: 'error',
       event: 'reset.failed',

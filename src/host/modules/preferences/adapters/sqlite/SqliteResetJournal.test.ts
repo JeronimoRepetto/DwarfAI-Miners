@@ -85,4 +85,28 @@ describe('SqliteResetJournal', () => {
     expect(subject.step(second.id)).toBe('db')
     expect(() => subject.step('00000000-0000-7000-8000-0000000000ff')).toThrow()
   })
+
+  it('[S13.08, S13.07] unfinished finds the one saga not done and fail records the reason of its failed step', () => {
+    const { transactions, clock, subject, row } = journal()
+    expect(subject.unfinished()).toBeNull()
+    const first = transactions.inTransaction(() => subject.begin(transactions))
+    subject.advance(first.id, 'done')
+    expect(subject.unfinished()).toBeNull()
+
+    const second = transactions.inTransaction(() => subject.begin(transactions))
+    clock.advance(1_000)
+    subject.advance(second.id, 'secrets')
+    subject.fail(second.id, 'config-revert-locked')
+
+    expect(subject.unfinished()).toStrictEqual({ id: second.id, epoch: 2, step: 'secrets' })
+    expect(row(second.id)).toMatchObject({
+      step: 'secrets',
+      step_at: T + 1_000,
+      last_failure: 'config-revert-locked'
+    })
+    // A later failure replaces the reason; the step stays where it was (nothing is rolled back).
+    subject.fail(second.id, 'secret-delete-failed')
+    expect(row(second.id)).toMatchObject({ step: 'secrets', last_failure: 'secret-delete-failed' })
+    expect(() => subject.fail('00000000-0000-7000-8000-0000000000ff', 'x')).toThrow()
+  })
 })

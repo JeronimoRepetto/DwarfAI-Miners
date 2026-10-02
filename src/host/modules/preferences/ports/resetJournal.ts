@@ -12,6 +12,11 @@ export interface ResetJournal {
   begin(tx: TransactionRunner): { id: string; epoch: number }
   step(id: string): ResetStep
   advance(id: string, s: ResetStep): void
+  // AMENDMENT (owner-approved 2026-10-02, ISSUE-212; 16 §4.12 and 05 §3.12): the boot resume
+  // finds the unfinished saga (07 S13.08, 16 §8.2 step 3) and a failed step is recorded in
+  // `reset_journal.last_failure` (07 S13.07, 09 §4.1)
+  unfinished(): { id: string; epoch: number; step: ResetStep } | null
+  fail(id: string, reason: string): void
 }
 export interface ResetDbStep {
   readonly name: string
