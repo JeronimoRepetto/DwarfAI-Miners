@@ -14,7 +14,7 @@
 // 3. Look it up with `t('key')` where the text is shown, never a string literal in a component or a menu builder.
 //    A key that is not in `en.ts` is a type error.
 // 4. Another locale is a `Partial` catalog added to `CATALOGS` and `COPY_LOCALES`; a key it lacks falls back to `en`.
-import { createCopy, resolveLocale } from './catalog'
+import { createCopy, resolveLocale, type CopyEntry, type PlainKey } from './catalog'
 import { en } from './en'
 
 export type {
@@ -23,6 +23,7 @@ export type {
   CopyCatalog,
   CopyEntry,
   CopyOptions,
+  PlainKey,
   PluralForms,
   Translate
 } from './catalog'
@@ -37,6 +38,12 @@ export const DEFAULT_LOCALE: CopyLocale = 'en'
 /** A key of the copy dictionary. */
 export type CopyKey = keyof typeof en
 
+/** The catalogs of the locales other than `en`, each partial: none yet. */
+const CATALOGS: Readonly<Partial<Record<CopyLocale, Partial<Record<CopyKey, CopyEntry>>>>> = {}
+
+/** A key of the copy dictionary whose text takes no params. */
+export type PlainCopyKey = PlainKey<typeof en>
+
 /**
  * The copy for the person's preferred languages (BCP 47 tags, most preferred first). Nothing chooses a language yet,
  * so the app uses `t` below, which is the default locale.
@@ -44,7 +51,8 @@ export type CopyKey = keyof typeof en
 export function copyFor(preferred: readonly string[]) {
   return createCopy({
     locale: resolveLocale(preferred, COPY_LOCALES, DEFAULT_LOCALE),
-    fallback: { locale: DEFAULT_LOCALE, catalog: en }
+    fallback: { locale: DEFAULT_LOCALE, catalog: en },
+    catalogs: CATALOGS
   })
 }
 

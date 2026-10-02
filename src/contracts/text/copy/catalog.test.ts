@@ -87,6 +87,9 @@ describe('createCopy', () => {
     english.t('greeting.plain', { name: 'Ana' })
     // @ts-expect-error a plural entry needs a numeric count
     english.t('mines.count', { count: '1' })
+    const either = 'greeting.plain' as 'greeting.plain' | 'greeting.named'
+    // @ts-expect-error a key that may be one with slots needs that key's params
+    english.t(either)
     expectTypeOf(english.t<'greeting.named'>)
       .parameter(1)
       .toEqualTypeOf<{ readonly name: string | number }>()

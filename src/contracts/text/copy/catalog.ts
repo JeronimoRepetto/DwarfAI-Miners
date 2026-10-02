@@ -18,8 +18,11 @@ type SlotsOf<S extends string> = S extends `${string}{${infer Slot}}${infer Rest
 /** Every text of an entry: the string itself, or each of its plural forms. */
 type TextsOf<E extends CopyEntry> = E extends string ? E : Extract<E[keyof E], string>
 
-/** What `t` takes for an entry: nothing without slots; every slot otherwise, and a numeric `count` for a plural. */
-export type CopyArgs<E extends CopyEntry> = E extends string
+/**
+ * What `t` takes for an entry: nothing without slots; every slot otherwise, and a numeric `count` for a plural. Not
+ * distributive: a key that may be one of several entries needs the params of every one of them.
+ */
+export type CopyArgs<E extends CopyEntry> = [E] extends [string]
   ? [SlotsOf<E>] extends [never]
     ? []
     : [params: { readonly [Slot in SlotsOf<E>]: string | number }]
@@ -30,6 +33,11 @@ export type CopyArgs<E extends CopyEntry> = E extends string
           : string | number
       }
     ]
+
+/** The keys of a catalog whose entry takes no params: a table of them can be looked up with `t(key)` alone. */
+export type PlainKey<C extends CopyCatalog> = {
+  [K in keyof C & string]: CopyArgs<C[K]> extends [] ? K : never
+}[keyof C & string]
 
 /** The lookup: a key of the catalog, and the params its entry needs. A key not in the catalog is a type error. */
 export type Translate<C extends CopyCatalog> = <K extends keyof C & string>(
