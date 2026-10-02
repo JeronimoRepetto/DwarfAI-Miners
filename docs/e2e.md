@@ -56,6 +56,11 @@ pnpm test:e2e
   "uncaught exception in the main process: <stack>". The harness installs this through Playwright's main-process
   `evaluate`; production code is unchanged.
 
+A case that needs two launches to share one profile (two builds meeting one person's data and Host, as in the rollback
+rehearsal `e2e/cut-0/rollback-rehearsal.e2e.ts`) makes it with `createIsolatedProfile()` and passes it as
+`launchApp({ profile })`. The teardown then keeps that profile and any Host it runs; the case removes both with
+`disposeProfile(profile)` in its `finally`.
+
 Assertions go through the UI, Playwright's main-process `evaluate`, or the profile's `dwarfai.db` opened read-only after
 the Host exited (`e2e/_harness/readOnlyHost.ts`). There is no test backdoor in production code.
 
