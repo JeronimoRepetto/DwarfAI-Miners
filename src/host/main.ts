@@ -35,7 +35,7 @@
 import { dirname, join, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '@dwarfai/contracts'
-import { createDiagnostics, logLevelFromEnv, type HostDiagnostics } from './modules/diagnostics'
+import { createDiagnostics, logLevelFromEnv } from './modules/diagnostics'
 import { NodeScheduler } from './platform/clock/NodeScheduler'
 import { SystemClock } from './platform/clock/SystemClock'
 import { createNodeEndpointFacts } from './platform/endpoint/nodeEndpointEnv'
@@ -48,7 +48,11 @@ import {
 import { NodeFs } from './platform/fs/NodeFs'
 import { UuidV7Generator } from './platform/ids/UuidV7Generator'
 import { EnvAppPaths } from './platform/paths/EnvAppPaths'
-import { buildKindOf, thisProcessReleaseHostDataDir } from './platform/paths/releaseDataDir'
+import {
+  buildKindOf,
+  thisProcessHostLogDir,
+  thisProcessReleaseHostDataDir
+} from './platform/paths/releaseDataDir'
 import { hostCopyRootFacts } from './platform/paths/versionedCopyRoot'
 import { NodeProcessControl, createQueryRunner } from './platform/process/NodeProcessControl'
 import { nodeOsSessionSignals } from './platform/process/osSessionSignals'
@@ -80,17 +84,6 @@ declare const __DWARFAI_APP_VERSION__: string
 /** The git commit (short) of this build (20 §3.1), stamped by electron.vite.host.config.ts. */
 declare const __DWARFAI_BUILD_ID__: string
 
-/**
- * Where the Host logs when DWARFAI_HOST_DATA_DIR is missing: the log folder is `<userData>/logs/`,
- * beside the data directory (ADR-026 item 1), so there is no folder to write to. The boot still
- * records its NO_DATA_DIR reason through it; the UI's launcher logs the exit code on its side
- * (later: ISSUE-030).
- */
-const NO_LOG_FOLDER: HostDiagnostics = {
-  record: () => {},
-  flush: () => Promise.resolve()
-}
-
 async function main(): Promise<void> {
   const entry = fileURLToPath(import.meta.url)
   // `out/host/main.js` → the app root (the repository in dev, `app.asar` when packaged).
@@ -104,27 +97,31 @@ async function main(): Promise<void> {
     readInJob: createNativeProcessInJob({ prebuildsDir: winPipePrebuildsDir(appRoot) })
   })
   const resourcesPath = (process as { resourcesPath?: string }).resourcesPath
+  // Packaged when this entry sits inside the executable's own resources folder (SP-04: under
+  // ELECTRON_RUN_AS_NODE `process.resourcesPath` is that folder).
+  const isPackaged = resourcesPath !== undefined && isInside(resourcesPath, entry)
   const paths = EnvAppPaths.create({
     env: process.env,
     execPath: process.execPath,
     resourcesPath,
-    // Packaged when this entry sits inside the executable's own resources folder (SP-04: under
-    // ELECTRON_RUN_AS_NODE `process.resourcesPath` is that folder).
-    isPackaged: resourcesPath !== undefined && isInside(resourcesPath, entry)
+    isPackaged
   })
 
   const clock = new SystemClock()
   const fs = new NodeFs()
-  const log = paths.ok
-    ? createDiagnostics({
-        fs,
-        clock,
-        logDir: join(dirname(paths.value.userDataDir), 'logs'),
-        appVersion: __DWARFAI_APP_VERSION__,
-        level: logLevelFromEnv(process.env),
-        appRoot
-      })
-    : NO_LOG_FOLDER
+  // `<userData>/logs/` beside the hostDataDir (ADR-026 item 1). Without DWARFAI_HOST_DATA_DIR the
+  // boot's NO_DATA_DIR refusal still reaches a log: the documented folder of this build (19 §3).
+  const log = createDiagnostics({
+    fs,
+    clock,
+    logDir: thisProcessHostLogDir({
+      isPackaged,
+      hostDataDir: paths.ok ? paths.value.userDataDir : null
+    }),
+    appVersion: __DWARFAI_APP_VERSION__,
+    level: logLevelFromEnv(process.env),
+    appRoot
+  })
   const scheduler = new NodeScheduler({
     onTaskError: (error) =>
       log.record({

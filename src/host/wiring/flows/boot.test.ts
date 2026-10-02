@@ -354,3 +354,48 @@ describe('Host boot sequence (16 §8.2, ADR-015 item 3)', () => {
     expect(h.states.at(-1)).toEqual({ state: 'ready', jobStatus: 'none' })
   })
 })
+
+describe('the boot records carry fixed sentences only (ADR-026 items 3, 5; 19 §5)', () => {
+  it('[ADR-026, FM-011] an unreadable elevation logs a fixed msg: the runtime cause text never reaches the record', async () => {
+    const cause = 'failed (spawn C:\\Users\\j\\tools\\whoami.exe ENOENT)'
+    const h = harness({ privilege: { ...NOT_ELEVATED, elevated: { ok: false, cause } } })
+
+    await runBoot(h.realSteps, h.deps)
+
+    expect(h.log.byEvent('host.elevated-refused')).toEqual([
+      {
+        level: 'error',
+        event: 'host.elevated-refused',
+        subsystem: 'host',
+        causeClass: 'unreadable',
+        msg: 'elevation could not be read'
+      }
+    ])
+    expect(JSON.stringify(h.log.entries)).not.toContain('whoami')
+  })
+
+  it('[ADR-026, FM-012] an unreadable job membership logs a fixed msg: the runtime cause text never reaches the record', async () => {
+    const cause = 'could not start (C:\\Users\\j\\native\\helper.node is not scripted)'
+    const h = harness({ privilege: { ...NOT_ELEVATED, inJob: { ok: false, cause } } })
+
+    await runBoot(h.realSteps, h.deps)
+
+    expect(h.log.byEvent('host.job-status')).toEqual([
+      expect.objectContaining({ msg: 'job membership could not be read' })
+    ])
+    expect(JSON.stringify(h.log.entries)).not.toContain('helper.node')
+  })
+
+  it('[ADR-026, FM-008] a failed step logs its class and code without a stack: stack belongs to uncaught records only', async () => {
+    const h = harness()
+    const steps = withStep(h.realSteps, 'resume-reset-saga', () =>
+      Promise.reject(Object.assign(new Error('journal unreadable'), { code: 'EIO' }))
+    )
+
+    await runBoot(steps, h.deps)
+
+    const failed = h.log.byEvent('host.boot.step').at(-1)
+    expect(failed).toMatchObject({ outcome: 'failed', errCode: 'EIO' })
+    expect(failed).not.toHaveProperty('stack')
+  })
+})
