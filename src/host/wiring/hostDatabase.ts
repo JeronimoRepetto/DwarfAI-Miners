@@ -50,6 +50,8 @@ import type { DiagnosticEntry, DiagnosticsLog } from '../kernel/ports/diagnostic
 import type { ProcessControl } from '../kernel/ports/processControl'
 import type { ShutdownCheckpoint } from '../kernel/ports/shutdownCheckpoint'
 import type { SqliteDatabase } from '../kernel/ports/sqliteDatabase'
+import type { TransactionRunner } from '../kernel/ports/transactionRunner'
+import type { TransactionScope } from '../kernel/ports/transactionScope'
 import type { HostFileProtection } from '../platform/sqlite/fileProtection'
 import { HostEpochLog, readResetEpoch } from '../platform/sqlite/hostEpochLog'
 import {
@@ -93,8 +95,20 @@ export interface HostDatabase {
   previousEpochEnd(): PreviousEpochEnd | null
   /** `app_meta.reset_epoch`, for the snapshot `meta` section (ISSUE-026). */
   resetEpoch(): number
+  /**
+   * The open connection and its one transaction runner (16 §2.2: one runner per connection, which
+   * is also the event bus's `TransactionScope`), for the SQLite adapters the modules are
+   * constructed with at boot step 4. Read after step 2 only.
+   */
+  connection(): HostDbConnection
   /** Closes the connection (a test's Host "killed"; production ends with its process). */
   close(): void
+}
+
+/** The Host's one database connection (09 §8.1: the single writer). */
+export interface HostDbConnection {
+  readonly db: SqliteDatabase
+  readonly transactions: TransactionRunner & TransactionScope
 }
 
 /** A refused open (09 §6.2): its code is the refusal, which the boot logs as `errCode`. */
@@ -108,8 +122,13 @@ export class HostDbRefusedError extends Error {
 const SUBSYSTEM = 'host'
 
 type Opened =
-  | { readOnly: false; db: SqliteDatabase; epochLog: HostEpochLog }
-  | { readOnly: true; db: SqliteDatabase }
+  | {
+      readOnly: false
+      db: SqliteDatabase
+      transactions: SqliteTransactionRunner
+      epochLog: HostEpochLog
+    }
+  | { readOnly: true; db: SqliteDatabase; transactions: SqliteTransactionRunner }
 
 /** The 19 §9.1 records of a decision; the boot identity values are never part of them. */
 function decisionEntries(decided: PreviousEpochEnd): Array<Omit<DiagnosticEntry, 'subsystem'>> {
@@ -164,8 +183,10 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
   const record = (entry: Omit<DiagnosticEntry, 'subsystem'>): void =>
     deps.log.record({ ...entry, subsystem: SUBSYSTEM })
 
-  const keepEpoch = async (db: SqliteDatabase): Promise<HostEpochLog> => {
-    const transactions = new SqliteTransactionRunner(db)
+  const keepEpoch = async (
+    db: SqliteDatabase,
+    transactions: SqliteTransactionRunner
+  ): Promise<HostEpochLog> => {
     const epochLog = new HostEpochLog({ db, transactions })
     const current = await deps.processControl.currentBootIdentity()
     const previous = epochLog.readPrevious()
@@ -216,6 +237,7 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
         record({ level: 'info', event: 'db.open', outcome: 'ok' })
       }
       const { db } = result.value
+      const transactions = new SqliteTransactionRunner(db)
       try {
         await protectFiles.dbFiles(deps.path)
       } catch (error) {
@@ -223,11 +245,16 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
         throw error
       }
       if (result.value.readOnly) {
-        opened = { readOnly: true, db }
+        opened = { readOnly: true, db, transactions }
         return
       }
       try {
-        opened = { readOnly: false, db, epochLog: await keepEpoch(db) }
+        opened = {
+          readOnly: false,
+          db,
+          transactions,
+          epochLog: await keepEpoch(db, transactions)
+        }
       } catch (error) {
         db.close()
         throw error
@@ -250,6 +277,12 @@ export function createHostDatabase(deps: HostDatabaseDeps): HostDatabase {
         throw new HostInvariantError('resetEpoch is read after boot step 2 opened the database')
       }
       return readResetEpoch(opened.db)
+    },
+    connection: () => {
+      if (opened === null) {
+        throw new HostInvariantError('the connection is read after boot step 2 opened the database')
+      }
+      return { db: opened.db, transactions: opened.transactions }
     },
     close: () => {
       opened?.db.close()

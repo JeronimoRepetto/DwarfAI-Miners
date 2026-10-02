@@ -48,6 +48,12 @@ export interface BootPorts {
    * (later: ISSUE-226) the step is a placeholder.
    */
   resumeResetSaga?: () => Promise<unknown>
+  /**
+   * Step 4: constructs the modules and wires their bridges and event routes (05 §4) over the
+   * database step 2 opened. The composition root passes it; the modules join it one wiring issue
+   * at a time (suppliers: ISSUE-159). Until it is passed the step is a placeholder.
+   */
+  constructModules?: () => void
 }
 
 /** The Host's UI endpoint as the boot sees it. */
@@ -64,7 +70,7 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
-  const { resumeResetSaga } = ports
+  const { resumeResetSaga, constructModules } = ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -94,9 +100,17 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
             return { kind: 'done' }
           }
         },
-    // 4. Construct the modules, wire bridges and event routes (05 §4); the first module wired is
-    //    mines, the others follow in their own wiring issues.
-    placeholder('construct-modules', 'ISSUE-093'),
+    // 4. Construct the modules, wire bridges and event routes (05 §4), over the database step 2
+    //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159).
+    constructModules === undefined
+      ? placeholder('construct-modules', 'ISSUE-093')
+      : {
+          name: 'construct-modules',
+          run: () => {
+            constructModules()
+            return Promise.resolve({ kind: 'done' })
+          }
+        },
     // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report, cleanup.
     placeholder('recover-sessions', 'ISSUE-173'),
     // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress.
