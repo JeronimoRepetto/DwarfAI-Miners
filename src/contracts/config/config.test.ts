@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // `TierThresholds` (06 §0.2, ISSUE-062), so they are not part of this parser.
 import { CATALOG_PROVIDER_IDS } from '../catalog'
 import {
+  FEATURE_FLAG_KEYS,
   SIMULATION_ENV_VAR,
   cliOverridesFrom,
   defaultConfig,
   defaultSimulationConfig,
   loadConfig,
-  loadSimulationConfig
+  loadSimulationConfig,
+  readSwitchText
 } from './config'
 
 describe('defaultConfig', () => {
@@ -529,3 +531,37 @@ describe('loadSimulationConfig', () => {
  * ADR-031, ADR-002 D1), so they have no destination here; they are retired
  * with the legacy runtime (cut 5).
  */
+
+/*
+ * ADDED for ISSUE-211. The Host's FeatureFlagReader reads the same switch text
+ * as UI main, but an invalid value there becomes the default and is logged
+ * (16 §4.12, INV-110) instead of stopping startup, so the reading is exported
+ * without the throw: the caller decides what an invalid value costs.
+ */
+describe('readSwitchText', () => {
+  it.each([
+    ['true', true],
+    ['1', true],
+    [' TRUE ', true],
+    ['false', false],
+    ['0', false],
+    [' False', false]
+  ])('[INV-110] reads %j as %s', (raw, expected) => {
+    expect(readSwitchText(raw)).toBe(expected)
+  })
+
+  it.each([undefined, '', '   '])('[INV-110] reads %j as unset', (raw) => {
+    expect(readSwitchText(raw)).toBe('unset')
+  })
+
+  it.each(['yes', 'on', '2', 'enabled'])('[INV-110] reads %j as invalid', (raw) => {
+    expect(readSwitchText(raw)).toBe('invalid')
+  })
+
+  it('[INV-110] names the two feature flags by their documented variables', () => {
+    expect(FEATURE_FLAG_KEYS).toStrictEqual({
+      guildAreasEnabled: 'GUILD_AREAS_ENABLED',
+      boostEnabled: 'BOOST_ENABLED'
+    })
+  })
+})

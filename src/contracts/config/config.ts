@@ -342,13 +342,40 @@ function readPort(env: ConfigEnv, key: string, fallback: number): number {
  * a feature flag left off by a typo would look exactly like the flag not
  * working, which is the bug a bad value exists to surface.
  */
-function readBoolean(env: ConfigEnv, key: string, fallback: boolean): boolean {
-  const raw = env[key]
-  if (raw === undefined || raw.trim() === '') return fallback
+/**
+ * The documented variable of each feature flag (06 §14.2 `FeatureFlags`; UC-073), shared by UI main and the Host's
+ * `FeatureFlagReader` so that both read the same names.
+ */
+export const FEATURE_FLAG_KEYS = {
+  guildAreasEnabled: 'GUILD_AREAS_ENABLED',
+  boostEnabled: 'BOOST_ENABLED'
+} as const
+
+/** What one layer's raw text says about a product switch. */
+export type SwitchReading = boolean | 'unset' | 'invalid'
+
+/**
+ * A product switch's raw text, read without deciding what a bad value costs: `true`/`1` or `false`/`0`, trimmed
+ * and case-insensitive; blank or missing is `unset` (it falls through to the next layer); anything else is
+ * `invalid`. `loadConfig` stops startup on an invalid value (#635); the Host's `FeatureFlagReader` uses the default
+ * and logs the key instead (16 §4.12, INV-110).
+ */
+export function readSwitchText(raw: string | undefined): SwitchReading {
+  if (raw === undefined || raw.trim() === '') return 'unset'
   const normalized = raw.trim().toLowerCase()
   if (normalized === '1' || normalized === 'true') return true
   if (normalized === '0' || normalized === 'false') return false
-  throw new Error(`[config] ${key} must be true, false, 1 or 0, got "${raw}"`)
+  return 'invalid'
+}
+
+function readBoolean(env: ConfigEnv, key: string, fallback: boolean): boolean {
+  const raw = env[key]
+  const reading = readSwitchText(raw)
+  if (reading === 'unset') return fallback
+  if (reading === 'invalid') {
+    throw new Error(`[config] ${key} must be true, false, 1 or 0, got "${raw}"`)
+  }
+  return reading
 }
 
 /** A trimmed free-form string (a path, a model name); blank counts as unset. */
@@ -439,7 +466,11 @@ export function loadConfig(env: ConfigEnv): AppConfig {
     sendTextRelayModel: readTrimmed(env, 'SENDTEXT_RELAY_MODEL', defaults.sendTextRelayModel),
     sendTextTimeoutS: readPositiveInt(env, 'SENDTEXT_TIMEOUT_S', defaults.sendTextTimeoutS),
     hooksPort: readPort(env, 'HOOKS_PORT', defaults.hooksPort),
-    guildAreasEnabled: readBoolean(env, 'GUILD_AREAS_ENABLED', defaults.guildAreasEnabled),
+    guildAreasEnabled: readBoolean(
+      env,
+      FEATURE_FLAG_KEYS.guildAreasEnabled,
+      defaults.guildAreasEnabled
+    ),
     // One line per backend, and one reader to read it: the whole point of #78's
     // second place. A third provider adds an entry here and its own reader,
     // and nothing above this line has to know it exists.
