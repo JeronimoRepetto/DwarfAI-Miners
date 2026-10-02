@@ -1,7 +1,8 @@
 // Garbage collection of the Host's versioned copies (ADR-027 item 2, ADR-002 D5): at Host start the
 // copies not used by a running Host and older than the two newest are deleted. L3-style over a
-// temporary directory; a busy copy is injected through CopyOps (on Windows a running executable's
-// folder cannot be renamed or deleted).
+// temporary directory; a busy copy is injected through CopyOps (on Windows a running executable
+// cannot be removed or opened for writing, while its folder can still be renamed:
+// versionedCopyInUse.os.test.ts).
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -46,6 +47,37 @@ describe('collectVersionedCopies (ADR-027 item 2)', () => {
     expect(log.byEvent('versioned-copy')).toMatchObject([
       { level: 'warn', outcome: 'skipped', causeClass: 'gc', errCode: 'EBUSY' },
       { level: 'info', outcome: 'ok', causeClass: 'gc' }
+    ])
+  })
+
+  it('[ADR-027] an old copy a running process still executes from is skipped whole, never renamed aside or removed', async () => {
+    // On Windows the folder of a running executable can be renamed, and a removal deletes every file but the held
+    // ones (versionedCopyInUse.os.test.ts), so the rename is no busy test: a held file is.
+    const root = rootWith(['0.8.0', '1.10.0', '1.11.0'])
+    const held = path.join(root, '0.8.0')
+    const calls: string[] = []
+    const ops: CopyOps = {
+      ...nodeCopyOps,
+      busyFile: async (dir) => (dir === held ? 'EBUSY' : nodeCopyOps.busyFile(dir)),
+      rename: async (from, to) => {
+        calls.push(`rename ${path.basename(from)}`)
+        await nodeCopyOps.rename(from, to)
+      },
+      removeTree: async (target) => {
+        calls.push(`removeTree ${path.basename(target)}`)
+        await nodeCopyOps.removeTree(target)
+      }
+    }
+    const log = new RecordingUiLog()
+
+    const report = await collectVersionedCopies({ root, inUse: '1.11.0', pid: 5, ops, log })
+
+    expect(report).toEqual({ deleted: [], skipped: ['0.8.0'] })
+    expect(calls).toEqual([])
+    expect(readdirSync(root).sort()).toEqual(['0.8.0', '1.10.0', '1.11.0'])
+    expect(readdirSync(held).sort()).toEqual(['app.exe', 'resources'])
+    expect(log.byEvent('versioned-copy')).toMatchObject([
+      { level: 'warn', outcome: 'skipped', causeClass: 'gc', errCode: 'EBUSY' }
     ])
   })
 
