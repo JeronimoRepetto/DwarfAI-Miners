@@ -525,3 +525,59 @@ describe('HostClient while the Host connection is lost (07 S2.16)', () => {
     expect(host.received.slice(asked)).toEqual([])
   })
 })
+
+// ADDED for ISSUE-111: B-M07 `presence` (14 §2.3; ADR-018 item 2; ADR-024 D7; INV-119).
+describe('HostClient.reportPresence (16 §4.14, B-M07)', () => {
+  const report = (seq: number, onScreenMineIds: string[]) => ({
+    onScreenMineIds: onScreenMineIds as never[],
+    anyWindowVisible: true,
+    seq
+  })
+
+  it('[INV-119] presence goes on the ui connection only, never the notifier, and the last report is sent again on every new ui connection', async () => {
+    const { host, client, handler } = world({
+      capabilities: [...FAKE_HOST_CAPABILITIES, 'presence']
+    })
+    host.handle('presence', () => ({}))
+    host.board = [meta]
+    expect(await client.ensureHost()).toBe('available')
+    await settle()
+
+    // No window holds a ui connection: nothing is sent, and the notifier never carries it.
+    client.reportPresence(report(1, [R1]))
+    await settle()
+    expect(host.methods()).not.toContain('presence')
+
+    // A window opens: its ui connection carries the last report first, then each new one.
+    const unsubscribe = client.subscribe(handler)
+    await settle()
+    client.reportPresence(report(2, [R2]))
+    await settle()
+    // The window closes and another opens: a new ui connection, a new client to the Host.
+    unsubscribe()
+    await settle()
+    client.subscribe(handler)
+    await settle()
+
+    expect(
+      host.received.filter((r) => r.method === 'presence').map((r) => [r.role, r.params])
+    ).toEqual([
+      ['ui', report(1, [R1])],
+      ['ui', report(2, [R2])],
+      ['ui', report(2, [R2])]
+    ])
+    expect(host.methods('notifier')).not.toContain('presence')
+  })
+
+  it('[ADR-018] a Host that does not advertise presence is sent none', async () => {
+    const { host, client, handler } = world()
+    host.board = [meta]
+    client.subscribe(handler)
+    expect(await client.ensureHost()).toBe('available')
+    await settle()
+
+    client.reportPresence(report(1, [R1]))
+    await settle()
+    expect(host.methods()).not.toContain('presence')
+  })
+})

@@ -7,8 +7,7 @@
 // - `HostAvailability`: "available | unavailable{spawn-failed | crash-loop | incompatible | generation-restart |
 //   elevated-refused | in-job | unresponsive}" (the `ensureHost` comment of 05 §3.14).
 // - `Presence`: what the UI reports, "Presence {onScreenMineIds, anyWindowVisible, seq}" (05 §3.14), which is 14 §3.4
-//   `PresenceParams` (the Host adds `anyUiAttached` itself, ADR-018). It moves to `contracts` with B-M07 (later:
-//   ISSUE-111).
+//   `PresenceParams` (the Host adds `anyUiAttached` itself, ADR-018), taken from `contracts` with B-M07 (ISSUE-111).
 // - `HostEvent`: what `subscribe` hands its handler (ADR-003 item 7; 14 §4.2, §4.3 rule 1): a snapshot only once
 //   every page arrived, as one `SnapshotPage` holding every chunk of every page and no `next`, then each `evt` frame
 //   whose `seq` is greater than the last one applied, in order. A `resync-required` frame is not handed on: it makes
@@ -18,7 +17,7 @@ import type {
   HostMethod,
   HostParams,
   HostResult,
-  MineId,
+  PresenceParams,
   SnapshotPage,
   SnapshotParams
 } from '@dwarfai/contracts'
@@ -34,11 +33,7 @@ export type HostUnavailableReason = Extract<HostConnection, { state: 'unavailabl
 export type HostAvailability = 'available' | { unavailable: HostUnavailableReason }
 
 /** The UI's presence report (14 §3.4 `PresenceParams`; ADR-024 D7). */
-export interface Presence {
-  onScreenMineIds: MineId[]
-  anyWindowVisible: boolean
-  seq: number
-}
+export type Presence = PresenceParams
 
 /** What a `subscribe` handler receives (ADR-003 item 7; 14 §4.2, §4.3). */
 export type HostEvent =

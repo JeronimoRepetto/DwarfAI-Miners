@@ -16,6 +16,7 @@ export {
   type HostMethods,
   type HostShutdownParams,
   type HostShutdownResult,
+  type PresenceParams,
   type SubscribeParams,
   type SubscribeResult
 } from './methods'

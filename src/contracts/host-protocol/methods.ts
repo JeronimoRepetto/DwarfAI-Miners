@@ -10,12 +10,14 @@ import {
   hostEpochSchema,
   hostPreferencesSchema,
   instantSchema,
+  mineIdSchema,
   preferencesViewSchema,
   stopAllOutcomeSchema,
   stranglerDwarfIdentitySchema,
   type HostEpoch,
   type HostPreferences,
   type Instant,
+  type MineId,
   type PreferencesView,
   type StopAllOutcome,
   type StranglerDwarfIdentity
@@ -38,7 +40,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M09, B-M12, B-M13, B-M15 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M09, B-M12, B-M13, B-M15 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -48,6 +50,8 @@ export interface HostMethods {
   'session.snapshot':                { params: SnapshotParams; result: SnapshotPage }
   'host.shutdown':                   { params: HostShutdownParams; result: HostShutdownResult }
   'host.upgrade.request':            { params: { targetVersion: string; targetDir: string; requestId: string }; result: { state: 'upgrade-pending' } }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+  'presence':                        { params: PresenceParams; result: {} }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'ui.resetPreferences.ack':         { params: { epoch: number }; result: {} }
   // preferences and secrets
@@ -79,6 +83,14 @@ export type HostShutdownResult =
   | { mode: 'when-idle'; accepted: true } // retired by AMENDMENT-5 (OQ-63): never returned; the Host never exits on its own
   | { mode: 'stop-all'; outcome: StopAllOutcome } // answered after every end settled (ADR-002 D7 step 3)
   | { mode: 'upgrade-drain'; accepted: true } // AMENDMENT-2 (SC-AR-03): sent only after the person confirmed (ADR-027 item 4)
+
+// As 14 §3.4 writes it (names, fields and comments; layout by prettier): protocol, B-M07
+export interface PresenceParams {
+  // 06 UiPresence on the wire; the Host adds anyUiAttached itself
+  onScreenMineIds: MineId[]
+  anyWindowVisible: boolean
+  seq: number // UI-side counter; the Host ignores an older seq
+}
 
 /** The strict() schemas of each method's `params` and `result`, by method name. */
 export const HOST_METHOD_SCHEMAS = {
@@ -136,6 +148,18 @@ export const HOST_METHOD_SCHEMAS = {
       .object({ targetVersion: z.string(), targetDir: z.string(), requestId: requestIdSchema })
       .strict(),
     result: z.object({ state: z.literal('upgrade-pending') }).strict()
+  },
+  // B-M07 (14 §2.3): `ui` only; not mutating, so no requestId (14 §1.6). Which report wins is the
+  // Host's rule (an older `seq` of the same client is ignored, 16 §4.11), not the wire's.
+  presence: {
+    params: z
+      .object({
+        onScreenMineIds: z.array(mineIdSchema),
+        anyWindowVisible: z.boolean(),
+        seq: z.number().int().nonnegative()
+      })
+      .strict(),
+    result: z.object({}).strict()
   },
   // B-M12, B-M13 (14 §2.3): `ui` only; B-M13 answers the stored HostPreferences (IPC Gap 10).
   'preferences.get': {
