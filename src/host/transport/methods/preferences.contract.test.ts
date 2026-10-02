@@ -142,7 +142,8 @@ async function host() {
     bus,
     clock,
     ids,
-    hostEpoch: EPOCH
+    hostEpoch: EPOCH,
+    featureFlags: { read: () => ({ guildAreasEnabled: false, boostEnabled: false }) }
   })
   registerPreferences(dispatcher, { preferences })
   sections.registerSection('preferences', ['ui'], preferencesSection(preferences))

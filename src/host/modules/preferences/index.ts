@@ -1,8 +1,9 @@
 // The preferences module (05 §3.12): the Host-read settings in the `host_preferences` singleton
-// (INV-105) and the Reset-metrics saga (ADR-023). Cut 1 serves `get`, `set` and `resetMetrics`;
-// secrets (only ever in `SecretStore`, ADR-017), integrations, the first-run step and feature flags
-// join with their issues. It imports no other module (05 §1.3, R4): the other modules' Reset steps
-// reach the saga as `ResetDbStep`s from host/wiring/resetParticipants.ts.
+// (INV-105), the Reset-metrics saga (ADR-023) and the feature flags read once at start (INV-110).
+// Cut 1 serves `get`, `set`, `resetMetrics` and the feature flags; secrets (only ever in
+// `SecretStore`, ADR-017), integrations and the first-run step join with their issues. It imports no
+// other module (05 §1.3, R4): the other modules' Reset steps reach the saga as `ResetDbStep`s from
+// host/wiring/resetParticipants.ts.
 import type { HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -24,6 +25,7 @@ import type { MetricsResetResult, ResetMetricsCommand } from './domain/resetSaga
 import type { ExternalConfigWriter } from './ports/externalConfigWriter'
 import type { ResetDbStep } from './ports/resetJournal'
 import type { SecretStore } from './ports/secretStore'
+import type { FeatureFlagReader } from './ports/featureFlagReader'
 
 export type { PreferencesCommands, PreferencesQueries }
 export type { ResetDbMaintenance, ResetUiFanout }
@@ -38,6 +40,7 @@ export type { MetricsResetResult, ResetMetricsCommand, ResetStep } from './domai
 export type { ResetDbStep } from './ports/resetJournal'
 export type { SecretStore } from './ports/secretStore'
 export type { ExternalConfigWriter } from './ports/externalConfigWriter'
+export type { FeatureFlagReader, FeatureFlags } from './ports/featureFlagReader'
 export type {
   HostPreferenceKey,
   HostPreferences,
@@ -56,6 +59,8 @@ export interface PreferencesDeps {
   ids: IdGenerator
   /** This boot's epoch. */
   hostEpoch: HostEpoch
+  /** The `host/wiring` reader of the two feature flags (05 §5.1 R9); read once, here (INV-110). */
+  featureFlags: FeatureFlagReader
 }
 
 export interface Preferences {
@@ -71,7 +76,8 @@ export function createPreferences(deps: PreferencesDeps): Preferences {
     bus: deps.bus,
     clock: deps.clock,
     ids: deps.ids,
-    hostEpoch: deps.hostEpoch
+    hostEpoch: deps.hostEpoch,
+    featureFlags: deps.featureFlags
   })
   return { commands: service, queries: service }
 }
