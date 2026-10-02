@@ -8,6 +8,7 @@ import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { PreferencesEvent } from '../domain/events'
+import { FakeFeatureFlagReader } from '../ports/fakes/FakeFeatureFlagReader'
 import { InMemoryPreferencesStore } from '../ports/fakes/InMemoryPreferencesStore'
 import { PreferencesService } from './preferencesService'
 
@@ -43,7 +44,8 @@ function service() {
     bus,
     clock,
     ids: new SequenceIdGenerator(),
-    hostEpoch: EPOCH
+    hostEpoch: EPOCH,
+    featureFlags: new FakeFeatureFlagReader()
   })
   return { preferences, store, bus, transactions: () => transactions }
 }
