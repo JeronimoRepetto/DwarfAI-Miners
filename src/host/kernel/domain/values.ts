@@ -33,6 +33,9 @@ export type HostEpoch = string
 /** A provider id: an open catalog string, never a closed enum (06 §0.1, BR-10, INV-40). */
 export type ProviderId = string
 
+/** The DwarfAI id of an ask (05 §4 "Common value types"; ADR-010 item 5). */
+export type AskId = string & { readonly __brand: 'AskId' }
+
 /** Stable id of a message; Retry reuses it (06 §0.1, ADR-022). */
 export type MessageId = string & { readonly __brand: 'MessageId' }
 
