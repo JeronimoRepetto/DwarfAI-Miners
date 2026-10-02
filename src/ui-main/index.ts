@@ -112,6 +112,7 @@ import {
   createNodeHostConnection,
   createNodeHostLauncher,
   createNodeHungHostEnder,
+  nodeHostManifestPath,
   winLaunchPrebuildsDir
 } from './hostLauncher'
 import { ElectronWindows, showRendererCrashedMessage } from './window/adapters/ElectronWindows'
@@ -723,8 +724,9 @@ declare const __DWARFAI_BUILD_ID__: string
 /**
  * HostClient over the Node host launcher (ISSUE-051; ADR-002 D2, D4, D5): the Host data folder is the UI's data folder
  * (`dataDirectory.ts`: userData, or `DwarfAI-dev` for a development build, ADR-005 item 6) + `/host`;
- * the Host runs `out/host/main.js` of this build from its versioned copy, checked against `out/host-manifest.json`,
- * both beside this bundle (`out/ui-main/`); the Windows launch helper loads from the app root's `prebuilds/`.
+ * the Host runs `out/host/main.js` of this build from its versioned copy, checked against `host-manifest.json`: beside
+ * this bundle's `out/` in development, in the resources folder once packaged (nodeHostManifestPath); the Windows
+ * launch helper loads from the app root's `prebuilds/`.
  */
 function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
   const outDir = join(import.meta.dirname, '..')
@@ -734,7 +736,11 @@ function electronHostClient(uiLog: UiLog, dataDir: string): HostClientService {
     launcher: createNodeHostLauncher({
       hostDataDir,
       execPath: process.execPath,
-      hostManifest: join(outDir, 'host-manifest.json'),
+      hostManifest: nodeHostManifestPath({
+        packaged: app.isPackaged,
+        outDir,
+        resourcesPath: process.resourcesPath
+      }),
       hostEntry: join(outDir, 'host', 'main.js'),
       prebuildsDir: winLaunchPrebuildsDir(join(outDir, '..')),
       log: uiLog,

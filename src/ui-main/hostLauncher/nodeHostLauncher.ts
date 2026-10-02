@@ -44,7 +44,13 @@ import type { HostSpawner, ProcessStart } from './ports'
 import { createPosixSpawner } from './posix'
 import { createIdentityProbe, createProcessStartReader, type QueryRunner } from './processStart'
 import { SpawnGate } from './spawnGate'
-import { copySourceOf, ensureVersionedCopy, nodeCopyOps, versionedCopyRoot } from './versionedCopy'
+import {
+  copySourceOf,
+  ensureVersionedCopy,
+  hostManifestPathOf,
+  nodeCopyOps,
+  versionedCopyRoot
+} from './versionedCopy'
 import type { HostAttach, UpgradeFlowDeps } from './upgradeFlow'
 import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
@@ -64,9 +70,9 @@ export interface NodeHostLauncherOptions {
   /** The app executable; the Host runs the copy of it in its versioned copy (ADR-002 D5). */
   execPath: string
   /**
-   * This build's `host-manifest.json` (ADR-002 D5), describing the directory the copy is made from:
-   * written by scripts/build/write-host-manifest.mjs for development and test builds, by the
-   * packaging job for packaged ones (later: ISSUE-270).
+   * This build's `host-manifest.json` (ADR-002 D5), describing the directory the copy is made from
+   * (nodeHostManifestPath): written by scripts/build/write-host-manifest.mjs for development and test
+   * builds, by the packaging hook scripts/build/write-packaged-host-manifest.mjs for packaged ones.
    */
   hostManifest: string
   /** The Host entry script (`out/host/main.js`). */
@@ -377,6 +383,18 @@ function createQueryRunner(): QueryRunner {
         }
       )
     })
+}
+
+/**
+ * This build's `host-manifest.json` on this OS (hostManifestPathOf): beside the build output in
+ * development, in the resources folder once packaged.
+ */
+export function nodeHostManifestPath(build: {
+  packaged: boolean
+  outDir: string
+  resourcesPath: string
+}): string {
+  return hostManifestPathOf(build, thisPlatform())
 }
 
 function thisPlatform(): 'win32' | 'darwin' | 'linux' {
