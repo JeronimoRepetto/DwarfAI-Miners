@@ -2,12 +2,14 @@
 // in-memory double and on the SQLite adapter. ISSUE-098's cases: one row per source key whatever
 // path delivers it, a dropped record keeps its key and writes no row, an echo merges into its
 // waiting DwarfAI row, pages are newest first and per dwarf, and every write runs inside the
-// caller's transaction. The 50-row cap cases (ISSUE-105) and the `request_id` case (ISSUE-166)
-// are added by their issues.
+// caller's transaction. ISSUE-105's cap cases: at most `MESSAGES_PER_DWARF` stored rows per
+// dwarf, every role counted, a `sending` row kept, a trimmed key never re-inserted, one dwarf's
+// trim never touching another's rows. The `request_id` case (ISSUE-166) is added by its issue.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
+import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
 export interface MessageLogSubject {
@@ -20,14 +22,23 @@ export interface MessageLogSubject {
   inTransaction<T>(work: () => T): T
   /** A DwarfAI-sent row of `dwarfId` waiting for the echo `correlation` (written by send later). */
   seedWaitingRow(dwarfId: DwarfId, correlation: string, text: string): MessageId
+  /** A DwarfAI-sent person row of `dwarfId` whose delivery is `sending`, stamped `now`. */
+  seedSendingRow(dwarfId: DwarfId, text: string): MessageId
+  /** A delivered "Answers:" record of `dwarfId`, stamped `now`. */
+  seedAnswersRecord(dwarfId: DwarfId, text: string): MessageId
   /** The claimed key, with the row it points at, or null when the key was never seen. */
   keyOf(sourceKey: string): { dwarfId: DwarfId; messageId: MessageId | null } | null
   /** How many message rows the dwarf has. */
   rowCount(dwarfId: DwarfId): number
+  /** The ids of the dwarf's message rows. */
+  rowIds(dwarfId: DwarfId): MessageId[]
   dispose(): void | Promise<void>
 }
 
 class CallerFailure extends Error {}
+
+/** Every role a provider entry can carry (15 §1.2), cycled so the cap counts each of them. */
+const ROLES: ConversationEntry['role'][] = ['person', 'dwarf', 'system-line']
 
 const entry = (n: number, extra: Partial<ConversationEntry> = {}): ConversationEntry => ({
   sourceKey: `claude:claude:session-1:event-${n}`,
@@ -167,6 +178,118 @@ export function runMessageLogContract(
       expect(s.keyOf(entry(1).sourceKey)).toBeNull()
       expect(s.keyOf(entry(2).sourceKey)).toBeNull()
       expect(s.rowCount(dwarf)).toBe(0)
+    })
+
+    // Entries `from`..`to` of `dwarf`, each one millisecond newer than the last and newer than every
+    // seeded row (seeds are stamped `now`), so the oldest is always the lowest `n`.
+    const timed = (s: MessageLogSubject, from: number, to: number, roles = ROLES) =>
+      Array.from({ length: to - from + 1 }, (_, i) =>
+        entry(from + i, {
+          providerTime: s.now + from + i,
+          role: roles[(from + i) % roles.length] ?? 'dwarf'
+        })
+      )
+
+    const appendAndTrim = (
+      s: MessageLogSubject,
+      dwarf: DwarfId,
+      entries: ConversationEntry[],
+      origin: 'live-stream' | 'transcript' = 'live-stream'
+    ) =>
+      s.inTransaction(() => {
+        const result = s.log.append(dwarf, entries, origin)
+        s.log.trim(dwarf, MESSAGES_PER_DWARF)
+        return result
+      })
+
+    it('[INV-61, ADR-007] the 51st stored message of a dwarf trims its oldest; every role counts, answers-record rows included', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const record = s.seedAnswersRecord(dwarf, 'Answers: yes')
+
+      // The record and 49 messages of every provider role: 50 rows, nothing to trim.
+      appendAndTrim(s, dwarf, timed(s, 1, 49))
+      expect(s.rowCount(dwarf)).toBe(50)
+      expect(s.rowIds(dwarf)).toContain(record)
+
+      // The 51st row trims the oldest, which is the answers-record.
+      appendAndTrim(s, dwarf, timed(s, 50, 50))
+      expect(s.rowCount(dwarf)).toBe(50)
+      expect(s.rowIds(dwarf)).not.toContain(record)
+
+      // The next one trims the oldest message; its key stays, pointing at no row.
+      appendAndTrim(s, dwarf, timed(s, 51, 51))
+      expect(s.rowCount(dwarf)).toBe(50)
+      expect(s.keyOf(entry(1).sourceKey)).toEqual({ dwarfId: dwarf, messageId: null })
+      expect(s.keyOf(entry(2).sourceKey)?.messageId).toEqual(expect.any(String))
+      expect(s.log.page(dwarf, {}).map((e) => e.sourceKey)).toEqual(
+        timed(s, 2, 51)
+          .reverse()
+          .map((e) => e.sourceKey)
+      )
+    })
+
+    it('[INV-61] a sending row is kept by the trim even when it is the oldest row of its dwarf', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const sending = s.seedSendingRow(dwarf, 'still being handed over')
+
+      appendAndTrim(s, dwarf, timed(s, 1, 50))
+
+      expect(s.rowCount(dwarf)).toBe(50)
+      expect(s.rowIds(dwarf)).toContain(sending)
+      expect(s.keyOf(entry(1).sourceKey)).toEqual({ dwarfId: dwarf, messageId: null })
+    })
+
+    it("[INV-61] a trimmed message's key blocks re-insertion from a replay", async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      appendAndTrim(s, dwarf, timed(s, 1, 51))
+      expect(s.keyOf(entry(1).sourceKey)).toEqual({ dwarfId: dwarf, messageId: null })
+
+      // The same record again, from the other path, even newer than every stored row.
+      const replay = appendAndTrim(
+        s,
+        dwarf,
+        [entry(1, { providerTime: s.now + 1_000 })],
+        'transcript'
+      )
+
+      expect(replay).toEqual({ inserted: 0, appended: [] })
+      expect(s.rowCount(dwarf)).toBe(50)
+      expect(s.keyOf(entry(1).sourceKey)).toEqual({ dwarfId: dwarf, messageId: null })
+    })
+
+    it("[INV-61] trimming one dwarf never touches another dwarf's rows", async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      // The other dwarf's rows are the oldest of the store.
+      const others = [0, 1, 2].map((n) =>
+        entry(100 + n, { providerTime: s.now - 10_000 + n, role: 'person' })
+      )
+      appendAndTrim(s, other, others)
+
+      appendAndTrim(s, dwarf, timed(s, 1, 55))
+
+      expect(s.rowCount(dwarf)).toBe(50)
+      expect(s.rowCount(other)).toBe(3)
+      expect(others.map((e) => s.keyOf(e.sourceKey)?.messageId)).toEqual([
+        expect.any(String),
+        expect.any(String),
+        expect.any(String)
+      ])
+    })
+
+    it('[INV-61] trim refuses any keep but MESSAGES_PER_DWARF and runs only inside the caller transaction', async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      appendAndTrim(s, dwarf, timed(s, 1, 51))
+
+      expect(() => s.log.trim(dwarf, MESSAGES_PER_DWARF)).toThrow(HostInvariantError)
+      for (const keep of [0, 49, 51]) {
+        expect(() => s.inTransaction(() => s.log.trim(dwarf, keep))).toThrow(HostInvariantError)
+      }
+      expect(s.rowCount(dwarf)).toBe(50)
     })
 
     it('[ADR-007] an entry over 64 KiB is refused and its batch leaves nothing in the caller transaction', async () => {

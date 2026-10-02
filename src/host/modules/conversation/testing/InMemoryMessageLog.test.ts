@@ -40,8 +40,11 @@ describe('InMemoryMessageLog', () => {
       },
       seedWaitingRow: (dwarfId, correlation, text) =>
         log.seedWaitingRow(dwarfId, correlation, text),
+      seedSendingRow: (dwarfId, text) => log.seedSendingRow(dwarfId, text),
+      seedAnswersRecord: (dwarfId, text) => log.seedAnswersRecord(dwarfId, text),
       keyOf: (sourceKey) => log.keyOf(sourceKey),
       rowCount: (dwarfId) => log.rowCount(dwarfId),
+      rowIds: (dwarfId) => log.rowIds(dwarfId),
       dispose: () => undefined
     }
   })

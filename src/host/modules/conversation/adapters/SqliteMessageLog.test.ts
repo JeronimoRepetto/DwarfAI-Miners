@@ -25,8 +25,11 @@ describe('SqliteMessageLog', () => {
       now: T0,
       inTransaction: (work) => runner.inTransaction(work),
       seedWaitingRow: probe.seedWaitingRow,
+      seedSendingRow: probe.seedSendingRow,
+      seedAnswersRecord: probe.seedAnswersRecord,
       keyOf: probe.keyOf,
       rowCount: probe.rowCount,
+      rowIds: probe.rowIds,
       dispose: () => undefined
     }
   })

@@ -6,7 +6,9 @@
 // first, and a key already claimed writes nothing; a dropped record keeps its key with no row; an
 // echo merges into its dwarf's waiting DwarfAI row; text over 64 KiB (UTF-8) is refused like the
 // `messages` CHECK; `append` runs only inside the caller's transaction. A test's transaction rolls
-// it back with `snapshot` / `restore`. `setDelivery` and `trim` are not built (ISSUE-166, ISSUE-105).
+// it back with `snapshot` / `restore`. `trim` keeps the newest `MESSAGES_PER_DWARF` rows of the
+// dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
+// row. `setDelivery` is not built (ISSUE-166).
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -16,9 +18,11 @@ import type { ConversationEntry } from '../../suppliers'
 import {
   classifyEntry,
   MESSAGE_TEXT_MAX_BYTES,
+  type DeliveryPhase,
   type FeedPageRequest,
   type Message
 } from '../domain/messages'
+import { MESSAGES_PER_DWARF, rowsToTrim } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
 export interface InMemoryMessageLogDeps {
@@ -34,6 +38,8 @@ interface StoredRow {
   message: Message
   /** `messages.pending_echo`: set only on a DwarfAI row waiting for its echo. */
   pendingEcho: string | null
+  /** `deliveries.phase` of the row, or null when it has no delivery row. */
+  delivery: DeliveryPhase | null
 }
 
 interface StoredKey {
@@ -97,7 +103,7 @@ export class InMemoryMessageLog implements MessageLog {
         providerTime: entry.providerTime,
         createdAt: now
       }
-      this.rows.push({ message, pendingEcho: null })
+      this.rows.push({ message, pendingEcho: null, delivery: null })
       this.keys.set(entry.sourceKey, { dwarfId, messageId: message.id })
       appended.push(structuredClone(message))
     }
@@ -137,25 +143,51 @@ export class InMemoryMessageLog implements MessageLog {
   }
 
   trim(dwarfId: DwarfId, keep: number): void {
-    void [dwarfId, keep]
-    throw new HostInvariantError('MessageLog.trim is not built (later: ISSUE-105)')
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError('MessageLog.trim runs inside the caller transaction (16 §2.2)')
+    }
+    if (keep !== MESSAGES_PER_DWARF) {
+      throw new HostInvariantError(`MessageLog.trim keeps MESSAGES_PER_DWARF rows, not ${keep}`)
+    }
+    const trimmed = new Set(
+      rowsToTrim(
+        this.rows
+          .filter((r) => r.message.dwarfId === dwarfId)
+          .map((r) => ({
+            id: r.message.id,
+            sortAt: sortAt(r.message),
+            sending: r.delivery === 'sending'
+          }))
+      )
+    )
+    if (trimmed.size === 0) return
+    // The row goes with its delivery; its key stays, pointing at no row (09 §5.2).
+    this.rows = this.rows.filter((r) => !trimmed.has(r.message.id))
+    for (const [sourceKey, key] of this.keys) {
+      if (key.messageId !== null && trimmed.has(key.messageId)) {
+        this.keys.set(sourceKey, { ...key, messageId: null })
+      }
+    }
   }
 
   /** Test seam: a DwarfAI-sent row waiting for `correlation` (send writes these later, ISSUE-166). */
   seedWaitingRow(dwarfId: DwarfId, correlation: string, text: string): MessageId {
-    const message: Message = {
-      id: this.deps.ids.uuidv7() as MessageId,
-      dwarfId,
-      sourceKey: null,
-      role: 'person',
-      text,
-      attachments: [],
-      origin: 'dwarfai',
-      providerTime: null,
-      createdAt: this.deps.clock.now()
-    }
-    this.rows.push({ message, pendingEcho: correlation })
-    return message.id
+    return this.seedDwarfAiRow(dwarfId, 'person', text, correlation, null)
+  }
+
+  /** Test seam: a DwarfAI-sent person row whose delivery is still `sending` (ISSUE-166 writes these). */
+  seedSendingRow(dwarfId: DwarfId, text: string): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'person', text, null, 'sending')
+  }
+
+  /** Test seam: an "Answers:" record of `dwarfId`, delivered (asking writes these through `AnswerRecords`). */
+  seedAnswersRecord(dwarfId: DwarfId, text: string): MessageId {
+    return this.seedDwarfAiRow(dwarfId, 'answers-record', text, null, 'delivered')
+  }
+
+  /** The ids of the dwarf's stored rows, in insertion order. */
+  rowIds(dwarfId: DwarfId): MessageId[] {
+    return this.rows.filter((r) => r.message.dwarfId === dwarfId).map((r) => r.message.id)
   }
 
   keyOf(sourceKey: string): StoredKey | null {
@@ -174,6 +206,28 @@ export class InMemoryMessageLog implements MessageLog {
   restore(snapshot: InMemorySnapshot): void {
     this.rows = structuredClone([...snapshot.rows])
     this.keys = new Map(snapshot.keys)
+  }
+
+  private seedDwarfAiRow(
+    dwarfId: DwarfId,
+    role: 'person' | 'answers-record',
+    text: string,
+    pendingEcho: string | null,
+    delivery: DeliveryPhase | null
+  ): MessageId {
+    const message: Message = {
+      id: this.deps.ids.uuidv7() as MessageId,
+      dwarfId,
+      sourceKey: null,
+      role,
+      text,
+      attachments: [],
+      origin: 'dwarfai',
+      providerTime: null,
+      createdAt: this.deps.clock.now()
+    }
+    this.rows.push({ message, pendingEcho, delivery })
+    return message.id
   }
 
   private waiting(dwarfId: DwarfId, correlation: string): StoredRow | undefined {
