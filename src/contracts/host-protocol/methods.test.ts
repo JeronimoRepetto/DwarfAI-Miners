@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
-import type { DwarfId, HostEpoch, Instant } from '../wire'
+import type { DwarfId, HostEpoch, HostPreferences, Instant, PreferencesView } from '../wire'
 import {
   HOST_METHOD_SCHEMAS,
   type HostMethods,
@@ -9,6 +9,7 @@ import {
   type SubscribeParams,
   type SubscribeResult
 } from './methods'
+import type { HostPreferenceKey, PreferenceSetParams } from './params/preferences'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -143,5 +144,114 @@ describe('host.upgrade.request params and result (14 §3.4, B-M06)', () => {
     expect(result.safeParse({ state: 'upgrade-pending' }).success).toBe(true)
     expect(result.safeParse({ state: 'ready' }).success).toBe(false)
     expect(result.safeParse({ state: 'upgrade-pending', at: 1 }).success).toBe(false)
+  })
+})
+
+// The B-M12 and B-M13 entries of 14 §3.4 and their strict() schemas (14 §1.4).
+
+describe('preferences.get and preferences.set params and result (14 §3.4, B-M12, B-M13)', () => {
+  const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const STORED = {
+    subagentDelegationOn: true,
+    routingProfile: 'premium',
+    defaultProvider: 'claude',
+    defaultModel: 'opus',
+    systemNotificationsOn: true,
+    openCodePermissionsOn: false
+  }
+  const VIEW = {
+    preferences: STORED,
+    secrets: [],
+    secretBackend: 'unavailable',
+    integrations: [],
+    welcome: { due: false, legacyFound: [], offered: [] }
+  }
+
+  it('[ADR-024] the preferences.get and preferences.set schemas infer exactly the 14 §3.4 entries and refuse any other key', () => {
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
+    expectTypeOf<HostMethods['preferences.get']['params']>().toEqualTypeOf<{}>()
+    expectTypeOf<HostMethods['preferences.get']['result']>().toEqualTypeOf<PreferencesView>()
+    expectTypeOf<HostMethods['preferences.set']['params']>().toEqualTypeOf<PreferenceSetParams>()
+    expectTypeOf<HostMethods['preferences.set']['result']>().toEqualTypeOf<HostPreferences>()
+    expectTypeOf<HostPreferenceKey>().toEqualTypeOf<
+      | 'subagentDelegationOn'
+      | 'routingProfile'
+      | 'defaultProvider'
+      | 'defaultModel'
+      | 'defaultEffort'
+      | 'systemNotificationsOn'
+    >()
+    expectTypeOf<Extract<PreferenceSetParams, { key: 'defaultProvider' }>>().toEqualTypeOf<{
+      key: 'defaultProvider'
+      value: string | undefined
+      requestId: string
+    }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.get']['params']>
+    >().toEqualTypeOf<HostMethods['preferences.get']['params']>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.get']['result']>
+    >().toEqualTypeOf<PreferencesView>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.set']['params']>
+    >().toEqualTypeOf<PreferenceSetParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['preferences.set']['result']>
+    >().toEqualTypeOf<HostPreferences>()
+
+    const get = HOST_METHOD_SCHEMAS['preferences.get']
+    expect(get.params.safeParse({}).success).toBe(true)
+    expect(get.params.safeParse({ keys: ['routingProfile'] }).success).toBe(false)
+    expect(get.result.safeParse(VIEW).success).toBe(true)
+    expect(get.result.safeParse({ ...VIEW, flags: {} }).success).toBe(false)
+
+    const { result } = HOST_METHOD_SCHEMAS['preferences.set']
+    expect(result.safeParse(STORED).success).toBe(true)
+    expect(result.safeParse({ ...STORED, notificationSoundsOn: true }).success).toBe(false)
+    expect(result.safeParse({ ...STORED, routingProfile: 'fast' }).success).toBe(false)
+  })
+
+  it('[ADR-003] preferences.set takes one writable key with its value: a catalog provider or none as the default provider, never Other or the derived openCodePermissionsOn', () => {
+    const { params } = HOST_METHOD_SCHEMAS['preferences.set']
+    const set = (key: string, value?: unknown, extra: object = {}) =>
+      params.safeParse({
+        key,
+        ...(value === undefined ? {} : { value }),
+        requestId: REQUEST_ID,
+        ...extra
+      })
+
+    expect(set('subagentDelegationOn', true).success).toBe(true)
+    expect(set('routingProfile', 'economy').success).toBe(true)
+    expect(set('defaultProvider', 'codex').success).toBe(true)
+    expect(set('defaultModel', 'gpt-5-codex').success).toBe(true)
+    expect(set('defaultEffort', 'high').success).toBe(true)
+    expect(set('systemNotificationsOn', false).success).toBe(true)
+    // "None": the optional keys are cleared by leaving the value out (JSON has no undefined).
+    const none = set('defaultProvider')
+    expect(none.success).toBe(true)
+    expect(none.data).toStrictEqual({
+      key: 'defaultProvider',
+      value: undefined,
+      requestId: REQUEST_ID
+    })
+    expect(set('defaultModel').success).toBe(true)
+    expect(set('defaultEffort').success).toBe(true)
+
+    expect(set('subagentDelegationOn').success).toBe(false)
+    expect(set('subagentDelegationOn', 'yes').success).toBe(false)
+    expect(set('routingProfile', 'fast').success).toBe(false)
+    expect(set('defaultProvider', 'other').success).toBe(false)
+    expect(set('defaultProvider', 'Other…').success).toBe(false)
+    expect(set('defaultProvider', null).success).toBe(false)
+    expect(set('defaultModel', 7).success).toBe(false)
+    expect(set('openCodePermissionsOn', true).success).toBe(false)
+    expect(set('notificationSoundsOn', true).success).toBe(false)
+    expect(set('jev-key', 'secret').success).toBe(false)
+    expect(set('routingProfile', 'economy', { origin: 'settings' }).success).toBe(false)
+    expect(params.safeParse({ key: 'routingProfile', value: 'economy' }).success).toBe(false)
+    expect(
+      params.safeParse({ key: 'routingProfile', value: 'economy', requestId: 'not-a-uuid' }).success
+    ).toBe(false)
   })
 })

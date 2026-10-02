@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
+import type { PreferencesView } from '../wire'
 import type { HelloOk } from './adr-003'
 import { HOST_FRAME_SCHEMAS, type HostFrames } from './frames'
 
@@ -58,5 +59,33 @@ describe('resync-required payload (14 §3.5, B-F03)', () => {
     expect(resync.safeParse({ reason: 'events-lost' }).success).toBe(false)
     expect(resync.safeParse({ reason: 'backpressure', seq: 3 }).success).toBe(false)
     expect(resync.safeParse({}).success).toBe(false)
+  })
+})
+
+// The B-F24 payload of 14 §3.5 and its strict() schema (14 §1.4).
+
+describe('preferences.changed payload (14 §3.5, B-F24)', () => {
+  it('[ADR-024] the preferences.changed schema infers exactly its 14 §3.5 PreferencesView and refuses any other key', () => {
+    expectTypeOf<HostFrames['preferences.changed']>().toEqualTypeOf<PreferencesView>()
+    expectTypeOf<
+      z.infer<(typeof HOST_FRAME_SCHEMAS)['preferences.changed']>
+    >().toEqualTypeOf<PreferencesView>()
+
+    const changed = HOST_FRAME_SCHEMAS['preferences.changed']
+    const view = {
+      preferences: {
+        subagentDelegationOn: false,
+        routingProfile: 'balanced',
+        systemNotificationsOn: true,
+        openCodePermissionsOn: false
+      },
+      secrets: [],
+      secretBackend: 'unavailable',
+      integrations: [],
+      welcome: { due: false, legacyFound: [], offered: [] }
+    }
+    expect(changed.safeParse(view).success).toBe(true)
+    expect(changed.safeParse({ ...view, seq: 3 }).success).toBe(false)
+    expect(changed.safeParse({ preferences: view.preferences }).success).toBe(false)
   })
 })

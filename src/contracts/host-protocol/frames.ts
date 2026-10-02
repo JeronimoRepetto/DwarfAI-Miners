@@ -6,15 +6,17 @@
 // tests); the type test in frames.test.ts keeps every schema equal to its interface entry. The
 // mapping is Partial only because a test may merge a frame of its own into HostFrames.
 import { z } from 'zod'
+import { preferencesViewSchema, type PreferencesView } from '../wire'
 import type { HelloOk } from './adr-003'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04 and B-F05 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05 and B-F24 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
   'host.state':           { state: HelloOk['state']; jobStatus: HelloOk['jobStatus'] }
   'host.closing':         { reason: 'idle' | 'stop-all' | 'upgrade' | 'os-session-end'; clean: true }   // 'idle' retired by AMENDMENT-5 (OQ-63), never sent
+  'preferences.changed':  PreferencesView
 }
 // end verbatim: 14 §3.5
 
@@ -42,5 +44,6 @@ export const HOST_FRAME_SCHEMAS = {
       reason: z.enum(['idle', 'stop-all', 'upgrade', 'os-session-end']),
       clean: z.literal(true)
     })
-    .strict()
+    .strict(),
+  'preferences.changed': preferencesViewSchema
 } as const satisfies Partial<{ [F in keyof HostFrames]: z.ZodType<HostFrames[F]> }>
