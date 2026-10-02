@@ -106,8 +106,12 @@ describe('spawn gate (ADR-002 D3)', () => {
       probe: prober.probe,
       gate: gateFor(files, probe, clock),
       spawner: spawner.spawn,
-      // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
-      prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
+      // AMENDED for ISSUE-031: the versioned copy (AMENDED for the cut-0 conformance fixes, was: the
+      // source folder itself; the double now answers a versioned folder, ADR-002 D5).
+      prepareCopy: new FakeCopyPreparer(
+        '/opt/DwarfAI-Miners',
+        '/home/j/.local/share/dwarfai/host/1.4.0'
+      ).prepare,
       host: HOST,
       clock,
       sleep: clock.sleep,
@@ -140,8 +144,12 @@ describe('spawn gate (ADR-002 D3)', () => {
       probe: prober.probe,
       gate: gateFor(files, new FakeIdentityProbe().alive(OWNER), clock),
       spawner: spawner.spawn,
-      // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
-      prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
+      // AMENDED for ISSUE-031: the versioned copy (AMENDED for the cut-0 conformance fixes, was: the
+      // source folder itself; the double now answers a versioned folder, ADR-002 D5).
+      prepareCopy: new FakeCopyPreparer(
+        '/opt/DwarfAI-Miners',
+        '/home/j/.local/share/dwarfai/host/1.4.0'
+      ).prepare,
       host: HOST,
       clock,
       sleep,
@@ -168,8 +176,12 @@ describe('spawn gate (ADR-002 D3)', () => {
       probe: prober.probe,
       gate: gateFor(files, new FakeIdentityProbe().alive(OWNER), clock),
       spawner: new FakeHostSpawner().spawn,
-      // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
-      prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
+      // AMENDED for ISSUE-031: the versioned copy (AMENDED for the cut-0 conformance fixes, was: the
+      // source folder itself; the double now answers a versioned folder, ADR-002 D5).
+      prepareCopy: new FakeCopyPreparer(
+        '/opt/DwarfAI-Miners',
+        '/home/j/.local/share/dwarfai/host/1.4.0'
+      ).prepare,
       host: HOST,
       clock,
       sleep: clock.sleep,
@@ -204,8 +216,12 @@ describe('spawn gate (ADR-002 D3)', () => {
           self: () => Promise.resolve(self)
         }),
         spawner: spawner.spawn,
-        // AMENDED for ISSUE-031: the versioned copy (here the source folder itself).
-        prepareCopy: new FakeCopyPreparer('/opt/DwarfAI-Miners').prepare,
+        // AMENDED for ISSUE-031: the versioned copy (AMENDED for the cut-0 conformance fixes, was: the
+        // source folder itself; the double now answers a versioned folder, ADR-002 D5).
+        prepareCopy: new FakeCopyPreparer(
+          '/opt/DwarfAI-Miners',
+          '/home/j/.local/share/dwarfai/host/1.4.0'
+        ).prepare,
         host: HOST,
         clock,
         sleep: clock.sleep,

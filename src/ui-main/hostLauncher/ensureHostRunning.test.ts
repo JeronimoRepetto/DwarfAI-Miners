@@ -24,6 +24,8 @@ import {
 const DETACHED_PROCESS = 0x0000_0008
 
 const HOST_DATA_DIR = '/home/j/.config/DwarfAI-Miners/host'
+/** The versioned copy the double prepares (ADR-002 D5, Linux: `$XDG_DATA_HOME/dwarfai/host/<version>`). */
+const COPY_DIR = '/home/j/.local/share/dwarfai/host/1.4.0'
 const SECRET = 'f00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeed'
 
 /** A gate nobody else holds, recording what the launcher does with it. */
@@ -46,9 +48,11 @@ function harness(uiEnv: Record<string, string | undefined> = { PATH: '/usr/bin' 
   const spawner = new FakeHostSpawner()
   const gate = new FreeGate()
   const log = new RecordingUiLog()
-  // AMENDED for ISSUE-031: the launcher prepares the versioned copy before it spawns; this one is
-  // the source folder itself, so the spawn paths below stay as configured.
-  const copy = new FakeCopyPreparer('/opt/DwarfAI-Miners')
+  // AMENDED for ISSUE-031: the launcher prepares the versioned copy before it spawns.
+  // AMENDED for the cut-0 conformance fixes (was: the source folder itself): the double now meets
+  // the HostCopyPreparer contract, so the copy is a versioned folder that is not the app directory
+  // (ADR-002 D5), and the spawn paths below are the relocated ones.
+  const copy = new FakeCopyPreparer('/opt/DwarfAI-Miners', COPY_DIR)
   const deps: HostLauncherDeps = {
     probe: prober.probe,
     gate,
@@ -269,8 +273,10 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     expect(await h.launcher.ensureHostRunning()).toBe('spawned')
 
     const [request] = h.spawner.requests
-    expect(request?.file).toBe('/opt/DwarfAI-Miners/dwarfai-miners')
-    expect(request?.args).toEqual(['/opt/DwarfAI-Miners/resources/app.asar/out/host/main.js'])
+    // AMENDED for the cut-0 conformance fixes (was: the install folder's paths): the Host is started
+    // from its versioned copy, never the install folder (ADR-002 D5).
+    expect(request?.file).toBe(`${COPY_DIR}/dwarfai-miners`)
+    expect(request?.args).toEqual([`${COPY_DIR}/resources/app.asar/out/host/main.js`])
     expect(request?.env).toEqual({
       PATH: '/usr/bin',
       HOME: '/home/j',
