@@ -1,8 +1,9 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
-import type { PreferencesView } from '../wire'
+import type { PreferencesView, ResetId } from '../wire'
 import type { HelloOk } from './adr-003'
 import { HOST_FRAME_SCHEMAS, type HostFrames } from './frames'
+import type { ResetStep } from './params/preferences'
 
 // The B-F04 and B-F05 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
 
@@ -87,5 +88,53 @@ describe('preferences.changed payload (14 §3.5, B-F24)', () => {
     expect(changed.safeParse(view).success).toBe(true)
     expect(changed.safeParse({ ...view, seq: 3 }).success).toBe(false)
     expect(changed.safeParse({ preferences: view.preferences }).success).toBe(false)
+  })
+})
+
+// The B-F26 and B-F27 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
+
+describe('ui.resetPreferences and reset.progress payloads (14 §3.5, B-F26, B-F27)', () => {
+  const RESET_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+
+  it('[ADR-023] each reset frame schema infers exactly its 14 §3.5 payload, takes only the seven ResetStep values and refuses any other key', () => {
+    expectTypeOf<HostFrames['ui.resetPreferences']>().toEqualTypeOf<{ epoch: number }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['ui.resetPreferences']>>().toEqualTypeOf<
+      HostFrames['ui.resetPreferences']
+    >()
+    expectTypeOf<HostFrames['reset.progress']>().toEqualTypeOf<{
+      resetId: ResetId
+      epoch: number
+      step: ResetStep
+    }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['reset.progress']>>().toEqualTypeOf<
+      HostFrames['reset.progress']
+    >()
+    expectTypeOf<ResetStep>().toEqualTypeOf<
+      'begun' | 'db' | 'secrets' | 'external-config' | 'ui-prefs' | 'install-moment' | 'done'
+    >()
+
+    const resetPreferences = HOST_FRAME_SCHEMAS['ui.resetPreferences']
+    expect(resetPreferences.safeParse({ epoch: 1 }).success).toBe(true)
+    expect(resetPreferences.safeParse({ epoch: 0 }).success).toBe(false)
+    expect(resetPreferences.safeParse({ epoch: 1, resetId: RESET_ID }).success).toBe(false)
+
+    const progress = HOST_FRAME_SCHEMAS['reset.progress']
+    for (const step of [
+      'begun',
+      'db',
+      'secrets',
+      'external-config',
+      'ui-prefs',
+      'install-moment',
+      'done'
+    ]) {
+      expect(progress.safeParse({ resetId: RESET_ID, epoch: 1, step }).success, step).toBe(true)
+    }
+    expect(progress.safeParse({ resetId: RESET_ID, epoch: 1, step: 'vacuum' }).success).toBe(false)
+    expect(progress.safeParse({ resetId: 'reset-1', epoch: 1, step: 'db' }).success).toBe(false)
+    expect(progress.safeParse({ resetId: RESET_ID, epoch: 1 }).success).toBe(false)
+    expect(
+      progress.safeParse({ resetId: RESET_ID, epoch: 1, step: 'db', reason: 'x' }).success
+    ).toBe(false)
   })
 })
