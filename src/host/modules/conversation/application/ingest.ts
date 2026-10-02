@@ -1,6 +1,7 @@
 // `ConversationCommands.ingest` (16 §4.6; 09 §5.2): one batch of entries from a live stream or a
-// transcript reader is written in ONE transaction through `MessageLog.append` (steps 1–2; the cap of
-// step 3 is ISSUE-105, activity runs of step 4 ISSUE-101, the cursor of step 5 ISSUE-099). Only
+// transcript reader is written in ONE transaction through `MessageLog.append` (steps 1–2), then
+// `MessageLog.trim` caps the dwarf at `MESSAGES_PER_DWARF` rows in the same transaction (step 3,
+// INV-61); activity runs of step 4 are ISSUE-101, the cursor of step 5 ISSUE-099. Only
 // after the commit (step 6; 08 §5.1) is `MessagesAppended` published, with the rows this batch
 // inserted and nothing else: a batch whose every key was already claimed publishes nothing, and a
 // batch that throws rolls back every row and publishes nothing.
@@ -14,6 +15,7 @@ import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import type { ConversationEntry } from '../../suppliers'
 import type { ConversationEvent } from '../domain/events'
 import { toMessageView } from '../domain/messages'
+import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
 /**
@@ -46,7 +48,12 @@ export class ConversationIngest implements ConversationCommands {
     origin: 'live-stream' | 'transcript'
   ): void {
     const { log, transactions, bus, clock, ids, hostEpoch } = this.deps
-    const { appended } = transactions.inTransaction(() => log.append(dwarfId, entries, origin))
+    // A batch carries one dwarf's entries, so that dwarf is the only one it can push over the cap.
+    const { appended } = transactions.inTransaction(() => {
+      const result = log.append(dwarfId, entries, origin)
+      log.trim(dwarfId, MESSAGES_PER_DWARF)
+      return result
+    })
     if (appended.length === 0) return
     bus.publish({
       type: 'MessagesAppended',

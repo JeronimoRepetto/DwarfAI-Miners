@@ -13,7 +13,13 @@
 //   16 §4.6). `activity_json` is left NULL: activity runs are ISSUE-101.
 // - `page` reads newest first by `sort_at DESC, id DESC` (the `messages_feed` index). It returns
 //   the rows `ConversationEntry` can carry: provider-keyed person, dwarf and system lines.
-// - `setDelivery` and `trim` are not built yet (later: ISSUE-166, ISSUE-105).
+// - `trim` is 09 §5.2 step 3, inside the caller's transaction: at most `MESSAGES_PER_DWARF` stored
+//   rows of the dwarf stay, every role counted, `sending` rows ranked first so a row still being
+//   handed over is kept, then the newest by `sort_at`, `id` (06 INV-61). The foreign keys of 09
+//   §4.4 do the rest in the same statement: the trimmed rows' `deliveries` go, and their
+//   `message_keys.message_id` and `ask_answers.message_id` become NULL; the key stays, so no
+//   replay re-inserts a trimmed message. Any other `keep` is refused: the cap is a constant.
+// - `setDelivery` is not built yet (later: ISSUE-166).
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -22,6 +28,7 @@ import type { SqliteDatabase, SqliteParam } from '../../../kernel/ports/sqliteDa
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ConversationEntry } from '../../suppliers'
 import { classifyEntry, type FeedPageRequest, type Message } from '../domain/messages'
+import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { MessageLog } from '../ports/messageLog'
 
 export interface SqliteMessageLogDeps {
@@ -51,6 +58,15 @@ const INSERT_ROW = `INSERT INTO messages
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
 const POINT_KEY = 'UPDATE message_keys SET message_id = ? WHERE source_key = ?'
+
+// 09 §5.2 step 3, with the cap bound rather than written in.
+const TRIM = `DELETE FROM messages
+ WHERE dwarf_id = ?
+   AND id NOT IN (SELECT m.id FROM messages m
+                    LEFT JOIN deliveries d ON d.message_id = m.id AND d.phase = 'sending'
+                   WHERE m.dwarf_id = ?
+                   ORDER BY (d.message_id IS NOT NULL) DESC, m.sort_at DESC, m.id DESC
+                   LIMIT ?)`
 
 const PAGE_WHERE = `WHERE dwarf_id = ? AND source_key IS NOT NULL AND role <> 'answers-record'`
 
@@ -138,8 +154,13 @@ export class SqliteMessageLog implements MessageLog {
   }
 
   trim(dwarfId: DwarfId, keep: number): void {
-    void [dwarfId, keep]
-    throw new HostInvariantError('MessageLog.trim is not built (later: ISSUE-105)')
+    if (!this.deps.scope.isInTransaction()) {
+      throw new HostInvariantError('MessageLog.trim runs inside the caller transaction (16 §2.2)')
+    }
+    if (keep !== MESSAGES_PER_DWARF) {
+      throw new HostInvariantError(`MessageLog.trim keeps MESSAGES_PER_DWARF rows, not ${keep}`)
+    }
+    this.deps.db.run(TRIM, [dwarfId, dwarfId, keep])
   }
 
   private waitingRow(dwarfId: DwarfId, correlation: string): string | null {

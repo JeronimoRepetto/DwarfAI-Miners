@@ -1,7 +1,8 @@
 // The conversation module (05 §3.6): a dwarf's message log, owned by the Host (ADR-007 item 1). So far
 // (ISSUE-098) the storage floor: `ingest` writes one batch of entries in one transaction with
 // once-only keys (INV-60), drops control-plane records and hand-off echoes with their key kept
-// (INV-68), merges echoes of DwarfAI-sent rows, and publishes `MessagesAppended` after the commit.
+// (INV-68), merges echoes of DwarfAI-sent rows, keeps at most 50 stored rows per dwarf in the same
+// transaction (INV-61, ISSUE-105), and publishes `MessagesAppended` after the commit.
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'

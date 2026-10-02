@@ -38,8 +38,13 @@ export function seedConversationDb(
 
 export interface SqliteConversationProbe {
   seedWaitingRow(dwarfId: DwarfId, correlation: string, text: string): MessageId
+  /** A DwarfAI-sent person row with its `deliveries` row in phase `sending`. */
+  seedSendingRow(dwarfId: DwarfId, text: string): MessageId
+  /** An "Answers:" record (no ask) with its `deliveries` row in phase `delivered`. */
+  seedAnswersRecord(dwarfId: DwarfId, text: string): MessageId
   keyOf(sourceKey: string): { dwarfId: DwarfId; messageId: MessageId | null } | null
   rowCount(dwarfId: DwarfId): number
+  rowIds(dwarfId: DwarfId): MessageId[]
 }
 
 export function sqliteProbe(
@@ -60,6 +65,12 @@ export function sqliteProbe(
       )
       return id
     },
+    seedSendingRow(dwarfId, text) {
+      return seedWithDelivery(dwarfId, 'person', 'message', 'sending', text)
+    },
+    seedAnswersRecord(dwarfId, text) {
+      return seedWithDelivery(dwarfId, 'answers-record', 'answers-record', 'delivered', text)
+    },
     keyOf(sourceKey) {
       const row = db.all('SELECT dwarf_id, message_id FROM message_keys WHERE source_key = ?', [
         sourceKey
@@ -75,6 +86,34 @@ export function sqliteProbe(
       return Number(
         db.all('SELECT count(*) AS n FROM messages WHERE dwarf_id = ?', [dwarfId])[0]?.['n']
       )
+    },
+    rowIds(dwarfId) {
+      return db
+        .all('SELECT id FROM messages WHERE dwarf_id = ? ORDER BY rowid', [dwarfId])
+        .map((row) => String(row['id']) as MessageId)
     }
+  }
+
+  function seedWithDelivery(
+    dwarfId: DwarfId,
+    role: 'person' | 'answers-record',
+    kind: 'message' | 'answers-record',
+    phase: 'sending' | 'delivered',
+    text: string
+  ): MessageId {
+    const id = ids.uuidv7() as MessageId
+    runner.inTransaction(() => {
+      db.run(
+        `INSERT INTO messages (id, dwarf_id, role, text, origin, created_at)
+         VALUES (?, ?, ?, ?, 'dwarfai', ?)`,
+        [id, dwarfId, role, text, at]
+      )
+      db.run(
+        `INSERT INTO deliveries (message_id, dwarf_id, kind, phase, sent_at, phase_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [id, dwarfId, kind, phase, at, at]
+      )
+    })
+    return id
   }
 }
