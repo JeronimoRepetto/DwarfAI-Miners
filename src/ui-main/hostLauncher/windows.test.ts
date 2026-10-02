@@ -14,6 +14,7 @@ import {
   windowsCommandLine,
   windowsPowerShell
 } from './windows'
+import { runHostSpawnerContract } from './testing/hostSpawner.contract'
 
 const REQUEST: HostSpawnRequest = {
   file: 'C:\\DwarfAI\\DwarfAI-Miners.exe',
@@ -270,5 +271,29 @@ describe('Windows launcher step (ADR-002 D6, SP-02)', () => {
     ])
     expect(helper.opened).toEqual([4242])
     expect(helper.watchedFor()).toBe(HOST_WATCH_MS)
+  })
+})
+
+// L3: the real Windows spawner over the launch helper's double, which plays the native side (breakaway answers, the
+// watched process exits); this OS's real helper is the L8 leg (spawner.os.test.ts).
+runHostSpawnerContract('createWindowsSpawner over the launch helper', () => {
+  const helper = new FakeWinLaunch()
+  let ended = false
+  return Promise.resolve({
+    spawner: createWindowsSpawner({ loadHelper: () => ({ ok: true, binding: helper.binding }) }),
+    request: (script) => {
+      helper.answer =
+        script === 'cannot-start'
+          ? () => ({ status: 'failed', code: 'WIN32_2' })
+          : (process) => ({ status: 'launched', process })
+      return { ...REQUEST, file: `C:\\app\\host-${script}.exe` }
+    },
+    afterLaunch: (script) => {
+      if (script === 'exits-with-3') {
+        ended = true
+        helper.exit(3)
+      }
+    },
+    stillRunning: () => Promise.resolve(!ended)
   })
 })

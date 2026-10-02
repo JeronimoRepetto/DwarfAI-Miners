@@ -1,5 +1,7 @@
 // The HostSpawner double: records every request and answers with a scripted outcome. A launched
-// fake Host exits only when the test calls `exit(code)`. Never imported by production code (R14).
+// fake Host exits only when the test calls `exit(code)`; `release()` ends the watch, so its
+// `exited` answers null, as the HostSpawner contract says (../testing/hostSpawner.contract.ts).
+// Never imported by production code (R14).
 import type { HostSpawnRequest, HostSpawner, LaunchOutcome, LaunchedHost } from '../ports'
 
 export class FakeHostSpawner {
@@ -14,14 +16,17 @@ export class FakeHostSpawner {
   readonly spawn: HostSpawner = (request) => {
     this.requests.push(request)
     if (this.outcome !== 'launched') return Promise.resolve(this.outcome)
+    let settle: (code: number | null) => void = () => {}
     const exited = new Promise<number | null>((resolve) => {
-      this.exitHost = resolve
+      settle = resolve
     })
+    this.exitHost = settle
     const host: LaunchedHost = {
       how: 'detached',
       exited,
       release: () => {
         this.released += 1
+        settle(null)
       }
     }
     this.onLaunch()

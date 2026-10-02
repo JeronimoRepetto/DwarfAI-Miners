@@ -6,6 +6,7 @@ import {
   type QueryRunner,
   type StartRead
 } from './processStart'
+import { runIdentityProbeContract } from './testing/identityProbe.contract'
 
 /** A query runner answering from a table keyed by the program's file name. */
 function runner(answers: Record<string, Awaited<ReturnType<QueryRunner>>>) {
@@ -84,4 +85,15 @@ describe('process start reader (ADR-002 D3 gate owner identity)', () => {
     expect(await probe({ pid: 3, processStartTimeMs: 10_000 })).toBe(false)
     expect(await probe({ pid: 4, processStartTimeMs: 10_000 })).toBe(true)
   })
+})
+
+// L3: the real probe over a scripted start-time reader; its OS readers are the L8 leg (processStart.os.test.ts).
+runIdentityProbeContract('createIdentityProbe over a scripted reader', () => {
+  const live = { pid: 4242, processStartTimeMs: 1_759_395_600_000 }
+  const probe = createIdentityProbe((pid) =>
+    Promise.resolve(
+      pid === live.pid ? { kind: 'started', ms: live.processStartTimeMs } : { kind: 'gone' }
+    )
+  )
+  return Promise.resolve({ probe, live, gonePid: 4343 })
 })
