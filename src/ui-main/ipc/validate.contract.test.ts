@@ -122,7 +122,9 @@ const VALID_REQUESTS: Partial<Record<ChannelKey, unknown>> = {
   'host:connection:retry': undefined,
   'host:connection:confirm-restart': undefined,
   'ui:session:get': undefined,
-  'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' }
+  'ui:session:patch': { kind: 'draft', dwarfId: U1, text: 'half a thought' },
+  'ui:preferences:get': { keys: ['startWithSystem', 'lastMode'] },
+  'ui:preferences:set': { key: 'startWithSystem', value: false }
 }
 
 /** A valid today request for every CHANGE row, whose today shape differs from its target. */
