@@ -303,6 +303,14 @@ export interface DwarfAiMinersApi {
   retryHostConnection: () => Promise<TargetResult<'host:connection:retry'>>
   /** A-N33 · `host:connection:confirm-restart` · invoke · NEW · target shape */
   confirmHostRestart: () => Promise<TargetResult<'host:connection:confirm-restart'>>
+  /** A-N17 · `ui:session:get` · invoke · NEW · target shape */
+  getUiSession: () => Promise<TargetResult<'ui:session:get'>>
+  /** A-N18 · `ui:session:patch` · send · NEW · target shape */
+  patchUiSession: (request: TargetRequest<'ui:session:patch'>) => void
+  /** A-N19 · `ui:session:changed` · push · NEW · target shape */
+  onUiSessionChanged: (
+    listener: (payload: TargetResult<'ui:session:changed'>) => void
+  ) => () => void
 }
 
 const api: DwarfAiMinersApi = {
@@ -545,7 +553,16 @@ const api: DwarfAiMinersApi = {
   },
   retryHostConnection: () => invokeOrReject(() => ipcRenderer.invoke('host:connection:retry')),
   confirmHostRestart: () =>
-    invokeOrReject(() => ipcRenderer.invoke('host:connection:confirm-restart'))
+    invokeOrReject(() => ipcRenderer.invoke('host:connection:confirm-restart')),
+  getUiSession: () => invokeOrReject(() => ipcRenderer.invoke('ui:session:get')),
+  patchUiSession: (request) => sendOrDrop(() => ipcRenderer.send('ui:session:patch', request)),
+  onUiSessionChanged: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+      listener(payload as TargetResult<'ui:session:changed'>)
+    }
+    ipcRenderer.on('ui:session:changed', wrapped)
+    return () => ipcRenderer.removeListener('ui:session:changed', wrapped)
+  }
 }
 
 contextBridge.exposeInMainWorld('api', api)

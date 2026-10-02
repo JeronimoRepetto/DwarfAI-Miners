@@ -49,5 +49,10 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // The cut-0 entries (A-N03…A-N05, A-N25…A-N27, A-N30, A-N34) were routed by the cut-0 switch (ISSUE-056).
   // A-N33, born with the first release that bumps `endpointGeneration` (AMENDMENT-11; 21 "Different-generation
   // restart"); no handler in v1 (review R8B-06)
-  'host:connection:confirm-restart': 'generation-2'
+  'host:connection:confirm-restart': 'generation-2',
+  // A-N17…A-N19, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by their
+  // handler issue (ISSUE-059)
+  'ui:session:get': 'cut-1',
+  'ui:session:patch': 'cut-1',
+  'ui:session:changed': 'cut-1'
 }

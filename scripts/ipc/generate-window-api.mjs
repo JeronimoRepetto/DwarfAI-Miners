@@ -109,7 +109,10 @@ const MEMBERS = {
   'host:connection:get': 'getHostConnection', // A-N03
   'host:connection:changed': 'onHostConnection', // A-N04
   'host:connection:retry': 'retryHostConnection', // A-N05
-  'host:connection:confirm-restart': 'confirmHostRestart' // A-N33 (AMENDMENT-11; unrouted until generation-2)
+  'host:connection:confirm-restart': 'confirmHostRestart', // A-N33 (AMENDMENT-11; unrouted until generation-2)
+  'ui:session:get': 'getUiSession', // A-N17 (unrouted until cut 1)
+  'ui:session:patch': 'patchUiSession', // A-N18 (unrouted until cut 1)
+  'ui:session:changed': 'onUiSessionChanged' // A-N19 (unrouted until cut 1)
 }
 
 /**

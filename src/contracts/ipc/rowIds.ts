@@ -80,5 +80,8 @@ export const ROW_IDS: Readonly<Record<string, RowId>> = {
   'host:connection:get': 'A-N03',
   'host:connection:changed': 'A-N04',
   'host:connection:retry': 'A-N05',
-  'host:connection:confirm-restart': 'A-N33'
+  'host:connection:confirm-restart': 'A-N33',
+  'ui:session:get': 'A-N17',
+  'ui:session:patch': 'A-N18',
+  'ui:session:changed': 'A-N19'
 }
