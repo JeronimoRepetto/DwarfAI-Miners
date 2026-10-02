@@ -2744,6 +2744,46 @@ describe('the Host connection in the shell', () => {
     expect(api.sendDwarfText).toHaveBeenCalledOnce()
   })
 
+  // ADDED for the cut-0 conformance audit (06 INV-113 had no test): ISSUE-052 and ISSUE-316 keep drafts while the Host
+  // is away; this is the lowest layer that holds them, the window's one store per dwarf (useMessageDock).
+  it('[INV-113, FM-146] each dwarf keeps its own draft through reconnecting and a crash-loop, and no call to main carries it', async () => {
+    const rows = hostRows()
+    const second = {
+      ...OBSERVED_DWARF,
+      id: 'claude:s3',
+      sessionId: 's3',
+      name: 'Second',
+      textDelivery: 'terminal'
+    }
+    const { wrapper, api } = await openOn(
+      [{ ...OBSERVED_DWARF, textDelivery: 'terminal' }, second],
+      'claude:s1',
+      rows.overrides
+    )
+    const box = (): HTMLTextAreaElement =>
+      wrapper.find('.dm-composer textarea').element as HTMLTextAreaElement
+    await wrapper.find('.dm-composer textarea').setValue('dig deeper')
+
+    await rows.push({ state: 'reconnecting', since: 1_000 })
+    await rows.push({ state: 'unavailable', reason: 'crash-loop' })
+    // Another dwarf's chat while the Host is away, then back: each dwarf has its own draft.
+    await selectOn(wrapper, 'claude:s3')
+    expect(box().value).toBe('')
+    await selectOn(wrapper, 'claude:s1')
+    expect(box().value).toBe('dig deeper')
+
+    await rows.push(connected)
+    expect(box().value).toBe('dig deeper')
+    // Never sent to the Host nor written anywhere through main: no window.api call carried the draft.
+    const carried = Object.entries(api as Record<string, unknown>)
+      .filter(
+        ([, member]) =>
+          vi.isMockFunction(member) && JSON.stringify(member.mock.calls).includes('dig deeper')
+      )
+      .map(([name]) => name)
+    expect(carried).toEqual([])
+  })
+
   it('[ADR-002] the incompatible message offers only Stop everything and quit, which sends A-N34 and never an upgrade request', async () => {
     const rows = hostRows()
     // UI main as A-N34 runs it: the tray's flow, which pushes A-N25 to the window (ui-main/ipc/handlers/stopEverything).

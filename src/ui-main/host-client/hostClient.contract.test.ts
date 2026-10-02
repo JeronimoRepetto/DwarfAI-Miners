@@ -489,3 +489,39 @@ describe('HostClient against FakeHost (16 §4.14.1)', () => {
     expect(host.hellos).toHaveLength(1)
   })
 })
+
+// ADDED for the cut-0 conformance audit (07 S2.16 had no test): what the subscribers are told while the Host is away.
+describe('HostClient while the Host connection is lost (07 S2.16)', () => {
+  it('[S2.16, S12.B04] a lost connection hands the subscribers nothing, so every dwarf of the last snapshot stays until a new snapshot, and closing the client asks the Host for nothing', async () => {
+    const { host, timers, client, events, handler } = world()
+    host.board = [meta, dwarfs('d1', 'd2')]
+    client.subscribe(handler)
+    await client.ensureHost()
+    await settle()
+    expect(snapshots(events)).toHaveLength(1)
+
+    // The Host goes away: the client is reconnecting, then, with every attempt refused, unavailable (crash-loop).
+    host.crash()
+    await settle()
+    expect(client.state().state).toBe('reconnecting')
+    expect(events).toHaveLength(1)
+    await elapse(timers, 10_000)
+    expect(client.state()).toMatchObject({ state: 'unavailable', reason: 'crash-loop' })
+    // No transition (07 S2.16): no empty board and no departure, nothing the board could read as a dwarf leaving.
+    expect(events).toHaveLength(1)
+
+    // The Host is back and the person retries: the board is replaced by a whole snapshot, never by a difference.
+    host.restart()
+    expect(await client.ensureHost()).toBe('available')
+    await settle()
+    const all = snapshots(events) as Array<{ snapshot: { chunks: SnapshotChunk[] } }>
+    expect(events).toHaveLength(2)
+    expect(all[1]?.snapshot.chunks).toEqual([meta, dwarfs('d1', 'd2')])
+
+    // Window close or app Quit (tray-only): the client closes and asks the Host to end nothing.
+    const asked = host.received.length
+    client.dispose()
+    await settle()
+    expect(host.received.slice(asked)).toEqual([])
+  })
+})
