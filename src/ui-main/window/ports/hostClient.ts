@@ -14,6 +14,7 @@
 //   the client snapshot again, and the next `snapshot` event replaces the state (no walk-out from a difference).
 import type {
   EvtFrame,
+  HostFrameData,
   HostMethod,
   HostParams,
   HostResult,
@@ -41,6 +42,15 @@ export type HostEvent =
   | { kind: 'snapshot'; snapshot: SnapshotPage }
   /** One frame newer than the last snapshot or frame applied. */
   | { kind: 'frame'; frame: EvtFrame }
+
+/**
+ * A level-3 frame of the `notifier` connection (ADR-003 item 12; 14 B-F22, B-F23; ADR-018 items 4, 5): what the adapter
+ * hands the composition's `onAttentionFrame` handlers, schema-checked. The notifier has no replay and no snapshot (14
+ * §2.3), so these frames never pass through `subscribe`.
+ */
+export type AttentionFrame =
+  | { name: 'attention.notify'; data: HostFrameData['attention.notify'] }
+  | { name: 'attention.withdraw'; data: HostFrameData['attention.withdraw'] }
 
 // verbatim: 05 §3.14 (the `HostClient` interface and the comment under it, byte-for-byte; `prettier-ignore` keeps
 // its alignment)
