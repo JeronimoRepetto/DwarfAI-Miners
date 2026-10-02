@@ -389,6 +389,33 @@ describe('trace:check (17 §3.2)', () => {
     expect(ratchetStillChecked.stderr).toContain('mapped.baseline.json: BR-17 lost its last test')
   })
 
+  // ADDED for the cut-0 conformance audit: both lists were empty, so checks 2 and 3 passed on any tree.
+  it('[ADR-001] the repository ratchet holds the closed cut-0 ACs and the mapped ids, so a tree without their tests fails both checks', () => {
+    const realClosed = JSON.parse(readFileSync(path.join(here, 'closed.json'), 'utf8'))
+    const realBaseline = JSON.parse(readFileSync(path.join(here, 'mapped.baseline.json'), 'utf8'))
+
+    // A tree that cites none of the repository's ids: every listed id must be reported.
+    const run = check(
+      makeRoot({
+        testTree: path.join(fixtures, 'mapped'),
+        closed: realClosed,
+        baseline: realBaseline
+      })
+    )
+
+    expect(realClosed.length, 'closed.json lists the closed ACs').toBeGreaterThan(0)
+    expect(realBaseline.length, 'mapped.baseline.json lists the mapped ids').toBeGreaterThan(0)
+    expect(
+      realClosed.every((id) => realBaseline.includes(id)),
+      'a closed AC is mapped'
+    ).toBe(true)
+    expect(run.status).toBe(1)
+    for (const id of realClosed) expect(run.stderr).toContain(`closed.json: ${id} has no test`)
+    for (const id of realBaseline) {
+      expect(run.stderr).toContain(`mapped.baseline.json: ${id} lost its last test`)
+    }
+  })
+
   it('[ADR-001] build-catalogs reads each id catalog from its owner document', () => {
     const packageDir = tempDir('trace-package-')
     const revision = makePackage(packageDir)
