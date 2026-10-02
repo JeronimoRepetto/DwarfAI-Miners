@@ -2,7 +2,8 @@
 // L6 (17 §1.6): B-M07 `presence` (14 §2.3, §3.4 `PresenceParams`; ADR-003 item 12; ADR-018 item 2;
 // ADR-024 D7) over the real seam-B transport — frame codec, hello-first authentication, roles, the
 // dispatcher and the connection registry — behind in-process duplexes, feeding the real attention
-// module (16 §4.11 `presenceChanged`) over FakeAttentionSettings and InMemoryAttentionLedger.
+// module (16 §4.11 `presenceChanged`) through its index only (R15), over inline doubles of its
+// two driven ports: system notifications on, and an in-memory ledger.
 //
 // TC-111-02, TC-111-03.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -23,10 +24,9 @@ import {
   type AttentionEvent,
   type AttentionFact,
   type AttentionInputs,
+  type AttentionLedger,
   type Presence
 } from '../../modules/attention'
-import { FakeAttentionSettings } from '../../modules/attention/ports/fakes/FakeAttentionSettings'
-import { InMemoryAttentionLedger } from '../../modules/attention/ports/fakes/InMemoryAttentionLedger'
 import { HelloThrottle } from '../auth/throttle'
 import { UI_TOKEN_FILE, UiToken } from '../auth/uiToken'
 import { collectCapabilities } from '../capabilities'
@@ -64,6 +64,34 @@ function validateFrame(name: string, data: unknown): void {
   const schema = schemas[name]
   if (schema === undefined) throw new Error(`no contract schema for ${name}`)
   schema.parse(data)
+}
+
+/** An in-memory `AttentionLedger`: the claimed keys only, no carry-over (16 §4.11). */
+class MemoryLedger implements AttentionLedger {
+  private readonly claimed = new Set<string>()
+  private readonly withdrawn = new Set<string>()
+  emitted(): ReadonlySet<string> {
+    return this.claimed
+  }
+  markEmitted(key: string): void {
+    this.claimed.add(key)
+  }
+  markSuppressed(key: string): void {
+    this.claimed.add(key)
+  }
+  carryOver(): ReadonlyMap<string, string> {
+    return new Map()
+  }
+  consumeCarryOver(): void {}
+  withdraw(keys: readonly string[]): readonly string[] {
+    const fresh = keys.filter((key) => this.claimed.has(key) && !this.withdrawn.has(key))
+    for (const key of fresh) this.withdrawn.add(key)
+    return fresh
+  }
+  sweepWithdrawn(): number {
+    return 0
+  }
+  dropCarryOver(): void {}
 }
 
 /** Every `presenceChanged` the transport handed on, in order. */
@@ -145,8 +173,8 @@ function attentionModule() {
     transactionScope: { isInTransaction: () => open }
   })
   const attention = createAttention({
-    settings: new FakeAttentionSettings(),
-    ledger: new InMemoryAttentionLedger(),
+    settings: { systemNotificationsOn: () => true },
+    ledger: new MemoryLedger(),
     transactions,
     bus,
     clock: new FakeClock(T0),
