@@ -20,6 +20,8 @@ export interface ResetMetricsCommand {
 export type MetricsResetResult =
   | { outcome: 'reset'; epoch: number }
   | { outcome: 'failed'; reason: string; resumesOnNextStart: boolean }
+export type ResetStep =
+  'begun' | 'db' | 'secrets' | 'external-config' | 'ui-prefs' | 'install-moment' | 'done'
 
 // As 14 §3.4 writes them (names, fields and comments; layout by prettier): preferences, B-M13
 export type PreferenceSetParams = {
@@ -128,6 +130,20 @@ export const metricsResetResultSchema = z.discriminatedUnion('outcome', [
     .object({ outcome: z.literal('failed'), reason: z.string(), resumesOnNextStart: z.boolean() })
     .strict()
 ])
+
+/** ADR-023 item 5 `ResetStep`: the saga's steps in their order (07 machine 13). */
+export const resetStepSchema = z.enum([
+  'begun',
+  'db',
+  'secrets',
+  'external-config',
+  'ui-prefs',
+  'install-moment',
+  'done'
+])
+
+/** A reset epoch carried by a frame or an ack: `app_meta.reset_epoch` after a reset, so ≥ 1 (09 §4.1). */
+export const resetEpochSchema = z.number().int().positive()
 
 /**
  * B-M14 `preferences.setOpenCodePermissions` params; A-53's request is this same object (14 §1.2). `origin`

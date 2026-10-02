@@ -42,6 +42,7 @@ export interface ConnectionRegistryOptions {
 
 export class ConnectionRegistry implements FramePublisher {
   private readonly delivery: FrameDelivery<AttachedConnection>
+  private readonly detachListeners = new Set<(connection: AttachedConnection) => void>()
 
   constructor(options: ConnectionRegistryOptions = {}) {
     this.delivery = new FrameDelivery(options.validateFrame)
@@ -52,7 +53,19 @@ export class ConnectionRegistry implements FramePublisher {
   }
 
   detach(connection: AttachedConnection): void {
+    const attached = this.connections().includes(connection)
     this.delivery.detach(connection)
+    if (attached) for (const listener of [...this.detachListeners]) listener(connection)
+  }
+
+  /**
+   * Calls `listener` with each connection detached from now on (a close, or the clean exit's
+   * `endAll`); returns the unsubscribe. The Reset saga's `ui-prefs` step stops waiting for a UI
+   * that detached (07 S13.05).
+   */
+  onDetach(listener: (connection: AttachedConnection) => void): () => void {
+    this.detachListeners.add(listener)
+    return () => this.detachListeners.delete(listener)
   }
 
   /** The connections attached right now. */

@@ -9,7 +9,12 @@ import {
   type SubscribeParams,
   type SubscribeResult
 } from './methods'
-import type { HostPreferenceKey, PreferenceSetParams } from './params/preferences'
+import type {
+  HostPreferenceKey,
+  MetricsResetResult,
+  PreferenceSetParams,
+  ResetMetricsParams
+} from './params/preferences'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -253,5 +258,56 @@ describe('preferences.get and preferences.set params and result (14 §3.4, B-M12
     expect(
       params.safeParse({ key: 'routingProfile', value: 'economy', requestId: 'not-a-uuid' }).success
     ).toBe(false)
+  })
+})
+
+// The B-M09 and B-M15 entries of 14 §3.4 and their strict() schemas (14 §1.4).
+
+describe('ui.resetPreferences.ack and preferences.resetMetrics params and result (14 §3.4, B-M09, B-M15)', () => {
+  const REQUEST_ID = '01890a5d-ac96-774b-bcce-b302099a8057'
+
+  it('[ADR-023] the B-M09 and B-M15 schemas infer exactly the 14 §3.4 entries and refuse any other key or a confirmation other than yes', () => {
+    expectTypeOf<HostMethods['ui.resetPreferences.ack']['params']>().toEqualTypeOf<{
+      epoch: number
+    }>()
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+    expectTypeOf<HostMethods['ui.resetPreferences.ack']['result']>().toEqualTypeOf<{}>()
+    expectTypeOf<
+      HostMethods['preferences.resetMetrics']['params']
+    >().toEqualTypeOf<ResetMetricsParams>()
+    expectTypeOf<
+      HostMethods['preferences.resetMetrics']['result']
+    >().toEqualTypeOf<MetricsResetResult>()
+    expectTypeOf<ResetMetricsParams>().toEqualTypeOf<{ confirmed: 'yes'; requestId: string }>()
+
+    const ack = HOST_METHOD_SCHEMAS['ui.resetPreferences.ack']
+    expect(ack.params.safeParse({ epoch: 3 }).success).toBe(true)
+    expect(ack.params.safeParse({ epoch: 0 }).success).toBe(false)
+    expect(ack.params.safeParse({ epoch: 1.5 }).success).toBe(false)
+    expect(ack.params.safeParse({}).success).toBe(false)
+    expect(ack.params.safeParse({ epoch: 3, requestId: REQUEST_ID }).success).toBe(false)
+    expect(ack.result.safeParse({}).success).toBe(true)
+    expect(ack.result.safeParse({ epoch: 3 }).success).toBe(false)
+
+    const reset = HOST_METHOD_SCHEMAS['preferences.resetMetrics']
+    expect(reset.params.safeParse({ confirmed: 'yes', requestId: REQUEST_ID }).success).toBe(true)
+    for (const confirmed of ['YES', ' yes', 'no', true, '']) {
+      expect(
+        reset.params.safeParse({ confirmed, requestId: REQUEST_ID }).success,
+        String(confirmed)
+      ).toBe(false)
+    }
+    expect(reset.params.safeParse({ confirmed: 'yes' }).success).toBe(false)
+    expect(
+      reset.params.safeParse({ confirmed: 'yes', requestId: REQUEST_ID, force: true }).success
+    ).toBe(false)
+    expect(reset.result.safeParse({ outcome: 'reset', epoch: 2 }).success).toBe(true)
+    expect(
+      reset.result.safeParse({ outcome: 'failed', reason: 'secrets', resumesOnNextStart: true })
+        .success
+    ).toBe(true)
+    expect(reset.result.safeParse({ outcome: 'reset' }).success).toBe(false)
+    expect(reset.result.safeParse({ outcome: 'failed', reason: 'secrets' }).success).toBe(false)
+    expect(reset.result.safeParse({ outcome: 'done', epoch: 2 }).success).toBe(false)
   })
 })

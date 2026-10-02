@@ -18,7 +18,15 @@ import {
   type PreferencesView,
   type StopAllOutcome
 } from '../wire'
-import { preferenceSetParamsSchema, type PreferenceSetParams } from './params/preferences'
+import {
+  metricsResetResultSchema,
+  preferenceSetParamsSchema,
+  resetEpochSchema,
+  resetMetricsParamsSchema,
+  type MetricsResetResult,
+  type PreferenceSetParams,
+  type ResetMetricsParams
+} from './params/preferences'
 import { requestIdSchema } from './requestId'
 import {
   snapshotPageSchema,
@@ -28,7 +36,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M12 and B-M13 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M09, B-M12, B-M13 and B-M15 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -38,10 +46,13 @@ export interface HostMethods {
   'session.snapshot':                { params: SnapshotParams; result: SnapshotPage }
   'host.shutdown':                   { params: HostShutdownParams; result: HostShutdownResult }
   'host.upgrade.request':            { params: { targetVersion: string; targetDir: string; requestId: string }; result: { state: 'upgrade-pending' } }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+  'ui.resetPreferences.ack':         { params: { epoch: number }; result: {} }
   // preferences and secrets
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'preferences.get':                 { params: {}; result: PreferencesView }
   'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
+  'preferences.resetMetrics':        { params: ResetMetricsParams; result: MetricsResetResult }
 }
 // end verbatim: 14 §3.4
 
@@ -129,6 +140,17 @@ export const HOST_METHOD_SCHEMAS = {
   'preferences.set': {
     params: preferenceSetParamsSchema,
     result: hostPreferencesSchema
+  },
+  // B-M09 (14 §2.3): `ui` only; idempotent by its own shape, so it carries no requestId
+  // (dedupe/mutatingMethods.ts). B-M15: `confirmed: 'yes'` only (ADR-019; the trimmed,
+  // case-insensitive comparison of the typed text is the dialog's, 07 S13.01).
+  'ui.resetPreferences.ack': {
+    params: z.object({ epoch: resetEpochSchema }).strict(),
+    result: z.object({}).strict()
+  },
+  'preferences.resetMetrics': {
+    params: resetMetricsParamsSchema,
+    result: metricsResetResultSchema
   }
 } as const satisfies Partial<{
   [M in keyof HostMethods]: {

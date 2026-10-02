@@ -42,6 +42,12 @@ export interface BootPorts {
   endpoint: UiEndpoint
   /** The Host database step 2 opens (createHostDatabase, hostDatabase.ts). */
   database: Pick<HostDatabase, 'open'>
+  /**
+   * Step 3: the Reset saga's boot resume (preferences `resumeOnBoot`, 07 S13.08). Injected so the
+   * step does not wait for module construction (step 4); until the composition root passes it
+   * (later: ISSUE-226) the step is a placeholder.
+   */
+  resumeResetSaga?: () => Promise<unknown>
 }
 
 /** The Host's UI endpoint as the boot sees it. */
@@ -58,6 +64,7 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
+  const { resumeResetSaga } = ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -76,8 +83,17 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
         return { kind: 'done' }
       }
     },
-    // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023).
-    placeholder('resume-reset-saga', 'ISSUE-212'),
+    // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023). A step that
+    //    fails again is recorded by the saga and resumes at the next boot; the boot goes on.
+    resumeResetSaga === undefined
+      ? placeholder('resume-reset-saga', 'ISSUE-226')
+      : {
+          name: 'resume-reset-saga',
+          run: async () => {
+            await resumeResetSaga()
+            return { kind: 'done' }
+          }
+        },
     // 4. Construct the modules, wire bridges and event routes (05 §4); the first module wired is
     //    mines, the others follow in their own wiring issues.
     placeholder('construct-modules', 'ISSUE-093'),
