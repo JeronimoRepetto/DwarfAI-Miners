@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FakeClock } from './FakeClock'
 import { FakeScheduler } from './FakeScheduler'
+import { runClockContract } from '../testing/clock.contract'
 
 const IDLE_TO_ASLEEP_MS = 60_000 // ADR-032: the idle → asleep timer, a Scheduler task on the Clock
 
@@ -22,4 +23,9 @@ describe('FakeClock', () => {
     expect(firedAt).toEqual([1_000 + IDLE_TO_ASLEEP_MS])
     expect(clock.now()).toBe(1_000 + IDLE_TO_ASLEEP_MS + 4)
   })
+})
+
+runClockContract(() => {
+  const clock = new FakeClock(1_000)
+  return { clock, advance: (ms) => clock.advance(ms) }
 })

@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { EnvAppPaths, type HostProcessFacts } from './EnvAppPaths'
+import { runAppPathsContract } from '../../kernel/testing/appPaths.contract'
 
 const HOST_DATA_DIR = join('users', 'someone', 'app-data', 'DwarfAI-Miners', 'host')
 const EXEC_PATH = join('opt', 'DwarfAI-Miners', 'versions', '1.0.0', 'DwarfAI-Miners')
@@ -62,4 +63,15 @@ describe('EnvAppPaths', () => {
     }).toThrow(TypeError)
     expect(paths.userDataDir).toBe(HOST_DATA_DIR)
   })
+})
+
+runAppPathsContract((values) => {
+  const created = EnvAppPaths.create({
+    env: { DWARFAI_HOST_DATA_DIR: values.userDataDir },
+    execPath: values.execPath,
+    resourcesPath: values.resourcesPath ?? undefined,
+    isPackaged: values.isPackaged
+  })
+  if (!created.ok) throw new Error(`EnvAppPaths refused: ${created.error}`)
+  return created.value
 })

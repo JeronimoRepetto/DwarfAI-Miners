@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RecordingDiagnosticsLog } from './RecordingDiagnosticsLog'
+import { runDiagnosticsLogContract } from '../testing/diagnosticsLog.contract'
 
 describe('RecordingDiagnosticsLog', () => {
   it('[ADR-026] keeps every recorded entry in call order and finds them by event', () => {
@@ -19,4 +20,15 @@ describe('RecordingDiagnosticsLog', () => {
       { level: 'warn', event: 'launch.failed', subsystem: 'launching', count: 2 }
     ])
   })
+})
+
+runDiagnosticsLogContract(() => {
+  const log = new RecordingDiagnosticsLog()
+  return {
+    log,
+    kept: () =>
+      Promise.resolve(
+        log.entries.map(({ level, event, subsystem }) => ({ level, event, subsystem }))
+      )
+  }
 })
