@@ -2,6 +2,8 @@
 // NodeLogFiles. A file keeps its byte size, its first bytes (for the first-record `ts`) and, unless it was
 // seeded with a size only, its whole text. It records the peak total size of each folder after every change
 // and the order of deletions, and can fail the next appends. Never imported by production code (R14).
+// Each folder keeps a running byte total, so the peak check after an append is O(1), not a scan of the folder:
+// the cap tests push tens of thousands of lines through a folder of twenty segments.
 import { dirname, join } from 'node:path'
 import { parseSegmentName, type SegmentInfo } from '@dwarfai/contracts'
 import type { AppendOutcome, LogFiles } from '../logFiles'
@@ -20,6 +22,8 @@ export class FakeLogFiles implements LogFiles {
   private readonly dirs = new Set<string>()
   private readonly files = new Map<string, FakeFile>()
   private readonly peaks = new Map<string, number>()
+  /** The sum of the byte sizes of the files directly in each folder. */
+  private readonly dirBytes = new Map<string, number>()
   private failures: Array<AppendOutcome | 'throw'> = []
   /** Every deleted path, in deletion order. */
   readonly deleted: string[] = []
@@ -38,7 +42,9 @@ export class FakeLogFiles implements LogFiles {
     if (failure !== undefined) return failure
     if (!this.dirs.has(dirname(path))) return 'not-found'
     const file = this.files.get(path) ?? { bytes: 0, head: '', text: '' }
-    file.bytes += Buffer.byteLength(data, 'utf8')
+    const bytes = Buffer.byteLength(data, 'utf8')
+    file.bytes += bytes
+    this.addBytes(dirname(path), bytes)
     if (file.head.length < HEAD_CHARS) file.head = (file.head + data).slice(0, HEAD_CHARS)
     if (file.text !== null) file.text += data
     this.files.set(path, file)
@@ -47,7 +53,10 @@ export class FakeLogFiles implements LogFiles {
   }
 
   async remove(path: string): Promise<boolean> {
-    if (!this.files.delete(path)) return false
+    const file = this.files.get(path)
+    if (file === undefined) return false
+    this.files.delete(path)
+    this.addBytes(dirname(path), -file.bytes)
     this.deleted.push(path)
     return true
   }
@@ -66,13 +75,13 @@ export class FakeLogFiles implements LogFiles {
   /** A file of `bytes` bytes whose first record has `firstTs` (written by another process, size only). */
   seed(path: string, bytes: number, firstTs: string): void {
     this.dirs.add(dirname(path))
-    this.files.set(path, { bytes, head: `{"ts":"${firstTs}"`, text: null })
+    this.put(path, { bytes, head: `{"ts":"${firstTs}"`, text: null })
     this.notePeak(dirname(path))
   }
 
   /** Any file, as another program would leave it. */
   plant(path: string, text: string): void {
-    this.files.set(path, { bytes: Buffer.byteLength(text, 'utf8'), head: text, text })
+    this.put(path, { bytes: Buffer.byteLength(text, 'utf8'), head: text, text })
   }
 
   /** The next appends end with these outcomes (or throw), one each, before appends work again. */
@@ -83,6 +92,7 @@ export class FakeLogFiles implements LogFiles {
   /** Forgets `dir` and everything in it, as a person deleting the folder. */
   removeDir(dir: string): void {
     for (const path of [...this.files.keys()]) if (dirname(path) === dir) this.files.delete(path)
+    this.dirBytes.delete(dir)
     this.dirs.delete(dir)
   }
 
@@ -99,7 +109,7 @@ export class FakeLogFiles implements LogFiles {
   }
 
   totalBytes(dir: string): number {
-    return this.namesIn(dir).reduce((sum, name) => sum + this.files.get(join(dir, name))!.bytes, 0)
+    return this.dirs.has(dir) ? (this.dirBytes.get(dir) ?? 0) : 0
   }
 
   /** The largest total size `dir` reached after any append or seed. */
@@ -112,6 +122,17 @@ export class FakeLogFiles implements LogFiles {
     return [...this.files.keys()]
       .filter((path) => dirname(path) === dir)
       .map((path) => path.slice(dir.length + 1))
+  }
+
+  /** Sets the file at `path`, replacing any earlier one and its bytes. */
+  private put(path: string, file: FakeFile): void {
+    const dir = dirname(path)
+    this.addBytes(dir, file.bytes - (this.files.get(path)?.bytes ?? 0))
+    this.files.set(path, file)
+  }
+
+  private addBytes(dir: string, bytes: number): void {
+    this.dirBytes.set(dir, (this.dirBytes.get(dir) ?? 0) + bytes)
   }
 
   private notePeak(dir: string): void {
