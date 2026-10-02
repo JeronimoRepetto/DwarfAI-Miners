@@ -5,7 +5,8 @@
 // as emitted (`markEmitted`) or suppressed (`markSuppressed`, S17.02, S17.08); a gated fact claims
 // nothing and waits. After the commit it publishes `AttentionNotified` (16 §2.3), which the sink
 // turns into `attention.notify` (later: ISSUE-112). `presenceChanged` keeps each UI client's last
-// report, ordered by its `seq`, and re-evaluates the gated facts that are still open (S17.03).
+// report, ordered by its `seq`; it and `preferencesChanged` re-evaluate the gated facts that are
+// still open (S17.03).
 // The withdrawal (`onFactEnded`) and the click counter (`clicked`) join with their issues
 // (later: ISSUE-110, ISSUE-112).
 import type { EventId, HostEpoch } from '../../../kernel/domain/values'
@@ -22,6 +23,7 @@ import {
   type AttentionKeyState,
   type Level3Gate,
   type Level3Names,
+  type Level3TitleFormatter,
   type Presence
 } from '../domain/decideLevel3'
 import type { AttentionEvent } from '../domain/events'
@@ -29,13 +31,18 @@ import type { AttentionLedger } from '../ports/attentionLedger'
 import type { AttentionSettings } from '../ports/attentionSettings'
 
 /**
- * Driving port (05 §3.11, 16 §4.11): cut 1's members. `onFact` takes the names beside the fact: the
- * wiring route resolves crew's display name and the mine's name at emit time (lead decision
- * 2026-09-30, ISSUE-109), since `attention` has no edge to `crew` or `mines` (05 §1.3).
+ * Driving port (05 §3.11, 16 §4.11 as amended: "Amendment for frozen 16 §4.11 AttentionInputs",
+ * owner-approved 2026-10-02, ISSUE-109): cut 1's members.
+ * - `onFact` takes the names beside the fact: the wiring route resolves the dwarf's display name
+ *   (`customName ?? baseName`, ADR-018 item 9) and the mine's name at emit time (lead decision
+ *   2026-09-30), since `attention` has no edge to `crew` or `mines` (05 §1.3).
+ * - `preferencesChanged` re-checks the gated facts against the current `AttentionSettings`: the
+ *   "preference change opens the gate" of 07 S17.03.
  */
 export interface AttentionInputs {
   onFact(fact: AttentionFact, names: Level3Names): void
   presenceChanged(uiClient: string, presence: Presence | 'detached'): void
+  preferencesChanged(): void
 }
 
 export interface AttentionPolicyDeps {
@@ -47,6 +54,8 @@ export interface AttentionPolicyDeps {
   ids: IdGenerator
   /** This boot's epoch, carried by every event (ADR-015). */
   hostEpoch: HostEpoch
+  /** The PO #44 titles from the copy dictionary, injected by the composition side. */
+  titles: Level3TitleFormatter
 }
 
 interface OpenFact {
@@ -74,6 +83,15 @@ export class AttentionPolicy implements AttentionInputs {
       if (last !== undefined && presence.seq <= last.seq) return // an older report (16 §4.11)
       this.reports.set(uiClient, presence)
     }
+    this.recheckGated()
+  }
+
+  preferencesChanged(): void {
+    this.recheckGated()
+  }
+
+  /** S17.03, S17.08: re-evaluate every gated fact that is still open against the current gate. */
+  private recheckGated(): void {
     for (const open of [...this.gated.values()]) this.decide(open, 'gated')
   }
 
@@ -114,7 +132,7 @@ export class AttentionPolicy implements AttentionInputs {
         dwarfId: fact.dwarfId,
         mineId: fact.mineId,
         kind: fact.kind,
-        notification: osNotification(fact, names)
+        notification: osNotification(fact, names, this.deps.titles)
       }
     })
   }

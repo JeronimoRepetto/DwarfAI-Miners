@@ -62,5 +62,11 @@ export const en = {
   // The "renderer crashed" message of UI main (ADR-019 item 11 open item, DG "renderer crashed"; DR-01).
   'rendererCrashed.message': '⟦COPY NEEDED: DG "renderer crashed"⟧',
   'rendererCrashed.reload': '⟦COPY NEEDED: DG "renderer crashed" Reload⟧',
-  'rendererCrashed.dismiss': '⟦COPY NEEDED: DG "renderer crashed" dismiss⟧'
+  'rendererCrashed.dismiss': '⟦COPY NEEDED: DG "renderer crashed" dismiss⟧',
+
+  // The level-3 OS notification titles (PO decision 2026-09-28 #44; US-SHELL-010.AC03): {dwarf} is the dwarf's
+  // display name, customName ?? baseName (ADR-018 item 9; PO #88). The body is the mine's own name, not copy.
+  'attention.level3Title.permission': '{dwarf} asks for permission',
+  'attention.level3Title.question': '{dwarf} has a question',
+  'attention.level3Title.turnFinished': '{dwarf} finished the turn'
 } as const satisfies CopyCatalog

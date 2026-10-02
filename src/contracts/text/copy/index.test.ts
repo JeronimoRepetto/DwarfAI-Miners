@@ -29,4 +29,14 @@ describe('the app copy dictionary', () => {
       if (value.includes('⟦') || value.includes('⟧')) expect(value).toMatch(MARKER)
     }
   })
+
+  it('[US-SHELL-010.AC03, US-SHELL-010.AC09] serves the PO #44 level-3 notification titles with the dwarf name as plain text', () => {
+    expect(t('attention.level3Title.permission', { dwarf: 'Durin' })).toBe(
+      'Durin asks for permission'
+    )
+    expect(t('attention.level3Title.question', { dwarf: 'Durin' })).toBe('Durin has a question')
+    expect(t('attention.level3Title.turnFinished', { dwarf: 'Durin' })).toBe(
+      'Durin finished the turn'
+    )
+  })
 })

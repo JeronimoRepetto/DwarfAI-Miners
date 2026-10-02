@@ -8,6 +8,7 @@ import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import { AttentionPolicy, type AttentionInputs } from './application/attentionPolicy'
+import type { Level3TitleFormatter } from './domain/decideLevel3'
 import type { AttentionEvent } from './domain/events'
 import type { AttentionLedger } from './ports/attentionLedger'
 import type { AttentionSettings } from './ports/attentionSettings'
@@ -16,12 +17,12 @@ export type { AttentionInputs }
 export type { AttentionEvent, AttentionNotified } from './domain/events'
 export {
   decideLevel3,
-  level3Title,
   turnFinishedFact,
   type AttentionFact,
   type AttentionKind,
   type Level3Decision,
   type Level3Names,
+  type Level3TitleFormatter,
   type OsNotification,
   type Presence
 } from './domain/decideLevel3'
@@ -41,6 +42,11 @@ export interface AttentionDeps {
   ids: IdGenerator
   /** This boot's epoch. */
   hostEpoch: HostEpoch
+  /**
+   * The PO #44 titles, looked up in the copy dictionary by the composition side (owner rule
+   * 2026-10-02; module code never imports contracts, R9). Wired by ISSUE-120.
+   */
+  titles: Level3TitleFormatter
 }
 
 export interface Attention {

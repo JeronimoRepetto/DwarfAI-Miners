@@ -40,12 +40,20 @@ export interface OsNotification {
 /**
  * The names a level-3 notification shows, resolved at emit time by the `host/wiring` route that
  * calls `onFact` (lead decision 2026-09-30, ISSUE-109): `attention` has no edge to `crew` or `mines`
- * (05 §1.3). `dwarfDisplayName` is crew's `customName ?? baseName` (OQ-27, INV-104).
+ * (05 §1.3). `displayName` is crew's `customName ?? baseName` (OQ-27, INV-104).
  */
 export interface Level3Names {
-  dwarfDisplayName: string
+  displayName: string
   mineName: string
 }
+
+/**
+ * Builds a level-3 title: PO #44 "`<dwarf>` asks for permission", "`<dwarf>` has a question",
+ * "`<dwarf>` finished the turn", with `<dwarf>` = the display name (ADR-018 item 9, INV-104). The
+ * text lives in the copy dictionary (owner rule 2026-10-02), which module code may not import (R9),
+ * so the composition side injects this formatter.
+ */
+export type Level3TitleFormatter = (kind: AttentionKind, displayName: string) => string
 
 /** Machine 17 states (07 §17; 06 §14.1 `AttentionKey`). */
 export type AttentionKeyState = 'gated' | 'emitted' | 'suppressed' | 'withdrawn'
@@ -147,29 +155,19 @@ export function unionPresence(reports: readonly Presence[]): Presence {
   }
 }
 
-/** PO #44 titles, with `<dwarf>` = `customName ?? baseName` at emit time (ADR-018 item 9, INV-104). */
-export function level3Title(kind: AttentionKind, displayName: string): string {
-  switch (kind) {
-    case 'permission':
-      return `${displayName} asks for permission`
-    case 'question':
-      return `${displayName} has a question`
-    case 'turn-finished':
-      return `${displayName} finished the turn`
-  }
-}
-
 /**
  * ADR-018's `decideLevel3` for a new fact: `show` iff every item-2 condition holds (machine 17
  * S17.01); a fact with `reannounce === false` is treated as already emitted. The names come beside
- * the fact (lead decision 2026-09-30). The `{ ended }` form, the withdrawal, lands with ISSUE-110.
+ * the fact (lead decision 2026-09-30) and the title text from the injected formatter. The `{ ended }`
+ * form, the withdrawal, lands with ISSUE-110.
  */
 export function decideLevel3(
   fact: AttentionFact,
   prefs: { systemNotificationsOn: boolean },
   presence: Presence,
   emitted: ReadonlySet<string>,
-  names: Level3Names
+  names: Level3Names,
+  titles: Level3TitleFormatter
 ): Level3Decision {
   const next = nextAttentionKey(undefined, {
     type: 'fact',
@@ -177,15 +175,19 @@ export function decideLevel3(
     gate: { prefs, presence },
     emitted
   })
-  return next.ok && next.value === 'emitted' ? { show: osNotification(fact, names) } : {}
+  return next.ok && next.value === 'emitted' ? { show: osNotification(fact, names, titles) } : {}
 }
 
 /** The notification of an emitted fact: PO #44 title, the mine's name as body (ADR-018 item 9). */
-export function osNotification(fact: AttentionFact, names: Level3Names): OsNotification {
+export function osNotification(
+  fact: AttentionFact,
+  names: Level3Names,
+  titles: Level3TitleFormatter
+): OsNotification {
   return {
     key: fact.key,
     kind: fact.kind,
-    title: level3Title(fact.kind, names.dwarfDisplayName),
+    title: titles(fact.kind, names.displayName),
     body: names.mineName,
     mineId: fact.mineId,
     dwarfId: fact.dwarfId,

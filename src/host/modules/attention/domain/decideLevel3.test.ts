@@ -8,8 +8,8 @@ import {
   decideLevel3,
   type AttentionFact,
   type AttentionKind,
-  level3Title,
   type Level3Names,
+  type Level3TitleFormatter,
   nextAttentionKey,
   type AttentionKeyEvent,
   type AttentionKeyState,
@@ -21,7 +21,10 @@ import {
 const DWARF = 'dwarf-0001' as DwarfId
 const MINE = 'mine-0001' as MineId
 const OTHER_MINE = 'mine-0002' as MineId
-const NAMES: Level3Names = { dwarfDisplayName: 'Gimli', mineName: 'Moria' }
+const NAMES: Level3Names = { displayName: 'Gimli', mineName: 'Moria' }
+// The titles come from the copy dictionary, injected by the composition side (owner rule
+// 2026-10-02): this fake shows which kind and name reached the formatter.
+const TITLE: Level3TitleFormatter = (kind, name) => `title(${kind}, ${name})`
 const ON = { systemNotificationsOn: true }
 const OFF = { systemNotificationsOn: false }
 
@@ -86,11 +89,11 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
     const closed = presence({ anyUiAttached: false, anyWindowVisible: false })
 
     for (const [kind, title] of [
-      ['question', 'Gimli has a question'],
-      ['permission', 'Gimli asks for permission']
+      ['question', 'title(question, Gimli)'],
+      ['permission', 'title(permission, Gimli)']
     ] as const) {
       for (const where of [elsewhere, hidden, closed]) {
-        expect(decideLevel3(fact(kind), ON, where, NONE, NAMES)).toStrictEqual({
+        expect(decideLevel3(fact(kind), ON, where, NONE, NAMES, TITLE)).toStrictEqual({
           show: {
             key: `${DWARF}:${kind}:ask-1`,
             kind,
@@ -103,8 +106,8 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
         })
       }
     }
-    expect(decideLevel3(fact('turn-finished'), ON, hidden, NONE, NAMES).show?.title).toBe(
-      'Gimli finished the turn'
+    expect(decideLevel3(fact('turn-finished'), ON, hidden, NONE, NAMES, TITLE).show?.title).toBe(
+      'title(turn-finished, Gimli)'
     )
   })
 
@@ -130,7 +133,8 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
         prefs,
         unionPresence(reports),
         NONE,
-        NAMES
+        NAMES,
+        TITLE
       )
 
       expect(decision.show, `seed ${seed}`).toBeUndefined()
@@ -147,7 +151,7 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
     ]
     for (const kind of KINDS) {
       for (const where of screens) {
-        expect(decideLevel3(fact(kind), OFF, where, NONE, NAMES)).toStrictEqual({})
+        expect(decideLevel3(fact(kind), OFF, where, NONE, NAMES, TITLE)).toStrictEqual({})
       }
     }
   })
@@ -157,7 +161,7 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
       for (const systemNotificationsOn of [true, false]) {
         const { prefs, reads } = watched({ systemNotificationsOn, notificationSoundsOn })
 
-        const decision = decideLevel3(fact('question'), prefs, presence(), NONE, NAMES)
+        const decision = decideLevel3(fact('question'), prefs, presence(), NONE, NAMES, TITLE)
 
         expect(reads).toStrictEqual(['systemNotificationsOn'])
         expect(decision.show !== undefined).toBe(systemNotificationsOn)
@@ -171,7 +175,7 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
     for (const systemNotificationsOn of [true, false, true]) {
       const { prefs, writes } = watched({ systemNotificationsOn, notificationSoundsOn: true })
 
-      decideLevel3(fact('permission'), prefs, presence(), NONE, NAMES)
+      decideLevel3(fact('permission'), prefs, presence(), NONE, NAMES, TITLE)
 
       expect(writes).toStrictEqual([])
       expect(prefs).toStrictEqual({ systemNotificationsOn, notificationSoundsOn: true })
@@ -198,16 +202,16 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
       at: 1_790_000_000_000,
       reannounce: true
     })
-    expect(decideLevel3(reliable as AttentionFact, ON, presence(), NONE, NAMES).show?.title).toBe(
-      'Gimli finished the turn'
-    )
+    expect(
+      decideLevel3(reliable as AttentionFact, ON, presence(), NONE, NAMES, TITLE).show?.title
+    ).toBe('title(turn-finished, Gimli)')
   })
 
   it('[S17.08] a reliable turn-finished fact with no ui client attached is suppressed, never shown later', () => {
     const closed = presence({ anyUiAttached: false, anyWindowVisible: false })
     const finished = turnFinishedFact(turnEnd(), MINE) as AttentionFact
 
-    expect(decideLevel3(finished, ON, closed, NONE, NAMES)).toStrictEqual({})
+    expect(decideLevel3(finished, ON, closed, NONE, NAMES, TITLE)).toStrictEqual({})
     expect(
       nextAttentionKey(undefined, {
         type: 'fact',
@@ -225,7 +229,7 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
       })
     ).toStrictEqual({ ok: false, error: 'not-listed' })
     // An ask is not held back by the closed app (S17.01): it may notify through the notifier.
-    expect(decideLevel3(fact('question'), ON, closed, NONE, NAMES).show?.key).toBe(
+    expect(decideLevel3(fact('question'), ON, closed, NONE, NAMES, TITLE).show?.key).toBe(
       `${DWARF}:question:ask-1`
     )
   })
@@ -233,13 +237,13 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
   it('[INV-100, BR-02] a key already emitted is never shown again and no decision depends on elapsed time', () => {
     for (const kind of KINDS) {
       const emitted = new Set([`${DWARF}:${kind}:ask-1`])
-      expect(decideLevel3(fact(kind), ON, presence(), emitted, NAMES)).toStrictEqual({})
+      expect(decideLevel3(fact(kind), ON, presence(), emitted, NAMES, TITLE)).toStrictEqual({})
     }
     // The same fact decided at any instant, early or decades later, gets the same decision.
     const at = [0, 1, 59_999, 60_000, 1_790_000_000_000, Number.MAX_SAFE_INTEGER]
     for (const kind of KINDS) {
       const decisions = at.map((instant) =>
-        decideLevel3(fact(kind, { at: instant }), ON, presence(), NONE, NAMES)
+        decideLevel3(fact(kind, { at: instant }), ON, presence(), NONE, NAMES, TITLE)
       )
       for (const decision of decisions) expect(decision).toStrictEqual(decisions[0])
       expect(decisions[0]?.show).toBeDefined()
@@ -253,7 +257,7 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
         presence(),
         presence({ anyUiAttached: false, anyWindowVisible: false })
       ]) {
-        expect(decideLevel3(reraised, ON, where, NONE, NAMES)).toStrictEqual({})
+        expect(decideLevel3(reraised, ON, where, NONE, NAMES, TITLE)).toStrictEqual({})
         expect(
           nextAttentionKey(undefined, {
             type: 'fact',
@@ -269,20 +273,22 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
   it('[US-SHELL-010.AC09, INV-104] the title uses the custom name when there is one, else the base name', () => {
     // The wiring route resolves crew's `customName ?? baseName` at emit time (lead decision
     // 2026-09-30); the title carries exactly that name, the same one the app shows everywhere.
-    const custom = { dwarfDisplayName: 'Durin the Deathless', mineName: 'Erebor' }
-    const base = { dwarfDisplayName: 'Claude 2', mineName: 'Erebor' }
+    const custom = { displayName: 'Durin the Deathless', mineName: 'Erebor' }
+    const base = { displayName: 'Claude 2', mineName: 'Erebor' }
 
-    expect(decideLevel3(fact('question'), ON, presence(), NONE, custom).show).toMatchObject({
-      title: 'Durin the Deathless has a question',
+    expect(decideLevel3(fact('question'), ON, presence(), NONE, custom, TITLE).show).toMatchObject({
+      title: 'title(question, Durin the Deathless)',
       body: 'Erebor'
     })
-    expect(decideLevel3(fact('question'), ON, presence(), NONE, base).show?.title).toBe(
-      'Claude 2 has a question'
+    expect(decideLevel3(fact('question'), ON, presence(), NONE, base, TITLE).show?.title).toBe(
+      'title(question, Claude 2)'
     )
-    expect(KINDS.map((kind) => level3Title(kind, 'Durin the Deathless'))).toStrictEqual([
-      'Durin the Deathless asks for permission',
-      'Durin the Deathless has a question',
-      'Durin the Deathless finished the turn'
+    expect(
+      KINDS.map((kind) => decideLevel3(fact(kind), ON, presence(), NONE, custom, TITLE).show?.title)
+    ).toStrictEqual([
+      'title(permission, Durin the Deathless)',
+      'title(question, Durin the Deathless)',
+      'title(turn-finished, Durin the Deathless)'
     ])
   })
 
@@ -324,7 +330,8 @@ describe('decideLevel3 (ADR-018 Verification)', () => {
                               { systemNotificationsOn },
                               where,
                               alreadyEmitted ? new Set([f.key]) : NONE,
-                              NAMES
+                              NAMES,
+                              TITLE
                             )
 
                       const expected =

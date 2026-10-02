@@ -7,7 +7,12 @@ import { RecordingEventBus } from '../../../kernel/fakes/RecordingEventBus'
 import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { DwarfId, MineId } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
-import type { AttentionFact, Level3Names, Presence } from '../domain/decideLevel3'
+import type {
+  AttentionFact,
+  Level3Names,
+  Level3TitleFormatter,
+  Presence
+} from '../domain/decideLevel3'
 import type { AttentionEvent } from '../domain/events'
 import { FakeAttentionSettings } from '../ports/fakes/FakeAttentionSettings'
 import { InMemoryAttentionLedger } from '../ports/fakes/InMemoryAttentionLedger'
@@ -18,7 +23,8 @@ const EPOCH = 'epoch-0109'
 const DWARF = 'dwarf-0001' as DwarfId
 const MINE = 'mine-0001' as MineId
 const OTHER_MINE = 'mine-0002' as MineId
-const NAMES: Level3Names = { dwarfDisplayName: 'Gimli', mineName: 'Moria' }
+const NAMES: Level3Names = { displayName: 'Gimli', mineName: 'Moria' }
+const TITLE: Level3TitleFormatter = (kind, name) => `title(${kind}, ${name})`
 
 const ASK: AttentionFact = {
   key: `${DWARF}:question:ask-1`,
@@ -57,7 +63,8 @@ function policy() {
     bus,
     clock: new FakeClock(T0),
     ids: new SequenceIdGenerator(),
-    hostEpoch: EPOCH
+    hostEpoch: EPOCH,
+    titles: TITLE
   })
   return { attention, settings, ledger, bus }
 }
@@ -89,7 +96,7 @@ describe('AttentionInputs.onFact (16 §4.11)', () => {
           notification: {
             key: ASK.key,
             kind: 'question',
-            title: 'Gimli has a question',
+            title: 'title(question, Gimli)',
             body: 'Moria',
             mineId: MINE,
             dwarfId: DWARF,
@@ -111,7 +118,7 @@ describe('AttentionInputs.onFact (16 §4.11)', () => {
     attention.presenceChanged('ui-1', report(1, []))
 
     expect(bus.ofType('AttentionNotified').map((e) => e.payload.notification.title)).toStrictEqual([
-      'Gimli has a question'
+      'title(question, Gimli)'
     ])
     expect(ledger.writes).toStrictEqual([
       { key: ASK.key, dwarfId: DWARF, kind: 'question', suppressed: false }
@@ -152,5 +159,22 @@ describe('AttentionInputs.onFact (16 §4.11)', () => {
 
     attention.presenceChanged('ui-1', report(6, []))
     expect(bus.ofType('AttentionNotified')).toHaveLength(1)
+  })
+
+  it('[S17.03] a gated ask becomes a notification when system notifications are turned on while it is still open', () => {
+    const { attention, settings, ledger, bus } = policy()
+    settings.set(false)
+    attention.onFact(ASK, NAMES)
+    attention.preferencesChanged()
+    expect(bus.published).toStrictEqual([])
+
+    settings.set(true)
+    attention.preferencesChanged()
+    attention.preferencesChanged()
+
+    expect(bus.ofType('AttentionNotified')).toHaveLength(1)
+    expect(ledger.writes).toStrictEqual([
+      { key: ASK.key, dwarfId: DWARF, kind: 'question', suppressed: false }
+    ])
   })
 })
