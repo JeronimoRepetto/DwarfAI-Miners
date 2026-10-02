@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -11,7 +12,13 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
-import { killProcessTree, launchApp, type LaunchedApp } from './launchApp.ts'
+import {
+  APP_DIAGNOSTICS_DIR,
+  killProcessTree,
+  launchApp,
+  waitForHostAttached,
+  type LaunchedApp
+} from './launchApp.ts'
 
 /**
  * L9 smoke of the E2E harness itself (testing strategy `17` §1.9).
@@ -115,6 +122,39 @@ test.describe('E2E harness (17 §1.9)', () => {
 
     expect(pids.filter(isAlive), 'app processes still running').toEqual([])
     expect(existsSync(profile.root), 'the temp profile is removed').toBe(false)
+  })
+
+  test("[ADR-002] teardown keeps the main process's timeline and the app's logs beside the trace, so a failed case shows what the app did", async () => {
+    const tracePath = test.info().outputPath('trace.zip')
+    launched = await launchApp({ tracePath })
+    const { profile } = launched
+    // The app has logged its Host attach (19 §9.1 `host.connection`) in its UI log.
+    await waitForHostAttached(profile)
+
+    await launched.teardown()
+    launched = undefined
+
+    expect(existsSync(profile.root), 'the temp profile is removed').toBe(false)
+    const kept = path.join(path.dirname(tracePath), APP_DIAGNOSTICS_DIR)
+    const timeline = path.join(kept, 'main-lifecycle.log')
+    expect(existsSync(timeline), 'the main-process timeline is kept').toBe(true)
+    const events = readFileSync(timeline, 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as { event: string; webContents?: number })
+    // The window's page load from its start, then the quit the teardown asked for and the exit, in order.
+    const names = events.map((entry) => entry.event)
+    expect(names).toContain('did-start-loading')
+    expect(names).toContain('did-stop-loading')
+    expect(names.indexOf('before-quit')).toBeGreaterThan(names.lastIndexOf('did-stop-loading'))
+    expect(names.indexOf('exit'), 'the exit is recorded after the quit').toBeGreaterThan(
+      names.indexOf('before-quit')
+    )
+    // The app's own UI log segments (19 §9.1), which a teardown used to delete with the profile.
+    expect(
+      readdirSync(path.join(kept, 'logs')).some((name) => name.startsWith('ui-')),
+      'the UI log is kept'
+    ).toBe(true)
   })
 })
 

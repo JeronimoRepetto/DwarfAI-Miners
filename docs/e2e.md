@@ -24,6 +24,12 @@ pnpm test:e2e
   flaky. The harness self-test (`e2e/_harness/harness.e2e.ts`) never retries.
 - A failed case keeps its folder under `test-results/e2e/` (git-ignored) with its Playwright trace; a passing case keeps
   nothing. Open a trace with `pnpm exec playwright show-trace <trace.zip>`.
+- Beside the trace, `app-diagnostics/` keeps what the app itself did, which the trace (the page only) cannot show and the
+  removed profile would lose: `main-lifecycle.log` (one JSON line per main-process event, written by the `-r` preload
+  `e2e/_harness/mainLifecycleProbe.cjs`: each web contents' loads, navigations, failed loads, renderer exits and
+  destruction; `ready`, `before-quit` and whether it was turned down, `will-quit`, `exit` with its code, `quit`; and
+  every main-thread stall of 250 ms or more), `main-errors.log` when the main process threw, and the app's `logs/` (the
+  UI log, 19 §9.1). CI uploads the folder with the trace (`e2e-traces-<os>`).
 - On Linux without a display, run it as CI does: `xvfb-run --auto-servernum pnpm test:e2e`.
 
 ### The isolated profile
