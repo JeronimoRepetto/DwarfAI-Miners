@@ -43,9 +43,10 @@ export interface BootPorts {
   /** The Host database step 2 opens (createHostDatabase, hostDatabase.ts). */
   database: Pick<HostDatabase, 'open'>
   /**
-   * Step 3: the Reset saga's boot resume (preferences `resumeOnBoot`, 07 S13.08). Injected so the
-   * step does not wait for module construction (step 4); until the composition root passes it
-   * (later: ISSUE-226) the step is a placeholder.
+   * Step 3: the Reset saga's boot resume (preferences `resumeOnBoot`, 07 S13.08). The composition
+   * root passes it (ISSUE-226): it wires the preferences module (preferencesWiring.ts) and resumes
+   * an unfinished saga, before module construction (step 4) and before any command is accepted
+   * (`ready`). Without it the step is a placeholder.
    */
   resumeResetSaga?: () => Promise<unknown>
   /**
@@ -91,6 +92,8 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     },
     // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023). A step that
     //    fails again is recorded by the saga and resumes at the next boot; the boot goes on.
+    //    Commands are accepted only from `ready` (step 8). Later: ISSUE-323 inserts the boot
+    //    re-verification of config writes and the first-run evaluation between the two.
     resumeResetSaga === undefined
       ? placeholder('resume-reset-saga', 'ISSUE-226')
       : {

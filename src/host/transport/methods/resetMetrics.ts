@@ -1,7 +1,7 @@
 // B-M15 `preferences.resetMetrics`, B-M09 `ui.resetPreferences.ack`, and the frames of the Reset
 // saga: B-F26 `ui.resetPreferences`, B-F27 `reset.progress` and B-F03 `resync-required
 // {metrics-reset}` (14 §2.3, §2.4, §1.9, §6.3 "Reset saga progress"; ADR-023 items 4–5; 07 machine
-// 13). The composition root registers them (later: ISSUE-226).
+// 13). host/wiring/preferencesWiring.ts registers them (ISSUE-226).
 //
 // - B-M15 is `ui` only (roles.ts) and mutating: a repeated `requestId` gets the first answer with
 //   no second effect (dispatcher.ts, 14 §1.6). Its params are the contract's strict() schema, so a

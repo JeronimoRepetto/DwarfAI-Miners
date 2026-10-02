@@ -156,6 +156,9 @@ async function bootHost(m: Machine, options: { publicBuild?: boolean } = {}): Pr
             log,
             installResolver: m.resolver,
             capabilityRecords,
+            // The integration gate as preferences answers it before the integration store joins
+            // (inline double, R15): every integration off (ADR-011 item 7).
+            integrationGate: { state: () => 'off' },
             bus,
             hostEpoch: epoch as HostEpoch,
             simulatedSeed: epoch
