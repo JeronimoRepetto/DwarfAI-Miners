@@ -1,6 +1,7 @@
 // layer: L7
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
+  appendFileSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
@@ -278,9 +279,12 @@ function makePackage(dir) {
     writeFile(path.join(dir, ...file.split('/')), lines.join('\n'))
   }
   git(dir, ['init', '-q'])
-  git(dir, ['config', 'user.email', 'test@example.com'])
-  git(dir, ['config', 'user.name', 'Test'])
-  git(dir, ['config', 'core.autocrlf', 'false'])
+  // The repository's own settings, written into its config file instead of by three more
+  // `git config` processes: each process start costs 75-100 ms on an idle Windows machine.
+  appendFileSync(
+    path.join(dir, '.git', 'config'),
+    '[user]\n\temail = test@example.com\n\tname = Test\n[core]\n\tautocrlf = false\n'
+  )
   git(dir, ['add', '-A'])
   git(dir, ['commit', '-q', '-m', 'synthetic package'])
   return git(dir, ['rev-parse', 'HEAD']).trim()
