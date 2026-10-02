@@ -33,24 +33,18 @@ import {
 } from '@dwarfai/contracts'
 import type { UiLog } from '../diagnostics/uiLogger'
 import { createBootIdReader } from './bootId'
+import { createCopyPreparer } from './copyPreparer'
 import { resolveUiEndpoint } from './endpointFacts'
 import { NodeGateFiles } from './gateFiles'
 import { createHelloProber } from './helloProber'
 import { createHostLinkOpener } from './hostLink'
 import { endHungHost, type HungHostEnd, type HungHostPorts } from './hungHost'
 import { createHostLauncher, type HostLauncher } from './launcher'
-import type { HostCopyPreparer, HostSpawner, ProcessStart } from './ports'
+import type { HostSpawner, ProcessStart } from './ports'
 import { createPosixSpawner } from './posix'
 import { createIdentityProbe, createProcessStartReader, type QueryRunner } from './processStart'
 import { SpawnGate } from './spawnGate'
-import {
-  copySourceOf,
-  ensureVersionedCopy,
-  nodeCopyOps,
-  versionedCopyRoot,
-  type CopyPlatform
-} from './versionedCopy'
-import { collectVersionedCopies } from './versionedCopyGc'
+import { copySourceOf, ensureVersionedCopy, nodeCopyOps, versionedCopyRoot } from './versionedCopy'
 import type { HostAttach, UpgradeFlowDeps } from './upgradeFlow'
 import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
@@ -110,7 +104,15 @@ export function createNodeHostLauncher(options: NodeHostLauncherOptions): HostLa
           loadHelper: () => loadWinLaunch({ prebuildsDir: options.prebuildsDir })
         })
       : createPosixSpawner()
-  const prepareCopy = createCopyPreparer(options, platform, uiEnv)
+  const prepareCopy = createCopyPreparer({
+    execPath: options.execPath,
+    hostManifest: options.hostManifest,
+    appVersion: options.client.appVersion,
+    platform,
+    uiEnv,
+    ...(options.copyRoot === undefined ? {} : { copyRoot: options.copyRoot }),
+    log: options.log
+  })
   const resolveEndpoint = async () =>
     options.endpoint === undefined
       ? resolveUiEndpoint({ platform, hostDataDir: options.hostDataDir, env: uiEnv, runQuery })
@@ -273,42 +275,6 @@ function spawnGateIn(
     clock: { now: Date.now },
     self
   })
-}
-
-/** Makes or reuses `host/<version>/`, then collects the old copies (ADR-002 D5; ADR-027 item 2). */
-function createCopyPreparer(
-  options: NodeHostLauncherOptions,
-  platform: CopyPlatform,
-  uiEnv: Readonly<Record<string, string | undefined>>
-): HostCopyPreparer {
-  return async () => {
-    const root =
-      options.copyRoot === undefined
-        ? versionedCopyRoot({ platform, env: uiEnv, homeDir: homedir() })
-        : { ok: true as const, value: options.copyRoot }
-    if (!root.ok) return root
-    const sourceDir = copySourceOf(options.execPath, platform)
-    const copy = await ensureVersionedCopy({
-      version: options.client.appVersion,
-      sourceDir,
-      manifestPath: options.hostManifest,
-      root: root.value,
-      platform,
-      pid: process.pid,
-      ops: nodeCopyOps,
-      log: options.log,
-      clock: { now: Date.now }
-    })
-    if (!copy.ok) return copy
-    await collectVersionedCopies({
-      root: root.value,
-      inUse: options.client.appVersion,
-      pid: process.pid,
-      ops: nodeCopyOps,
-      log: options.log
-    })
-    return { ok: true, sourceDir, contentDir: copy.contentDir }
-  }
 }
 
 function connectTo(path: string): Promise<import('node:net').Socket> {
