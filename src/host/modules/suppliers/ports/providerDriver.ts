@@ -80,10 +80,19 @@ export type DriverEvent =
   | { t: 'ask.resolved'; providerRequestId: string; by: 'elsewhere' | 'cancelled' }
   | { t: 'usage'; observation: UsageObservationInput } // ADR-006
   | { t: 'status'; value: 'working' | 'idle' }
-  | { t: 'turn.ended'; end: TurnEnded } // TurnEnded as defined by ADR-021 D1 (kind, reliability, turnKey, …)
+  // AMENDED (owner-approved 2026-10-02, ADR-009 D3: driver turn.ended payload omits dwarfId);
+  // was: `end: TurnEnded`. A driver cannot know the dwarf (ADR-015 item 7): suppliers stamps it.
+  | { t: 'turn.ended'; end: DriverTurnEnded } // TurnEnded as defined by ADR-021 D1 (kind, reliability, turnKey, …)
   | { t: 'subagent'; childRef: SessionRef; parentRef: SessionRef }
   | { t: 'error'; cause: DriverErrorCause }
   | { t: 'exited'; code: number | null }
+
+/**
+ * The driver side of ADR-021's `TurnEnded` (AMENDED, owner-approved 2026-10-02, ADR-009 D3): the
+ * payload without `dwarfId`, as `UsageObservationInput` omits it (15 §1.2). Suppliers fills it
+ * with the dwarf bound to the session before the event leaves the module.
+ */
+export type DriverTurnEnded = Omit<TurnEnded, 'dwarfId'>
 
 // ---------- 15 §1.2: detection and probe (ADR-009 D5, AQ-22, AQ-30) ----------
 

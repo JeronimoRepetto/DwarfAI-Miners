@@ -193,6 +193,9 @@ describe('SimulatedDriver (reference)', () => {
       t: 'turn.ended',
       end: { kind: 'concluded', reliability: 'reliable', cancelledFromApp: false }
     })
+    // AMENDED for the ADR-009 D3 amendment (owner-approved 2026-10-02): a driver does not know the
+    // dwarf, so its turn.ended payload carries no dwarfId; suppliers stamps the bound one.
+    expect(Object.keys(ended[0]?.t === 'turn.ended' ? ended[0].end : {})).not.toContain('dwarfId')
     // turn.ended follows every activity of its turn (15 §1.4).
     expect(kinds.lastIndexOf('activity')).toBeLessThan(kinds.indexOf('turn.ended'))
   })

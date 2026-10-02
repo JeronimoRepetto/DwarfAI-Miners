@@ -10,8 +10,7 @@
 // satisfy ADR-009 D3. Its seeded FNV-1a hash (`rng.ts`) is the design reused here, reimplemented
 // rather than imported (R16).
 import type { ProcessIdentity } from '../../../../../kernel/domain/processIdentity'
-import type { AnswerOutcome, TurnEnded } from '../../../../../kernel/domain/sharedContracts'
-import type { DwarfId } from '../../../../../kernel/domain/values'
+import type { AnswerOutcome } from '../../../../../kernel/domain/sharedContracts'
 import type { Clock } from '../../../../../kernel/ports/clock'
 import type { Scheduler } from '../../../../../kernel/ports/scheduler'
 import type { ProviderCapabilities } from '../../../domain/capabilities'
@@ -24,6 +23,7 @@ import type {
   DriverLaunchRequest,
   DriverSendError,
   DriverSession,
+  DriverTurnEnded,
   ProviderDriver,
   SendReceipt,
   SessionRef,
@@ -34,14 +34,6 @@ import type {
 export const SIMULATED_HANDSHAKE_MS = 50
 /** The spacing of the simulated events of one turn. */
 export const SIMULATED_STEP_MS = 10
-
-/**
- * The `dwarfId` of a `turn.ended` this driver emits. A driver cannot know the dwarf: launching
- * binds it after `launch()` resolves (ADR-015 item 7), and `DriverLaunchRequest` carries none.
- * Suppliers stamps the dwarf it resolves from the session's `SessionRef`, as it does for
- * `AskInput` (15 §1.2). Package gap reported with ISSUE-143.
- */
-export const UNBOUND_DWARF_ID = '' as DwarfId
 
 /** Lines the simulated dwarf answers with, picked by the seed. Provider output, not app copy. */
 const REPLIES = [
@@ -238,8 +230,7 @@ class SimulatedRun {
 
   private endTurn(kind: 'concluded' | 'interrupted'): void {
     if (this.openTurn === null) return
-    const end: TurnEnded = {
-      dwarfId: UNBOUND_DWARF_ID,
+    const end: DriverTurnEnded = {
       turnKey: this.openTurn.turnKey,
       kind,
       at: this.options.clock.now(),
