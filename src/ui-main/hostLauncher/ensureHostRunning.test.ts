@@ -124,6 +124,22 @@ describe('ensureHostRunning (ADR-002 D4)', () => {
     ])
   })
 
+  it('[ADR-002, FM-012] a launched Host that reports itself in a job is logged degraded with how it was launched', async () => {
+    const h = harness()
+    h.spawner.onLaunch = () => {
+      h.prober.answer = () => ({ kind: 'hello-ok', state: 'ready', jobStatus: 'in-job' })
+    }
+    expect(await h.launcher.ensureHostRunning()).toBe('spawned')
+    expect(h.log.byEvent('host.spawn')).toEqual([
+      expect.objectContaining({
+        level: 'warn',
+        outcome: 'degraded',
+        causeClass: 'in-job',
+        errCode: 'LAUNCHED_DETACHED'
+      })
+    ])
+  })
+
   it('[ADR-002] a Host reporting migrating extends the wait by up to 30 s', async () => {
     // Migrating the whole time: the wait ends at 15 s + 30 s.
     const long = harness()

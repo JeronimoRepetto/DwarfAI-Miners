@@ -113,7 +113,14 @@ describe('Windows launcher step (ADR-002 D6, SP-02)', () => {
     const helper = refusingHelper('CREATE_5')
     helper.wmiAnswer = () => Promise.resolve({ status: 'refused', code: 'WMI_0x80041003' })
     const refused = launch(helper)
-    expect(await refused.outcome).toEqual({ kind: 'in-job', errCode: 'WMI_0x80041003' })
+    // AMENDED (ISSUE-056, in-job diagnosis; was: the WMI code alone): the code names both refusals, breakaway's first.
+    expect(await refused.outcome).toEqual({ kind: 'in-job', errCode: 'CREATE_5:WMI_0x80041003' })
+  })
+
+  it('[ADR-002, FM-012] an in-job launch names both refusals, breakaway then WMI, so the log says why', async () => {
+    const helper = refusingHelper('STILL_IN_JOB')
+    helper.wmiAnswer = () => Promise.resolve({ status: 'refused', code: 'WMI_9' })
+    expect(await launch(helper).outcome).toEqual({ kind: 'in-job', errCode: 'STILL_IN_JOB:WMI_9' })
   })
 
   it('[ADR-002, FM-008] a step that fails, ends without a launch, cannot start or never reports is a failed launch', async () => {

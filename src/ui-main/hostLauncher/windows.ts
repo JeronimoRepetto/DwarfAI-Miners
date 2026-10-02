@@ -160,6 +160,9 @@ export function createWindowsSpawner(options: WindowsSpawnerOptions): HostSpawne
     }
     if (result.status === 'failed') return { kind: 'failed', errCode: result.code }
     const created = await createViaWmi(binding, request, after)
+    // Still in a job: both refusals, breakaway's then WMI's (`STILL_IN_JOB:WMI_9`), so the log says why (FM-012).
+    if (created.kind === 'in-job')
+      return { kind: 'in-job', errCode: `${result.code}:${created.errCode}` }
     if (created.kind !== 'launched') return created
     let opened: HostProcessHandle | null
     try {

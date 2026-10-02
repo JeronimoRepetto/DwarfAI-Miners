@@ -126,6 +126,8 @@ export function createHostLauncher(deps: HostLauncherDeps): HostLauncher {
       level: inJob ? 'warn' : 'info',
       outcome: inJob ? 'degraded' : 'ok',
       causeClass: inJob ? 'in-job' : launched.how,
+      // A launch that left every job and still reports one says how it was launched (FM-012 diagnosis).
+      ...(inJob ? { errCode: `LAUNCHED_${launched.how.toUpperCase()}` } : {}),
       durationMs
     })
     return 'spawned'
