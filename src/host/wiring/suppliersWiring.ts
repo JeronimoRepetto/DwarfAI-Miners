@@ -3,8 +3,8 @@
 //
 // - `catalogIds` is `CATALOG_PROVIDER_IDS`, read here because only `host/main.ts` and `host/wiring`
 //   read `contracts` (R9; ISSUE-143 gap 2);
-// - the answer-channel gate is the `IntegrationGateReader` bridge (bridges/integrationGateReader.ts),
-//   fail closed until preferences is wired (later: ISSUE-226);
+// - the answer-channel gate is the `IntegrationGateReader` bridge to preferences
+//   (bridges/integrationGateReader.ts), which boot step 3 wired (ISSUE-226);
 // - driver events leave through the `SuppliedEventSink`. Their routes to conversation, asking, crew
 //   and ledger are added by those consumers' wiring issues (05 §4); no session can be launched
 //   before the SessionStarter bridge (later: ISSUE-162), so until then nothing reaches the sink;
@@ -25,12 +25,12 @@ import {
   createSuppliers,
   type CapabilityRecordStore,
   type InstallResolver,
+  type IntegrationGateReader,
   type SuppliedEventSink,
   type Suppliers,
   type SuppliersEvent
 } from '../modules/suppliers'
 import { errorCode } from './boot'
-import { failClosedIntegrationGate } from './bridges/integrationGateReader'
 
 export interface SuppliersWiringDeps {
   /** ADR-009 D6: the one build-time flag (`isPublicBuild`). */
@@ -44,6 +44,8 @@ export interface SuppliersWiringDeps {
   installResolver: InstallResolver
   /** `SqliteCapabilityRecordStore` over the Host's connection (NFR-OBS-04). */
   capabilityRecords: CapabilityRecordStore
+  /** The answer-channel gate: the bridge to `PreferencesQueries.integrationState` (16 §4.4). */
+  integrationGate: IntegrationGateReader
   /** The Host's event bus, where `ProviderCapabilitiesRecorded` goes (08 §0). */
   bus: Pick<DomainEventBus<SuppliersEvent>, 'publish'>
   hostEpoch: HostEpoch
@@ -74,7 +76,7 @@ export function wireSuppliers(deps: SuppliersWiringDeps): Suppliers {
     installResolver: deps.installResolver,
     fs: deps.fs,
     capabilityRecords: deps.capabilityRecords,
-    integrationGate: failClosedIntegrationGate,
+    integrationGate: deps.integrationGate,
     bus: deps.bus,
     ids: deps.ids,
     hostEpoch: deps.hostEpoch

@@ -31,6 +31,7 @@ describe('suppliers wiring start-up detection', () => {
       log,
       installResolver: { resolve: () => Promise.resolve(null) },
       capabilityRecords: { record: () => undefined, latest: () => null },
+      integrationGate: { state: () => 'off' },
       bus: new RecordingEventBus<SuppliersEvent>(),
       hostEpoch: 'epoch-0159' as HostEpoch,
       simulatedSeed: 'seed'
