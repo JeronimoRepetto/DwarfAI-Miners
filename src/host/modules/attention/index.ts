@@ -1,7 +1,8 @@
 // The attention module (05 §3.11): ADR-018's level-3 policy. Cut 1 serves `onFact`,
 // `presenceChanged` and `preferencesChanged` (ISSUE-109), the withdrawal `onFactEnded`, the
-// carry-over and the 24-hour sweep (ISSUE-110), the Reset-metrics step (ISSUE-118); the sink and
-// the click counter join with ISSUE-112. It imports no other module: its one edge, to preferences,
+// carry-over and the 24-hour sweep (ISSUE-110), the Reset-metrics step (ISSUE-118), the
+// `Level3Sink`, the standing notifications sent again to an attaching notifier and the click
+// counter (ISSUE-112). It imports no other module: its one edge, to preferences,
 // is the `AttentionSettings` bridge composed by `host/wiring`, and its Reset step reaches the saga
 // structurally (05 §1.3, R4).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
@@ -18,6 +19,7 @@ import type { Level3TitleFormatter } from './domain/decideLevel3'
 import type { AttentionEvent } from './domain/events'
 import type { AttentionLedger } from './ports/attentionLedger'
 import type { AttentionSettings } from './ports/attentionSettings'
+import type { Level3Sink } from './ports/level3Sink'
 
 export type { AttentionInputs }
 export type { AttentionEvent, AttentionNotified, AttentionWithdrawn } from './domain/events'
@@ -35,6 +37,7 @@ export {
 } from './domain/decideLevel3'
 export type { AttentionLedger } from './ports/attentionLedger'
 export type { AttentionSettings } from './ports/attentionSettings'
+export type { Level3Sink } from './ports/level3Sink'
 
 export interface AttentionDeps {
   /** The bridge to the Host preference `systemNotificationsOn` (05 §3.11). */
@@ -45,6 +48,8 @@ export interface AttentionDeps {
   transactions: TransactionRunner
   /** Where the module publishes its events after commit (16 §2.3). */
   bus: DomainEventBus<AttentionEvent>
+  /** Frames to the `notifier` connection only (16 §4.11; adapter `TransportLevel3Sink`). */
+  sink: Level3Sink
   clock: Clock
   ids: IdGenerator
   /** This boot's epoch. */
@@ -62,6 +67,10 @@ export interface Attention {
   sweep(): number
   /** 09 §7.1: a person-initiated turn or the departure ends the dwarf's carry-over (ISSUE-120). */
   dropCarryOver(dwarfId: DwarfId): void
+  /** A `notifier` connection attached: every standing notification is sent again (14 §2.3). */
+  notifierAttached(): void
+  /** The `attention.clicked` diagnostics counter (ADR-018 item 6; 19 §10, in memory only). */
+  clicks(): number
 }
 
 /**
@@ -88,6 +97,8 @@ export function createAttention(deps: AttentionDeps): Attention {
   return {
     inputs: policy,
     sweep: () => sweepWithdrawnKeys(deps),
-    dropCarryOver: (dwarfId) => policy.dropCarryOver(dwarfId)
+    dropCarryOver: (dwarfId) => policy.dropCarryOver(dwarfId),
+    notifierAttached: () => policy.notifierAttached(),
+    clicks: () => policy.clicks()
   }
 }

@@ -102,6 +102,7 @@ function host(options: { laterStep?: ResetDbStep } = {}) {
     clock,
     ids,
     hostEpoch: EPOCH,
+    sink: { notify: () => 'no-ui', withdraw: () => undefined },
     titles: (kind, displayName) => `fake ${kind} title for ${displayName}`
   })
 
