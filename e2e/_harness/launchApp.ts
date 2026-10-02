@@ -1,5 +1,14 @@
 import { execFile, execFileSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,7 +43,12 @@ import { resolveEntry, type AppEntry } from './resolveEntry.ts'
  *   XDG_DATA_HOME (Linux) or HOME (macOS, a short folder under /tmp so its socket path fits) point
  *   into it unless `env` names them.
  * - Electron's `-r` switch preloads `mainErrorGuard.cjs` before the app's main file runs, so an
- *   uncaught exception while it loads ends the app with its stack recorded, never a modal box.
+ *   uncaught exception while it loads ends the app with its stack recorded, never a modal box, and
+ *   `mainLifecycleProbe.cjs`, which writes the main process's timeline (its web contents' loads,
+ *   navigations and crashes, the quit, the exit and the main thread's stalls) into the profile.
+ * - With `tracePath`, every teardown keeps that timeline, the main-process errors and the app's
+ *   `logs/` in `app-diagnostics/` beside the trace before it removes the profile: a failed case's
+ *   output folder (uploaded by CI) then shows what the app itself did, not only its page.
  *
  * No production code knows about this harness (R14): everything goes through the command line,
  * the environment and Playwright's own main-process `evaluate`.
@@ -130,6 +144,18 @@ const MAIN_ERROR_GUARD = path.join(
   'mainErrorGuard.cjs'
 )
 
+/** The preload that writes the main process's timeline (`mainLifecycleProbe.cjs`). */
+const MAIN_LIFECYCLE_PROBE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'mainLifecycleProbe.cjs'
+)
+
+/** Where, inside the profile, the main process's timeline is written. */
+const MAIN_LIFECYCLE_FILE = 'main-lifecycle.log'
+
+/** The folder beside a case's trace that keeps the profile's diagnostics. */
+export const APP_DIAGNOSTICS_DIR = 'app-diagnostics'
+
 /** The preload that records the app's tray menus and icon (`trayProbe.cjs`). */
 const TRAY_PROBE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'trayProbe.cjs')
 
@@ -158,6 +184,7 @@ function appEnv(profile: IsolatedProfile, options: LaunchOptions): Record<string
   env.CODEX_HOME = profile.codexHome
   env[dataRootVariable()] = profile.dataRoot
   env.DWARFAI_E2E_MAIN_ERRORS = path.join(profile.root, MAIN_ERRORS_FILE)
+  env.DWARFAI_E2E_MAIN_LIFECYCLE = path.join(profile.root, MAIN_LIFECYCLE_FILE)
   if (options.trayProbe === true) env.DWARFAI_E2E_TRAY_LOG = path.join(profile.root, TRAY_LOG_FILE)
   const extra = typeof options.env === 'function' ? options.env(profile) : options.env
   return { ...env, ...extra }
@@ -319,6 +346,27 @@ async function captureMainProcessErrors(app: ElectronApplication, file: string):
   }, file)
 }
 
+/**
+ * Copies what the profile knows about the run into `app-diagnostics/` beside the trace, before the profile is removed:
+ * the main process's timeline, its uncaught exceptions and the app's `logs/` (the UI log, 19 §9.1). Only the files
+ * that exist; a copy that fails leaves the case's own outcome as it is, since the diagnostics never decide a case.
+ */
+function keepDiagnostics(profile: IsolatedProfile, tracePath: string | undefined): void {
+  if (tracePath === undefined) return
+  const kept = path.join(path.dirname(tracePath), APP_DIAGNOSTICS_DIR)
+  try {
+    mkdirSync(kept, { recursive: true })
+    for (const name of [MAIN_LIFECYCLE_FILE, MAIN_ERRORS_FILE]) {
+      const file = path.join(profile.root, name)
+      if (existsSync(file)) copyFileSync(file, path.join(kept, name))
+    }
+    const logs = path.join(profile.userDataDir, 'logs')
+    if (existsSync(logs)) cpSync(logs, path.join(kept, 'logs'), { recursive: true })
+  } catch {
+    // A file still held open by an app being killed (Windows): the rest of the teardown goes on.
+  }
+}
+
 /** The uncaught exceptions the main process recorded, or `undefined` when there were none. */
 function readMainErrors(file: string): string | undefined {
   if (!existsSync(file)) return undefined
@@ -380,6 +428,8 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
       args: [
         '-r',
         MAIN_ERROR_GUARD,
+        '-r',
+        MAIN_LIFECYCLE_PROBE,
         ...(options.trayProbe === true ? ['-r', TRAY_PROBE] : []),
         options.entry === 'ui-main' ? mainFile : appDir,
         `--user-data-dir=${profile.userDataDir}`
@@ -462,6 +512,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
         { cause: failure }
       )
     }
+    keepDiagnostics(profile, options.tracePath)
     try {
       await removeProfile()
     } catch (error) {
@@ -510,6 +561,7 @@ export async function launchApp(options: LaunchOptions = {}): Promise<LaunchedAp
         cause: failure
       })
     }
+    keepDiagnostics(isolated, options.tracePath)
     try {
       await removeProfile()
     } catch (error) {
