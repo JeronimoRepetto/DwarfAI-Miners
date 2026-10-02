@@ -8,12 +8,17 @@
 import { z } from 'zod'
 import {
   hostEpochSchema,
+  hostPreferencesSchema,
   instantSchema,
+  preferencesViewSchema,
   stopAllOutcomeSchema,
   type HostEpoch,
+  type HostPreferences,
   type Instant,
+  type PreferencesView,
   type StopAllOutcome
 } from '../wire'
+import { preferenceSetParamsSchema, type PreferenceSetParams } from './params/preferences'
 import { requestIdSchema } from './requestId'
 import {
   snapshotPageSchema,
@@ -23,7 +28,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05 and B-M06 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M12 and B-M13 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -33,6 +38,10 @@ export interface HostMethods {
   'session.snapshot':                { params: SnapshotParams; result: SnapshotPage }
   'host.shutdown':                   { params: HostShutdownParams; result: HostShutdownResult }
   'host.upgrade.request':            { params: { targetVersion: string; targetDir: string; requestId: string }; result: { state: 'upgrade-pending' } }
+  // preferences and secrets
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
+  'preferences.get':                 { params: {}; result: PreferencesView }
+  'preferences.set':                 { params: PreferenceSetParams; result: HostPreferences }
 }
 // end verbatim: 14 §3.4
 
@@ -111,6 +120,15 @@ export const HOST_METHOD_SCHEMAS = {
       .object({ targetVersion: z.string(), targetDir: z.string(), requestId: requestIdSchema })
       .strict(),
     result: z.object({ state: z.literal('upgrade-pending') }).strict()
+  },
+  // B-M12, B-M13 (14 §2.3): `ui` only; B-M13 answers the stored HostPreferences (IPC Gap 10).
+  'preferences.get': {
+    params: z.object({}).strict(),
+    result: preferencesViewSchema
+  },
+  'preferences.set': {
+    params: preferenceSetParamsSchema,
+    result: hostPreferencesSchema
   }
 } as const satisfies Partial<{
   [M in keyof HostMethods]: {
