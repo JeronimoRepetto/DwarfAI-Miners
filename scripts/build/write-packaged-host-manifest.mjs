@@ -57,7 +57,8 @@ export async function writePackagedHostManifest(sourceDir, platform) {
 
 /**
  * Whether the packed app at `sourceDir` carries a manifest that matches it byte for byte, the check a fresh
- * versioned copy of it passes: `missing`, `invalid` (a file the launcher would refuse) or `mismatch`.
+ * versioned copy of it passes: `missing`, `invalid` (a file the launcher would refuse) or `mismatch`, which
+ * names every differing entry (manifestDifferences).
  */
 export async function verifyPackagedHostManifest(sourceDir, platform) {
   const { manifestPath, relative } = packagedManifestOf(sourceDir, platform)
@@ -65,8 +66,52 @@ export async function verifyPackagedHostManifest(sourceDir, platform) {
   if (text === null) return { ok: false, reason: 'missing' }
   const parsed = parseManifest(text)
   if (!parsed.ok) return { ok: false, reason: 'invalid' }
-  const check = await verifyManifest(sourceDir, parsed.value, { exclude: [relative] })
-  return check.ok ? { ok: true } : { ok: false, reason: 'mismatch' }
+  const exclude = [relative]
+  const check = await verifyManifest(sourceDir, parsed.value, { exclude })
+  if (check.ok) return { ok: true }
+  const actual = await buildManifest(sourceDir, { exclude }).catch(() => ({ entries: [] }))
+  return {
+    ok: false,
+    reason: 'mismatch',
+    differences: manifestDifferences(parsed.value.entries, actual.entries)
+  }
+}
+
+/**
+ * Every entry on which the manifest (`expected`) and the packed app (`actual`) differ, by path: `missing`
+ * from the app, `extra` in it, or `changed` (another size, hash, link target or kind).
+ */
+export function manifestDifferences(expected, actual) {
+  const found = new Map(actual.map((entry) => [entry.path, entry]))
+  const differences = []
+  for (const entry of expected) {
+    const other = found.get(entry.path)
+    found.delete(entry.path)
+    if (other === undefined)
+      differences.push({ path: entry.path, change: 'missing', expected: entry })
+    else if (JSON.stringify(other) !== JSON.stringify(entry)) {
+      differences.push({ path: entry.path, change: 'changed', expected: entry, actual: other })
+    }
+  }
+  for (const entry of found.values())
+    differences.push({ path: entry.path, change: 'extra', actual: entry })
+  return differences.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+}
+
+/** One difference as the check prints it. */
+export function describeDifference(difference) {
+  const { change, path: where, expected, actual } = difference
+  if (change !== 'changed') return `${change} ${where}`
+  if (expected.kind === 'file' && actual.kind === 'file') {
+    return `changed ${where}: size ${expected.size} -> ${actual.size}, sha256 ${expected.sha256.slice(0, 12)} -> ${actual.sha256.slice(0, 12)}`
+  }
+  return `changed ${where}: ${describeEntry(expected)} -> ${describeEntry(actual)}`
+}
+
+function describeEntry(entry) {
+  return entry.kind === 'file'
+    ? `file of ${entry.size} bytes, sha256 ${entry.sha256.slice(0, 12)}`
+    : `link to ${entry.target}`
 }
 
 /** electron-builder's afterPack step (called by scripts/build/afterPack.mjs, after the prune). */

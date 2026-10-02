@@ -10,7 +10,7 @@
 // `<os>-<arch>-unpacked`), and each `<Name>.app` in `mac` or `mac-<arch>`. A folder with none fails too.
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
-import { verifyPackagedHostManifest } from './write-packaged-host-manifest.mjs'
+import { describeDifference, verifyPackagedHostManifest } from './write-packaged-host-manifest.mjs'
 
 const releaseDir = process.argv[2]
 if (releaseDir === undefined) {
@@ -56,6 +56,8 @@ for (const app of apps) {
   } else {
     failed = true
     console.error(`host-manifest: ${app.name} ${check.reason}`)
+    for (const difference of check.differences ?? [])
+      console.error(`  ${describeDifference(difference)}`)
   }
 }
 process.exit(failed ? 1 : 0)

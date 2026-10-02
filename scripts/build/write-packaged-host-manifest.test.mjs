@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,6 +78,10 @@ function packedApp(
     resourcesDir: path.join(appOutDir, 'resources'),
     relative: 'resources/host-manifest.json'
   }
+}
+
+function sha256Of(text) {
+  return createHash('sha256').update(text).digest('hex')
 }
 
 function contextOf(appOutDir, electronPlatformName) {
@@ -155,7 +168,15 @@ describe('write-packaged-host-manifest.mjs (ADR-002 D5)', () => {
     writeFileSync(path.join(app.appOutDir, `${PRODUCT}.exe`), 'signed exe')
     expect(await verifyPackagedHostManifest(app.sourceDir, 'win32')).toEqual({
       ok: false,
-      reason: 'mismatch'
+      reason: 'mismatch',
+      differences: [
+        {
+          path: `${PRODUCT}.exe`,
+          change: 'changed',
+          expected: { path: `${PRODUCT}.exe`, kind: 'file', size: 3, sha256: sha256Of('exe') },
+          actual: { path: `${PRODUCT}.exe`, kind: 'file', size: 10, sha256: sha256Of('signed exe') }
+        }
+      ]
     })
 
     writeFileSync(path.join(app.resourcesDir, 'host-manifest.json'), '{"format":9}')
@@ -259,6 +280,32 @@ describe('verify-packaged-host-manifest.mjs (CI check after packaging)', () => {
 
     writeFileSync(path.join(winOut, 'resources', 'app.asar'), 'changed after the hook')
     expect(run(release).code, 'a stale manifest').toBe(1)
+  })
+
+  it('[ADR-002] a mismatch names each differing entry: changed with its size and hash, missing, or extra', async () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'dwarfai-packaged-release-'))
+    dirs.push(base)
+    const app = packedApp('win32', base)
+    // electron-builder's own folder name, which the check looks for.
+    const release = path.join(base, 'release')
+    const winOut = path.join(release, 'win-unpacked')
+    mkdirSync(release)
+    renameSync(app.appOutDir, winOut)
+    await writePackagedManifest(contextOf(winOut, 'win32'))
+    writeFileSync(path.join(winOut, 'resources', 'app.asar'), 'changed after the hook')
+    rmSync(path.join(winOut, 'locales', 'en-US.pak'))
+    write(path.join(winOut, 'resources', 'added-later.dll'), 'added')
+
+    const result = run(release)
+
+    expect(result.code).toBe(1)
+    const short = (text) => sha256Of(text).slice(0, 12)
+    expect(result.output.split(/\r?\n/).filter(Boolean)).toEqual([
+      'host-manifest: win-unpacked mismatch',
+      '  missing locales/en-US.pak',
+      '  extra resources/added-later.dll',
+      `  changed resources/app.asar: size 13 -> 22, sha256 ${short('archive bytes')} -> ${short('changed after the hook')}`
+    ])
   })
 
   it('[ADR-002] a release folder without any packed app fails the check instead of passing empty', () => {
