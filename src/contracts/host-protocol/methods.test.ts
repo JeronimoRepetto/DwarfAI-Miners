@@ -5,6 +5,7 @@ import type {
   HostEpoch,
   HostPreferences,
   Instant,
+  MineId,
   PreferencesView,
   StranglerDwarfIdentity
 } from '../wire'
@@ -13,6 +14,7 @@ import {
   type HostMethods,
   type HostShutdownParams,
   type HostShutdownResult,
+  type PresenceParams,
   type SubscribeParams,
   type SubscribeResult
 } from './methods'
@@ -348,5 +350,38 @@ describe('strangler.dwarfIdentities params and result (14 §3.4, B-M41)', () => 
     expect(result.safeParse([record]).success).toBe(true)
     expect(result.safeParse([{ ...record, legacyId: 'd-1' }]).success).toBe(false)
     expect(result.safeParse([{ ...record, dwarfId: 'session-1' }]).success).toBe(false)
+  })
+})
+
+// The B-M07 entry of 14 §3.4 and its strict() schemas (14 §1.4): the UI's presence report; the Host
+// adds `anyUiAttached` itself (ADR-018 item 2), so the wire never carries it.
+
+describe('presence params and result (14 §3.4, B-M07)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8111'
+
+  it('[ADR-018] the presence schemas infer exactly the 14 §3.4 PresenceParams and refuse anyUiAttached or any other key', () => {
+    expectTypeOf<HostMethods['presence']['params']>().toEqualTypeOf<PresenceParams>()
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+    expectTypeOf<HostMethods['presence']['result']>().toEqualTypeOf<{}>()
+    expectTypeOf<PresenceParams>().toEqualTypeOf<{
+      onScreenMineIds: MineId[]
+      anyWindowVisible: boolean
+      seq: number
+    }>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['presence']['params']>
+    >().toEqualTypeOf<PresenceParams>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS.presence
+    const report = { onScreenMineIds: [MINE], anyWindowVisible: true, seq: 1 }
+    expect(params.safeParse(report).success).toBe(true)
+    expect(params.safeParse({ ...report, onScreenMineIds: [] }).success).toBe(true)
+    expect(params.safeParse({ ...report, anyUiAttached: true }).success).toBe(false)
+    expect(params.safeParse({ ...report, onScreenMineIds: ['mine-1'] }).success).toBe(false)
+    expect(params.safeParse({ ...report, seq: 1.5 }).success).toBe(false)
+    expect(params.safeParse({ ...report, seq: -1 }).success).toBe(false)
+    expect(params.safeParse({ onScreenMineIds: [MINE], seq: 1 }).success).toBe(false)
+    expect(result.safeParse({}).success).toBe(true)
+    expect(result.safeParse({ seq: 1 }).success).toBe(false)
   })
 })
