@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DwarfId } from '../../../kernel/domain/values'
+import type { DwarfId, MineId } from '../../../kernel/domain/values'
 import { applyPresence, arriveDwarf, causeOnExit, recordPendingEnd, type Dwarf } from './dwarf'
 import {
   arrivedPresence,
@@ -26,9 +26,27 @@ const ROOT = 'dwarf-root' as DwarfId
 const CHILD = 'dwarf-child' as DwarfId
 const GRANDCHILD = 'dwarf-grandchild' as DwarfId
 
+/** The mine, identity and names an arrival binds (ISSUE-069); a subagent has its own agent id. */
+const bound = (agentId?: string) => ({
+  mineId: 'mine-1' as MineId,
+  identity:
+    agentId === undefined
+      ? { providerId: 'claude', providerSessionId: 'session-1' }
+      : { providerId: 'claude', providerSessionId: 'session-1', providerAgentId: agentId },
+  baseName: `claude-${agentId ?? 'session-'}`,
+  delegated: false
+})
+
 /** An observed root that arrived with no message yet, in a mine the app already knows. */
 const root = (): Dwarf =>
-  arriveDwarf({ id: ROOT, parentDwarfId: null, rank: rankForDepth(0), status: 'idle', at: T0 })
+  arriveDwarf({
+    ...bound(),
+    id: ROOT,
+    parentDwarfId: null,
+    rank: rankForDepth(0),
+    status: 'idle',
+    at: T0
+  })
 
 const present = (): PresenceState => arrivedPresence()
 
@@ -124,6 +142,7 @@ describe('machine 2, dwarf presence (07 §2; ADR-032 item 2)', () => {
     const dwarfs = [
       root(),
       arriveDwarf({
+        ...bound('agent-child'),
         id: CHILD,
         parentDwarfId: ROOT,
         rank: rankForDepth(1),
@@ -131,6 +150,7 @@ describe('machine 2, dwarf presence (07 §2; ADR-032 item 2)', () => {
         at: T0
       }),
       arriveDwarf({
+        ...bound('agent-grandchild'),
         id: GRANDCHILD,
         parentDwarfId: CHILD,
         rank: rankForDepth(2),
