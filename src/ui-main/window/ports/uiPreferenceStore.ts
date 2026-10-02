@@ -40,6 +40,8 @@ export interface UiPreferenceStoreMap {
   shortcut: string | null
   /** "Start with the system" (AMENDMENT-6): the verified state of the login entry (ADR-027 item 7; ISSUE-060). */
   startWithSystem: UiPreferencesMap['startWithSystem']
+  /** The last Reset metrics epoch UI main applied (14 §3.9, §4.3 rule 4; ADR-024 item 8; ISSUE-061): UI main's own. */
+  resetEpochApplied: UiPreferencesMap['resetEpochApplied']
 }
 
 export type UiPreferenceStoreKey = keyof UiPreferenceStoreMap
