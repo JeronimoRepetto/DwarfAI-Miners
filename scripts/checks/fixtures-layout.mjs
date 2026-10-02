@@ -54,7 +54,7 @@ function isDirectory(full) {
 }
 
 /** The problems of one `meta.json`, as `[rule, message]` pairs. */
-function metaProblems(text) {
+export function metaProblems(text) {
   let meta
   try {
     meta = JSON.parse(text)
