@@ -10,6 +10,11 @@ export interface DrainGateSubject {
   open: readonly DrainBlocker[]
 }
 
+// Why one case is enough for the empty gate of cut 0 (cut-0 conformance audit): the port only reads, and its whole
+// contract is that the read reports exactly what is open, unchanged by reading (ADR-002 D8 items 2–3). In cut 0 no
+// session exists, so nothing can be open and `[]` is the only true answer; the case compares with the subject's
+// `open` list exactly, so an empty binding that reports anything fails it (proven by breaking emptyDrainGate to report
+// one `in-flight` blocker). FakeDrainGate runs it with a blocker open, so the case is never only vacuous.
 export function runDrainGateContract(makeSubject: () => DrainGateSubject): void {
   describe('DrainGate contract', () => {
     it('[ADR-002, S12.15] blockers reports exactly what the subject holds open, and reading it changes nothing', () => {
