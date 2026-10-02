@@ -191,6 +191,15 @@ const NEW_ROWS = [
     kind: 'invoke',
     placement: 'ui-local',
     sensitive: false
+  },
+  // ISSUE-061: the Reset metrics UI step (ADR-024 item 8), born `ui-local` in cut 1
+  {
+    id: 'A-N12',
+    wire: 'ui:preferences:reset',
+    member: 'onUiPreferencesReset',
+    kind: 'push',
+    placement: 'ui-local',
+    sensitive: false
   }
 ] as const
 const NEW_WIRES: readonly string[] = NEW_ROWS.map((row) => row.wire)
