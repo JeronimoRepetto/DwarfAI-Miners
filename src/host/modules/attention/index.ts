@@ -2,7 +2,7 @@
 // `presenceChanged` and `preferencesChanged` (ISSUE-109), the withdrawal `onFactEnded`, the
 // carry-over and the 24-hour sweep (ISSUE-110), the Reset-metrics step (ISSUE-118), the
 // `Level3Sink`, the standing notifications sent again to an attaching notifier and the click
-// counter (ISSUE-112). It imports no other module: its one edge, to preferences,
+// counter (ISSUE-112), and the tray notifier supervisor, machine 12C (ISSUE-115). It imports no other module: its one edge, to preferences,
 // is the `AttentionSettings` bridge composed by `host/wiring`, and its Reset step reaches the saga
 // structurally (05 §1.3, R4).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
@@ -14,7 +14,13 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { AttentionResetStep } from './adapters/sqlite/AttentionResetStep'
 import { AttentionPolicy, type AttentionInputs } from './application/attentionPolicy'
+import {
+  NotifierSupervisor,
+  type NotifierSupervisorDeps,
+  type UiClientConnection
+} from './application/notifierSupervisor'
 import { sweepWithdrawnKeys } from './application/sweep'
+import type { NotifierLauncherState } from './domain/notifierPresence'
 import type { Level3TitleFormatter } from './domain/decideLevel3'
 import type { AttentionEvent } from './domain/events'
 import type { AttentionLedger } from './ports/attentionLedger'
@@ -38,6 +44,9 @@ export {
 export type { AttentionLedger } from './ports/attentionLedger'
 export type { AttentionSettings } from './ports/attentionSettings'
 export type { Level3Sink } from './ports/level3Sink'
+export type { NotifierLauncher } from './ports/notifierLauncher'
+export { TRAY_RESPAWN_DELAY_MS, type NotifierLauncherState } from './domain/notifierPresence'
+export type { NotifierSupervisorDeps, UiClientConnection } from './application/notifierSupervisor'
 
 export interface AttentionDeps {
   /** The bridge to the Host preference `systemNotificationsOn` (05 §3.11). */
@@ -89,6 +98,22 @@ export function createAttentionResetStep(deps: {
   scope: TransactionScope
 }): AttentionResetDbStep {
   return new AttentionResetStep(deps)
+}
+
+/**
+ * Machine 12C (07 §12C; ADR-018 item 5): fed with every client that attaches or detaches (the
+ * connection registry, wired by ISSUE-119), it starts the app `--background` through
+ * `NotifierLauncher` when no `ui` or `notifier` client is left. Its `drawPending` is the module's
+ * `notifierAttached` (S12.C03).
+ */
+export interface NotifierPresenceInputs {
+  clientAttached(client: UiClientConnection): void
+  clientDetached(client: UiClientConnection): void
+  state(): NotifierLauncherState
+}
+
+export function createNotifierSupervisor(deps: NotifierSupervisorDeps): NotifierPresenceInputs {
+  return new NotifierSupervisor(deps)
 }
 
 /** The module over its driven ports; the adapters are composed by `host/main.ts` (ISSUE-119). */
