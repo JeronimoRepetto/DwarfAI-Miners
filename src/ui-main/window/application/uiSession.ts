@@ -12,6 +12,8 @@
 //   window runs in: no window sent them.
 // - Cleared whole on every entry into tray-only (07 S10.14, S10.15; NFR-PERS-06): no window exists then, so nothing is
 //   pushed; the next window reads the empty store.
+// - The store hears the Host only while it holds something: it subscribes at its first patch and unsubscribes when it
+//   is cleared, so an empty store, and tray-only, keep no subscription and so no `ui` connection (ADR-003 item 12).
 import {
   dwarfIdSchema,
   type ChannelKey,
@@ -57,7 +59,7 @@ export interface UiSessionDeps {
   store: SessionStore
   /** The open mode windows. */
   windows(): readonly UiSessionWindow[]
-  /** The Host's frames, for `dwarf.departed`; nothing is ever sent through it. */
+  /** The Host's frames, for `dwarf.departed`, heard while the store holds something; nothing is sent through it. */
   host: Pick<HostClient, 'subscribe'>
 }
 
@@ -70,7 +72,7 @@ export interface UiSession {
   dropDwarf(dwarfId: DwarfId): void
   /** Empties the store: UI main entered tray-only (S10.14, S10.15). */
   clear(): void
-  /** Stops hearing the Host's frames. */
+  /** Stops hearing the Host's frames (the app is closing). */
   dispose(): void
 }
 
@@ -173,10 +175,12 @@ export function createUiSession(deps: UiSessionDeps): UiSession {
     for (const patch of patches) push({ ...patch, origin: FROM_UI_MAIN })
   }
 
-  const unsubscribe = deps.host.subscribe((event) => {
-    const dwarfId = departedDwarfOf(event)
-    if (dwarfId !== null) dropDwarf(dwarfId)
-  })
+  /** Stops the Host subscription; null while the store holds nothing. */
+  let unsubscribe: (() => void) | null = null
+  function stopListening(): void {
+    unsubscribe?.()
+    unsubscribe = null
+  }
 
   return {
     get() {
@@ -191,6 +195,10 @@ export function createUiSession(deps: UiSessionDeps): UiSession {
       return { drafts, chatViews, ...structuredClone(fields) }
     },
     patch(p, origin) {
+      unsubscribe ??= deps.host.subscribe((event) => {
+        const dwarfId = departedDwarfOf(event)
+        if (dwarfId !== null) dropDwarf(dwarfId)
+      })
       apply(p)
       push({ ...p, origin: origin.mode }, origin.webContentsId)
     },
@@ -199,7 +207,8 @@ export function createUiSession(deps: UiSessionDeps): UiSession {
       for (const dwarfId of dwarfs) store.dropDwarf(dwarfId)
       dwarfs.clear()
       fields = emptyFields()
+      stopListening()
     },
-    dispose: unsubscribe
+    dispose: stopListening
   }
 }

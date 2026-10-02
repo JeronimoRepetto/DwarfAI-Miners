@@ -190,4 +190,23 @@ describe('the UI-main session store (ADR-024 items 1, 3; 14 §3.9)', () => {
     // The one thing the store asks of the client is to hear the Host's frames (dwarf.departed).
     expect(host.calls).toEqual([{ member: 'subscribe' }])
   })
+
+  it('[ADR-003] the store hears the Host only while it holds something, so tray-only keeps no subscription open', () => {
+    const { host, session, fromPanel } = world()
+    // An empty store has nothing a departure could drop: it holds no subscription (and so no `ui` connection).
+    expect(host.subscribers).toBe(0)
+
+    session.patch({ kind: 'draft', dwarfId: BORIN, text: 'half a thought' }, fromPanel)
+    session.patch({ kind: 'draft', dwarfId: DORI, text: 'another' }, fromPanel)
+    expect(host.subscribers).toBe(1)
+
+    session.clear()
+    expect(host.subscribers).toBe(0)
+
+    // The next window's first patch listens again.
+    session.patch({ kind: 'open-chat', host: 'panel', dwarfId: DORI }, fromPanel)
+    expect(host.subscribers).toBe(1)
+    session.dispose()
+    expect(host.subscribers).toBe(0)
+  })
 })
