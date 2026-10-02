@@ -37,10 +37,12 @@ import {
   type Platform,
   type SearchDir
 } from './searchDirs'
+import { PROBE_TIMEOUT_MS } from '../../application/probe'
 import { batchShimTarget, scoopShimTarget } from './shims'
 
-/** 15 §0: the bound on a CLI's `--version` probe (and on the resolver's other reads). */
-export const PROBE_TIMEOUT_MS = 5_000
+// 15 §0: the bound on a CLI's `--version` probe (and on the resolver's other reads). One constant
+// for the resolver and the capability probe, owned by the probe use case (ISSUE-147).
+export { PROBE_TIMEOUT_MS }
 
 /** Marks the login shell's PATH in its output, so whatever its profile prints is ignored. */
 export const LOGIN_SHELL_PATH_MARK = '__DWARFAI_PATH__'

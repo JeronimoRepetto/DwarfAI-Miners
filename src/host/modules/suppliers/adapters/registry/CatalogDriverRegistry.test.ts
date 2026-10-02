@@ -5,9 +5,15 @@ import { FakeFs } from '../../../../kernel/fakes/FakeFs'
 import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import { createSupplierCatalogue } from '../../application/catalogue'
 import { createInstallDetection } from '../../application/detection'
+import { createCapabilityProbing } from '../../application/probe'
 import { FAIL_CLOSED_CAPABILITIES } from '../../domain/capabilities'
 import type { CatalogRecord, DriverTransport, ProviderProfile } from '../../domain/profile'
 import { FakeInstallResolver } from '../../ports/fakes/FakeInstallResolver'
+import { FakeIntegrationGateReader } from '../../ports/fakes/FakeIntegrationGateReader'
+import { InMemoryCapabilityRecordStore } from '../../ports/fakes/InMemoryCapabilityRecordStore'
+import { RecordingEventBus } from '../../../../kernel/fakes/RecordingEventBus'
+import { SequenceIdGenerator } from '../../../../kernel/fakes/SequenceIdGenerator'
+import type { SuppliersEvent } from '../../domain/events'
 import { SimulatedDriver } from '../drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './CatalogDriverRegistry'
 
@@ -98,7 +104,7 @@ describe('DriverRegistry', () => {
     ).toThrow(HostInvariantError)
   })
 
-  it('[ADR-009] in a public build a gated provider is present in the catalogue but absent from launch surfaces', () => {
+  it('[ADR-009] in a public build a gated provider is present in the catalogue but absent from launch surfaces', async () => {
     const gated = record('gated-one', { publicLaunch: 'gated', drivers: ['ndjson'] })
     const open = record('open-one', { drivers: ['acp'] })
     const records = [gated, open]
@@ -124,7 +130,20 @@ describe('DriverRegistry', () => {
         resolver: new FakeInstallResolver(),
         fs: new FakeFs(),
         scheduler: new FakeScheduler(new FakeClock())
-      })
+      }),
+      // Amended for ISSUE-147: the catalogue also takes probing (over the public registry), the
+      // integration gate and a scheduler.
+      probing: createCapabilityProbing({
+        registry: publicRegistry,
+        store: new InMemoryCapabilityRecordStore(),
+        clock,
+        scheduler,
+        bus: new RecordingEventBus<SuppliersEvent>(),
+        ids: new SequenceIdGenerator(),
+        hostEpoch: 'epoch-1'
+      }),
+      gate: new FakeIntegrationGateReader(),
+      scheduler
     })
 
     expect(publicRegistry.drivers('gated-one')).toEqual([])
@@ -133,7 +152,11 @@ describe('DriverRegistry', () => {
       providerId: 'gated-one',
       publicLaunch: 'gated'
     })
-    expect(catalogue.capabilities('gated-one').observe).toBe(true)
+    // Amended for ISSUE-147: with no driver in a public build nothing can probe it, so its
+    // capabilities carry no evidence and fail closed (ADR-009 D2, D6; INV-44); it stays known as
+    // catalogue data above and is on no launch surface. Was: `observe` read from the ceiling (true).
+    expect(catalogue.capabilities('gated-one').launch).toBe(false)
+    expect(await catalogue.launchable()).toEqual([])
     // Development builds keep it launchable, so its driver stays tested (ADR-009 D6).
     expect(devRegistry.drivers('gated-one').map((d) => d.transport)).toEqual(['ndjson'])
   })

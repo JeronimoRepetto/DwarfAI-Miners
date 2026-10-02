@@ -1,31 +1,39 @@
 // The suppliers module (05 §3.4): the open provider catalog, the driver registry and the one
 // ProviderDriver contract of ADR-009, whose types this file re-exports (never redefines): catalogue
 // `launchable` (installed detection through the one `InstallResolver`, ISSUE-146), `entry` /
-// `capabilities` over the catalog records, `DriverRegistry` with the SimulatedDriver attached in
-// development builds, `SessionChannels` over the sessions the registry's drivers opened. Probe and
-// merge and the real drivers come later (ISSUE-147…163); wiring into `host/main.ts` is ISSUE-159.
-import type { ProviderId } from '../../kernel/domain/values'
+// `capabilities` as the effective values of the capability merge, probe and integration gate
+// (ISSUE-147), `DriverRegistry` with the SimulatedDriver attached in
+// development builds, `SessionChannels` over the sessions the registry's drivers opened. The real
+// drivers come later (ISSUE-148…163); wiring into `host/main.ts` is ISSUE-159.
+import type { HostEpoch, ProviderId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
+import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
 import type { FileSystem } from '../../kernel/ports/fileSystem'
+import type { IdGenerator } from '../../kernel/ports/idGenerator'
 import type { Scheduler } from '../../kernel/ports/scheduler'
 import { CATALOG_RECORDS, SIMULATED_RECORD } from './adapters/catalog/profiles'
 import { SimulatedDriver } from './adapters/drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './adapters/registry/CatalogDriverRegistry'
 import { createSupplierCatalogue, type SupplierCatalogueQueries } from './application/catalogue'
 import { createInstallDetection } from './application/detection'
+import { createCapabilityProbing } from './application/probe'
 import {
   trackLiveSessions,
   type SessionBindings,
   type SessionChannels
 } from './application/sessionChannels'
+import type { SuppliersEvent } from './domain/events'
 import { recordsForBuild } from './domain/profile'
+import type { CapabilityRecordStore } from './ports/capabilityRecordStore'
 import type { DriverRegistry } from './ports/driverRegistry'
 import type { InstallResolver } from './ports/installResolver'
+import type { IntegrationGateReader } from './ports/integrationGateReader'
 import type { SuppliedEventSink } from './ports/suppliedEventSink'
 
 // ADR-009 D1–D3 and the 15 §1.2 supporting types: every other module imports them from here.
 export type {
   CatalogRecord,
+  PermissionModeCatalog,
   DriverTransport,
   ModelEntry,
   PermissionModeId,
@@ -62,6 +70,9 @@ export type {
 } from './ports/providerDriver'
 export type { DriverRegistry } from './ports/driverRegistry'
 export type { InstallResolver } from './ports/installResolver'
+export type { CapabilityRecordStore } from './ports/capabilityRecordStore'
+export type { IntegrationGateReader } from './ports/integrationGateReader'
+export type { ProviderCapabilitiesRecorded, SuppliersEvent } from './domain/events'
 // The kernel owner types the D3 contract names (05 §2.2, revised 2026-09-30).
 export type {
   AnswerOutcome,
@@ -100,6 +111,14 @@ export interface SuppliersDeps {
   readonly installResolver: InstallResolver
   /** Detection revalidates its cache by the `stat` mtime of each resolved path (ADR-009 D5). */
   readonly fs: Pick<FileSystem, 'stat'>
+  /** Measured capabilities with provider version and date (NFR-OBS-04); SQLite in ISSUE-148. */
+  readonly capabilityRecords: CapabilityRecordStore
+  /** The answer-channel gate: a `host/wiring` bridge to `preferences.integrationState` (ADR-011 item 7). */
+  readonly integrationGate: IntegrationGateReader
+  /** Where `ProviderCapabilitiesRecorded` goes (08 §0). */
+  readonly bus: Pick<DomainEventBus<SuppliersEvent>, 'publish'>
+  readonly ids: IdGenerator
+  readonly hostEpoch: HostEpoch
 }
 
 export interface Suppliers {
@@ -125,15 +144,13 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
         })
       ]
     : []
-  const tracked = trackLiveSessions(
-    new CatalogDriverRegistry({
-      catalogIds: deps.catalogIds,
-      records,
-      drivers,
-      publicBuild: deps.publicBuild
-    }),
-    { sink: deps.sink, clock: deps.clock }
-  )
+  const registry = new CatalogDriverRegistry({
+    catalogIds: deps.catalogIds,
+    records,
+    drivers,
+    publicBuild: deps.publicBuild
+  })
+  const tracked = trackLiveSessions(registry, { sink: deps.sink, clock: deps.clock })
   return {
     catalogue: createSupplierCatalogue({
       records,
@@ -142,7 +159,19 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
         resolver: deps.installResolver,
         fs: deps.fs,
         scheduler: deps.scheduler
-      })
+      }),
+      // Probing only detects and probes: it never launches, so it reads the plain registry.
+      probing: createCapabilityProbing({
+        registry,
+        store: deps.capabilityRecords,
+        clock: deps.clock,
+        scheduler: deps.scheduler,
+        bus: deps.bus,
+        ids: deps.ids,
+        hostEpoch: deps.hostEpoch
+      }),
+      gate: deps.integrationGate,
+      scheduler: deps.scheduler
     }),
     sessions: tracked.channels,
     bindings: tracked.bindings,
