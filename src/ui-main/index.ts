@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   app,
   BrowserWindow,
@@ -28,6 +28,12 @@ import {
   type EndFirstTimers,
   type LegacyLaunchedSessions
 } from '../legacy-bridge/LegacyEndFirstAdapter'
+import { createLegacySettingsWriteHub } from '../legacy-bridge/settingsMirror/legacySettingsWrites'
+import type { MirrorHalf } from '../legacy-bridge/settingsMirror/mirrorHalf'
+import {
+  createSettingsMirrorBridge,
+  type LegacySettingsWrites
+} from '../legacy-bridge/settingsMirror/settingsMirrorBridge'
 import {
   createStopEverything,
   STOP_EVERYTHING_REQUESTED,
@@ -109,6 +115,7 @@ import { ElectronTray } from './window/adapters/ElectronTray'
 import { readUserDataConfigFile } from './window/adapters/userDataConfigFile'
 import type { HostClientService } from './host-client/HostClient'
 import { composeHostClient } from './host-client/composeHostClient'
+import { mintRequestId } from './host-client/requestIds'
 import {
   createNodeHostAttach,
   createNodeHostConnection,
@@ -381,6 +388,12 @@ export interface UiMainDeps {
    * resume wakes it (13 FM-109). Disposed at will-quit, so a closing app never reconnects or respawns.
    */
   host?: { client: HostClientService }
+  /**
+   * `SettingsMirrorBridge` (21 §3, cuts 1–3e; ISSUE-214): the legacy store's write notifications and the halves whose
+   * non-secret Host-read preferences are mirrored into the Host with `preferences.set`. Composed over the Host attach
+   * (`host`) and disposed at will-quit; deleted in 4a, when the direction flips.
+   */
+  settingsMirror?: { legacy: LegacySettingsWrites; halves: readonly MirrorHalf[] }
 }
 
 /** What a started root holds: the reopen state when the Host attach was composed. */
@@ -424,7 +437,8 @@ export async function startUiMain({
   uiPreferences,
   uiLog,
   panelWindow,
-  host
+  host,
+  settingsMirror
 }: UiMainDeps): Promise<UiMainStarted | undefined> {
   if (!lock.acquire()) {
     lifecycle.quit()
@@ -517,6 +531,18 @@ export async function startUiMain({
           for (const window of modeWindowList()) window.send(HOST_CONNECTION_PUSH, view)
         })
       : undefined
+  // The legacy store stays the source of truth for the settings rows until 4a: the mirror keeps the Host's copy of
+  // its halves' preferences equal to it (21 §3).
+  const mirror =
+    host === undefined || settingsMirror === undefined
+      ? undefined
+      : createSettingsMirrorBridge({
+          hostClient: host.client,
+          legacy: settingsMirror.legacy,
+          halves: settingsMirror.halves,
+          newRequestId: () =>
+            mintRequestId({ now: () => Date.now(), random: (n) => randomBytes(n) })
+        })
   let trayProcess: TrayProcess | null = null
   lifecycle.onResume?.(() => host?.client.wake())
   lifecycle.onBeforeQuit(() => legacyRuntime.beforeQuit())
@@ -525,6 +551,7 @@ export async function startUiMain({
     trayProcess?.dispose()
     stopConnectionPush?.()
     uiSession?.dispose()
+    mirror?.dispose()
     host?.client.dispose()
     legacyRuntime.willQuit()
   })
@@ -871,6 +898,8 @@ if (process.type === 'browser') {
       ),
       newConfirmationId: () => randomUUID()
     },
-    host: { client: electronHostClient(uiLog, dataDir) }
+    host: { client: electronHostClient(uiLog, dataDir) },
+    // The halves register here with their legacy saves wired to the hub (ISSUE-116 from cut 1, ISSUE-194 from 3a).
+    settingsMirror: { legacy: createLegacySettingsWriteHub(), halves: [] }
   })
 }
