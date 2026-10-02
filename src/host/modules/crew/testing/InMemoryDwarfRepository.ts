@@ -11,10 +11,11 @@ import { HostInvariantError } from '../../../kernel/domain/errors'
 import { sameProviderIdentity } from '../../../kernel/domain/providerIdentity'
 import type { DwarfId, MineId, ProviderIdentity } from '../../../kernel/domain/values'
 import type { TransactionScope } from '../../../kernel/ports/transactionScope'
+import type { PresentDwarfs } from '../application/crewQueries'
 import type { Dwarf } from '../domain/dwarf'
 import type { DwarfRepository } from '../ports/dwarfRepository'
 
-export class InMemoryDwarfRepository implements DwarfRepository {
+export class InMemoryDwarfRepository implements DwarfRepository, PresentDwarfs {
   private stored: Dwarf[] = []
 
   constructor(private readonly scope: TransactionScope) {}
@@ -29,6 +30,11 @@ export class InMemoryDwarfRepository implements DwarfRepository {
 
   inMine(id: MineId): Dwarf[] {
     return this.stored.filter((d) => d.mineId === id).map((d) => structuredClone(d))
+  }
+
+  /** Strangler-only (`PresentDwarfs`): deleted with B-M41 at the end of cut 4. */
+  present(): Dwarf[] {
+    return this.stored.filter((d) => d.departedAt === null).map((d) => structuredClone(d))
   }
 
   save(d: Dwarf): void {

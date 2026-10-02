@@ -3,6 +3,7 @@ import type { MineId } from '../../../kernel/domain/values'
 import { SqliteTransactionRunner } from '../../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../../platform/sqlite/testing/templateDb'
 import { runDwarfRepositoryContract } from '../testing/dwarfRepository.contract'
+import { runPresentDwarfsContract } from '../testing/presentDwarfs.contract'
 import { SqliteDwarfRepository } from './SqliteDwarfRepository'
 
 // L3 (17 §1.3): the contract over a copy of the run's template database (schema v1, migration 1
@@ -13,6 +14,26 @@ const MINES = [
   '00000000-0000-7000-8000-0000000000f1' as MineId,
   '00000000-0000-7000-8000-0000000000f2' as MineId
 ] as const
+
+function subject() {
+  const { db } = openTemplateCopy()
+  const runner = new SqliteTransactionRunner(db)
+  runner.inTransaction(() => {
+    MINES.forEach((id, n) => {
+      db.run(
+        `INSERT INTO mines (id, canonical_path, name, name_norm, state, created_at, last_used_at)
+         VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+        [id, `/work/mine-${n}`, `mine-${n}`, `mine-${n}`, T0, T0]
+      )
+    })
+  })
+  return {
+    repository: new SqliteDwarfRepository({ db, scope: runner }),
+    mineIds: MINES,
+    inTransaction: <T>(work: () => T): T => runner.inTransaction(work),
+    dispose: () => undefined
+  }
+}
 
 describe('SqliteDwarfRepository', () => {
   runDwarfRepositoryContract(() => {
@@ -34,4 +55,10 @@ describe('SqliteDwarfRepository', () => {
       dispose: () => undefined
     }
   })
+})
+
+// The strangler-only `PresentDwarfs` read (05 §3.2; AMENDMENT-8), deleted with B-M41 at the end of
+// cut 4, over the same seeded template copy.
+describe('SqliteDwarfRepository (strangler-only present)', () => {
+  runPresentDwarfsContract(subject)
 })

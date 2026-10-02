@@ -1,8 +1,13 @@
 // The `CrewQueries` driving port (05 §3.2; 16 §4.2): read models over `DwarfRepository`, with the
 // status and the other derived fields read at the clock's now (06 §5.1 `DwarfView`). Read-only:
-// no transaction, no event. The strangler-only `presentIdentities` joins with ISSUE-083.
+// no transaction, no event.
+//
+// Strangler-only (05 §3.2; 14 B-M41; AMENDMENT-8, OQ-69): `presentIdentities` and the
+// `PresentDwarfs` read behind it. Their only caller is the B-M41 `strangler.dwarfIdentities`
+// handler (host/transport/methods/strangler.ts), read by `LegacyDwarfIdBridge`; they never feed a
+// renderer read model and are deleted together with B-M41 at the end of cut 4 (later: ISSUE-241).
 import { HostInvariantError } from '../../../kernel/domain/errors'
-import type { DwarfId, MineId } from '../../../kernel/domain/values'
+import type { DwarfId, MineId, ProviderId, ProviderIdentity } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { Dwarf } from '../domain/dwarf'
 import { displayNameOf, viewOf, type DwarfView } from '../domain/dwarfView'
@@ -16,6 +21,20 @@ export interface CrewQueries {
   get(dwarfId: DwarfId): DwarfView | null
   /** `customName ?? baseName` (OQ-27, INV-104 titles); never sent to a provider (NFR-PRIV-03). */
   displayName(dwarfId: DwarfId): string
+  /** Strangler-only (05 §3.2): one record per present dwarf, `providerId = identity.providerId`, imported names only. */
+  presentIdentities(): { dwarfId: DwarfId; providerId: ProviderId; identity: ProviderIdentity }[]
+}
+
+/** One record of `presentIdentities` (strangler-only; deleted with B-M41 at the end of cut 4). */
+export type PresentIdentity = ReturnType<CrewQueries['presentIdentities']>[number]
+
+/**
+ * Strangler-only: every present dwarf of every mine, in arrival order. The frozen
+ * `DwarfRepository` (16 §4.2) lists dwarfs per mine only, so this read sits beside it, implemented
+ * by the same adapter and its double, and is deleted with B-M41 at the end of cut 4.
+ */
+export interface PresentDwarfs {
+  present(): Dwarf[]
 }
 
 /**
@@ -33,6 +52,8 @@ export interface CrewReadModelDeps {
   repository: DwarfRepository
   clock: Clock
   links: SessionLinks
+  /** Strangler-only, for `presentIdentities` (deleted with B-M41 at the end of cut 4). */
+  presentDwarfs: PresentDwarfs
 }
 
 export class CrewReadModel implements CrewQueries {
@@ -55,6 +76,14 @@ export class CrewReadModel implements CrewQueries {
     const dwarf = this.deps.repository.byId(dwarfId)
     if (dwarf === null) throw new HostInvariantError(`no dwarf ${dwarfId} was ever stored`)
     return displayNameOf(dwarf)
+  }
+
+  presentIdentities(): PresentIdentity[] {
+    return this.deps.presentDwarfs.present().map((d) => ({
+      dwarfId: d.id,
+      providerId: d.identity.providerId,
+      identity: { ...d.identity }
+    }))
   }
 
   private view(d: Dwarf, now: number): DwarfView {
