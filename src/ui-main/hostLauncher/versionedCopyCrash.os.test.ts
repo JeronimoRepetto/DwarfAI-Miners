@@ -32,7 +32,9 @@ const PLATFORM =
 /**
  * One launcher start's copy step. `crashAt` makes it wait, for the kill, right where the crash is meant to land:
  * `copying` once the real copy has started (and after it, should the kill come late), `renaming` at the final
- * rename, after the copy was verified and an outdated copy removed; `none` runs it through and prints the outcome.
+ * rename, after the copy was verified and an outdated copy moved aside; `none` runs it through and prints the outcome.
+ * AMENDED (fix/dev-copy-root): an outdated copy is renamed aside rather than deleted in place, so `renaming` waits at
+ * the rename into `host/<version>/`, the final one, and not at that first rename.
  */
 const COPIER = `
 import { ensureVersionedCopy, nodeCopyOps } from ${repoImport('src', 'ui-main', 'hostLauncher', 'versionedCopy.ts')}
@@ -50,8 +52,11 @@ const ops = {
     await nodeCopyOps.copyTree(from, to)
     return waitForTheKill('copied')
   },
-  rename: (from, to) => (crashAt === 'renaming' ? waitForTheKill('renaming') : nodeCopyOps.rename(from, to)),
-  removeTree: (target) => nodeCopyOps.removeTree(target)
+  rename: (from, to) =>
+    crashAt === 'renaming' && to.endsWith('${VERSION}') ? waitForTheKill('renaming') : nodeCopyOps.rename(from, to),
+  removeTree: (target) => nodeCopyOps.removeTree(target),
+  // ADDED (fix/dev-copy-root): the probe for a copy a running process holds, before an outdated copy is moved aside.
+  busyFile: (dir) => nodeCopyOps.busyFile(dir)
 }
 const outcome = await ensureVersionedCopy({
   version: '${VERSION}', sourceDir, manifestPath, root, platform, pid: process.pid, ops,
@@ -148,7 +153,7 @@ describe('an interrupted versioned copy is never used (ADR-002 D5)', () => {
   )
 
   it(
-    '[ADR-002, FM-129] a copy killed at its rename, after the outdated copy was removed, leaves no host/<version>/ at all, never a partial one; the next start makes a verified copy',
+    '[ADR-002, FM-129] a copy killed at its rename, after the outdated copy was moved aside, leaves no host/<version>/ at all, never a partial one; the next start makes a verified copy',
     async () => {
       const copyRoot = path.join(root, 'at-rename')
       const outdated = path.join(copyRoot, VERSION)
@@ -160,7 +165,11 @@ describe('an interrupted versioned copy is never used (ADR-002 D5)', () => {
       })
 
       expect(existsSync(outdated)).toBe(false)
-      expect(readdirSync(copyRoot)).toEqual([`${VERSION}.tmp-${pid}`])
+      // AMENDED (fix/dev-copy-root): the outdated copy waits aside as a .tmp- leftover too, removed at the next start.
+      expect(readdirSync(copyRoot).sort()).toEqual([
+        `${VERSION}.tmp-${pid}`,
+        `${VERSION}.tmp-${pid}-old`
+      ])
       await nextStartMakesAVerifiedCopy(copyRoot)
     },
     CASE_TIMEOUT_MS
