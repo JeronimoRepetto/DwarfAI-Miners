@@ -28,6 +28,7 @@ import { FakeSingleInstanceLock } from './window/ports/fakes/FakeSingleInstanceL
 import { FakeTrayController } from './window/ports/fakes/FakeTrayController'
 import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
 import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
+import { RecordingNotificationDisplay } from './window/ports/fakes/RecordingNotificationDisplay'
 
 /**
  * The cut-0 composition of UI main (ISSUE-056; 21 §2 cut 0; ADR-001 item 3): the route table serves the window
@@ -211,6 +212,8 @@ async function cut0App(
     endVerdict?: 'ended' | 'refused'
     routes?: readonly ChannelRoute[]
     composeFails?: boolean
+    /** The level-3 notification display and the S-018-1 gate (ISSUE-113); absent, no presenter is composed. */
+    notifications?: { display: RecordingNotificationDisplay; drawsWithoutWindow: boolean }
   } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
@@ -264,6 +267,7 @@ async function cut0App(
     host: { client },
     appWindows: appWindows.list,
     tray: { controller: tray, newConfirmationId: () => CONFIRMATION },
+    ...(options.notifications === undefined ? {} : { notifications: options.notifications }),
     shortcut: (controller) =>
       createToggleShortcut({
         registry: shortcuts,
@@ -469,5 +473,44 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     const calls = lifecycle.calls
     expect(calls.indexOf('log ui.start')).toBeLessThan(calls.indexOf('log flushed'))
     expect(calls.indexOf('log flushed')).toBeLessThan(calls.indexOf('exit 1'))
+  })
+
+  it("[ADR-018] in cut 0 the root draws the notifier's attention frames through the notification display, unchanged, and stops at will-quit", async () => {
+    const display = new RecordingNotificationDisplay()
+    const { host, lifecycle, panel } = await cut0App({
+      notifications: { display, drawsWithoutWindow: false }
+    })
+    const notification = {
+      key: `${HOST_DWARF}:question:ask-1`,
+      kind: 'question',
+      title: 'Ember has a question',
+      body: 'Mine one',
+      mineId: '01890a5d-ac96-774b-bcce-b302099a8111',
+      dwarfId: HOST_DWARF,
+      sensitive: true
+    }
+
+    // The Panel is open: drawn even where S-018-1 has not passed (window-only fallback).
+    panel.panel()?.show()
+    host.publishToNotifiers('attention.notify', notification)
+    await settle()
+    expect(display.shown).toEqual([
+      { key: notification.key, title: 'Ember has a question', body: 'Mine one' }
+    ])
+    host.publishToNotifiers('attention.withdraw', { keys: [notification.key] })
+    await settle()
+    expect(display.closed).toEqual([notification.key])
+
+    // Tray mode where S-018-1 has not passed: not drawn.
+    panel.panel()?.hide()
+    host.publishToNotifiers('attention.notify', { ...notification, key: 'k2' })
+    await settle()
+    expect(display.shown).toHaveLength(1)
+
+    panel.panel()?.show()
+    lifecycle.handlers.get('will-quit')?.()
+    host.publishToNotifiers('attention.notify', { ...notification, key: 'k3' })
+    await settle()
+    expect(display.shown).toHaveLength(1)
   })
 })
