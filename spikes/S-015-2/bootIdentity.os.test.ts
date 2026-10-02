@@ -4,6 +4,8 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   compileWindowsHelper,
+  parseLoginwindowStart,
+  parseWhoConsoleLogin,
   rebootVerdict,
   snapshot,
   type BootIdentity,
@@ -41,7 +43,11 @@ const TABLE_SOURCES: Partial<Record<NodeJS.Platform, readonly string[]>> = {
 const CANDIDATE_SOURCES: Partial<Record<NodeJS.Platform, readonly string[]>> = {
   win32: ['registry PrefetchParameters\\BootId (reg.exe)', 'whoami /logonid (logon SID)'],
   linux: ['/proc/stat btime'],
-  darwin: []
+  // P2 found no environment or ps session source that changes at logout; these two belong to the GUI login itself.
+  darwin: [
+    'who console login (utmpx, to the minute)',
+    'loginwindow start time (ps lstart, to the second)'
+  ]
 }
 
 function readingsOf(shots: readonly Snapshot[], source: string): Reading[] {
@@ -153,5 +159,48 @@ describe('S-015-2: boot and logon identity sources (ADR-015 item 4)', () => {
     )
     // A Host crash while the machine kept running.
     expect(rebootVerdict(base, base, epochStart)).toBe('same boot (rule 4)')
+  })
+})
+
+// The macOS logon readers' parsers are pure, so they run on every OS leg. The lines have the shape macOS 26.6.2
+// printed in P2b (2026-10-02) under `LC_ALL=C` and `TZ=UTC0`, with the synthetic account `j` (uid 501).
+describe('S-015-2: macOS logon source parsers (ADR-015 item 4)', () => {
+  const who = [
+    'k        console      Oct  2 08:02',
+    'j        ttys000      Oct  2 19:21',
+    'j        console      Oct  2 19:20',
+    ''
+  ].join('\n')
+
+  const loginwindow = '/System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow'
+  const ps = [
+    `    0 Fri Oct  2 19:18:20 2026     /sbin/launchd`,
+    `  502 Fri Oct  2 08:02:11 2026     ${loginwindow}`,
+    `  501 Fri Oct  2 19:20:51 2026     /usr/libexec/loginwindowhelper`,
+    `  501 Fri Oct  2 19:20:51 2026     ${loginwindow}`,
+    `  501 Fri Oct  2 19:21:03 2026     /bin/zsh`,
+    ''
+  ].join('\n')
+
+  it('[S-015-2] the who console line of this user gives its login minute, and no console line gives null', () => {
+    expect(parseWhoConsoleLogin(who, 'j')).toBe('Oct  2 19:20')
+    expect(parseWhoConsoleLogin(who, 'k')).toBe('Oct  2 08:02')
+    expect(parseWhoConsoleLogin('j        ttys000      Oct  2 19:21\n', 'j')).toBeNull()
+  })
+
+  it('[S-015-2] the loginwindow start of this uid parses as a UTC instant to the second', () => {
+    expect(parseLoginwindowStart(ps, 501)).toBe(Date.UTC(2026, 9, 2, 19, 20, 51))
+    expect(parseLoginwindowStart(ps, 502)).toBe(Date.UTC(2026, 9, 2, 8, 2, 11))
+    expect(parseLoginwindowStart(ps, 503)).toBeNull()
+  })
+
+  it('[S-015-2] a start time printed outside the C locale is unreadable, never misparsed', () => {
+    // What `ps` prints for the same instant when LC_ALL is not forced to C (es_ES here).
+    expect(
+      parseLoginwindowStart(`  501 vie  2 oct 19:20:51 2026     ${loginwindow}\n`, 501)
+    ).toBeNull()
+    expect(
+      parseLoginwindowStart(`  501 Fri Oct 32 19:20:51 2026     ${loginwindow}\n`, 501)
+    ).toBeNull()
   })
 })

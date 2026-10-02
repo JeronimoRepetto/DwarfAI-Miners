@@ -15,7 +15,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { release, tmpdir, uptime, version } from 'node:os'
+import { release, tmpdir, uptime, userInfo, version } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -76,8 +76,14 @@ function uptimeBootMs(): number {
   return Math.round((Date.now() - uptime() * 1000) / 1000) * 1000
 }
 
-function run(file: string, args: readonly string[]): string {
-  return execFileSync(file, args, { encoding: 'utf8', windowsHide: true, timeout: 20000 })
+function run(file: string, args: readonly string[], env?: NodeJS.ProcessEnv): string {
+  return execFileSync(file, args, {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 20000,
+    shell: false,
+    ...(env ? { env } : {})
+  })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -270,6 +276,58 @@ function linuxReadings(): Reading[] {
 // ---------------------------------------------------------------------------------------------------------------
 // macOS
 
+/**
+ * The environment of the macOS logon readers. `who` and `ps -o lstart` format their times with `strftime`, whose
+ * month and day names follow the locale and whose clock follows the time zone. The C locale and UTC make the output
+ * one fixed shape, so a parser never depends on the person's settings.
+ */
+const MACOS_FIXED_FORMAT_ENV = { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * The login minute of `user`'s console line in `who` output (utmpx), e.g. `Oct  2 19:20`; null without one. utmpx
+ * keeps only the minute, so two logins within one minute read the same.
+ */
+export function parseWhoConsoleLogin(whoOutput: string, user: string): string | null {
+  for (const line of whoOutput.split(/\r?\n/)) {
+    const match = /^(\S+)\s+console\s+(.+?)\s*$/.exec(line)
+    if (match?.[1] === user && match[2]) return match[2]
+  }
+  return null
+}
+
+/**
+ * The start instant, in ms since the epoch, of the `loginwindow` process of `uid` in the output of
+ * `ps -axo uid=,lstart=,comm=` run with `MACOS_FIXED_FORMAT_ENV` (C locale, UTC); null without one or when the
+ * time does not have that exact shape. loginwindow runs once per GUI login under the user's own uid and is replaced
+ * at every logout, so its start instant identifies the logon to the second.
+ */
+export function parseLoginwindowStart(psOutput: string, uid: number): number | null {
+  const row =
+    /^\s*(\d+)\s+[A-Z][a-z]{2} ([A-Z][a-z]{2})\s+(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})\s+(.+?)\s*$/
+  for (const line of psOutput.split(/\r?\n/)) {
+    const match = row.exec(line)
+    if (!match || Number(match[1]) !== uid || !match[8]?.endsWith('/loginwindow')) continue
+    const [month, day, hours, minutes, seconds, year] = [
+      MONTHS.indexOf(match[2] ?? ''),
+      ...match.slice(3, 8).map(Number)
+    ] as [number, number, number, number, number, number]
+    const ms = Date.UTC(year, month, day, hours, minutes, seconds)
+    const back = new Date(ms)
+    // Date.UTC rolls an out-of-range field over (Oct 32 → Nov 1); a value that does not round-trip is unreadable.
+    const exact =
+      month >= 0 &&
+      back.getUTCMonth() === month &&
+      back.getUTCDate() === day &&
+      back.getUTCHours() === hours &&
+      back.getUTCMinutes() === minutes &&
+      back.getUTCSeconds() === seconds
+    return exact ? ms : null
+  }
+  return null
+}
+
 function macosReadings(): Reading[] {
   return [
     timed('sysctl kern.bootsessionuuid', 'bootId', () =>
@@ -288,7 +346,18 @@ function macosReadings(): Reading[] {
     timed('ps -o sess= (session of this process)', 'logonSessionId', () => {
       const value = run('/bin/ps', ['-o', 'sess=', '-p', String(process.pid)]).trim()
       return value ? fingerprint(value) : null
-    })
+    }),
+    // `ps -o sess=` reads 0 for every process and SECURITYSESSIONID is absent from some shells (P2, 2026-10-02), so
+    // these two read the GUI login itself (P2b).
+    timed('who console login (utmpx, to the minute)', 'logonSessionId', () =>
+      parseWhoConsoleLogin(run('/usr/bin/who', [], MACOS_FIXED_FORMAT_ENV), userInfo().username)
+    ),
+    timed('loginwindow start time (ps lstart, to the second)', 'logonSessionId', () =>
+      parseLoginwindowStart(
+        run('/bin/ps', ['-axo', 'uid=,lstart=,comm='], MACOS_FIXED_FORMAT_ENV),
+        userInfo().uid
+      )
+    )
   ]
 }
 
