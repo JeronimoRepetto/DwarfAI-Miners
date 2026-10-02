@@ -40,7 +40,6 @@ function world() {
     windows: () =>
       [PANEL_ID, VETA_ID].map((id) => ({
         webContentsId: id,
-        mode: MODES[id] ?? 'panel',
         send: (push: string, payload: unknown) => void pushes.push({ to: id, push, payload })
       })),
     host

@@ -34,11 +34,10 @@ const EMPTY: UiSessionSnapshot = {
 }
 
 /** A mode window that records the pushes it receives. */
-function windowOf(webContentsId: number, mode: UiSessionWindow['mode']) {
+function windowOf(webContentsId: number) {
   const sent: Array<[string, unknown]> = []
   const window: UiSessionWindow = {
     webContentsId,
-    mode,
     send: (push, payload) => void sent.push([push, payload])
   }
   return { window, sent }
@@ -46,9 +45,9 @@ function windowOf(webContentsId: number, mode: UiSessionWindow['mode']) {
 
 function world() {
   const host = new RecordingHostClient()
-  const panel = windowOf(1, 'panel')
-  const veta = windowOf(2, 'veta')
-  const valle = windowOf(3, 'valle')
+  const panel = windowOf(1)
+  const veta = windowOf(2)
+  const valle = windowOf(3)
   const session = createUiSession({
     store: new InMemorySessionStore(),
     windows: () => [panel.window, veta.window, valle.window],

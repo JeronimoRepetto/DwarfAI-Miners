@@ -44,7 +44,6 @@ const NO_STORED_VIEW = { scrollAnchor: 'bottom' } as const
 /** An open mode window, as the pushes reach it. */
 export interface UiSessionWindow {
   readonly webContentsId: number
-  readonly mode: Exclude<WindowMode, 'hidden'>
   send(push: string, payload: unknown): void
 }
 
