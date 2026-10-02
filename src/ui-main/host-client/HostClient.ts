@@ -202,6 +202,8 @@ class NodeHostClient implements HostClientService {
   private disposed = false
   /** A `ui` hello is under way: a second attach waits for it instead of opening another connection. */
   private uiOpening = false
+  /** The last presence the PresenceTracker reported (B-M07): sent again first on every new `ui` connection. */
+  private presence: Presence | null = null
   private readonly calls = new Set<Call>()
   /** The calls waiting for their `res`, by correlation id. */
   private readonly pending = new Map<string, Call>()
@@ -282,9 +284,9 @@ class NodeHostClient implements HostClientService {
     }
   }
 
-  reportPresence(_p: Presence): void {
-    // B-M07 `presence` is born with the attention module's presence route (later: ISSUE-111); until the Host
-    // advertises it, sending it would be a method the Host did not list (14 §1.3).
+  reportPresence(p: Presence): void {
+    this.presence = p
+    this.sendPresence(this.ui)
   }
 
   async withUiConnection<T>(
@@ -556,6 +558,8 @@ class NodeHostClient implements HostClientService {
       return
     }
     this.ui = channel
+    // A new `ui` connection is a new client to the Host, which holds no report of it yet (16 §4.11).
+    this.sendPresence(channel)
     const { epoch } = channel.helloOk
     const sameEpoch = this.applied !== null && this.applied.epoch === epoch
     const lastSeq = sameEpoch ? (this.applied?.seq ?? null) : null
@@ -722,6 +726,17 @@ class NodeHostClient implements HostClientService {
       call.resent = true
       this.send(call, this.ui)
     }
+  }
+
+  /**
+   * B-M07 on `channel`, the `ui` connection, with the last report: never on the notifier (INV-119); `callOn` refuses
+   * it locally for a Host that does not advertise it (14 §1.3). One-shot: a report the connection lost is sent again on the next `ui`
+   * connection, and a refusal changes nothing the person sees.
+   */
+  private sendPresence(channel: HostChannel | null): void {
+    const presence = this.presence
+    if (channel === null || !channel.open || presence === null) return
+    this.callOn(channel, 'presence', presence).catch(() => {})
   }
 
   // ---- calls ----
