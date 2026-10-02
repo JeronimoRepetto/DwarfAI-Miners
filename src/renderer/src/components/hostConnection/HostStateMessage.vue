@@ -2,7 +2,8 @@
 /*
  * The one Host-state message over the Panel (ADR-002 D9; 07 §12B; 14 §6.4 `useHostConnection`): its text and its one
  * action — Retry (A-N05) or Stop everything and quit (ADR-002 D8 item 5) — announced in a live region, `alert` for a
- * Host that is down and `status` for a reconnect or a degraded Host. No toast and no OS notification (ADR-002 D9).
+ * Host that is down and `status` for a reconnect or a degraded Host. A message with an action is this dialog and never
+ * a toast; one without an action is a toast (below); neither is ever an OS notification (ADR-002 D9).
  *
  * A message with an action is the design's dialog (owner's design ruling 2026-10-02): the same `molecules/dialog` as
  * the remove-mine popup (MinesList) and ISSUE-317's confirmation, through ModalDialog. That gives a title, the message
