@@ -40,7 +40,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M09, B-M12, B-M13, B-M15 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -52,6 +52,8 @@ export interface HostMethods {
   'host.upgrade.request':            { params: { targetVersion: string; targetDir: string; requestId: string }; result: { state: 'upgrade-pending' } }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'presence':                        { params: PresenceParams; result: {} }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
+  'attention.clicked':               { params: { key: string }; result: {} }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty result as {}
   'ui.resetPreferences.ack':         { params: { epoch: number }; result: {} }
   // preferences and secrets
@@ -159,6 +161,12 @@ export const HOST_METHOD_SCHEMAS = {
         seq: z.number().int().nonnegative()
       })
       .strict(),
+    result: z.object({}).strict()
+  },
+  // B-M08 (14 §2.3): `notifier` only; not mutating, so no requestId (14 §1.6). The key is a
+  // diagnostics counter's input only (ADR-018 item 6); the frame codec bounds its size.
+  'attention.clicked': {
+    params: z.object({ key: z.string() }).strict(),
     result: z.object({}).strict()
   },
   // B-M12, B-M13 (14 §2.3): `ui` only; B-M13 answers the stored HostPreferences (IPC Gap 10).

@@ -1,8 +1,15 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
-import type { PreferencesView, ResetId } from '../wire'
+import type {
+  AttentionKind,
+  DwarfId,
+  MineId,
+  OsNotification,
+  PreferencesView,
+  ResetId
+} from '../wire'
 import type { HelloOk } from './adr-003'
-import { HOST_FRAME_SCHEMAS, type HostFrames } from './frames'
+import { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, type HostFrames } from './frames'
 import type { ResetStep } from './params/preferences'
 
 // The B-F04 and B-F05 payloads of 14 §3.5 and their strict() schemas (14 §1.4).
@@ -136,5 +143,68 @@ describe('ui.resetPreferences and reset.progress payloads (14 §3.5, B-F26, B-F2
     expect(
       progress.safeParse({ resetId: RESET_ID, epoch: 1, step: 'db', reason: 'x' }).success
     ).toBe(false)
+  })
+})
+
+// The B-F22 and B-F23 payloads of 14 §3.5, their strict() schemas (14 §1.4) and SENSITIVE_FRAMES:
+// the notifier's attention frames (ADR-003 item 12; ADR-018).
+
+describe('attention.notify and attention.withdraw payloads (14 §3.5, B-F22, B-F23)', () => {
+  const MINE = '01890a5d-ac96-774b-bcce-b302099a8111'
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099ad111'
+  const NOTIFICATION = {
+    key: `${DWARF}:question:ask-1`,
+    kind: 'question',
+    title: 'Canary has a question',
+    body: 'Mine one',
+    mineId: MINE,
+    dwarfId: DWARF,
+    sensitive: true
+  }
+
+  it('[ADR-018] the attention frame schemas infer exactly OsNotification and {keys}, and refuse any other key', () => {
+    expect(Object.keys(HOST_FRAME_SCHEMAS)).toEqual(
+      expect.arrayContaining(['attention.notify', 'attention.withdraw'])
+    )
+    expectTypeOf<HostFrames['attention.notify']>().toEqualTypeOf<OsNotification>()
+    expectTypeOf<OsNotification>().toEqualTypeOf<{
+      key: string
+      kind: AttentionKind
+      title: string
+      body: string
+      mineId: MineId
+      dwarfId: DwarfId
+      sensitive: true
+    }>()
+    expectTypeOf<AttentionKind>().toEqualTypeOf<'permission' | 'question' | 'turn-finished'>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['attention.notify']>>().toEqualTypeOf<
+      HostFrames['attention.notify']
+    >()
+    expectTypeOf<HostFrames['attention.withdraw']>().toEqualTypeOf<{ keys: string[] }>()
+    expectTypeOf<z.infer<(typeof HOST_FRAME_SCHEMAS)['attention.withdraw']>>().toEqualTypeOf<
+      HostFrames['attention.withdraw']
+    >()
+
+    const notify = HOST_FRAME_SCHEMAS['attention.notify']
+    for (const kind of ['permission', 'question', 'turn-finished']) {
+      expect(notify.safeParse({ ...NOTIFICATION, kind }).success, kind).toBe(true)
+    }
+    expect(notify.safeParse({ ...NOTIFICATION, kind: 'host-crash' }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, sensitive: false }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, mineId: 'mine-1' }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, dwarfId: 'dwarf-1' }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, at: 1 }).success).toBe(false)
+    expect(notify.safeParse({ ...NOTIFICATION, body: undefined }).success).toBe(false)
+
+    const withdraw = HOST_FRAME_SCHEMAS['attention.withdraw']
+    expect(withdraw.safeParse({ keys: [NOTIFICATION.key, 'k2'] }).success).toBe(true)
+    expect(withdraw.safeParse({ keys: [] }).success).toBe(true)
+    expect(withdraw.safeParse({ keys: [1] }).success).toBe(false)
+    expect(withdraw.safeParse({ keys: ['k'], reason: 'ended' }).success).toBe(false)
+  })
+
+  it('[NFR-SEC-12] attention.notify is a sensitive frame: its payload is never logged (14 §3.5)', () => {
+    expect(SENSITIVE_FRAMES).toContain('attention.notify')
+    expect(SENSITIVE_FRAMES).not.toContain('attention.withdraw')
   })
 })
