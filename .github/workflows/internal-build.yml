@@ -18,6 +18,9 @@ name: Internal build
 # unchanged until the package job of the architecture (20 §2.1 `package`, ISSUE-268) replaces both. The fuses flip
 # and the packaged-artifact tests P-01..P-09 of 20 §2.1, §2.3 do not exist in the repository yet (ISSUE-269, ISSUE-271
 # and their siblings), so there is nothing of theirs to run here.
+#
+# Every installer is unsigned (owner, 2026-10-02): the workflow reads no secret and no Environment. On first launch
+# macOS needs "Open Anyway" in System Settings > Privacy & Security, and Windows shows the SmartScreen warning.
 
 on:
   workflow_dispatch:
@@ -118,13 +121,12 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Copy of ci.yml `release-mac`: signed and notarized with the Developer ID certificate and the Apple notarization
-  # credentials of the `release` Environment (docs/signing.md), which reach the packaging step alone. The Environment
-  # must allow this workflow's ref (main) for a dispatch to start; see the hand-off of the PR that added this file.
-  # Pinned to macos-15 for the same keychain reason the release-mac comment in ci.yml records.
+  # Copy of ci.yml `release-mac`, but UNSIGNED (owner, 2026-10-02): the internal macOS build is neither signed nor
+  # notarized, so this job uses no Environment and reads no secret. On first launch macOS refuses the app; the owner
+  # opens it once through System Settings > Privacy & Security > "Open Anyway".
+  # Kept on macos-15 like release-mac, the image that job is known to package on.
   package-mac:
     name: Package internal build (macos)
-    environment: release
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -165,15 +167,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Only this step sees the release environment's secrets, as in ci.yml `release-mac`.
-      - name: Package installers
-        run: pnpm package:mac
+      # Signing off, explicitly. `-c.mac.identity=null` is electron-builder's own switch to skip macOS code signing
+      # (pnpm appends it to the script's electron-builder command); CSC_IDENTITY_AUTO_DISCOVERY=false stops it from
+      # picking any identity out of the runner's keychain. Notarization runs only after a successful signature
+      # (electron-builder 26 MacPackager.sign), so it is skipped with it, although package.json keeps `notarize: true`
+      # for the release jobs.
+      - name: Package installers (unsigned)
+        run: pnpm package:mac -c.mac.identity=null
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Write SHA256SUMS
         run: node scripts/ci/sha256sums.mjs release .dmg .zip

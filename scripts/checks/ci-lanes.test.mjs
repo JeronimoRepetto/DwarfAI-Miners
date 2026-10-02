@@ -159,8 +159,9 @@ describe('release lanes in CI (17 §1.13, §5.2; 20 §2.1)', () => {
 // ADDED for the internal cut build (owner, 2026-10-02): `.github/workflows/internal-build.yml` packages the installers
 // of an internal cut build for the owner's soak on his own machines (`21` §2, OQ-71). No public build exists before
 // cut 5 (OQ-66, `20` §3.2), and the repository is public, so the workflow runs only on a manual dispatch, publishes
-// no release, creates no tag, keeps its artifacts one day, and hands the macOS signing secrets to the packaging step
-// alone (`20` §2.1 "only in the packaging step"). scripts/ci/fetch-internal-build.mjs downloads and deletes them.
+// no release, creates no tag and keeps its artifacts one day. The internal macOS build is unsigned (owner, 2026-10-02):
+// the workflow reads no secret and no environment, and the macOS packaging step turns signing off explicitly.
+// scripts/ci/fetch-internal-build.mjs downloads and deletes the artifacts.
 const internalBuild = readFileSync(
   path.join(repoRoot, '.github', 'workflows', 'internal-build.yml'),
   'utf8'
@@ -236,7 +237,8 @@ describe('internal cut build workflow (20 §2.1, §3.2; OQ-66)', () => {
     expect(code).toMatch(/if: runner\.os == 'Windows'\n\s+run: pnpm build:native --arch x64\n/)
     expect(internalCode).toContain('package_script: package\n')
     expect(internalCode).toContain('package_script: package:linux\n')
-    expect(code).toContain('run: pnpm package:mac\n')
+    // AMENDED (owner, 2026-10-02): the internal macOS build is unsigned, so the script runs with signing off.
+    expect(code).toContain('run: pnpm package:mac -c.mac.identity=null\n')
     expect(code).toContain('run: pnpm install --frozen-lockfile\n')
     const uses = [...internalCode.matchAll(/uses: (\S+)/g)].map((m) => m[1])
     expect(uses.length).toBeGreaterThan(0)
@@ -269,22 +271,22 @@ describe('internal cut build workflow (20 §2.1, §3.2; OQ-66)', () => {
     ])
   })
 
-  it('[ADR-027] hands the signing secrets to the macOS packaging step alone, in the release environment', () => {
-    expect(internalCode.slice(0, internalCode.indexOf('\njobs:\n'))).not.toContain('secrets.')
-    const holders = []
-    for (const job of internalJobs()) {
-      expect(job.header, `the ${job.id} job's own env holds no secret`).not.toContain('secrets.')
-      for (const step of job.steps) {
-        if (!step.includes('secrets.')) continue
-        holders.push(job.id)
-        expect(step).toContain('run: pnpm package:mac\n')
-        expect([...step.matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]).sort()).toEqual(
-          SIGNING_SECRETS
-        )
-        expect(job.header).toContain('environment: release\n')
-        expect(job.header).toContain('runs-on: macos-15\n')
-      }
-    }
-    expect(holders).toEqual(['package-mac'])
+  // AMENDED (owner, 2026-10-02): the internal macOS build is unsigned, so no step holds a signing secret any more.
+  it('[ADR-027] references no secret and no environment at all', () => {
+    expect(internalCode).not.toMatch(/\bsecrets\./)
+    expect(internalCode).not.toMatch(/\n {4}environment:/)
+    for (const name of SIGNING_SECRETS) expect(internalCode).not.toContain(name)
+  })
+
+  it('[ADR-027] packages the macOS dmg and zip unsigned, so nothing is signed or notarized', () => {
+    const mac = internalJobs().find((job) => job.id === 'package-mac')
+    expect(mac, 'the workflow has a package-mac job').toBeDefined()
+    const step = mac.steps.find((s) => s.includes('run: pnpm package:mac'))
+    expect(step, 'the package-mac job packages macOS').toBeDefined()
+    // identity null skips code signing (electron-builder's own CLI switch), and notarization runs only after a signature.
+    expect(step).toContain('run: pnpm package:mac -c.mac.identity=null\n')
+    expect(step).toMatch(/\n {8}env:\n(?: {10}.*\n)* {10}CSC_IDENTITY_AUTO_DISCOVERY: 'false'\n/)
+    const upload = mac.steps.find((s) => s.includes('uses: actions/upload-artifact@'))
+    expect(upload).toMatch(/ {12}release\/\*\.dmg\n {12}release\/\*\.zip\n/)
   })
 })
