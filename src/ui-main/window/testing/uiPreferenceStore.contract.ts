@@ -1,5 +1,6 @@
 // The UiPreferenceStore conformance suite (16 §4.14, 17 §1.3): run against InMemoryUiPreferenceStore and against
-// JsonUiPreferenceStore over a per-test temporary folder, for each of the six stores (TC-048-01).
+// JsonUiPreferenceStore over a per-test temporary folder, for each of the six stores (TC-048-01) and the UiPreferencesMap
+// keys built so far (`startWithSystem`, ISSUE-060).
 import { describe, expect, it } from 'vitest'
 import { defaultsOf } from '../domain/uiPreferenceValues'
 import type {
@@ -36,7 +37,8 @@ export const NON_DEFAULT_VALUES: UiPreferenceStoreMap = {
   launchView: { area: 'mines', mineId: 'mine-7' },
   dockSide: 'left',
   alwaysOnTop: false,
-  shortcut: 'Control+Alt+K'
+  shortcut: 'Control+Alt+K',
+  startWithSystem: false
 }
 
 /** A second stored value per store, different from both the defaults and `NON_DEFAULT_VALUES`. */
@@ -49,7 +51,8 @@ const OTHER_VALUES: UiPreferenceStoreMap = {
   launchView: { area: 'lab', mineId: null },
   dockSide: 'right',
   alwaysOnTop: true,
-  shortcut: 'Control+Shift+J'
+  shortcut: 'Control+Shift+J',
+  startWithSystem: true
 }
 
 export const STORE_KEYS = Object.keys(NON_DEFAULT_VALUES) as UiPreferenceStoreKey[]
@@ -109,6 +112,13 @@ export function runUiPreferenceStoreContract(
         reopened.save(corrupted, NON_DEFAULT_VALUES[corrupted])
         expect(subject.open().load(corrupted)).toEqual(NON_DEFAULT_VALUES[corrupted])
       }
+    })
+
+    it('[US-SET-002.AC10, OQ-65] a store never written loads "Start with the system" ON and logs nothing', async () => {
+      const subject = await makeSubject()
+
+      expect(subject.open().load('startWithSystem')).toBe(true)
+      expect(subject.logged()).toEqual([])
     })
   })
 }
