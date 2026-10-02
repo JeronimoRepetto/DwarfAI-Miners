@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../../kernel/domain/errors'
 import { FakeClock } from '../../../../kernel/fakes/FakeClock'
+import { FakeFs } from '../../../../kernel/fakes/FakeFs'
 import { FakeScheduler } from '../../../../kernel/fakes/FakeScheduler'
 import { createSupplierCatalogue } from '../../application/catalogue'
+import { createInstallDetection } from '../../application/detection'
 import { FAIL_CLOSED_CAPABILITIES } from '../../domain/capabilities'
 import type { CatalogRecord, DriverTransport, ProviderProfile } from '../../domain/profile'
+import { FakeInstallResolver } from '../../ports/fakes/FakeInstallResolver'
 import { SimulatedDriver } from '../drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './CatalogDriverRegistry'
 
@@ -114,7 +117,15 @@ describe('DriverRegistry', () => {
       drivers,
       publicBuild: false
     })
-    const catalogue = createSupplierCatalogue({ records })
+    const catalogue = createSupplierCatalogue({
+      records,
+      publicBuild: true,
+      detection: createInstallDetection({
+        resolver: new FakeInstallResolver(),
+        fs: new FakeFs(),
+        scheduler: new FakeScheduler(new FakeClock())
+      })
+    })
 
     expect(publicRegistry.drivers('gated-one')).toEqual([])
     expect(publicRegistry.drivers('open-one').map((d) => d.transport)).toEqual(['acp'])

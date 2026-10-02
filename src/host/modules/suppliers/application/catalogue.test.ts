@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest'
+import { FakeClock } from '../../../kernel/fakes/FakeClock'
+import { FakeFs } from '../../../kernel/fakes/FakeFs'
+import { FakeScheduler } from '../../../kernel/fakes/FakeScheduler'
 import { FAIL_CLOSED_CAPABILITIES, type ProviderCapabilities } from '../domain/capabilities'
 import type { CatalogRecord, ProviderProfile } from '../domain/profile'
-import { createSupplierCatalogue, type SupplierEntry } from './catalogue'
+import { FakeInstallResolver } from '../ports/fakes/FakeInstallResolver'
+import { createSupplierCatalogue as createWithDetection, type SupplierEntry } from './catalogue'
+import { createInstallDetection } from './detection'
+
+/** The catalogue over these records, on a machine where nothing was ever detected (ISSUE-146). */
+function createSupplierCatalogue(deps: { records: readonly CatalogRecord[] }) {
+  const scheduler = new FakeScheduler(new FakeClock())
+  const detection = createInstallDetection({
+    resolver: new FakeInstallResolver(),
+    fs: new FakeFs(),
+    scheduler
+  })
+  return createWithDetection({ records: deps.records, publicBuild: false, detection })
+}
 
 const INTERACTIVE: ProviderCapabilities = {
   launch: true,

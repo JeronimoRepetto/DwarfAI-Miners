@@ -1,16 +1,18 @@
 // The suppliers module (05 §3.4): the open provider catalog, the driver registry and the one
-// ProviderDriver contract of ADR-009, whose types this file re-exports (never redefines). Skeleton
-// (ISSUE-143): catalogue `entry` / `capabilities` over the catalog records, `DriverRegistry` with
-// the SimulatedDriver attached in development builds, `SessionChannels` over the sessions the
-// registry's drivers opened. Detection, probe and merge, `launchable()` and the real drivers come
-// later (ISSUE-146…163); wiring into `host/main.ts` is ISSUE-159.
+// ProviderDriver contract of ADR-009, whose types this file re-exports (never redefines): catalogue
+// `launchable` (installed detection through the one `InstallResolver`, ISSUE-146), `entry` /
+// `capabilities` over the catalog records, `DriverRegistry` with the SimulatedDriver attached in
+// development builds, `SessionChannels` over the sessions the registry's drivers opened. Probe and
+// merge and the real drivers come later (ISSUE-147…163); wiring into `host/main.ts` is ISSUE-159.
 import type { ProviderId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
+import type { FileSystem } from '../../kernel/ports/fileSystem'
 import type { Scheduler } from '../../kernel/ports/scheduler'
 import { CATALOG_RECORDS, SIMULATED_RECORD } from './adapters/catalog/profiles'
 import { SimulatedDriver } from './adapters/drivers/simulated/SimulatedDriver'
 import { CatalogDriverRegistry } from './adapters/registry/CatalogDriverRegistry'
-import { createSupplierCatalogue, type SupplierCatalogueSkeleton } from './application/catalogue'
+import { createSupplierCatalogue, type SupplierCatalogueQueries } from './application/catalogue'
+import { createInstallDetection } from './application/detection'
 import {
   trackLiveSessions,
   type SessionBindings,
@@ -18,6 +20,7 @@ import {
 } from './application/sessionChannels'
 import { recordsForBuild } from './domain/profile'
 import type { DriverRegistry } from './ports/driverRegistry'
+import type { InstallResolver } from './ports/installResolver'
 import type { SuppliedEventSink } from './ports/suppliedEventSink'
 
 // ADR-009 D1–D3 and the 15 §1.2 supporting types: every other module imports them from here.
@@ -58,6 +61,7 @@ export type {
   UsageObservationInput
 } from './ports/providerDriver'
 export type { DriverRegistry } from './ports/driverRegistry'
+export type { InstallResolver } from './ports/installResolver'
 // The kernel owner types the D3 contract names (05 §2.2, revised 2026-09-30).
 export type {
   AnswerOutcome,
@@ -73,11 +77,7 @@ export type {
   TurnEnded,
   UsageObservation
 } from '../../kernel/domain/sharedContracts'
-export type {
-  SupplierCatalogueQueries,
-  SupplierCatalogueSkeleton,
-  SupplierEntry
-} from './application/catalogue'
+export type { SupplierCatalogueQueries, SupplierEntry } from './application/catalogue'
 export type { SessionBindings, SessionChannels } from './application/sessionChannels'
 export type {
   SuppliedEvent,
@@ -96,10 +96,14 @@ export interface SuppliersDeps {
   readonly simulatedSeed: string
   /** Where driver events go, each with its bound dwarf (`host/wiring`, ISSUE-159). */
   readonly sink: SuppliedEventSink
+  /** The one resolver behind every `detect()` (ADR-009 D5): `CliInstallResolver` in the Host. */
+  readonly installResolver: InstallResolver
+  /** Detection revalidates its cache by the `stat` mtime of each resolved path (ADR-009 D5). */
+  readonly fs: Pick<FileSystem, 'stat'>
 }
 
 export interface Suppliers {
-  readonly catalogue: SupplierCatalogueSkeleton
+  readonly catalogue: SupplierCatalogueQueries
   readonly sessions: SessionChannels
   /** Launching binds each session to its dwarf (ADR-015 item 7); events wait for it. */
   readonly bindings: SessionBindings
@@ -131,7 +135,15 @@ export function createSuppliers(deps: SuppliersDeps): Suppliers {
     { sink: deps.sink, clock: deps.clock }
   )
   return {
-    catalogue: createSupplierCatalogue({ records }),
+    catalogue: createSupplierCatalogue({
+      records,
+      publicBuild: deps.publicBuild,
+      detection: createInstallDetection({
+        resolver: deps.installResolver,
+        fs: deps.fs,
+        scheduler: deps.scheduler
+      })
+    }),
     sessions: tracked.channels,
     bindings: tracked.bindings,
     registry: tracked.registry
