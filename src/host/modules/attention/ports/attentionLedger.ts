@@ -1,7 +1,8 @@
 // Driven port (05 §3.11, 16 §4.11): the emitted and suppressed attention keys and the carry-over
 // rows (ADR-018 items 2–3), read and written inside the caller's transaction. `emitted()` holds
 // every claimed key, suppressed ones included, so a suppressed key is never announced later
-// (07 S17.08). The SQLite adapter and the carry-over use land later (ISSUE-110).
+// (07 S17.08). `carryOver()` is keyed by `carryOverKey(dwarfId, kind)` (domain/carryOver.ts).
+// `SqliteAttentionLedger` and `InMemoryAttentionLedger` run `runAttentionLedgerContract`.
 import type { DwarfId } from '../../../kernel/domain/values'
 import type { AttentionKind } from '../domain/decideLevel3'
 
