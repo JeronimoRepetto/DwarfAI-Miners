@@ -1,0 +1,326 @@
+{
+  "date": "2026-10-03",
+  "builder": {
+    "electronBuilder": "26.15.3",
+    "target": "dir",
+    "buildMs": 3001
+  },
+  "runs": {
+    "asar": {
+      "exitCode": 0,
+      "report": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "versions": {
+          "node": "24.18.1",
+          "electron": "44.0.0",
+          "modules": "149"
+        },
+        "runAsNode": true,
+        "execPath": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/MacOS/dwarfai-sp04",
+        "script": "/private<build>/out/mac-arm64/DwarfAI-SP04.app/Contents/Resources/app.asar/host/packagedHost.mjs",
+        "resourcesPath": {
+          "type": "string",
+          "value": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/Resources",
+          "isExecDirResources": true
+        },
+        "sqlite": {
+          "ok": true,
+          "sqliteVersion": "3.53.1",
+          "journalMode": "wal",
+          "foreignKeyEnforced": true,
+          "rows": 1
+        },
+        "clis": {
+          "claude": {
+            "found": true,
+            "firstExt": "(none)",
+            "matches": [
+              {
+                "pathIndex": 1,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 16,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 17,
+                "ext": "(none)"
+              }
+            ]
+          },
+          "codex": {
+            "found": true,
+            "firstExt": "(none)",
+            "matches": [
+              {
+                "pathIndex": 1,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 16,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 17,
+                "ext": "(none)"
+              }
+            ]
+          },
+          "agy": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "opencode": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kimi": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kiro-cli": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "claude-agent-acp": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          }
+        },
+        "cmdShimSpawn": null
+      },
+      "stderr": null
+    },
+    "unpacked": {
+      "exitCode": 0,
+      "report": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "versions": {
+          "node": "24.18.1",
+          "electron": "44.0.0",
+          "modules": "149"
+        },
+        "runAsNode": true,
+        "execPath": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/MacOS/dwarfai-sp04",
+        "script": "/private<build>/out/mac-arm64/DwarfAI-SP04.app/Contents/Resources/app.asar.unpacked/host/packagedHost.mjs",
+        "resourcesPath": {
+          "type": "string",
+          "value": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/Resources",
+          "isExecDirResources": true
+        },
+        "sqlite": {
+          "ok": true,
+          "sqliteVersion": "3.53.1",
+          "journalMode": "wal",
+          "foreignKeyEnforced": true,
+          "rows": 1
+        },
+        "clis": {
+          "claude": {
+            "found": true,
+            "firstExt": "(none)",
+            "matches": [
+              {
+                "pathIndex": 1,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 16,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 17,
+                "ext": "(none)"
+              }
+            ]
+          },
+          "codex": {
+            "found": true,
+            "firstExt": "(none)",
+            "matches": [
+              {
+                "pathIndex": 1,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 16,
+                "ext": "(none)"
+              },
+              {
+                "pathIndex": 17,
+                "ext": "(none)"
+              }
+            ]
+          },
+          "agy": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "opencode": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kimi": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kiro-cli": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "claude-agent-acp": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          }
+        },
+        "cmdShimSpawn": null
+      },
+      "stderr": null
+    },
+    "asar-guiDefaultPath": {
+      "exitCode": 0,
+      "report": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "versions": {
+          "node": "24.18.1",
+          "electron": "44.0.0",
+          "modules": "149"
+        },
+        "runAsNode": true,
+        "execPath": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/MacOS/dwarfai-sp04",
+        "script": "/private<build>/out/mac-arm64/DwarfAI-SP04.app/Contents/Resources/app.asar/host/packagedHost.mjs",
+        "resourcesPath": {
+          "type": "string",
+          "value": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/Resources",
+          "isExecDirResources": true
+        },
+        "sqlite": {
+          "ok": true,
+          "sqliteVersion": "3.53.1",
+          "journalMode": "wal",
+          "foreignKeyEnforced": true,
+          "rows": 1
+        },
+        "clis": {
+          "claude": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "codex": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "agy": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "opencode": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kimi": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kiro-cli": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "claude-agent-acp": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          }
+        },
+        "cmdShimSpawn": null
+      },
+      "stderr": null
+    },
+    "unpacked-guiDefaultPath": {
+      "exitCode": 0,
+      "report": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "versions": {
+          "node": "24.18.1",
+          "electron": "44.0.0",
+          "modules": "149"
+        },
+        "runAsNode": true,
+        "execPath": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/MacOS/dwarfai-sp04",
+        "script": "/private<build>/out/mac-arm64/DwarfAI-SP04.app/Contents/Resources/app.asar.unpacked/host/packagedHost.mjs",
+        "resourcesPath": {
+          "type": "string",
+          "value": "/private<build>/out/mac-arm64/dwarfai-sp04.app/Contents/Resources",
+          "isExecDirResources": true
+        },
+        "sqlite": {
+          "ok": true,
+          "sqliteVersion": "3.53.1",
+          "journalMode": "wal",
+          "foreignKeyEnforced": true,
+          "rows": 1
+        },
+        "clis": {
+          "claude": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "codex": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "agy": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "opencode": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kimi": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "kiro-cli": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          },
+          "claude-agent-acp": {
+            "found": false,
+            "firstExt": null,
+            "matches": []
+          }
+        },
+        "cmdShimSpawn": null
+      },
+      "stderr": null
+    }
+  }
+}

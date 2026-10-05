@@ -302,18 +302,39 @@ jobs:
 
       - name: OS lane (Linux, under Xvfb)
         if: runner.os == 'Linux'
+        env:
+          SPIKE_REPORT_DIR: coverage/spike-reports
+          S0181_MODE: record
         run: xvfb-run --auto-servernum pnpm test:os
 
       - name: OS lane (Windows, as the non-elevated test user)
         if: runner.os == 'Windows'
+        env:
+          SPIKE_REPORT_DIR: coverage/spike-reports
+          S0181_MODE: record
         run: node scripts/ci/run-unelevated.mjs -- pnpm test:os
 
       - name: OS lane
         if: runner.os == 'macOS'
+        env:
+          SPIKE_REPORT_DIR: coverage/spike-reports
+          S0181_MODE: record
         run: pnpm test:os
 
       - name: OS-lane empty guard
         run: node scripts/checks/os-lane-guard.mjs
+
+      # The raw outputs of the cut-1 entry spikes S-030-1, S-018-1 and S-027-4 (ISSUE-318): the OS-lane harnesses
+      # above write them under SPIKE_REPORT_DIR, and S0181_MODE=record lets the S-018-1 harness show one notification
+      # on this runner's desktop, which is nobody's. The owner copies them into spike-results/<ID>/ (17 §4).
+      - name: Upload spike evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-evidence-${{ matrix.os }}
+          path: coverage/spike-reports/
+          if-no-files-found: warn
+          retention-days: 30
 
       # ---- Stage 6: build ----
 

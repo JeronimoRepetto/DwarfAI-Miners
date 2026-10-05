@@ -43,11 +43,18 @@ export interface BootPorts {
   /** The Host database step 2 opens (createHostDatabase, hostDatabase.ts). */
   database: Pick<HostDatabase, 'open'>
   /**
-   * Step 3: the Reset saga's boot resume (preferences `resumeOnBoot`, 07 S13.08). Injected so the
-   * step does not wait for module construction (step 4); until the composition root passes it
-   * (later: ISSUE-226) the step is a placeholder.
+   * Step 3: the Reset saga's boot resume (preferences `resumeOnBoot`, 07 S13.08). The composition
+   * root passes it (ISSUE-226): it wires the preferences module (preferencesWiring.ts) and resumes
+   * an unfinished saga, before module construction (step 4) and before any command is accepted
+   * (`ready`). Without it the step is a placeholder.
    */
   resumeResetSaga?: () => Promise<unknown>
+  /**
+   * Step 4: constructs the modules and wires their bridges and event routes (05 §4) over the
+   * database step 2 opened. The composition root passes it; the modules join it one wiring issue
+   * at a time (suppliers: ISSUE-159). Until it is passed the step is a placeholder.
+   */
+  constructModules?: () => void
 }
 
 /** The Host's UI endpoint as the boot sees it. */
@@ -64,7 +71,7 @@ function placeholder(name: BootStepName, owner: string): BootStep {
 }
 
 export function createBootSteps(ports: BootPorts): readonly BootStep[] {
-  const { resumeResetSaga } = ports
+  const { resumeResetSaga, constructModules } = ports
   return [
     // 1. Bind the UI endpoint; the bind is the single-instance mutex (decideBind, ADR-002 D3).
     {
@@ -85,6 +92,8 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
     },
     // 3. Resume an unfinished Reset saga, before commands and observation (ADR-023). A step that
     //    fails again is recorded by the saga and resumes at the next boot; the boot goes on.
+    //    Commands are accepted only from `ready` (step 8). Later: ISSUE-323 inserts the boot
+    //    re-verification of config writes and the first-run evaluation between the two.
     resumeResetSaga === undefined
       ? placeholder('resume-reset-saga', 'ISSUE-226')
       : {
@@ -94,9 +103,17 @@ export function createBootSteps(ports: BootPorts): readonly BootStep[] {
             return { kind: 'done' }
           }
         },
-    // 4. Construct the modules, wire bridges and event routes (05 §4); the first module wired is
-    //    mines, the others follow in their own wiring issues.
-    placeholder('construct-modules', 'ISSUE-093'),
+    // 4. Construct the modules, wire bridges and event routes (05 §4), over the database step 2
+    //    opened; each module joins in its own wiring issue (suppliers: ISSUE-159).
+    constructModules === undefined
+      ? placeholder('construct-modules', 'ISSUE-093')
+      : {
+          name: 'construct-modules',
+          run: () => {
+            constructModules()
+            return Promise.resolve({ kind: 'done' })
+          }
+        },
     // 5. launching.recoverAfterHostStart(): reconcile, verify, classify, report, cleanup.
     placeholder('recover-sessions', 'ISSUE-173'),
     // 6. The MCP endpoint (DelegationServer.listen) and the hook ingress.

@@ -7,9 +7,14 @@
 //   successful no-op (`'unavailable'`, AMENDMENT-2 AR-13-04). A `delete` that throws on an
 //   available backend fails the saga step, which resumes at the next start (07 S13.07).
 // - Never called inside a transaction (16 §2.2).
+//
+// `SecretName` (ADR-017 item 1) is declared once, with the kernel `SecretReader` port that reads it
+// (kernel/ports/secretReader.ts; the kernel imports no module), and re-exported here.
+import type { SecretName } from '../../../kernel/ports/secretReader'
+
+export type { SecretName }
 
 // As ADR-017 item 1 writes them (names, members and comments; layout by prettier)
-export type SecretName = 'jev-key' | 'opencode-password' // names used by ADR-023's reset saga and 05
 export type SecretBackend = 'os-secret-store' | 'unavailable'
 export interface SecretStore {
   // Host driven port
