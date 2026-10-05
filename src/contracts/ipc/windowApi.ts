@@ -317,3 +317,90 @@ export const uiSessionChangeSchema = z.discriminatedUnion('kind', [
   patchVariants.valle.extend({ origin: windowModeSchema }).strict(),
   patchVariants.vetaRisenChat.extend({ origin: windowModeSchema }).strict()
 ]) satisfies z.ZodType<UiSessionChange>
+
+// A-N20 `getUiPreferences`, A-N21 `setUiPreference` (14 §2.2, §3.9; ADR-024 items 1, 9): the persisted UI preferences
+// UI main owns. Types and comments as 14 §3.9 writes them (`startWithSystem` as AMENDMENT-6 writes it).
+export type ZoneContent = 'mine' | 'map' | 'mineslist' | 'history'
+export interface VetaDock {
+  edge: 'left' | 'right' | 'top' | 'bottom'
+  end: 'start' | 'end'
+  offset: number
+}
+export interface ValleLayoutControl {
+  // Control room preset
+  chatWidth: number
+  split: boolean // 07 N-17 / V-05: the wish; 'suspended' is derived (machine 30)
+  foldedList: boolean
+  zones: Record<MineId, { content: ZoneContent }> // 07 N-21: one zone per mosaic column, keyed by its mine
+}
+export interface ValleLayoutFront {
+  // Work front preset
+  chatWidth: number
+  split: boolean
+  foldedList: boolean
+  zone: { content: ZoneContent; mineId?: MineId } // 07 N-21: a single zone
+}
+export interface UiPreferencesMap {
+  // persisted keys NEW on seam A (ADR-024 D1)
+  lastMode: Exclude<WindowMode, 'hidden'> // written by the ModeCoordinator only
+  modeAtLaunch: 'last-used' | 'panel' | 'veta' | 'valle' // US-SET-002
+  lastSettingsSection: string // PO #33
+  vetaDock: Record<string /* DisplayKey, ADR-024 D5 */, VetaDock>
+  valleLayout: { control: ValleLayoutControl; front: ValleLayoutFront }
+  vallePreset: 'control' | 'front' // the preset in use, restored like lastMode (lead decision derived from
+  // OQ-18; R5B-01); Reset metrics returns it to 'control' (ADR-024 D8)
+  valleLastFrontMineId: MineId | null // 07 N-15: "the last mine worked in", remembered with the layout
+  valleMosaicOrder: MineId[] | null // 07 N-22: null = never written (the first mosaic applies); [] = emptied
+  pins: Array<{ dwarfId: DwarfId; mineId: MineId; order: number }> | null // PO #85; chat pins only (R5B-27); null = never written (start-up pins apply)
+  mutedMineIds: MineId[] // 07 N-18, 06 §16 D-13: ambience muted per mine
+  resetEpochApplied: number // written by UI main only, after ui.resetPreferences (§4.3 rule 4)
+  startWithSystem: boolean // AMENDMENT-6 (OQ-65): Settings → General "Start with the system"; default true;
+  // UI main stores the verified login-entry state (ADR-027 item 7), so the
+  // setUiPreference answer is the real state, which may differ from the request
+}
+export type UiPreferenceKey = keyof UiPreferencesMap
+export type UiPreferenceWrite = {
+  [K in UiPreferenceKey]: { key: K; value: UiPreferencesMap[K] }
+}[UiPreferenceKey]
+// lastMode and resetEpochApplied are written by UI main itself, never by a renderer:
+// setUiPreference({key:'lastMode' | 'resetEpochApplied'}) → INVALID_PARAMS.
+
+/** Every key of 14 §3.9 `UiPreferencesMap`: A-N20 may ask for any of them. */
+export const UI_PREFERENCE_KEYS = [
+  'lastMode',
+  'modeAtLaunch',
+  'lastSettingsSection',
+  'vetaDock',
+  'valleLayout',
+  'vallePreset',
+  'valleLastFrontMineId',
+  'valleMosaicOrder',
+  'pins',
+  'mutedMineIds',
+  'resetEpochApplied',
+  'startWithSystem'
+] as const satisfies readonly UiPreferenceKey[]
+
+export const uiPreferenceKeySchema = z.enum(UI_PREFERENCE_KEYS) satisfies z.ZodType<UiPreferenceKey>
+
+/** A-N20's request: the keys the window asks for. */
+export const getUiPreferencesRequestSchema = z
+  .object({ keys: z.array(uiPreferenceKeySchema) })
+  .strict() satisfies z.ZodType<{ keys: UiPreferenceKey[] }>
+
+/**
+ * A-N20's answer: the stored value of each asked key UI main serves. A key joins this schema, and the renderer's
+ * writable keys below, in the issue that builds it (Veta and Valle keys with their epics, ADR-034); until then it is
+ * never answered (hidden until built, 21 §1 item 8).
+ */
+export const uiPreferencesAnswerSchema = z
+  .object({ startWithSystem: z.boolean().optional() })
+  .strict() satisfies z.ZodType<Partial<UiPreferencesMap>>
+
+/**
+ * A-N21's request and answer: one key and its value. Only the keys a renderer may write are listed: `lastMode` and
+ * `resetEpochApplied` are UI main's own (14 §3.9), so a write of either is refused `INVALID_PARAMS` by the seam A gate.
+ */
+export const uiPreferenceWriteSchema = z.discriminatedUnion('key', [
+  z.object({ key: z.literal('startWithSystem'), value: z.boolean() }).strict()
+]) satisfies z.ZodType<UiPreferenceWrite>

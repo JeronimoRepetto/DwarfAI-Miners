@@ -311,6 +311,14 @@ export interface DwarfAiMinersApi {
   onUiSessionChanged: (
     listener: (payload: TargetResult<'ui:session:changed'>) => void
   ) => () => void
+  /** A-N20 · `ui:preferences:get` · invoke · NEW · target shape */
+  getUiPreferences: (
+    request: TargetRequest<'ui:preferences:get'>
+  ) => Promise<TargetResult<'ui:preferences:get'>>
+  /** A-N21 · `ui:preferences:set` · invoke · NEW · target shape */
+  setUiPreference: (
+    request: TargetRequest<'ui:preferences:set'>
+  ) => Promise<TargetResult<'ui:preferences:set'>>
 }
 
 const api: DwarfAiMinersApi = {
@@ -562,7 +570,11 @@ const api: DwarfAiMinersApi = {
     }
     ipcRenderer.on('ui:session:changed', wrapped)
     return () => ipcRenderer.removeListener('ui:session:changed', wrapped)
-  }
+  },
+  getUiPreferences: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('ui:preferences:get', request)),
+  setUiPreference: (request) =>
+    invokeOrReject(() => ipcRenderer.invoke('ui:preferences:set', request))
 }
 
 contextBridge.exposeInMainWorld('api', api)

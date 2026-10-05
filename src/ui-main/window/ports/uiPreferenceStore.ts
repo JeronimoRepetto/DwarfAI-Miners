@@ -11,7 +11,7 @@
 // KEEP stores below are named by ADR-024 item 1; the `UiPreferencesMap` keys join when ISSUE-060 brings that map. Each value type is the seam A shape of its row
 // (14 §2.1), taken from the channel registry, never restated.
 import type { z } from 'zod'
-import type { CHANNELS, LogRecord } from '@dwarfai/contracts'
+import type { CHANNELS, LogRecord, UiPreferencesMap } from '@dwarfai/contracts'
 
 /** A-06/A-07 `AudioPreferences` (music at startup, the three volumes, `notificationSounds`). */
 export type AudioPreferences = z.infer<(typeof CHANNELS)['audio:preferences:get']['response']>
@@ -24,7 +24,10 @@ export type LaunchView = z.infer<(typeof CHANNELS)['launch-view:get']['response'
 /** The docking edge of the Panel (`PanelLayout.edge`, A-08/A-09; ADR-024 item 1 `dockSide`). */
 export type DockSide = z.infer<(typeof CHANNELS)['panel:layout:get']['response']>['edge']
 
-/** The persisted UI-main stores of ADR-024 item 1 that seam A keeps from today (14 §2.1 KEEP rows). */
+/**
+ * The persisted UI-main stores of ADR-024 item 1: those seam A keeps from today (14 §2.1 KEEP rows), then the 14 §3.9
+ * `UiPreferencesMap` keys built so far, each typed as that map types it.
+ */
 export interface UiPreferenceStoreMap {
   audio: AudioPreferences
   typography: TypographyPreferences
@@ -35,6 +38,8 @@ export interface UiPreferenceStoreMap {
   alwaysOnTop: boolean
   /** The recorded global shortcut, canonical; `null` = none recorded, so the platform default applies (ISSUE-049). */
   shortcut: string | null
+  /** "Start with the system" (AMENDMENT-6): the verified state of the login entry (ADR-027 item 7; ISSUE-060). */
+  startWithSystem: UiPreferencesMap['startWithSystem']
 }
 
 export type UiPreferenceStoreKey = keyof UiPreferenceStoreMap
