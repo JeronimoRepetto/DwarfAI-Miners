@@ -9,6 +9,7 @@ import { z } from 'zod'
 import {
   dwarfIdSchema,
   dwarfWireSchema,
+  materialTotalsSchema,
   mineIdSchema,
   mineWireSchema,
   osNotificationSchema,
@@ -16,6 +17,8 @@ import {
   resetIdSchema,
   type DwarfId,
   type DwarfWire,
+  type Material,
+  type MaterialAmount,
   type MineId,
   type MineWire,
   type OsNotification,
@@ -27,7 +30,7 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F20, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -37,6 +40,7 @@ export interface HostFrames {
   'dwarf.arrived':        { dwarf: DwarfWire; announce: boolean }
   'dwarf.changed':        { dwarf: DwarfWire }
   'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
+  'ledger.changed':       { mineId: MineId; totals: Record<Material, MaterialAmount> }
   'attention.notify':     OsNotification
   'attention.withdraw':   { keys: string[] }
   'preferences.changed':  PreferencesView
@@ -76,6 +80,7 @@ export const HOST_FRAME_SCHEMAS = {
   'dwarf.departed': z
     .object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema, cause: departureCauseSchema })
     .strict(),
+  'ledger.changed': z.object({ mineId: mineIdSchema, totals: materialTotalsSchema }).strict(),
   'attention.notify': osNotificationSchema,
   'attention.withdraw': z.object({ keys: z.array(z.string()) }).strict(),
   'preferences.changed': preferencesViewSchema,

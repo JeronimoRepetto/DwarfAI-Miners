@@ -1,0 +1,36 @@
+{
+  "$comment": "Hand-written from 15 §6 C-11 and 13 FM-086 (INV-38): a truncated line, a line that is not an object and a record with no type are skipped with one warning each; a record of an unknown type is no warning and yields nothing. Shared by malformed-line-crlf.jsonl.",
+  "warnings": 3,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000713",
+      "providerAgentId": null,
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790769600000,
+      "parent": null
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Is the build green?", "providerTime": 1790769600000 },
+    { "role": "dwarf", "text": "Yes, all checks passed.", "providerTime": 1790769605000 }
+  ],
+  "activity": ["turn-started", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000713:00000000-0000-4000-8000-000000071306",
+      "kind": "concluded",
+      "at": 1790769605000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01MalformedF",
+      "fidelity": 1,
+      "tokens": { "inputNet": 7, "output": 9, "cacheRead": 50, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790769605000
+    }
+  ]
+}

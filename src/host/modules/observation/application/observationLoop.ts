@@ -271,8 +271,9 @@ export class ObservationLoop {
             }
           })
         }
-        // Messages and usage need the dwarf: hold the stream until the route made it (16 §4.3).
-        if (entries.length > 0 || usage.length > 0) plan.held = true
+        // Messages, usage and turn ends need the dwarf: hold the stream until the route made it (16 §4.3).
+        const turnEnds = records.some((r) => r.kind === 'turn-ended')
+        if (entries.length > 0 || usage.length > 0 || turnEnds) plan.held = true
         continue
       }
 
@@ -341,6 +342,12 @@ export class ObservationLoop {
               at: r.at,
               kind: r.activity
             }
+          })
+          break
+        case 'turn-ended':
+          out.push({
+            type: 'ObservedTurnEnded',
+            payload: { identity, end: { ...r.end, dwarfId } }
           })
           break
         case 'closed':

@@ -105,7 +105,9 @@ export interface EntryFlags {
 
 /**
  * Classifies one entry whose key was just claimed (09 §5.2 step 1). `isEchoWaiting` tells whether
- * a DwarfAI row of the same dwarf waits for that echo correlation (`messages.pending_echo`).
+ * a DwarfAI row of the same dwarf waits for that echo correlation (`messages.pending_echo`);
+ * `typedEchoWaiting` whether a waiting row is the one this uncorrelated observed entry echoes
+ * (`echoesTypedSend`).
  *
  * - A hand-off echo or a provider control-plane record is dropped first, whatever its
  *   correlation: neither ever renders, and a pushed delegation result has no row to merge into
@@ -115,9 +117,64 @@ export interface EntryFlags {
  */
 export function classifyEntry(
   entry: EntryFlags,
-  isEchoWaiting: (correlation: string) => boolean
+  isEchoWaiting: (correlation: string) => boolean,
+  typedEchoWaiting = false
 ): EntryDisposition {
   if (entry.handoffEcho === true || entry.controlPlane === true) return 'drop-keep-key'
   if (entry.echoOf !== undefined && isEchoWaiting(entry.echoOf)) return 'merge-echo'
+  if (entry.echoOf === undefined && typedEchoWaiting) return 'merge-echo'
   return 'insert'
+}
+
+/**
+ * How long after a DwarfAI row was written its text, typed into an observed terminal, may come
+ * back in the transcript and still be its echo (ADR-007 item 3, "exact text + time window").
+ * Package gap: the package names the window but not its length. Ten minutes covers a message
+ * held behind a running turn (ADR-022 `heldUntilTurnEnd`) and a catch-up read after a Host
+ * restart, because the window is measured on the provider's own time of the echo, not on when
+ * it was read.
+ */
+export const TYPED_ECHO_WINDOW_MS = 600_000
+
+/** The provider's clock may read slightly behind the Host's on the same machine. */
+export const TYPED_ECHO_SKEW_MS = 5_000
+
+/** The fields of an observed entry the typed-echo rule reads. */
+export interface TypedEchoEntry extends EntryFlags {
+  role: MessageRole
+  text: string
+  providerTime: Instant | null
+}
+
+/**
+ * Whether an entry can be the echo of a message DwarfAI typed into an observed terminal: a
+ * person entry a transcript observer read with no echo correlation (the transcript cannot carry
+ * the relay's), and no record that is dropped anyway.
+ */
+export function mayEchoTypedSend(
+  entry: TypedEchoEntry,
+  origin: 'live-stream' | 'transcript'
+): boolean {
+  return (
+    origin === 'transcript' &&
+    entry.role === 'person' &&
+    entry.echoOf === undefined &&
+    entry.handoffEcho !== true &&
+    entry.controlPlane !== true
+  )
+}
+
+/**
+ * Whether `entry` is the transcript echo of the waiting DwarfAI row `row` (ADR-007 item 3): the
+ * exact same text, at a provider time (or, without one, at `now`) inside the row's window.
+ */
+export function echoesTypedSend(
+  entry: TypedEchoEntry,
+  origin: 'live-stream' | 'transcript',
+  row: { text: string; createdAt: Instant },
+  now: Instant
+): boolean {
+  if (!mayEchoTypedSend(entry, origin) || entry.text !== row.text) return false
+  const at = entry.providerTime ?? now
+  return at >= row.createdAt - TYPED_ECHO_SKEW_MS && at <= row.createdAt + TYPED_ECHO_WINDOW_MS
 }

@@ -15,6 +15,7 @@ import type { FileSystem } from '../../../kernel/ports/fileSystem'
 import type {
   ConversationEntry,
   ObservedCapabilities,
+  TurnEndedInput,
   UsageObservationInput
 } from '../../suppliers'
 
@@ -68,6 +69,10 @@ export type ObservedEvent =
   | (ObservedRecord & { kind: 'usage'; usage: UsageObservationInput })
   | (ObservedRecord & { kind: 'activity'; at: Instant; activity: 'record' | 'turn-started' })
   | (ObservedRecord & { kind: 'closed'; at: Instant })
+  // A turn's end as the provider recorded it (08 §0 `ObservedTurnEnded` { identity; end }; ADR-021
+  // item 1): the adapter cannot know the dwarf, the loop stamps it. Package gap resolved in dev
+  // (ISSUE-073): ISSUE-070 left turn ends to the provider adapters that observe them.
+  | (ObservedRecord & { kind: 'turn-ended'; at: Instant; end: TurnEndedInput })
 
 /** The kinds of `ObservedEvent`. */
 export type ObservedEventKind = ObservedEvent['kind']

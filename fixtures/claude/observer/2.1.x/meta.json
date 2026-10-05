@@ -1,0 +1,18 @@
+{
+  "providerVersion": "2.1.x",
+  "capturedAt": "2026-10-05",
+  "capturedBy": "ci-synthetic",
+  "os": "any",
+  "scrubbed": true,
+  "synthetic": true,
+  "source": "Hand-written from 15-provider-driver.md §5 (Claude row) and the record shapes of the scrubbed recordings under src/main/providers/__fixtures__/claude (2.1.251, 2.1.260) and docs/provider-formats.md; no real CLI was run. Replace with the scrubbed ISSUE-319 recordings (SP-06 one-turn, tool-continuation; S-021-1 two-turns, subagent, compaction) when the maintainer records them.",
+  "capabilities": {
+    "observe": true,
+    "turnEnd": "none",
+    "subagents": "transcript",
+    "usage": { "fidelity": 1, "rateLimits": false },
+    "console": "log",
+    "observedPermission": "none",
+    "observedQuestion": "none"
+  }
+}
