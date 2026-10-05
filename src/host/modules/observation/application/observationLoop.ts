@@ -36,8 +36,8 @@
 // Provider errors (ISSUE-084; 13 FM-067, FM-068; ADR-026 item 6): every read of a stream is
 // counted by the `ProviderErrorFold` of domain/providerError.ts, opened once per poll cycle. A read
 // that skipped records and read none, or that threw, is an unreadable read of its stream; a streak
-// of them surfaces for the stream's dwarf (the dwarf a batch of that stream was last written to in
-// this Host run; none when the stream never read) once as `ProviderErrorObserved {cause: 'unreadable'}`, published after
+// of them surfaces for the stream's dwarf (the present dwarf of the identity the stream last carried
+// records of in this Host run; none when the stream never read or its dwarf departed) once as `ProviderErrorObserved {cause: 'unreadable'}`, published after
 // the batch's own events, at most once per `(providerId, cause, dwarfId?)` and cycle. The dwarf's
 // status is not touched: no event of this loop changes it (US-RES-004.AC02). A thrown read is
 // logged with its `errCode` (`code`, else the error's name) and never its message (16 §2.1).
@@ -153,8 +153,8 @@ export class ObservationLoop {
   private readonly cwdOf = new Map<string, FolderPath>()
   /** The identity of each dwarf a batch was written to this Host run. */
   private readonly identityOfDwarf = new Map<DwarfId, ProviderIdentity>()
-  /** The dwarf a batch of each stream was last written to this Host run (ISSUE-084). */
-  private readonly dwarfOfStream = new Map<string, DwarfId>()
+  /** The identity each stream last carried records of, this Host run (ISSUE-084). */
+  private readonly identityOfStream = new Map<string, ProviderIdentity>()
   /** Provider errors, folded per cause and cycle, drift counted before it surfaces (ISSUE-084). */
   private readonly errors = new ProviderErrorFold()
 
@@ -336,7 +336,7 @@ export class ObservationLoop {
     streamId: string | null,
     outcome: ReadOutcome
   ): void {
-    const dwarfId = streamId === null ? undefined : this.dwarfOfStream.get(streamId)
+    const dwarfId = streamId === null ? undefined : this.presentDwarfOf(streamId)
     const report = this.errors.read(
       {
         providerId: adapter.providerId,
@@ -372,6 +372,7 @@ export class ObservationLoop {
       const key = providerIdentityKey(identity)
       const alreadyEnded = this.hasEnded(identity)
       const closing = records.find((r) => r.kind === 'closed')
+      if (records.some((r) => r.kind !== 'closed')) this.identityOfStream.set(streamId, identity)
       if (closing?.kind === 'closed' && !alreadyEnded) {
         plan.ended.push({ identity, at: closing.at })
       }
@@ -425,7 +426,6 @@ export class ObservationLoop {
 
       const dwarfId = session.dwarfId
       this.identityOfDwarf.set(dwarfId, identity)
-      this.dwarfOfStream.set(streamId, dwarfId)
       if (entries.length > 0 || usage.length > 0) {
         plan.sinks.push({
           dwarfId,
@@ -505,6 +505,13 @@ export class ObservationLoop {
       }
     }
     return out
+  }
+
+  /** The dwarf of the identity a stream carries, while it is present (not departed). */
+  private presentDwarfOf(streamId: string): DwarfId | undefined {
+    const identity = this.identityOfStream.get(streamId)
+    const session = identity === undefined ? null : this.deps.sessions.byIdentity(identity)
+    return session !== null && session.closedAt === null ? session.dwarfId : undefined
   }
 
   /** Whether the ledger holds the identity, or the session a subagent ran in. */

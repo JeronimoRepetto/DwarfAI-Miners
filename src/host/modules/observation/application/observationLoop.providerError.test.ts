@@ -187,4 +187,45 @@ describe('ObservationLoop provider errors', () => {
     expect(w.log.byEvent('observation.drift')).toHaveLength(DRIFT_SURFACE_THRESHOLD * 2 + 1)
     w.loop.stop()
   })
+
+  it('[US-RES-004.AC01, FM-067] a dwarf that arrived while its first batch waited is named by its provider error, and a departed one is not', async () => {
+    const w = world()
+    w.adapter.sources = [source('s1')]
+    let failing = false
+    w.adapter.onRead('s1', () => {
+      if (failing) throw Object.assign(new Error('provider gone'), { code: 'ECONNRESET' })
+      return {
+        events: [
+          { kind: 'session', sourceEventId: 'e0', identity: S1, cwd: MINE, at: T0 },
+          activity('e1')
+        ],
+        next: cursor('s1', 100),
+        warnings: []
+      }
+    })
+
+    // The session is observed; its records wait for the dwarf (the held stream, 16 §4.3) …
+    w.loop.start()
+    await w.loop.whenIdle()
+    expect(w.bus.published.map((e) => e.type)).toEqual(['SessionObserved'])
+    // … the route makes the dwarf, and the provider stops answering before any batch is written.
+    const dwarfId = w.dwarfs.bind(S1, MINE, T0)
+    failing = true
+    for (let n = 0; n < DRIFT_SURFACE_THRESHOLD; n++) await w.poll()
+    expect(w.errors().map((e) => e.payload)).toEqual([
+      { providerId: 'simulated', cause: 'unreadable', dwarfId }
+    ])
+
+    // A dwarf that departed is not named again: the next streak reports the provider alone.
+    w.dwarfs.depart(dwarfId, T0)
+    failing = false
+    await w.poll()
+    failing = true
+    for (let n = 0; n < DRIFT_SURFACE_THRESHOLD; n++) await w.poll()
+    expect(w.errors().map((e) => e.payload)).toEqual([
+      { providerId: 'simulated', cause: 'unreadable', dwarfId },
+      { providerId: 'simulated', cause: 'unreadable' }
+    ])
+    w.loop.stop()
+  })
 })
