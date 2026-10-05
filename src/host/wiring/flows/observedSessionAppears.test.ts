@@ -42,6 +42,7 @@ import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFac
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 import { toDwarfWire } from '../../transport/mappers/wire'
+import type { DwarfWire } from '@dwarfai/contracts'
 
 type HostEvent = ObservationEvent | MinesEvent | CrewEvent
 
@@ -116,7 +117,7 @@ async function host() {
 
   // The 05 §4 routes of this flow.
   const routes = new Set<Promise<void>>()
-  const resolutions: Array<{ waiting?: true; created?: boolean }> = []
+  const resolutions: Array<Awaited<ReturnType<typeof mines.commands.resolveForSession>>> = []
   bus.subscribe('SessionObserved', ({ payload }) => {
     const route = (async () => {
       const firstMessage = payload.firstMessage ?? false
@@ -319,8 +320,10 @@ describe('observed session appears (F1)', () => {
     // Nothing in the wire says which way either came to exist: equal apart from the ids (the id
     // and the base name, which is derived from the provider identity).
     const wireOf = (id: DwarfId) => {
-      const { id: _id, baseName: _name, ...rest } = toDwarfWire(h.crew.queries.get(id)!)
-      return rest
+      const wire: Partial<DwarfWire> = { ...toDwarfWire(h.crew.queries.get(id)!) }
+      delete wire.id
+      delete wire.baseName
+      return wire
     }
     expect(wireOf(observed)).toEqual(wireOf(launched))
 
