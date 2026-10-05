@@ -9,7 +9,9 @@
 // `messages` CHECK; `append` runs only inside the caller's transaction. A test's transaction rolls
 // it back with `snapshot` / `restore`. `trim` keeps the newest `MESSAGES_PER_DWARF` rows of the
 // dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
-// row. `setDelivery` is not built (ISSUE-166).
+// row. `page` returns every stored row as a `Message` with its delivery, newest first by
+// `sortAt` then id (amendment of 2026-10-05 to 16 §4.6, ISSUE-103). `setDelivery` is not built
+// (ISSUE-166).
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
@@ -20,6 +22,7 @@ import {
   classifyEntry,
   echoesTypedSend,
   MESSAGE_TEXT_MAX_BYTES,
+  type Delivery,
   type DeliveryPhase,
   type FeedPageRequest,
   type Message
@@ -40,8 +43,8 @@ interface StoredRow {
   message: Message
   /** `messages.pending_echo`: set only on a DwarfAI row waiting for its echo. */
   pendingEcho: string | null
-  /** `deliveries.phase` of the row, or null when it has no delivery row. */
-  delivery: DeliveryPhase | null
+  /** The row's `deliveries` row, or null when it has none. */
+  delivery: Delivery | null
 }
 
 interface StoredKey {
@@ -118,27 +121,19 @@ export class InMemoryMessageLog implements MessageLog {
     return { inserted: appended.length, appended }
   }
 
-  page(dwarfId: DwarfId, req: FeedPageRequest): ConversationEntry[] {
-    const ordered = this.rows
-      .map((r) => r.message)
-      .filter((m) => m.dwarfId === dwarfId)
-      .sort(newestFirst)
+  page(dwarfId: DwarfId, req: FeedPageRequest): Message[] {
+    const ordered = this.rows.filter((r) => r.message.dwarfId === dwarfId).sort(newestFirst)
     let from = 0
     if (req.before !== undefined) {
-      const at = ordered.findIndex((m) => m.id === req.before)
+      const at = ordered.findIndex((r) => r.message.id === req.before)
       if (at === -1) return []
       from = at + 1
     }
     return ordered
-      .slice(from)
-      .filter(isProviderEntry)
-      .slice(0, req.limit ?? PAGE_LIMIT)
-      .map((m) => ({
-        sourceKey: m.sourceKey,
-        role: m.role,
-        text: m.text,
-        providerTime: m.providerTime
-      }))
+      .slice(from, from + (req.limit ?? PAGE_LIMIT))
+      .map((r) =>
+        structuredClone(r.delivery === null ? r.message : { ...r.message, delivery: r.delivery })
+      )
   }
 
   setDelivery(
@@ -164,7 +159,7 @@ export class InMemoryMessageLog implements MessageLog {
           .map((r) => ({
             id: r.message.id,
             sortAt: sortAt(r.message),
-            sending: r.delivery === 'sending'
+            sending: r.delivery?.phase === 'sending'
           }))
       )
     )
@@ -223,6 +218,7 @@ export class InMemoryMessageLog implements MessageLog {
     pendingEcho: string | null,
     delivery: DeliveryPhase | null
   ): MessageId {
+    const now = this.deps.clock.now()
     const message: Message = {
       id: this.deps.ids.uuidv7() as MessageId,
       dwarfId,
@@ -232,9 +228,23 @@ export class InMemoryMessageLog implements MessageLog {
       attachments: [],
       origin: 'dwarfai',
       providerTime: null,
-      createdAt: this.deps.clock.now()
+      createdAt: now
     }
-    this.rows.push({ message, pendingEcho, delivery })
+    this.rows.push({
+      message,
+      pendingEcho,
+      delivery:
+        delivery === null
+          ? null
+          : {
+              messageId: message.id,
+              dwarfId,
+              kind: role === 'answers-record' ? 'answers-record' : 'message',
+              phase: delivery,
+              attempts: 1,
+              phaseAt: now
+            }
+    })
     return message.id
   }
 
@@ -264,13 +274,9 @@ function sortAt(m: Message): number {
   return m.providerTime ?? m.createdAt
 }
 
-function newestFirst(a: Message, b: Message): number {
-  return sortAt(b) - sortAt(a) || (b.id < a.id ? -1 : b.id > a.id ? 1 : 0)
-}
-
-/** A row `ConversationEntry` can carry: a provider-keyed person, dwarf or system line. */
-function isProviderEntry(
-  m: Message
-): m is Message & { sourceKey: string; role: ConversationEntry['role'] } {
-  return m.sourceKey !== null && m.role !== 'answers-record'
+/** `sort_at DESC, id DESC` (the `messages_feed` index). */
+function newestFirst(a: StoredRow, b: StoredRow): number {
+  const x = a.message
+  const y = b.message
+  return sortAt(y) - sortAt(x) || (y.id < x.id ? -1 : y.id > x.id ? 1 : 0)
 }
