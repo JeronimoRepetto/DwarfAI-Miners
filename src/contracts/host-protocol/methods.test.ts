@@ -33,6 +33,8 @@ import type {
   MineSummaryWire,
   ResolveFileResult
 } from './params/mines'
+import type { FeedPage } from '../wire'
+import type { FeedParams } from './params/conversation'
 
 // The B-M02, B-M05 and B-M06 entries of 14 §3.4 and their strict() schemas (14 §1.4).
 
@@ -517,5 +519,65 @@ describe('mines.declare, mines.adoptMainProject and mines.resolveFile (14 §3.4,
     ).toBe(false)
     expect(resolve.result.safeParse({ ok: true, value: { path: '/work/a.ts' } }).success).toBe(true)
     expect(resolve.result.safeParse({ ok: false, error: 'outside' }).success).toBe(false)
+  })
+})
+
+// The B-M26 entry of 14 §3.4 (`FeedParams`) and 14 §3.6 `FeedPageRequest`, `FeedPage`, with their
+// strict() schemas (14 §1.4).
+
+describe('conversation.feed params and result (14 §3.4, §3.6, B-M26)', () => {
+  const DWARF = '01890a5d-ac96-774b-bcce-b302099a8057'
+  const MESSAGE = '01890a5d-ac96-774b-bcce-b302099a8058'
+  const view = {
+    id: MESSAGE,
+    dwarfId: DWARF,
+    role: 'dwarf',
+    text: 'hello',
+    attachments: [],
+    providerTime: 1_000,
+    createdAt: 1_001
+  }
+
+  it('[ADR-003] the conversation.feed schemas infer exactly FeedParams and FeedPage, limit at most 50, and refuse any other key', () => {
+    expectTypeOf<HostMethods['conversation.feed']['params']>().toEqualTypeOf<FeedParams>()
+    expectTypeOf<HostMethods['conversation.feed']['result']>().toEqualTypeOf<FeedPage>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['conversation.feed']['params']>
+    >().toEqualTypeOf<FeedParams>()
+    expectTypeOf<
+      z.infer<(typeof HOST_METHOD_SCHEMAS)['conversation.feed']['result']>
+    >().toEqualTypeOf<FeedPage>()
+
+    const { params, result } = HOST_METHOD_SCHEMAS['conversation.feed']
+    expect(params.safeParse({ dwarfId: DWARF }).success).toBe(true)
+    expect(params.safeParse({ dwarfId: DWARF, page: {} }).success).toBe(true)
+    expect(params.safeParse({ dwarfId: DWARF, page: { before: MESSAGE, limit: 50 } }).success).toBe(
+      true
+    )
+    // At most 50 rows exist per dwarf (PO #87): a larger page is never asked for.
+    expect(params.safeParse({ dwarfId: DWARF, page: { limit: 51 } }).success).toBe(false)
+    expect(params.safeParse({ dwarfId: DWARF, page: { limit: 0 } }).success).toBe(false)
+    expect(params.safeParse({ dwarfId: DWARF, page: { limit: 1.5 } }).success).toBe(false)
+    expect(params.safeParse({ dwarfId: DWARF, page: { before: 7 } }).success).toBe(false)
+    expect(params.safeParse({ dwarfId: DWARF, page: { cursor: MESSAGE } }).success).toBe(false)
+    expect(params.safeParse({ dwarfId: DWARF, mineId: DWARF }).success).toBe(false)
+    expect(params.safeParse({ dwarfId: 'claude:s1' }).success).toBe(false)
+    expect(params.safeParse({}).success).toBe(false)
+
+    expect(result.safeParse({ dwarfId: DWARF, messages: [view], reachedStart: true }).success).toBe(
+      true
+    )
+    // MessageView never carries the stored row's sourceKey, origin or askId (06 §0.2).
+    for (const extra of [{ sourceKey: 'k' }, { origin: 'transcript' }, { askId: MESSAGE }]) {
+      expect(
+        result.safeParse({ dwarfId: DWARF, messages: [{ ...view, ...extra }], reachedStart: true })
+          .success,
+        Object.keys(extra)[0]
+      ).toBe(false)
+    }
+    expect(result.safeParse({ dwarfId: DWARF, messages: [] }).success).toBe(false)
+    expect(
+      result.safeParse({ dwarfId: DWARF, messages: [], reachedStart: true, next: MESSAGE }).success
+    ).toBe(false)
   })
 })

@@ -20,4 +20,4 @@ export {
   type SubscribeParams,
   type SubscribeResult
 } from './methods'
-export { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, type HostFrames } from './frames'
+export { HOST_FRAME_SCHEMAS, SENSITIVE_FRAMES, SENSITIVE_METHODS, type HostFrames } from './frames'
