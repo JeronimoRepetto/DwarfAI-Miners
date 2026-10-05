@@ -54,5 +54,9 @@ export const UNROUTED: Partial<Record<ChannelKey, StepId>> = {
   // handler issue (ISSUE-059)
   'ui:session:get': 'cut-1',
   'ui:session:patch': 'cut-1',
-  'ui:session:changed': 'cut-1'
+  'ui:session:changed': 'cut-1',
+  // A-N20, A-N21, born `ui-local` in cut 1 (21 §2 cut 1); routed by the cut-1 switch (ISSUE-123), never by their
+  // handler issue (ISSUE-060)
+  'ui:preferences:get': 'cut-1',
+  'ui:preferences:set': 'cut-1'
 }
