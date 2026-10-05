@@ -14,7 +14,9 @@ import {
   preferencesViewSchema,
   stopAllOutcomeSchema,
   stranglerDwarfIdentitySchema,
+  feedPageSchema,
   type DwarfId,
+  type FeedPage,
   type FolderPath,
   type HostEpoch,
   type HostPreferences,
@@ -48,6 +50,7 @@ import {
   type PreferenceSetParams,
   type ResetMetricsParams
 } from './params/preferences'
+import { feedParamsSchema, type FeedParams } from './params/conversation'
 import { requestIdSchema } from './requestId'
 import {
   snapshotPageSchema,
@@ -57,7 +60,7 @@ import {
 } from './snapshot'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M19, B-M20 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.4 (the B-M02, B-M03, B-M04, B-M05, B-M06, B-M07, B-M08, B-M09, B-M12, B-M13, B-M15, B-M16, B-M17, B-M19, B-M20, B-M26 and B-M41 entries and their group comments, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostMethods {
   // protocol
@@ -83,6 +86,8 @@ export interface HostMethods {
   'mines.adoptMainProject':          { params: { worktreePath: FolderPath; requestId: string }; result: AdoptMainProjectResult }
   'mines.list':                      { params: MineListParams; result: MineListResult }
   'mines.resolveFile':               { params: { mineId: MineId; dwarfId?: DwarfId; target: string }; result: ResolveFileResult }
+  // conversation
+  'conversation.feed':               { params: FeedParams; result: FeedPage }
   // strangler-only (AMENDMENT-8, OQ-69): ui role, called only by LegacyDwarfIdBridge; deleted at the end of cut 4
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- 14 §3.4 spells the empty params as {}
   'strangler.dwarfIdentities':       { params: {}; result: StranglerDwarfIdentity[] }
@@ -232,6 +237,12 @@ export const HOST_METHOD_SCHEMAS = {
   'mines.resolveFile': {
     params: resolveFileParamsSchema,
     result: resolveFileResultSchema
+  },
+  // B-M26 (14 §2.3, §3.6): `ui` and `viewer` (its own dwarf only, host/transport/methods/conversationFeed.ts);
+  // a query, so no requestId (14 §1.6). Its result is sensitive (14 §3.5 SENSITIVE_METHODS).
+  'conversation.feed': {
+    params: feedParamsSchema,
+    result: feedPageSchema
   },
   // B-M41 (14 §2.3, §1.10; AMENDMENT-8, OQ-69): `ui` only, never relayed to seam A; deleted with
   // LegacyDwarfIdBridge at the end of cut 4 (later: ISSUE-241).

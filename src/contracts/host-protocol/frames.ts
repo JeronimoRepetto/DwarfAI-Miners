@@ -10,6 +10,7 @@ import {
   dwarfIdSchema,
   dwarfWireSchema,
   materialTotalsSchema,
+  messageViewSchema,
   mineIdSchema,
   mineWireSchema,
   osNotificationSchema,
@@ -19,6 +20,7 @@ import {
   type DwarfWire,
   type Material,
   type MaterialAmount,
+  type MessageView,
   type MineId,
   type MineWire,
   type OsNotification,
@@ -30,7 +32,7 @@ import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F20, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F11, B-F20, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -40,6 +42,7 @@ export interface HostFrames {
   'dwarf.arrived':        { dwarf: DwarfWire; announce: boolean }
   'dwarf.changed':        { dwarf: DwarfWire }
   'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
+  'conversation.appended': { dwarfId: DwarfId; messages: MessageView[] }
   'ledger.changed':       { mineId: MineId; totals: Record<Material, MaterialAmount> }
   'attention.notify':     OsNotification
   'attention.withdraw':   { keys: string[] }
@@ -80,6 +83,9 @@ export const HOST_FRAME_SCHEMAS = {
   'dwarf.departed': z
     .object({ dwarfId: dwarfIdSchema, mineId: mineIdSchema, cause: departureCauseSchema })
     .strict(),
+  'conversation.appended': z
+    .object({ dwarfId: dwarfIdSchema, messages: z.array(messageViewSchema) })
+    .strict(),
   'ledger.changed': z.object({ mineId: mineIdSchema, totals: materialTotalsSchema }).strict(),
   'attention.notify': osNotificationSchema,
   'attention.withdraw': z.object({ keys: z.array(z.string()) }).strict(),
@@ -106,4 +112,22 @@ export const SENSITIVE_FRAMES = [
   'toast',                   // provider-error cause
   'mine.changed',            // folder paths
 ] as const
+// end verbatim: 14 §3.5
+
+// The 14 §3.5 list of methods whose params, result or both are never logged: the dispatcher logs a
+// method's name, correlation fields, outcome and error code only (host/transport/dispatcher.ts).
+// verbatim: 14 §3.5 (SENSITIVE_METHODS, byte-for-byte; `prettier-ignore` keeps its alignment)
+// prettier-ignore
+export const SENSITIVE_METHODS = {          // 'params' | 'result' | 'both' is what must not be logged
+  'settings.secret.set': 'params', 'settings.secret.clear': 'params',
+  'conversation.send': 'params', 'conversation.feed': 'result', 'conversation.mineHistory': 'result',
+  'conversation.describeAttachments': 'both', 'conversation.resolveConsole': 'result',   // paths, credentialFile path
+  'session.snapshot': 'result',             // tails, asks, launches, mines, dwarfs
+  'asking.answerQuestion': 'params',        // free-text answers
+  'launching.launch': 'params', 'launching.launchCustom': 'params',   // prompt, custom command
+  'jev.suggest': 'params',                  // prompt
+  'crew.rename': 'params',                  // custom name
+  'mines.declare': 'params', 'mines.adoptMainProject': 'params', 'mines.list': 'result', 'mines.resolveFile': 'both',
+  'host.upgrade.request': 'params',
+} as const
 // end verbatim: 14 §3.5
