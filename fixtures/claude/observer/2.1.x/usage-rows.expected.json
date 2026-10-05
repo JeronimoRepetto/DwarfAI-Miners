@@ -1,0 +1,74 @@
+{
+  "$comment": "Hand-written from ADR-006 items 4 and 6 and HR O4: one sealed observation per message.id, from its first row with a stop reason (a later row of the same message adds nothing); a message that never gets a stop reason is sealed by the next message of the session, from its last row. output = output_tokens - thinking_tokens; shared by usage-rows-crlf.jsonl and usage-rows-with-extra.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000712",
+      "providerAgentId": null,
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790766000000,
+      "parent": null
+    }
+  ],
+  "entries": [
+    { "role": "person", "text": "Summarize the changes.", "providerTime": 1790766000000 },
+    { "role": "dwarf", "text": "Three files changed.", "providerTime": 1790766003000 },
+    { "role": "dwarf", "text": "Interrupted reply", "providerTime": 1790766007000 },
+    { "role": "person", "text": "Continue.", "providerTime": 1790766020000 },
+    { "role": "dwarf", "text": "Done.", "providerTime": 1790766022000 }
+  ],
+  "activity": [
+    "turn-started",
+    "record",
+    "record",
+    "record",
+    "record",
+    "record",
+    "turn-started",
+    "record"
+  ],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000712:00000000-0000-4000-8000-000000071209",
+      "kind": "concluded",
+      "at": 1790766022000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01UsageRowsC",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 5,
+        "output": 50,
+        "cacheRead": 0,
+        "cacheWrite": 1000,
+        "reasoning": 70
+      },
+      "sealed": true,
+      "providerTime": 1790766004000
+    },
+    {
+      "unitKey": "msg_01UsageRowsD",
+      "fidelity": 1,
+      "tokens": { "inputNet": 2, "output": 30, "cacheRead": 1005, "cacheWrite": 0, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790766007000
+    },
+    {
+      "unitKey": "msg_01UsageRowsE",
+      "fidelity": 1,
+      "tokens": {
+        "inputNet": 4,
+        "output": 12,
+        "cacheRead": 1005,
+        "cacheWrite": 10,
+        "reasoning": 0
+      },
+      "sealed": true,
+      "providerTime": 1790766022000
+    }
+  ]
+}
