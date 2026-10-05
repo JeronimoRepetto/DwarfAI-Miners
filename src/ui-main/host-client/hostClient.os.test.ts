@@ -25,6 +25,20 @@ const CASE_TIMEOUT_MS = 120_000
 const CUT_0_CAPABILITIES = JSON.parse(
   readFileSync(path.join(REPO_ROOT, 'fixtures', 'ipc', 'capabilities', 'cut-0.json'), 'utf8')
 ) as string[]
+// What this checkout's Host serves beyond the cut-0 release list: the preferences module's members and
+// section, served from cut 1 (ISSUE-226). Each release commits its own list (17 §1.6 "Versioning and
+// capabilities"); until the cut-1 list is committed, the cut-0 list plus these is the exact set.
+const SERVED_SINCE_CUT_0 = [
+  'frame:preferences.changed',
+  'frame:reset.progress',
+  'frame:ui.resetPreferences',
+  'preferences.get',
+  'preferences.resetMetrics',
+  'preferences.set',
+  'section:preferences',
+  'ui.resetPreferences.ack'
+]
+const SERVED_SECTIONS = ['meta', 'preferences']
 
 let entry = ''
 let root = ''
@@ -110,10 +124,12 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
             }).toEqual({})
           })
           expect(client.state()).toMatchObject({ state: 'connected', compat: false })
-          expect([...client.capabilities()].sort()).toEqual(CUT_0_CAPABILITIES)
+          expect([...client.capabilities()].sort()).toEqual(
+            [...CUT_0_CAPABILITIES, ...SERVED_SINCE_CUT_0].sort()
+          )
           const first = snapshots()[0] as SnapshotPage
           expect(first.next).toBeUndefined()
-          expect(first.chunks.map((c) => c.section)).toEqual(['meta'])
+          expect(first.chunks.map((c) => c.section)).toEqual(SERVED_SECTIONS)
 
           // A method the Host did not advertise is refused locally (TC-051-02).
           const refused = await client
@@ -126,7 +142,7 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))(
 
           // A short-lived ui connection reads the snapshot and closes (OQ-47).
           const page = await client.withUiConnection((c) => c.snapshot({}))
-          expect(page.chunks.map((c) => c.section)).toEqual(['meta'])
+          expect(page.chunks.map((c) => c.section)).toEqual(SERVED_SECTIONS)
 
           // The Host dies: the client reconnects, the launcher starts a new Host, and the new epoch is a fresh snapshot.
           await (hosts[0] as RealHost).kill()

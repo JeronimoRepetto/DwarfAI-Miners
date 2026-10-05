@@ -1,0 +1,49 @@
+{
+  "spike": "S-030-1",
+  "platform": "linux",
+  "osRelease": "6.17.0-1022-azure",
+  "node": "v24.21.0",
+  "rounds": 20,
+  "measurements": [
+    {
+      "label": "ext4-casefold-dir",
+      "how": "ext4 image with the casefold feature, folder with the +F attribute (loop mount through sudo -n)",
+      "expected": "case-insensitive",
+      "verdict": "case-insensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.118,
+        "median": 0.149,
+        "max": 1.13
+      },
+      "realpathOfSwappedSpelling": "the spelling given (probe-s0301)"
+    },
+    {
+      "label": "ext4-plain-dir",
+      "how": "the same ext4 casefold image, folder without +F",
+      "expected": "case-sensitive",
+      "verdict": "case-sensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.12,
+        "median": 0.151,
+        "max": 0.303
+      },
+      "realpathOfSwappedSpelling": "not found (ENOENT)"
+    },
+    {
+      "label": "os-temp",
+      "how": "the OS's own temp folder",
+      "expected": null,
+      "verdict": "case-sensitive",
+      "reads": 2,
+      "latencyMs": {
+        "min": 0.083,
+        "median": 0.112,
+        "max": 0.387
+      },
+      "realpathOfSwappedSpelling": "not found (ENOENT)"
+    }
+  ],
+  "setupNotes": []
+}

@@ -132,3 +132,15 @@ describe('PreferencesCommands.set', () => {
     expect(bus.published).toHaveLength(0)
   })
 })
+
+describe('PreferencesQueries.integrationState', () => {
+  it('[ADR-011] before the integration store joins every integration reads off, the new-install value', () => {
+    const { preferences, bus } = service()
+
+    expect([
+      preferences.integrationState('opencode-permissions'),
+      preferences.integrationState('claude-hooks')
+    ]).toStrictEqual(['off', 'off'])
+    expect(bus.published).toHaveLength(0)
+  })
+})
