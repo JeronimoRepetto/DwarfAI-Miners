@@ -24,8 +24,7 @@ import type { EndOutcome } from '../../kernel/domain/processIdentity'
 import type { DwarfId, MineId } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { ProcessControl } from '../../kernel/ports/processControl'
-import type { CrewQueries, EndReason } from '../../modules/crew'
-import type { SessionTerminator } from '../../modules/crew/ports/sessionTerminator'
+import type { CrewQueries, EndReason, SessionTerminator } from '../../modules/crew'
 import type { ObservationControl, ObservedProcessIdentities } from '../../modules/observation'
 
 export interface SessionTerminatorBridgeDeps {
