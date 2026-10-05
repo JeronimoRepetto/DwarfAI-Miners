@@ -214,15 +214,8 @@ describe('sumSourceWeight (ISSUE-065)', () => {
     ).resolves.toEqual({ unenterable: 'access-denied' })
   })
 
-  it('is self-contained, so its source text runs on its own in a worker', async () => {
-    const fs = new FakeFs()
-    fs.addFile(`${ROOT}\\a.ts`, 'a'.repeat(10))
-    // Rebuilt from its text alone: any reference to a module binding would throw here.
-    const rebuilt = new Function(
-      `return (${sumSourceWeight.toString()})`
-    )() as typeof sumSourceWeight
-    await expect(rebuilt(ROOT, SOURCE_WALK_RULES, fakeIo(fs), () => false)).resolves.toEqual({
-      bytes: 10
-    })
-  })
+  // REMOVED in ISSUE-065 (the orchestrator's option A): 'is self-contained, so its source text runs
+  // on its own in a worker'. The worker is now its own module (`scanWorker.ts`, `?modulePath`), so
+  // the walk no longer has to survive `fn.toString()`; the real worker is exercised by the
+  // FsSourceWeightScanner contract run.
 })

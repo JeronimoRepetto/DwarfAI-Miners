@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
+import type { Plugin } from 'vite'
 import { configDefaults, defineConfig } from 'vitest/config'
 
 // The per-test timeout on the Windows CI runner. Measured on the Windows leg's `Test (L1-L7)`
@@ -19,8 +20,36 @@ import { configDefaults, defineConfig } from 'vitest/config'
 const WINDOWS_CI_TEST_TIMEOUT_MS = 30_000
 const onWindowsCi = process.platform === 'win32' && process.env['CI'] === 'true'
 
+/**
+ * electron-vite's `?modulePath` import (a worker thread's entry, bundled as its own chunk by the
+ * build; FsSourceWeightScanner's scan worker, ISSUE-065) has no meaning to vitest, which would
+ * import the module itself instead. Here it answers the entry's own source path, and the test's
+ * real worker thread runs that TypeScript file with Node's type stripping, so a worker entry and
+ * what it imports use `.ts` specifiers and erasable syntax only.
+ */
+function workerModulePath(): Plugin {
+  const SUFFIX = '?modulePath'
+  const PREFIX = '\0dwarfai-module-path:'
+  return {
+    name: 'dwarfai:module-path',
+    enforce: 'pre',
+    async resolveId(id, importer) {
+      if (!id.endsWith(SUFFIX)) return null
+      const resolved = await this.resolve(id.slice(0, -SUFFIX.length), importer, {
+        skipSelf: true
+      })
+      return resolved === null ? null : PREFIX + resolved.id
+    },
+    load(id) {
+      return id.startsWith(PREFIX)
+        ? `export default ${JSON.stringify(id.slice(PREFIX.length))}`
+        : null
+    }
+  }
+}
+
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), workerModulePath()],
   resolve: {
     // The one contracts barrel (ADR-004 P13), same alias as both tsconfigs and electron-vite.
     alias: {

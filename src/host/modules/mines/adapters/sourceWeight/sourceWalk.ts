@@ -5,11 +5,9 @@
 // before each directory (ADR-030, S3.15), a root that cannot be listed is `{ unenterable }` with
 // the io's error instead of weighing 0 (S3.11), and the walk runs in a worker (HR O2).
 //
-// `sumSourceWeight` is SELF-CONTAINED: it reads only its parameters and language globals, never a
-// module binding, because the adapter builds its worker from the function's source text. The
-// rules travel as data (`workerData`) and the file system as `io`. Keep it that way: a reference
-// to anything outside the function body would throw inside the worker (`sourceWalk.test.ts`
-// rebuilds it from its text to prove it).
+// The rules travel to the worker as data (`workerData`) and the file system is `io`, so the walk is
+// tested over a FakeFs in process. The worker runs this file as TypeScript under vitest (Node type
+// stripping, `scanWorker.ts`): erasable syntax only, and no imports.
 
 /** The walk's rules, plain data so they can be posted to the worker. */
 export interface SourceWalkRules {
