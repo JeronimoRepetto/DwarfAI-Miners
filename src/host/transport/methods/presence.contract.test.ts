@@ -180,6 +180,7 @@ function attentionModule() {
     clock: new FakeClock(T0),
     ids: new SequenceIdGenerator(),
     hostEpoch: EPOCH,
+    sink: { notify: () => 'no-ui', withdraw: () => undefined },
     titles: (kind, name) => `${kind}:${name}`
   })
   return { inputs: attention.inputs, bus }

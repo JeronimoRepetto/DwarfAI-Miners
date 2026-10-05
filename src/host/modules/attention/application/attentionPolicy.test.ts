@@ -17,6 +17,7 @@ import type { AttentionEvent } from '../domain/events'
 import { FakeAttentionSettings } from '../ports/fakes/FakeAttentionSettings'
 import { InMemoryAttentionLedger } from '../ports/fakes/InMemoryAttentionLedger'
 import { AttentionPolicy } from './attentionPolicy'
+import { RecordingLevel3Sink } from '../ports/fakes/RecordingLevel3Sink'
 
 const T0 = 1_790_000_000_000
 const EPOCH = 'epoch-0109'
@@ -64,6 +65,7 @@ function policy() {
     clock: new FakeClock(T0),
     ids: new SequenceIdGenerator(),
     hostEpoch: EPOCH,
+    sink: new RecordingLevel3Sink(),
     titles: TITLE
   })
   return { attention, settings, ledger, bus }
