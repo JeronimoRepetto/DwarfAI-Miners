@@ -10,7 +10,9 @@
 //   warning, which the loop counts as drift (INV-38, FM-068, FM-086), and reads on. Unknown extra
 //   fields on a readable step are ignored (HR T1).
 // - Event ids (15 §5): the step's `step_index`. Source keys follow 15 §1.5:
-//   `<providerId>:<providerId>:<conversationId>:<eventId>`.
+//   `<providerId>:<providerId>:<conversationId>:<eventId>`, with the conversation id whatever
+//   session generation the step belongs to: `step_index` is unique across the whole log, so a
+//   step keeps the one key it was first written with however it is attributed later.
 // - Person lines are `USER_EXPLICIT`/`USER_INPUT` content, read from inside the `<USER_REQUEST>`
 //   envelope the CLI wraps the typed words in (the `<ADDITIONAL_METADATA>` and
 //   `<USER_SETTINGS_CHANGE>` blocks beside it are the harness's); an unclosed envelope is read whole.
@@ -110,7 +112,13 @@ export function entryOf(step: AntigravityStep, sourceKey: string): ConversationE
 
 export interface StepContext {
   providerId: ProviderId
+  /** The conversation the step belongs to: its keys are the conversation's. */
   conversationId: string
+  /**
+   * The session the step is the dwarf of: the conversation id, or a resumed generation of it
+   * (`resumedSessionIdOf`, `AntigravityObservationAdapter.ts`).
+   */
+  sessionId: string
   /** The conversation's workspace from `history.jsonl`, or null while none names it. */
   cwd: FolderPath | null
   /** The step's byte offset in its log: the first step states the session. */
@@ -119,11 +127,12 @@ export interface StepContext {
 
 /** The facts one readable step states. */
 export function eventsOfStep(step: AntigravityStep, context: StepContext): ObservedEvent[] {
-  const identity = { providerId: context.providerId, providerSessionId: context.conversationId }
+  const identity = { providerId: context.providerId, providerSessionId: context.sessionId }
   const base = { identity, ...(context.cwd === null ? {} : { cwd: context.cwd }) }
   const eventId = String(step.stepIndex)
   const events: ObservedEvent[] = []
   if (context.offset === 0 && context.cwd !== null && step.at !== null) {
+    // The log's first step states the conversation's first session.
     events.push({
       ...base,
       kind: 'session',

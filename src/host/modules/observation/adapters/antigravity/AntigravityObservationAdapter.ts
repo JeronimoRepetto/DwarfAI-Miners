@@ -28,6 +28,24 @@
 // fact with the same key; the loop's ledger keeps that to one `SessionClosedObserved` (INV-36). A
 // lock that comes back opens it again. Closure also seals a conversation's newest generation.
 //
+// Resume under the same id (owner decision 2026-10-05, as 07 S4.41 / FM-145): `agy --conversation
+// <id>` (AMENDMENT-13) continues a conversation with its own id, but a conversation observed closed
+// is in the ended-agents ledger, which never lets its identity arrive again (INV-36). So a resumed
+// conversation is a new session, and a new dwarf: `resumedSessionIdOf` gives it the identity
+// `<conversationId>~resumed-<lock start, epoch seconds>`. The shape is the frozen `ProviderIdentity`
+// (ADR-015; 16): the generation rides on `providerSessionId`, because `providerAgentId` names a
+// subagent of a session, which a resume is not. It is derived from the store alone, never from
+// memory, so a Host restart derives the same identity: a lock is a 0-byte file the CLI writes when a
+// session starts, so its modification time is that start; a lock that started more than the grace
+// after the conversation's first step began a later session (the original session's lock is
+// written before its first step, and a closed session's lock stayed gone for at least the grace).
+// Steps created from that start on are the resumed session's; the ones before stay the
+// conversation's first session. Keys never change with the session: a step's source key is its
+// conversation's (`parse.ts`), so the predecessor's records, read again, add no rows. Its usage
+// units likewise keep their `unitKey`; only the dwarf they are read for is the resumed one.
+// UNVERIFIED until the ISSUE-319 recording: that agy writes the lock once per session and never
+// touches it while the session runs.
+//
 // No turn end (`turnEnd: 'none'`, C-20) and no readable process identity: a running agy cannot be
 // tied to a conversation (`antigravityProvider.ts:102-103`), so `processIdentitySource` is `none`
 // and ending an observed Antigravity session answers `no-identity` (15 §5, ADR-014 item 2, S-014-1).
@@ -64,6 +82,18 @@ import { eventsOfStep, parseStepLine } from './parse'
 
 /** How long a presence lock must stay gone before its conversation is closed (the candidate's 30 s). */
 export const ANTIGRAVITY_LOCK_GRACE_MS = 30_000
+
+/** The most read of a step log's head to find its first step's time. */
+const HEAD_BYTES = 64 * 1024
+
+/**
+ * The session identity of a conversation resumed under its own id, from when its lock was written
+ * (15 §5; ADR-015): `<conversationId>~resumed-<epoch seconds>`. Seconds, because the step log's
+ * times are whole seconds.
+ */
+export function resumedSessionIdOf(conversationId: string, lockStartedAtMs: number): string {
+  return `${conversationId}~resumed-${Math.floor(lockStartedAtMs / 1000)}`
+}
 
 /** The most read of `history.jsonl`, from its end: the newest records are the ones that count. */
 const HISTORY_TAIL_BYTES = 1024 * 1024
@@ -141,6 +171,12 @@ export class AntigravityObservationAdapter implements ObservationAdapter, Transc
   private readonly absentSince = new Map<string, { at: number; atFirstSight: boolean }>()
   /** The conversations any `discover` of this Host run has seen. */
   private readonly seen = new Set<string>()
+  /** The step log of each conversation. */
+  private readonly logOf = new Map<string, string>()
+  /** Each conversation's first step time, once its log has one. */
+  private readonly firstStepAt = new Map<string, number>()
+  /** The start of each conversation's resumed session (its lock's time), while known. */
+  private readonly resumedAt = new Map<string, number>()
 
   constructor(private readonly options: AntigravityObservationAdapterOptions) {
     this.providerId = options.providerId
@@ -177,6 +213,7 @@ export class AntigravityObservationAdapter implements ObservationAdapter, Transc
       const conversationId = conversationIdOfTranscript(source.path)
       if (conversationId === null) continue
       this.conversationOfStream.set(source.streamId, conversationId)
+      this.logOf.set(conversationId, source.path)
       logs.push(source)
     }
     const databases = await this.databases.discover((id) => this.workspaces.has(id))
@@ -188,8 +225,17 @@ export class AntigravityObservationAdapter implements ObservationAdapter, Transc
     const streamId = baseStreamId(source.streamId)
     if (this.databases.owns(streamId)) {
       const conversationId = this.databases.conversationOf(streamId)
-      const closed = conversationId !== null && this.isClosed(conversationId)
-      return this.databases.read(source, from, closed)
+      if (conversationId === null) return this.databases.read(source, from, false)
+      const read = await this.databases.read(source, from, this.isClosed(conversationId))
+      // Units read now are the current session's: every earlier one was sealed by its close.
+      const sessionId = this.sessionIdOf(conversationId, null)
+      return {
+        ...read,
+        events: read.events.map((event) => ({
+          ...event,
+          identity: { ...event.identity, providerSessionId: sessionId }
+        }))
+      }
     }
     const conversationId =
       this.conversationOfStream.get(streamId) ?? conversationIdOfTranscript(source.path)
@@ -200,7 +246,10 @@ export class AntigravityObservationAdapter implements ObservationAdapter, Transc
     const closed: ObservedEvent = {
       kind: 'closed',
       sourceEventId: 'presence-closed',
-      identity: { providerId: this.providerId, providerSessionId: conversationId },
+      identity: {
+        providerId: this.providerId,
+        providerSessionId: this.sessionIdOf(conversationId, null)
+      },
       ...(workspace === undefined ? {} : { cwd: workspace as FolderPath }),
       at: this.closedAt(conversationId)
     }
@@ -232,9 +281,22 @@ export class AntigravityObservationAdapter implements ObservationAdapter, Transc
     return eventsOfStep(step, {
       providerId: this.providerId,
       conversationId,
+      sessionId: this.sessionIdOf(conversationId, step.at),
       cwd: workspace === undefined ? null : (workspace as FolderPath),
       offset: line.offset
     })
+  }
+
+  /**
+   * The session a fact of the conversation belongs to: its resumed session when the fact is from
+   * that session's start on (`at` null: the current session), else the conversation's own.
+   */
+  private sessionIdOf(conversationId: string, at: Instant | null): string {
+    const resumed = this.resumedAt.get(conversationId)
+    if (resumed === undefined) return conversationId
+    // The step log's times are whole seconds: a step of the lock's second is the resumed session's.
+    if (at !== null && at < Math.floor(resumed / 1000) * 1000) return conversationId
+    return resumedSessionIdOf(conversationId, resumed)
   }
 
   /** Whether a conversation is not running: its lock gone past the grace, or never seen. */
@@ -274,6 +336,43 @@ export class AntigravityObservationAdapter implements ObservationAdapter, Transc
       this.seen.add(id)
     }
     this.locked = locked
+    for (const id of locked) await this.readResume(id)
+  }
+
+  /**
+   * Whether the held lock of a conversation started a resumed session: written more than the grace
+   * after the conversation's first step. A lock that did not drops the resume (the store says the
+   * running session is the conversation's own).
+   */
+  private async readResume(conversationId: string): Promise<void> {
+    const lock = await this.options.fs.stat(
+      join(presenceDirOf(this.options.geminiDir), `${conversationId}.lock`)
+    )
+    const first = await this.firstStepOf(conversationId)
+    if (lock === null || first === null) return
+    if (lock.mtimeMs - this.grace > first) this.resumedAt.set(conversationId, lock.mtimeMs)
+    else this.resumedAt.delete(conversationId)
+  }
+
+  /** The time of a conversation's first readable step, or null while its log has none. */
+  private async firstStepOf(conversationId: string): Promise<number | null> {
+    const known = this.firstStepAt.get(conversationId)
+    if (known !== undefined) return known
+    const path = this.logOf.get(conversationId)
+    if (path === undefined) return null
+    let text: string
+    try {
+      text = await this.options.fs.readTextHead(path, HEAD_BYTES)
+    } catch {
+      return null
+    }
+    for (const line of text.split('\n')) {
+      const at = parseStepLine(line.replace(/\r$/, ''))?.at ?? null
+      if (at === null) continue
+      this.firstStepAt.set(conversationId, at)
+      return at
+    }
+    return null
   }
 
   /** Re-reads the workspace map when `history.jsonl` changed. */

@@ -16,7 +16,16 @@
 // `<USER_REQUEST>` envelope, the newest-by-timestamp workspace of `history.jsonl`, and the presence
 // lock as a hint bounded by a grace on disappearance.
 import { realpathSync } from 'node:fs'
-import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,9 +43,10 @@ import {
   type ReadOnlySnapshot,
   type ReadOnlySnapshotOpener
 } from '../../../../platform/sqlite/readOnlySnapshot'
-import type { ObservationEvent } from '../../application/events'
+import type { ObservationEvent, SessionObserved } from '../../application/events'
 import { OBSERVATION_POLL_MS, ObservationLoop } from '../../application/observationLoop'
 import { InMemoryCursorStore } from '../../ports/fakes/InMemoryCursorStore'
+import { InMemoryEndedAgentLedger } from '../../ports/fakes/InMemoryEndedAgentLedger'
 import { InMemoryObservedSessionStore } from '../../ports/fakes/InMemoryObservedSessionStore'
 import { RecordingObservedBatchSink } from '../../ports/fakes/RecordingObservedBatchSink'
 import type { Cursor, SourceFile } from '../../ports/observationAdapter'
@@ -127,10 +137,18 @@ function dbPath(gemini: string, tree: Tree = 'antigravity-cli', cid = CID): stri
   return join(gemini, tree, 'conversations', `${cid}.db`)
 }
 
-async function setLock(gemini: string, present: boolean): Promise<void> {
+/** When the fixtures' conversation started: its lock is written just before its first step. */
+const STARTED_AT = Date.parse('2026-09-04T19:01:00Z')
+
+/**
+ * Writes or removes the conversation's presence lock. A lock is a 0-byte file the CLI writes when a
+ * session starts, so its modification time is that start (`createdAt`, the fixtures' by default).
+ */
+async function setLock(gemini: string, present: boolean, createdAt = STARTED_AT): Promise<void> {
   if (present) {
     await mkdir(dirname(lockPath(gemini)), { recursive: true })
     await writeFile(lockPath(gemini), '')
+    await utimes(lockPath(gemini), createdAt / 1000, createdAt / 1000)
   } else {
     await rm(lockPath(gemini), { force: true })
   }
@@ -665,5 +683,127 @@ describe('AntigravityObservationAdapter conformance (fixtures/antigravity/observ
       expect(blocked.warnings).toEqual([])
       expect(blocked.next.value).toBe(0)
     }
+  })
+  it('[S4.41, FM-145, ADR-015] a closed Antigravity conversation resumed under the same id appears as a new dwarf and its earlier records add no rows', async () => {
+    const gemini = await storeWith({ transcript: 'transcript.jsonl' })
+    const cwd = 'C:\Users\j\Desktop\Sample-Project' as FolderPath
+    const original = { providerId: 'antigravity', providerSessionId: CID }
+    // `agy --conversation <id>` (AMENDMENT-13) an hour later: a new lock, the same id, new steps.
+    const resumedAt = Date.parse('2026-09-04T20:00:00Z')
+    const resumed = { providerId: 'antigravity', providerSessionId: `${CID}~resumed-1788552000` }
+    const step = (index: number, at: string, source: string, type: string, content: string) =>
+      JSON.stringify({ step_index: index, source, type, status: 'DONE', created_at: at, content }) +
+      '\n'
+
+    const clock = new FakeClock(T0)
+    const scheduler = new FakeScheduler(clock)
+    const transactions = new InMemoryTransactions()
+    const dwarfs = new InMemoryBoundDwarfs()
+    const cursors = new InMemoryCursorStore(transactions)
+    const sessions = new InMemoryObservedSessionStore(transactions, dwarfs)
+    const ended = new InMemoryEndedAgentLedger(transactions)
+    const sink = new RecordingObservedBatchSink(transactions)
+    for (const p of [cursors, sessions, ended, sink]) transactions.enlist(p)
+    const bus = new RecordingEventBus<ObservationEvent>({ transactionScope: transactions })
+    const fs = new NodeFs()
+    const loopOver = (adapter: AntigravityObservationAdapter) =>
+      new ObservationLoop({
+        adapters: [adapter],
+        fs,
+        cursors,
+        sessions,
+        sink,
+        transactions,
+        bus,
+        clock,
+        scheduler,
+        ids: new SequenceIdGenerator(),
+        hostEpoch: 'epoch-0074',
+        log: new RecordingDiagnosticsLog(),
+        ended
+      })
+    let loop = loopOver(adapterAt(gemini, { clock }))
+    const poll = async () => {
+      clock.advance(OBSERVATION_POLL_MS)
+      await loop.whenIdle()
+    }
+    const observed = () =>
+      bus.published
+        .filter((e): e is SessionObserved => e.type === 'SessionObserved')
+        .map((e) => e.payload.identity)
+    const rows = () => sink.applied.flatMap((b) => b.entries.map((e) => [b.dwarfId, e.sourceKey]))
+
+    // The conversation arrives, is written, then closes: its identity joins the ledger.
+    loop.start()
+    await loop.whenIdle()
+    expect(observed()).toEqual([original])
+    const first = dwarfs.bind(original, cwd, T0)
+    await poll()
+    expect(rows()).toHaveLength(4)
+    await setLock(gemini, false)
+    for (let t = 0; t <= ANTIGRAVITY_LOCK_GRACE_MS; t += OBSERVATION_POLL_MS) await poll()
+    expect(ended.has(original)).toBe(true)
+    expect(bus.ofType('SessionClosedObserved')).toHaveLength(1)
+
+    // Resumed under the same id: a new identity, which the ledger does not suppress.
+    await setLock(gemini, true, resumedAt)
+    await appendFile(
+      transcriptPath(gemini),
+      step(
+        13,
+        '2026-09-04T20:00:05Z',
+        'USER_EXPLICIT',
+        'USER_INPUT',
+        '<USER_REQUEST>\nAnd now?\n</USER_REQUEST>'
+      ) +
+        step(
+          14,
+          '2026-09-04T20:00:09Z',
+          'MODEL',
+          'PLANNER_RESPONSE',
+          'Picking up where we left off.'
+        )
+    )
+    await poll()
+    expect(observed()).toEqual([original, resumed])
+    const second = dwarfs.bind(resumed, cwd, T0)
+    expect(second).not.toBe(first)
+    await poll()
+    // Only the resumed steps are the new dwarf's; nothing written before the close is written again.
+    expect(rows().slice(4)).toEqual([
+      [second, `antigravity:antigravity:${CID}:13`],
+      [second, `antigravity:antigravity:${CID}:14`]
+    ])
+
+    // A Host restart derives the same resumed identity: no second arrival, the next step is its.
+    loop.stop()
+    loop = loopOver(adapterAt(gemini, { clock }))
+    loop.start()
+    await loop.whenIdle()
+    await appendFile(
+      transcriptPath(gemini),
+      step(15, '2026-09-04T20:01:00Z', 'MODEL', 'PLANNER_RESPONSE', 'Done.')
+    )
+    await poll()
+    expect(observed()).toEqual([original, resumed])
+    expect(rows().slice(6)).toEqual([[second, `antigravity:antigravity:${CID}:15`]])
+    loop.stop()
+
+    // Replayed from the start after a restart, every step keeps its key and its generation.
+    const fresh = adapterAt(gemini)
+    const replay = await fresh.read(await sourceOf(fresh, 'transcript'), null)
+    const entries = replay.events.flatMap((e) =>
+      e.kind === 'entries' ? e.entries.map((x) => [e.identity.providerSessionId, x.sourceKey]) : []
+    )
+    expect(entries).toEqual([
+      [CID, `antigravity:antigravity:${CID}:0`],
+      [CID, `antigravity:antigravity:${CID}:4`],
+      [CID, `antigravity:antigravity:${CID}:5`],
+      [CID, `antigravity:antigravity:${CID}:12`],
+      [resumed.providerSessionId, `antigravity:antigravity:${CID}:13`],
+      [resumed.providerSessionId, `antigravity:antigravity:${CID}:14`],
+      [resumed.providerSessionId, `antigravity:antigravity:${CID}:15`]
+    ])
+    expect(new Set(rows().map(([, key]) => key)).size).toBe(rows().length)
   })
 })
