@@ -39,6 +39,7 @@ import {
   type SourceFile
 } from '../../modules/observation'
 import type { ConversationEntry } from '../../modules/suppliers'
+import { SqliteLifecycleFactLog } from '../../platform/sqlite/SqliteLifecycleFactLog'
 import { SqliteTransactionRunner } from '../../platform/sqlite/SqliteTransactionRunner'
 import { openTemplateCopy } from '../../platform/sqlite/testing/templateDb'
 
@@ -250,7 +251,8 @@ function host() {
       bus,
       clock,
       ids,
-      hostEpoch
+      hostEpoch,
+      lifecycleFacts: new SqliteLifecycleFactLog({ db: faulty.db, scope: transactions, ids, clock })
     })
     // The conversation half of the ObservedBatchSink bridge (ISSUE-120 registers it).
     const sink: ObservedBatchSink = {
