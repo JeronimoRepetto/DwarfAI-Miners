@@ -4,8 +4,9 @@
 // (`source_cursors`, `observed_sessions`, `observed_session_streams`; INV-37): messages and usage
 // go to conversation and ledger through the `ObservedBatchSink` bridge. The Claude (ISSUE-071) and
 // Codex (ISSUE-073) adapters are exported for the composition; the other provider adapters (later:
-// ISSUE-074, ISSUE-075) and `catchUp` (later: ISSUE-078) join with their issues; `host/main.ts`
-// composes it (later: ISSUE-095). The `EndedAgentLedger` (`ended_agents`) keeps every identity
+// ISSUE-074, ISSUE-075) join with their issues; `host/main.ts` composes it and calls `catchUp`
+// then `start` at boot (later: ISSUE-095). `catchUp` (ISSUE-078) reads every stream from its cursor,
+// so what providers wrote while no Host ran is observed and credited once (INV-98). The `EndedAgentLedger` (`ended_agents`) keeps every identity
 // DwarfAI ended or saw end from arriving again (ISSUE-072, INV-36), and the Claude adapter answers
 // a session's process identity through its #45 guard (`processRegistries`).
 import type { ProcessIdentity } from '../../kernel/domain/processIdentity'
@@ -23,7 +24,7 @@ import { SqliteCursorStore } from './adapters/SqliteCursorStore'
 import { SqliteEndedAgentLedger } from './adapters/SqliteEndedAgentLedger'
 import { SqliteObservedSessionStore } from './adapters/SqliteObservedSessionStore'
 import type { ObservationEvent } from './application/events'
-import type { ObservationControlSoFar } from './application/observationControl'
+import type { ObservationControl } from './application/observationControl'
 import { ObservationLoop } from './application/observationLoop'
 import { createObservationQueries, type ObservationQueries } from './application/observationQueries'
 import type { CursorStore } from './ports/cursorStore'
@@ -41,7 +42,7 @@ export type {
   TranscriptEntriesObserved,
   UsageObserved
 } from './application/events'
-export type { ObservationControl, ObservationControlSoFar } from './application/observationControl'
+export type { ObservationControl } from './application/observationControl'
 export {
   CLAUDE_OBSERVED_CAPABILITIES,
   ClaudeObservationAdapter,
@@ -145,7 +146,7 @@ export interface ObservedProcessIdentities {
 }
 
 export interface Observation {
-  control: ObservationControlSoFar
+  control: ObservationControl
   queries: ObservationQueries
   /**
    * Only the Claude adapter records a process identity: the registry pid and its recorded start,
@@ -168,6 +169,7 @@ export function createObservation(deps: ObservationDeps): Observation {
       start: () => loop.start(),
       stop: () => loop.stop(),
       nudge: (hint) => loop.nudge(hint),
+      catchUp: () => loop.catchUp(),
       recordEnded: (identity, at) => loop.recordEnded(identity, at)
     },
     queries: createObservationQueries({ sessions: deps.sessions }),
