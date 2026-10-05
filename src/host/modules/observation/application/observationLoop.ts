@@ -33,7 +33,9 @@
 // mine. An ended identity whose dwarf is still present (it arrived while its ending was being
 // read) is closed (S4.33), because an `active` session is never in the ledger (07 §4B).
 //
-// `catchUp` (later: ISSUE-078) joins with its issue.
+// `catchUp` (ISSUE-078) is one such cycle at Host boot, before the live loop starts: it reads every
+// stream from the cursor the last Host left, so what was written while no Host ran is observed by
+// these same rules (S4.38, S4.39; INV-98).
 import { providerIdentityKey } from '../../../kernel/domain/providerIdentity'
 import type {
   DwarfId,
@@ -130,6 +132,8 @@ interface BatchPlan {
 
 export class ObservationLoop {
   private running = false
+  /** How many times `stop` ran: a catch-up pass ends when it changes. */
+  private halts = 0
   private timer: { cancel(): void } | null = null
   private cycle: Promise<void> | null = null
   private rerun = false
@@ -150,6 +154,7 @@ export class ObservationLoop {
 
   stop(): void {
     this.running = false
+    this.halts += 1
     this.rerun = false
     this.timer?.cancel()
     this.timer = null
@@ -158,6 +163,39 @@ export class ObservationLoop {
   nudge(_hint: NudgeHint): void {
     if (!this.running) return
     this.kick()
+  }
+
+  /**
+   * 16 §4.3 `ObservationControl.catchUp` (16 §8.2 step 7; 09 §5.4; 07 S4.37–S4.39): one pass over
+   * every stream every adapter discovers, each read from its cursor, under the same batch rules as
+   * a live cycle. Whatever a provider wrote while no Host ran is therefore written and credited
+   * once (INV-98, ADR-006 item 7): a re-read batch carries the same source and unit keys. A session
+   * whose ending was written meanwhile is closed and published once (`SessionClosedObserved`, the
+   * ordinary departure), and the anti-ghost check runs first, so an ended identity is never
+   * resurrected (INV-36). There is no first-sight baseline: a stream with no cursor is read from its
+   * start (09 §5.4). A batch that fails rolls back alone and the next pass (this Host's live loop,
+   * or the next boot) reads it again from its cursor. A new session's messages wait for its dwarf
+   * as in a live cycle (the held stream): the first live cycle after `start` writes them.
+   *
+   * It runs whether or not the live loop has started, one cycle at a time with it: a live cycle in
+   * flight finishes first, and a nudge or `start` during the pass runs its cycle after it. A `stop`
+   * during the pass ends it after the stream being read.
+   */
+  async catchUp(): Promise<void> {
+    while (this.cycle !== null) await this.cycle
+    const halts = this.halts
+    const pass = (async () => {
+      for (const adapter of this.deps.adapters) {
+        if (this.halts !== halts) return
+        await this.observe(adapter, () => this.halts === halts)
+      }
+    })()
+    this.cycle = pass.finally(() => {
+      this.cycle = null
+      if (this.rerun && this.running) this.kick()
+      else this.schedule()
+    })
+    await pass
   }
 
   /**
@@ -206,12 +244,13 @@ export class ObservationLoop {
       this.rerun = false
       for (const adapter of this.deps.adapters) {
         if (!this.running) return
-        await this.observe(adapter)
+        await this.observe(adapter, () => this.running)
       }
     } while (this.rerun && this.running)
   }
 
-  private async observe(adapter: ObservationAdapter): Promise<void> {
+  /** One adapter's streams, each from its cursor, while `active` holds. */
+  private async observe(adapter: ObservationAdapter, active: () => boolean): Promise<void> {
     let sources: SourceFile[]
     try {
       sources = await adapter.discover(this.deps.fs)
@@ -221,7 +260,7 @@ export class ObservationLoop {
     }
     const seen = new Set<string>()
     for (const source of sources) {
-      if (!this.running) return
+      if (!active()) return
       if (seen.has(source.streamId)) continue
       seen.add(source.streamId)
       await this.observeSource(adapter, source)
