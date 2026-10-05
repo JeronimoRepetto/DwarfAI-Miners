@@ -199,6 +199,9 @@ export function goldenApi(sample: GoldenSample): Api {
         valle: {}
       }),
     patchUiSession: none,
-    onUiSessionChanged: unsubscribe
+    onUiSessionChanged: unsubscribe,
+    // A-N20, A-N21: a golden stores no UI preference, so none is answered and none is written.
+    getUiPreferences: () => Promise.resolve({}),
+    setUiPreference: refuse('setUiPreference')
   }
 }

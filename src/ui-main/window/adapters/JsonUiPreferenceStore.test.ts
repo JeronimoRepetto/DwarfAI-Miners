@@ -102,7 +102,9 @@ describe('JsonUiPreferenceStore', () => {
       launchView: NON_DEFAULT_VALUES.launchView,
       dockSide: { edge: 'left' },
       alwaysOnTop: { pinned: false },
-      shortcut: { accelerator: 'Control+Alt+K' }
+      shortcut: { accelerator: 'Control+Alt+K' },
+      // NEW with ISSUE-060, no store of today's: the document this store writes.
+      startWithSystem: { on: false }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), `${JSON.stringify(legacy[key])}\n`)
@@ -124,7 +126,8 @@ describe('JsonUiPreferenceStore', () => {
       launchView: { ...NON_DEFAULT_VALUES.launchView, scroll: 3 },
       dockSide: { edge: 'top' },
       alwaysOnTop: { pinned: 'yes' },
-      shortcut: { accelerator: 'K' }
+      shortcut: { accelerator: 'K' },
+      startWithSystem: { on: 'yes' }
     }
     for (const key of STORE_KEYS) {
       writeFileSync(join(dir, UI_PREFERENCE_FILES[key]), JSON.stringify(nonConforming[key]))

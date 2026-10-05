@@ -75,6 +75,9 @@ import {
   openCodeSettingsViewSchema,
   rendererDiagnosticSchema,
   stopEverythingRequestedSchema,
+  getUiPreferencesRequestSchema,
+  uiPreferencesAnswerSchema,
+  uiPreferenceWriteSchema,
   uiSessionChangeSchema,
   uiSessionPatchSchema,
   uiSessionSnapshotSchema
@@ -716,6 +719,25 @@ export const CHANNELS = {
     status: 'new',
     request: none,
     response: uiSessionChangeSchema
+  },
+  // A-N20 `getUiPreferences`, A-N21 `setUiPreference` (ADR-024 items 1, 9; AMENDMENT-6): the persisted UI preferences
+  // UI main owns; the setter answers what was stored, for `startWithSystem` the verified login-entry state (ADR-027
+  // item 7)
+  'ui:preferences:get': {
+    name: 'ui:preferences:get',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: getUiPreferencesRequestSchema,
+    response: uiPreferencesAnswerSchema
+  },
+  'ui:preferences:set': {
+    name: 'ui:preferences:set',
+    kind: 'invoke',
+    placement: 'ui-local',
+    status: 'new',
+    request: uiPreferenceWriteSchema,
+    response: uiPreferenceWriteSchema
   }
   // ADR-019 item 6 writes the constraint with `any`, verbatim:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

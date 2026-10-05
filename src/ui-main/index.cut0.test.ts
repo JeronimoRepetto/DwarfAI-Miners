@@ -29,6 +29,9 @@ import { FakeTrayController } from './window/ports/fakes/FakeTrayController'
 import { FakeWindowFactory } from './window/ports/fakes/FakeWindowFactory'
 import { InMemoryUiPreferenceStore } from './window/ports/fakes/InMemoryUiPreferenceStore'
 import { RecordingNotificationDisplay } from './window/ports/fakes/RecordingNotificationDisplay'
+import { FakeAutostartPort } from './window/ports/fakes/FakeAutostartPort'
+import { createStartWithSystem } from './window/application/startWithSystem'
+import { uiStartPlanOf } from './window/domain/uiStart'
 
 /**
  * The cut-0 composition of UI main (ISSUE-056; 21 §2 cut 0; ADR-001 item 3): the route table serves the window
@@ -214,6 +217,9 @@ async function cut0App(
     composeFails?: boolean
     /** The level-3 notification display and the S-018-1 gate (ISSUE-113); absent, no presenter is composed. */
     notifications?: { display: RecordingNotificationDisplay; drawsWithoutWindow: boolean }
+    launch?: UiMainDeps['launch']
+    startWithSystem?: UiMainDeps['startWithSystem']
+    onPanelBuilt?: () => void
   } = {}
 ) {
   const lifecycle = new RecordingLifecycle()
@@ -249,6 +255,7 @@ async function cut0App(
   const factory = new FakeWindowFactory()
   // Electron's `browser-window-created` for the rebuilt Panel, as its factory builds it.
   const panel = rebuiltPanel(factory, () => {
+    options.onPanelBuilt?.()
     lifecycle.createWindow(PANEL)
     appWindows.open(PANEL)
   })
@@ -274,7 +281,9 @@ async function cut0App(
         preference: { load: () => 'Control+Alt+Shift+P', save: () => {} },
         panel: controller,
         platform: 'win32'
-      })
+      }),
+    ...(options.launch === undefined ? {} : { launch: options.launch }),
+    ...(options.startWithSystem === undefined ? {} : { startWithSystem: options.startWithSystem })
   })
   lifecycle.becomeReady()
   await started
@@ -454,6 +463,46 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     expect(await read()).toEqual({ ...empty, drafts: { [HOST_DWARF]: 'half a thought' } })
     lifecycle.handlers.get('window-all-closed')?.()
     expect(await read()).toEqual(empty)
+  })
+
+  it('[S10.03, US-RES-002.AC13] a --background start builds no window and starts the tray; the person opening the app shows the Panel', async () => {
+    const { factory, panel, lock, tray, legacy } = await cut0App({
+      launch: uiStartPlanOf(['DwarfAI-Miners.exe', '--background'])
+    })
+
+    // Tray-only (S10.03): the tray and today's runtime, no window built.
+    expect(factory.built).toEqual([])
+    expect(tray.entries).toEqual(['open', 'quit', '—', 'stop-everything'])
+    expect(legacy.counts.composed).toBe(1)
+    // The person opens the app (a second launch, S10.13): the Panel is built and shown.
+    lock.launchAgain()
+    expect(factory.built).toEqual([{ kind: 'panel' }])
+    expect(panel.panel()?.visible()).toBe(true)
+  })
+
+  it('[S40.02, ADR-027] every start, normal or --background, applies Start with the system before any window is built', async () => {
+    for (const argv of [['DwarfAI-Miners.exe'], ['DwarfAI-Miners.exe', '--background']]) {
+      const entry = new FakeAutostartPort()
+      const store = new InMemoryUiPreferenceStore()
+      store.save('startWithSystem', false)
+      entry.entry = 'enabled'
+      const order: string[] = []
+      const startWithSystem = createStartWithSystem({
+        autostart: entry,
+        store,
+        log: (record) => order.push(`${record.event} ${record.causeClass}`)
+      })
+      await cut0App({
+        launch: uiStartPlanOf(argv),
+        startWithSystem,
+        onPanelBuilt: () => order.push('panel built')
+      })
+
+      // The stored OFF is re-applied: the entry found at the start is removed and OFF stays stored.
+      expect(entry.entry, argv.join(' ')).toBe('absent')
+      expect(store.load('startWithSystem')).toBe(false)
+      expect(order[0], argv.join(' ')).toBe('autostart.register removed')
+    }
   })
 
   it('[ADR-026] a start that fails records ui.start failed with its step and error class, never its message, before it exits with code 1', async () => {
