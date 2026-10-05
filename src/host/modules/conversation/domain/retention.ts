@@ -30,3 +30,9 @@ function retainedFirst(a: RetainedRow, b: RetainedRow): number {
   if (a.sending !== b.sending) return a.sending ? -1 : 1
   return b.sortAt - a.sortAt || (b.id < a.id ? -1 : b.id > a.id ? 1 : 0)
 }
+
+/**
+ * At most this many activity runs per dwarf, the open one never trimmed (09 §5.2 step 4: "activity
+ * runs follow the same cap"; ADR-007 item 5). A constant, never a setting.
+ */
+export const ACTIVITY_RUNS_PER_DWARF = 50

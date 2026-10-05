@@ -1,10 +1,11 @@
 // Test helpers over a template-database copy for conversation's SQLite tests (17 §1.5): one mine
-// and two dwarfs seeded in bound SQL, and read-backs of `messages` / `message_keys` the port does
-// not expose. Never imported by production code (R14).
+// and two dwarfs seeded in bound SQL, and read-backs of `messages` / `message_keys` /
+// `activity_disclosures` the ports do not expose. Never imported by production code (R14).
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase } from '../../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
+import type { ActivityDisclosure } from '../domain/activityRun'
 
 const MINE = '00000000-0000-7000-8000-0000000000f1'
 export const CONVERSATION_DWARFS = [
@@ -116,4 +117,27 @@ export function sqliteProbe(
     })
     return id
   }
+}
+
+/**
+ * Every stored activity run of the dwarf, by `opened_at` then id, read back from
+ * `activity_disclosures` (09 §4.4) independently of the adapter.
+ */
+export function storedRuns(db: SqliteDatabase, dwarfId: DwarfId): ActivityDisclosure[] {
+  return db
+    .all(
+      `SELECT id, dwarf_id, turn_key, open, step_count, summaries_json, opened_at, closed_at
+         FROM activity_disclosures WHERE dwarf_id = ? ORDER BY opened_at, id`,
+      [dwarfId]
+    )
+    .map((row) => ({
+      id: String(row['id']),
+      dwarfId: String(row['dwarf_id']) as DwarfId,
+      turnKey: String(row['turn_key']),
+      open: Number(row['open']) === 1,
+      stepCount: Number(row['step_count']),
+      summaries: JSON.parse(String(row['summaries_json'])) as string[],
+      openedAt: Number(row['opened_at']),
+      ...(row['closed_at'] === null ? {} : { closedAt: Number(row['closed_at']) })
+    }))
 }

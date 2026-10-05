@@ -41,6 +41,18 @@ export interface ActivitySummary {
   summaries: string[]
 }
 
+/**
+ * The `ActivitySummary` of the tool steps folded into one entry (15 §1.2
+ * `ConversationEntry.activity`; 10 `messages.activity_json`): one summary line per step, never tool
+ * output (ADR-007 item 4). An entry with no step has none.
+ */
+export function activitySummaryOf(
+  steps: readonly { summary: string }[] | undefined
+): ActivitySummary | undefined {
+  if (steps === undefined || steps.length === 0) return undefined
+  return { steps: steps.length, summaries: steps.map((step) => step.summary) }
+}
+
 /** 06 §9.1 `AttachmentMeta`: name and size only, never the bytes (INV-62). */
 export interface AttachmentMeta {
   name: string
