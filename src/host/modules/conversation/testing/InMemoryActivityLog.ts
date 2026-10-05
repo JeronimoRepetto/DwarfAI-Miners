@@ -99,6 +99,13 @@ export class InMemoryActivityLog implements ActivityLog {
     )
   }
 
+  /** Test seam for the Reset step double (09 §7.2): every run, open ones included, and every line go. */
+  clearAll(): void {
+    this.inTransaction('clearAll')
+    this.box.runs = []
+    this.box.outcomes = new Map()
+  }
+
   snapshot(): ActivityStore {
     return structuredClone(this.box)
   }
