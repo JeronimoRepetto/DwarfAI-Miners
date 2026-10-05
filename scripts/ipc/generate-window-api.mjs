@@ -114,7 +114,8 @@ const MEMBERS = {
   'ui:session:patch': 'patchUiSession', // A-N18 (unrouted until cut 1)
   'ui:session:changed': 'onUiSessionChanged', // A-N19 (unrouted until cut 1)
   'ui:preferences:get': 'getUiPreferences', // A-N20 (unrouted until cut 1)
-  'ui:preferences:set': 'setUiPreference' // A-N21 (unrouted until cut 1)
+  'ui:preferences:set': 'setUiPreference', // A-N21 (unrouted until cut 1)
+  'ui:preferences:reset': 'onUiPreferencesReset' // A-N12 (unrouted until cut 1)
 }
 
 /**

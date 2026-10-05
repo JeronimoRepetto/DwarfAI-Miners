@@ -431,7 +431,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       'ui:session:patch': 'cut-1',
       'ui:session:changed': 'cut-1',
       'ui:preferences:get': 'cut-1',
-      'ui:preferences:set': 'cut-1'
+      'ui:preferences:set': 'cut-1',
+      // AMENDED for ISSUE-061: A-N12 joins them, born `ui-local` in cut 1 and routed by the same switch.
+      'ui:preferences:reset': 'cut-1'
     })
   })
 
