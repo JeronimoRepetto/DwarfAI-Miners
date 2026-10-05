@@ -138,6 +138,8 @@ import {
 import { ElectronTray } from './window/adapters/ElectronTray'
 import { ElectronNotificationDisplay } from './window/adapters/ElectronNotificationDisplay'
 import { startNotificationPresenter } from './window/application/notificationPresenter'
+import { createDepartedDwarfs, createRevealDwarfChat } from './window/application/revealDwarfChat'
+import { createPanelReveal, REVEAL_DWARF_CHAT_PUSH } from './window/adapters/panelReveal'
 import { drawsWithoutWindow } from './window/domain/trayNotificationGate'
 import type {
   NotificationDisplay,
@@ -559,6 +561,12 @@ export interface UiMainDeps {
   notifications?: {
     display: NotificationDisplay & NotificationWithdrawal
     drawsWithoutWindow: boolean
+    /**
+     * Whether a window of the app has the focus (ISSUE-114): read right after a notification click asked the Panel to
+     * the front, so the reveal knows whether the raise held (S-018-2; 13 FM-049). Absent, a raise is never taken as
+     * held.
+     */
+    windowFocused?(): boolean
   }
   /**
    * How this process was started (07 machine 10): a normal launch, or a `--background` start by the login entry or the
@@ -725,6 +733,21 @@ export async function startUiMain({
   // Level-3 OS notifications (ISSUE-113; ADR-018 items 5, 7): the notifier connection's frames, from the start of the
   // attach, are drawn once Electron is ready (a notification cannot be built before), in arrival order; where S-018-1
   // has not passed, only while the Panel is shown (window/domain/trayNotificationGate.ts).
+  //
+  // A click (ISSUE-114; ADR-018 item 6) reports `attention.clicked` and runs `revealDwarfChat` over the Panel, the one
+  // mode built: the Panel window that exists (shown, hidden or minimized) is shown again, and with none the app opens
+  // as a launch does, which until Veta and Valle exist is the Panel too. It is composed once the table routes A-N16
+  // (the cut-1 switch, ISSUE-123): before that a click only logs its event name, as in cut 0, so a click neither
+  // brings up a Panel that could not be told what to reveal nor counts a reveal that did not happen (hidden until
+  // built, 21 §1 item 8). A dwarf counts as present until its `dwarf.departed` frame was heard (`createDepartedDwarfs`).
+  const departedDwarfs =
+    rebuilt &&
+    panel !== undefined &&
+    host !== undefined &&
+    notifications !== undefined &&
+    routed(REVEAL_DWARF_CHAT_PUSH)
+      ? createDepartedDwarfs(host.client)
+      : undefined
   const notificationPresenter =
     rebuilt &&
     panel !== undefined &&
@@ -739,7 +762,31 @@ export async function startUiMain({
           display: notifications.display,
           drawsWithoutWindow: notifications.drawsWithoutWindow,
           anyWindowOpen: () => panel.visible(),
-          log: uiLog
+          log: uiLog,
+          ...(departedDwarfs === undefined
+            ? {}
+            : {
+                click: {
+                  host: host.client,
+                  reveal: createRevealDwarfChat({
+                    windows: {
+                      existing: () => (modeWindowList().length > 0 ? 'panel' : null),
+                      restore: () => panel.show(),
+                      openAtLaunch: () => {
+                        panel.show()
+                        return Promise.resolve('panel')
+                      },
+                      raise: () => {
+                        panel.raise()
+                        return Promise.resolve(notifications.windowFocused?.() ?? false)
+                      }
+                    },
+                    reveals: { panel: createPanelReveal(modeWindowList) },
+                    dwarfPresent: (t) => departedDwarfs.present(t),
+                    log: uiLog
+                  })
+                }
+              })
         })
       : undefined
 
@@ -795,6 +842,7 @@ export async function startUiMain({
     toggle?.dispose()
     trayProcess?.dispose()
     notificationPresenter?.dispose()
+    departedDwarfs?.dispose()
     stopConnectionPush?.()
     uiSession?.dispose()
     stopResetListening?.()
@@ -1199,7 +1247,8 @@ if (process.type === 'browser') {
         setAppUserModelId: (id) => app.setAppUserModelId(id),
         log: uiLog
       }),
-      drawsWithoutWindow: drawsWithoutWindow(currentUiPlatform())
+      drawsWithoutWindow: drawsWithoutWindow(currentUiPlatform()),
+      windowFocused: () => BrowserWindow.getFocusedWindow() !== null
     },
     launch: uiStartPlanOf(process.argv),
     ...electronStartWithSystem(uiPreferenceStore, uiLog),

@@ -13,8 +13,10 @@
 //   caller's transaction rolls the whole batch back (16 §2.1).
 // - It returns the rows this batch inserted, merged echoes excluded (amendment of 2026-10-02 to
 //   16 §4.6). `activity_json` is left NULL: activity runs are ISSUE-101.
-// - `page` reads newest first by `sort_at DESC, id DESC` (the `messages_feed` index). It returns
-//   the rows `ConversationEntry` can carry: provider-keyed person, dwarf and system lines.
+// - `page` reads newest first by `sort_at DESC, id DESC` (the `messages_feed` index), at most the
+//   limit (default 50), every stored row of the dwarf as a `Message` with its `deliveries` row
+//   (amendment of 2026-10-05 to 16 §4.6, ISSUE-103): DwarfAI-sent rows and answers-records too.
+//   `activity_json` is not read yet: nothing writes it before activity runs (ISSUE-101).
 // - `trim` is 09 §5.2 step 3, inside the caller's transaction: at most `MESSAGES_PER_DWARF` stored
 //   rows of the dwarf stay, every role counted, `sending` rows ranked first so a row still being
 //   handed over is kept, then the newest by `sort_at`, `id` (06 INV-61). The foreign keys of 09
@@ -23,7 +25,8 @@
 //   replay re-inserts a trimmed message. Any other `keep` is refused: the cap is a constant.
 // - `setDelivery` is not built yet (later: ISSUE-166).
 import { HostInvariantError } from '../../../kernel/domain/errors'
-import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
+import type { AnswerRefusalReason } from '../../../kernel/domain/sharedContracts'
+import type { AskId, DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
 import type { SqliteDatabase, SqliteParam } from '../../../kernel/ports/sqliteDatabase'
@@ -33,6 +36,8 @@ import {
   classifyEntry,
   echoesTypedSend,
   mayEchoTypedSend,
+  type Delivery,
+  type DeliveryFailure,
   type FeedPageRequest,
   type Message
 } from '../domain/messages'
@@ -81,9 +86,14 @@ const TRIM = `DELETE FROM messages
                    ORDER BY (d.message_id IS NOT NULL) DESC, m.sort_at DESC, m.id DESC
                    LIMIT ?)`
 
-const PAGE_WHERE = `WHERE dwarf_id = ? AND source_key IS NOT NULL AND role <> 'answers-record'`
+const PAGE_SELECT = `SELECT m.id, m.dwarf_id, m.source_key, m.role, m.text, m.issuer_dwarf_id,
+    m.attachments_json, m.origin, m.provider_time, m.created_at, m.ask_id,
+    d.kind, d.phase, d.confidence, d.held_until_turn_end, d.failure_kind, d.failure_reason,
+    d.attempts, d.phase_at
+  FROM messages m LEFT JOIN deliveries d ON d.message_id = m.id
+  WHERE m.dwarf_id = ?`
 
-const BEFORE = `AND (sort_at, id) < (SELECT sort_at, id FROM messages WHERE id = ? AND dwarf_id = ?)`
+const BEFORE = `AND (m.sort_at, m.id) < (SELECT sort_at, id FROM messages WHERE id = ? AND dwarf_id = ?)`
 
 export class SqliteMessageLog implements MessageLog {
   constructor(private readonly deps: SqliteMessageLogDeps) {}
@@ -147,21 +157,16 @@ export class SqliteMessageLog implements MessageLog {
     return { inserted: appended.length, appended }
   }
 
-  page(dwarfId: DwarfId, req: FeedPageRequest): ConversationEntry[] {
+  page(dwarfId: DwarfId, req: FeedPageRequest): Message[] {
     const params: SqliteParam[] = [dwarfId]
-    let sql = `SELECT source_key, role, text, provider_time FROM messages ${PAGE_WHERE}`
+    let sql = PAGE_SELECT
     if (req.before !== undefined) {
       sql += ` ${BEFORE}`
       params.push(req.before, dwarfId)
     }
-    sql += ' ORDER BY sort_at DESC, id DESC LIMIT ?'
+    sql += ' ORDER BY m.sort_at DESC, m.id DESC LIMIT ?'
     params.push(req.limit ?? PAGE_LIMIT)
-    return this.deps.db.all(sql, params).map((row) => ({
-      sourceKey: String(row['source_key']),
-      role: row['role'] as ConversationEntry['role'],
-      text: String(row['text']),
-      providerTime: row['provider_time'] === null ? null : Number(row['provider_time'])
-    }))
+    return this.deps.db.all(sql, params).map(messageOf)
   }
 
   setDelivery(
@@ -207,5 +212,72 @@ export class SqliteMessageLog implements MessageLog {
   private waitingRow(dwarfId: DwarfId, correlation: string): string | null {
     const row = this.deps.db.all(WAITING_ROW, [dwarfId, correlation])[0]
     return row === undefined ? null : String(row['id'])
+  }
+}
+
+type Row = Record<string, unknown>
+
+const text = (row: Row, column: string): string => String(row[column])
+const optionalText = (row: Row, column: string): string | null =>
+  row[column] === null || row[column] === undefined ? null : String(row[column])
+const optionalNumber = (row: Row, column: string): number | null =>
+  row[column] === null || row[column] === undefined ? null : Number(row[column])
+
+/** One `messages` row, with its `deliveries` row when it has one, as the aggregate `Message`. */
+function messageOf(row: Row): Message {
+  const id = text(row, 'id') as MessageId
+  const dwarfId = text(row, 'dwarf_id') as DwarfId
+  const issuer = optionalText(row, 'issuer_dwarf_id')
+  const askId = optionalText(row, 'ask_id')
+  return {
+    id,
+    dwarfId,
+    sourceKey: optionalText(row, 'source_key'),
+    role: text(row, 'role') as Message['role'],
+    text: text(row, 'text'),
+    ...(issuer === null ? {} : { issuer: { dwarfId: issuer as DwarfId } }),
+    attachments: JSON.parse(text(row, 'attachments_json')) as Message['attachments'],
+    ...(row['phase'] === null || row['phase'] === undefined
+      ? {}
+      : { delivery: deliveryOf(row, id, dwarfId) }),
+    origin: text(row, 'origin') as Message['origin'],
+    providerTime: optionalNumber(row, 'provider_time'),
+    ...(askId === null ? {} : { askId: askId as AskId }),
+    createdAt: Number(row['created_at'])
+  }
+}
+
+/** The `deliveries` columns of a joined row as ADR-022 `Delivery`. */
+function deliveryOf(row: Row, messageId: MessageId, dwarfId: DwarfId): Delivery {
+  const confidence = optionalText(row, 'confidence')
+  const failureKind = optionalText(row, 'failure_kind')
+  const failure = failureOf(failureKind, optionalText(row, 'failure_reason'))
+  return {
+    messageId,
+    dwarfId,
+    kind: text(row, 'kind') as Delivery['kind'],
+    phase: text(row, 'phase') as Delivery['phase'],
+    ...(confidence === null ? {} : { confidence: confidence as 'confirmed' | 'unconfirmed' }),
+    ...(Number(row['held_until_turn_end']) === 1 ? { heldUntilTurnEnd: true } : {}),
+    ...(failure === undefined ? {} : { failure }),
+    attempts: Number(row['attempts']),
+    phaseAt: Number(row['phase_at'])
+  }
+}
+
+/** `deliveries.failure_kind` and `failure_reason` as ADR-022 `DeliveryFailure`. */
+function failureOf(kind: string | null, reason: string | null): DeliveryFailure | undefined {
+  switch (kind) {
+    case null:
+      return undefined
+    case 'channel-error':
+      return { kind, reason: reason ?? '' }
+    case 'refused':
+      return { kind, reason: reason as AnswerRefusalReason }
+    case 'session-closed':
+    case 'host-interrupted':
+      return { kind }
+    default:
+      throw new HostInvariantError(`unknown deliveries.failure_kind: ${kind}`)
   }
 }
