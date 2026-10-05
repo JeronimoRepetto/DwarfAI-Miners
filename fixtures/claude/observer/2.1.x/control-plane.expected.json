@@ -1,0 +1,75 @@
+{
+  "$comment": "Hand-written from 13 FM-086 and 15 §1.2 `controlPlane` (INV-68): a slash command and its output, a meta line, a compaction summary, a side-chain Warmup exchange in the session file, a synthetic assistant message and a task notification are control-plane entries (key claimed, no row, label only, no usage, no turn end); a file-history snapshot, a compact boundary and a summary record yield nothing. A message typed mid-turn (queued_command, origin human) is the person's. Shared by control-plane-crlf.jsonl.",
+  "warnings": 0,
+  "sessions": [
+    {
+      "providerSessionId": "01a0b000-0000-7000-8000-000000000714",
+      "providerAgentId": null,
+      "cwd": "/home/j/work/sample-project",
+      "at": 1790773201000,
+      "parent": null
+    }
+  ],
+  "entries": [
+    {
+      "role": "system-line",
+      "text": "command",
+      "providerTime": 1790773201000,
+      "controlPlane": true
+    },
+    {
+      "role": "system-line",
+      "text": "command",
+      "providerTime": 1790773201100,
+      "controlPlane": true
+    },
+    { "role": "system-line", "text": "meta", "providerTime": 1790773201200, "controlPlane": true },
+    {
+      "role": "system-line",
+      "text": "compaction",
+      "providerTime": 1790773202100,
+      "controlPlane": true
+    },
+    {
+      "role": "system-line",
+      "text": "warmup",
+      "providerTime": 1790773203000,
+      "controlPlane": true
+    },
+    {
+      "role": "system-line",
+      "text": "side-chain",
+      "providerTime": 1790773203500,
+      "controlPlane": true
+    },
+    {
+      "role": "system-line",
+      "text": "synthetic",
+      "providerTime": 1790773204000,
+      "controlPlane": true
+    },
+    { "role": "person", "text": "Now run the linter.", "providerTime": 1790773210000 },
+    { "role": "system-line", "text": "meta", "providerTime": 1790773211000, "controlPlane": true },
+    { "role": "person", "text": "Also check formatting.", "providerTime": 1790773212000 },
+    { "role": "dwarf", "text": "Lint and format are clean.", "providerTime": 1790773215000 }
+  ],
+  "activity": ["turn-started", "record"],
+  "turnEnds": [
+    {
+      "turnKey": "claude:claude:01a0b000-0000-7000-8000-000000000714:00000000-0000-4000-8000-000000071414",
+      "kind": "concluded",
+      "at": 1790773215000,
+      "reliability": "inferred",
+      "cancelledFromApp": false
+    }
+  ],
+  "usage": [
+    {
+      "unitKey": "msg_01ControlG",
+      "fidelity": 1,
+      "tokens": { "inputNet": 6, "output": 15, "cacheRead": 400, "cacheWrite": 20, "reasoning": 0 },
+      "sealed": true,
+      "providerTime": 1790773215000
+    }
+  ]
+}
