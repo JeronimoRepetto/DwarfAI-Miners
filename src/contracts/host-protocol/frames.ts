@@ -28,11 +28,12 @@ import {
   type ResetId
 } from '../wire'
 import type { HelloOk } from './adr-003'
+import { turnEndKindSchema, type TurnEndKind } from './params/conversation'
 import { departureCauseSchema, type DepartureCause } from './params/crew'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F11, B-F20, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F06, B-F08, B-F09, B-F10, B-F11, B-F14, B-F20, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
@@ -43,6 +44,7 @@ export interface HostFrames {
   'dwarf.changed':        { dwarf: DwarfWire }
   'dwarf.departed':       { dwarfId: DwarfId; mineId: MineId; cause: DepartureCause }
   'conversation.appended': { dwarfId: DwarfId; messages: MessageView[] }
+  'turn.ended':           { dwarfId: DwarfId; turnKey: string; kind: TurnEndKind; reliability: 'reliable' | 'inferred'; cancelledFromApp: boolean }
   'ledger.changed':       { mineId: MineId; totals: Record<Material, MaterialAmount> }
   'attention.notify':     OsNotification
   'attention.withdraw':   { keys: string[] }
@@ -85,6 +87,15 @@ export const HOST_FRAME_SCHEMAS = {
     .strict(),
   'conversation.appended': z
     .object({ dwarfId: dwarfIdSchema, messages: z.array(messageViewSchema) })
+    .strict(),
+  'turn.ended': z
+    .object({
+      dwarfId: dwarfIdSchema,
+      turnKey: z.string().min(1),
+      kind: turnEndKindSchema,
+      reliability: z.enum(['reliable', 'inferred']),
+      cancelledFromApp: z.boolean()
+    })
     .strict(),
   'ledger.changed': z.object({ mineId: mineIdSchema, totals: materialTotalsSchema }).strict(),
   'attention.notify': osNotificationSchema,

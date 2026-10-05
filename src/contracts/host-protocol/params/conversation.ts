@@ -52,3 +52,9 @@ export const sendMessageResultSchema = outcomeSchema(
 export const feedParamsSchema = z
   .object({ dwarfId: dwarfIdSchema, page: feedPageRequestSchema.optional() })
   .strict()
+
+/** ADR-021 item 1 `TurnEndKind` (14 §3 imports it from ADR-021): how a turn ended. */
+export type TurnEndKind = 'concluded' | 'capped' | 'errored' | 'interrupted'
+
+/** B-F14 `turn.ended` `kind` (14 §3.5): exactly the four ADR-021 kinds; an unknown kind is refused. */
+export const turnEndKindSchema = z.enum(['concluded', 'capped', 'errored', 'interrupted'])
