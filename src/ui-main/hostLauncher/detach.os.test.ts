@@ -25,6 +25,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -41,7 +42,9 @@ import { buildManifest, serializeManifest } from './hostManifest'
 import { createHelloProber } from './helloProber'
 import { createNodeHostLauncher } from './index'
 import { createPosixSpawner } from './posix'
+import { IDENTITY_TOLERANCE_MS, createProcessStartReader } from './processStart'
 import { buildHostSpawn } from './spawnHost'
+import { osQueryRunner, thisPlatform } from './testing/osQueryRunner'
 import { copySourceOf } from './versionedCopy'
 import { loadWinLaunch } from './win-launch/nativeWinLaunch'
 import { createWindowsSpawner } from './windows'
@@ -147,6 +150,17 @@ function hostReports(world: World): FakeHostReport[] {
     )
 }
 
+/** Each fake Host's pid and when its report was last written (it was running then). */
+function hostRecords(world: World): Array<{ pid: number; recordedAtMs: number }> {
+  return readdirSync(world.hostDataDir)
+    .filter((name) => /^fake-host-\d+\.json$/.test(name))
+    .map((name) => {
+      const file = path.join(world.hostDataDir, name)
+      const report = JSON.parse(readFileSync(file, 'utf8')) as FakeHostReport
+      return { pid: report.pid, recordedAtMs: statSync(file).mtimeMs }
+    })
+}
+
 function proberFor(world: World) {
   return createHelloProber({
     connect: () =>
@@ -184,17 +198,47 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs: number, what: s
   }
 }
 
-/** Ends `pid` and waits until it is gone; true when nothing is left. */
-async function endProcess(pid: number): Promise<boolean> {
-  if (isAlive(pid)) {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // already gone
-    }
+const readStart = createProcessStartReader({ platform: thisPlatform(), runQuery: osQueryRunner() })
+
+/**
+ * Whether `pid` is still the process that was running when its record was written at
+ * `recordedAtMs` (ADR-014: never a bare pid): it runs and started no later than that, within the
+ * one tolerance. A pid that is gone or started later is another process or none.
+ */
+async function recordedState(
+  pid: number,
+  recordedAtMs: number
+): Promise<'recorded' | 'other' | 'unknown'> {
+  const start = await readStart(pid)
+  if (start.kind === 'unknown') return 'unknown'
+  return start.kind === 'started' && start.ms <= recordedAtMs + IDENTITY_TOLERANCE_MS
+    ? 'recorded'
+    : 'other'
+}
+
+/**
+ * Ends `pid` only while it is the recorded process, and waits until it is gone; true when the
+ * recorded process is not left running. A pid Windows or the kernel handed to another process is
+ * never signalled, and neither is one whose start time cannot be read (that answers false).
+ */
+async function endProcess(pid: number, recordedAtMs: number): Promise<boolean> {
+  const state = await recordedState(pid, recordedAtMs)
+  if (state !== 'recorded') return state === 'other'
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // already gone
   }
   for (let waited = 0; waited < 5_000 && isAlive(pid); waited += 100) await sleep(100)
-  return !isAlive(pid)
+  return !isAlive(pid) || (await recordedState(pid, recordedAtMs)) === 'other'
+}
+
+/** Ends a process this test started through its own handle, which never names a pid already freed. */
+async function endChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+  child.kill('SIGKILL')
+  await Promise.race([exited, sleep(5_000)])
 }
 
 /** Ends every fake Host of every world, then removes the worlds; fails the case if a Host survives. */
@@ -202,8 +246,8 @@ async function endEveryHost(): Promise<void> {
   const ended = worlds.splice(0)
   const survivors: number[] = []
   for (const world of ended) {
-    for (const report of hostReports(world)) {
-      if (!(await endProcess(report.pid))) survivors.push(report.pid)
+    for (const host of hostRecords(world)) {
+      if (!(await endProcess(host.pid, host.recordedAtMs))) survivors.push(host.pid)
     }
   }
   const leftovers: string[] = []
@@ -576,6 +620,8 @@ describe.runIf(WINDOWS)('Host survival on Windows (SP-02 regression test)', () =
     const lines: string[] = []
     createInterface({ input: holder.stdout }).on('line', (line) => lines.push(line))
     let uiPid = 0
+    // When the holder reported the UI's pid: the UI was running then, so a later start is another process.
+    let uiSeenAtMs = 0
     try {
       const childLine = await waitFor(
         () => lines.find((line) => line.startsWith('child ') || line.startsWith('error')),
@@ -584,6 +630,7 @@ describe.runIf(WINDOWS)('Host survival on Windows (SP-02 regression test)', () =
       )
       expect(childLine, `job holder (${jobKind})`).toMatch(/^child \d+$/)
       uiPid = Number(childLine.slice('child '.length))
+      uiSeenAtMs = Date.now()
       const report = await waitFor(
         () => readUiReport(reportFile),
         60_000,
@@ -610,7 +657,7 @@ describe.runIf(WINDOWS)('Host survival on Windows (SP-02 regression test)', () =
         hostAnswersAfterClose: await proberFor(world)()
       }
     } finally {
-      if (uiPid !== 0) await endProcess(uiPid)
+      if (uiPid !== 0) await endProcess(uiPid, uiSeenAtMs)
       if (holder.exitCode === null) holder.kill()
     }
   }
@@ -705,7 +752,7 @@ describe.runIf(!WINDOWS)('Host survival on POSIX', () => {
         expect(isAlive(host?.pid ?? -1), 'the Host still runs').toBe(true)
         expect(await proberFor(world)()).toMatchObject({ kind: 'hello-ok', state: 'ready' })
       } finally {
-        await endProcess(uiPid)
+        await endChild(ui)
         await endEveryHost()
       }
     },

@@ -4,10 +4,12 @@
 // (`source_cursors`, `observed_sessions`, `observed_session_streams`; INV-37): messages and usage
 // go to conversation and ledger through the `ObservedBatchSink` bridge. The Claude (ISSUE-071) and
 // Codex (ISSUE-073) adapters are exported for the composition; the other provider adapters (later:
-// ISSUE-074, ISSUE-075), the ended-agent ledger (later: ISSUE-072) and `catchUp` (later:
-// ISSUE-078) join with their issues; `host/main.ts` composes it (later: ISSUE-095).
+// ISSUE-074, ISSUE-075) and `catchUp` (later: ISSUE-078) join with their issues; `host/main.ts`
+// composes it (later: ISSUE-095). The `EndedAgentLedger` (`ended_agents`) keeps every identity
+// DwarfAI ended or saw end from arriving again (ISSUE-072, INV-36), and the Claude adapter answers
+// a session's process identity through its #45 guard (`processRegistries`).
 import type { ProcessIdentity } from '../../kernel/domain/processIdentity'
-import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
+import type { DwarfId, HostEpoch, ProviderIdentity } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
 import type { DiagnosticsLog } from '../../kernel/ports/diagnosticsLog'
 import type { DomainEventBus } from '../../kernel/ports/domainEventBus'
@@ -18,6 +20,7 @@ import type { SqliteDatabase } from '../../kernel/ports/sqliteDatabase'
 import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { SqliteCursorStore } from './adapters/SqliteCursorStore'
+import { SqliteEndedAgentLedger } from './adapters/SqliteEndedAgentLedger'
 import { SqliteObservedSessionStore } from './adapters/SqliteObservedSessionStore'
 import type { ObservationEvent } from './application/events'
 import type { ObservationControlSoFar } from './application/observationControl'
@@ -25,6 +28,7 @@ import { ObservationLoop } from './application/observationLoop'
 import { createObservationQueries, type ObservationQueries } from './application/observationQueries'
 import type { CursorStore } from './ports/cursorStore'
 import type { ObservationAdapter } from './ports/observationAdapter'
+import type { EndedAgentLedger } from './ports/endedAgentLedger'
 import type { ObservedBatchSink } from './ports/observedBatchSink'
 import type { ObservedSessionStore } from './ports/observedSessionStore'
 
@@ -60,6 +64,7 @@ export {
   type ObservedTrigger
 } from './domain/observedSession'
 export type { CursorStore } from './ports/cursorStore'
+export type { EndedAgentLedger } from './ports/endedAgentLedger'
 export type {
   Cursor,
   CursorKind,
@@ -96,6 +101,22 @@ export interface ObservationDeps {
   log: DiagnosticsLog
   /** Defaults to `OBSERVATION_POLL_MS`. */
   pollMs?: number
+  /** The identities DwarfAI ended or saw end (16 §4.3; INV-36). */
+  ended: EndedAgentLedger
+  /**
+   * The adapters that can name an observed session's process (the Claude adapter, through its
+   * registry and #45 guard); none answers `null` for every dwarf.
+   */
+  processRegistries?: readonly ObservedProcessRegistry[]
+}
+
+/**
+ * An adapter's read of the process identity of one observed session, or null when it has none
+ * (a subagent, a session no registry names, a pid the #45 guard did not take). Internal to the
+ * module: the read behind `ObservedProcessIdentities` (same package gap).
+ */
+export interface ObservedProcessRegistry {
+  processIdentityOf(identity: ProviderIdentity): ProcessIdentity | null
 }
 
 /**
@@ -113,10 +134,12 @@ export interface Observation {
   control: ObservationControlSoFar
   queries: ObservationQueries
   /**
-   * No adapter of this build records a process identity: Codex, Antigravity and OpenCode files
-   * carry no pid and spike S-014-1 is `partial` (its default: `no-identity`), and the Claude
-   * adapter, which reads the registry pid and start time, is not built yet (later: ISSUE-071,
-   * ISSUE-072). So every observed session answers `null` and ends `failed: 'no-identity'`.
+   * Only the Claude adapter records a process identity: the registry pid and its recorded start,
+   * taken through the #45 guard (ISSUE-072). Codex, Antigravity and OpenCode files carry no pid and
+   * spike S-014-1 is `partial` (its default: `no-identity`), and a subagent has no process of its
+   * own, so those answer `null` and end `failed: 'no-identity'`. A dwarf is known by the
+   * identity of the last batch written to it this Host run: after a restart, a dwarf whose session
+   * wrote nothing since answers `null` until it does.
    */
   processIdentities: ObservedProcessIdentities
   /** Resolves once no observation cycle is in flight (tests and an orderly shutdown). */
@@ -130,22 +153,34 @@ export function createObservation(deps: ObservationDeps): Observation {
     control: {
       start: () => loop.start(),
       stop: () => loop.stop(),
-      nudge: (hint) => loop.nudge(hint)
+      nudge: (hint) => loop.nudge(hint),
+      recordEnded: (identity, at) => loop.recordEnded(identity, at)
     },
     queries: createObservationQueries({ sessions: deps.sessions }),
-    processIdentities: { processIdentityOf: () => null },
+    processIdentities: {
+      processIdentityOf: (dwarfId) => {
+        const identity = loop.identityOf(dwarfId)
+        if (identity === null) return null
+        for (const registry of deps.processRegistries ?? []) {
+          const found = registry.processIdentityOf(identity)
+          if (found !== null) return found
+        }
+        return null
+      }
+    },
     whenIdle: () => loop.whenIdle()
   }
 }
 
-/** The module's two stores over the Host database (09 §4.2). */
+/** The module's three stores over the Host database (09 §4.2). */
 export function createSqliteObservationStores(deps: {
   db: SqliteDatabase
   scope: TransactionScope
   clock: Clock
-}): { cursors: CursorStore; sessions: ObservedSessionStore } {
+}): { cursors: CursorStore; sessions: ObservedSessionStore; ended: EndedAgentLedger } {
   return {
     cursors: new SqliteCursorStore({ db: deps.db, scope: deps.scope, clock: deps.clock }),
-    sessions: new SqliteObservedSessionStore({ db: deps.db, scope: deps.scope })
+    sessions: new SqliteObservedSessionStore({ db: deps.db, scope: deps.scope }),
+    ended: new SqliteEndedAgentLedger({ db: deps.db, scope: deps.scope })
   }
 }

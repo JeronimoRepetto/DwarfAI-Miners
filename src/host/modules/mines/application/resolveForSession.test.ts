@@ -8,6 +8,7 @@ import type { MinesEvent } from '../domain/events'
 import { transition, type Mine } from '../domain/mine'
 import { FakeGitRepoInspector } from '../ports/fakes/FakeGitRepoInspector'
 import { InMemoryMineRepository } from '../testing/InMemoryMineRepository'
+import { createCheckFolder } from './checkFolder'
 import type { MinePathProbe } from './resolveFile'
 import { createResolveForSession } from './resolveForSession'
 
@@ -20,7 +21,12 @@ const T0 = 1_790_000_000_000
 
 const at = (path: string) => path as FolderPath
 
-function world() {
+/**
+ * `realFolderCheck`: the session's mine is checked on this FakeFs (ISSUE-085); otherwise a stub
+ * that finds every folder as the mine's state already says, so the cases above it stay about
+ * resolution alone.
+ */
+function world(opts: { realFolderCheck?: boolean } = {}) {
   const fs = new FakeFs()
   fs.addFile('/work/plain/readme.md', 'plain')
   fs.addFile('/work/repo/.git/HEAD', 'ref: refs/heads/main\n')
@@ -49,20 +55,38 @@ function world() {
     kindOf: (path) => (fs.entriesNow(path) !== null ? 'directory' : null)
   }
   const remeasured: MineId[] = []
+  const ids = new SequenceIdGenerator()
+  const checked: MineId[] = []
+  const real = createCheckFolder({
+    repository,
+    transactions,
+    fs,
+    clock,
+    ids,
+    bus,
+    hostEpoch: 'epoch-066',
+    remeasure: (mineId) => remeasured.push(mineId)
+  })
   const { resolveForSession } = createResolveForSession({
     repository,
     transactions,
     resolver: new FakeGitRepoInspector({ fs, clock, style: 'posix', caseFold: false }),
     paths,
-    ids: new SequenceIdGenerator(),
+    ids,
     clock,
     bus,
     hostEpoch: 'epoch-066',
     style: 'posix',
-    remeasure: (mineId) => remeasured.push(mineId)
+    remeasure: (mineId) => remeasured.push(mineId),
+    checkFolder: async (mineId) => {
+      checked.push(mineId)
+      if (opts.realFolderCheck === true) return real.checkFolder(mineId)
+      const state = repository.byId(mineId)?.state
+      return { ok: true, value: state === 'unenterable' ? 'unenterable' : 'enterable' }
+    }
   })
   const save = (mine: Mine) => transactions.inTransaction(() => repository.save(mine))
-  return { resolveForSession, repository, bus, remeasured, clock, save }
+  return { resolveForSession, repository, bus, remeasured, checked, clock, save, fs }
 }
 
 describe('resolveForSession (16 §4.1)', () => {
@@ -132,5 +156,29 @@ describe('resolveForSession (16 §4.1)', () => {
     expect(await w.resolveForSession(at('/work/repo'), true)).toEqual({
       unenterable: 'folder missing'
     })
+  })
+
+  it('[S3.12, S3.13, INV-08] a session resolving to a known mine checks its folder: gone, it answers the reason; back, the mine is entered again', async () => {
+    const w = world({ realFolderCheck: true })
+    const first = await w.resolveForSession(at('/work/plain'), true)
+    const mineId = (first as { mineId: MineId }).mineId
+    // A new mine is not checked: its folder was just resolved.
+    expect(w.checked).toEqual([])
+
+    w.fs.removeFile('/work/plain/readme.md')
+    expect(await w.resolveForSession(at('/work/plain'), true)).toEqual({ unenterable: 'not-found' })
+    expect(w.checked).toEqual([mineId])
+    expect(w.repository.byId(mineId)).toMatchObject({
+      state: 'unenterable',
+      unenterableReason: 'not-found'
+    })
+    expect(w.bus.ofType('MineBecameUnenterable').map((event) => event.payload)).toEqual([
+      { mineId, reason: 'not-found' }
+    ])
+
+    w.fs.addFile('/work/plain/readme.md', 'plain')
+    expect(await w.resolveForSession(at('/work/plain'), false)).toEqual({ mineId, created: false })
+    expect(w.repository.byId(mineId)?.state).toBe('measuring')
+    expect(w.bus.ofType('MineBecameEnterable').map((event) => event.payload)).toEqual([{ mineId }])
   })
 })

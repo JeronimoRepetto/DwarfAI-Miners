@@ -51,7 +51,13 @@ export type MineBecameUnenterable = DomainEvent<
   { mineId: MineId; reason: string }
 >
 
+/** The mine's folder is found again (08 §0; 07 S3.13, S3.14). State, on change. */
+export type MineBecameEnterable = DomainEvent<'MineBecameEnterable', { mineId: MineId }>
+
 /** The events of the scoring walk (`MinesCommands.remeasure`, ISSUE-065). */
 export type MeasurementEvent = MineMeasurementStarted | MineMeasured | MineBecameUnenterable
 
-export type MinesEvent = MineCreated | MineReattached | MeasurementEvent
+/** The events of the folder check (`MinesCommands.checkFolder`, ISSUE-085). */
+export type FolderCheckEvent = MineBecameUnenterable | MineBecameEnterable
+
+export type MinesEvent = MineCreated | MineReattached | MeasurementEvent | MineBecameEnterable
