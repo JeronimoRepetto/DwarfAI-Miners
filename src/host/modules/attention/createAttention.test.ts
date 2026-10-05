@@ -12,6 +12,7 @@ import {
   InMemoryAttentionRows
 } from './ports/fakes/InMemoryAttentionLedger'
 import { createAttention, turnFinishedFact, type AttentionEvent } from './index'
+import { RecordingLevel3Sink } from './ports/fakes/RecordingLevel3Sink'
 
 const T0 = 1_790_000_000_000
 const DWARF = 'dwarf-0001' as DwarfId
@@ -29,6 +30,7 @@ describe('createAttention', () => {
       clock: new FakeClock(T0),
       ids: new SequenceIdGenerator(),
       hostEpoch: 'epoch-0109',
+      sink: new RecordingLevel3Sink(),
       titles: (kind, displayName) => `fake ${kind} title for ${displayName}`
     })
     const finished = turnFinishedFact(
@@ -78,6 +80,7 @@ describe('createAttention', () => {
       clock,
       ids: new SequenceIdGenerator(),
       hostEpoch: 'epoch-0110',
+      sink: new RecordingLevel3Sink(),
       titles: (kind, displayName) => `fake ${kind} title for ${displayName}`
     })
     const turnKey = `${DWARF}:turn-finished:turn-1`

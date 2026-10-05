@@ -6,17 +6,26 @@
 // tests); the type test in frames.test.ts keeps every schema equal to its interface entry. The
 // mapping is Partial only because a test may merge a frame of its own into HostFrames.
 import { z } from 'zod'
-import { preferencesViewSchema, resetIdSchema, type PreferencesView, type ResetId } from '../wire'
+import {
+  osNotificationSchema,
+  preferencesViewSchema,
+  resetIdSchema,
+  type OsNotification,
+  type PreferencesView,
+  type ResetId
+} from '../wire'
 import type { HelloOk } from './adr-003'
 import { resetEpochSchema, resetStepSchema, type ResetStep } from './params/preferences'
 
 // An interface, not a type alias, so that entries merge into it.
-// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
+// verbatim: 14 §3.5 (the B-F03, B-F04, B-F05, B-F22, B-F23, B-F24, B-F26 and B-F27 entries, byte-for-byte; `prettier-ignore` keeps their alignment)
 // prettier-ignore
 export interface HostFrames {
   'resync-required':      { reason: 'epoch-changed' | 'seq-not-in-ring' | 'ring-overrun' | 'backpressure' | 'metrics-reset' }
   'host.state':           { state: HelloOk['state']; jobStatus: HelloOk['jobStatus'] }
   'host.closing':         { reason: 'idle' | 'stop-all' | 'upgrade' | 'os-session-end'; clean: true }   // 'idle' retired by AMENDMENT-5 (OQ-63), never sent
+  'attention.notify':     OsNotification
+  'attention.withdraw':   { keys: string[] }
   'preferences.changed':  PreferencesView
   'ui.resetPreferences':  { epoch: number }
   'reset.progress':       { resetId: ResetId; epoch: number; step: ResetStep }
@@ -48,9 +57,29 @@ export const HOST_FRAME_SCHEMAS = {
       clean: z.literal(true)
     })
     .strict(),
+  'attention.notify': osNotificationSchema,
+  'attention.withdraw': z.object({ keys: z.array(z.string()) }).strict(),
   'preferences.changed': preferencesViewSchema,
   'ui.resetPreferences': z.object({ epoch: resetEpochSchema }).strict(),
   'reset.progress': z
     .object({ resetId: resetIdSchema, epoch: resetEpochSchema, step: resetStepSchema })
     .strict()
 } as const satisfies Partial<{ [F in keyof HostFrames]: z.ZodType<HostFrames[F]> }>
+
+// Every name of the 14 §3.5 list, also those whose frame lands with a later issue: the list is the
+// contract's, and the transport logs a frame's name, seq and size only, never its data (14 §1.10).
+// verbatim: 14 §3.5 (SENSITIVE_FRAMES, byte-for-byte; `prettier-ignore` keeps its alignment)
+/** Payloads never written to a log, debug dump or crash report (§1.10); the transport logs names, ids, seq and sizes only. */
+// prettier-ignore
+export const SENSITIVE_FRAMES = [
+  'attention.notify',        // OsNotification: custom names, question text
+  'conversation.appended',   // message text
+  'dwarf.arrived', 'dwarf.changed',   // custom names, outcome line
+  'ask.opened',              // ask payloads (question steps, tool summaries)
+  'activity.changed',        // tool-step summaries
+  'launch.changed', 'launch.failed',  // LaunchFailure.toolOutputTail
+  'host.recovered',          // report items (dwarf names, provider causes)
+  'toast',                   // provider-error cause
+  'mine.changed',            // folder paths
+] as const
+// end verbatim: 14 §3.5

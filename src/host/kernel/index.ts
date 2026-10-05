@@ -1,6 +1,6 @@
 // The Host kernel's public surface (05 §2.1): value types, the event envelope, the kernel driven
 // ports, InProcessEventBus and the poll profiler. Never the fakes or the contract suites (R14).
-export type { DwarfId, EventId, HostEpoch, Instant, Result } from './domain/values'
+export type { DwarfId, EventId, HostEpoch, Instant, MineId, Result } from './domain/values'
 export type { DomainEvent } from './domain/domainEvent'
 export { HostInvariantError } from './domain/errors'
 export type { AppPaths } from './ports/appPaths'
@@ -14,6 +14,13 @@ export type {
   LifecycleFactType
 } from './ports/lifecycleFactLog'
 export type { Scheduler } from './ports/scheduler'
+export {
+  SECRET_NAMES,
+  SECRET_READ_TIMEOUT_MS,
+  type SecretName,
+  type SecretReader,
+  type SecretValue
+} from './ports/secretReader'
 export type { TransactionScope } from './ports/transactionScope'
 export {
   InProcessEventBus,

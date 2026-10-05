@@ -17,6 +17,7 @@ import {
   InMemoryAttentionRows
 } from '../ports/fakes/InMemoryAttentionLedger'
 import { AttentionPolicy } from './attentionPolicy'
+import { RecordingLevel3Sink } from '../ports/fakes/RecordingLevel3Sink'
 
 const T0 = 1_790_000_000_000
 const DWARF = 'dwarf-0001' as DwarfId
@@ -76,6 +77,7 @@ function hostLife(rows = new InMemoryAttentionRows(), epoch = 'epoch-0110') {
     clock: new FakeClock(T0),
     ids: new SequenceIdGenerator(),
     hostEpoch: epoch,
+    sink: new RecordingLevel3Sink(),
     titles: (kind, name) => `title(${kind}, ${name})`
   })
   const withdrawn = () =>
