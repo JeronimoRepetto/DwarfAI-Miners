@@ -133,6 +133,32 @@ export function runMessageLogContract(
       expect(s.rowCount(other)).toBe(1)
     })
 
+    it('[INV-60, ADR-007] an uncorrelated transcript echo of typed text merges into the oldest waiting row with that exact text, once', async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      // The same text typed twice: two waiting rows, each merged by one echo, oldest first.
+      const first = s.seedWaitingRow(dwarf, 'typed:relay-1', 'hello')
+      const second = s.seedWaitingRow(dwarf, 'typed:relay-2', 'hello')
+      s.seedWaitingRow(other, 'typed:relay-3', 'hello')
+      const echo = (n: number) => entry(n, { role: 'person', text: 'hello', providerTime: s.now })
+
+      const firstEcho = s.inTransaction(() => s.log.append(dwarf, [echo(1)], 'transcript'))
+      const secondEcho = s.inTransaction(() => s.log.append(dwarf, [echo(2)], 'transcript'))
+      // A third echo finds no waiting row left: it is the person's own message.
+      const third = s.inTransaction(() => s.log.append(dwarf, [echo(3)], 'transcript'))
+      // The same text from a live stream is never merged by text: it carries its correlation.
+      const live = s.inTransaction(() => s.log.append(other, [echo(4)], 'live-stream'))
+
+      expect(firstEcho).toEqual({ inserted: 0, appended: [] })
+      expect(secondEcho).toEqual({ inserted: 0, appended: [] })
+      expect(s.keyOf(echo(1).sourceKey)).toEqual({ dwarfId: dwarf, messageId: first })
+      expect(s.keyOf(echo(2).sourceKey)).toEqual({ dwarfId: dwarf, messageId: second })
+      expect(third.inserted).toBe(1)
+      expect(live.inserted).toBe(1)
+      expect(s.rowCount(dwarf)).toBe(3)
+      expect(s.rowCount(other)).toBe(2)
+    })
+
     it('[ADR-007] page returns the newest rows first and never a row of another dwarf', async () => {
       const s = await setUp()
       const [dwarf, other] = s.dwarfIds

@@ -4,7 +4,8 @@
 //
 // The same rules as `SqliteMessageLog` (09 §5.2 steps 1–2): each entry claims its source key
 // first, and a key already claimed writes nothing; a dropped record keeps its key with no row; an
-// echo merges into its dwarf's waiting DwarfAI row; text over 64 KiB (UTF-8) is refused like the
+// echo merges into its dwarf's waiting DwarfAI row, and an uncorrelated observed person entry into
+// the oldest waiting row with its exact text inside the typed-echo window; text over 64 KiB (UTF-8) is refused like the
 // `messages` CHECK; `append` runs only inside the caller's transaction. A test's transaction rolls
 // it back with `snapshot` / `restore`. `trim` keeps the newest `MESSAGES_PER_DWARF` rows of the
 // dwarf by the domain rule `rowsToTrim` (`sending` first), and a trimmed row's key stays with no
@@ -17,6 +18,7 @@ import type { TransactionScope } from '../../../kernel/ports/transactionScope'
 import type { ConversationEntry } from '../../suppliers'
 import {
   classifyEntry,
+  echoesTypedSend,
   MESSAGE_TEXT_MAX_BYTES,
   type DeliveryPhase,
   type FeedPageRequest,
@@ -74,10 +76,16 @@ export class InMemoryMessageLog implements MessageLog {
     for (const entry of entries) {
       if (this.keys.has(entry.sourceKey)) continue
       this.keys.set(entry.sourceKey, { dwarfId, messageId: null })
-      const disposition = classifyEntry(entry, (c) => this.waiting(dwarfId, c) !== undefined)
+      const typed =
+        entry.echoOf === undefined ? this.typedEcho(dwarfId, entry, origin, now) : undefined
+      const disposition = classifyEntry(
+        entry,
+        (c) => this.waiting(dwarfId, c) !== undefined,
+        typed !== undefined
+      )
       if (disposition === 'drop-keep-key') continue
-      if (disposition === 'merge-echo' && entry.echoOf !== undefined) {
-        const row = this.waiting(dwarfId, entry.echoOf)
+      if (disposition === 'merge-echo') {
+        const row = entry.echoOf === undefined ? typed : this.waiting(dwarfId, entry.echoOf)
         if (row !== undefined) {
           row.message = {
             ...row.message,
@@ -230,9 +238,26 @@ export class InMemoryMessageLog implements MessageLog {
     return message.id
   }
 
+  /** The oldest waiting row of the dwarf this uncorrelated observed entry echoes (ADR-007 item 3). */
+  private typedEcho(
+    dwarfId: DwarfId,
+    entry: ConversationEntry,
+    origin: 'live-stream' | 'transcript',
+    now: Instant
+  ): StoredRow | undefined {
+    return this.rows
+      .filter((r) => r.message.dwarfId === dwarfId && r.pendingEcho !== null)
+      .sort((a, b) => a.message.createdAt - b.message.createdAt || compareIds(a, b))
+      .find((r) => echoesTypedSend(entry, origin, r.message, now))
+  }
+
   private waiting(dwarfId: DwarfId, correlation: string): StoredRow | undefined {
     return this.rows.find((r) => r.message.dwarfId === dwarfId && r.pendingEcho === correlation)
   }
+}
+
+function compareIds(a: StoredRow, b: StoredRow): number {
+  return a.message.id < b.message.id ? -1 : a.message.id > b.message.id ? 1 : 0
 }
 
 function sortAt(m: Message): number {
