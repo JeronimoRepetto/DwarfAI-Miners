@@ -9,6 +9,7 @@ import { SequenceIdGenerator } from '../../../kernel/fakes/SequenceIdGenerator'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
 import type { TransactionRunner } from '../../../kernel/ports/transactionRunner'
 import { ConversationIngest, type ConversationCommands } from '../application/ingest'
+import { AskNoter } from '../application/noteAsk'
 import { SessionEndRecorder } from '../application/recordSessionEnd'
 import { TurnEndRecorder } from '../application/recordTurnEnd'
 import type { ConversationEvent } from '../domain/events'
@@ -94,8 +95,18 @@ export function inMemoryConversation(options: { guardedBus?: boolean } = {}) {
       ids,
       hostEpoch
     })
+    const asks = new AskNoter({
+      activity,
+      transactions: transactionRunner,
+      scope,
+      emit: (event, joined) => ingest.emit(event, joined),
+      clock,
+      ids,
+      hostEpoch
+    })
     return {
       ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
+      noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change),
       recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
       recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
       publishJoined: () => ingest.publishJoined(),

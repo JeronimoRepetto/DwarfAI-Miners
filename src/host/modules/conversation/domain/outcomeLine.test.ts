@@ -70,9 +70,13 @@ describe('deriveOutcomeLine', () => {
 
   it("[US-MSG-011.AC01, US-MSG-011.AC14] a working dwarf's line carries its open run's steps so far, from one step on", () => {
     for (const n of [1, 2, 37]) {
-      const line = deriveOutcomeLine(input({ openRun: { stepCount: n } }))
+      const line = deriveOutcomeLine(
+        input({ openRun: { stepCount: n }, stepsSinceLastPersonMessage: n + 4 })
+      )
       expect(line.kind).toBe('working')
-      expect(line.stepCount).toBe(n)
+      // stepCount is the running total since the person's last message (amendment B); the part is
+      // the open run's count.
+      expect(line.stepCount).toBe(n + 4)
       expect(line.parts).toEqual([{ kind: 'steps-so-far', n }])
     }
     // Steps of earlier runs since the person's last message are not "so far": only the open run counts.
@@ -87,13 +91,14 @@ describe('deriveOutcomeLine', () => {
       input({
         status: 'asking',
         openRun: { stepCount: 4 },
+        stepsSinceLastPersonMessage: 6,
         frontAsk: { kind: 'question', questionCount: 2 }
       })
     )
     expect(questions).toEqual({
       dwarfId: DWARF,
       kind: 'waiting-on-you',
-      stepCount: 4,
+      stepCount: 6,
       parts: [{ kind: 'waiting-questions', n: 2 }],
       reliability: 'reliable',
       at: T0
@@ -117,7 +122,9 @@ describe('deriveOutcomeLine', () => {
   })
 
   it('[US-MSG-011.AC03, US-MSG-011.AC04] after the answer is submitted the line reads answers received, and after the answers message is handed over it reads reading your message', () => {
-    const submitted = deriveOutcomeLine(input({ openRun: { stepCount: 3 }, answers: 'submitted' }))
+    const submitted = deriveOutcomeLine(
+      input({ openRun: { stepCount: 3 }, stepsSinceLastPersonMessage: 3, answers: 'submitted' })
+    )
     expect(submitted.kind).toBe('working')
     expect(submitted.parts).toEqual([{ kind: 'answers-received' }])
     expect(submitted.stepCount).toBe(3)

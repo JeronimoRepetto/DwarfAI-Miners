@@ -25,8 +25,15 @@
 // in its parent's session (`providerAgentId`, 15 §1.5): it is never re-resolved here.
 //
 // Amendment of 2026-10-02 to 16 §4.6 (ISSUE-098): `ingest` takes the feed of the batch (`origin`).
+//
+// The outcome line (ISSUE-102; 16 §4.6 amendment B): after the runs are saved, the same transaction
+// reads the dwarf's previous line, adds the steps this batch folded to its running total (the
+// person's own message, in batch order, starts the total again), and saves the derived line; its
+// `OutcomeLineChanged` follows the batch's other events after the commit, only when it changed. A
+// batch that folded steps makes the dwarf working, unless it is asking (the trusted ask first,
+// ADR-032 item 2); any other batch keeps the status the previous line carries.
 import type { TurnEnded } from '../../../kernel/domain/sharedContracts'
-import type { EventId, DwarfId, HostEpoch, Instant } from '../../../kernel/domain/values'
+import type { AskId, EventId, DwarfId, HostEpoch, Instant } from '../../../kernel/domain/values'
 import type { Clock } from '../../../kernel/ports/clock'
 import type { DomainEventBus } from '../../../kernel/ports/domainEventBus'
 import type { IdGenerator } from '../../../kernel/ports/idGenerator'
@@ -46,10 +53,11 @@ import { MESSAGES_PER_DWARF } from '../domain/retention'
 import type { ActivityLog } from '../ports/activityLog'
 import type { MessageLog } from '../ports/messageLog'
 import { activityChanged } from './activityChanged'
+import { outcomeLineChanged, recomputeOutcome } from './outcomeRecompute'
 
 /**
  * The members of 05 §3.6 `ConversationCommands` built so far. Each later issue adds its member
- * with the types it needs (`send` / `retry` ISSUE-166, `noteAsk` ISSUE-102, …).
+ * with the types it needs (`send` / `retry` ISSUE-166, …).
  */
 export interface ConversationCommands {
   // from live streams + transcript readers
@@ -59,7 +67,15 @@ export interface ConversationCommands {
   recordTurnEnd(end: TurnEnded): void
   // route of DwarfDeparted / DriverSessionExited: closes an open activity run (07 S11.05); idempotent (AMENDMENT-10)
   recordSessionEnd(dwarfId: DwarfId, at: Instant): void
+  // Amended: 16 §4.6 noteAsk (owner amendment B2, 2026-10-05): an opened ask carries its kind and
+  // question count. Route of ask.opened / ask.closed: the outcome-line trigger (US-MSG-011 AC02).
+  noteAsk(dwarfId: DwarfId, change: AskChange): void
 }
+
+/** 16 §4.6 `noteAsk`'s change, as amended (B2): what the line words of an opened ask. */
+export type AskChange =
+  | { askId: AskId; state: 'opened'; kind: 'question' | 'permission'; questionCount: number }
+  | { askId: AskId; state: 'closed' }
 
 export interface ConversationIngestDeps {
   log: MessageLog
@@ -91,15 +107,27 @@ export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> 
     const { log, transactions, scope, clock, ids, hostEpoch } = this.deps
     const joined = scope.isInTransaction()
     // A batch carries one dwarf's entries, so that dwarf is the only one it can push over the cap.
-    const { appended, runs } = transactions.inTransaction(() => {
+    const { appended, runs, outcome } = transactions.inTransaction(() => {
       const result = log.append(dwarfId, entries, origin)
       log.trim(dwarfId, MESSAGES_PER_DWARF)
-      const changed = this.foldActivity(
+      const folded = this.foldActivity(
         dwarfId,
         entries,
         result.appended.map((m) => m.sourceKey)
       )
-      return { appended: result.appended, runs: changed }
+      const line = recomputeOutcome(
+        this.deps.activity,
+        dwarfId,
+        (previous) => {
+          if (previous === null && folded.steps === 0) return null
+          const before = folded.personReset ? 0 : (previous?.stepsSinceLastPersonMessage ?? 0)
+          const kept = previous ?? { status: 'working' as const, lastTurnEnd: null, frontAsk: null }
+          const status = folded.steps > 0 && kept.status !== 'asking' ? 'working' : kept.status
+          return { ...kept, status, stepsSinceLastPersonMessage: before + folded.steps }
+        },
+        clock.now()
+      )
+      return { appended: result.appended, runs: folded.runs, outcome: line }
     })
     if (appended.length > 0) {
       this.emit(
@@ -115,6 +143,7 @@ export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> 
       )
     }
     for (const run of runs) this.emit(activityChanged(run, { clock, ids, hostEpoch }), joined)
+    if (outcome !== null) this.emit(outcomeLineChanged(outcome, { clock, ids, hostEpoch }), joined)
   }
 
   /**
@@ -142,18 +171,21 @@ export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> 
   /**
    * Inside the batch transaction: applies the inserted entries to the dwarf's open run (07 §11) and
    * saves every run they changed, in the order each first changed, so a run that closed is saved
-   * before the one that opened after it (INV-66). Returns those runs in their final state.
+   * before the one that opened after it (INV-66). Returns those runs in their final state, the
+   * steps folded since the batch's last person message, and whether it had one (the line's total).
    */
   private foldActivity(
     dwarfId: DwarfId,
     entries: readonly ConversationEntry[],
     insertedKeys: readonly (string | null)[]
-  ): ActivityDisclosure[] {
+  ): { runs: ActivityDisclosure[]; steps: number; personReset: boolean } {
     const { activity, clock, ids } = this.deps
     const inserted = new Set(insertedKeys)
     const changed = new Map<string, ActivityDisclosure>()
     const now = clock.now()
     let open = activity.openRun(dwarfId)
+    let steps = 0
+    let personReset = false
     const take = (change: RunChange): void => {
       if (!change.changed || change.run === null) return
       changed.set(change.run.id, change.run)
@@ -164,8 +196,13 @@ export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> 
       if (!inserted.delete(entry.sourceKey)) continue
       const at = entry.providerTime ?? now
       if (entry.role === 'dwarf' && entry.text.trim() !== '') take(applyDwarfSpoke(open, at))
-      if (entry.role === 'person') take(applyPersonMessage(open, at))
+      if (entry.role === 'person') {
+        take(applyPersonMessage(open, at))
+        personReset = true
+        steps = 0
+      }
       for (const step of entry.activity ?? []) {
+        steps += 1
         take(
           applyStep(
             open,
@@ -177,6 +214,6 @@ export class ConversationIngest implements Pick<ConversationCommands, 'ingest'> 
       }
     }
     for (const run of changed.values()) activity.saveDisclosure(run)
-    return [...changed.values()]
+    return { runs: [...changed.values()], steps, personReset }
   }
 }

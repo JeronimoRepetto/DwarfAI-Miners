@@ -95,8 +95,13 @@ describe('activity runs through ingest, recordTurnEnd and recordSessionEnd', () 
         payload: { dwarfId: CONVERSATION_DWARF, disclosureId: run!.id, open: false, stepCount: 3 }
       }
     ])
-    // After the MessagesAppended of the same commit, one transaction in all.
-    expect(c.bus.published.map((e) => e.type)).toEqual(['MessagesAppended', 'ActivityChanged'])
+    // After the MessagesAppended of the same commit, one transaction in all; the outcome line the
+    // batch changed follows (16 §4.6 ingest events; ISSUE-102).
+    expect(c.bus.published.map((e) => e.type)).toEqual([
+      'MessagesAppended',
+      'ActivityChanged',
+      'OutcomeLineChanged'
+    ])
     expect(c.transactions()).toBe(1)
   })
 
@@ -182,8 +187,13 @@ describe('activity runs through ingest, recordTurnEnd and recordSessionEnd', () 
     expect(c.activity.runs(CONVERSATION_DWARF)).toMatchObject([
       { open: false, stepCount: 2, closedAt: CONVERSATION_T0 + 900 }
     ])
-    // After the ingest's MessagesAppended and ActivityChanged.
-    expect(c.bus.published.slice(2).map((e) => e.type)).toEqual(['TurnEnded', 'ActivityChanged'])
+    // After the ingest's MessagesAppended, ActivityChanged and OutcomeLineChanged; the new end's
+    // outcome line follows its ActivityChanged (16 §4.6 recordTurnEnd events; ISSUE-102).
+    expect(c.bus.published.slice(3).map((e) => e.type)).toEqual([
+      'TurnEnded',
+      'ActivityChanged',
+      'OutcomeLineChanged'
+    ])
     expect(c.bus.ofType('ActivityChanged').at(-1)?.payload).toMatchObject({
       open: false,
       stepCount: 2

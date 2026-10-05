@@ -73,7 +73,12 @@ export class InMemoryActivityLog implements ActivityLog {
     this.box.outcomes.set(o.dwarfId, structuredClone(o))
   }
 
-  /** The dwarf's stored outcome line, or null. */
+  outcomeOf(dwarfId: DwarfId): OutcomeLine | null {
+    this.inTransaction('outcomeOf')
+    return this.outcome(dwarfId)
+  }
+
+  /** The dwarf's stored outcome line, or null: the test probe, outside any transaction. */
   outcome(dwarfId: DwarfId): OutcomeLine | null {
     const line = this.box.outcomes.get(dwarfId)
     return line === undefined ? null : structuredClone(line)

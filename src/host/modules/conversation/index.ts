@@ -12,7 +12,10 @@
 // activity runs (07 machine 11) — `ingest` folds each new entry's tool steps into the dwarf's open
 // run and the dwarf speaking closes it, `recordTurnEnd` closes it with a new turn end,
 // `recordSessionEnd` with a session end (AMENDMENT-10), all through `SqliteActivityLog`, each
-// publishing `ActivityChanged` after its commit.
+// publishing `ActivityChanged` after its commit. ISSUE-102: the outcome line (06 §9.2) — each of
+// `ingest`, `recordTurnEnd`, `recordSessionEnd` and `noteAsk` (amended B2) recomputes it in its
+// transaction through `ActivityLog.outcomeOf` / `saveOutcome` (amendment B) and publishes
+// `OutcomeLineChanged` after the commit when it changed.
 // Conversation imports only suppliers and crew (05 §1.3, R4).
 import type { DwarfId, HostEpoch } from '../../kernel/domain/values'
 import type { Clock } from '../../kernel/ports/clock'
@@ -24,7 +27,8 @@ import type { TransactionRunner } from '../../kernel/ports/transactionRunner'
 import type { TransactionScope } from '../../kernel/ports/transactionScope'
 import { SqliteActivityLog } from './adapters/SqliteActivityLog'
 import { SqliteMessageLog } from './adapters/SqliteMessageLog'
-import { ConversationIngest, type ConversationCommands } from './application/ingest'
+import { ConversationIngest, type AskChange, type ConversationCommands } from './application/ingest'
+import { AskNoter } from './application/noteAsk'
 import { ConversationFeedQueries } from './application/queries'
 import { SessionEndRecorder } from './application/recordSessionEnd'
 import { TurnEndRecorder } from './application/recordTurnEnd'
@@ -35,8 +39,10 @@ export type {
   ActivityChanged,
   ConversationEvent,
   MessagesAppended,
+  OutcomeLineChanged,
   TurnEndedEvent
 } from './domain/events'
+export type { OutcomeLine, OutcomeLinePart, TurnOutcomeKind } from './domain/outcomeLine'
 export type { ActivityDisclosure } from './domain/activityRun'
 export type { TurnEnded, TurnEndKind } from '../../kernel/domain/sharedContracts'
 export { announceable, downgrade, type TurnEndCapability } from './domain/turnEnd'
@@ -53,7 +59,7 @@ export type {
   MessageRole,
   MessageView
 } from './domain/messages'
-export type { ConversationCommands }
+export type { AskChange, ConversationCommands }
 /** The feed of an ingested batch (`messages.origin`): what the `ObservedBatchSink` route passes. */
 export type IngestOrigin = Parameters<ConversationCommands['ingest']>[2]
 
@@ -137,10 +143,20 @@ export function createConversation(deps: ConversationDeps): Conversation {
     ids: deps.ids,
     hostEpoch: deps.hostEpoch
   })
+  const asks = new AskNoter({
+    activity,
+    transactions: deps.transactions,
+    scope: deps.transactions,
+    emit: (event, joined) => ingest.emit(event, joined),
+    clock: deps.clock,
+    ids: deps.ids,
+    hostEpoch: deps.hostEpoch
+  })
   const commands: ConversationCommands = {
     ingest: (dwarfId, entries, origin) => ingest.ingest(dwarfId, entries, origin),
     recordTurnEnd: (end) => turnEnds.recordTurnEnd(end),
-    recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at)
+    recordSessionEnd: (dwarfId, at) => sessionEnds.recordSessionEnd(dwarfId, at),
+    noteAsk: (dwarfId, change) => asks.noteAsk(dwarfId, change)
   }
   return {
     commands,

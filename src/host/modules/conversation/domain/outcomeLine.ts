@@ -44,6 +44,11 @@ export type OutcomeLinePart =
 export interface OutcomeLine {
   dwarfId: DwarfId
   kind: TurnOutcomeKind
+  /**
+   * The steps of every run since the person's last message (10 `outcome_lines.step_count`, "steps in
+   * the turn"): the running total the next recompute adds to (16 §4.6 amendment B). A working line
+   * shows its open run's count in its `steps-so-far` part instead.
+   */
   stepCount: number
   /** At most three (06 §9.2; 09 `parts_json` CHECK). */
   parts: OutcomeLinePart[]
@@ -92,7 +97,7 @@ export function deriveOutcomeLine(input: OutcomeInput): OutcomeLine {
     return {
       dwarfId,
       kind: 'waiting-on-you',
-      stepCount: runSteps,
+      stepCount: input.stepsSinceLastPersonMessage,
       parts: askParts(input.frontAsk),
       reliability: 'reliable',
       at
@@ -102,7 +107,7 @@ export function deriveOutcomeLine(input: OutcomeInput): OutcomeLine {
     return {
       dwarfId,
       kind: 'working',
-      stepCount: runSteps,
+      stepCount: input.stepsSinceLastPersonMessage,
       parts: workingParts(input.answers, runSteps),
       reliability: 'reliable',
       at

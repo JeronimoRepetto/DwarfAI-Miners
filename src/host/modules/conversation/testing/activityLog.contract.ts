@@ -6,7 +6,8 @@
 // `openRun` (16 §4.6, amendment A): null with no run, the open run, null after it closes, and the
 // same answer from a reopened store. `saveOutcome` (16 §4.6, ISSUE-102): one outcome line per dwarf
 // over `outcome_lines`, replaced by the next save, the same line twice changing nothing, inside the
-// caller's transaction (INV-67; 09 §4.4).
+// caller's transaction (INV-67; 09 §4.4). `outcomeOf` (16 §4.6, amendment B): null with no line, the
+// saved line, the same from a reopened store, refused outside the caller's transaction.
 import { afterEach, describe, expect, it } from 'vitest'
 import { HostInvariantError } from '../../../kernel/domain/errors'
 import type { DwarfId, Instant } from '../../../kernel/domain/values'
@@ -253,6 +254,24 @@ export function runActivityLogContract(
         })
       ).toThrow('the batch failed')
       expect(s.outcome(dwarf)).toEqual(workingLine(dwarf, 1))
+    })
+
+    it("[INV-67] outcomeOf answers null with no line, the saved line, the same from a reopened store, and is refused outside the caller's transaction", async () => {
+      const s = await setUp()
+      const [dwarf, other] = s.dwarfIds
+      expect(s.inTransaction(() => s.log.outcomeOf(dwarf))).toBeNull()
+
+      s.inTransaction(() => s.log.saveOutcome(finishedLine(dwarf)))
+      expect(s.inTransaction(() => s.log.outcomeOf(dwarf))).toEqual(finishedLine(dwarf))
+      expect(s.inTransaction(() => s.log.outcomeOf(other))).toBeNull()
+
+      // Replaced in place, and read back as the latest line, also after a Host restart.
+      s.inTransaction(() => s.log.saveOutcome(workingLine(dwarf, 3)))
+      const reopened = s.reopen()
+      expect(s.inTransaction(() => reopened.outcomeOf(dwarf))).toEqual(workingLine(dwarf, 3))
+
+      // Outside the caller's transaction the read is refused (16 §2.2).
+      expect(() => reopened.outcomeOf(dwarf)).toThrow(HostInvariantError)
     })
 
     it("[ADR-007] saveDisclosure outside the caller's transaction throws HostInvariantError and stores nothing", async () => {
