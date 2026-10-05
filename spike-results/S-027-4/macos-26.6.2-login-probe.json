@@ -1,0 +1,46 @@
+{
+  "note": "Assembled from the printed output of loginProbe.ts, steps 1, 4, 5 and 6 of clean-vm.md; macOS 26.6.2 (25G83) arm64, 2026-10-03. Paths scrubbed (<home>, <repo>).",
+  "steps": {
+    "1-install": {
+      "installed": "macos-launch-agent",
+      "location": "<home>/Library/LaunchAgents/com.dwarfai.spike.s0274.login-probe.plist",
+      "readBack": {
+        "present": true,
+        "command": {
+          "executable": "<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+          "args": [
+            "<repo>/coverage/s0274-login-probe/app",
+            "--background",
+            "--s0274-marker=<repo>/coverage/s0274-login-probe/marker.jsonl"
+          ]
+        },
+        "disabledByPerson": false,
+        "raw": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>com.dwarfai.spike.s0274.login-probe</string>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string><repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron</string>\n\t\t<string><repo>/coverage/s0274-login-probe/app</string>\n\t\t<string>--background</string>\n\t\t<string>--s0274-marker=<repo>/coverage/s0274-login-probe/marker.jsonl</string>\n\t</array>\n\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<false/>\n</dict>\n</plist>\n"
+      }
+    },
+    "4-check": {
+      "startedByTheOsAfterInstall": true,
+      "startedWithBackground": true,
+      "windowsOpened": 0,
+      "trayIcon": {
+        "ok": true
+      }
+    },
+    "5-read-after-the-person-turned-the-row-off": {
+      "present": true,
+      "command": {
+        "executable": "<repo>/node_modules/.pnpm/electron@44.0.0/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+        "args": [
+          "<repo>/coverage/s0274-login-probe/app",
+          "--background",
+          "--s0274-marker=<repo>/coverage/s0274-login-probe/marker.jsonl"
+        ]
+      },
+      "disabledByPerson": false
+    },
+    "6-remove": {
+      "removed": true,
+      "location": "<home>/Library/LaunchAgents/com.dwarfai.spike.s0274.login-probe.plist"
+    }
+  }
+}
