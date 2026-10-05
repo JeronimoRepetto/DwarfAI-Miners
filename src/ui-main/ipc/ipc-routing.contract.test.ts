@@ -541,7 +541,9 @@ describe('release cut-0 (21 §2 cut 0)', () => {
       // AMENDED for ISSUE-061: A-N12 joins them, born `ui-local` in cut 1 and routed by the same switch.
       'ui:preferences:reset': 'cut-1',
       'host:snapshot': 'cut-1',
-      'host:event': 'cut-1'
+      'host:event': 'cut-1',
+      // AMENDED for ISSUE-114: A-N16 joins them, born `ui-local` in cut 1 and routed by the same switch (ISSUE-123).
+      'mode:revealDwarfChat': 'cut-1'
     })
   })
 

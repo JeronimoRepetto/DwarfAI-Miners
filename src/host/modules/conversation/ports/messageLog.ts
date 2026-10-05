@@ -7,6 +7,12 @@
 // feed the batch came from (`messages.origin`, 09 §4.4) and returns, beside the count, the stored
 // rows this batch inserted (merged echoes excluded), so ingest can publish `MessagesAppended` with
 // the new rows only (08 §0, §5.1).
+//
+// Amendment to frozen 16 §4.6 / 05 §3.6 (owner-approved 2026-10-05, ISSUE-103): `page` returns
+// `Message[]`, every stored row of the dwarf — DwarfAI-sent rows and answers-records included,
+// each with its delivery — newest first by `sort_at DESC, id DESC`, at most the limit, so
+// `ConversationQueries.feed` can answer 14 §3.6 `FeedPage` (`MessageView` items, `before` a
+// `MessageId`) over "every stored row" (11 F12 table, the feed tail row).
 import type { DwarfId, Instant, MessageId } from '../../../kernel/domain/values'
 import type { ConversationEntry } from '../../suppliers'
 import type { FeedPageRequest, Message } from '../domain/messages'
@@ -18,7 +24,8 @@ export interface MessageLog {
     entries: ConversationEntry[],
     origin: 'live-stream' | 'transcript'
   ): { inserted: number; appended: Message[] }
-  page(dwarfId: DwarfId, req: FeedPageRequest): ConversationEntry[]
+  /** Amended: every stored row as a `Message`, newest first by `sort_at DESC, id DESC`, at most `req.limit` (default 50). */
+  page(dwarfId: DwarfId, req: FeedPageRequest): Message[]
   setDelivery(
     id: MessageId,
     phase: 'sending' | 'delivered' | 'reacted' | 'failed',

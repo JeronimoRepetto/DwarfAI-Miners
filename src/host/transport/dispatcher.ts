@@ -43,6 +43,12 @@ export type ResponseFrame = z.infer<typeof resFrameSchema>
 export interface RequestContext {
   role: ChannelRole
   clientId: string
+  /**
+   * `viewer` only: the dwarf its per-view token is bound to (ADR-031 item 2), which scopes what it
+   * may read (`conversation.feed` of that dwarf only). Absent for every other role, and for every
+   * viewer until the per-view token issuer exists (later: ISSUE-170).
+   */
+  dwarfId?: string
 }
 
 /** What every handler receives: the caller, and a way to act after its own answer. */

@@ -92,6 +92,16 @@ export interface FeedPageRequest {
   limit?: number
 }
 
+/**
+ * 14 §3.6 `FeedPage`, copied field for field like `FeedPageRequest` above (05 R2, R3): one page
+ * of a dwarf's feed, newest first; `reachedStart` once the oldest stored row is in it.
+ */
+export interface FeedPage {
+  dwarfId: DwarfId
+  messages: MessageView[]
+  reachedStart: boolean
+}
+
 /** What one ingested entry does (09 §5.2): a new row, a merge into a waiting row, or its key only. */
 export type EntryDisposition = 'insert' | 'merge-echo' | 'drop-keep-key'
 

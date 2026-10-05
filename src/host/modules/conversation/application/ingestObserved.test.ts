@@ -36,7 +36,14 @@ describe('conversation ingest, observed entries', () => {
 
     expect(c.log.rowIds(DWARF)).toEqual([waiting])
     expect(c.log.keyOf(echo.sourceKey)).toEqual({ dwarfId: DWARF, messageId: waiting })
-    expect(c.log.page(DWARF, {})).toEqual([
+    expect(
+      c.log.page(DWARF, {}).map(({ sourceKey, role, text, providerTime }) => ({
+        sourceKey,
+        role,
+        text,
+        providerTime
+      }))
+    ).toEqual([
       {
         sourceKey: echo.sourceKey,
         role: 'person',

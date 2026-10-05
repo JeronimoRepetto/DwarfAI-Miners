@@ -280,6 +280,8 @@ function stubApi(overrides: Record<string, unknown> = {}) {
      */
     setOpenMine: vi.fn(),
     onShowMine: vi.fn().mockReturnValue(() => undefined),
+    // AMENDED for ISSUE-114 (was: absent): the shell also hears A-N16, the reveal a notification click runs.
+    onRevealDwarfChat: vi.fn().mockReturnValue(() => undefined),
     getNotificationsEnabled: vi.fn().mockResolvedValue(true),
     setNotificationsEnabled: vi
       .fn()
@@ -2781,6 +2783,59 @@ describe('App system notifications (#316)', () => {
     await flushPromises()
     expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
     expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
+  })
+
+  /*
+   * ISSUE-114 (ADR-018 item 6; ADR-025 item 8; 14 §2.2 A-N16) — APPENDED. The reveal a notification click runs:
+   * unlike #316's click, it opens that dwarf's chat, or the mine alone when the dwarf left.
+   */
+  type Reveal = (t: { mineId: string; dwarfId: string | null }) => void
+  const revealOf = (api: { onRevealDwarfChat: { mock: { calls: unknown[][] } } }): Reveal =>
+    api.onRevealDwarfChat.mock.calls[0]![0] as Reveal
+
+  it('[US-SHELL-010.AC10] onRevealDwarfChat selects the mine, brings the card into view and opens the chat', async () => {
+    // jsdom has no scrollIntoView: the test gives elements one that records who was brought into view.
+    const scrolled: Element[] = []
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: function (this: Element) {
+        scrolled.push(this)
+      }
+    })
+    try {
+      const { wrapper, api } = await notifiedApp()
+      revealOf(api)({ mineId: MINE.id, dwarfId: MINE.dwarfs[0]!.id })
+      await flushPromises()
+      expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+      expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
+      const card = wrapper.find(`button.dm-dwarf[data-dwarf="${MINE.dwarfs[0]!.id}"]`)
+      expect(card.attributes('aria-pressed')).toBe('true')
+      expect(scrolled).toContain(card.element)
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
+  it('[ADR-018] onRevealDwarfChat with no dwarf, or one no longer on the board, opens the mine with no chat', async () => {
+    const { wrapper, api } = await notifiedApp()
+    // A chat already open on the dwarf is put away: the reveal says the dwarf left.
+    wrapper.findComponent(MapPage).vm.$emit('open', MINE.id)
+    await flushPromises()
+    await wrapper.find('button.dm-dwarf').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(true)
+    revealOf(api)({ mineId: MINE.id, dwarfId: null })
+    await flushPromises()
+    expect(wrapper.find('.dm-minecol').exists()).toBe(true)
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    revealOf(api)({ mineId: MINE.id, dwarfId: '01890a5d-ac96-774b-bcce-b302099adfff' })
+    await flushPromises()
+    expect(wrapper.findComponent(DwarfMessagePanel).exists()).toBe(false)
+    expect(wrapper.find('button.dm-dwarf').attributes('aria-pressed')).toBe('false')
+    // Nothing is held open in the dock for it either: the window keeps no slot beside the mine.
+    expect(api.setPanelLayout).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mineOpen: true, dockOpen: false })
+    )
   })
 
   it('adopts the stored switch on mount and draws it in Settings', async () => {

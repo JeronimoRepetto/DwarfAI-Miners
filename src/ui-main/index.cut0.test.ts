@@ -237,7 +237,11 @@ async function cut0App(
       lifecycle.calls.push('log flushed')
     }
   }
-  const host = new FakeHost({ capabilities: [...FAKE_HOST_CAPABILITIES, 'section:dwarfs'] })
+  // AMENDED for ISSUE-114 (was: without 'attention.clicked'): the Host serves B-M08 (host/transport), so a click's
+  // counter is advertised as the real Host does; no other request uses it.
+  const host = new FakeHost({
+    capabilities: [...FAKE_HOST_CAPABILITIES, 'section:dwarfs', 'attention.clicked']
+  })
   host.board = [
     {
       section: 'meta',
@@ -561,5 +565,51 @@ describe('the cut-0 composition of UI main (21 §2 cut 0)', () => {
     host.publishToNotifiers('attention.notify', { ...notification, key: 'k3' })
     await settle()
     expect(display.shown).toHaveLength(1)
+  })
+
+  it('[ADR-018, S17.06] a notification click reports attention.clicked and reaches the Panel as A-N16 only once the table routes A-N16', async () => {
+    const notification = {
+      key: `${HOST_DWARF}:question:ask-1`,
+      kind: 'question',
+      title: 'Ember has a question',
+      body: 'Mine one',
+      mineId: '01890a5d-ac96-774b-bcce-b302099a8111',
+      dwarfId: HOST_DWARF,
+      sensitive: true
+    }
+    const clickIn = async (routes: readonly ChannelRoute[]) => {
+      const display = new RecordingNotificationDisplay()
+      const app = await cut0App({ routes, notifications: { display, drawsWithoutWindow: false } })
+      app.panel.panel()?.show()
+      app.host.publishToNotifiers('attention.notify', notification)
+      await settle()
+      expect(display.click(notification.key)).toBe(true)
+      await settle()
+      const reveals = app.appWindows.windows.flatMap((w) =>
+        w.pushes.filter(([push]) => push === 'mode:revealDwarfChat')
+      )
+      return { app, reveals }
+    }
+
+    // Cut 0: A-N16 is not routed (unrouted until the cut-1 switch, ISSUE-123): the click only logs, as before; no
+    // counter for a reveal that did not run, no push, and the Panel is not brought up for it.
+    const cut0 = await clickIn(ROUTES)
+    expect(cut0.app.host.methods('notifier')).not.toContain('attention.clicked')
+    expect(cut0.reveals).toEqual([])
+    expect(cut0.app.log.filter((entry) => entry.event === 'window.raise')).toEqual([])
+
+    // The table the cut-1 switch gives A-N16: `ui-local`, target shape.
+    const revealRoute: ChannelRoute = {
+      channel: 'mode:revealDwarfChat',
+      owner: 'ui-local',
+      since: 'cut-1',
+      parity: 'n/a',
+      shape: 'target'
+    }
+    const cut1 = await clickIn([...ROUTES, revealRoute])
+    expect(cut1.app.host.methods('notifier')).toContain('attention.clicked')
+    expect(cut1.reveals).toEqual([
+      ['mode:revealDwarfChat', { mineId: notification.mineId, dwarfId: HOST_DWARF }]
+    ])
   })
 })
