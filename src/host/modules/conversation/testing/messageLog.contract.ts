@@ -380,5 +380,35 @@ export function runMessageLogContract(
       expect(s.keyOf(tooLong.sourceKey)).toBeNull()
       expect(s.rowCount(dwarf)).toBe(0)
     })
+
+    // ISSUE-101: the tool steps folded into an entry (15 §1.2 `ConversationEntry.activity`) are
+    // stored on its row as ADR-007's `ActivitySummary` (`messages.activity_json`, 10).
+    it("[ADR-007] an entry's tool steps are stored on its row as a step count and one-line summaries, and page returns them", async () => {
+      const s = await setUp()
+      const [dwarf] = s.dwarfIds
+      const step = (n: number) => ({
+        sourceKey: `claude:claude:session-1:tool-${n}`,
+        turnKey: 'claude:claude:session-1:turn-1',
+        kind: 'tool' as const,
+        toolName: 'Bash',
+        summary: `Ran step ${n}`,
+        state: 'finished' as const,
+        at: null
+      })
+      const withSteps = entry(1, { activity: [step(1), step(2)] })
+      const without = entry(2)
+      const emptySteps = entry(3, { activity: [] })
+
+      const { appended } = s.inTransaction(() =>
+        s.log.append(dwarf, [withSteps, without, emptySteps], 'live-stream')
+      )
+
+      const summary = { steps: 2, summaries: ['Ran step 1', 'Ran step 2'] }
+      expect(appended.map((m) => m.activity)).toEqual([summary, undefined, undefined])
+      const paged = s.log.page(dwarf, {})
+      expect(paged.find((m) => m.sourceKey === withSteps.sourceKey)?.activity).toEqual(summary)
+      expect(paged.find((m) => m.sourceKey === without.sourceKey)).not.toHaveProperty('activity')
+      expect(paged.find((m) => m.sourceKey === emptySteps.sourceKey)).not.toHaveProperty('activity')
+    })
   })
 }
